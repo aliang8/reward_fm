@@ -1,0 +1,15 @@
+libero_dpo_dataset/*
+*.pyc
+libero_hf_dataset/*
+libero_rm/*
+logs/*
+pick_up_green_block/*
+rendered_examples/*
+square/*
+videos/*
+old/*
+wandb/*
+LIBERO/*
+__pycache__/*
+datasets/*
+visualizations/*

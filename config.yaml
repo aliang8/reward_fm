@@ -1,0 +1,106 @@
+# VLM Reward Model Configuration
+# Configuration file for training and evaluating the VLM reward model
+
+# =====================================================================================
+# Experiment Mode
+# =====================================================================================
+mode: "train"  # "train" or "evaluate"
+
+# =====================================================================================
+# Model Configuration
+# =====================================================================================
+model:
+  base_model_id: "Qwen/Qwen2.5-VL-7B-Instruct"
+  torch_dtype: "bfloat16"
+  trust_remote_code: true
+
+# =====================================================================================
+# Training Configuration
+# =====================================================================================
+training:
+  # Data paths (LIBERO dataset)
+  dpo_dataset_path: "libero_dpo_dataset/train_dataset.json"
+  base_dir: "libero_dpo_dataset"
+  output_dir: "./libero_rm"
+  
+  # Training parameters
+  per_device_train_batch_size: 8
+  gradient_accumulation_steps: 1
+  learning_rate: 2e-5
+  num_train_epochs: -1  # Number of epochs to train for
+  save_strategy: "steps"
+  logging_steps: 20
+  save_steps: 50
+  max_steps: 500  # -1 means no limit, use num_train_epochs instead
+   
+  # Model settings
+  max_seq_length: 1024
+  beta: 0.1  # DPO beta parameter
+  
+  # Resume training
+  resume_from_checkpoint: null  # Set to checkpoint path to resume, null for fresh start
+  
+  # Mixed precision and optimization
+  bf16: true
+  remove_unused_columns: false
+  gradient_checkpointing: true
+  
+  # FSDP configuration
+  fsdp: "full_shard"
+  fsdp_config:
+    fsdp_transformer_layer_cls_to_wrap: ["Qwen2_5_VLDecoderLayer"]
+    fsdp_offload_params: true
+  
+  # Data loading
+  dataloader_pin_memory: false
+  dataloader_num_workers: 0
+  ddp_find_unused_parameters: false
+  ddp_bucket_cap_mb: 25
+  
+  # Video processing settings (LIBERO dataset)
+  video_frame_sampling: "uniform"  # "uniform", "random", "first", "middle"
+  video_max_frames: 8  # LIBERO dataset uses 8 frames per trajectory
+
+# =====================================================================================
+# PEFT Configuration
+# =====================================================================================
+peft:
+  use_peft: false  # Set to false to train the full model instead of using PEFT/LoRA
+  r: 32
+  lora_alpha: 64
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+  lora_dropout: 0.05
+  bias: "none"
+  # Additional options for more comprehensive training (when use_peft: false)
+  train_vision_encoder: true  # Whether to train the vision encoder
+  train_language_model: false   # Whether to train the language model
+  train_value_head: true       # Whether to train the value head
+
+# =====================================================================================
+# Prompt Configuration
+# =====================================================================================
+prompt:
+  discriminator: "You are shown three video sequences of robot trajectories. The first sequence is from a reference policy. Which of the two other sequences is most similar to the reference policy?"
+
+# =====================================================================================
+# Evaluation Configuration
+# =====================================================================================
+evaluation:
+  model_path: "./libero_rm/checkpoint-200"
+  eval_subset_size: -1  # Number of examples to use for evaluation
+  # Evaluation dataset path (separate from training)
+  eval_dataset_path: "libero_dpo_dataset/eval_dataset.json"
+  eval_base_dir: "libero_dpo_dataset"
+
+# =====================================================================================
+# Logging and Output Configuration
+# =====================================================================================
+logging:
+  save_model: true
+  save_processor: true
+  print_trainable_parameters: true
+  # Wandb configuration
+  use_wandb: true
+  wandb_project: "vlm-reward-model"
+  wandb_entity: null  # Set to your wandb username if needed
+  wandb_run_name: "libero-dpo-training"  # Optional: set a specific run name 

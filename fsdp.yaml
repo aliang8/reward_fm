@@ -1,0 +1,29 @@
+# Configuration for running full-parameter DPO fine-tuning on 8 GPUs
+# using FSDP (Fully Sharded Data Parallelism).
+
+# Environment settings
+compute_environment: LOCAL_MACHINE
+distributed_type: FSDP
+num_processes: 8  # The number of GPUs you want to use
+machine_rank: 0
+num_machines: 1
+main_training_function: main
+mixed_precision: 'bf16' # Use bfloat16 for training, must match the DPOConfig
+use_cpu: false
+
+# FSDP specific configurations
+fsdp_config:
+  fsdp_auto_wrap_policy: TRANSFORMER_BASED_WRAP
+  # CRITICAL: Define the classes to wrap for Qwen2.5-VL
+  # This tells FSDP how to correctly shard the complex multi-modal model.
+  fsdp_transformer_layer_cls_to_wrap: 'Qwen2_5_VLDecoderLayer'
+  
+  # Sharding strategy: FULL_SHARD is the most memory-efficient
+  fsdp_sharding_strategy: FULL_SHARD # 1 for FULL_SHARD, 2 for SHARD_GRAD_OP
+
+  # CPU Offloading: Offload parameters and gradients to CPU RAM to save VRAM.
+  # This is crucial for fitting large models.
+  fsdp_offload_params: true
+
+  # Set the state dict type for saving sharded model checkpoints
+  fsdp_state_dict_type: SHARDED_STATE_DICT

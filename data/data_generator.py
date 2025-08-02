@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DataGenerator class for producing batches of data for three prediction heads:
+DataGenerator class for producing batches of data for RFM model training with three prediction heads:
 1. Preference prediction: Predict whether o^1 or o^2 are preferred
 2. Progress prediction: Predict progress for a single trajectory  
 3. Comparative scoring: Rank o^1 and o^2 against a reference trajectory o^ref
@@ -39,15 +39,15 @@ class Sample:
     trajectory_A_frames: Optional[List[str]] = None
     trajectory_B_frames: Optional[List[str]] = None
     preferred_trajectory: Optional[str] = None  # "A" or "B"
-    entry_A_id: Optional[str] = None
-    entry_B_id: Optional[str] = None
-    entry_B_task: Optional[str] = None
-    entry_B_lang_vector: Optional[np.ndarray] = None
-    entry_B_data_source: Optional[str] = None
-    entry_B_optimal: Optional[bool] = None
-    entry_B_ranking: Optional[int] = None
-    entry_B_preference_embedding: Optional[np.ndarray] = None
-    entry_B_is_robot: Optional[bool] = None
+    trajectory_A_id: Optional[str] = None
+    trajectory_B_id: Optional[str] = None
+    trajectory_B_task: Optional[str] = None
+    trajectory_B_lang_vector: Optional[np.ndarray] = None
+    trajectory_B_data_source: Optional[str] = None
+    trajectory_B_optimal: Optional[bool] = None
+    trajectory_B_ranking: Optional[int] = None
+    trajectory_B_preference_embedding: Optional[np.ndarray] = None
+    trajectory_B_is_robot: Optional[bool] = None
     
     # Comparative-specific fields
     reference_frames: Optional[List[str]] = None  # o^ref
@@ -57,27 +57,27 @@ class Sample:
     task_ref: Optional[str] = None
     task_A: Optional[str] = None
     task_B: Optional[str] = None
-    ref_entry_id: Optional[str] = None
-    entry_A_id: Optional[str] = None
-    entry_B_id: Optional[str] = None
-    entry_A_task: Optional[str] = None
-    entry_A_lang_vector: Optional[np.ndarray] = None
-    entry_A_data_source: Optional[str] = None
-    entry_A_optimal: Optional[bool] = None
-    entry_A_ranking: Optional[int] = None
-    entry_A_preference_embedding: Optional[np.ndarray] = None
-    entry_A_is_robot: Optional[bool] = None
-    entry_B_task: Optional[str] = None
-    entry_B_lang_vector: Optional[np.ndarray] = None
-    entry_B_data_source: Optional[str] = None
-    entry_B_optimal: Optional[bool] = None
-    entry_B_ranking: Optional[int] = None
-    entry_B_preference_embedding: Optional[np.ndarray] = None
-    entry_B_is_robot: Optional[bool] = None
+    ref_trajectory_id: Optional[str] = None
+    trajectory_A_id: Optional[str] = None
+    trajectory_B_id: Optional[str] = None
+    trajectory_A_task: Optional[str] = None
+    trajectory_A_lang_vector: Optional[np.ndarray] = None
+    trajectory_A_data_source: Optional[str] = None
+    trajectory_A_optimal: Optional[bool] = None
+    trajectory_A_ranking: Optional[int] = None
+    trajectory_A_preference_embedding: Optional[np.ndarray] = None
+    trajectory_A_is_robot: Optional[bool] = None
+    trajectory_B_task: Optional[str] = None
+    trajectory_B_lang_vector: Optional[np.ndarray] = None
+    trajectory_B_data_source: Optional[str] = None
+    trajectory_B_optimal: Optional[bool] = None
+    trajectory_B_ranking: Optional[int] = None
+    trajectory_B_preference_embedding: Optional[np.ndarray] = None
+    trajectory_B_is_robot: Optional[bool] = None
     
     # Progress-specific fields
     trajectory_frames: Optional[List[str]] = None
-    entry_id: Optional[str] = None
+    trajectory_id: Optional[str] = None
     success: Optional[bool] = None
     
     # Metadata field
@@ -142,13 +142,13 @@ class DataGenerator:
         # Load the dataset
         self._load_dataset()
         
-        # Group entries by task for efficient sampling
-        self._group_entries_by_task()
+        # Group trajectories by task for efficient sampling
+        self._group_trajectories_by_task()
         
         # Initialize sentence transformer model
         self.lang_model = SentenceTransformer('all-MiniLM-L6-v2')
         
-        print(f"DataGenerator initialized with {len(self.entries)} total entries")
+        print(f"DataGenerator initialized with {len(self.trajectories)} total trajectories")
         print(f"Batch size: {batch_size}")
         print(f"Ratios - Preference: {preference_ratio}, Comparative: {comparative_ratio}, Progress: {progress_ratio}")
     
@@ -166,63 +166,63 @@ class DataGenerator:
             # Load from local disk
             self.dataset = load_from_disk(self.dataset_path)
         
-        self.entries = list(self.dataset)
-        print(f"Loaded {len(self.entries)} entries")
+        self.trajectories = list(self.dataset)
+        print(f"Loaded {len(self.trajectories)} trajectories")
     
-    def _group_entries_by_task(self):
-        """Group entries by task name for efficient sampling."""
+    def _group_trajectories_by_task(self):
+        """Group trajectories by task name for efficient sampling."""
         self.task_groups = {}
-        for entry in self.entries:
-            task_name = entry['task']
+        for traj in self.trajectories:
+            task_name = traj['task']
             if task_name not in self.task_groups:
                 self.task_groups[task_name] = []
-            self.task_groups[task_name].append(entry)
+            self.task_groups[task_name].append(traj)
         
-        print(f"Grouped entries into {len(self.task_groups)} tasks")
+        print(f"Grouped trajectories into {len(self.task_groups)} tasks")
     
     def _create_preference_sample(self) -> Sample:
         """Create a preference prediction sample: o^1 vs o^2 where o^1 is preferred."""
         
-        # Find tasks with at least 2 entries
-        available_tasks = [task for task, entries in self.task_groups.items() if len(entries) >= 2]
+        # Find tasks with at least 2 trajectories
+        available_tasks = [task for task, trajectories in self.task_groups.items() if len(trajectories) >= 2]
         if not available_tasks:
-            raise ValueError("No tasks with at least 2 entries found")
+            raise ValueError("No tasks with at least 2 trajectories found")
         
         # Randomly select a task
         task_name = random.choice(available_tasks)
-        task_entries = self.task_groups[task_name]
+        task_trajectories = self.task_groups[task_name]
         
-        # Select two different entries from the same task
-        entry_1, entry_2 = random.sample(task_entries, 2)
+        # Select two different trajectories from the same task
+        traj_1, traj_2 = random.sample(task_trajectories, 2)
         
         # Create unified sample structure with all fields
         sample = Sample(
             prediction_type="preference",
-            # Core HF dataset fields (from primary entry)
-            id=entry_1['id'],
-            task=entry_1['task'],
-            lang_vector=entry_1['lang_vector'],
-            data_source=entry_1['data_source'],
-            frames=entry_1['frames'],
-            optimal=entry_1['optimal'],
-            ranking=entry_1['ranking'],
-            preference_embedding=entry_1['preference_embedding'],
-            is_robot=entry_1['is_robot'],
-            metadata=entry_1.get('metadata'),
+            # Core HF dataset fields (from primary trajectory)
+            id=traj_1['id'],
+            task=traj_1['task'],
+            lang_vector=traj_1['lang_vector'],
+            data_source=traj_1['data_source'],
+            frames=traj_1['frames'],
+            optimal=traj_1['optimal'],
+            ranking=traj_1['ranking'],
+            preference_embedding=traj_1['preference_embedding'],
+            is_robot=traj_1['is_robot'],
+            metadata=traj_1.get('metadata'),
             # Preference-specific fields
-            trajectory_A_frames=entry_1['frames'],
-            trajectory_B_frames=entry_2['frames'],
+            trajectory_A_frames=traj_1['frames'],
+            trajectory_B_frames=traj_2['frames'],
             preferred_trajectory="A",  # A is preferred
-            entry_A_id=entry_1['id'],
-            entry_B_id=entry_2['id'],
-            # Entry B fields
-            entry_B_task=entry_2['task'],
-            entry_B_lang_vector=entry_2['lang_vector'],
-            entry_B_data_source=entry_2['data_source'],
-            entry_B_optimal=entry_2['optimal'],
-            entry_B_ranking=entry_2['ranking'],
-            entry_B_preference_embedding=entry_2['preference_embedding'],
-            entry_B_is_robot=entry_2['is_robot'],
+            trajectory_A_id=traj_1['id'],
+            trajectory_B_id=traj_2['id'],
+            # Trajectory B fields
+            trajectory_B_task=traj_2['task'],
+            trajectory_B_lang_vector=traj_2['lang_vector'],
+            trajectory_B_data_source=traj_2['data_source'],
+            trajectory_B_optimal=traj_2['optimal'],
+            trajectory_B_ranking=traj_2['ranking'],
+            trajectory_B_preference_embedding=traj_2['preference_embedding'],
+            trajectory_B_is_robot=traj_2['is_robot'],
         )
         
         return sample
@@ -230,27 +230,27 @@ class DataGenerator:
     def _create_progress_sample(self) -> Sample:
         """Create a progress prediction sample: single trajectory for progress prediction."""
         
-        # Randomly select an entry
-        entry = random.choice(self.entries)
+        # Randomly select a trajectory
+        traj = random.choice(self.trajectories)
         
         # Create unified sample structure with all fields
         sample = Sample(
             prediction_type="progress",
             # Core HF dataset fields
-            id=entry['id'],
-            task=entry['task'],
-            lang_vector=entry['lang_vector'],
-            data_source=entry['data_source'],
-            frames=entry['frames'],
-            optimal=entry['optimal'],
-            ranking=entry['ranking'],
-            preference_embedding=entry['preference_embedding'],
-            is_robot=entry['is_robot'],
-            metadata=entry.get('metadata'),
+            id=traj['id'],
+            task=traj['task'],
+            lang_vector=traj['lang_vector'],
+            data_source=traj['data_source'],
+            frames=traj['frames'],
+            optimal=traj['optimal'],
+            ranking=traj['ranking'],
+            preference_embedding=traj['preference_embedding'],
+            is_robot=traj['is_robot'],
+            metadata=traj.get('metadata'),
             # Progress-specific fields
-            trajectory_frames=entry['frames'],
-            entry_id=entry['id'],
-            success=entry.get('optimal', True),
+            trajectory_frames=traj['frames'],
+            trajectory_id=traj['id'],
+            success=traj.get('optimal', True),
         )
         
         return sample
@@ -269,36 +269,36 @@ class DataGenerator:
             # Randomly select two different tasks
             task_ref, task_other = random.sample(task_names, 2)
         
-        # Get entries from reference task
-        ref_entries = self.task_groups[task_ref]
-        ref_entry = random.choice(ref_entries)
+        # Get trajectories from reference task
+        ref_trajectories = self.task_groups[task_ref]
+        ref_traj = random.choice(ref_trajectories)
         
-        # Get entries from other task
-        other_entries = self.task_groups[task_other]
-        other_entry = random.choice(other_entries)
+        # Get trajectories from other task
+        other_trajectories = self.task_groups[task_other]
+        other_traj = random.choice(other_trajectories)
         
-        # For o^1, use an entry from the same task as reference (optimal)
+        # For o^1, use a trajectory from the same task as reference (optimal)
         if task_ref == task_other:
-            # Same task case - pick different entry
-            same_task_entries = [e for e in ref_entries if e['id'] != ref_entry['id']]
-            if same_task_entries:
-                entry_1 = random.choice(same_task_entries)
+            # Same task case - pick different trajectory
+            same_task_trajectories = [t for t in ref_trajectories if t['id'] != ref_traj['id']]
+            if same_task_trajectories:
+                traj_1 = random.choice(same_task_trajectories)
             else:
-                entry_1 = ref_entry  # Fallback
+                traj_1 = ref_traj  # Fallback
         else:
-            # Different task case - use entry from other task
-            entry_1 = other_entry
+            # Different task case - use trajectory from other task
+            traj_1 = other_traj
         
-        # For o^2, use an entry from different task (suboptimal)
+        # For o^2, use a trajectory from different task (suboptimal)
         if task_ref != task_other:
-            entry_2 = other_entry
+            traj_2 = other_traj
         else:
-            # Same task case - pick another entry
-            same_task_entries = [e for e in ref_entries if e['id'] not in [ref_entry['id'], entry_1['id']]]
-            if same_task_entries:
-                entry_2 = random.choice(same_task_entries)
+            # Same task case - pick another trajectory
+            same_task_trajectories = [t for t in ref_trajectories if t['id'] not in [ref_traj['id'], traj_1['id']]]
+            if same_task_trajectories:
+                traj_2 = random.choice(same_task_trajectories)
             else:
-                entry_2 = entry_1  # Fallback
+                traj_2 = traj_1  # Fallback
         
         # Determine ranking (reference is best, o^1 is better than o^2)
         ranking = [1, 2, 3]  # reference=1 (best), o^1=2, o^2=3 (worst)
@@ -306,44 +306,44 @@ class DataGenerator:
         # Create unified sample structure with all fields
         sample = Sample(
             prediction_type="comparative",
-            # Core HF dataset fields (from ref_entry)
-            id=ref_entry['id'],
-            task=ref_entry['task'],
-            lang_vector=ref_entry['lang_vector'],
-            data_source=ref_entry['data_source'],
-            frames=ref_entry['frames'],
-            optimal=ref_entry['optimal'],
-            ranking=ref_entry['ranking'],
-            preference_embedding=ref_entry['preference_embedding'],
-            is_robot=ref_entry['is_robot'],
-            metadata=ref_entry.get('metadata'),
+            # Core HF dataset fields (from ref_traj)
+            id=ref_traj['id'],
+            task=ref_traj['task'],
+            lang_vector=ref_traj['lang_vector'],
+            data_source=ref_traj['data_source'],
+            frames=ref_traj['frames'],
+            optimal=ref_traj['optimal'],
+            ranking=ref_traj['ranking'],
+            preference_embedding=ref_traj['preference_embedding'],
+            is_robot=ref_traj['is_robot'],
+            metadata=ref_traj.get('metadata'),
             # Comparative-specific fields
-            reference_frames=ref_entry['frames'],  # o^ref
-            trajectory_A_frames=entry_1['frames'],  # o^1
-            trajectory_B_frames=entry_2['frames'],  # o^2
+            reference_frames=ref_traj['frames'],  # o^ref
+            trajectory_A_frames=traj_1['frames'],  # o^1
+            trajectory_B_frames=traj_2['frames'],  # o^2
             ranking_list=ranking,  # [reference_rank, o1_rank, o2_rank]
             task_ref=task_ref,
-            task_A=entry_1['task'],
-            task_B=entry_2['task'],
-            ref_entry_id=ref_entry['id'],
-            entry_A_id=entry_1['id'],
-            entry_B_id=entry_2['id'],
-            # Entry A fields (o^1)
-            entry_A_task=entry_1['task'],
-            entry_A_lang_vector=entry_1['lang_vector'],
-            entry_A_data_source=entry_1['data_source'],
-            entry_A_optimal=entry_1['optimal'],
-            entry_A_ranking=entry_1['ranking'],
-            entry_A_preference_embedding=entry_1['preference_embedding'],
-            entry_A_is_robot=entry_1['is_robot'],
-            # Entry B fields (o^2)
-            entry_B_task=entry_2['task'],
-            entry_B_lang_vector=entry_2['lang_vector'],
-            entry_B_data_source=entry_2['data_source'],
-            entry_B_optimal=entry_2['optimal'],
-            entry_B_ranking=entry_2['ranking'],
-            entry_B_preference_embedding=entry_2['preference_embedding'],
-            entry_B_is_robot=entry_2['is_robot'],
+            task_A=traj_1['task'],
+            task_B=traj_2['task'],
+            ref_trajectory_id=ref_traj['id'],
+            trajectory_A_id=traj_1['id'],
+            trajectory_B_id=traj_2['id'],
+            # Trajectory A fields (o^1)
+            trajectory_A_task=traj_1['task'],
+            trajectory_A_lang_vector=traj_1['lang_vector'],
+            trajectory_A_data_source=traj_1['data_source'],
+            trajectory_A_optimal=traj_1['optimal'],
+            trajectory_A_ranking=traj_1['ranking'],
+            trajectory_A_preference_embedding=traj_1['preference_embedding'],
+            trajectory_A_is_robot=traj_1['is_robot'],
+            # Trajectory B fields (o^2)
+            trajectory_B_task=traj_2['task'],
+            trajectory_B_lang_vector=traj_2['lang_vector'],
+            trajectory_B_data_source=traj_2['data_source'],
+            trajectory_B_optimal=traj_2['optimal'],
+            trajectory_B_ranking=traj_2['ranking'],
+            trajectory_B_preference_embedding=traj_2['preference_embedding'],
+            trajectory_B_is_robot=traj_2['is_robot'],
         )
         
         return sample
@@ -444,6 +444,35 @@ def main():
     # Generate a single batch
     print("Generating a single batch...")
     batch = generator.generate_batch()
+
+# Dataset wrapper for HuggingFace Trainer compatibility
+class DataGeneratorDataset:
+    """Dataset wrapper that uses DataGenerator to provide samples for HuggingFace Trainer."""
+    
+    def __init__(self, data_generator: DataGenerator, num_batches: int = 1000):
+        """
+        Initialize the dataset wrapper.
+        
+        Args:
+            data_generator: DataGenerator instance to use for generating samples
+            num_batches: Number of batches to pre-generate
+        """
+        self.data_generator = data_generator
+        self.num_batches = num_batches
+        # Pre-generate some batches for the dataset
+        self.samples = []
+        for _ in range(num_batches):
+            batch = data_generator.generate_batch()
+            self.samples.extend(batch.samples)
+    
+    def __len__(self):
+        """Return the number of samples in the dataset."""
+        return len(self.samples)
+    
+    def __getitem__(self, idx):
+        """Get a sample by index."""
+        return self.samples[idx]
+
 
 if __name__ == "__main__":
     main() 

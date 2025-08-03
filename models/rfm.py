@@ -34,7 +34,6 @@ class RFMModel(PreTrainedModel):
         self.preference_head = self.preference_head.to(dtype=self.model_dtype)
         self.similarity_head = self.similarity_head.to(dtype=self.model_dtype)
         
-        # The tokenizer can be attached after initialization if needed.
         self.tokenizer = tokenizer
 
     def gradient_checkpointing_enable(self, **kwargs):
@@ -120,12 +119,14 @@ class RFMModel(PreTrainedModel):
             progress_logits = self.progress_head(token_hidden_states)  # [batch_size, 1]
 
         # For preference and similarity, use specific tokens
-        if prediction_type == "preference":
-            token_id = self.tokenizer.convert_tokens_to_ids("<|pref_token|>")
-        else:  # similarity (default)
-            token_id = self.tokenizer.convert_tokens_to_ids("<|reward_token|>")
-        
-                    # Find all positions where the target token appears
+        logits = None
+        if prediction_type is not None:
+            if prediction_type == "preference":
+                token_id = self.tokenizer.convert_tokens_to_ids("<|pref_token|>")
+            else:  # similarity (default)
+                token_id = self.tokenizer.convert_tokens_to_ids("<|reward_token|>")
+            
+            # Find all positions where the target token appears
             token_positions = []
             for i, seq_ids in enumerate(input_ids):
                 # Find the last occurrence of token_id in this sequence
@@ -136,27 +137,24 @@ class RFMModel(PreTrainedModel):
                     # Fallback to last token if target token not found
                     token_positions.append(attention_mask[i].sum().item() - 1)
             token_positions = torch.tensor(token_positions, device=input_ids.device, dtype=torch.long)
+            
+            # Extract hidden states at the target token positions
+            token_hidden_states = torch.gather(
+                last_hidden_state,
+                1,
+                token_positions.view(-1, 1, 1).expand(
+                    -1, -1, last_hidden_state.size(-1)
+                ),
+            ).squeeze(1)
+            
+            # Apply the appropriate head
+            if prediction_type == "preference":
+                logits = self.preference_head(token_hidden_states)
+            else:  # similarity (default)
+                logits = self.similarity_head(token_hidden_states)
         
-        # Extract hidden states at the target token positions
-        token_hidden_states = torch.gather(
-            last_hidden_state,
-            1,
-            token_positions.view(-1, 1, 1).expand(
-                -1, -1, last_hidden_state.size(-1)
-            ),
-        ).squeeze(1)
-        
-        # Apply the appropriate head
-        if prediction_type == "preference":
-            logits = self.preference_head(token_hidden_states)
-        else:  # similarity (default)
-            logits = self.similarity_head(token_hidden_states)
-        
-        # Return both logits if progress was computed
-        if progress_logits is not None:
-            return SequenceClassifierOutputWithPast(
-                logits=logits,
-                progress_logits=progress_logits
-            )
+        if logits is not None:
+            return SequenceClassifierOutputWithPast(logits=logits), progress_logits
         else:
-            return SequenceClassifierOutputWithPast(logits=logits) 
+            # No prediction requested
+            return SequenceClassifierOutputWithPast(logits=torch.zeros(input_ids.shape[0], 1, device=input_ids.device)), progress_logits    

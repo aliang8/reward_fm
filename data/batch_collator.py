@@ -26,29 +26,21 @@ class ProcessedBatch:
     image_grid_thw: Optional[torch.Tensor] = None
     video_grid_thw: Optional[torch.Tensor] = None
     
-    # Trajectory A inputs (for preference/comparative samples)
-    input_ids_A: Optional[torch.Tensor] = None
-    attention_mask_A: Optional[torch.Tensor] = None
-    pixel_values_A: Optional[torch.Tensor] = None
-    pixel_values_videos_A: Optional[torch.Tensor] = None
-    image_grid_thw_A: Optional[torch.Tensor] = None
-    video_grid_thw_A: Optional[torch.Tensor] = None
+    # Reference vs A inputs (for similarity samples)
+    input_ids_ref_A: Optional[torch.Tensor] = None
+    attention_mask_ref_A: Optional[torch.Tensor] = None
+    pixel_values_ref_A: Optional[torch.Tensor] = None
+    pixel_values_videos_ref_A: Optional[torch.Tensor] = None
+    image_grid_thw_ref_A: Optional[torch.Tensor] = None
+    video_grid_thw_ref_A: Optional[torch.Tensor] = None
     
-    # Trajectory B inputs (for preference/comparative samples)
-    input_ids_B: Optional[torch.Tensor] = None
-    attention_mask_B: Optional[torch.Tensor] = None
-    pixel_values_B: Optional[torch.Tensor] = None
-    pixel_values_videos_B: Optional[torch.Tensor] = None
-    image_grid_thw_B: Optional[torch.Tensor] = None
-    video_grid_thw_B: Optional[torch.Tensor] = None
-    
-    # Reference inputs (for comparative samples)
-    input_ids_ref: Optional[torch.Tensor] = None
-    attention_mask_ref: Optional[torch.Tensor] = None
-    pixel_values_ref: Optional[torch.Tensor] = None
-    pixel_values_videos_ref: Optional[torch.Tensor] = None
-    image_grid_thw_ref: Optional[torch.Tensor] = None
-    video_grid_thw_ref: Optional[torch.Tensor] = None
+    # Reference vs B inputs (for similarity samples)
+    input_ids_ref_B: Optional[torch.Tensor] = None
+    attention_mask_ref_B: Optional[torch.Tensor] = None
+    pixel_values_ref_B: Optional[torch.Tensor] = None
+    pixel_values_videos_ref_B: Optional[torch.Tensor] = None
+    image_grid_thw_ref_B: Optional[torch.Tensor] = None
+    video_grid_thw_ref_B: Optional[torch.Tensor] = None
     
     # Progress prediction targets
     target_progress_A: Optional[torch.Tensor] = None  # Progress values for trajectory A
@@ -83,107 +75,20 @@ class BatchCollator:
             Dictionary with processed inputs
         """
         if sample.prediction_type == "preference":
-            # For preference samples, process trajectory A and B separately
+            # For preference samples, process trajectory A and B in a single conversation
             if sample.trajectory_A_frames is None or sample.trajectory_B_frames is None:
                 raise ValueError("Preference sample must have trajectory_A_frames and trajectory_B_frames")
             
-            # Process trajectory A
-            conversation_A = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": f"Task: {sample.task}"},
-                        {"type": "video", "video": sample.trajectory_A_frames},
-                        {"type": "text", "text": "<|pref_token|>"}
-                    ]
-                }
-            ]
-            
-            # Process trajectory B
-            conversation_B = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": f"Task: {sample.task}"},
-                        {"type": "video", "video": sample.trajectory_B_frames},
-                        {"type": "text", "text": "<|pref_token|>"}
-                    ]
-                }
-            ]
-            
-            # Process both conversations
-            text_A = self.processor.apply_chat_template(
-                conversation_A, tokenize=False, add_generation_prompt=False, add_vision_id=True
-            )
-            text_B = self.processor.apply_chat_template(
-                conversation_B, tokenize=False, add_generation_prompt=False, add_vision_id=True
-            )
-            
-            # Process vision information for both
-            image_inputs_A, video_inputs_A, video_kwargs_A = process_vision_info(
-                conversation_A, return_video_kwargs=True
-            )
-            image_inputs_B, video_inputs_B, video_kwargs_B = process_vision_info(
-                conversation_B, return_video_kwargs=True
-            )
-            
-            # Process through the processor for both
-            inputs_A = self.processor(
-                text=[text_A],
-                images=image_inputs_A,
-                videos=video_inputs_A,
-                padding=True,
-                truncation=True,
-                max_length=self.max_length,
-                return_tensors="pt",
-                **video_kwargs_A,
-            )
-            
-            inputs_B = self.processor(
-                text=[text_B],
-                images=image_inputs_B,
-                videos=video_inputs_B,
-                padding=True,
-                truncation=True,
-                max_length=self.max_length,
-                return_tensors="pt",
-                **video_kwargs_B,
-            )
-            
-            # Combine into single inputs dict with A and B suffixes
-            inputs = {
-                "prediction_type": sample.prediction_type,
-                "preference_labels": torch.tensor([1.0], dtype=torch.float32),  # A is preferred
-            }
-            
-            # Add target progress for both trajectories
-            if sample.target_progress_A is not None:
-                inputs["target_progress_A"] = torch.tensor([sample.target_progress_A], dtype=torch.float32)
-            if sample.target_progress_B is not None:
-                inputs["target_progress_B"] = torch.tensor([sample.target_progress_B], dtype=torch.float32)
-            
-            # Add trajectory A inputs
-            for key, value in inputs_A.items():
-                inputs[f"{key}_A"] = value
-            
-            # Add trajectory B inputs
-            for key, value in inputs_B.items():
-                inputs[f"{key}_B"] = value
-            
-            return inputs
-            
-        elif sample.prediction_type == "progress":
-            # For progress samples, we have a single trajectory
-            if sample.trajectory_frames is None:
-                raise ValueError("Progress sample must have trajectory_frames")
-            
+            # Single conversation with both videos: task + video A + <|split_token|> + video B + <|pref_token|>
             conversation = [
                 {
                     "role": "user",
                     "content": [
                         {"type": "text", "text": f"Task: {sample.task}"},
-                        {"type": "video", "video": sample.trajectory_frames},
-                        {"type": "text", "text": "<|progress_token|>"}
+                        {"type": "video", "video": sample.trajectory_A_frames},
+                        {"type": "text", "text": "<|split_token|>"},
+                        {"type": "video", "video": sample.trajectory_B_frames},
+                        {"type": "text", "text": "<|pref_token|>"}
                     ]
                 }
             ]
@@ -210,36 +115,31 @@ class BatchCollator:
                 **video_kwargs,
             )
             
-            # Add prediction type and target progress
+            # Add prediction type and preference labels
             inputs["prediction_type"] = sample.prediction_type
-            total_frames = len(sample.trajectory_frames)
-            target_progress = torch.tensor([1.0 / total_frames], dtype=torch.float32)
-            inputs["target_progress"] = target_progress
+            inputs["preference_labels"] = torch.tensor([1.0], dtype=torch.float32)  # A is preferred
+            
+            # Add target progress for both trajectories
+            if sample.target_progress_A is not None:
+                inputs["target_progress_A"] = torch.tensor([sample.target_progress_A], dtype=torch.float32)
+            if sample.target_progress_B is not None:
+                inputs["target_progress_B"] = torch.tensor([sample.target_progress_B], dtype=torch.float32)
             
             return inputs
             
-        elif sample.prediction_type == "comparative":
-            # For comparative samples, process reference, trajectory A, and trajectory B separately
+        elif sample.prediction_type == "similarity":
+            # For similarity samples, process reference vs trajectory A and reference vs trajectory B separately
             if sample.reference_frames is None or sample.trajectory_A_frames is None or sample.trajectory_B_frames is None:
-                raise ValueError("Comparative sample must have reference_frames, trajectory_A_frames, and trajectory_B_frames")
+                raise ValueError("Similarity sample must have reference_frames, trajectory_A_frames, and trajectory_B_frames")
             
-            # Process reference trajectory
-            conversation_ref = [
+            # Process reference vs trajectory A
+            conversation_ref_A = [
                 {
                     "role": "user",
                     "content": [
                         {"type": "text", "text": f"Reference task: {sample.task_ref}"},
                         {"type": "video", "video": sample.reference_frames},
-                        {"type": "text", "text": "<|reward_token|>"}
-                    ]
-                }
-            ]
-            
-            # Process trajectory A
-            conversation_A = [
-                {
-                    "role": "user",
-                    "content": [
+                        {"type": "text", "text": "<|split_token|>"},
                         {"type": "text", "text": f"Candidate A task: {sample.task_A}"},
                         {"type": "video", "video": sample.trajectory_A_frames},
                         {"type": "text", "text": "<|reward_token|>"}
@@ -247,11 +147,14 @@ class BatchCollator:
                 }
             ]
             
-            # Process trajectory B
-            conversation_B = [
+            # Process reference vs trajectory B
+            conversation_ref_B = [
                 {
                     "role": "user",
                     "content": [
+                        {"type": "text", "text": f"Reference task: {sample.task_ref}"},
+                        {"type": "video", "video": sample.reference_frames},
+                        {"type": "text", "text": "<|split_token|>"},
                         {"type": "text", "text": f"Candidate B task: {sample.task_B}"},
                         {"type": "video", "video": sample.trajectory_B_frames},
                         {"type": "text", "text": "<|reward_token|>"}
@@ -259,63 +162,46 @@ class BatchCollator:
                 }
             ]
             
-            # Process all conversations
-            text_ref = self.processor.apply_chat_template(
-                conversation_ref, tokenize=False, add_generation_prompt=False, add_vision_id=True
+            # Process both conversations
+            text_ref_A = self.processor.apply_chat_template(
+                conversation_ref_A, tokenize=False, add_generation_prompt=False, add_vision_id=True
             )
-            text_A = self.processor.apply_chat_template(
-                conversation_A, tokenize=False, add_generation_prompt=False, add_vision_id=True
-            )
-            text_B = self.processor.apply_chat_template(
-                conversation_B, tokenize=False, add_generation_prompt=False, add_vision_id=True
+            text_ref_B = self.processor.apply_chat_template(
+                conversation_ref_B, tokenize=False, add_generation_prompt=False, add_vision_id=True
             )
             
-            # Process vision information for all
-            image_inputs_ref, video_inputs_ref, video_kwargs_ref = process_vision_info(
-                conversation_ref, return_video_kwargs=True
+            # Process vision information for both
+            image_inputs_ref_A, video_inputs_ref_A, video_kwargs_ref_A = process_vision_info(
+                conversation_ref_A, return_video_kwargs=True
             )
-            image_inputs_A, video_inputs_A, video_kwargs_A = process_vision_info(
-                conversation_A, return_video_kwargs=True
-            )
-            image_inputs_B, video_inputs_B, video_kwargs_B = process_vision_info(
-                conversation_B, return_video_kwargs=True
+            image_inputs_ref_B, video_inputs_ref_B, video_kwargs_ref_B = process_vision_info(
+                conversation_ref_B, return_video_kwargs=True
             )
             
-            # Process through the processor for all
-            inputs_ref = self.processor(
-                text=[text_ref],
-                images=image_inputs_ref,
-                videos=video_inputs_ref,
+            # Process through the processor for both
+            inputs_ref_A = self.processor(
+                text=[text_ref_A],
+                images=image_inputs_ref_A,
+                videos=video_inputs_ref_A,
                 padding=True,
                 truncation=True,
                 max_length=self.max_length,
                 return_tensors="pt",
-                **video_kwargs_ref,
+                **video_kwargs_ref_A,
             )
             
-            inputs_A = self.processor(
-                text=[text_A],
-                images=image_inputs_A,
-                videos=video_inputs_A,
+            inputs_ref_B = self.processor(
+                text=[text_ref_B],
+                images=image_inputs_ref_B,
+                videos=video_inputs_ref_B,
                 padding=True,
                 truncation=True,
                 max_length=self.max_length,
                 return_tensors="pt",
-                **video_kwargs_A,
+                **video_kwargs_ref_B,
             )
             
-            inputs_B = self.processor(
-                text=[text_B],
-                images=image_inputs_B,
-                videos=video_inputs_B,
-                padding=True,
-                truncation=True,
-                max_length=self.max_length,
-                return_tensors="pt",
-                **video_kwargs_B,
-            )
-            
-            # Combine into single inputs dict with ref, A, and B suffixes
+            # Combine into single inputs dict with ref_A and ref_B suffixes
             inputs = {
                 "prediction_type": sample.prediction_type,
             }
@@ -326,17 +212,13 @@ class BatchCollator:
             if sample.target_progress_B is not None:
                 inputs["target_progress_B"] = torch.tensor([sample.target_progress_B], dtype=torch.float32)
             
-            # Add reference inputs
-            for key, value in inputs_ref.items():
-                inputs[f"{key}_ref"] = value
+            # Add reference vs A inputs
+            for key, value in inputs_ref_A.items():
+                inputs[f"{key}_ref_A"] = value
             
-            # Add trajectory A inputs
-            for key, value in inputs_A.items():
-                inputs[f"{key}_A"] = value
-            
-            # Add trajectory B inputs
-            for key, value in inputs_B.items():
-                inputs[f"{key}_B"] = value
+            # Add reference vs B inputs
+            for key, value in inputs_ref_B.items():
+                inputs[f"{key}_ref_B"] = value
             
             return inputs
             
@@ -396,29 +278,21 @@ class BatchCollator:
             image_grid_thw=batched_inputs.get("image_grid_thw"),
             video_grid_thw=batched_inputs.get("video_grid_thw"),
             
-            # Trajectory A inputs (for preference/comparative samples)
-            input_ids_A=batched_inputs.get("input_ids_A"),
-            attention_mask_A=batched_inputs.get("attention_mask_A"),
-            pixel_values_A=batched_inputs.get("pixel_values_A"),
-            pixel_values_videos_A=batched_inputs.get("pixel_values_videos_A"),
-            image_grid_thw_A=batched_inputs.get("image_grid_thw_A"),
-            video_grid_thw_A=batched_inputs.get("video_grid_thw_A"),
+            # Reference vs A inputs (for similarity samples)
+            input_ids_ref_A=batched_inputs.get("input_ids_ref_A"),
+            attention_mask_ref_A=batched_inputs.get("attention_mask_ref_A"),
+            pixel_values_ref_A=batched_inputs.get("pixel_values_ref_A"),
+            pixel_values_videos_ref_A=batched_inputs.get("pixel_values_videos_ref_A"),
+            image_grid_thw_ref_A=batched_inputs.get("image_grid_thw_ref_A"),
+            video_grid_thw_ref_A=batched_inputs.get("video_grid_thw_ref_A"),
             
-            # Trajectory B inputs (for preference/comparative samples)
-            input_ids_B=batched_inputs.get("input_ids_B"),
-            attention_mask_B=batched_inputs.get("attention_mask_B"),
-            pixel_values_B=batched_inputs.get("pixel_values_B"),
-            pixel_values_videos_B=batched_inputs.get("pixel_values_videos_B"),
-            image_grid_thw_B=batched_inputs.get("image_grid_thw_B"),
-            video_grid_thw_B=batched_inputs.get("video_grid_thw_B"),
-            
-            # Reference inputs (for comparative samples)
-            input_ids_ref=batched_inputs.get("input_ids_ref"),
-            attention_mask_ref=batched_inputs.get("attention_mask_ref"),
-            pixel_values_ref=batched_inputs.get("pixel_values_ref"),
-            pixel_values_videos_ref=batched_inputs.get("pixel_values_videos_ref"),
-            image_grid_thw_ref=batched_inputs.get("image_grid_thw_ref"),
-            video_grid_thw_ref=batched_inputs.get("video_grid_thw_ref"),
+            # Reference vs B inputs (for similarity samples)
+            input_ids_ref_B=batched_inputs.get("input_ids_ref_B"),
+            attention_mask_ref_B=batched_inputs.get("attention_mask_ref_B"),
+            pixel_values_ref_B=batched_inputs.get("pixel_values_ref_B"),
+            pixel_values_videos_ref_B=batched_inputs.get("pixel_values_videos_ref_B"),
+            image_grid_thw_ref_B=batched_inputs.get("image_grid_thw_ref_B"),
+            video_grid_thw_ref_B=batched_inputs.get("video_grid_thw_ref_B"),
             
             # Progress prediction targets
             target_progress_A=batched_inputs.get("target_progress_A"),

@@ -1,5 +1,5 @@
-# VLM Reward Model Configuration
-# Configuration file for training and evaluating the VLM reward model
+# RFM (Reward Foundation Model) Configuration
+# Configuration file for training and evaluating the RFM model with three objectives
 
 # =====================================================================================
 # Experiment Mode
@@ -10,7 +10,7 @@ mode: "train"  # "train" or "evaluate"
 # Model Configuration
 # =====================================================================================
 model:
-  base_model_id: "Qwen/Qwen2.5-VL-7B-Instruct"
+  base_model_id: "Qwen/Qwen2.5-VL-3B-Instruct"
   torch_dtype: "bfloat16"
   trust_remote_code: true
 
@@ -18,10 +18,10 @@ model:
 # Training Configuration
 # =====================================================================================
 training:
-  # Data paths (LIBERO dataset)
-  dpo_dataset_path: "libero_dpo_dataset/train_dataset.json"
-  base_dir: "libero_dpo_dataset"
-  output_dir: "./libero_rm"
+  # Data paths (RFM dataset with LIBERO90)
+  dataset_path: "aliangdw/rfm"
+  dataset_subsets: ["libero_90"]
+  output_dir: "./logs/rfm"
   
   # Training parameters
   per_device_train_batch_size: 8
@@ -32,20 +32,26 @@ training:
   logging_steps: 20
   save_steps: 50
   max_steps: 500  # -1 means no limit, use num_train_epochs instead
+  
+  # Multi-objective training ratios
+  preference_ratio: 0.5  # Ratio of preference prediction samples
+  similarity_ratio: 0.5  # Ratio of similarity scoring samples
    
   # Model settings
   max_seq_length: 1024
-  beta: 0.1  # DPO beta parameter
+  max_frames: 32  # Maximum frames per trajectory
   
   # Resume training
   resume_from_checkpoint: null  # Set to checkpoint path to resume, null for fresh start
   
   # Mixed precision and optimization
   bf16: true
+  fp16: false
   remove_unused_columns: false
   gradient_checkpointing: true
   
   # FSDP configuration
+  use_fsdp: false  # Set to true to enable FSDP
   fsdp: "full_shard"
   fsdp_config:
     fsdp_transformer_layer_cls_to_wrap: ["Qwen2_5_VLDecoderLayer"]
@@ -57,9 +63,10 @@ training:
   ddp_find_unused_parameters: false
   ddp_bucket_cap_mb: 25
   
-  # Video processing settings (LIBERO dataset)
-  video_frame_sampling: "uniform"  # "uniform", "random", "first", "middle"
-  video_max_frames: 8  # LIBERO dataset uses 8 frames per trajectory
+  # Data generation settings
+  dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
+  shuffle: true
+  seed: 42
 
 # =====================================================================================
 # PEFT Configuration
@@ -74,23 +81,19 @@ peft:
   # Additional options for more comprehensive training (when use_peft: false)
   train_vision_encoder: true  # Whether to train the vision encoder
   train_language_model: false   # Whether to train the language model
-  train_value_head: true       # Whether to train the value head
-
-# =====================================================================================
-# Prompt Configuration
-# =====================================================================================
-prompt:
-  discriminator: "You are shown three video sequences of robot trajectories. The first sequence is from a reference policy. Which of the two other sequences is most similar to the reference policy?"
+  train_progress_head: true     # Whether to train the progress prediction head
+  train_preference_head: true   # Whether to train the preference prediction head
+  train_similarity_head: true   # Whether to train the similarity scoring head
 
 # =====================================================================================
 # Evaluation Configuration
 # =====================================================================================
 evaluation:
-  model_path: "./libero_rm/checkpoint-200"
+  model_path: "./rfm_model_output/checkpoint-200"
   eval_subset_size: -1  # Number of examples to use for evaluation
-  # Evaluation dataset path (separate from training)
-  eval_dataset_path: "libero_dpo_dataset/eval_dataset.json"
-  eval_base_dir: "libero_dpo_dataset"
+  # Evaluation dataset path (same as training for now)
+  eval_dataset_path: "aliangdw/rfm"
+  eval_dataset_subsets: ["libero_90"]
 
 # =====================================================================================
 # Logging and Output Configuration
@@ -100,7 +103,7 @@ logging:
   save_processor: true
   print_trainable_parameters: true
   # Wandb configuration
-  use_wandb: true
-  wandb_project: "vlm-reward-model"
+  use_wandb: false
+  wandb_project: "rfm-model"
   wandb_entity: null  # Set to your wandb username if needed
-  wandb_run_name: "libero-dpo-training"  # Optional: set a specific run name 
+  wandb_run_name: "rfm-training"  

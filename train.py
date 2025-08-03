@@ -20,7 +20,7 @@ import os
 import yaml
 from typing import List, Dict, Optional, Union, Any
 from peft import get_peft_model, LoraConfig, PeftModel
-from data.data_generator import BatchCollator, DataGeneratorDataset
+from data.data_generator import BatchCollator, DataGeneratorDataset, DataGenerator
 from models.rfm import RFMModel
 from tqdm import tqdm
 from dataclasses import dataclass, field
@@ -29,6 +29,7 @@ from pyrallis import wrap
 from qwen_vl_utils import process_vision_info
 from accelerate import Accelerator
 import wandb
+import numpy as np
 
 # Suppress FSDP ShardedTensor deprecation warning
 warnings.filterwarnings("ignore", message="Please use DTensor instead and we are deprecating ShardedTensor")
@@ -47,7 +48,7 @@ class ModelConfig:
 @dataclass
 class PEFTConfig:
     """Config for PEFT/LoRA settings"""
-    use_peft: bool = field(default=True, metadata={"help": "Whether to use PEFT/LoRA or train full model"})
+    use_peft: bool = field(default=False, metadata={"help": "Whether to use PEFT/LoRA or train full model"})
     r: int = field(default=32)
     lora_alpha: int = field(default=64)
     lora_dropout: float = field(default=0.05)
@@ -57,12 +58,17 @@ class PEFTConfig:
     train_vision_encoder: bool = field(default=False, metadata={"help": "Whether to train the vision encoder"})
     train_language_model: bool = field(default=True, metadata={"help": "Whether to train the language model"})
     train_value_head: bool = field(default=True, metadata={"help": "Whether to train the value head"})
+    # RFM-specific head training options
+    train_progress_head: bool = field(default=True, metadata={"help": "Whether to train the progress prediction head"})
+    train_preference_head: bool = field(default=True, metadata={"help": "Whether to train the preference prediction head"})
+    train_similarity_head: bool = field(default=True, metadata={"help": "Whether to train the similarity scoring head"})
 
 
 @dataclass
 class TrainingConfig:
     """Config for training settings"""
-    dpo_dataset_path: str = field(default="rfm_dataset/libero")
+    # Dataset settings
+    dataset_path: str = field(default="aliangdw/rfm")
     base_dir: str = field(default="libero_dpo_dataset")
     output_dir: str = field(default="./rfm_model_output")
     max_seq_length: int = field(default=1024)
@@ -76,10 +82,12 @@ class TrainingConfig:
     num_train_epochs: Optional[int] = field(default=1)  # Default to 1 epoch if not specified
     save_strategy: str = field(default="steps")
     logging_steps: int = field(default=10)
-    bf16: bool = field(default=True)
+    bf16: bool = field(default=False)
+    fp16: bool = field(default=True)
     remove_unused_columns: bool = field(default=False)
     gradient_checkpointing: bool = field(default=True)
-    fsdp: str = field(default="full_shard")  # Re-enable FSDP
+    use_fsdp: bool = field(default=False)  # Whether to use FSDP
+    fsdp: str = field(default="full_shard")  # FSDP strategy
     dataloader_pin_memory: bool = field(default=False)
     dataloader_num_workers: int = field(default=0)
     ddp_find_unused_parameters: bool = field(default=False)
@@ -90,6 +98,15 @@ class TrainingConfig:
     # Video processing settings
     video_frame_sampling: str = field(default="uniform")  # "uniform", "random", "first", "middle"
     video_max_frames: int = field(default=8)  # LIBERO dataset uses 8 frames per trajectory
+    max_frames: int = field(default=32)  # Maximum frames per trajectory
+    
+    # Data generation settings
+    dataset_subsets: List[str] = field(default_factory=lambda: ["libero_90"])
+    preference_ratio: float = field(default=0.5)
+    similarity_ratio: float = field(default=0.5)
+    dataset_preference_ratio: float = field(default=0.7)
+    shuffle: bool = field(default=True)
+    seed: int = field(default=42)
     
     # FSDP configuration (nested under training in YAML)
     fsdp_config: Dict = field(default_factory=lambda: {
@@ -110,10 +127,7 @@ class LoggingConfig:
     wandb_run_name: Optional[str] = field(default=None, metadata={"help": "Wandb run name"})
 
 
-@dataclass
-class PromptConfig:
-    """Config for prompt settings"""
-    discriminator: str = field(default="You are shown three video sequences of robot trajectories. Sequences A and B are from the same task, while sequence C is from a different task. Which sequence (A or B) shows a better trajectory for the task?")
+
 
 
 @dataclass
@@ -123,6 +137,7 @@ class EvaluationConfig:
     eval_subset_size: int = field(default=10, metadata={"help": "Number of examples to use for evaluation"})
     eval_dataset_path: str = field(default="rfm_dataset/libero")
     eval_base_dir: str = field(default="libero_dpo_dataset")
+    eval_dataset_subsets: List[str] = field(default_factory=lambda: ["libero_90"])
 
 
 @dataclass
@@ -133,10 +148,9 @@ class ExperimentConfig:
     peft: PEFTConfig = field(default_factory=PEFTConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
-    prompt: PromptConfig = field(default_factory=PromptConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     
-        
+
 class RFMTrainer(Trainer):
     def __init__(self, *args, beta=0.1, compute_metrics=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -144,19 +158,86 @@ class RFMTrainer(Trainer):
         self.compute_metrics = compute_metrics
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-        # Determine prediction type from inputs
-        prediction_type = inputs.get("prediction_type", "similarity")  # Default to similarity
+        """Compute loss for mixed batches with different prediction types."""
+        batch_size = inputs["input_ids"].shape[0] if "input_ids" in inputs else 1
+        prediction_types = inputs.get("prediction_type", ["similarity"])
+        if not isinstance(prediction_types, list):
+            prediction_types = [prediction_types] * batch_size
         
-        if prediction_type == "progress":
-            return self._compute_progress_loss(model, inputs, return_outputs)
-        elif prediction_type == "preference":
-            return self._compute_preference_loss(model, inputs, return_outputs)
-        else:  # similarity
-            return self._compute_similarity_loss(model, inputs, return_outputs)
-    
+        # Initialize loss components and metadata
+        total_loss = 0.0
+        loss_metadata = {
+            "progress_loss": 0.0,
+            "preference_loss": 0.0, 
+            "similarity_loss": 0.0,
+            "progress_count": 0,
+            "preference_count": 0,
+            "similarity_count": 0
+        }
+        
+        # Group samples by prediction type
+        preference_indices = [i for i, pt in enumerate(prediction_types) if pt == "preference"]
+        similarity_indices = [i for i, pt in enumerate(prediction_types) if pt == "similarity"]
+        
+        import ipdb; ipdb.set_trace()
+        # Compute preference loss for preference samples (takes both videos A and B)
+        if preference_indices:
+            preference_inputs = self._extract_batch_subset(inputs, preference_indices)
+            preference_loss, preference_outputs = self._compute_preference_loss(model, preference_inputs, return_outputs=True)
+            total_loss += preference_loss * len(preference_indices)
+            loss_metadata["preference_loss"] = preference_loss.item()
+            loss_metadata["preference_count"] = len(preference_indices)
+        
+        # Compute similarity loss for similarity samples
+        if similarity_indices:
+            similarity_inputs = self._extract_batch_subset(inputs, similarity_indices)
+            similarity_loss, similarity_outputs = self._compute_similarity_loss(model, similarity_inputs, return_outputs=True)
+            total_loss += similarity_loss * len(similarity_indices)
+            loss_metadata["similarity_loss"] = similarity_loss.item()
+            loss_metadata["similarity_count"] = len(similarity_indices)
+        
+        # Always compute progress loss for trajectory A if target_progress_A is provided
+        if "target_progress_A" in inputs and inputs["target_progress_A"] is not None:
+            # Use the full batch for progress computation (trajectory A)
+            progress_loss, progress_outputs = self._compute_progress_loss(model, inputs, return_outputs=True)
+            total_loss += progress_loss
+            loss_metadata["progress_loss"] = progress_loss.item()
+            loss_metadata["progress_count"] = batch_size
+        
+        # Normalize by total batch size
+        total_loss = total_loss / batch_size
+        
+        if return_outputs:
+            # Combine outputs from all loss functions
+            combined_outputs = {
+                "loss_metadata": loss_metadata,
+                "total_loss": total_loss,
+                "batch_size": batch_size
+            }
+            return total_loss, combined_outputs
+        
+        return total_loss
+
+    def _extract_batch_subset(self, inputs, indices):
+        """Extract a subset of the batch for specific indices."""
+        subset_inputs = {}
+        
+        for key, value in inputs.items():
+            if isinstance(value, torch.Tensor) and len(value.shape) > 0:
+                # For tensors, index along the first dimension
+                subset_inputs[key] = value[indices]
+            elif isinstance(value, list) and len(value) > 0:
+                # For lists, extract specific indices
+                subset_inputs[key] = [value[i] for i in indices]
+            else:
+                # For scalars or other types, keep as is
+                subset_inputs[key] = value
+        
+        return subset_inputs
+
     def _compute_progress_loss(self, model, inputs, return_outputs=False):
         """Compute progress prediction loss (MSE for frame progress 0-1)."""
-        # Forward pass with progress prediction
+        # Forward pass with progress prediction (trajectory A)
         outputs = model(
             input_ids=inputs["input_ids"],
             attention_mask=inputs["attention_mask"],
@@ -164,20 +245,26 @@ class RFMTrainer(Trainer):
             pixel_values_videos=inputs.get("pixel_values_videos"),
             image_grid_thw=inputs.get("image_grid_thw"),
             video_grid_thw=inputs.get("video_grid_thw"),
-            prediction_type="progress"
+            target_progress=inputs.get("target_progress_A"),
+            prediction_type="similarity"  # Use similarity as default, progress will be computed automatically
         )
         
-        # Get predicted progress scores
-        predicted_progress = outputs.logits.squeeze(-1)
+        # Get predicted progress scores from progress_logits
+        if hasattr(outputs, 'progress_logits') and outputs.progress_logits is not None:
+            predicted_progress = outputs.progress_logits.squeeze(-1)  # [batch_size]
+        else:
+            # Fallback: use main logits if progress_logits not available
+            predicted_progress = outputs.logits.squeeze(-1)  # [batch_size]
         
-        # Get target progress (frame index / total frames)
-        target_progress = inputs["target_progress"]  # Should be provided in inputs
+        # Get target progress (we'll use the final progress value for each trajectory)
+        target_progress = inputs["target_progress_A"]  # [batch_size, num_frames]
+        final_target_progress = target_progress[:, -1]  # [batch_size] - use final frame progress
         
         # Compute MSE loss
-        loss = F.mse_loss(predicted_progress, target_progress)
+        loss = F.mse_loss(predicted_progress, final_target_progress)
         
         if return_outputs:
-            return loss, {"predicted_progress": predicted_progress, "target_progress": target_progress}
+            return loss, {"predicted_progress": predicted_progress, "target_progress": final_target_progress}
         return loss
     
     def _compute_preference_loss(self, model, inputs, return_outputs=False):
@@ -204,7 +291,7 @@ class RFMTrainer(Trainer):
             prediction_type="preference"
         )
         
-        # Get preference scores
+        # Get preference scores from the preference head
         score_A = outputs_A.logits.squeeze(-1)
         score_B = outputs_B.logits.squeeze(-1)
         
@@ -398,7 +485,7 @@ def setup_model_and_processor(cfg: ExperimentConfig):
     base_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(cfg.model.base_model_id)
     
     # Add RFM special tokens if they don't exist
-    special_tokens = ["<|split_token|>", "<|reward_token|>", "<|progress_token|>", "<|pref_token|>"]
+    special_tokens = ["<|split_token|>", "<|reward_token|>", "<|pref_token|>"]
     for token in special_tokens:
         if token not in processor.tokenizer.get_vocab():
             processor.tokenizer.add_special_tokens({"additional_special_tokens": [token]})
@@ -444,9 +531,13 @@ def setup_peft_model(rfm_model, cfg: ExperimentConfig):
         peft_rfm_model = rfm_model
         # Configure which parts of the model to train based on config
         for name, param in peft_rfm_model.named_parameters():
-            # Always train the prediction heads
-            if any(head in name for head in ["progress_head", "preference_head", "similarity_head"]):
-                param.requires_grad = cfg.peft.train_value_head
+            # Train prediction heads based on individual settings
+            if "progress_head" in name:
+                param.requires_grad = cfg.peft.train_progress_head
+            elif "preference_head" in name:
+                param.requires_grad = cfg.peft.train_preference_head
+            elif "similarity_head" in name:
+                param.requires_grad = cfg.peft.train_similarity_head
             # Train vision encoder if specified
             elif "visual" in name or "vision" in name:
                 param.requires_grad = cfg.peft.train_vision_encoder
@@ -465,7 +556,9 @@ def setup_peft_model(rfm_model, cfg: ExperimentConfig):
             print(f"Training configuration:")
             print(f"  - Vision encoder: {cfg.peft.train_vision_encoder}")
             print(f"  - Language model: {cfg.peft.train_language_model}")
-            print(f"  - Prediction heads: {cfg.peft.train_value_head}")
+            print(f"  - Progress head: {cfg.peft.train_progress_head}")
+            print(f"  - Preference head: {cfg.peft.train_preference_head}")
+            print(f"  - Similarity head: {cfg.peft.train_similarity_head}")
         
         return peft_rfm_model
 
@@ -483,17 +576,27 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
         "logging_steps": cfg.training.logging_steps,
         "save_steps": cfg.training.save_steps,
         "bf16": cfg.training.bf16,
+        "fp16": cfg.training.fp16,
         "remove_unused_columns": cfg.training.remove_unused_columns,
         "gradient_checkpointing": cfg.training.gradient_checkpointing,
-        "fsdp": cfg.training.fsdp,
-        "fsdp_config": cfg.training.fsdp_config,
+    }
+    
+    # Add FSDP configuration only if enabled
+    if cfg.training.use_fsdp:
+        base_args.update({
+            "fsdp": cfg.training.fsdp,
+            "fsdp_config": cfg.training.fsdp_config,
+        })
+    
+    # Add remaining arguments
+    base_args.update({
         "dataloader_pin_memory": cfg.training.dataloader_pin_memory,
         "dataloader_num_workers": cfg.training.dataloader_num_workers,
         "ddp_find_unused_parameters": cfg.training.ddp_find_unused_parameters,
         "ddp_bucket_cap_mb": cfg.training.ddp_bucket_cap_mb,
         "save_safetensors": True,
         "save_total_limit": 2,
-    }
+    })
     
     if is_eval:
         # Evaluation-specific arguments
@@ -521,35 +624,15 @@ def train(cfg: ExperimentConfig):
     
     # Initialize wandb if enabled
     if cfg.logging.use_wandb:
+        # Convert config to dict for wandb using dataclass asdict
+        from dataclasses import asdict
+        config_dict = asdict(cfg)
+        
         wandb.init(
             project=cfg.logging.wandb_project,
             entity=cfg.logging.wandb_entity,
             name=cfg.logging.wandb_run_name,
-            config={
-                "model": {
-                    "base_model_id": cfg.model.base_model_id,
-                    "torch_dtype": cfg.model.torch_dtype,
-                },
-                "peft": {
-                    "use_peft": cfg.peft.use_peft,
-                    "r": cfg.peft.r,
-                    "lora_alpha": cfg.peft.lora_alpha,
-                    "train_vision_encoder": cfg.peft.train_vision_encoder,
-                    "train_language_model": cfg.peft.train_language_model,
-                    "train_value_head": cfg.peft.train_value_head,
-                },
-                "training": {
-                    "learning_rate": cfg.training.learning_rate,
-                    "per_device_train_batch_size": cfg.training.per_device_train_batch_size,
-                    "gradient_accumulation_steps": cfg.training.gradient_accumulation_steps,
-                    "num_train_epochs": cfg.training.num_train_epochs,
-                    "max_steps": cfg.training.max_steps,
-                    "beta": cfg.training.beta,
-                },
-                "prompt": {
-                    "discriminator": cfg.prompt.discriminator,
-                }
-            }
+            config=config_dict
         )
         print(f"Wandb initialized: {wandb.run.name}")
     
@@ -564,17 +647,15 @@ def train(cfg: ExperimentConfig):
     # Apply PEFT if enabled
     peft_rfm_model = setup_peft_model(rfm_model, cfg)
     
-    # Import DataGenerator for creating Sample/Batch objects
-    from data.data_generator import DataGenerator
-    
     # Create DataGenerator for training
     data_generator = DataGenerator(
-        dataset_path=cfg.training.dpo_dataset_path,
+        dataset_path=cfg.training.dataset_path,
+        dataset_subsets=cfg.training.dataset_subsets,
         batch_size=cfg.training.per_device_train_batch_size,
-        preference_ratio=1.0,  # Use only preference samples for DPO training
-        comparative_ratio=0.0,
-        progress_ratio=0.0,
+        preference_ratio=cfg.training.preference_ratio,
+        similarity_ratio=cfg.training.similarity_ratio,
         max_frames=cfg.training.video_max_frames,
+        dataset_preference_ratio=cfg.training.dataset_preference_ratio,
         shuffle=True,
         seed=42
     )
@@ -616,17 +697,15 @@ def evaluate(cfg: ExperimentConfig):
     # Apply PEFT configuration (same as training) to ensure parameter groups match
     model = setup_peft_model(rfm_model, cfg)
     
-    # Import DataGenerator for creating Sample/Batch objects
-    from data.data_generator import DataGenerator
-    
     # Create DataGenerator for evaluation
     eval_data_generator = DataGenerator(
         dataset_path=cfg.evaluation.eval_dataset_path,
+        dataset_subsets=cfg.evaluation.eval_dataset_subsets,
         batch_size=2,  # Small batch size for evaluation
-        preference_ratio=1.0,  # Use only preference samples for DPO evaluation
-        comparative_ratio=0.0,
-        progress_ratio=0.0,
+        preference_ratio=cfg.training.preference_ratio,
+        similarity_ratio=cfg.training.similarity_ratio,
         max_frames=cfg.training.video_max_frames,
+        dataset_preference_ratio=cfg.training.dataset_preference_ratio,
         shuffle=False,  # No shuffling for evaluation
         seed=42
     )
@@ -709,14 +788,13 @@ def main(cfg: ExperimentConfig):
         print(f'Training RFM model on LIBERO dataset...')
         print(f'\tModel: {cfg.model.base_model_id}')
         print(f'\tOutput directory: {cfg.training.output_dir}')
-        print(f'\tDataset: {cfg.training.dpo_dataset_path}')
+        print(f'\tDataset: {cfg.training.dataset_path}')
         print(f'\tBase directory: {cfg.training.base_dir}')
         print(f'\tBatch size: {cfg.training.per_device_train_batch_size}')
         print(f'\tLearning rate: {cfg.training.learning_rate}')
         print(f'\tEpochs: {cfg.training.num_train_epochs}')
         print(f'\tVideo max frames: {cfg.training.video_max_frames}')
         print(f'\tVideo frame sampling: {cfg.training.video_frame_sampling}')
-        print(f'\tPrompt: {cfg.prompt.discriminator}')
         
         train(cfg)
         

@@ -9,45 +9,77 @@ from typing import List, Dict, Optional, Union, Any
 from dataclasses import dataclass
 from transformers import AutoProcessor
 from qwen_vl_utils import process_vision_info
-from .data_generator import Sample, Batch
+import numpy as np
+from dataclasses import dataclass, field
+
+@dataclass
+class Sample:
+    """A unified sample structure that can handle all prediction types."""
+    
+    # Core HF dataset fields
+    prediction_type: str
+    id: str
+    task: str
+    lang_vector: np.ndarray
+    data_source: str
+    frames: List[str]
+    optimal: bool
+    is_robot: bool
+    
+    # Preference-specific fields
+    trajectory_A_frames: Optional[List[str]] = None
+    trajectory_B_frames: Optional[List[str]] = None
+    preferred_trajectory: Optional[str] = None  # "A" or "B"
+    trajectory_A_id: Optional[str] = None
+    trajectory_B_id: Optional[str] = None
+    trajectory_B_task: Optional[str] = None
+    trajectory_B_lang_vector: Optional[np.ndarray] = None
+    trajectory_B_data_source: Optional[str] = None
+    trajectory_B_optimal: Optional[bool] = None
+    trajectory_B_is_robot: Optional[bool] = None
+    
+    # Comparative-specific fields
+    reference_frames: Optional[List[str]] = None  # o^ref
+    trajectory_A_frames: Optional[List[str]] = None  # o^1
+    trajectory_B_frames: Optional[List[str]] = None  # o^2
+    task_ref: Optional[str] = None
+    task_A: Optional[str] = None
+    task_B: Optional[str] = None
+    ref_trajectory_id: Optional[str] = None
+    trajectory_A_id: Optional[str] = None
+    trajectory_B_id: Optional[str] = None
+    trajectory_A_task: Optional[str] = None
+    trajectory_A_lang_vector: Optional[np.ndarray] = None
+    trajectory_A_data_source: Optional[str] = None
+    trajectory_A_optimal: Optional[bool] = None
+    trajectory_A_is_robot: Optional[bool] = None
+    trajectory_B_task: Optional[str] = None
+    trajectory_B_lang_vector: Optional[np.ndarray] = None
+    trajectory_B_data_source: Optional[str] = None
+    trajectory_B_optimal: Optional[bool] = None
+    trajectory_B_is_robot: Optional[bool] = None
+    
+    # Progress fields
+    target_progress_A: Optional[List[float]] = None  # Progress values for trajectory A
+    target_progress_B: Optional[List[float]] = None  # Progress values for trajectory B
+    
+    # Metadata field
+    metadata: Optional[Dict] = None
 
 
 @dataclass
-class ProcessedBatch:
-    """A batch of processed samples with model inputs."""
+class Batch:
+    """A batch of samples with all prediction types mixed together."""
     
-    # Text inputs
-    input_ids: torch.Tensor
-    attention_mask: torch.Tensor
+    samples: List[Sample] = field(default_factory=list)
     
-    # Vision inputs (if present)
-    pixel_values: Optional[torch.Tensor] = None
-    pixel_values_videos: Optional[torch.Tensor] = None
-    image_grid_thw: Optional[torch.Tensor] = None
-    video_grid_thw: Optional[torch.Tensor] = None
+    def __len__(self) -> int:
+        """Return the number of samples in the batch."""
+        return len(self.samples)
     
-    # Reference vs A inputs (for similarity samples)
-    input_ids_ref_A: Optional[torch.Tensor] = None
-    attention_mask_ref_A: Optional[torch.Tensor] = None
-    pixel_values_ref_A: Optional[torch.Tensor] = None
-    pixel_values_videos_ref_A: Optional[torch.Tensor] = None
-    image_grid_thw_ref_A: Optional[torch.Tensor] = None
-    video_grid_thw_ref_A: Optional[torch.Tensor] = None
-    
-    # Reference vs B inputs (for similarity samples)
-    input_ids_ref_B: Optional[torch.Tensor] = None
-    attention_mask_ref_B: Optional[torch.Tensor] = None
-    pixel_values_ref_B: Optional[torch.Tensor] = None
-    pixel_values_videos_ref_B: Optional[torch.Tensor] = None
-    image_grid_thw_ref_B: Optional[torch.Tensor] = None
-    video_grid_thw_ref_B: Optional[torch.Tensor] = None
-    
-    # Progress prediction targets
-    target_progress_A: Optional[torch.Tensor] = None  # Progress values for trajectory A
-    target_progress_B: Optional[torch.Tensor] = None  # Progress values for trajectory B
-    
-    # Sample metadata
-    samples: List[Sample] = None
+    def __iter__(self):
+        """Iterate over samples."""
+        return iter(self.samples)
 
 
 class BatchCollator:
@@ -102,19 +134,21 @@ class BatchCollator:
             image_inputs, video_inputs, video_kwargs = process_vision_info(
                 conversation, return_video_kwargs=True
             )
-            
+
             # Process through the processor
             inputs = self.processor(
                 text=[text],
                 images=image_inputs,
                 videos=video_inputs,
-                padding=True,
+                padding="max_length",
                 truncation=True,
                 max_length=self.max_length,
                 return_tensors="pt",
                 **video_kwargs,
             )
-            
+
+            print("video_inputs")
+            print(inputs["pixel_values_videos"].shape)
             # Add prediction type and preference labels
             inputs["prediction_type"] = sample.prediction_type
             inputs["preference_labels"] = torch.tensor([1.0], dtype=torch.float32)  # A is preferred
@@ -161,7 +195,7 @@ class BatchCollator:
                     ]
                 }
             ]
-            
+
             # Process both conversations
             text_ref_A = self.processor.apply_chat_template(
                 conversation_ref_A, tokenize=False, add_generation_prompt=False, add_vision_id=True
@@ -183,7 +217,7 @@ class BatchCollator:
                 text=[text_ref_A],
                 images=image_inputs_ref_A,
                 videos=video_inputs_ref_A,
-                padding=True,
+                padding="max_length",
                 truncation=True,
                 max_length=self.max_length,
                 return_tensors="pt",
@@ -194,12 +228,14 @@ class BatchCollator:
                 text=[text_ref_B],
                 images=image_inputs_ref_B,
                 videos=video_inputs_ref_B,
-                padding=True,
+                padding="max_length",
                 truncation=True,
                 max_length=self.max_length,
                 return_tensors="pt",
                 **video_kwargs_ref_B,
             )
+
+            print(inputs_ref_B["pixel_values_videos"].shape)
             
             # Combine into single inputs dict with ref_A and ref_B suffixes
             inputs = {
@@ -225,15 +261,15 @@ class BatchCollator:
         else:
             raise ValueError(f"Unknown prediction type: {sample.prediction_type}")
     
-    def __call__(self, samples: Union[List[Sample], List[dict]]) -> ProcessedBatch:
+    def __call__(self, samples: Union[List[Sample], List[dict]]) -> Dict[str, torch.Tensor]:
         """
-        Collate a list of samples into a ProcessedBatch object.
+        Collate a list of samples into a dictionary of processed tensors.
         
         Args:
             samples: List of Sample objects or dictionaries that can be converted to Sample objects
             
         Returns:
-            ProcessedBatch object containing the processed tensors
+            Dictionary containing the processed tensors
         """
         # Convert dictionaries to Sample objects if needed
         sample_objects = []
@@ -260,49 +296,71 @@ class BatchCollator:
         all_keys = set()
         for inputs in processed_inputs:
             all_keys.update(inputs.keys())
-        
+
         # Batch each key
         for key in all_keys:
-            if key in processed_inputs[0]:
-                # Check if all samples have this key
-                if all(key in inputs for inputs in processed_inputs):
-                    batched_inputs[key] = torch.cat([inputs[key] for inputs in processed_inputs], dim=0)
-        
-        # Create and return ProcessedBatch
-        return ProcessedBatch(
-            # Main inputs (for progress samples or combined inputs)
-            input_ids=batched_inputs.get("input_ids"),
-            attention_mask=batched_inputs.get("attention_mask"),
-            pixel_values=batched_inputs.get("pixel_values"),
-            pixel_values_videos=batched_inputs.get("pixel_values_videos"),
-            image_grid_thw=batched_inputs.get("image_grid_thw"),
-            video_grid_thw=batched_inputs.get("video_grid_thw"),
-            
-            # Reference vs A inputs (for similarity samples)
-            input_ids_ref_A=batched_inputs.get("input_ids_ref_A"),
-            attention_mask_ref_A=batched_inputs.get("attention_mask_ref_A"),
-            pixel_values_ref_A=batched_inputs.get("pixel_values_ref_A"),
-            pixel_values_videos_ref_A=batched_inputs.get("pixel_values_videos_ref_A"),
-            image_grid_thw_ref_A=batched_inputs.get("image_grid_thw_ref_A"),
-            video_grid_thw_ref_A=batched_inputs.get("video_grid_thw_ref_A"),
-            
-            # Reference vs B inputs (for similarity samples)
-            input_ids_ref_B=batched_inputs.get("input_ids_ref_B"),
-            attention_mask_ref_B=batched_inputs.get("attention_mask_ref_B"),
-            pixel_values_ref_B=batched_inputs.get("pixel_values_ref_B"),
-            pixel_values_videos_ref_B=batched_inputs.get("pixel_values_videos_ref_B"),
-            image_grid_thw_ref_B=batched_inputs.get("image_grid_thw_ref_B"),
-            video_grid_thw_ref_B=batched_inputs.get("video_grid_thw_ref_B"),
-            
-            # Progress prediction targets
-            target_progress_A=batched_inputs.get("target_progress_A"),
-            target_progress_B=batched_inputs.get("target_progress_B"),
-            
-            # Sample metadata
-            samples=sample_objects
-        )
+            if key == "prediction_type":
+                # prediction_type is a string, collect as list
+                batched_inputs[key] = [inputs[key] for inputs in processed_inputs]
+            else:
+                # Everything else is a tensor, handle specially for pixel_values_videos
+                tensors = [inputs[key] for inputs in processed_inputs if key in inputs]
+                
+                if len(tensors) > 0:
+                    if key == "pixel_values_videos":
+                        # N x D where N is the number of patches and D is the dimension of the patch
+                        # some videos may have less than max frames
+                        # Special handling for pixel_values_videos - pad to max first dimension
+                        # Find max first dimension
+                        max_first_dim = max(tensor.shape[0] for tensor in tensors)
+                        
+                        # Pad all tensors to max first dimension
+                        padded_tensors = []
+                        for i, tensor in enumerate(tensors):
+                            current_first_dim = tensor.shape[0]
+                            if current_first_dim < max_first_dim:
+                                # Calculate padding needed
+                                padding_needed = max_first_dim - current_first_dim
+                                # Pad with zeros at the end (assuming first dim is time/frames)
+                                padding = torch.zeros(padding_needed, *tensor.shape[1:], dtype=tensor.dtype, device=tensor.device)
+                                padded_tensor = torch.cat([tensor, padding], dim=0)
+                            else:
+                                padded_tensor = tensor
+                            padded_tensors.append(padded_tensor)
+                        
+                        # Stack the padded tensors
+                        batched_inputs[key] = torch.stack(padded_tensors, dim=0)
+                    elif key in ["target_progress_A", "target_progress_B"]:
+                        # 1 x D where D is the number of frames
+                        # Special handling for target_progress - pad to max last dimension
+                        # Find max last dimension
+                        max_last_dim = max(tensor.shape[-1] for tensor in tensors)
+                        
+                        # Pad all tensors to max last dimension
+                        padded_tensors = []
+                        for i, tensor in enumerate(tensors):
+                            current_last_dim = tensor.shape[-1]
+                            if current_last_dim < max_last_dim:
+                                # Calculate padding needed
+                                padding_needed = max_last_dim - current_last_dim
+                                # Pad with zeros at the end (last dim is progress values)
+                                padding = torch.zeros(*tensor.shape[:-1], padding_needed, dtype=tensor.dtype, device=tensor.device)
+                                padded_tensor = torch.cat([tensor, padding], dim=-1)
+                            else:
+                                padded_tensor = tensor
+                            padded_tensors.append(padded_tensor)
+                        
+                        # Stack the padded tensors
+                        batched_inputs[key] = torch.stack(padded_tensors, dim=0)
+                    else:
+                        # Regular tensor stacking for other keys
+                        batched_inputs[key] = torch.stack(tensors, dim=0)
+                else:
+                    # No tensors found for this key, create empty tensor
+                    batched_inputs[key] = torch.empty(0)
+        return batched_inputs
     
-    def collate_fn(self, batch: List[Sample]) -> ProcessedBatch:
+    def collate_fn(self, batch: List[Sample]) -> Dict[str, torch.Tensor]:
         """
         Alternative method name for compatibility with PyTorch DataLoader.
         
@@ -310,6 +368,6 @@ class BatchCollator:
             batch: List of Sample objects
             
         Returns:
-            ProcessedBatch object containing the processed tensors
+            Dictionary containing the processed tensors
         """
         return self(batch) 

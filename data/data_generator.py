@@ -16,190 +16,8 @@ from sentence_transformers import SentenceTransformer
 import shutil
 import os
 from pathlib import Path
-from dataclasses import dataclass, field
 import torch
-
-
-@dataclass
-class Sample:
-    """A unified sample structure that can handle all prediction types."""
-    
-    # Core HF dataset fields
-    prediction_type: str
-    id: str
-    task: str
-    lang_vector: np.ndarray
-    data_source: str
-    frames: List[str]
-    optimal: bool
-    is_robot: bool
-    
-    # Preference-specific fields
-    trajectory_A_frames: Optional[List[str]] = None
-    trajectory_B_frames: Optional[List[str]] = None
-    preferred_trajectory: Optional[str] = None  # "A" or "B"
-    trajectory_A_id: Optional[str] = None
-    trajectory_B_id: Optional[str] = None
-    trajectory_B_task: Optional[str] = None
-    trajectory_B_lang_vector: Optional[np.ndarray] = None
-    trajectory_B_data_source: Optional[str] = None
-    trajectory_B_optimal: Optional[bool] = None
-    trajectory_B_is_robot: Optional[bool] = None
-    
-    # Comparative-specific fields
-    reference_frames: Optional[List[str]] = None  # o^ref
-    trajectory_A_frames: Optional[List[str]] = None  # o^1
-    trajectory_B_frames: Optional[List[str]] = None  # o^2
-    task_ref: Optional[str] = None
-    task_A: Optional[str] = None
-    task_B: Optional[str] = None
-    ref_trajectory_id: Optional[str] = None
-    trajectory_A_id: Optional[str] = None
-    trajectory_B_id: Optional[str] = None
-    trajectory_A_task: Optional[str] = None
-    trajectory_A_lang_vector: Optional[np.ndarray] = None
-    trajectory_A_data_source: Optional[str] = None
-    trajectory_A_optimal: Optional[bool] = None
-    trajectory_A_is_robot: Optional[bool] = None
-    trajectory_B_task: Optional[str] = None
-    trajectory_B_lang_vector: Optional[np.ndarray] = None
-    trajectory_B_data_source: Optional[str] = None
-    trajectory_B_optimal: Optional[bool] = None
-    trajectory_B_is_robot: Optional[bool] = None
-    
-
-    
-    # Progress fields
-    target_progress_A: Optional[List[float]] = None  # Progress values for trajectory A
-    target_progress_B: Optional[List[float]] = None  # Progress values for trajectory B
-    
-    # Metadata field
-    metadata: Optional[Dict] = None
-
-
-@dataclass
-class Batch:
-    """A batch of samples with all prediction types mixed together."""
-    
-    samples: List[Sample] = field(default_factory=list)
-    
-    def __len__(self) -> int:
-        """Return the number of samples in the batch."""
-        return len(self.samples)
-    
-    def __iter__(self):
-        """Iterate over samples."""
-        return iter(self.samples)
-
-class BatchCollator:
-    """Simple batch collator that processes Sample objects."""
-    
-    def __init__(self, processor=None, max_length: int = 1024):
-        """
-        Initialize the batch collator.
-        
-        Args:
-            processor: HuggingFace processor for text and vision processing
-            max_length: Maximum sequence length for text
-        """
-        self.processor = processor
-        self.max_length = max_length
-    
-    def __call__(self, samples: List[Sample]) -> Dict[str, torch.Tensor]:
-        """
-        Collate a list of samples into a dictionary format expected by the trainer.
-        
-        Args:
-            samples: List of Sample objects
-            
-        Returns:
-            Dictionary containing the processed tensors
-        """
-        # For now, create dummy tensors for testing
-        batch_size = len(samples)
-        
-        # Check if we have different sample types
-        has_preference = any(s.prediction_type == "preference" for s in samples)
-        has_similarity = any(s.prediction_type == "similarity" for s in samples)
-        
-        # For preference samples, we need to concatenate trajectory A and B
-        # For similarity samples, we need trajectory A, B, and reference
-        # For now, create dummy tensors that represent the concatenated sequences
-        
-        if has_preference:
-            # For preference: [trajectory_A] <|split_token|> [trajectory_B] <|pref_token|>
-            # Double the sequence length to accommodate both trajectories
-            input_ids = torch.randint(0, 1000, (batch_size, self.max_length * 2))
-            attention_mask = torch.ones(batch_size, self.max_length * 2)
-        elif has_similarity:
-            # For similarity: [reference] <|split_token|> [trajectory_A] <|split_token|> [trajectory_B] <|reward_token|>
-            # Triple the sequence length to accommodate reference, A, and B
-            input_ids = torch.randint(0, 1000, (batch_size, self.max_length * 3))
-            attention_mask = torch.ones(batch_size, self.max_length * 3)
-        else:
-            # Default case
-            input_ids = torch.randint(0, 1000, (batch_size, self.max_length))
-            attention_mask = torch.ones(batch_size, self.max_length)
-        
-        # Create separate tensors for individual trajectories (for compatibility)
-        input_ids_A = torch.randint(0, 1000, (batch_size, self.max_length))
-        attention_mask_A = torch.ones(batch_size, self.max_length)
-        input_ids_B = torch.randint(0, 1000, (batch_size, self.max_length))
-        attention_mask_B = torch.ones(batch_size, self.max_length)
-        
-        if has_similarity:
-            input_ids_ref = torch.randint(0, 1000, (batch_size, self.max_length))
-            attention_mask_ref = torch.ones(batch_size, self.max_length)
-        
-        # Always create target progress tensors for trajectory A and B
-        # Get the maximum number of frames across all samples with target_progress_A
-        max_frames_A = max(len(s.target_progress_A) for s in samples if hasattr(s, 'target_progress_A') and s.target_progress_A is not None)
-        target_progress_A = torch.zeros(batch_size, max_frames_A)
-        
-        for i, sample in enumerate(samples):
-            if hasattr(sample, 'target_progress_A') and sample.target_progress_A is not None:
-                num_frames = len(sample.target_progress_A)
-                target_progress_A[i, :num_frames] = torch.tensor(sample.target_progress_A)
-        
-        # Get the maximum number of frames across all samples with target_progress_B
-        max_frames_B = max(len(s.target_progress_B) for s in samples if hasattr(s, 'target_progress_B') and s.target_progress_B is not None)
-        target_progress_B = torch.zeros(batch_size, max_frames_B)
-        
-        for i, sample in enumerate(samples):
-            if hasattr(sample, 'target_progress_B') and sample.target_progress_B is not None:
-                num_frames = len(sample.target_progress_B)
-                target_progress_B[i, :num_frames] = torch.tensor(sample.target_progress_B)
-        
-        # Return dictionary format expected by trainer
-        batch_dict = {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-        }
-        
-        # Always include individual trajectory tensors for compatibility
-        batch_dict["input_ids_A"] = input_ids_A
-        batch_dict["attention_mask_A"] = attention_mask_A
-        batch_dict["input_ids_B"] = input_ids_B
-        batch_dict["attention_mask_B"] = attention_mask_B
-        
-        if has_similarity:
-            batch_dict["input_ids_ref"] = input_ids_ref
-            batch_dict["attention_mask_ref"] = attention_mask_ref
-        # Always include target progress tensors
-        batch_dict["target_progress_A"] = target_progress_A
-        batch_dict["target_progress_B"] = target_progress_B
-        
-        # Add prediction type for each sample
-        prediction_types = [s.prediction_type for s in samples]
-        batch_dict["prediction_type"] = prediction_types
-        
-        # Add preference labels for preference samples (dummy for now)
-        if has_preference:
-            # For preference samples, A is always preferred (1), B is not preferred (0)
-            batch_dict["preference_labels"] = torch.ones(batch_size)
-        
-        return batch_dict
-
+from batch_collator import Batch, Sample, BatchCollator
 
 class DataGenerator:
     """Data generator for producing batches of prediction data with controlled ratios."""
@@ -786,6 +604,7 @@ class DataGeneratorDataset:
 
 def test():
     """Test the BatchCollator with generated samples."""
+    from transformers import AutoProcessor
     
     # Create data generator
     generator = DataGenerator(
@@ -809,26 +628,14 @@ def test():
     
     # Test the batch collator
     print("\nTesting batch collator...")
-    batch_collator = BatchCollator(max_length=1024)
+    processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct")
+    batch_collator = BatchCollator(processor, max_length=1024)
     
-    try:
-        processed_batch = batch_collator(batch.samples)
-        print("✅ Successfully processed batch!")
-        print(f"Processed batch type: {type(processed_batch)}")
-        print(f"Input IDs shape: {processed_batch.input_ids.shape}")
-        
-        # Check for trajectory-specific inputs
-        if processed_batch.input_ids_A is not None:
-            print(f"Trajectory A input IDs shape: {processed_batch.input_ids_A.shape}")
-        if processed_batch.input_ids_B is not None:
-            print(f"Trajectory B input IDs shape: {processed_batch.input_ids_B.shape}")
-        if processed_batch.input_ids_ref is not None:
-            print(f"Reference input IDs shape: {processed_batch.input_ids_ref.shape}")
-            
-    except Exception as e:
-        print(f"❌ Error processing batch: {e}")
-        import traceback
-        traceback.print_exc()
+    processed_batch = batch_collator(batch.samples)
+    for key, value in processed_batch.items():
+        if key != "prediction_type":
+            print(key, value.shape)
+    
 
 
 if __name__ == "__main__":

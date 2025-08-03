@@ -53,7 +53,8 @@ class RFMModel(PreTrainedModel):
         pixel_values_videos=None,
         image_grid_thw=None,
         video_grid_thw=None,
-        prediction_type=None,  # "progress", "preference", or "similarity"
+        prediction_type=None,  # "preference" or "similarity"
+        target_progress=None,  # For progress prediction on trajectory A
         **kwargs,
     ):
         # Handle case where input_ids and attention_mask might be in kwargs
@@ -103,25 +104,38 @@ class RFMModel(PreTrainedModel):
         outputs = self.model(**model_kwargs)
         last_hidden_state = outputs.hidden_states[-1]
 
-        # Determine which token to use based on prediction type
-        if prediction_type == "progress":
-            token_id = self.tokenizer.convert_tokens_to_ids("<|progress_token|>")
-        elif prediction_type == "preference":
+        # Always compute progress for trajectory A if target_progress is provided
+        progress_logits = None
+        if target_progress is not None:
+            # Use the last token position for each sequence
+            last_positions = attention_mask.sum(dim=1) - 1  # [batch_size]
+            token_hidden_states = torch.gather(
+                last_hidden_state,
+                1,
+                last_positions.view(-1, 1, 1).expand(
+                    -1, -1, last_hidden_state.size(-1)
+                ).long(),
+            ).squeeze(1)  # [batch_size, hidden_size]
+            
+            progress_logits = self.progress_head(token_hidden_states)  # [batch_size, 1]
+
+        # For preference and similarity, use specific tokens
+        if prediction_type == "preference":
             token_id = self.tokenizer.convert_tokens_to_ids("<|pref_token|>")
         else:  # similarity (default)
             token_id = self.tokenizer.convert_tokens_to_ids("<|reward_token|>")
         
-        # Find all positions where the target token appears
-        token_positions = []
-        for i, seq_ids in enumerate(input_ids):
-            # Find the last occurrence of token_id in this sequence
-            positions = (seq_ids == token_id).nonzero(as_tuple=True)[0]
-            if len(positions) > 0:
-                token_positions.append(positions[-1].item())
-            else:
-                # Fallback to last token if target token not found
-                token_positions.append(attention_mask[i].sum().item() - 1)
-        token_positions = torch.tensor(token_positions, device=input_ids.device)
+                    # Find all positions where the target token appears
+            token_positions = []
+            for i, seq_ids in enumerate(input_ids):
+                # Find the last occurrence of token_id in this sequence
+                positions = (seq_ids == token_id).nonzero(as_tuple=True)[0]
+                if len(positions) > 0:
+                    token_positions.append(positions[-1].item())
+                else:
+                    # Fallback to last token if target token not found
+                    token_positions.append(attention_mask[i].sum().item() - 1)
+            token_positions = torch.tensor(token_positions, device=input_ids.device, dtype=torch.long)
         
         # Extract hidden states at the target token positions
         token_hidden_states = torch.gather(
@@ -132,12 +146,17 @@ class RFMModel(PreTrainedModel):
             ),
         ).squeeze(1)
         
-        # Apply the appropriate head based on prediction type
-        if prediction_type == "progress":
-            logits = self.progress_head(token_hidden_states)
-        elif prediction_type == "preference":
+        # Apply the appropriate head
+        if prediction_type == "preference":
             logits = self.preference_head(token_hidden_states)
         else:  # similarity (default)
             logits = self.similarity_head(token_hidden_states)
         
-        return SequenceClassifierOutputWithPast(logits=logits) 
+        # Return both logits if progress was computed
+        if progress_logits is not None:
+            return SequenceClassifierOutputWithPast(
+                logits=logits,
+                progress_logits=progress_logits
+            )
+        else:
+            return SequenceClassifierOutputWithPast(logits=logits) 

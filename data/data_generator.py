@@ -67,10 +67,11 @@ class Sample:
     trajectory_B_optimal: Optional[bool] = None
     trajectory_B_is_robot: Optional[bool] = None
     
-    # Progress-specific fields
-    trajectory_frames: Optional[List[str]] = None
-    trajectory_id: Optional[str] = None
-    success: Optional[bool] = None
+
+    
+    # Progress fields
+    target_progress_A: Optional[List[float]] = None  # Progress values for trajectory A
+    target_progress_B: Optional[List[float]] = None  # Progress values for trajectory B
     
     # Metadata field
     metadata: Optional[Dict] = None
@@ -90,49 +91,6 @@ class Batch:
         """Iterate over samples."""
         return iter(self.samples)
 
-
-@dataclass
-class ProcessedBatch:
-    """A batch of processed samples with model inputs."""
-    
-    # Text inputs
-    input_ids: torch.Tensor
-    attention_mask: torch.Tensor
-    
-    # Vision inputs (if present)
-    pixel_values: Optional[torch.Tensor] = None
-    pixel_values_videos: Optional[torch.Tensor] = None
-    image_grid_thw: Optional[torch.Tensor] = None
-    video_grid_thw: Optional[torch.Tensor] = None
-    
-    # Trajectory A inputs (for preference/comparative samples)
-    input_ids_A: Optional[torch.Tensor] = None
-    attention_mask_A: Optional[torch.Tensor] = None
-    pixel_values_A: Optional[torch.Tensor] = None
-    pixel_values_videos_A: Optional[torch.Tensor] = None
-    image_grid_thw_A: Optional[torch.Tensor] = None
-    video_grid_thw_A: Optional[torch.Tensor] = None
-    
-    # Trajectory B inputs (for preference/comparative samples)
-    input_ids_B: Optional[torch.Tensor] = None
-    attention_mask_B: Optional[torch.Tensor] = None
-    pixel_values_B: Optional[torch.Tensor] = None
-    pixel_values_videos_B: Optional[torch.Tensor] = None
-    image_grid_thw_B: Optional[torch.Tensor] = None
-    video_grid_thw_B: Optional[torch.Tensor] = None
-    
-    # Reference inputs (for comparative samples)
-    input_ids_ref: Optional[torch.Tensor] = None
-    attention_mask_ref: Optional[torch.Tensor] = None
-    pixel_values_ref: Optional[torch.Tensor] = None
-    pixel_values_videos_ref: Optional[torch.Tensor] = None
-    image_grid_thw_ref: Optional[torch.Tensor] = None
-    video_grid_thw_ref: Optional[torch.Tensor] = None
-    
-    # Sample metadata
-    samples: List[Sample] = None
-
-
 class BatchCollator:
     """Simple batch collator that processes Sample objects."""
     
@@ -147,15 +105,15 @@ class BatchCollator:
         self.processor = processor
         self.max_length = max_length
     
-    def __call__(self, samples: List[Sample]) -> ProcessedBatch:
+    def __call__(self, samples: List[Sample]) -> Dict[str, torch.Tensor]:
         """
-        Collate a list of samples into a ProcessedBatch object.
+        Collate a list of samples into a dictionary format expected by the trainer.
         
         Args:
             samples: List of Sample objects
             
         Returns:
-            ProcessedBatch object containing the processed tensors
+            Dictionary containing the processed tensors
         """
         # For now, create dummy tensors for testing
         batch_size = len(samples)
@@ -166,28 +124,84 @@ class BatchCollator:
         
         # Create dummy tensors for trajectory A and B if needed
         input_ids_A = None
+        attention_mask_A = None
         input_ids_B = None
+        attention_mask_B = None
         input_ids_ref = None
+        attention_mask_ref = None
+        target_progress = None
         
-        # Check if we have preference or comparative samples
+        # Check if we have different sample types
         has_preference = any(s.prediction_type == "preference" for s in samples)
-        has_comparative = any(s.prediction_type == "comparative" for s in samples)
+        has_similarity = any(s.prediction_type == "similarity" for s in samples)
         
-        if has_preference or has_comparative:
+        # Always compute progress for trajectory A if target_progress is available
+        has_progress = any(hasattr(s, 'target_progress') and s.target_progress is not None for s in samples)
+        
+        if has_preference or has_similarity:
             input_ids_A = torch.randint(0, 1000, (batch_size, self.max_length))
+            attention_mask_A = torch.ones(batch_size, self.max_length)
             input_ids_B = torch.randint(0, 1000, (batch_size, self.max_length))
+            attention_mask_B = torch.ones(batch_size, self.max_length)
         
-        if has_comparative:
+        if has_similarity:
             input_ids_ref = torch.randint(0, 1000, (batch_size, self.max_length))
+            attention_mask_ref = torch.ones(batch_size, self.max_length)
         
-        return ProcessedBatch(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            input_ids_A=input_ids_A,
-            input_ids_B=input_ids_B,
-            input_ids_ref=input_ids_ref,
-            samples=samples
-        )
+        # Always create target progress tensors for trajectory A and B if available
+        target_progress_A = None
+        target_progress_B = None
+        
+        if has_progress:
+            # Get the maximum number of frames across all samples with target_progress_A
+            max_frames_A = max(len(s.target_progress_A) for s in samples if hasattr(s, 'target_progress_A') and s.target_progress_A is not None)
+            target_progress_A = torch.zeros(batch_size, max_frames_A)
+            
+            for i, sample in enumerate(samples):
+                if hasattr(sample, 'target_progress_A') and sample.target_progress_A is not None:
+                    num_frames = len(sample.target_progress_A)
+                    target_progress_A[i, :num_frames] = torch.tensor(sample.target_progress_A)
+            
+            # Get the maximum number of frames across all samples with target_progress_B
+            max_frames_B = max(len(s.target_progress_B) for s in samples if hasattr(s, 'target_progress_B') and s.target_progress_B is not None)
+            target_progress_B = torch.zeros(batch_size, max_frames_B)
+            
+            for i, sample in enumerate(samples):
+                if hasattr(sample, 'target_progress_B') and sample.target_progress_B is not None:
+                    num_frames = len(sample.target_progress_B)
+                    target_progress_B[i, :num_frames] = torch.tensor(sample.target_progress_B)
+        
+        # Return dictionary format expected by trainer
+        batch_dict = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+        }
+        
+        # Add optional tensors if they exist
+        if input_ids_A is not None:
+            batch_dict["input_ids_A"] = input_ids_A
+            batch_dict["attention_mask_A"] = attention_mask_A
+        if input_ids_B is not None:
+            batch_dict["input_ids_B"] = input_ids_B
+            batch_dict["attention_mask_B"] = attention_mask_B
+        if input_ids_ref is not None:
+            batch_dict["input_ids_ref"] = input_ids_ref
+            batch_dict["attention_mask_ref"] = attention_mask_ref
+        if target_progress_A is not None:
+            batch_dict["target_progress_A"] = target_progress_A
+        if target_progress_B is not None:
+            batch_dict["target_progress_B"] = target_progress_B
+        
+        # Add prediction type for each sample
+        prediction_types = [s.prediction_type for s in samples]
+        batch_dict["prediction_type"] = prediction_types
+        
+        # Add preference labels for preference samples (dummy for now)
+        if has_preference:
+            # For preference samples, A is always preferred (1), B is not preferred (0)
+            batch_dict["preference_labels"] = torch.ones(batch_size)
+        
+        return batch_dict
 
 
 class DataGenerator:
@@ -201,11 +215,10 @@ class DataGenerator:
         preference_dataset_subset: Optional[str] = None,
         batch_size: int = 32,
         preference_ratio: float = 0.5,
-        comparative_ratio: float = 0.5,
+        similarity_ratio: float = 0.5,
         max_frames: int = 32,
         shuffle: bool = True,
         seed: Optional[int] = None,
-        rewind_ratio: float = 0.3,
         dataset_preference_ratio: float = 0.7
     ):
         """
@@ -218,12 +231,11 @@ class DataGenerator:
             preference_dataset_subset: Optional subset name for preference dataset
             batch_size: Number of samples per batch
             preference_ratio: Ratio of preference prediction samples (0.0 to 1.0)
-            comparative_ratio: Ratio of comparative scoring samples (0.0 to 1.0)
+            similarity_ratio: Ratio of similarity scoring samples (0.0 to 1.0)
             max_frames: Maximum frames per trajectory
             shuffle: Whether to shuffle the data
             seed: Random seed for reproducibility
-            rewind_ratio: Ratio of rewind-generated preferences (0.0 to 1.0)
-            dataset_preference_ratio: Ratio of preferences from dataset vs rewind (0.0 to 1.0)
+            dataset_preference_ratio: Ratio of preferences from dataset vs generated (0.0 to 1.0)
         """
         self.dataset_path = dataset_path
         self.dataset_subsets = dataset_subsets
@@ -231,11 +243,10 @@ class DataGenerator:
         self.preference_dataset_subset = preference_dataset_subset
         self.batch_size = batch_size
         self.preference_ratio = preference_ratio
-        self.comparative_ratio = comparative_ratio
+        self.similarity_ratio = similarity_ratio
         self.max_frames = max_frames
         self.shuffle = shuffle
         self.seed = seed
-        self.rewind_ratio = rewind_ratio
         self.dataset_preference_ratio = dataset_preference_ratio
         
         if seed is not None:
@@ -262,8 +273,8 @@ class DataGenerator:
         if self.preferences:
             print(f"Loaded {len(self.preferences)} preference pairs")
         print(f"Batch size: {batch_size}")
-        print(f"Ratios - Preference: {preference_ratio}, Comparative: {comparative_ratio}")
-        print(f"Rewind ratio: {rewind_ratio}, Dataset preference ratio: {dataset_preference_ratio}")
+        print(f"Ratios - Preference: {preference_ratio}, Similarity: {similarity_ratio}")
+        print(f"Dataset preference ratio: {dataset_preference_ratio}")
     
     def _create_rewind_trajectory(self, original_traj: Dict) -> Dict:
         """Create a suboptimal trajectory by rewinding the original trajectory."""
@@ -476,6 +487,10 @@ class DataGenerator:
             if chosen_traj is None or rejected_traj is None:
                 raise ValueError(f"Could not find trajectories for preference {preference.traj_id}")
             
+            # Calculate target progress for both trajectories
+            target_progress_A = self._calculate_target_progress(chosen_traj)
+            target_progress_B = self._calculate_target_progress(rejected_traj)
+            
             # Create unified sample structure with all fields
             sample = Sample(
                 prediction_type="preference",
@@ -500,6 +515,9 @@ class DataGenerator:
                 trajectory_B_data_source=rejected_traj['data_source'],
                 trajectory_B_optimal=rejected_traj['optimal'],
                 trajectory_B_is_robot=rejected_traj['is_robot'],
+                # Progress fields
+                target_progress_A=target_progress_A,
+                target_progress_B=target_progress_B,
             )
         else:
             # Use generated preference (rewind or random)
@@ -516,13 +534,13 @@ class DataGenerator:
         
         optimal_traj = random.choice(self.optimal_trajectories)
         
-        # Choose negative generation strategy
+        # Choose negative generation strategy (equal probability for each)
         strategy = random.random()
         
-        if strategy < self.rewind_ratio:
+        if strategy < 0.33:
             # Strategy 1: Use rewind-generated suboptimal trajectory
             negative_traj = self._create_rewind_trajectory(optimal_traj)
-        elif strategy < 0.7:
+        elif strategy < 0.66:
             # Strategy 2: Use random trajectory from different task
             different_task_trajectories = [
                 traj for traj in self.trajectories 
@@ -544,6 +562,10 @@ class DataGenerator:
             else:
                 # Fall back to rewind if no same-task suboptimal trajectories
                 negative_traj = self._create_rewind_trajectory(optimal_traj)
+        
+        # Calculate target progress for both trajectories
+        target_progress_A = self._calculate_target_progress(optimal_traj)
+        target_progress_B = self._calculate_target_progress(negative_traj)
         
         # Create unified sample structure with all fields
         sample = Sample(
@@ -569,41 +591,30 @@ class DataGenerator:
             trajectory_B_data_source=negative_traj['data_source'],
             trajectory_B_optimal=negative_traj['optimal'],
             trajectory_B_is_robot=negative_traj['is_robot'],
+            # Progress fields
+            target_progress_A=target_progress_A,
+            target_progress_B=target_progress_B,
         )
         
         return sample
     
-    def _create_progress_sample(self) -> Sample:
-        """Create a progress prediction sample: single trajectory for progress prediction."""
+    def _calculate_target_progress(self, trajectory: Dict) -> List[float]:
+        """Calculate target progress values for a trajectory."""
+        frames = trajectory['frames']
+        num_frames = len(frames)
         
-        # Use preprocessed optimal trajectories for progress prediction
-        if not self.optimal_trajectories:
-            raise ValueError("No optimal trajectories found for progress prediction")
-        
-        traj = random.choice(self.optimal_trajectories)
-        
-        # Create unified sample structure with all fields
-        sample = Sample(
-            prediction_type="progress",
-            # Core HF dataset fields
-            id=traj['id'],
-            task=traj['task'],
-            lang_vector=traj['lang_vector'],
-            data_source=traj['data_source'],
-            frames=traj['frames'],
-            optimal=traj['optimal'],
-            is_robot=traj['is_robot'],
-            metadata=traj.get('metadata'),
-            # Progress-specific fields
-            trajectory_frames=traj['frames'],
-            trajectory_id=traj['id'],
-            success=traj.get('optimal', True),
-        )
-        
-        return sample
+        # Check if this is a rewind trajectory (has rewind progress in metadata)
+        if (trajectory.get('metadata') and 
+            trajectory['metadata'].get('rewind_generated') and 
+            trajectory['metadata'].get('rewind_progress')):
+            # Use the rewind progress that was calculated during rewind generation
+            return trajectory['metadata']['rewind_progress']
+        else:
+            # For optimal trajectories, use linear progress (0.0 to 1.0)
+            return [i / (num_frames - 1) for i in range(num_frames)]
     
-    def _create_comparative_sample(self) -> Sample:
-        """Create a comparative scoring sample: o^1 and o^2 ranked against o^ref."""
+    def _create_similarity_sample(self) -> Sample:
+        """Create a similarity scoring sample: o^1 and o^2 ranked against o^ref."""
         
         # Get available tasks
         task_names = list(self.task_groups.keys())
@@ -650,9 +661,13 @@ class DataGenerator:
             else:
                 traj_2 = traj_1  # Fallback
         
+        # Calculate target progress for all trajectories
+        target_progress_A = self._calculate_target_progress(traj_1)
+        target_progress_B = self._calculate_target_progress(traj_2)
+        
         # Create unified sample structure with all fields
         sample = Sample(
-            prediction_type="comparative",
+            prediction_type="similarity",
             # Core HF dataset fields (from ref_traj)
             id=ref_traj['id'],
             task=ref_traj['task'],
@@ -684,6 +699,9 @@ class DataGenerator:
             trajectory_B_data_source=traj_2['data_source'],
             trajectory_B_optimal=traj_2['optimal'],
             trajectory_B_is_robot=traj_2['is_robot'],
+            # Progress fields
+            target_progress_A=target_progress_A,
+            target_progress_B=target_progress_B,
         )
         
         return sample
@@ -694,21 +712,21 @@ class DataGenerator:
         # Calculate target counts based on ratios
         total_samples = self.batch_size
         
-        # For preference and comparative, use the specified ratios
+        # For preference and similarity, use the specified ratios
         preference_count = int(total_samples * self.preference_ratio)
-        comparative_count = int(total_samples * self.comparative_ratio)
+        similarity_count = int(total_samples * self.similarity_ratio)
         
         # Ensure we don't exceed batch size
-        actual_total = preference_count + comparative_count
+        actual_total = preference_count + similarity_count
         if actual_total > total_samples:
             # Scale down proportionally
             scale_factor = total_samples / actual_total
             preference_count = int(preference_count * scale_factor)
-            comparative_count = int(comparative_count * scale_factor)
+            similarity_count = int(similarity_count * scale_factor)
         
         return {
             "preference": preference_count,
-            "comparative": comparative_count
+            "similarity": similarity_count
         }
     
     def generate_batch(self) -> 'Batch':
@@ -724,14 +742,9 @@ class DataGenerator:
             sample = self._create_preference_sample()
             samples.append(sample)
         
-        # Generate comparative samples
-        for _ in range(composition["comparative"]):
-            sample = self._create_comparative_sample()
-            samples.append(sample)
-        
-        # Generate additional progress samples if needed
-        while len(samples) < self.batch_size:
-            sample = self._create_progress_sample()
+        # Generate similarity samples
+        for _ in range(composition["similarity"]):
+            sample = self._create_similarity_sample()
             samples.append(sample)
         
         # Shuffle if requested

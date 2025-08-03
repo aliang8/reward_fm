@@ -50,6 +50,10 @@ class ProcessedBatch:
     image_grid_thw_ref: Optional[torch.Tensor] = None
     video_grid_thw_ref: Optional[torch.Tensor] = None
     
+    # Progress prediction targets
+    target_progress_A: Optional[torch.Tensor] = None  # Progress values for trajectory A
+    target_progress_B: Optional[torch.Tensor] = None  # Progress values for trajectory B
+    
     # Sample metadata
     samples: List[Sample] = None
 
@@ -151,6 +155,12 @@ class BatchCollator:
                 "prediction_type": sample.prediction_type,
                 "preference_labels": torch.tensor([1.0], dtype=torch.float32),  # A is preferred
             }
+            
+            # Add target progress for both trajectories
+            if sample.target_progress_A is not None:
+                inputs["target_progress_A"] = torch.tensor([sample.target_progress_A], dtype=torch.float32)
+            if sample.target_progress_B is not None:
+                inputs["target_progress_B"] = torch.tensor([sample.target_progress_B], dtype=torch.float32)
             
             # Add trajectory A inputs
             for key, value in inputs_A.items():
@@ -310,6 +320,12 @@ class BatchCollator:
                 "prediction_type": sample.prediction_type,
             }
             
+            # Add target progress for both trajectories
+            if sample.target_progress_A is not None:
+                inputs["target_progress_A"] = torch.tensor([sample.target_progress_A], dtype=torch.float32)
+            if sample.target_progress_B is not None:
+                inputs["target_progress_B"] = torch.tensor([sample.target_progress_B], dtype=torch.float32)
+            
             # Add reference inputs
             for key, value in inputs_ref.items():
                 inputs[f"{key}_ref"] = value
@@ -403,6 +419,10 @@ class BatchCollator:
             pixel_values_videos_ref=batched_inputs.get("pixel_values_videos_ref"),
             image_grid_thw_ref=batched_inputs.get("image_grid_thw_ref"),
             video_grid_thw_ref=batched_inputs.get("video_grid_thw_ref"),
+            
+            # Progress prediction targets
+            target_progress_A=batched_inputs.get("target_progress_A"),
+            target_progress_B=batched_inputs.get("target_progress_B"),
             
             # Sample metadata
             samples=sample_objects

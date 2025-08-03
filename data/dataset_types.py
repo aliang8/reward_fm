@@ -10,8 +10,8 @@ import numpy as np
 
 
 @dataclass
-class DatasetTrajectory:
-    """Standard dataset trajectory structure for HuggingFace format."""
+class Trajectory:
+    """Standard trajectory structure for HuggingFace format."""
     
     id: str
     task: str
@@ -19,8 +19,6 @@ class DatasetTrajectory:
     data_source: str
     frames: List[str]
     optimal: bool
-    ranking: int
-    preference_embedding: np.ndarray
     is_robot: bool
     metadata: Dict[str, Any] = field(default_factory=dict)
     
@@ -33,8 +31,6 @@ class DatasetTrajectory:
             "data_source": self.data_source,
             "frames": self.frames,
             "optimal": self.optimal,
-            "ranking": self.ranking,
-            "preference_embedding": self.preference_embedding,
             "is_robot": self.is_robot,
             "metadata": self.metadata,
         }
@@ -64,4 +60,21 @@ class DatasetMetadata:
             "data_source": self.data_source,
             "created_at": self.created_at,
             "additional_info": self.additional_info,
+        }
+
+
+@dataclass
+class Preference:
+    """Preference data structure for trajectory comparisons."""
+    
+    traj_id: str
+    chosen_id: str
+    rejected_id: str
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary format."""
+        return {
+            "traj_id": self.traj_id,
+            "chosen_id": self.chosen_id,
+            "rejected_id": self.rejected_id,
         } 

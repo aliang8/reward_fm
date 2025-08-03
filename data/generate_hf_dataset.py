@@ -18,12 +18,12 @@ from helpers import (
     create_output_directory,
     flatten_task_data
 )
-from dataset_types import DatasetTrajectory, DatasetMetadata
+from dataset_types import Trajectory, DatasetMetadata
 
 
 def convert_dataset_to_hf_format(
     trajectories: List[Dict],
-    create_hf_trajectory: Callable[[Dict, str, str, int, np.ndarray, Any, int, str], DatasetTrajectory],
+    create_hf_trajectory: Callable[[Dict, str, str, int, Any, int, str], Trajectory],
     output_dir: str = "rfm_dataset",
     dataset_name: str = "UNKNOWN",
     max_trajectories: int = None,
@@ -58,9 +58,6 @@ def convert_dataset_to_hf_format(
     all_entries = []
     
     for trajectory_idx, trajectory in enumerate(tqdm(trajectories, desc="Processing trajectories")):            
-        # Generate unique preference embedding for each trajectory (all same for now)
-        preference_embedding = np.random.randn(384).astype(np.float32)
-        
         # Create output directory for this trajectory
         trajectory_dir = os.path.join(output_dir, f"trajectory_{trajectory_idx:04d}")
         os.makedirs(trajectory_dir, exist_ok=True)
@@ -73,7 +70,6 @@ def convert_dataset_to_hf_format(
             output_dir=trajectory_dir,
             sequence_name=sequence_name,
             ranking=default_ranking,
-            preference_embedding=preference_embedding,
             lang_model=lang_model,
             max_frames=max_frames,
             dataset_name=dataset_name

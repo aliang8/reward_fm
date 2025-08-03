@@ -62,7 +62,6 @@ def create_hf_trajectory(
     output_dir: str,
     sequence_name: str,
     ranking: int,
-    preference_embedding: np.ndarray,
     lang_model: SentenceTransformer,
     max_frames: int = 32,
     dataset_name: str = "UNKNOWN"
@@ -101,7 +100,6 @@ def create_hf_trajectory(
         "frames": frame_paths,
         "optimal": demo.get('success', demo.get('optimal', True)),
         "ranking": ranking,
-        "preference_embedding": preference_embedding,
         "is_robot": demo.get('is_robot', True),
         "metadata": metadata,
     }

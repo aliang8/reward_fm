@@ -17,6 +17,7 @@ import shutil
 import os
 from pathlib import Path
 from dataclasses import dataclass, field
+import torch
 
 
 @dataclass
@@ -31,8 +32,6 @@ class Sample:
     data_source: str
     frames: List[str]
     optimal: bool
-    ranking: int
-    preference_embedding: np.ndarray
     is_robot: bool
     
     # Preference-specific fields
@@ -45,15 +44,12 @@ class Sample:
     trajectory_B_lang_vector: Optional[np.ndarray] = None
     trajectory_B_data_source: Optional[str] = None
     trajectory_B_optimal: Optional[bool] = None
-    trajectory_B_ranking: Optional[int] = None
-    trajectory_B_preference_embedding: Optional[np.ndarray] = None
     trajectory_B_is_robot: Optional[bool] = None
     
     # Comparative-specific fields
     reference_frames: Optional[List[str]] = None  # o^ref
     trajectory_A_frames: Optional[List[str]] = None  # o^1
     trajectory_B_frames: Optional[List[str]] = None  # o^2
-    ranking_list: Optional[List[int]] = None
     task_ref: Optional[str] = None
     task_A: Optional[str] = None
     task_B: Optional[str] = None
@@ -64,15 +60,11 @@ class Sample:
     trajectory_A_lang_vector: Optional[np.ndarray] = None
     trajectory_A_data_source: Optional[str] = None
     trajectory_A_optimal: Optional[bool] = None
-    trajectory_A_ranking: Optional[int] = None
-    trajectory_A_preference_embedding: Optional[np.ndarray] = None
     trajectory_A_is_robot: Optional[bool] = None
     trajectory_B_task: Optional[str] = None
     trajectory_B_lang_vector: Optional[np.ndarray] = None
     trajectory_B_data_source: Optional[str] = None
     trajectory_B_optimal: Optional[bool] = None
-    trajectory_B_ranking: Optional[int] = None
-    trajectory_B_preference_embedding: Optional[np.ndarray] = None
     trajectory_B_is_robot: Optional[bool] = None
     
     # Progress-specific fields
@@ -99,75 +91,295 @@ class Batch:
         return iter(self.samples)
 
 
+@dataclass
+class ProcessedBatch:
+    """A batch of processed samples with model inputs."""
+    
+    # Text inputs
+    input_ids: torch.Tensor
+    attention_mask: torch.Tensor
+    
+    # Vision inputs (if present)
+    pixel_values: Optional[torch.Tensor] = None
+    pixel_values_videos: Optional[torch.Tensor] = None
+    image_grid_thw: Optional[torch.Tensor] = None
+    video_grid_thw: Optional[torch.Tensor] = None
+    
+    # Trajectory A inputs (for preference/comparative samples)
+    input_ids_A: Optional[torch.Tensor] = None
+    attention_mask_A: Optional[torch.Tensor] = None
+    pixel_values_A: Optional[torch.Tensor] = None
+    pixel_values_videos_A: Optional[torch.Tensor] = None
+    image_grid_thw_A: Optional[torch.Tensor] = None
+    video_grid_thw_A: Optional[torch.Tensor] = None
+    
+    # Trajectory B inputs (for preference/comparative samples)
+    input_ids_B: Optional[torch.Tensor] = None
+    attention_mask_B: Optional[torch.Tensor] = None
+    pixel_values_B: Optional[torch.Tensor] = None
+    pixel_values_videos_B: Optional[torch.Tensor] = None
+    image_grid_thw_B: Optional[torch.Tensor] = None
+    video_grid_thw_B: Optional[torch.Tensor] = None
+    
+    # Reference inputs (for comparative samples)
+    input_ids_ref: Optional[torch.Tensor] = None
+    attention_mask_ref: Optional[torch.Tensor] = None
+    pixel_values_ref: Optional[torch.Tensor] = None
+    pixel_values_videos_ref: Optional[torch.Tensor] = None
+    image_grid_thw_ref: Optional[torch.Tensor] = None
+    video_grid_thw_ref: Optional[torch.Tensor] = None
+    
+    # Sample metadata
+    samples: List[Sample] = None
+
+
+class BatchCollator:
+    """Simple batch collator that processes Sample objects."""
+    
+    def __init__(self, processor=None, max_length: int = 1024):
+        """
+        Initialize the batch collator.
+        
+        Args:
+            processor: HuggingFace processor for text and vision processing
+            max_length: Maximum sequence length for text
+        """
+        self.processor = processor
+        self.max_length = max_length
+    
+    def __call__(self, samples: List[Sample]) -> ProcessedBatch:
+        """
+        Collate a list of samples into a ProcessedBatch object.
+        
+        Args:
+            samples: List of Sample objects
+            
+        Returns:
+            ProcessedBatch object containing the processed tensors
+        """
+        # For now, create dummy tensors for testing
+        batch_size = len(samples)
+        
+        # Create dummy input_ids and attention_mask
+        input_ids = torch.randint(0, 1000, (batch_size, self.max_length))
+        attention_mask = torch.ones(batch_size, self.max_length)
+        
+        # Create dummy tensors for trajectory A and B if needed
+        input_ids_A = None
+        input_ids_B = None
+        input_ids_ref = None
+        
+        # Check if we have preference or comparative samples
+        has_preference = any(s.prediction_type == "preference" for s in samples)
+        has_comparative = any(s.prediction_type == "comparative" for s in samples)
+        
+        if has_preference or has_comparative:
+            input_ids_A = torch.randint(0, 1000, (batch_size, self.max_length))
+            input_ids_B = torch.randint(0, 1000, (batch_size, self.max_length))
+        
+        if has_comparative:
+            input_ids_ref = torch.randint(0, 1000, (batch_size, self.max_length))
+        
+        return ProcessedBatch(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            input_ids_A=input_ids_A,
+            input_ids_B=input_ids_B,
+            input_ids_ref=input_ids_ref,
+            samples=samples
+        )
+
+
 class DataGenerator:
     """Data generator for producing batches of prediction data with controlled ratios."""
     
     def __init__(
         self,
-        dataset_path: str = "libero_hf_dataset/libero_hf_dataset",
+        dataset_path: str = "rfm_dataset",
+        dataset_subsets: List[str] = ["libero"],
+        preference_dataset_path: Optional[str] = None,
+        preference_dataset_subset: Optional[str] = None,
         batch_size: int = 32,
         preference_ratio: float = 0.5,
         comparative_ratio: float = 0.5,
-        progress_ratio: float = 1.0,  # All data can be used for progress prediction
         max_frames: int = 32,
         shuffle: bool = True,
-        seed: Optional[int] = None
+        seed: Optional[int] = None,
+        rewind_ratio: float = 0.3,
+        dataset_preference_ratio: float = 0.7
     ):
         """
         Initialize the data generator.
         
         Args:
-            dataset_path: Path to the HuggingFace dataset
+            dataset_path: Path to the HuggingFace dataset or dataset name
+            dataset_subsets: List of dataset names to load (e.g., ["libero", "droid"] or ["libero"])
+            preference_dataset_path: Optional path to preference dataset
+            preference_dataset_subset: Optional subset name for preference dataset
             batch_size: Number of samples per batch
             preference_ratio: Ratio of preference prediction samples (0.0 to 1.0)
             comparative_ratio: Ratio of comparative scoring samples (0.0 to 1.0)
-            progress_ratio: Ratio of progress prediction samples (0.0 to 1.0)
             max_frames: Maximum frames per trajectory
             shuffle: Whether to shuffle the data
             seed: Random seed for reproducibility
+            rewind_ratio: Ratio of rewind-generated preferences (0.0 to 1.0)
+            dataset_preference_ratio: Ratio of preferences from dataset vs rewind (0.0 to 1.0)
         """
         self.dataset_path = dataset_path
+        self.dataset_subsets = dataset_subsets
+        self.preference_dataset_path = preference_dataset_path
+        self.preference_dataset_subset = preference_dataset_subset
         self.batch_size = batch_size
         self.preference_ratio = preference_ratio
         self.comparative_ratio = comparative_ratio
-        self.progress_ratio = progress_ratio
         self.max_frames = max_frames
         self.shuffle = shuffle
         self.seed = seed
+        self.rewind_ratio = rewind_ratio
+        self.dataset_preference_ratio = dataset_preference_ratio
         
         if seed is not None:
             random.seed(seed)
             np.random.seed(seed)
         
-        # Load the dataset
-        self._load_dataset()
+        # Load trajectory dataset
+        self._load_trajectory_dataset()
+        
+        # Load preference dataset if provided
+        self._load_preference_dataset()
         
         # Group trajectories by task for efficient sampling
         self._group_trajectories_by_task()
+        
+        # Preprocess trajectory categories for efficient sampling
+        self._preprocess_trajectory_categories()
         
         # Initialize sentence transformer model
         self.lang_model = SentenceTransformer('all-MiniLM-L6-v2')
         
         print(f"DataGenerator initialized with {len(self.trajectories)} total trajectories")
+        print(f"Loaded datasets: {dataset_subsets}")
+        if self.preferences:
+            print(f"Loaded {len(self.preferences)} preference pairs")
         print(f"Batch size: {batch_size}")
-        print(f"Ratios - Preference: {preference_ratio}, Comparative: {comparative_ratio}, Progress: {progress_ratio}")
+        print(f"Ratios - Preference: {preference_ratio}, Comparative: {comparative_ratio}")
+        print(f"Rewind ratio: {rewind_ratio}, Dataset preference ratio: {dataset_preference_ratio}")
     
-    def _load_dataset(self):
-        """Load the HuggingFace dataset from disk or hub."""
-        print(f"Loading dataset from: {self.dataset_path}")
+    def _create_rewind_trajectory(self, original_traj: Dict) -> Dict:
+        """Create a suboptimal trajectory by rewinding the original trajectory."""
+        frames = original_traj['frames']
         
-        # Check if it's a hub path (contains '/') and not a local path
-        if '/' in self.dataset_path and not os.path.exists(self.dataset_path):
+        if len(frames) < 4:
+            # If trajectory is too short, just return the original
+            return original_traj
+        
+        # Randomly select start and end points for the forward segment
+        start_idx = random.randint(0, len(frames) // 2)
+        end_idx = random.randint(len(frames) // 2, len(frames))
+        
+        # Ensure minimum segment length
+        while end_idx - start_idx < 3:
+            start_idx = random.randint(0, len(frames) // 2)
+            end_idx = random.randint(len(frames) // 2, len(frames))
+        
+        # Extract forward segment
+        forward_frames = frames[start_idx:end_idx]
+        forward_progress = [(i + 1) / len(frames[start_idx:]) for i in range(len(forward_frames))]
+        
+        # Create rewind segment (reverse the forward segment)
+        selected_end_point = random.randint(2, len(forward_frames) - 1)
+        reverse_frames = forward_frames[::-1][1:selected_end_point]
+        reverse_progress = forward_progress[::-1][1:selected_end_point]
+        
+        # Combine forward and reverse segments
+        combined_frames = forward_frames + reverse_frames
+        combined_progress = forward_progress + reverse_progress
+        
+        # Create new trajectory with rewind frames
+        rewind_traj = original_traj.copy()
+        rewind_traj['frames'] = combined_frames
+        rewind_traj['id'] = f"{original_traj['id']}_rewind_{random.randint(1000, 9999)}"
+        rewind_traj['optimal'] = False  # Mark as suboptimal
+        rewind_traj['metadata'] = rewind_traj.get('metadata', {}).copy()
+        rewind_traj['metadata']['rewind_generated'] = True
+        rewind_traj['metadata']['original_traj_id'] = original_traj['id']
+        rewind_traj['metadata']['rewind_progress'] = combined_progress
+        
+        return rewind_traj
+    
+    def _load_trajectory_dataset(self):
+        """Load the trajectory dataset from disk or hub."""
+        print(f"Loading trajectory dataset from: {self.dataset_path}")
+        
+        # Load multiple subsets and combine them
+        all_trajectories = []
+        
+        for dataset_name in self.dataset_subsets:
+            print(f"Loading dataset: {dataset_name}")
+            dataset = self._load_dataset_from_path(self.dataset_path, dataset_name)
+            
+            # Handle DatasetDict by accessing the train split
+            if hasattr(dataset, 'keys') and 'train' in dataset:
+                print(f"  Found DatasetDict with train split, accessing train data...")
+                dataset = dataset['train']
+            
+            dataset_trajectories = list(dataset)
+            all_trajectories.extend(dataset_trajectories)
+            print(f"  Loaded {len(dataset_trajectories)} trajectories from dataset '{dataset_name}'")
+        
+        self.trajectories = all_trajectories
+        print(f"Combined {len(self.trajectories)} total trajectories from {len(self.dataset_subsets)} datasets")
+    
+    def _load_preference_dataset(self):
+        """Load the preference dataset from disk or hub if provided."""
+        self.preferences = []
+        
+        if not self.preference_dataset_path:
+            print("No preference dataset provided, will use random sampling for preferences")
+            return
+        
+        print(f"Loading preference dataset from: {self.preference_dataset_path}")
+        
+        # Load preference dataset using helper method
+        preference_dataset = self._load_dataset_from_path(
+            self.preference_dataset_path, 
+            self.preference_dataset_subset
+        )
+        
+        # Convert to Preference objects
+        for item in preference_dataset:
+            from dataset_types import Preference
+            preference = Preference(
+                traj_id=item['traj_id'],
+                chosen_id=item['chosen_id'],
+                rejected_id=item['rejected_id']
+            )
+            self.preferences.append(preference)
+        
+        print(f"Loaded {len(self.preferences)} preference pairs from subset '{self.preference_dataset_subset}'")
+        
+    def _load_dataset_from_path(self, dataset_path: str, subset: str = None):
+        """Helper method to load a dataset from path (local or hub)."""
+        if '/' in dataset_path and not os.path.exists(dataset_path):
             # Load from HuggingFace Hub
             from datasets import load_dataset
-            print(f"Loading from HuggingFace Hub: {self.dataset_path}")
-            self.dataset = load_dataset(self.dataset_path, split="train")
+            print(f"Loading from HuggingFace Hub: {dataset_path}")
+            if subset:
+                return load_dataset(dataset_path, name=subset)
+            else:
+                return load_dataset(dataset_path)
         else:
             # Load from local disk
-            self.dataset = load_from_disk(self.dataset_path)
-        
-        self.trajectories = list(self.dataset)
-        print(f"Loaded {len(self.trajectories)} trajectories")
+            if os.path.isdir(dataset_path):
+                # It's a directory, load the specific subset
+                dataset = load_from_disk(dataset_path)
+                if subset:
+                    return dataset[subset]
+                else:
+                    return dataset
+            else:
+                # It's a file, load directly
+                return load_from_disk(dataset_path)
     
     def _group_trajectories_by_task(self):
         """Group trajectories by task name for efficient sampling."""
@@ -179,50 +391,184 @@ class DataGenerator:
             self.task_groups[task_name].append(traj)
         
         print(f"Grouped trajectories into {len(self.task_groups)} tasks")
+        
+        # Create trajectory ID mapping for quick lookup
+        self.traj_id_to_traj = {traj['id']: traj for traj in self.trajectories}
+    
+    def _preprocess_trajectory_categories(self):
+        """Preprocess trajectories into categories for efficient sampling."""
+        
+        # Categorize by robot vs human
+        self.robot_trajectories = [traj for traj in self.trajectories if traj.get('is_robot', True)]
+        self.human_trajectories = [traj for traj in self.trajectories if not traj.get('is_robot', True)]
+        
+        # Categorize by optimal vs suboptimal
+        self.optimal_trajectories = [traj for traj in self.trajectories if traj.get('optimal', True)]
+        self.suboptimal_trajectories = [traj for traj in self.trajectories if not traj.get('optimal', True)]
+        
+        # Categorize by task and optimality
+        self.optimal_by_task = {}
+        self.suboptimal_by_task = {}
+        for task_name, task_trajectories in self.task_groups.items():
+            self.optimal_by_task[task_name] = [traj for traj in task_trajectories if traj.get('optimal', True)]
+            self.suboptimal_by_task[task_name] = [traj for traj in task_trajectories if not traj.get('optimal', True)]
+        
+        # Categorize by data source
+        self.trajectories_by_source = {}
+        for traj in self.trajectories:
+            source = traj.get('data_source', 'unknown')
+            if source not in self.trajectories_by_source:
+                self.trajectories_by_source[source] = []
+            self.trajectories_by_source[source].append(traj)
+        
+        print(f"Preprocessed trajectory categories:")
+        print(f"  Robot trajectories: {len(self.robot_trajectories)}")
+        print(f"  Human trajectories: {len(self.human_trajectories)}")
+        print(f"  Optimal trajectories: {len(self.optimal_trajectories)}")
+        print(f"  Suboptimal trajectories: {len(self.suboptimal_trajectories)}")
+        print(f"  Data sources: {list(self.trajectories_by_source.keys())}")
+    
+    def get_optimal_trajectories_by_task(self, task_name: str) -> List[Dict]:
+        """Get optimal trajectories for a specific task."""
+        return self.optimal_by_task.get(task_name, [])
+    
+    def get_suboptimal_trajectories_by_task(self, task_name: str) -> List[Dict]:
+        """Get suboptimal trajectories for a specific task."""
+        return self.suboptimal_by_task.get(task_name, [])
+    
+    def get_trajectories_by_source(self, source: str) -> List[Dict]:
+        """Get trajectories from a specific data source."""
+        return self.trajectories_by_source.get(source, [])
+    
+    def get_robot_trajectories(self) -> List[Dict]:
+        """Get all robot trajectories."""
+        return self.robot_trajectories
+    
+    def get_human_trajectories(self) -> List[Dict]:
+        """Get all human trajectories."""
+        return self.human_trajectories
+    
+    def get_optimal_trajectories(self) -> List[Dict]:
+        """Get all optimal trajectories."""
+        return self.optimal_trajectories
+    
+    def get_suboptimal_trajectories(self) -> List[Dict]:
+        """Get all suboptimal trajectories."""
+        return self.suboptimal_trajectories
     
     def _create_preference_sample(self) -> Sample:
         """Create a preference prediction sample: o^1 vs o^2 where o^1 is preferred."""
         
-        # Find tasks with at least 2 trajectories
-        available_tasks = [task for task, trajectories in self.task_groups.items() if len(trajectories) >= 2]
-        if not available_tasks:
-            raise ValueError("No tasks with at least 2 trajectories found")
+        # Decide whether to use dataset preferences or generated preferences
+        use_dataset_preference = (
+            self.preferences and 
+            random.random() < self.dataset_preference_ratio
+        )
         
-        # Randomly select a task
-        task_name = random.choice(available_tasks)
-        task_trajectories = self.task_groups[task_name]
+        if use_dataset_preference:
+            # Use preference dataset
+            preference = random.choice(self.preferences)
+            
+            # Get the trajectories by ID
+            chosen_traj = self.traj_id_to_traj.get(preference.chosen_id)
+            rejected_traj = self.traj_id_to_traj.get(preference.rejected_id)
+            
+            if chosen_traj is None or rejected_traj is None:
+                raise ValueError(f"Could not find trajectories for preference {preference.traj_id}")
+            
+            # Create unified sample structure with all fields
+            sample = Sample(
+                prediction_type="preference",
+                # Core HF dataset fields (from chosen trajectory)
+                id=chosen_traj['id'],
+                task=chosen_traj['task'],
+                lang_vector=chosen_traj['lang_vector'],
+                data_source=chosen_traj['data_source'],
+                frames=chosen_traj['frames'],
+                optimal=chosen_traj['optimal'],
+                is_robot=chosen_traj['is_robot'],
+                metadata=chosen_traj.get('metadata'),
+                # Preference-specific fields
+                trajectory_A_frames=chosen_traj['frames'],
+                trajectory_B_frames=rejected_traj['frames'],
+                preferred_trajectory="A",  # A is the chosen trajectory
+                trajectory_A_id=chosen_traj['id'],
+                trajectory_B_id=rejected_traj['id'],
+                # Trajectory B fields
+                trajectory_B_task=rejected_traj['task'],
+                trajectory_B_lang_vector=rejected_traj['lang_vector'],
+                trajectory_B_data_source=rejected_traj['data_source'],
+                trajectory_B_optimal=rejected_traj['optimal'],
+                trajectory_B_is_robot=rejected_traj['is_robot'],
+            )
+        else:
+            # Use generated preference (rewind or random)
+            sample = self._create_generated_preference_sample()
         
-        # Select two different trajectories from the same task
-        traj_1, traj_2 = random.sample(task_trajectories, 2)
+        return sample
+    
+    def _create_generated_preference_sample(self) -> Sample:
+        """Create a preference prediction sample using various negative generation strategies."""
+        
+        # Use preprocessed optimal trajectories
+        if not self.optimal_trajectories:
+            raise ValueError("No optimal trajectories found for preference generation")
+        
+        optimal_traj = random.choice(self.optimal_trajectories)
+        
+        # Choose negative generation strategy
+        strategy = random.random()
+        
+        if strategy < self.rewind_ratio:
+            # Strategy 1: Use rewind-generated suboptimal trajectory
+            negative_traj = self._create_rewind_trajectory(optimal_traj)
+        elif strategy < 0.7:
+            # Strategy 2: Use random trajectory from different task
+            different_task_trajectories = [
+                traj for traj in self.trajectories 
+                if traj['task'] != optimal_traj['task']
+            ]
+            if different_task_trajectories:
+                negative_traj = random.choice(different_task_trajectories)
+            else:
+                # Fall back to rewind if no different task trajectories
+                negative_traj = self._create_rewind_trajectory(optimal_traj)
+        else:
+            # Strategy 3: Use random suboptimal trajectory from same task
+            same_task_suboptimal = [
+                traj for traj in self.suboptimal_trajectories 
+                if traj['task'] == optimal_traj['task'] and traj['id'] != optimal_traj['id']
+            ]
+            if same_task_suboptimal:
+                negative_traj = random.choice(same_task_suboptimal)
+            else:
+                # Fall back to rewind if no same-task suboptimal trajectories
+                negative_traj = self._create_rewind_trajectory(optimal_traj)
         
         # Create unified sample structure with all fields
         sample = Sample(
             prediction_type="preference",
-            # Core HF dataset fields (from primary trajectory)
-            id=traj_1['id'],
-            task=traj_1['task'],
-            lang_vector=traj_1['lang_vector'],
-            data_source=traj_1['data_source'],
-            frames=traj_1['frames'],
-            optimal=traj_1['optimal'],
-            ranking=traj_1['ranking'],
-            preference_embedding=traj_1['preference_embedding'],
-            is_robot=traj_1['is_robot'],
-            metadata=traj_1.get('metadata'),
+            # Core HF dataset fields (from optimal trajectory)
+            id=optimal_traj['id'],
+            task=optimal_traj['task'],
+            lang_vector=optimal_traj['lang_vector'],
+            data_source=optimal_traj['data_source'],
+            frames=optimal_traj['frames'],
+            optimal=optimal_traj['optimal'],
+            is_robot=optimal_traj['is_robot'],
+            metadata=optimal_traj.get('metadata'),
             # Preference-specific fields
-            trajectory_A_frames=traj_1['frames'],
-            trajectory_B_frames=traj_2['frames'],
-            preferred_trajectory="A",  # A is preferred
-            trajectory_A_id=traj_1['id'],
-            trajectory_B_id=traj_2['id'],
+            trajectory_A_frames=optimal_traj['frames'],
+            trajectory_B_frames=negative_traj['frames'],
+            preferred_trajectory="A",  # A is the optimal trajectory
+            trajectory_A_id=optimal_traj['id'],
+            trajectory_B_id=negative_traj['id'],
             # Trajectory B fields
-            trajectory_B_task=traj_2['task'],
-            trajectory_B_lang_vector=traj_2['lang_vector'],
-            trajectory_B_data_source=traj_2['data_source'],
-            trajectory_B_optimal=traj_2['optimal'],
-            trajectory_B_ranking=traj_2['ranking'],
-            trajectory_B_preference_embedding=traj_2['preference_embedding'],
-            trajectory_B_is_robot=traj_2['is_robot'],
+            trajectory_B_task=negative_traj['task'],
+            trajectory_B_lang_vector=negative_traj['lang_vector'],
+            trajectory_B_data_source=negative_traj['data_source'],
+            trajectory_B_optimal=negative_traj['optimal'],
+            trajectory_B_is_robot=negative_traj['is_robot'],
         )
         
         return sample
@@ -230,8 +576,11 @@ class DataGenerator:
     def _create_progress_sample(self) -> Sample:
         """Create a progress prediction sample: single trajectory for progress prediction."""
         
-        # Randomly select a trajectory
-        traj = random.choice(self.trajectories)
+        # Use preprocessed optimal trajectories for progress prediction
+        if not self.optimal_trajectories:
+            raise ValueError("No optimal trajectories found for progress prediction")
+        
+        traj = random.choice(self.optimal_trajectories)
         
         # Create unified sample structure with all fields
         sample = Sample(
@@ -243,8 +592,6 @@ class DataGenerator:
             data_source=traj['data_source'],
             frames=traj['frames'],
             optimal=traj['optimal'],
-            ranking=traj['ranking'],
-            preference_embedding=traj['preference_embedding'],
             is_robot=traj['is_robot'],
             metadata=traj.get('metadata'),
             # Progress-specific fields
@@ -269,8 +616,11 @@ class DataGenerator:
             # Randomly select two different tasks
             task_ref, task_other = random.sample(task_names, 2)
         
-        # Get trajectories from reference task
-        ref_trajectories = self.task_groups[task_ref]
+        # Get optimal trajectories from reference task
+        ref_trajectories = self.get_optimal_trajectories_by_task(task_ref)
+        if not ref_trajectories:
+            # Fall back to all trajectories if no optimal ones
+            ref_trajectories = self.task_groups[task_ref]
         ref_traj = random.choice(ref_trajectories)
         
         # Get trajectories from other task
@@ -300,9 +650,6 @@ class DataGenerator:
             else:
                 traj_2 = traj_1  # Fallback
         
-        # Determine ranking (reference is best, o^1 is better than o^2)
-        ranking = [1, 2, 3]  # reference=1 (best), o^1=2, o^2=3 (worst)
-        
         # Create unified sample structure with all fields
         sample = Sample(
             prediction_type="comparative",
@@ -313,15 +660,12 @@ class DataGenerator:
             data_source=ref_traj['data_source'],
             frames=ref_traj['frames'],
             optimal=ref_traj['optimal'],
-            ranking=ref_traj['ranking'],
-            preference_embedding=ref_traj['preference_embedding'],
             is_robot=ref_traj['is_robot'],
             metadata=ref_traj.get('metadata'),
             # Comparative-specific fields
             reference_frames=ref_traj['frames'],  # o^ref
             trajectory_A_frames=traj_1['frames'],  # o^1
             trajectory_B_frames=traj_2['frames'],  # o^2
-            ranking_list=ranking,  # [reference_rank, o1_rank, o2_rank]
             task_ref=task_ref,
             task_A=traj_1['task'],
             task_B=traj_2['task'],
@@ -333,16 +677,12 @@ class DataGenerator:
             trajectory_A_lang_vector=traj_1['lang_vector'],
             trajectory_A_data_source=traj_1['data_source'],
             trajectory_A_optimal=traj_1['optimal'],
-            trajectory_A_ranking=traj_1['ranking'],
-            trajectory_A_preference_embedding=traj_1['preference_embedding'],
             trajectory_A_is_robot=traj_1['is_robot'],
             # Trajectory B fields (o^2)
             trajectory_B_task=traj_2['task'],
             trajectory_B_lang_vector=traj_2['lang_vector'],
             trajectory_B_data_source=traj_2['data_source'],
             trajectory_B_optimal=traj_2['optimal'],
-            trajectory_B_ranking=traj_2['ranking'],
-            trajectory_B_preference_embedding=traj_2['preference_embedding'],
             trajectory_B_is_robot=traj_2['is_robot'],
         )
         
@@ -358,27 +698,17 @@ class DataGenerator:
         preference_count = int(total_samples * self.preference_ratio)
         comparative_count = int(total_samples * self.comparative_ratio)
         
-        # For progress, we can use all data (both preference and comparative samples can be used for progress)
-        # So we calculate how many additional progress samples we need
-        progress_from_preference = int(preference_count * self.progress_ratio)
-        progress_from_comparative = int(comparative_count * self.progress_ratio)
-        additional_progress = max(0, total_samples - preference_count - comparative_count)
-        
         # Ensure we don't exceed batch size
-        actual_total = preference_count + comparative_count + additional_progress
+        actual_total = preference_count + comparative_count
         if actual_total > total_samples:
             # Scale down proportionally
             scale_factor = total_samples / actual_total
             preference_count = int(preference_count * scale_factor)
             comparative_count = int(comparative_count * scale_factor)
-            additional_progress = total_samples - preference_count - comparative_count
         
         return {
             "preference": preference_count,
-            "comparative": comparative_count,
-            "progress": additional_progress,
-            "progress_from_preference": progress_from_preference,
-            "progress_from_comparative": progress_from_comparative
+            "comparative": comparative_count
         }
     
     def generate_batch(self) -> 'Batch':
@@ -391,30 +721,18 @@ class DataGenerator:
         
         # Generate preference samples
         for _ in range(composition["preference"]):
-            try:
-                sample = self._create_preference_sample()
-                samples.append(sample)
-            except Exception as e:
-                print(f"Error creating preference sample: {e}")
-                continue
+            sample = self._create_preference_sample()
+            samples.append(sample)
         
         # Generate comparative samples
         for _ in range(composition["comparative"]):
-            try:
-                sample = self._create_comparative_sample()
-                samples.append(sample)
-            except Exception as e:
-                print(f"Error creating comparative sample: {e}")
-                continue
+            sample = self._create_comparative_sample()
+            samples.append(sample)
         
         # Generate additional progress samples if needed
         while len(samples) < self.batch_size:
-            try:
-                sample = self._create_progress_sample()
-                samples.append(sample)
-            except Exception as e:
-                print(f"Error creating progress sample: {e}")
-                continue
+            sample = self._create_progress_sample()
+            samples.append(sample)
         
         # Shuffle if requested
         if self.shuffle:
@@ -426,24 +744,6 @@ class DataGenerator:
         """Generate multiple batches."""
         for i in range(num_batches):
             yield self.generate_batch()
-
-def main():
-    """Example usage of the DataGenerator."""
-    
-    # Create data generator with 50/50 preference/comparative ratio
-    generator = DataGenerator(
-        dataset_path="libero_hf_dataset/libero_hf_dataset",
-        batch_size=32,
-        preference_ratio=0.5,
-        comparative_ratio=0.5,
-        progress_ratio=1.0,  # All data can be used for progress
-        shuffle=True,
-        seed=42
-    )
-    
-    # Generate a single batch
-    print("Generating a single batch...")
-    batch = generator.generate_batch()
 
 # Dataset wrapper for HuggingFace Trainer compatibility
 class DataGeneratorDataset:
@@ -474,5 +774,53 @@ class DataGeneratorDataset:
         return self.samples[idx]
 
 
+def test():
+    """Test the BatchCollator with generated samples."""
+    
+    # Create data generator
+    generator = DataGenerator(
+        dataset_path="aliangdw/rfm",
+        dataset_subsets=["libero_90"],
+        batch_size=4,  # Small batch for testing
+        preference_ratio=0.5,
+        comparative_ratio=0.5,
+        shuffle=True,
+        seed=42
+    )
+    
+    # Generate a batch
+    print("Generating test batch...")
+    batch = generator.generate_batch()
+    print(f"Generated batch with {len(batch)} samples")
+    
+    # Print sample types
+    for i, sample in enumerate(batch.samples):
+        print(f"Sample {i}: {sample.prediction_type}")
+    
+    # Test the batch collator
+    print("\nTesting batch collator...")
+    batch_collator = BatchCollator(max_length=1024)
+    
+    try:
+        processed_batch = batch_collator(batch.samples)
+        print("✅ Successfully processed batch!")
+        print(f"Processed batch type: {type(processed_batch)}")
+        print(f"Input IDs shape: {processed_batch.input_ids.shape}")
+        
+        # Check for trajectory-specific inputs
+        if processed_batch.input_ids_A is not None:
+            print(f"Trajectory A input IDs shape: {processed_batch.input_ids_A.shape}")
+        if processed_batch.input_ids_B is not None:
+            print(f"Trajectory B input IDs shape: {processed_batch.input_ids_B.shape}")
+        if processed_batch.input_ids_ref is not None:
+            print(f"Reference input IDs shape: {processed_batch.input_ids_ref.shape}")
+            
+    except Exception as e:
+        print(f"❌ Error processing batch: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 if __name__ == "__main__":
-    main() 
+    # main()
+    test() 

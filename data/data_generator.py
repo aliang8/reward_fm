@@ -118,58 +118,57 @@ class BatchCollator:
         # For now, create dummy tensors for testing
         batch_size = len(samples)
         
-        # Create dummy input_ids and attention_mask
-        input_ids = torch.randint(0, 1000, (batch_size, self.max_length))
-        attention_mask = torch.ones(batch_size, self.max_length)
-        
-        # Create dummy tensors for trajectory A and B if needed
-        input_ids_A = None
-        attention_mask_A = None
-        input_ids_B = None
-        attention_mask_B = None
-        input_ids_ref = None
-        attention_mask_ref = None
-        target_progress = None
-        
         # Check if we have different sample types
         has_preference = any(s.prediction_type == "preference" for s in samples)
         has_similarity = any(s.prediction_type == "similarity" for s in samples)
         
-        # Always compute progress for trajectory A if target_progress is available
-        has_progress = any(hasattr(s, 'target_progress') and s.target_progress is not None for s in samples)
+        # For preference samples, we need to concatenate trajectory A and B
+        # For similarity samples, we need trajectory A, B, and reference
+        # For now, create dummy tensors that represent the concatenated sequences
         
-        if has_preference or has_similarity:
-            input_ids_A = torch.randint(0, 1000, (batch_size, self.max_length))
-            attention_mask_A = torch.ones(batch_size, self.max_length)
-            input_ids_B = torch.randint(0, 1000, (batch_size, self.max_length))
-            attention_mask_B = torch.ones(batch_size, self.max_length)
+        if has_preference:
+            # For preference: [trajectory_A] <|split_token|> [trajectory_B] <|pref_token|>
+            # Double the sequence length to accommodate both trajectories
+            input_ids = torch.randint(0, 1000, (batch_size, self.max_length * 2))
+            attention_mask = torch.ones(batch_size, self.max_length * 2)
+        elif has_similarity:
+            # For similarity: [reference] <|split_token|> [trajectory_A] <|split_token|> [trajectory_B] <|reward_token|>
+            # Triple the sequence length to accommodate reference, A, and B
+            input_ids = torch.randint(0, 1000, (batch_size, self.max_length * 3))
+            attention_mask = torch.ones(batch_size, self.max_length * 3)
+        else:
+            # Default case
+            input_ids = torch.randint(0, 1000, (batch_size, self.max_length))
+            attention_mask = torch.ones(batch_size, self.max_length)
+        
+        # Create separate tensors for individual trajectories (for compatibility)
+        input_ids_A = torch.randint(0, 1000, (batch_size, self.max_length))
+        attention_mask_A = torch.ones(batch_size, self.max_length)
+        input_ids_B = torch.randint(0, 1000, (batch_size, self.max_length))
+        attention_mask_B = torch.ones(batch_size, self.max_length)
         
         if has_similarity:
             input_ids_ref = torch.randint(0, 1000, (batch_size, self.max_length))
             attention_mask_ref = torch.ones(batch_size, self.max_length)
         
-        # Always create target progress tensors for trajectory A and B if available
-        target_progress_A = None
-        target_progress_B = None
+        # Always create target progress tensors for trajectory A and B
+        # Get the maximum number of frames across all samples with target_progress_A
+        max_frames_A = max(len(s.target_progress_A) for s in samples if hasattr(s, 'target_progress_A') and s.target_progress_A is not None)
+        target_progress_A = torch.zeros(batch_size, max_frames_A)
         
-        if has_progress:
-            # Get the maximum number of frames across all samples with target_progress_A
-            max_frames_A = max(len(s.target_progress_A) for s in samples if hasattr(s, 'target_progress_A') and s.target_progress_A is not None)
-            target_progress_A = torch.zeros(batch_size, max_frames_A)
-            
-            for i, sample in enumerate(samples):
-                if hasattr(sample, 'target_progress_A') and sample.target_progress_A is not None:
-                    num_frames = len(sample.target_progress_A)
-                    target_progress_A[i, :num_frames] = torch.tensor(sample.target_progress_A)
-            
-            # Get the maximum number of frames across all samples with target_progress_B
-            max_frames_B = max(len(s.target_progress_B) for s in samples if hasattr(s, 'target_progress_B') and s.target_progress_B is not None)
-            target_progress_B = torch.zeros(batch_size, max_frames_B)
-            
-            for i, sample in enumerate(samples):
-                if hasattr(sample, 'target_progress_B') and sample.target_progress_B is not None:
-                    num_frames = len(sample.target_progress_B)
-                    target_progress_B[i, :num_frames] = torch.tensor(sample.target_progress_B)
+        for i, sample in enumerate(samples):
+            if hasattr(sample, 'target_progress_A') and sample.target_progress_A is not None:
+                num_frames = len(sample.target_progress_A)
+                target_progress_A[i, :num_frames] = torch.tensor(sample.target_progress_A)
+        
+        # Get the maximum number of frames across all samples with target_progress_B
+        max_frames_B = max(len(s.target_progress_B) for s in samples if hasattr(s, 'target_progress_B') and s.target_progress_B is not None)
+        target_progress_B = torch.zeros(batch_size, max_frames_B)
+        
+        for i, sample in enumerate(samples):
+            if hasattr(sample, 'target_progress_B') and sample.target_progress_B is not None:
+                num_frames = len(sample.target_progress_B)
+                target_progress_B[i, :num_frames] = torch.tensor(sample.target_progress_B)
         
         # Return dictionary format expected by trainer
         batch_dict = {
@@ -177,20 +176,18 @@ class BatchCollator:
             "attention_mask": attention_mask,
         }
         
-        # Add optional tensors if they exist
-        if input_ids_A is not None:
-            batch_dict["input_ids_A"] = input_ids_A
-            batch_dict["attention_mask_A"] = attention_mask_A
-        if input_ids_B is not None:
-            batch_dict["input_ids_B"] = input_ids_B
-            batch_dict["attention_mask_B"] = attention_mask_B
-        if input_ids_ref is not None:
+        # Always include individual trajectory tensors for compatibility
+        batch_dict["input_ids_A"] = input_ids_A
+        batch_dict["attention_mask_A"] = attention_mask_A
+        batch_dict["input_ids_B"] = input_ids_B
+        batch_dict["attention_mask_B"] = attention_mask_B
+        
+        if has_similarity:
             batch_dict["input_ids_ref"] = input_ids_ref
             batch_dict["attention_mask_ref"] = attention_mask_ref
-        if target_progress_A is not None:
-            batch_dict["target_progress_A"] = target_progress_A
-        if target_progress_B is not None:
-            batch_dict["target_progress_B"] = target_progress_B
+        # Always include target progress tensors
+        batch_dict["target_progress_A"] = target_progress_A
+        batch_dict["target_progress_B"] = target_progress_B
         
         # Add prediction type for each sample
         prediction_types = [s.prediction_type for s in samples]
@@ -796,7 +793,7 @@ def test():
         dataset_subsets=["libero_90"],
         batch_size=4,  # Small batch for testing
         preference_ratio=0.5,
-        comparative_ratio=0.5,
+        similarity_ratio=0.5,
         shuffle=True,
         seed=42
     )

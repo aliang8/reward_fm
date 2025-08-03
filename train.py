@@ -167,12 +167,12 @@ class RFMTrainer(Trainer):
         # Initialize loss components and metadata
         total_loss = 0.0
         loss_metadata = {
-            "progress_loss": 0.0,
             "preference_loss": 0.0, 
             "similarity_loss": 0.0,
-            "progress_count": 0,
+            "progress_loss": 0.0,
             "preference_count": 0,
-            "similarity_count": 0
+            "similarity_count": 0,
+            "progress_count": 0
         }
         
         # Group samples by prediction type
@@ -185,24 +185,20 @@ class RFMTrainer(Trainer):
             preference_inputs = self._extract_batch_subset(inputs, preference_indices)
             preference_loss, preference_outputs = self._compute_preference_loss(model, preference_inputs, return_outputs=True)
             total_loss += preference_loss * len(preference_indices)
-            loss_metadata["preference_loss"] = preference_loss.item()
+            loss_metadata["preference_loss"] = preference_outputs.get("preference_loss", 0.0)
+            loss_metadata["progress_loss"] += preference_outputs.get("progress_loss", 0.0) * len(preference_indices)
             loss_metadata["preference_count"] = len(preference_indices)
+            loss_metadata["progress_count"] += len(preference_indices)
         
         # Compute similarity loss for similarity samples
         if similarity_indices:
             similarity_inputs = self._extract_batch_subset(inputs, similarity_indices)
             similarity_loss, similarity_outputs = self._compute_similarity_loss(model, similarity_inputs, return_outputs=True)
             total_loss += similarity_loss * len(similarity_indices)
-            loss_metadata["similarity_loss"] = similarity_loss.item()
+            loss_metadata["similarity_loss"] = similarity_outputs.get("similarity_loss", 0.0)
+            loss_metadata["progress_loss"] += (similarity_outputs.get("progress_loss_A", 0.0) + similarity_outputs.get("progress_loss_B", 0.0)) * len(similarity_indices)
             loss_metadata["similarity_count"] = len(similarity_indices)
-        
-        # Always compute progress loss for trajectory A if target_progress_A is provided
-        if "target_progress_A" in inputs and inputs["target_progress_A"] is not None:
-            # Use the full batch for progress computation (trajectory A)
-            progress_loss, progress_outputs = self._compute_progress_loss(model, inputs, return_outputs=True)
-            total_loss += progress_loss
-            loss_metadata["progress_loss"] = progress_loss.item()
-            loss_metadata["progress_count"] = batch_size
+            loss_metadata["progress_count"] += len(similarity_indices) * 2  # Both A and B for similarity
         
         # Normalize by total batch size
         total_loss = total_loss / batch_size
@@ -235,9 +231,40 @@ class RFMTrainer(Trainer):
         
         return subset_inputs
 
-    def _compute_progress_loss(self, model, inputs, return_outputs=False):
-        """Compute progress prediction loss (MSE for frame progress 0-1)."""
-        # Forward pass with progress prediction (trajectory A)
+    def _compute_progress_loss_from_outputs(self, outputs, target_progress_A, target_progress_B=None):
+        """Helper function to compute progress loss from model outputs."""
+        progress_loss = 0.0
+        progress_metadata = {}
+        
+        # Unpack tuple (outputs, progress_logits)
+        model_outputs, progress_logits = outputs
+        
+        # Compute progress loss for trajectory A if target_progress_A is provided
+        if target_progress_A is not None and progress_logits is not None:
+            predicted_progress_A = progress_logits.squeeze(-1)  # [batch_size]
+            final_target_progress_A = target_progress_A[:, -1]  # [batch_size] - use final frame progress
+            progress_loss_A = F.mse_loss(predicted_progress_A, final_target_progress_A)
+            progress_loss += progress_loss_A
+            progress_metadata["predicted_progress_A"] = predicted_progress_A
+            progress_metadata["target_progress_A"] = final_target_progress_A
+            progress_metadata["progress_loss_A"] = progress_loss_A.item()
+        
+        # Compute progress loss for trajectory B if target_progress_B is provided
+        if target_progress_B is not None and progress_logits is not None:
+            predicted_progress_B = progress_logits.squeeze(-1)  # [batch_size]
+            final_target_progress_B = target_progress_B[:, -1]  # [batch_size] - use final frame progress
+            progress_loss_B = F.mse_loss(predicted_progress_B, final_target_progress_B)
+            progress_loss += progress_loss_B
+            progress_metadata["predicted_progress_B"] = predicted_progress_B
+            progress_metadata["target_progress_B"] = final_target_progress_B
+            progress_metadata["progress_loss_B"] = progress_loss_B.item()
+        
+        return progress_loss, progress_metadata
+    
+    def _compute_preference_loss(self, model, inputs, return_outputs=False):
+        """Compute preference prediction loss using Bradley-Terry model."""
+        # Single forward pass with both trajectories concatenated
+        # The model should handle the preference prediction at the end
         outputs = model(
             input_ids=inputs["input_ids"],
             attention_mask=inputs["attention_mask"],
@@ -245,119 +272,109 @@ class RFMTrainer(Trainer):
             pixel_values_videos=inputs.get("pixel_values_videos"),
             image_grid_thw=inputs.get("image_grid_thw"),
             video_grid_thw=inputs.get("video_grid_thw"),
-            target_progress=inputs.get("target_progress_A"),
-            prediction_type="similarity"  # Use similarity as default, progress will be computed automatically
-        )
-        
-        # Get predicted progress scores from progress_logits
-        if hasattr(outputs, 'progress_logits') and outputs.progress_logits is not None:
-            predicted_progress = outputs.progress_logits.squeeze(-1)  # [batch_size]
-        else:
-            # Fallback: use main logits if progress_logits not available
-            predicted_progress = outputs.logits.squeeze(-1)  # [batch_size]
-        
-        # Get target progress (we'll use the final progress value for each trajectory)
-        target_progress = inputs["target_progress_A"]  # [batch_size, num_frames]
-        final_target_progress = target_progress[:, -1]  # [batch_size] - use final frame progress
-        
-        # Compute MSE loss
-        loss = F.mse_loss(predicted_progress, final_target_progress)
-        
-        if return_outputs:
-            return loss, {"predicted_progress": predicted_progress, "target_progress": final_target_progress}
-        return loss
-    
-    def _compute_preference_loss(self, model, inputs, return_outputs=False):
-        """Compute preference prediction loss using Bradley-Terry model."""
-        # Forward pass for trajectory A
-        outputs_A = model(
-            input_ids=inputs["input_ids_A"],
-            attention_mask=inputs["attention_mask_A"],
-            pixel_values=inputs.get("pixel_values_A"),
-            pixel_values_videos=inputs.get("pixel_values_videos_A"),
-            image_grid_thw=inputs.get("image_grid_thw_A"),
-            video_grid_thw=inputs.get("video_grid_thw_A"),
+            target_progress=inputs.get("target_progress_A"),  # Pass target progress for trajectory A
             prediction_type="preference"
         )
         
-        # Forward pass for trajectory B
-        outputs_B = model(
-            input_ids=inputs["input_ids_B"],
-            attention_mask=inputs["attention_mask_B"],
-            pixel_values=inputs.get("pixel_values_B"),
-            pixel_values_videos=inputs.get("pixel_values_videos_B"),
-            image_grid_thw=inputs.get("image_grid_thw_B"),
-            video_grid_thw=inputs.get("video_grid_thw_B"),
-            prediction_type="preference"
-        )
+        # Handle tuple return (outputs, progress_logits)
+        model_outputs, progress_logits = outputs
         
         # Get preference scores from the preference head
-        score_A = outputs_A.logits.squeeze(-1)
-        score_B = outputs_B.logits.squeeze(-1)
+        preference_scores = model_outputs.logits.squeeze(-1)  # [batch_size]
         
         # Get preference labels (1 if A is preferred, 0 if B is preferred)
         preference_labels = inputs["preference_labels"]
         
-        # Bradley-Terry model: P(A > B) = sigmoid(score_A - score_B)
-        preference_logits = score_A - score_B
-        loss = F.binary_cross_entropy_with_logits(preference_logits, preference_labels.float())
+        # Binary cross entropy loss for preference prediction
+        preference_loss = F.binary_cross_entropy_with_logits(preference_scores, preference_labels.float())
+        
+        # Compute progress loss if progress_logits exist
+        progress_loss, progress_metadata = self._compute_progress_loss_from_outputs(
+            outputs, 
+            inputs.get("target_progress_A"), 
+            inputs.get("target_progress_B")
+        )
+        
+        # Combine losses
+        total_loss = preference_loss + progress_loss
         
         if return_outputs:
-            return loss, {"score_A": score_A, "score_B": score_B, "preference_labels": preference_labels}
-        return loss
+            outputs_dict = {
+                "preference_scores": preference_scores, 
+                "preference_labels": preference_labels,
+                "preference_loss": preference_loss.item(),
+                "progress_loss": progress_loss.item()
+            }
+            outputs_dict.update(progress_metadata)
+            return total_loss, outputs_dict
+        return total_loss
     
     def _compute_similarity_loss(self, model, inputs, return_outputs=False):
         """Compute similarity scoring loss (DPO-style)."""
-        # Prepare model kwargs for chosen sequence (A vs B)
-        chosen_kwargs = {
-            "input_ids": inputs["input_ids_chosen"],
-            "attention_mask": inputs["attention_mask_chosen"],
-            "prediction_type": "similarity"
-        }
+        # Forward pass for reference vs trajectory A
+        outputs_ref_A = model(
+            input_ids=inputs["input_ids_ref_A"],
+            attention_mask=inputs["attention_mask_ref_A"],
+            pixel_values=inputs.get("pixel_values_ref_A"),
+            pixel_values_videos=inputs.get("pixel_values_videos_ref_A"),
+            image_grid_thw=inputs.get("image_grid_thw_ref_A"),
+            video_grid_thw=inputs.get("video_grid_thw_ref_A"),
+            target_progress=inputs.get("target_progress_A"),  # Pass target progress for trajectory A
+            prediction_type="similarity"
+        )
         
-        # Add vision inputs for chosen if they exist
-        if "pixel_values_chosen" in inputs:
-            chosen_kwargs["pixel_values"] = inputs["pixel_values_chosen"]
-        if "pixel_values_videos_chosen" in inputs:
-            chosen_kwargs["pixel_values_videos"] = inputs["pixel_values_videos_chosen"]
-        if "image_grid_thw_chosen" in inputs:
-            chosen_kwargs["image_grid_thw"] = inputs["image_grid_thw_chosen"]
-        if "video_grid_thw_chosen" in inputs:
-            chosen_kwargs["video_grid_thw"] = inputs["video_grid_thw_chosen"]
+        # Forward pass for reference vs trajectory B
+        outputs_ref_B = model(
+            input_ids=inputs["input_ids_ref_B"],
+            attention_mask=inputs["attention_mask_ref_B"],
+            pixel_values=inputs.get("pixel_values_ref_B"),
+            pixel_values_videos=inputs.get("pixel_values_videos_ref_B"),
+            image_grid_thw=inputs.get("image_grid_thw_ref_B"),
+            video_grid_thw=inputs.get("video_grid_thw_ref_B"),
+            target_progress=inputs.get("target_progress_B"),  # Pass target progress for trajectory B
+            prediction_type="similarity"
+        )
         
-        # Forward pass for chosen sequence (A vs B)
-        outputs_chosen = model(**chosen_kwargs)
-        
-        # Prepare model kwargs for rejected sequence (A vs C)
-        rejected_kwargs = {
-            "input_ids": inputs["input_ids_rejected"],
-            "attention_mask": inputs["attention_mask_rejected"],
-            "prediction_type": "similarity"
-        }
-        
-        # Add vision inputs for rejected if they exist
-        if "pixel_values_rejected" in inputs:
-            rejected_kwargs["pixel_values"] = inputs["pixel_values_rejected"]
-        if "pixel_values_videos_rejected" in inputs:
-            rejected_kwargs["pixel_values_videos"] = inputs["pixel_values_videos_rejected"]
-        if "image_grid_thw_rejected" in inputs:
-            rejected_kwargs["image_grid_thw"] = inputs["image_grid_thw_rejected"]
-        if "video_grid_thw_rejected" in inputs:
-            rejected_kwargs["video_grid_thw"] = inputs["video_grid_thw_rejected"]
-        
-        # Forward pass for rejected sequence (A vs C)
-        outputs_rejected = model(**rejected_kwargs)
+        # Handle tuple returns (outputs, progress_logits)
+        model_outputs_ref_A, progress_logits_ref_A = outputs_ref_A
+        model_outputs_ref_B, progress_logits_ref_B = outputs_ref_B
         
         # Extract similarity scores
-        score_chosen = outputs_chosen.logits.squeeze(-1)
-        score_rejected = outputs_rejected.logits.squeeze(-1)
+        score_ref_A = model_outputs_ref_A.logits.squeeze(-1)
+        score_ref_B = model_outputs_ref_B.logits.squeeze(-1)
         
-        # Compute DPO loss
-        loss = -F.logsigmoid(self.beta * (score_chosen - score_rejected)).mean()
+        # Compute DPO-style loss: encourage trajectory A to be more similar to reference than trajectory B
+        # This assumes trajectory A is the "better" trajectory (more similar to reference)
+        similarity_loss = -F.logsigmoid(self.beta * (score_ref_A - score_ref_B)).mean()
+        
+        # Compute progress loss for both forward passes
+        progress_loss_A, progress_metadata_A = self._compute_progress_loss_from_outputs(
+            outputs_ref_A, 
+            inputs.get("target_progress_A")
+        )
+        progress_loss_B, progress_metadata_B = self._compute_progress_loss_from_outputs(
+            outputs_ref_B, 
+            inputs.get("target_progress_B")
+        )
+        
+        # Combine losses
+        total_loss = similarity_loss + progress_loss_A + progress_loss_B
         
         if return_outputs:
-            return loss, {"score_chosen": score_chosen, "score_rejected": score_rejected}
-        return loss
+            outputs_dict = {
+                "score_ref_A": score_ref_A, 
+                "score_ref_B": score_ref_B,
+                "similarity_loss": similarity_loss.item(),
+                "progress_loss_A": progress_loss_A.item(),
+                "progress_loss_B": progress_loss_B.item()
+            }
+            # Combine progress metadata with A and B suffixes
+            for key, value in progress_metadata_A.items():
+                outputs_dict[f"{key}_A"] = value
+            for key, value in progress_metadata_B.items():
+                outputs_dict[f"{key}_B"] = value
+            return total_loss, outputs_dict
+        return total_loss
 
     def prediction_step(
         self,
@@ -381,23 +398,29 @@ class RFMTrainer(Trainer):
             
             if prediction_type == "progress":
                 # For progress prediction, return predicted vs target progress
-                predicted_progress = outputs["predicted_progress"]
-                target_progress = outputs["target_progress"]
+                # Handle tuple return from model
+                model_outputs, progress_logits = outputs
+                predicted_progress = progress_logits.squeeze(-1) if progress_logits is not None else torch.zeros(1)
+                target_progress = outputs.get("target_progress", torch.zeros(1))
                 logits = torch.stack([predicted_progress, target_progress], dim=-1)
                 labels = torch.zeros(logits.shape[0], dtype=torch.long, device=logits.device)
                 
             elif prediction_type == "preference":
                 # For preference prediction, return preference scores
-                score_A = outputs["score_A"]
-                score_B = outputs["score_B"]
-                logits = torch.stack([score_A, score_B], dim=-1)
-                labels = outputs["preference_labels"].long()
+                # Handle tuple return from model
+                model_outputs, progress_logits = outputs
+                preference_scores = model_outputs.get("preference_scores", torch.zeros(1))
+                # Create dummy second column for compatibility
+                logits = torch.stack([preference_scores, torch.zeros_like(preference_scores)], dim=-1)
+                labels = outputs.get("preference_labels", torch.zeros(1)).long()
                 
             else:  # similarity
-                # For similarity prediction, return chosen vs rejected scores
-                score_chosen = outputs["score_chosen"]
-                score_rejected = outputs["score_rejected"]
-                logits = torch.stack([score_chosen, score_rejected], dim=-1)
+                # For similarity prediction, return reference vs A vs B scores
+                # Handle tuple return from model
+                model_outputs, progress_logits = outputs
+                score_ref_A = model_outputs.get("score_ref_A", torch.zeros(1))
+                score_ref_B = model_outputs.get("score_ref_B", torch.zeros(1))
+                logits = torch.stack([score_ref_A, score_ref_B], dim=-1)
                 # Create dummy labels for similarity (no ground truth labels)
                 labels = torch.zeros(logits.shape[0], dtype=torch.long, device=logits.device)
             
@@ -440,8 +463,9 @@ def compute_metrics(eval_prediction):
         else:
             preference_accuracy = None
         
-        # Similarity prediction metrics (score_1 = chosen, score_2 = rejected)
-        similarity_accuracy = (score_1 > score_2).astype(float).mean()
+        # Similarity prediction metrics (score_1 = ref_A, score_2 = ref_B)
+        # For similarity, we compare how similar trajectory A vs B are to the reference
+        similarity_accuracy = (score_1 > score_2).astype(float).mean()  # A more similar than B
         similarity_diff = score_1 - score_2
         
         metrics = {
@@ -457,8 +481,8 @@ def compute_metrics(eval_prediction):
             # Similarity metrics
             "similarity_accuracy": similarity_accuracy,
             "similarity_diff": similarity_diff.mean(),
-            "avg_score_chosen": score_1.mean(),
-            "avg_score_rejected": score_2.mean(),
+            "avg_score_ref_A": score_1.mean(),
+            "avg_score_ref_B": score_2.mean(),
         }
         
         print(f"DEBUG: computed metrics: {metrics}")
@@ -584,8 +608,8 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
     # Add FSDP configuration only if enabled
     if cfg.training.use_fsdp:
         base_args.update({
-            "fsdp": cfg.training.fsdp,
-            "fsdp_config": cfg.training.fsdp_config,
+        "fsdp": cfg.training.fsdp,
+        "fsdp_config": cfg.training.fsdp_config,
         })
     
     # Add remaining arguments

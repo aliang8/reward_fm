@@ -158,11 +158,13 @@ class RFMTrainer(Trainer):
         self.compute_metrics = compute_metrics
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-        """Compute loss for mixed batches with different prediction types."""
-        batch_size = inputs["input_ids"].shape[0] if "input_ids" in inputs else 1
-        prediction_types = inputs.get("prediction_type", ["similarity"])
-        if not isinstance(prediction_types, list):
-            prediction_types = [prediction_types] * batch_size
+        """Compute loss for separate preference and similarity batches."""
+        
+        # Extract the separate batches
+        preference_inputs = inputs.get("preference_inputs", {})
+        similarity_inputs = inputs.get("similarity_inputs", {})
+        num_preferences = inputs.get("num_preferences", 0)
+        num_similarities = inputs.get("num_similarities", 0)
         
         # Initialize loss components and metadata
         total_loss = 0.0
@@ -170,66 +172,42 @@ class RFMTrainer(Trainer):
             "preference_loss": 0.0, 
             "similarity_loss": 0.0,
             "progress_loss": 0.0,
-            "preference_count": 0,
-            "similarity_count": 0,
+            "preference_count": num_preferences,
+            "similarity_count": num_similarities,
             "progress_count": 0
         }
         
-        # Group samples by prediction type
-        preference_indices = [i for i, pt in enumerate(prediction_types) if pt == "preference"]
-        similarity_indices = [i for i, pt in enumerate(prediction_types) if pt == "similarity"]
-        
-        import ipdb; ipdb.set_trace()
-        # Compute preference loss for preference samples (takes both videos A and B)
-        if preference_indices:
-            preference_inputs = self._extract_batch_subset(inputs, preference_indices)
+        # Compute preference loss if we have preference samples
+        if num_preferences > 0 and preference_inputs:
             preference_loss, preference_outputs = self._compute_preference_loss(model, preference_inputs, return_outputs=True)
-            total_loss += preference_loss * len(preference_indices)
+            total_loss += preference_loss * num_preferences
             loss_metadata["preference_loss"] = preference_outputs.get("preference_loss", 0.0)
-            loss_metadata["progress_loss"] += preference_outputs.get("progress_loss", 0.0) * len(preference_indices)
-            loss_metadata["preference_count"] = len(preference_indices)
-            loss_metadata["progress_count"] += len(preference_indices)
+            loss_metadata["progress_loss"] += preference_outputs.get("progress_loss", 0.0) * num_preferences
+            loss_metadata["progress_count"] += num_preferences
         
-        # Compute similarity loss for similarity samples
-        if similarity_indices:
-            similarity_inputs = self._extract_batch_subset(inputs, similarity_indices)
+        # Compute similarity loss if we have similarity samples
+        if num_similarities > 0 and similarity_inputs:
             similarity_loss, similarity_outputs = self._compute_similarity_loss(model, similarity_inputs, return_outputs=True)
-            total_loss += similarity_loss * len(similarity_indices)
+            total_loss += similarity_loss * num_similarities
             loss_metadata["similarity_loss"] = similarity_outputs.get("similarity_loss", 0.0)
-            loss_metadata["progress_loss"] += (similarity_outputs.get("progress_loss_A", 0.0) + similarity_outputs.get("progress_loss_B", 0.0)) * len(similarity_indices)
-            loss_metadata["similarity_count"] = len(similarity_indices)
-            loss_metadata["progress_count"] += len(similarity_indices) * 2  # Both A and B for similarity
+            loss_metadata["progress_loss"] += (similarity_outputs.get("progress_loss_A", 0.0) + similarity_outputs.get("progress_loss_B", 0.0)) * num_similarities
+            loss_metadata["progress_count"] += num_similarities * 2  # Both A and B for similarity
         
         # Normalize by total batch size
-        total_loss = total_loss / batch_size
+        total_batch_size = num_preferences + num_similarities
+        if total_batch_size > 0:
+            total_loss = total_loss / total_batch_size
         
         if return_outputs:
             # Combine outputs from all loss functions
             combined_outputs = {
                 "loss_metadata": loss_metadata,
                 "total_loss": total_loss,
-                "batch_size": batch_size
+                "batch_size": total_batch_size
             }
             return total_loss, combined_outputs
         
         return total_loss
-
-    def _extract_batch_subset(self, inputs, indices):
-        """Extract a subset of the batch for specific indices."""
-        subset_inputs = {}
-        
-        for key, value in inputs.items():
-            if isinstance(value, torch.Tensor) and len(value.shape) > 0:
-                # For tensors, index along the first dimension
-                subset_inputs[key] = value[indices]
-            elif isinstance(value, list) and len(value) > 0:
-                # For lists, extract specific indices
-                subset_inputs[key] = [value[i] for i in indices]
-            else:
-                # For scalars or other types, keep as is
-                subset_inputs[key] = value
-        
-        return subset_inputs
 
     def _compute_progress_loss_from_outputs(self, outputs, target_progress_A, target_progress_B=None):
         """Helper function to compute progress loss from model outputs."""
@@ -265,6 +243,8 @@ class RFMTrainer(Trainer):
         """Compute preference prediction loss using Bradley-Terry model."""
         # Single forward pass with both trajectories concatenated
         # The model should handle the preference prediction at the end
+
+        import ipdb; ipdb.set_trace()
         outputs = model(
             input_ids=inputs["input_ids"],
             attention_mask=inputs["attention_mask"],
@@ -272,6 +252,7 @@ class RFMTrainer(Trainer):
             pixel_values_videos=inputs.get("pixel_values_videos"),
             image_grid_thw=inputs.get("image_grid_thw"),
             video_grid_thw=inputs.get("video_grid_thw"),
+            second_per_grid_ts=inputs.get("second_per_grid_ts"),
             target_progress=inputs.get("target_progress_A"),  # Pass target progress for trajectory A
             prediction_type="preference"
         )
@@ -384,28 +365,23 @@ class RFMTrainer(Trainer):
         ignore_keys: Optional[list[str]] = None,
     ) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
-        Custom prediction step for RFM format that handles all three prediction types.
+        Custom prediction step for RFM format that handles separate preference and similarity batches.
         """
         model.eval()
         
         with torch.no_grad():
-            # Determine prediction type from inputs
-            prediction_type = inputs.get("prediction_type", "similarity")
+            # Extract the separate batches
+            preference_inputs = inputs.get("preference_inputs", {})
+            similarity_inputs = inputs.get("similarity_inputs", {})
+            num_preferences = inputs.get("num_preferences", 0)
+            num_similarities = inputs.get("num_similarities", 0)
             
             # Compute the loss using our custom compute_loss method
             loss, outputs = self.compute_loss(model, inputs, return_outputs=True)
             loss = loss.detach().mean()
             
-            if prediction_type == "progress":
-                # For progress prediction, return predicted vs target progress
-                # Handle tuple return from model
-                model_outputs, progress_logits = outputs
-                predicted_progress = progress_logits.squeeze(-1) if progress_logits is not None else torch.zeros(1)
-                target_progress = outputs.get("target_progress", torch.zeros(1))
-                logits = torch.stack([predicted_progress, target_progress], dim=-1)
-                labels = torch.zeros(logits.shape[0], dtype=torch.long, device=logits.device)
-                
-            elif prediction_type == "preference":
+            # Determine which type of prediction to return based on what's available
+            if num_preferences > 0:
                 # For preference prediction, return preference scores
                 # Handle tuple return from model
                 model_outputs, progress_logits = outputs
@@ -414,7 +390,7 @@ class RFMTrainer(Trainer):
                 logits = torch.stack([preference_scores, torch.zeros_like(preference_scores)], dim=-1)
                 labels = outputs.get("preference_labels", torch.zeros(1)).long()
                 
-            else:  # similarity
+            elif num_similarities > 0:
                 # For similarity prediction, return reference vs A vs B scores
                 # Handle tuple return from model
                 model_outputs, progress_logits = outputs
@@ -423,8 +399,13 @@ class RFMTrainer(Trainer):
                 logits = torch.stack([score_ref_A, score_ref_B], dim=-1)
                 # Create dummy labels for similarity (no ground truth labels)
                 labels = torch.zeros(logits.shape[0], dtype=torch.long, device=logits.device)
+                
+            else:
+                # No samples, return empty tensors
+                logits = torch.zeros(0, 2)
+                labels = torch.zeros(0, dtype=torch.long)
             
-            print(f"DEBUG: prediction_step ({prediction_type}) - loss: {loss.shape}, logits: {logits.shape}, labels: {labels.shape}")
+            print(f"DEBUG: prediction_step - loss: {loss.shape}, logits: {logits.shape}, labels: {labels.shape}")
             
         return (loss, logits, labels)
 

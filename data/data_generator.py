@@ -17,7 +17,7 @@ import shutil
 import os
 from pathlib import Path
 import torch
-from batch_collator import Batch, Sample, BatchCollator
+from data.batch_collator import Batch, Sample, BatchCollator
 
 class DataGenerator:
     """Data generator for producing batches of prediction data with controlled ratios."""
@@ -622,10 +622,6 @@ def test():
     batch = generator.generate_batch()
     print(f"Generated batch with {len(batch)} samples")
     
-    # Print sample types
-    for i, sample in enumerate(batch.samples):
-        print(f"Sample {i}: {sample.prediction_type}")
-    
     # Test the batch collator
     print("\nTesting batch collator...")
     processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct")
@@ -633,9 +629,15 @@ def test():
     
     processed_batch = batch_collator(batch.samples)
     for key, value in processed_batch.items():
-        if key != "prediction_type":
-            print(key, value.shape)
-    
+        print(key)
+        if key == "preference_inputs":
+            for key2, value2 in value.items():
+                if key2 != "prediction_type":
+                    print(key2, value2.shape)
+        elif key == "similarity_inputs":
+            for key2, value2 in value.items():
+                if key2 != "prediction_type":
+                    print(key2, value2.shape)
 
 
 if __name__ == "__main__":

@@ -185,12 +185,14 @@ class BatchCollator:
         
         image_inputs, video_inputs, video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
         
+        import ipdb; ipdb.set_trace()
+
         # Process through the processor in one batch
         batch_inputs = self.processor(
             text=texts,
             images=image_inputs,
             videos=video_inputs,
-            padding="max_length",
+            padding=True,
             truncation=True,
             max_length=self.max_length,
             return_tensors="pt",

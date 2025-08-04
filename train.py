@@ -8,10 +8,10 @@ import torch.nn.functional as F
 from datasets import Dataset
 from transformers import (
     AutoProcessor,
-    Qwen2_5_VLForConditionalGeneration,
+    Qwen2_5_VLModel,
     PreTrainedModel,
     Trainer,
-    TrainingArguments,
+    TrainingArguments,  
 )
 
 from PIL import Image
@@ -487,7 +487,7 @@ def setup_model_and_processor(cfg: ExperimentConfig):
         processor.tokenizer.pad_token = processor.tokenizer.eos_token
     
     # Create a fresh model instance
-    base_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(cfg.model.base_model_id)
+    base_model = Qwen2_5_VLModel.from_pretrained(cfg.model.base_model_id)
     
     # Add RFM special tokens if they don't exist
     special_tokens = ["<|split_token|>", "<|reward_token|>", "<|pref_token|>"]
@@ -508,7 +508,7 @@ def setup_model_and_processor(cfg: ExperimentConfig):
     )
     print(f"Loading base model state dict...")
     rfm_model.model.load_state_dict(base_model.state_dict())
-    
+    import ipdb; ipdb.set_trace()
     return processor, rfm_model
 
 

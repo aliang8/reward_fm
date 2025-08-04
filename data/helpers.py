@@ -11,6 +11,7 @@ from typing import List, Dict, Any
 from pathlib import Path
 import uuid
 from sentence_transformers import SentenceTransformer
+import cv2
 
 
 def save_frame_as_image(frame_data: np.ndarray, output_path: str) -> str:
@@ -26,6 +27,10 @@ def save_frame_as_image(frame_data: np.ndarray, output_path: str) -> str:
 
 def downsample_frames(frames: np.ndarray, max_frames: int = 32) -> np.ndarray:
     """Downsample frames to at most max_frames using linear interpolation."""
+    # If max_frames is -1, don't downsample
+    if max_frames == -1:
+        return frames
+    
     if len(frames) <= max_frames:
         return frames
     
@@ -34,7 +39,51 @@ def downsample_frames(frames: np.ndarray, max_frames: int = 32) -> np.ndarray:
     return frames[indices]
 
 
-def create_trajectory_sequence(frames: List[str], output_dir: str, sequence_name: str, max_frames: int = 32) -> List[str]:
+def create_trajectory_video(frames: np.ndarray, output_dir: str, sequence_name: str, max_frames: int = -1, fps: int = 10) -> bytes:
+    """Create a trajectory video from frames and return as bytes."""
+    
+    # Downsample frames
+    frames = downsample_frames(frames, max_frames)
+    
+    # Get video dimensions from first frame
+    if len(frames) == 0:
+        raise ValueError("No frames provided for video creation")
+    
+    height, width = frames[0].shape[:2]
+    
+    # Create temporary video file
+    temp_video_path = os.path.join(output_dir, f"temp_{sequence_name}.mp4")
+    
+    # Initialize video writer
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    video_writer = cv2.VideoWriter(temp_video_path, fourcc, fps, (width, height))
+    
+    # Write frames to video
+    for frame in frames:
+        # Ensure frame is in uint8 format
+        if frame.dtype != np.uint8:
+            frame = (frame * 255).astype(np.uint8)
+        
+        # Convert RGB to BGR for OpenCV
+        if len(frame.shape) == 3 and frame.shape[2] == 3:
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        
+        video_writer.write(frame)
+    
+    # Release video writer
+    video_writer.release()
+    
+    # Read video file as bytes
+    with open(temp_video_path, 'rb') as f:
+        video_bytes = f.read()
+    
+    # Clean up temporary file
+    os.remove(temp_video_path)
+    
+    return video_bytes
+
+
+def create_trajectory_sequence(frames: List[str], output_dir: str, sequence_name: str, max_frames: int = -1) -> List[str]:
     """Create a trajectory sequence from frames and save as images."""
     
     sequence_dir = os.path.join(output_dir, sequence_name)
@@ -62,13 +111,21 @@ def create_hf_trajectory(
     output_dir: str,
     sequence_name: str,
     lang_model: SentenceTransformer,
-    max_frames: int = 32,
-    dataset_name: str = ""
+    max_frames: int = -1,
+    dataset_name: str = "",
+    use_video: bool = True,
+    fps: int = 10
 ) -> Dict:
     """Create a HuggingFace dataset trajectory."""
     
-    # Create trajectory sequence
-    frame_paths = create_trajectory_sequence(traj_dict['frames'], output_dir, sequence_name, max_frames)
+    if use_video:
+        # Create trajectory video
+        video_bytes = create_trajectory_video(traj_dict['frames'], output_dir, sequence_name, max_frames, fps)
+        frames = [video_bytes]  # Store video bytes as single frame entry
+    else:
+        # Create trajectory sequence (original behavior)
+        frame_paths = create_trajectory_sequence(traj_dict['frames'], output_dir, sequence_name, max_frames)
+        frames = frame_paths
     
     # Generate unique ID
     unique_id = generate_unique_id()
@@ -85,7 +142,7 @@ def create_hf_trajectory(
         "task": task_description,
         "lang_vector": lang_vector,
         "data_source": dataset_name,
-        "frames": frame_paths,
+        "frames": frames,
         "optimal": traj_dict['optimal'],
         "is_robot": traj_dict['is_robot'],
     }

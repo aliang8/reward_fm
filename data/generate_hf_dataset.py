@@ -34,7 +34,9 @@ class OutputConfig:
     """Config for output settings"""
     output_dir: str = field(default="rfm_dataset", metadata={"help": "Output directory for the dataset"})
     max_trajectories: Optional[int] = field(default=None, metadata={"help": "Maximum number of trajectories to process (None for all)"})
-    max_frames: int = field(default=32, metadata={"help": "Maximum number of frames per trajectory"})
+    max_frames: int = field(default=-1, metadata={"help": "Maximum number of frames per trajectory (-1 for no downsampling)"})
+    use_video: bool = field(default=True, metadata={"help": "Use MP4 videos instead of individual frame images"})
+    fps: int = field(default=10, metadata={"help": "Frames per second for video creation"})
 
 
 @dataclass
@@ -58,7 +60,9 @@ def convert_dataset_to_hf_format(
     output_dir: str = "rfm_dataset",
     dataset_name: str = "",
     max_trajectories: int = None,
-    max_frames: int = 32,
+    max_frames: int = -1,
+    use_video: bool = True,
+    fps: int = 10,
     push_to_hub: bool = False,
     hub_repo_id: Optional[str] = None,
     hub_token: Optional[str] = None
@@ -99,7 +103,9 @@ def convert_dataset_to_hf_format(
             sequence_name=sequence_name,
             lang_model=lang_model,
             max_frames=max_frames,
-            dataset_name=dataset_name
+            dataset_name=dataset_name,
+            use_video=use_video,
+            fps=fps
         )
         
         all_entries.append(trajectory)
@@ -159,11 +165,13 @@ def main(cfg: GenerateConfig):
     # Convert dataset
     convert_dataset_to_hf_format(
         trajectories=trajectories,
-        create_hf_trajectory=partial(create_hf_trajectory, dataset_name=cfg.dataset.dataset_name),
+        create_hf_trajectory=partial(create_hf_trajectory, dataset_name=cfg.dataset.dataset_name, use_video=cfg.output.use_video, fps=cfg.output.fps),
         output_dir=cfg.output.output_dir,
         dataset_name=cfg.dataset.dataset_name,
         max_trajectories=cfg.output.max_trajectories,
         max_frames=cfg.output.max_frames,
+        use_video=cfg.output.use_video,
+        fps=cfg.output.fps,
         push_to_hub=cfg.hub.push_to_hub,
         hub_repo_id=cfg.hub.hub_repo_id,
         hub_token=cfg.hub.hub_token

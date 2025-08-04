@@ -67,7 +67,7 @@ def load_libero_dataset(base_path: str) -> Dict[str, List[Dict]]:
                         trajectory_info['actions'] = trajectory['actions'][:]
 
                     # Assume all LIBERO trajectories are successful
-                    trajectory_info['optimal'] = True
+                    trajectory_info['optimal'] = "optimal"
                     trajectory_info['is_robot'] = True
                     
                     # Parse the original file path to extract scene and task info

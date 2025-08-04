@@ -1,12 +1,14 @@
 # config.yaml
 dataset:
   dataset_path: LIBERO/libero/datasets/libero_90
-  dataset_name: libero  # This will be the dataset name / data source
+  dataset_name: libero_90  # This will be the dataset name / data source
 
 output:
   output_dir: rfm_dataset
   max_trajectories: -1
   max_frames: 32
+  use_video: true
+  fps: 10
 
 hub:
   push_to_hub: true

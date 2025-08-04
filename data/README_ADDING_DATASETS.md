@@ -12,7 +12,7 @@ Your dataset loader must produce trajectories in the following format:
 
 ```python
 {
-    'frames': List[str],               # List of file paths
+    'frames': List[Union[str, bytes]], # List of file paths (frame images) or video bytes (MP4 data)
     'actions': np.ndarray,             # Actions 
     'is_robot': bool,                  # Whether this is robot data (True) or human data (False)
     'task': str,                       # Human-readable task description
@@ -142,5 +142,7 @@ python data/generate_hf_dataset.py \
     --dataset.dataset_name=DROID \
     --output.output_dir=rfm_dataset \
     --output.max_trajectories=1000 \
-    --output.max_frames=32
+    --output.max_frames=-1 \
+    --output.use_video=true \
+    --output.fps=10
 ```

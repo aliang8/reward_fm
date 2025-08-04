@@ -34,35 +34,7 @@ class Trajectory:
             "is_robot": self.is_robot,
             "metadata": self.metadata,
         }
-
-
-@dataclass
-class DatasetMetadata:
-    """Metadata for the entire dataset."""
-    
-    dataset_name: str
-    num_entries: int
-    max_trajectories: Optional[int]
-    max_frames: int
-    default_ranking: int
-    data_source: str
-    created_at: str
-    additional_info: Dict[str, Any] = field(default_factory=dict)
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary format for JSON serialization."""
-        return {
-            "dataset_name": self.dataset_name,
-            "num_entries": self.num_entries,
-            "max_trajectories": self.max_trajectories,
-            "max_frames": self.max_frames,
-            "default_ranking": self.default_ranking,
-            "data_source": self.data_source,
-            "created_at": self.created_at,
-            "additional_info": self.additional_info,
-        }
-
-
+        
 @dataclass
 class Preference:
     """Preference data structure for trajectory comparisons."""

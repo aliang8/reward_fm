@@ -54,30 +54,20 @@ def load_libero_dataset(base_path: str) -> Dict[str, List[Dict]]:
                 if isinstance(trajectory, h5py.Group):
                     # Extract trajectory data
                     trajectory_info = {
-                        'demo_id': trajectory_key,
-                        'task_name': task_name,
-                        'file_path': str(file_path),
-                        'trajectory_length': None,
                         'frames': [],
-                        'actions': [],
-                        'rewards': []
+                        'actions': []
                     }
                     
                     # Get trajectory length from observations
                     if 'obs' in trajectory and 'agentview_rgb' in trajectory['obs']:
-                        trajectory_info['trajectory_length'] = trajectory['obs']['agentview_rgb'].shape[0]
                         trajectory_info['frames'] = trajectory['obs']['agentview_rgb'][:]  # RGB frames
                     
                     # Get actions if available
                     if 'actions' in trajectory:
                         trajectory_info['actions'] = trajectory['actions'][:]
-                    
-                    # Get rewards if available
-                    if 'rewards' in trajectory:
-                        trajectory_info['rewards'] = trajectory['rewards'][:]
-                    
+
                     # Assume all LIBERO trajectories are successful
-                    trajectory_info['success'] = True
+                    trajectory_info['optimal'] = True
                     trajectory_info['is_robot'] = True
                     
                     # Parse the original file path to extract scene and task info
@@ -105,23 +95,11 @@ def load_libero_dataset(base_path: str) -> Dict[str, List[Dict]]:
                     
                     # Convert task parts to readable string
                     task_string = " ".join(task_parts).replace('_', ' ')
+                    task_string = task_string.replace("demo", "")
                     
-                    # Create metadata dictionary
-                    metadata = {
-                        "original_file": file_name,
-                        "scene": scene_part,
-                        "demo_id": trajectory_key,
-                        "trajectory_info": f"trajectory_{trajectory_key}",
-                        "trajectory_length": trajectory_info.get('trajectory_length'),
-                        "file_path": str(file_path)
-                    }
                     
                     # Add parsed information to trajectory
-                    trajectory_info['task'] = task_string
-                    trajectory_info['original_file'] = file_name
-                    trajectory_info['scene'] = scene_part
-                    trajectory_info['metadata'] = metadata
-                    
+                    trajectory_info['task'] = task_string.strip()                    
                     trajectories.append(trajectory_info)
             
             task_data[task_name] = trajectories

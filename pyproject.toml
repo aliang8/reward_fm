@@ -1,0 +1,104 @@
+# ==================================================================================
+# Project Metadata
+# Defines core information about the package.
+# ==================================================================================
+[project]
+name = "reward-fm"
+version = "0.0.1" # You can update this as you release new versions
+description = "PyTorch implementation of a Reward Foundation Model (RFM)"
+readme = "README.md"
+requires-python = ">=3.10" # Based on your GitHub repo's setup
+license = { file = "LICENSE" }
+authors = [
+    { name = "Anthony Liang", email = "aliang80@usc.edu" }
+]
+
+# ==================================================================================
+# Dependencies
+# This section lists the direct dependencies of your project.
+# It is best practice to list only the packages your code directly imports,
+# not every package from your environment. Tools like 'uv' or 'pip' will
+# resolve and install the dependencies of these packages automatically.
+# ==================================================================================
+dependencies = [
+    "accelerate>=1.9.0",
+    "bitsandbytes>=0.46.1",
+    "datasets>=3.6.0",
+    "einops>=0.8.0",
+    "evaluate>=0.4.3",
+    "huggingface-hub>=0.33.0",
+    "numpy<2.0.0", # Pinned to avoid breaking changes in numpy 2.0
+    "peft>=0.16.0",
+    "safetensors>=0.6.0",
+    "torch>=2.3.0", # A more recent version of torch is generally recommended
+    "transformers==4.53.2", # Pinning to a specific version you use
+    "tqdm>=4.67.1",
+    "wandb>=0.20.1",
+    "pyyaml>=6.0.0",
+    "rich>=14.0.0",
+]
+
+[project.urls]
+Repository = "https://github.com/aliang8/reward_fm"
+
+# ==================================================================================
+# Optional Dependencies
+# These are groups of dependencies for specific purposes, like development or
+# running optional features. Install with `uv pip install .[dev]`
+# ==================================================================================
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.8.0",
+    "pre-commit>=4.0.0",
+    "ipykernel",
+    "ipywidgets",
+]
+
+# ==================================================================================
+# Build System
+# Specifies how your project should be packaged. Hatchling is a modern,
+# fast, and recommended build backend.
+# ==================================================================================
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+
+# ==================================================================================
+# Tool Configuration
+# Settings for various development tools like 'uv', 'ruff' (linter), etc.
+# ==================================================================================
+
+# Configuration for the 'uv' package manager
+[tool.uv]
+# This section could be used for advanced features like overriding dependencies
+# from your environment if needed, similar to the 'openpi' example.
+# override-dependencies = ["ml-dtypes==0.4.1"]
+
+# Tool configuration for the 'ruff' linter and formatter
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+    "RUF",# Ruff-specific rules
+]
+ignore = [
+    "T201", # Allows `print` statements
+]
+
+[tool.ruff.lint.isort]
+force-single-line = true
+
+# Tool configuration for 'pytest'
+[tool.pytest.ini_options]
+testpaths = ["tests"] # Assuming your tests are in a 'tests' directory

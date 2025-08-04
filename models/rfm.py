@@ -7,7 +7,7 @@ Contains the RFMModel class with three prediction heads for different objectives
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import PreTrainedModel, Qwen2_5_VLForConditionalGeneration
+from transformers import PreTrainedModel, Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLModel
 from transformers.modeling_outputs import SequenceClassifierOutputWithPast
 from typing import Optional, Dict, Any
 
@@ -15,13 +15,13 @@ from typing import Optional, Dict, Any
 class RFMModel(PreTrainedModel):
     """Reward Foundation Model with three prediction heads for different objectives."""
     
-    config_class = Qwen2_5_VLForConditionalGeneration.config_class
+    config_class = Qwen2_5_VLModel.config_class
 
     def __init__(self, config, tokenizer):
         super().__init__(config)
         # The RFMModel now owns and creates its submodules.
         # This is the standard pattern for PreTrainedModel.
-        self.model = Qwen2_5_VLForConditionalGeneration(config)
+        self.model = Qwen2_5_VLModel(config)
         
         # Three prediction heads for different objectives
         self.progress_head = nn.Linear(config.hidden_size, 1, bias=False)  # Progress prediction (0-1)
@@ -54,51 +54,21 @@ class RFMModel(PreTrainedModel):
         video_grid_thw=None,
         prediction_type=None,  # "preference" or "similarity"
         target_progress=None,  # For progress prediction on trajectory A
+        second_per_grid_ts=None,
         **kwargs,
-    ):
-        # Handle case where input_ids and attention_mask might be in kwargs
-        if input_ids is None and "input_ids" in kwargs:
-            input_ids = kwargs.pop("input_ids")
-        if attention_mask is None and "attention_mask" in kwargs:
-            attention_mask = kwargs.pop("attention_mask")
-        
-        # Handle nested argument structures (common in evaluation)
-        if input_ids is None and "input_ids_chosen" in kwargs:
-            input_ids = kwargs.pop("input_ids_chosen")
-        if attention_mask is None and "attention_mask_chosen" in kwargs:
-            attention_mask = kwargs.pop("attention_mask_chosen")
-        
-        # Handle case where arguments might be in a nested dict
-        if input_ids is None and "inputs" in kwargs:
-            inputs = kwargs.pop("inputs")
-            if isinstance(inputs, dict):
-                input_ids = inputs.get("input_ids")
-                attention_mask = inputs.get("attention_mask")
-        
-        # Ensure required arguments are provided
-        if input_ids is None:
-            raise ValueError("input_ids is required")
-        if attention_mask is None:
-            raise ValueError("attention_mask is required")
-        
-        # Prepare model kwargs with all available inputs
+    ):   
         model_kwargs = {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
             "output_hidden_states": True,
+            "pixel_values": pixel_values,
+            "pixel_values_videos": pixel_values_videos,
+            "image_grid_thw": image_grid_thw,
+            "video_grid_thw": video_grid_thw,
+            "second_per_grid_ts": second_per_grid_ts,
             **kwargs,
         }
-        
-        # Add vision inputs based on what's available
-        if pixel_values is not None:
-            model_kwargs["pixel_values"] = pixel_values
-        if pixel_values_videos is not None:
-            model_kwargs["pixel_values_videos"] = pixel_values_videos
-        if image_grid_thw is not None:
-            model_kwargs["image_grid_thw"] = image_grid_thw
-        if video_grid_thw is not None:
-            model_kwargs["video_grid_thw"] = video_grid_thw
-        
+
         # Forward pass through the model
         outputs = self.model(**model_kwargs)
         last_hidden_state = outputs.hidden_states[-1]

@@ -34,7 +34,7 @@ def downsample_frames(frames: np.ndarray, max_frames: int = 32) -> np.ndarray:
     return frames[indices]
 
 
-def create_trajectory_sequence(frames: np.ndarray, output_dir: str, sequence_name: str, max_frames: int = 32) -> List[str]:
+def create_trajectory_sequence(frames: List[str], output_dir: str, sequence_name: str, max_frames: int = 32) -> List[str]:
     """Create a trajectory sequence from frames and save as images."""
     
     sequence_dir = os.path.join(output_dir, sequence_name)
@@ -58,39 +58,27 @@ def generate_unique_id() -> str:
 
 
 def create_hf_trajectory(
-    demo: Dict,
+    traj_dict: Dict,
     output_dir: str,
     sequence_name: str,
-    ranking: int,
     lang_model: SentenceTransformer,
     max_frames: int = 32,
-    dataset_name: str = "UNKNOWN"
+    dataset_name: str = ""
 ) -> Dict:
     """Create a HuggingFace dataset trajectory."""
     
     # Create trajectory sequence
-    frame_paths = create_trajectory_sequence(demo['frames'], output_dir, sequence_name, max_frames)
+    frame_paths = create_trajectory_sequence(traj_dict['frames'], output_dir, sequence_name, max_frames)
     
     # Generate unique ID
     unique_id = generate_unique_id()
     
     # Get task description
-    task_description = demo.get('task', demo.get('task_name', 'Unknown task'))
+    task_description = traj_dict["task"]
     
     # Generate language embedding
     lang_vector = lang_model.encode(task_description)
-    
-    # Create metadata dictionary
-    metadata = {
-        "original_file": demo.get('original_file', 'unknown'),
-        "scene": demo.get('scene', 'unknown'),
-        "demo_id": demo.get('demo_id', 'unknown'),
-        "trajectory_info": demo.get('trajectory_info', sequence_name),
-        "trajectory_length": demo.get('trajectory_length', len(demo['frames'])),
-        "file_path": demo.get('file_path', 'unknown'),
-        "dataset_specific": demo.get('metadata', {})  # Any dataset-specific metadata
-    }
-    
+
     # Create dataset trajectory
     trajectory = {
         "id": unique_id,
@@ -98,10 +86,8 @@ def create_hf_trajectory(
         "lang_vector": lang_vector,
         "data_source": dataset_name,
         "frames": frame_paths,
-        "optimal": demo.get('success', demo.get('optimal', True)),
-        "ranking": ranking,
-        "is_robot": demo.get('is_robot', True),
-        "metadata": metadata,
+        "optimal": traj_dict['optimal'],
+        "is_robot": traj_dict['is_robot'],
     }
     
     return trajectory

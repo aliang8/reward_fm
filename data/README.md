@@ -1,10 +1,44 @@
 # Adding New Datasets to RFM
 
-This guide explains how to add new datasets (like DROID, Bridge, or any custom dataset) to the Reward Foundation Model (RFM) training pipeline.
+This guide explains how to add new datasets to the Reward Foundation Model (RFM) training pipeline.
 
-## Overview
+## Supported Datasets
+
+### Ready-to-Use Datasets
+- **LIBERO**: Built-in HDF5 support → [📖 LIBERO Guide](dataset_guides/LIBERO.md)
+- **AgiBotWorld**: ✅ Native streaming support → [📖 AgiBotWorld Guide](dataset_guides/AgiBotWorld.md)
+
+### Custom Datasets
+- **Add Your Own**: DROID, Bridge, or any custom dataset → [📖 Custom Dataset Guide](dataset_guides/CustomDataset.md)
+
+## Quick Start
+
+### Use Existing Datasets
+```bash
+# AgiBotWorld (streaming)
+uv run python data/generate_hf_dataset.py --config_path=configs/data_gen_configs/agibot_world.yaml
+
+# LIBERO (local files)
+uv run python data/generate_hf_dataset.py --config_path=configs/data_gen.yaml
+```
+
+### Add Custom Dataset
+1. **Read the guide**: [Custom Dataset Guide](dataset_guides/CustomDataset.md)
+2. **Create loader**: `data/{dataset_name}_loader.py`
+3. **Add config**: `configs/data_gen_configs/{dataset_name}.yaml`
+4. **Test**: Run conversion and training
+
+## Architecture Overview
 
 Each dataset type has its own loader module. The main converter (`generate_hf_dataset.py`) is dataset-agnostic and works with any dataset-specific loader that follows the established interface.
+
+### Video Processing Features
+
+Modern dataset loaders (like AgiBotWorld) include built-in video processing:
+- **📹 Automatic Resizing**: Videos resized to consistent dimensions (e.g., 256x256)
+- **⏱️ Frame Interpolation**: Downsamples to configurable frame count (e.g., 32 frames)
+- **💾 Size Optimization**: 99%+ reduction in file size for efficient training
+- **🎯 Quality Preservation**: Maintains visual quality while standardizing format
 
 ## Dataset Structure Requirements
 
@@ -12,13 +46,15 @@ Your dataset loader must produce trajectories in the following format:
 
 ```python
 {
-    'frames': List[Union[str, bytes]], # List of file paths (frame images) or video bytes (MP4 data)
+    'frames': Union[List[str], bytes], # Video file paths OR processed video bytes (recommended)
     'actions': np.ndarray,             # Actions 
     'is_robot': bool,                  # Whether this is robot data (True) or human data (False)
     'task': str,                       # Human-readable task description
     'optimal': str                     # Whether this trajectory is optimal
 }
 ```
+
+**Note**: Modern loaders should process videos during loading (resize, downsample frames) and store as bytes for optimal performance.
 
 ## Step-by-Step Guide
 
@@ -135,14 +171,34 @@ print(f"Sample task: {trajectories[0].get('task', 'No task found')}")
 Use the main converter with your new dataset:
 
 ```bash
-python data/generate_hf_dataset.py \
+uv run python data/generate_hf_dataset.py \
     --config_path=configs/data_gen.yaml \
-    --dataset.dataset_type=droid \
-    --dataset.dataset_path=/path/to/your/droid/dataset \
-    --dataset.dataset_name=DROID \
-    --output.output_dir=rfm_dataset \
+    --dataset.dataset_name=your_dataset \
+    --dataset.dataset_path=/path/to/your/dataset \
+    --output.output_dir=your_dataset_rfm \
     --output.max_trajectories=1000 \
-    --output.max_frames=-1 \
     --output.use_video=true \
     --output.fps=10
 ```
+
+### Visualize the Dataset
+
+```bash
+uv run python visualize_dataset.py --dataset_path=your_dataset_rfm/your_dataset_name
+```
+
+## Dataset-Specific Guides
+
+📁 **[Browse All Dataset Guides](dataset_guides/)** - Complete overview with quick reference table
+
+### Individual Guides
+- **[📖 AgiBotWorld Guide](dataset_guides/AgiBotWorld.md)** - Streaming support, webdataset format
+- **[📖 LIBERO Guide](dataset_guides/LIBERO.md)** - HDF5 files, simulation data  
+- **[📖 Custom Dataset Guide](dataset_guides/CustomDataset.md)** - Add DROID, Bridge, or your own dataset
+
+Each guide includes:
+- ✅ Prerequisites and setup
+- ✅ Configuration examples
+- ✅ Troubleshooting tips
+- ✅ Performance notes
+- ✅ Integration with RFM training

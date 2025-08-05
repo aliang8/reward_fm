@@ -34,10 +34,11 @@ class OutputConfig:
     """Config for output settings"""
     output_dir: str = field(default="rfm_dataset", metadata={"help": "Output directory for the dataset"})
     max_trajectories: Optional[int] = field(default=None, metadata={"help": "Maximum number of trajectories to process (None for all)"})
-    max_frames: int = field(default=-1, metadata={"help": "Maximum number of frames per trajectory (-1 for no downsampling)"})
+    max_frames: int = field(default=64, metadata={"help": "Maximum number of frames per trajectory (-1 for no downsampling)"})
     use_video: bool = field(default=True, metadata={"help": "Use MP4 videos instead of individual frame images"})
+    shortest_edge_size: int = field(default=240, metadata={"help": "Shortest edge size for video resizing"})
+    center_crop: Optional[bool] = field(default=False, metadata={"help": "Center crop the video to the target size. Defaults to False, which means no cropping."})
     fps: int = field(default=10, metadata={"help": "Frames per second for video creation"})
-
 
 @dataclass
 class HubConfig:
@@ -56,7 +57,7 @@ class GenerateConfig:
 
 def convert_dataset_to_hf_format(
     trajectories: List[Dict],
-    create_hf_trajectory: Callable[[Dict, str, str, int, Any, int, str], Trajectory],
+    hf_creator_fn: Callable[[Dict, str, str, int, Any, int, str], Trajectory],
     output_dir: str = "rfm_dataset",
     dataset_name: str = "",
     max_trajectories: int = None,
@@ -97,7 +98,7 @@ def convert_dataset_to_hf_format(
         os.makedirs(trajectory_dir, exist_ok=True)
         sequence_name = f"trajectory_{trajectory_idx:04d}"
         
-        trajectory = create_hf_trajectory(
+        trajectory = hf_creator_fn(
             traj_dict=trajectory,
             output_dir=trajectory_dir,
             sequence_name=sequence_name,
@@ -159,13 +160,22 @@ def main(cfg: GenerateConfig):
         # Load the trajectories using the loader
         task_data = load_libero_dataset(cfg.dataset.dataset_path)
         trajectories = flatten_task_data(task_data)
+    elif "agibotworld" in cfg.dataset.dataset_name.lower():
+        from agibotworld_loader import load_agibotworld_dataset
+        # Load the trajectories using the loader with max_trajectories limit
+        print(f"Loading AgiBotWorld dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_agibotworld_dataset(
+            cfg.dataset.dataset_path, 
+            cfg.output.max_trajectories,
+        )
+        trajectories = flatten_task_data(task_data)
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")
     
     # Convert dataset
     convert_dataset_to_hf_format(
         trajectories=trajectories,
-        create_hf_trajectory=partial(create_hf_trajectory, dataset_name=cfg.dataset.dataset_name, use_video=cfg.output.use_video, fps=cfg.output.fps),
+        hf_creator_fn=partial(create_hf_trajectory, dataset_name=cfg.dataset.dataset_name, use_video=cfg.output.use_video, fps=cfg.output.fps, shortest_edge_size=cfg.output.shortest_edge_size, center_crop=cfg.output.center_crop),
         output_dir=cfg.output.output_dir,
         dataset_name=cfg.dataset.dataset_name,
         max_trajectories=cfg.output.max_trajectories,

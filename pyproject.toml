@@ -8,7 +8,6 @@ version = "0.0.1" # You can update this as you release new versions
 description = "PyTorch implementation of a Reward Foundation Model (RFM)"
 readme = "README.md"
 requires-python = ">=3.10" # Based on your GitHub repo's setup
-license = { file = "LICENSE" }
 authors = [
     { name = "Anthony Liang", email = "aliang80@usc.edu" }
 ]
@@ -29,7 +28,6 @@ dependencies = [
     "huggingface-hub>=0.33.0",
     "numpy<2.0.0", # Pinned to avoid breaking changes in numpy 2.0
     "peft>=0.16.0",
-    "safetensors>=0.6.0",
     "torch>=2.3.0", # A more recent version of torch is generally recommended
     "transformers==4.53.2", # Pinning to a specific version you use
     "tqdm>=4.67.1",
@@ -54,15 +52,6 @@ dev = [
     "ipykernel",
     "ipywidgets",
 ]
-
-# ==================================================================================
-# Build System
-# Specifies how your project should be packaged. Hatchling is a modern,
-# fast, and recommended build backend.
-# ==================================================================================
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
 
 
 # ==================================================================================

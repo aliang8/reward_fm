@@ -33,24 +33,17 @@ This project uses `uv` for fast and reliable dependency management. We recommend
     (See the [official uv installation guide](https://github.com/astral-sh/uv#installation) for other systems).
 
 3.  **Create and Activate a Virtual Environment:**
-    `uv` has a built-in environment manager that is much faster than `venv`.
-    ```bash
-    # Create a virtual environment in the .venv directory
-    uv venv
-
-    # Activate the environment
-    # On macOS and Linux:
-    source .venv/bin/activate
-    # On Windows:
-    # .venv\Scripts\activate
+    Install with:
+    ```
+    uv sync
     ```
 
-4.  **Install Dependencies:**
-    This project includes a `requirements.lock.txt` file for fully reproducible installations. Use the `uv pip sync` command to install the exact versions of all required packages.
+    You can separately activate your environment with
+    ```
+    source .venv/bin/activate
+    ```
 
-    ```bash
-    # Sync the virtual environment with the locked dependencies
-    uv pip sync -r requirements.lock.txt
+    or you can prepend `uv run python ...` before all your python scripts
 
 ## Dataset Generation
 ```bash

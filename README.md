@@ -33,16 +33,14 @@ This project uses `uv` for fast and reliable dependency management. We recommend
     (See the [official uv installation guide](https://github.com/astral-sh/uv#installation) for other systems).
 
 3.  **Create and Activate a Virtual Environment:**
-    `uv` has a built-in environment manager that is much faster than `venv`.
-    ```bash
-    # Create a virtual environment in the .venv directory
-    uv venv
+    Install with:
+    ```
+    uv sync
+    ```
 
-    # Activate the environment
-    # On macOS and Linux:
+    You can separately activate your environment with
+    ```
     source .venv/bin/activate
-    # On Windows:
-    # .venv\Scripts\activate
     ```
 
 4.  **Install Dependencies:**

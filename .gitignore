@@ -14,3 +14,4 @@ __pycache__/*
 datasets/*
 visualizations/*
 rfm_dataset/*
+.DS_Store

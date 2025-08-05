@@ -7,7 +7,7 @@ Contains utility functions for processing frames, saving images, and managing da
 import os
 import numpy as np
 from PIL import Image
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from pathlib import Path
 import uuid
 from sentence_transformers import SentenceTransformer
@@ -36,11 +36,18 @@ def downsample_frames(frames: np.ndarray, max_frames: int = 32) -> np.ndarray:
     
     # Use linear interpolation to downsample
     indices = np.linspace(0, len(frames) - 1, max_frames, dtype=int)
-    return frames[indices]
+
+    # keep unique frames
+    unique_indices = np.unique(indices)
+    return frames[unique_indices]
 
 
-def create_trajectory_video(frames: np.ndarray, output_dir: str, sequence_name: str, max_frames: int = -1, fps: int = 10) -> bytes:
+def create_trajectory_video(frames, output_dir: str, sequence_name: str, max_frames: int = -1, fps: int = 10, shortest_edge_size: int = 240, center_crop: bool = False) -> bytes:
     """Create a trajectory video from frames and return as bytes."""
+    
+    # Handle numpy array of frames (traditional case)
+    if not isinstance(frames, np.ndarray):
+        frames = np.array(frames)
     
     # Downsample frames
     frames = downsample_frames(frames, max_frames)
@@ -50,13 +57,32 @@ def create_trajectory_video(frames: np.ndarray, output_dir: str, sequence_name: 
         raise ValueError("No frames provided for video creation")
     
     height, width = frames[0].shape[:2]
-    
+
+    # First, optionally center crop to min(height, width)
+    if center_crop:
+        # Calculate crop coordinates for center crop
+        crop_h = min(height, width)
+        y_start = max((height - crop_h) // 2, 0)
+        x_start = max((width - crop_h) // 2, 0)
+        frames = frames[y_start:y_start+crop_h, x_start:x_start+crop_h]
+        height, width = frames[0].shape[:2]
+
+    # Figure out target dimensions for all frames
+    if height != width:
+        scale_factor = shortest_edge_size / min(height, width)
+        target_height = int(height * scale_factor)
+        target_width = int(width * scale_factor)
+    else:
+        target_height = height
+        target_width = width
+
     # Create temporary video file
     temp_video_path = os.path.join(output_dir, f"temp_{sequence_name}.mp4")
     
-    # Initialize video writer
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    video_writer = cv2.VideoWriter(temp_video_path, fourcc, fps, (width, height))
+    # Initialize video writer with H.264 codec for better compatibility
+    fourcc = cv2.VideoWriter_fourcc(*'avc1')  # H.264 codec for better preview support
+    # Note: OpenCV VideoWriter expects (width, height), not (height, width)
+    video_writer = cv2.VideoWriter(temp_video_path, fourcc, fps, (target_width, target_height))
     
     # Write frames to video
     for frame in frames:
@@ -64,6 +90,10 @@ def create_trajectory_video(frames: np.ndarray, output_dir: str, sequence_name: 
         if frame.dtype != np.uint8:
             frame = (frame * 255).astype(np.uint8)
         
+        # Resize frame to target dimensions if needed
+        if frame.shape[:2] != (target_height, target_width):
+            frame = cv2.resize(frame, (target_width, target_height), interpolation=cv2.INTER_AREA)
+
         # Convert RGB to BGR for OpenCV
         if len(frame.shape) == 3 and frame.shape[2] == 3:
             frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
@@ -114,13 +144,15 @@ def create_hf_trajectory(
     max_frames: int = -1,
     dataset_name: str = "",
     use_video: bool = True,
-    fps: int = 10
+    fps: int = 10,
+    shortest_edge_size: int = 240,
+    center_crop: bool = False
 ) -> Dict:
     """Create a HuggingFace dataset trajectory."""
     
     if use_video:
         # Create trajectory video
-        video_bytes = create_trajectory_video(traj_dict['frames'], output_dir, sequence_name, max_frames, fps)
+        video_bytes = create_trajectory_video(traj_dict['frames'], output_dir, sequence_name, max_frames, fps, shortest_edge_size, center_crop)
         frames = [video_bytes]  # Store video bytes as single frame entry
     else:
         # Create trajectory sequence (original behavior)

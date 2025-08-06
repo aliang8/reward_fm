@@ -214,6 +214,16 @@ def main(cfg: GenerateConfig):
             cfg.output.max_trajectories,
         )
         trajectories = flatten_task_data(task_data)
+
+    elif "egodex" in cfg.dataset.dataset_name.lower():
+        from rfm.data.dataset_loaders.egodex_loader import load_egodex_dataset
+        # Load the trajectories using the loader with max_trajectories limit
+        print(f"Loading EgoDex dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_egodex_dataset(
+            cfg.dataset.dataset_path, 
+            cfg.output.max_trajectories,
+        )
+        trajectories = flatten_task_data(task_data)
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")
     

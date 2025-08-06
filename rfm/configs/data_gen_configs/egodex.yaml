@@ -1,0 +1,17 @@
+# EgoDex dataset configuration
+dataset:
+  dataset_path: "~/part2"  # Local path to EgoDex dataset directory
+  dataset_name: egodex
+
+output:
+  output_dir: egodex_dataset
+  max_trajectories: -1
+  max_frames: 64
+  shortest_edge_size: 240
+  use_video: true
+  fps: 30
+  center_crop: false
+
+hub:
+  push_to_hub: true 
+  hub_repo_id: abraranwar/egodex_rfm

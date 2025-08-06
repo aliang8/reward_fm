@@ -22,7 +22,7 @@ git clone https://github.com/Lifelong-Robot-Learning/LIBERO.git
 
 ### Option 1: Use Default Configuration
 ```bash
-uv run python data/generate_hf_dataset.py \
+uv run python rfm/data/generate_hf_dataset.py \
     --config_path=configs/data_gen.yaml \
     --dataset.dataset_path=LIBERO/libero/datasets/libero_90 \
     --dataset.dataset_name=libero_90
@@ -30,7 +30,7 @@ uv run python data/generate_hf_dataset.py \
 
 ### Option 2: Custom Configuration
 ```bash
-uv run python data/generate_hf_dataset.py \
+uv run python rfm/data/generate_hf_dataset.py \
     --config_path=configs/data_gen.yaml \
     --dataset.dataset_path=/path/to/your/libero/dataset \
     --dataset.dataset_name=libero_custom \

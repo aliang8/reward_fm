@@ -15,3 +15,4 @@ datasets/*
 visualizations/*
 rfm/rfm_dataset/*
 .DS_Store
+rfm_dataset/*

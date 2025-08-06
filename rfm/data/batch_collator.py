@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 """
-Batch collator for processing Sample objects through the processor and returning Batch objects.
-This collator handles the conversion from Sample objects to processed tensors in a Batch format.
+Batch collator for processing Sample objects through the processor and returning processed tensors.
+This collator handles the conversion from PreferenceSample and SimilaritySample objects to processed tensors.
 """
 
 import torch
 from typing import List, Dict, Optional, Union, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from transformers import AutoProcessor
 from qwen_vl_utils import process_vision_info
 import numpy as np
-from dataclasses import dataclass, field
 
 @dataclass
-class Sample:
-    """A unified sample structure that can handle all prediction types."""
+class BaseSample:
+    """Base sample structure with common fields for all prediction types."""
     
     # Core HF dataset fields
     prediction_type: str
@@ -22,13 +21,25 @@ class Sample:
     task: str
     lang_vector: np.ndarray
     data_source: str
-    frames: List[str]
+    frames: Union[List[str], np.ndarray]
     optimal: bool
     is_robot: bool
     
+    # Progress fields
+    target_progress_A: Optional[List[float]] = None  # Progress values for trajectory A
+    target_progress_B: Optional[List[float]] = None  # Progress values for trajectory B
+    
+    # Metadata field
+    metadata: Optional[Dict] = None
+
+
+@dataclass
+class PreferenceSample(BaseSample):
+    """Sample structure for preference prediction: o^1 vs o^2 where o^1 is preferred."""
+    
     # Preference-specific fields
-    trajectory_A_frames: Optional[List[str]] = None
-    trajectory_B_frames: Optional[List[str]] = None
+    trajectory_A_frames: Optional[Union[List[str], np.ndarray]] = None
+    trajectory_B_frames: Optional[Union[List[str], np.ndarray]] = None
     preferred_trajectory: Optional[str] = None  # "A" or "B"
     trajectory_A_id: Optional[str] = None
     trajectory_B_id: Optional[str] = None
@@ -38,10 +49,19 @@ class Sample:
     trajectory_B_optimal: Optional[bool] = None
     trajectory_B_is_robot: Optional[bool] = None
     
+    def __post_init__(self):
+        """Set the prediction type after initialization."""
+        self.prediction_type = "preference"
+
+
+@dataclass
+class SimilaritySample(BaseSample):
+    """Sample structure for similarity scoring: o^1 and o^2 ranked against o^ref."""
+    
     # Comparative-specific fields
-    reference_frames: Optional[List[str]] = None  # o^ref
-    trajectory_A_frames: Optional[List[str]] = None  # o^1
-    trajectory_B_frames: Optional[List[str]] = None  # o^2
+    reference_frames: Optional[Union[List[str], np.ndarray]] = None  # o^ref
+    trajectory_A_frames: Optional[Union[List[str], np.ndarray]] = None  # o^1
+    trajectory_B_frames: Optional[Union[List[str], np.ndarray]] = None  # o^2
     task_ref: Optional[str] = None
     task_A: Optional[str] = None
     task_B: Optional[str] = None
@@ -59,27 +79,15 @@ class Sample:
     trajectory_B_optimal: Optional[bool] = None
     trajectory_B_is_robot: Optional[bool] = None
     
-    # Progress fields
-    target_progress_A: Optional[List[float]] = None  # Progress values for trajectory A
-    target_progress_B: Optional[List[float]] = None  # Progress values for trajectory B
-    
-    # Metadata field
-    metadata: Optional[Dict] = None
+    def __post_init__(self):
+        """Set the prediction type after initialization."""
+        self.prediction_type = "similarity"
 
 
-@dataclass
-class Batch:
-    """A batch of samples with all prediction types mixed together."""
-    
-    samples: List[Sample] = field(default_factory=list)
-    
-    def __len__(self) -> int:
-        """Return the number of samples in the batch."""
-        return len(self.samples)
-    
-    def __iter__(self):
-        """Iterate over samples."""
-        return iter(self.samples)
+
+
+
+
 
 
 class BatchCollator:
@@ -112,7 +120,7 @@ class BatchCollator:
             padded_list.append(padded_progress)
         return torch.tensor(padded_list, dtype=torch.float32)
     
-    def __call__(self, samples: Union[List[Sample], List[dict]]) -> Dict[str, torch.Tensor]:
+    def __call__(self, samples: Union[List[BaseSample], List[PreferenceSample], List[SimilaritySample], List[dict]]) -> Dict[str, torch.Tensor]:
         """
         Collate a list of samples into separate batches for preferences and similarities.
         
@@ -126,10 +134,16 @@ class BatchCollator:
         sample_objects = []
         for sample in samples:
             if isinstance(sample, dict):
-                # Convert dict to Sample object
-                sample_obj = Sample(**sample)
+                # Convert dict to appropriate Sample object based on prediction_type
+                prediction_type = sample.get('prediction_type', 'unknown')
+                if prediction_type == "preference":
+                    sample_obj = PreferenceSample(**sample)
+                elif prediction_type == "similarity":
+                    sample_obj = SimilaritySample(**sample)
+                else:
+                    raise ValueError(f"Unknown prediction_type: {prediction_type}. Must be 'preference' or 'similarity'")
                 sample_objects.append(sample_obj)
-            elif isinstance(sample, Sample):
+            elif isinstance(sample, (BaseSample, PreferenceSample, SimilaritySample)):
                 sample_objects.append(sample)
             else:
                 raise ValueError(f"Expected Sample object or dict, got {type(sample)}")
@@ -156,21 +170,57 @@ class BatchCollator:
             "num_similarities": len(similarity_samples)
         }
     
-    def _process_preference_batch(self, preference_samples: List[Sample]) -> Dict[str, torch.Tensor]:
+    def _convert_frames_to_pil_images(self, frames):
+        """Convert frames to PIL images if they are numpy arrays."""
+        if frames is None:
+            return None
+        
+        # If frames are already paths (strings), return as is
+        if isinstance(frames, str) or (isinstance(frames, list) and all(isinstance(f, str) for f in frames)):
+            return frames
+        
+        # If frames are numpy array (TxHxWxC), convert to list of PIL images
+        if isinstance(frames, np.ndarray):
+            from PIL import Image
+            pil_images = []
+            for i in range(frames.shape[0]):  # Iterate over time dimension
+                frame = frames[i]  # HxWxC
+                # Convert to PIL Image (already in HxWxC format)
+                pil_image = Image.fromarray(frame.astype(np.uint8))
+                pil_images.append(pil_image)
+            return pil_images
+        
+        # If frames are list of numpy arrays, convert each to PIL
+        if isinstance(frames, list) and all(isinstance(f, np.ndarray) for f in frames):
+            from PIL import Image
+            pil_images = []
+            for frame in frames:
+                # Convert to PIL Image (assuming HxWxC format)
+                pil_image = Image.fromarray(frame.astype(np.uint8))
+                pil_images.append(pil_image)
+            return pil_images
+        
+        return frames
+
+    def _process_preference_batch(self, preference_samples: List[PreferenceSample]) -> Dict[str, torch.Tensor]:
         """Process a batch of preference samples."""
         # Collect all messages for batch processing
         all_messages = []
         
         for sample in preference_samples:
+            # Convert frames to appropriate format
+            trajectory_A_frames = self._convert_frames_to_pil_images(sample.trajectory_A_frames)
+            trajectory_B_frames = self._convert_frames_to_pil_images(sample.trajectory_B_frames)
+            
             # Single conversation with both videos: task + video A + <|split_token|> + video B + <|pref_token|>
             conversation = [
                 {
                     "role": "user",
                     "content": [
                         {"type": "text", "text": f"Task: {sample.task}"},
-                        {"type": "video", "video": sample.trajectory_A_frames},
+                        {"type": "video", "video": trajectory_A_frames},
                         {"type": "text", "text": "<|split_token|>"},
-                        {"type": "video", "video": sample.trajectory_B_frames},
+                        {"type": "video", "video": trajectory_B_frames},
                         {"type": "text", "text": "<|pref_token|>"}
                     ]
                 }
@@ -185,8 +235,6 @@ class BatchCollator:
         
         image_inputs, video_inputs, video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
         
-        import ipdb; ipdb.set_trace()
-
         # Process through the processor in one batch
         batch_inputs = self.processor(
             text=texts,
@@ -219,21 +267,26 @@ class BatchCollator:
         
         return batch_inputs
     
-    def _process_similarity_batch(self, similarity_samples: List[Sample]) -> Dict[str, torch.Tensor]:
+    def _process_similarity_batch(self, similarity_samples: List[SimilaritySample]) -> Dict[str, torch.Tensor]:
         """Process a batch of similarity samples."""
         # Collect all messages for batch processing (ref_A and ref_B for each sample)
         all_messages = []
         
         for sample in similarity_samples:
+            # Convert frames to appropriate format
+            reference_frames = self._convert_frames_to_pil_images(sample.reference_frames)
+            trajectory_A_frames = self._convert_frames_to_pil_images(sample.trajectory_A_frames)
+            trajectory_B_frames = self._convert_frames_to_pil_images(sample.trajectory_B_frames)
+            
             # Process reference vs trajectory A
             conversation_ref_A = [
                 {
                     "role": "user",
                     "content": [
                         {"type": "text", "text": f"Reference task: {sample.task_ref}"},
-                        {"type": "video", "video": sample.reference_frames},
+                        {"type": "video", "video": reference_frames},
                         {"type": "text", "text": "<|split_token|>"},
-                        {"type": "video", "video": sample.trajectory_A_frames},
+                        {"type": "video", "video": trajectory_A_frames},
                         {"type": "text", "text": "<|reward_token|>"}
                     ]
                 }
@@ -245,9 +298,9 @@ class BatchCollator:
                     "role": "user",
                     "content": [
                         {"type": "text", "text": f"Reference task: {sample.task_ref}"},
-                        {"type": "video", "video": sample.reference_frames},
+                        {"type": "video", "video": reference_frames},
                         {"type": "text", "text": "<|split_token|>"},
-                        {"type": "video", "video": sample.trajectory_B_frames},
+                        {"type": "video", "video": trajectory_B_frames},
                         {"type": "text", "text": "<|reward_token|>"}
                     ]
                 }
@@ -317,7 +370,7 @@ class BatchCollator:
         
         return combined_inputs
     
-    def collate_fn(self, batch: List[Sample]) -> Dict[str, torch.Tensor]:
+    def collate_fn(self, batch: List[Union[BaseSample, PreferenceSample, SimilaritySample]]) -> Dict[str, torch.Tensor]:
         """
         Alternative method name for compatibility with PyTorch DataLoader.
         

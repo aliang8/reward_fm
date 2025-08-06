@@ -10,14 +10,14 @@ The generator allows controlling the ratio between different prediction types.
 
 import random
 import numpy as np
-from typing import List, Dict, Tuple, Optional, Iterator
+from typing import List, Dict, Tuple, Optional, Iterator, Union
 from datasets import load_from_disk
 from sentence_transformers import SentenceTransformer
 import shutil
 import os
 from pathlib import Path
 import torch
-from rfm.data.batch_collator import Batch, Sample, BatchCollator
+from rfm.data.batch_collator import BaseSample, PreferenceSample, SimilaritySample, BatchCollator
 
 class DataGenerator:
     """Data generator for producing batches of prediction data with controlled ratios."""
@@ -34,7 +34,9 @@ class DataGenerator:
         max_frames: int = 32,
         shuffle: bool = True,
         seed: Optional[int] = None,
-        dataset_preference_ratio: float = 0.7
+        dataset_preference_ratio: float = 0.7,
+        num_proc: int = 1,
+        debug: bool = False,
     ):
         """
         Initialize the data generator.
@@ -51,6 +53,8 @@ class DataGenerator:
             shuffle: Whether to shuffle the data
             seed: Random seed for reproducibility
             dataset_preference_ratio: Ratio of preferences from dataset vs generated (0.0 to 1.0)
+            num_proc: Number of processes to use for dataset processing (default: 1)
+            debug: Whether to enable debug mode (reduces dataset size, enables debug features)
         """
         self.dataset_path = dataset_path
         self.dataset_subsets = dataset_subsets
@@ -63,12 +67,14 @@ class DataGenerator:
         self.shuffle = shuffle
         self.seed = seed
         self.dataset_preference_ratio = dataset_preference_ratio
+        self.num_proc = num_proc
+        self.debug = debug 
         
         if seed is not None:
             random.seed(seed)
             np.random.seed(seed)
         
-        # Load trajectory dataset
+        # Load trajectory dataset (includes frame processing)
         self._load_trajectory_dataset()
         
         # Load preference dataset if provided
@@ -90,6 +96,96 @@ class DataGenerator:
         print(f"Batch size: {batch_size}")
         print(f"Ratios - Preference: {preference_ratio}, Similarity: {similarity_ratio}")
         print(f"Dataset preference ratio: {dataset_preference_ratio}")
+    
+    def _preprocess_videos(self, frames, num_frames: int = 32) -> np.ndarray:
+        """
+        Downsample frames to the specified number using uniform sampling.
+        
+        Args:
+            frames: VideoReader object from HuggingFace Video feature
+            num_frames: Number of frames to extract (default: 32)
+            
+        Returns:
+            frames as numpy arrays with shape (T, H, W, C) where T is time dimension
+        """
+        if not frames:
+            return np.array([])
+        
+        # Convert VideoReader to list of frames
+        all_frames = list(frames)
+        total_frames = len(all_frames)
+        
+        if total_frames == 0:
+            return np.array([])
+        
+        # Stack frames into tensor and convert to numpy
+        # Each frame["data"] should be HxWxC, stacking gives TxHxWxC
+        frames_tensor = torch.stack([frame["data"] for frame in all_frames])
+        frames_array = frames_tensor.numpy()
+        
+        # Ensure we have the correct shape: (T, H, W, C)
+        if len(frames_array.shape) != 4:
+            raise ValueError(f"Expected 4D array (T, H, W, C), got shape {frames_array.shape}")
+        
+        # Convert from CxHxW to HxWxC
+        if frames_array.shape[1] == 3:
+            frames_array = np.transpose(frames_array, (0, 2, 3, 1))
+
+        if total_frames <= num_frames:
+            # If video has fewer frames than requested, take all frames
+            return frames_array
+        else:
+            # Uniform sampling across the video
+            frame_indices = [int(i * total_frames / num_frames) for i in range(num_frames)]
+            return frames_array[frame_indices]
+    
+    def _process_dataset_videos_map(self, dataset):
+        """
+        Process dataset frames using .map() method for efficient on-the-fly processing.
+        
+        Args:
+            dataset: HuggingFace dataset containing trajectories
+            
+        Returns:
+            Dataset with processed frames
+        """
+        # Check if frames are already processed (numpy arrays)
+        sample_item = dataset[0]
+        frames_data = sample_item.get('frames')
+        
+        if isinstance(frames_data, np.ndarray):
+            print("Frames already processed (numpy arrays), skipping downsampling.")
+            return dataset
+        
+        print("Downsampling video frames using .map()...")
+        
+        def process_videos(example):
+            """Downsample frames in a single example."""
+            frames = example.get('frames_path')
+            frames = self._preprocess_videos(frames, self.max_frames)
+            
+            # Update the example with downsampled frames
+            del example["frames_path"]
+            example["frames"] = frames
+            return example
+        
+        # Apply the mapping function to the dataset
+        processed_dataset = dataset.map(
+            process_videos,
+            desc="Processing videos",
+            num_proc=self.num_proc
+        )
+        processed_dataset = processed_dataset.with_format("np")
+        
+        print(f"Frame downsampling complete. Each trajectory now has {self.max_frames} frames.")
+        
+        # Save the processed dataset to disk for future fast loading
+        cache_dir = f"./processed_datasets/{self.dataset_path.replace('/', '_')}_{self.max_frames}frames"
+        print(f"Saving processed dataset to {cache_dir} for future fast loading...")
+        processed_dataset.save_to_disk(cache_dir)
+        print(f"Processed dataset saved to {cache_dir}")
+        
+        return processed_dataset
     
     def _create_rewind_trajectory(self, original_traj: Dict) -> Dict:
         """Create a suboptimal trajectory by rewinding the original trajectory."""
@@ -118,7 +214,12 @@ class DataGenerator:
         reverse_progress = forward_progress[::-1][1:selected_end_point]
         
         # Combine forward and reverse segments
-        combined_frames = forward_frames + reverse_frames
+        if isinstance(forward_frames, np.ndarray):
+            # If frames are numpy arrays, use concatenate
+            combined_frames = np.concatenate([forward_frames, reverse_frames], axis=0)
+        else:
+            # If frames are lists, use regular concatenation
+            combined_frames = forward_frames + reverse_frames
         combined_progress = forward_progress + reverse_progress
         
         # Create new trajectory with rewind frames
@@ -138,7 +239,7 @@ class DataGenerator:
         print(f"Loading trajectory dataset from: {self.dataset_path}")
         
         # Load multiple subsets and combine them
-        all_trajectories = []
+        all_datasets = []
         
         for dataset_name in self.dataset_subsets:
             print(f"Loading dataset: {dataset_name}")
@@ -149,11 +250,33 @@ class DataGenerator:
                 print(f"  Found DatasetDict with train split, accessing train data...")
                 dataset = dataset['train']
             
-            dataset_trajectories = list(dataset)
-            all_trajectories.extend(dataset_trajectories)
-            print(f"  Loaded {len(dataset_trajectories)} trajectories from dataset '{dataset_name}'")
+            # Check if frames need processing by examining the first sample
+            if len(dataset) > 0:
+                sample_item = dataset[0]
+                frames_data = sample_item.get('frames')
+                
+                # If frames are already numpy arrays, skip processing
+                if isinstance(frames_data, np.ndarray):
+                    print(f"  Frames already processed (numpy arrays), skipping frame processing")
+                else:
+                    print(f"  Frames need processing, applying .map()...")
+                    dataset = self._process_dataset_videos_map(dataset)
+            else:
+                print(f"  Empty dataset, skipping frame processing")
+            
+            all_datasets.append(dataset)
+            print(f"  Loaded {len(dataset)} trajectories from dataset '{dataset_name}'")
         
-        self.trajectories = all_trajectories
+        # Combine all datasets
+        if len(all_datasets) == 1:
+            self.trajectories = list(all_datasets[0])
+        else:
+            # Combine multiple datasets
+            combined_trajectories = []
+            for dataset in all_datasets:
+                combined_trajectories.extend(list(dataset))
+            self.trajectories = combined_trajectories
+        
         print(f"Combined {len(self.trajectories)} total trajectories from {len(self.dataset_subsets)} datasets")
     
     def _load_preference_dataset(self):
@@ -186,14 +309,31 @@ class DataGenerator:
         
     def _load_dataset_from_path(self, dataset_path: str, subset: str = None):
         """Helper method to load a dataset from path (local or hub)."""
+
         if '/' in dataset_path and not os.path.exists(dataset_path):
+            # Check for cached processed dataset first
+            cache_dir = f"./processed_datasets/{dataset_path.replace('/', '_')}_{self.max_frames}frames"
+            if os.path.exists(cache_dir):
+                print(f"Found cached processed dataset at {cache_dir}, loading...")
+                return load_from_disk(cache_dir)
+            
             # Load from HuggingFace Hub
-            from datasets import load_dataset
+            from datasets import load_dataset, Video, Features
             print(f"Loading from HuggingFace Hub: {dataset_path}")
-            if subset:
-                return load_dataset(dataset_path, name=subset)
-            else:
-                return load_dataset(dataset_path)
+
+            def patch_path(old_path):
+                root_dir = "/workspace/vlm_reward_model/rfm_dataset"
+                return f"{root_dir}/{old_path}"       # e.g., "./videos/trajectory_0000.mp4"
+            
+            ds = load_dataset(dataset_path, name=subset, split="train")
+            ds = ds.map(lambda x: {"frames_path": patch_path(x["frames"])})
+            ds = ds.cast_column("frames_path", Video(decode=True))
+            # Only select a small subset for debugging
+            if self.debug:
+                ds = ds.select(range(5))
+                print("  Debug mode: Using only first 5 samples")
+            return ds
+
         else:
             # Load from local disk
             if os.path.isdir(dataset_path):
@@ -282,7 +422,7 @@ class DataGenerator:
         """Get all suboptimal trajectories."""
         return self.suboptimal_trajectories
     
-    def _create_preference_sample(self) -> Sample:
+    def _create_preference_sample(self) -> PreferenceSample:
         """Create a preference prediction sample: o^1 vs o^2 where o^1 is preferred."""
         
         # Decide whether to use dataset preferences or generated preferences
@@ -306,9 +446,8 @@ class DataGenerator:
             target_progress_A = self._calculate_target_progress(chosen_traj)
             target_progress_B = self._calculate_target_progress(rejected_traj)
             
-            # Create unified sample structure with all fields
-            sample = Sample(
-                prediction_type="preference",
+            # Create preference sample structure
+            sample = PreferenceSample(
                 # Core HF dataset fields (from chosen trajectory)
                 id=chosen_traj['id'],
                 task=chosen_traj['task'],
@@ -335,12 +474,11 @@ class DataGenerator:
                 target_progress_B=target_progress_B,
             )
         else:
-            # Use generated preference (rewind or random)
-            sample = self._create_generated_preference_sample()
+            sample = self._create_subopt_rewind_traj()
         
         return sample
     
-    def _create_generated_preference_sample(self) -> Sample:
+    def _create_subopt_rewind_traj(self) -> PreferenceSample:
         """Create a preference prediction sample using various negative generation strategies."""
         
         # Use preprocessed optimal trajectories
@@ -382,9 +520,8 @@ class DataGenerator:
         target_progress_A = self._calculate_target_progress(optimal_traj)
         target_progress_B = self._calculate_target_progress(negative_traj)
         
-        # Create unified sample structure with all fields
-        sample = Sample(
-            prediction_type="preference",
+        # Create preference sample structure
+        sample = PreferenceSample(
             # Core HF dataset fields (from optimal trajectory)
             id=optimal_traj['id'],
             task=optimal_traj['task'],
@@ -428,7 +565,7 @@ class DataGenerator:
             # For optimal trajectories, use linear progress (0.0 to 1.0)
             return [i / (num_frames - 1) for i in range(num_frames)]
     
-    def _create_similarity_sample(self) -> Sample:
+    def _create_similarity_sample(self) -> SimilaritySample:
         """Create a similarity scoring sample: o^1 and o^2 ranked against o^ref."""
         
         # Get available tasks
@@ -480,9 +617,8 @@ class DataGenerator:
         target_progress_A = self._calculate_target_progress(traj_1)
         target_progress_B = self._calculate_target_progress(traj_2)
         
-        # Create unified sample structure with all fields
-        sample = Sample(
-            prediction_type="similarity",
+        # Create similarity sample structure
+        sample = SimilaritySample(
             # Core HF dataset fields (from ref_traj)
             id=ref_traj['id'],
             task=ref_traj['task'],
@@ -544,7 +680,7 @@ class DataGenerator:
             "similarity": similarity_count
         }
     
-    def generate_batch(self) -> 'Batch':
+    def generate_batch(self) -> List[Union[PreferenceSample, SimilaritySample]]:
         """Generate a single batch of data."""
         
         # Determine batch composition
@@ -566,9 +702,9 @@ class DataGenerator:
         if self.shuffle:
             random.shuffle(samples)
         
-        return Batch(samples=samples)
+        return samples
     
-    def generate_batches(self, num_batches: int) -> Iterator[Batch]:
+    def generate_batches(self, num_batches: int) -> Iterator[List[Union[PreferenceSample, SimilaritySample]]]:
         """Generate multiple batches."""
         for i in range(num_batches):
             yield self.generate_batch()
@@ -591,7 +727,7 @@ class DataGeneratorDataset:
         self.samples = []
         for _ in range(num_batches):
             batch = data_generator.generate_batch()
-            self.samples.extend(batch.samples)
+            self.samples.extend(batch)
     
     def __len__(self):
         """Return the number of samples in the dataset."""
@@ -602,6 +738,7 @@ class DataGeneratorDataset:
         return self.samples[idx]
 
 
+
 def test():
     """Test the BatchCollator with generated samples."""
     from transformers import AutoProcessor
@@ -609,12 +746,13 @@ def test():
     # Create data generator
     generator = DataGenerator(
         dataset_path="aliangdw/rfm",
-        dataset_subsets=["libero_90"],
+        dataset_subsets=["libero_10"],
         batch_size=4,  # Small batch for testing
         preference_ratio=0.5,
         similarity_ratio=0.5,
         shuffle=True,
-        seed=42
+        seed=42,
+        num_proc=4
     )
     
     # Generate a batch
@@ -627,7 +765,7 @@ def test():
     processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct")
     batch_collator = BatchCollator(processor, max_length=1024)
     
-    processed_batch = batch_collator(batch.samples)
+    processed_batch = batch_collator(batch)
     for key, value in processed_batch.items():
         print(key)
         if key == "preference_inputs":

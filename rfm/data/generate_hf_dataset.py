@@ -146,12 +146,7 @@ def convert_dataset_to_hf_format(
     
     dataset = Dataset.from_dict(data_dict, features=features)
     
-    # Save dataset as a split
-    dataset_path = os.path.join(output_dir, dataset_name.lower())
-    dataset.save_to_disk(dataset_path)
-    
     print(f"{dataset_name} HuggingFace dataset created successfully!")
-    print(f"Dataset saved to: {dataset_path}")
     print(f"Total entries: {len(all_entries)}")
     
     # Push to HuggingFace Hub if requested
@@ -188,8 +183,15 @@ def convert_dataset_to_hf_format(
             print("Dataset was created locally but failed to push to hub")
     elif push_to_hub and not hub_repo_id:
         print("❌ push_to_hub=True but no hub_repo_id provided")
+    else:
+        # Only save locally if not pushing to hub (to avoid redundant Arrow files)
+        dataset_path = os.path.join(output_dir, dataset_name.lower())
+        dataset.save_to_disk(dataset_path)
+        print(f"Dataset saved locally to: {dataset_path}")
     
     return dataset
+
+
 
 @wrap()
 def main(cfg: GenerateConfig):

@@ -79,10 +79,10 @@ class EgoDexIterator:
         Returns:
             Dictionary containing trajectory data
         """
-        if self.max_trajectories and self.trajectory_count >= self.max_trajectories:
+        if self.max_trajectories and self.trajectory_count >= self.max_trajectories and self.max_trajectories != -1:
             raise StopIteration
         
-        if self.trajectory_count >= len(self.trajectory_files):
+        if self.trajectory_count >= len(self.trajectory_files) and self.max_trajectories != -1:
             raise StopIteration
         
         hdf5_path, mp4_path, task_name = self.trajectory_files[self.trajectory_count]
@@ -100,7 +100,7 @@ class EgoDexIterator:
     
     def _load_trajectory(self, hdf5_path: Path, mp4_path: Path, task_name: str) -> Dict:
         """
-        Load a single trajectory from HDF5 and MP4 files.
+        Load trajectory metadata with a callable for lazy frame loading.
         
         Args:
             hdf5_path: Path to HDF5 file with pose annotations
@@ -108,17 +108,19 @@ class EgoDexIterator:
             task_name: Name of the task
             
         Returns:
-            Dictionary containing trajectory data
+            Dictionary containing trajectory metadata and frame loader function
         """
-        # Load video frames
-        frames = self._load_video_frames(mp4_path)
-        
-        # Load pose data and metadata from HDF5
+        # Load pose data and metadata from HDF5 (lightweight)
         pose_data, task_description = self._load_hdf5_data(hdf5_path)
         
-        # Create trajectory dictionary
+        # Create a frame loader function that will be called on-demand
+        def load_frames():
+            """Load frames from the MP4 file when called."""
+            return self._load_video_frames(mp4_path)
+        
+        # Create trajectory dictionary with frame loader function
         trajectory = {
-            'frames': frames,
+            'frames': load_frames,  # Callable that returns frames when needed
             'actions': pose_data,  # Use pose data as actions
             'is_robot': False,  # EgoDex is human egocentric data
             'task': task_description or f"EgoDex {task_name}",
@@ -128,6 +130,8 @@ class EgoDexIterator:
         }
         
         return trajectory
+    
+
     
     def _load_video_frames(self, mp4_path: Path) -> np.ndarray:
         """
@@ -282,6 +286,10 @@ class EgoDexIterator:
         concatenated_actions = np.concatenate(actions, axis=1)  # Shape: (N, total_dim)
         
         return concatenated_actions
+
+    def __len__(self):
+        """Return the number of trajectories."""
+        return len(self.trajectory_files)
 
 
 def load_egodex_dataset(dataset_path: str, max_trajectories: int = 100) -> Dict[str, List[Dict]]:

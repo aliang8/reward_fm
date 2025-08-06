@@ -246,7 +246,7 @@ def generate_unique_id() -> str:
 def create_hf_trajectory(
     traj_dict: Dict,
     video_path: str,
-    lang_model: SentenceTransformer,
+    lang_vector: np.ndarray,
     max_frames: int = -1,
     dataset_name: str = "",
     use_video: bool = True,
@@ -255,32 +255,40 @@ def create_hf_trajectory(
     center_crop: bool = False,
     hub_repo_id: str = None
 ) -> Dict:
-    """Create a HuggingFace dataset trajectory."""
+    """Create a HuggingFace dataset trajectory with unified frame loading."""
     
-    video_path = create_trajectory_video_optimized(traj_dict['frames'], video_path, max_frames, fps, shortest_edge_size, center_crop)
-    frames = "/".join(video_path.split("/")[1:])
+    # Handle frames - could be np.array, callable, or missing
+    frames_data = traj_dict.get('frames')
+    if frames_data is None:
+        raise ValueError("Trajectory must contain 'frames'")
+    
+    # If frames is callable, call it to get the actual frames
+    if callable(frames_data):
+        frames = frames_data()  # Load frames on-demand
+    else:
+        frames = frames_data  # Already loaded frames (legacy datasets)
+    
+    video_path = create_trajectory_video_optimized(frames, video_path, max_frames, fps, shortest_edge_size, center_crop)
     
     # Generate unique ID
     unique_id = generate_unique_id()
     
     # Get task description
     task_description = traj_dict["task"]
-    
-    # Generate language embedding
-    lang_vector = lang_model.encode(task_description)
 
     # Create dataset trajectory
     trajectory = {
         "id": unique_id,
         "task": task_description,
-        "lang_vector": lang_vector,
+        "lang_vector": lang_vector,  # Pre-computed language vector
         "data_source": dataset_name,
-        "frames": frames,
+        "frames": video_path,
         "optimal": traj_dict['optimal'],
         "is_robot": traj_dict['is_robot'],
     }
     
     return trajectory
+
 
 
 def load_sentence_transformer_model() -> SentenceTransformer:

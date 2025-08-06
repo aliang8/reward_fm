@@ -14,6 +14,8 @@ import datasets
 from tqdm import tqdm
 from dataclasses import dataclass, field
 from pyrallis import wrap
+from multiprocessing import Pool, cpu_count
+from functools import partial
 from rfm.data.helpers import (
     load_sentence_transformer_model, 
     create_output_directory,
@@ -21,7 +23,6 @@ from rfm.data.helpers import (
     create_hf_trajectory
 )
 from rfm.data.dataset_types import Trajectory
-from functools import partial
 
 # Global dataset features definition
 BASE_FEATURES = {
@@ -51,6 +52,7 @@ class OutputConfig:
     shortest_edge_size: int = field(default=240, metadata={"help": "Shortest edge size for video resizing"})
     center_crop: Optional[bool] = field(default=False, metadata={"help": "Center crop the video to the target size. Defaults to False, which means no cropping."})
     fps: int = field(default=10, metadata={"help": "Frames per second for video creation"})
+    num_workers: int = field(default=-1, metadata={"help": "Number of parallel workers for processing (-1 for auto, 0 for sequential)"})
 
 @dataclass
 class HubConfig:
@@ -67,6 +69,42 @@ class GenerateConfig:
     output: OutputConfig = field(default_factory=OutputConfig)
     hub: HubConfig = field(default_factory=HubConfig)
 
+
+def process_single_trajectory(args):
+    """
+    Worker function to process a single trajectory.
+    
+    Args:
+        args: Tuple containing (trajectory_idx, trajectory, lang_vector, hf_creator_fn, output_dir, dataset_name, max_frames, use_video, fps)
+    
+    Returns:
+        Dict: Processed trajectory data or None if failed
+    """
+    trajectory_idx, trajectory, lang_vector, hf_creator_fn, output_dir, dataset_name, max_frames, use_video, fps = args
+    
+    try:
+        # Create output directory for this trajectory
+        trajectory_dir = os.path.join(output_dir, dataset_name.lower(), f"trajectory_{trajectory_idx:04d}.mp4")
+        os.makedirs(os.path.dirname(trajectory_dir), exist_ok=True)
+        
+        # Process trajectory (lang_vector is already computed)
+        processed_trajectory = hf_creator_fn(
+            traj_dict=trajectory,
+            video_path=trajectory_dir,
+            lang_vector=lang_vector,  # Pre-computed language vector
+            max_frames=max_frames,
+            dataset_name=dataset_name,
+            use_video=use_video,
+            fps=fps
+        )
+        
+        return processed_trajectory
+        
+    except Exception as e:
+        print(f"❌ Error processing trajectory {trajectory_idx}: {e}")
+        return None
+
+
 def convert_dataset_to_hf_format(
     trajectories: List[Dict],
     hf_creator_fn: Callable[[Dict, str, str, int, Any, int, str], Trajectory],
@@ -76,6 +114,7 @@ def convert_dataset_to_hf_format(
     max_frames: int = -1,
     use_video: bool = True,
     fps: int = 10,
+    num_workers: int = -1,
     push_to_hub: bool = False,
     hub_repo_id: Optional[str] = None,
     hub_token: Optional[str] = None
@@ -87,10 +126,6 @@ def convert_dataset_to_hf_format(
     # Create output directory
     create_output_directory(output_dir)
     
-    # Load sentence transformer model
-    print("Loading sentence transformer model...")
-    lang_model = load_sentence_transformer_model()
-    
     # Validate input
     if not trajectories:
         raise ValueError(f"No trajectories provided for {dataset_name} dataset.")
@@ -101,25 +136,87 @@ def convert_dataset_to_hf_format(
     if max_trajectories is not None:
         trajectories = trajectories[:max_trajectories]
     
-    # Process each trajectory
+    # Determine number of workers
+    if num_workers == -1:
+        num_workers = min(cpu_count(), len(trajectories))
+    elif num_workers == 0:
+        num_workers = 1  # Sequential processing
+    
+    print(f"Using {num_workers} worker(s) for parallel processing")
+    
+    # Pre-compute language embeddings to avoid loading sentence transformer in each worker
+    print("Pre-computing language embeddings...")
+    lang_model = load_sentence_transformer_model()
+    
+    lang_vectors = []
+    unique_tasks = {}  # Cache for identical task descriptions
+    
+    for trajectory in tqdm(trajectories, desc="Computing language embeddings"):
+        task_description = trajectory["task"]
+        
+        # Use cache to avoid recomputing identical task descriptions
+        if task_description not in unique_tasks:
+            unique_tasks[task_description] = lang_model.encode(task_description)
+        
+        lang_vectors.append(unique_tasks[task_description])
+    
+    print(f"Computed embeddings for {len(unique_tasks)} unique task descriptions")
+    
+    # Process trajectories
     all_entries = []
     
-    for trajectory_idx, trajectory in enumerate(tqdm(trajectories, desc="Processing trajectories")):            
-        # Create output directory for this trajectory
-        trajectory_dir = os.path.join(output_dir, dataset_name.lower(), f"trajectory_{trajectory_idx:04d}.mp4")
-        os.makedirs(os.path.dirname(trajectory_dir), exist_ok=True)
+    if num_workers == 1:
+        # Sequential processing (using pre-computed embeddings)
+        for trajectory_idx, (trajectory, lang_vector) in enumerate(tqdm(zip(trajectories, lang_vectors), desc="Processing trajectories")):            
+            # Create output directory for this trajectory
+            trajectory_dir = os.path.join(output_dir, dataset_name.lower(), f"trajectory_{trajectory_idx:04d}.mp4")
+            os.makedirs(os.path.dirname(trajectory_dir), exist_ok=True)
+            
+            processed_trajectory = hf_creator_fn(
+                traj_dict=trajectory,
+                video_path=trajectory_dir,
+                lang_vector=lang_vector,  # Pre-computed language vector
+                max_frames=max_frames,
+                dataset_name=dataset_name,
+                use_video=use_video,
+                fps=fps
+            )
+            
+            all_entries.append(processed_trajectory)
+    else:
+        # Parallel processing
+        print(f"Preparing {len(trajectories)} trajectories for parallel processing...")
         
-        trajectory = hf_creator_fn(
-            traj_dict=trajectory,
-            video_path=trajectory_dir,
-            lang_model=lang_model,
-            max_frames=max_frames,
-            dataset_name=dataset_name,
-            use_video=use_video,
-            fps=fps
-        )
+        # Prepare arguments for worker processes
+        worker_args = []
+        for trajectory_idx, (trajectory, lang_vector) in enumerate(zip(trajectories, lang_vectors)):
+            args = (
+                trajectory_idx, 
+                trajectory, 
+                lang_vector,  # Pre-computed language vector
+                hf_creator_fn, 
+                output_dir, 
+                dataset_name, 
+                max_frames, 
+                use_video, 
+                fps
+            )
+            worker_args.append(args)
         
-        all_entries.append(trajectory)
+        # Process trajectories in parallel
+        with Pool(processes=num_workers) as pool:
+            results = list(tqdm(
+                pool.imap_unordered(process_single_trajectory, worker_args),
+                total=len(worker_args),
+                desc="Processing trajectories"
+            ))
+        
+        # Filter out failed trajectories (None results)
+        all_entries = [result for result in results if result is not None]
+        
+        if len(all_entries) < len(trajectories):
+            failed_count = len(trajectories) - len(all_entries)
+            print(f"⚠️  {failed_count} trajectories failed to process and were skipped")
     
     # Create HuggingFace dataset with proper features
     print(f"Creating HuggingFace dataset with {len(all_entries)} entries...")
@@ -146,12 +243,7 @@ def convert_dataset_to_hf_format(
     
     dataset = Dataset.from_dict(data_dict, features=features)
     
-    # Save dataset as a split
-    dataset_path = os.path.join(output_dir, dataset_name.lower())
-    dataset.save_to_disk(dataset_path)
-    
     print(f"{dataset_name} HuggingFace dataset created successfully!")
-    print(f"Dataset saved to: {dataset_path}")
     print(f"Total entries: {len(all_entries)}")
     
     # Push to HuggingFace Hub if requested
@@ -188,8 +280,15 @@ def convert_dataset_to_hf_format(
             print("Dataset was created locally but failed to push to hub")
     elif push_to_hub and not hub_repo_id:
         print("❌ push_to_hub=True but no hub_repo_id provided")
+    else:
+        # Only save locally if not pushing to hub (to avoid redundant Arrow files)
+        dataset_path = os.path.join(output_dir, dataset_name.lower())
+        dataset.save_to_disk(dataset_path)
+        print(f"Dataset saved locally to: {dataset_path}")
     
     return dataset
+
+
 
 @wrap()
 def main(cfg: GenerateConfig):
@@ -214,6 +313,16 @@ def main(cfg: GenerateConfig):
             cfg.output.max_trajectories,
         )
         trajectories = flatten_task_data(task_data)
+
+    elif "egodex" in cfg.dataset.dataset_name.lower():
+        from rfm.data.dataset_loaders.egodex_loader import load_egodex_dataset
+        # Load the trajectories using the loader with max_trajectories limit
+        print(f"Loading EgoDex dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_egodex_dataset(
+            cfg.dataset.dataset_path, 
+            cfg.output.max_trajectories,
+        )
+        trajectories = flatten_task_data(task_data)
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")
     
@@ -227,6 +336,7 @@ def main(cfg: GenerateConfig):
         max_frames=cfg.output.max_frames,
         use_video=cfg.output.use_video,
         fps=cfg.output.fps,
+        num_workers=cfg.output.num_workers,
         push_to_hub=cfg.hub.push_to_hub,
         hub_repo_id=cfg.hub.hub_repo_id,
         hub_token=cfg.hub.hub_token

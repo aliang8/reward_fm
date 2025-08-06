@@ -201,12 +201,12 @@ def main(cfg: GenerateConfig):
     
     # Import the appropriate dataset loader and trajectory creator
     if "libero" in cfg.dataset.dataset_name:
-        from dataset_loaders.libero_loader import load_libero_dataset
+        from rfm.data.dataset_loaders.libero_loader import load_libero_dataset
         # Load the trajectories using the loader
         task_data = load_libero_dataset(cfg.dataset.dataset_path)
         trajectories = flatten_task_data(task_data)
     elif "agibotworld" in cfg.dataset.dataset_name.lower():
-        from dataset_loaders.agibotworld_loader import load_agibotworld_dataset
+        from rfm.data.dataset_loaders.agibotworld_loader import load_agibotworld_dataset
         # Load the trajectories using the loader with max_trajectories limit
         print(f"Loading AgiBotWorld dataset from: {cfg.dataset.dataset_path}")
         task_data = load_agibotworld_dataset(

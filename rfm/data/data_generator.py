@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import torch
 from rfm.data.batch_collator import BaseSample, PreferenceSample, SimilaritySample, BatchCollator
+from datasets import concatenate_datasets
 
 class DataGenerator:
     """Data generator for producing batches of prediction data with controlled ratios."""
@@ -97,16 +98,45 @@ class DataGenerator:
         print(f"Ratios - Preference: {preference_ratio}, Similarity: {similarity_ratio}")
         print(f"Dataset preference ratio: {dataset_preference_ratio}")
     
+    def _serialize_frames(self, frames_array: np.ndarray) -> bytes:
+        """
+        Serialize frames array to bytes for efficient storage.
+        
+        Args:
+            frames_array: numpy array with shape (T, H, W, C)
+            
+        Returns:
+            Serialized bytes
+        """
+        if frames_array.size == 0:
+            return b''
+        return frames_array.tobytes()
+    
+    def _deserialize_frames(self, bytes_blob: bytes, shape: tuple = (32, 240, 240, 3)) -> np.ndarray:
+        """
+        Deserialize bytes back to frames array.
+        
+        Args:
+            bytes_blob: Serialized bytes
+            shape: Expected shape of the frames array (T, H, W, C)
+            
+        Returns:
+            Deserialized numpy array
+        """
+        if not bytes_blob:
+            return np.array([])
+        return np.frombuffer(bytes_blob, dtype=np.uint8).reshape(shape)
+    
     def _preprocess_videos(self, frames, num_frames: int = 32) -> np.ndarray:
         """
-        Downsample frames to the specified number using uniform sampling.
+        Downsample frames to the specified number using uniform sampling and pad to max_frames.
         
         Args:
             frames: VideoReader object from HuggingFace Video feature
             num_frames: Number of frames to extract (default: 32)
             
         Returns:
-            frames as numpy arrays with shape (T, H, W, C) where T is time dimension
+            frames as numpy arrays with shape (max_frames, H, W, C) where T is time dimension
         """
         if not frames:
             return np.array([])
@@ -132,7 +162,11 @@ class DataGenerator:
             frames_array = np.transpose(frames_array, (0, 2, 3, 1))
 
         if total_frames <= num_frames:
-            # If video has fewer frames than requested, take all frames
+            # If video has fewer frames than requested, pad with last frame
+            if total_frames < num_frames:
+                last_frame = frames_array[-1]  # Get the last frame
+                padding_frames = np.repeat(last_frame[np.newaxis, :, :, :], num_frames - total_frames, axis=0)
+                frames_array = np.concatenate([frames_array, padding_frames], axis=0)
             return frames_array
         else:
             # Uniform sampling across the video
@@ -149,24 +183,27 @@ class DataGenerator:
         Returns:
             Dataset with processed frames
         """
-        # Check if frames are already processed (numpy arrays)
+        # Check if frames are already processed (serialized bytes or numpy arrays)
         sample_item = dataset[0]
         frames_data = sample_item.get('frames')
         
-        if isinstance(frames_data, np.ndarray):
-            print("Frames already processed (numpy arrays), skipping downsampling.")
+        if isinstance(frames_data, bytes) or isinstance(frames_data, np.ndarray):
+            print("Frames already processed, skipping downsampling.")
             return dataset
         
         print("Downsampling video frames using .map()...")
         
         def process_videos(example):
-            """Downsample frames in a single example."""
+            """Downsample frames in a single example and serialize."""
             frames = example.get('frames_path')
-            frames = self._preprocess_videos(frames, self.max_frames)
+            frames_array = self._preprocess_videos(frames, self.max_frames)
             
-            # Update the example with downsampled frames
+            # Serialize frames to bytes for efficient storage
+            frames_bytes = self._serialize_frames(frames_array)
+            
+            # Update the example with serialized frames
             del example["frames_path"]
-            example["frames"] = frames
+            example["frames"] = frames_bytes
             return example
         
         # Apply the mapping function to the dataset
@@ -175,8 +212,7 @@ class DataGenerator:
             desc="Processing videos",
             num_proc=self.num_proc
         )
-        processed_dataset = processed_dataset.with_format("np")
-        
+
         print(f"Frame downsampling complete. Each trajectory now has {self.max_frames} frames.")
         
         # Save the processed dataset to disk for future fast loading
@@ -189,7 +225,13 @@ class DataGenerator:
     
     def _create_rewind_trajectory(self, original_traj: Dict) -> Dict:
         """Create a suboptimal trajectory by rewinding the original trajectory."""
-        frames = original_traj['frames']
+        frames_data = original_traj['frames']
+        
+        # Deserialize frames if they're bytes
+        if isinstance(frames_data, bytes):
+            frames = self._deserialize_frames(frames_data)
+        else:
+            frames = frames_data
         
         if len(frames) < 4:
             # If trajectory is too short, just return the original
@@ -258,6 +300,8 @@ class DataGenerator:
                 # If frames are already numpy arrays, skip processing
                 if isinstance(frames_data, np.ndarray):
                     print(f"  Frames already processed (numpy arrays), skipping frame processing")
+                elif isinstance(frames_data, bytes):
+                    print(f"  Frames are serialized bytes, will be deserialized on-demand")
                 else:
                     print(f"  Frames need processing, applying .map()...")
                     dataset = self._process_dataset_videos_map(dataset)
@@ -269,13 +313,9 @@ class DataGenerator:
         
         # Combine all datasets
         if len(all_datasets) == 1:
-            self.trajectories = list(all_datasets[0])
+            self.trajectories = all_datasets[0]
         else:
-            # Combine multiple datasets
-            combined_trajectories = []
-            for dataset in all_datasets:
-                combined_trajectories.extend(list(dataset))
-            self.trajectories = combined_trajectories
+            self.trajectories = concatenate_datasets(all_datasets)
         
         print(f"Combined {len(self.trajectories)} total trajectories from {len(self.dataset_subsets)} datasets")
     
@@ -315,7 +355,8 @@ class DataGenerator:
             cache_dir = f"./processed_datasets/{dataset_path.replace('/', '_')}_{self.max_frames}frames"
             if os.path.exists(cache_dir):
                 print(f"Found cached processed dataset at {cache_dir}, loading...")
-                return load_from_disk(cache_dir)
+                ds = load_from_disk(cache_dir)
+                return ds
             
             # Load from HuggingFace Hub
             from datasets import load_dataset, Video, Features
@@ -552,8 +593,15 @@ class DataGenerator:
     
     def _calculate_target_progress(self, trajectory: Dict) -> List[float]:
         """Calculate target progress values for a trajectory."""
-        frames = trajectory['frames']
-        num_frames = len(frames)
+        frames_data = trajectory['frames']
+        
+        # Deserialize frames if they're bytes
+        if isinstance(frames_data, bytes):
+            frames = self._deserialize_frames(frames_data)
+            num_frames = frames.shape[0]  # Use shape[0] for numpy array
+        else:
+            frames = frames_data
+            num_frames = len(frames)
         
         # Check if this is a rewind trajectory (has rewind progress in metadata)
         if (trajectory.get('metadata') and 

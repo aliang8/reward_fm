@@ -16,7 +16,6 @@ class BaseSample:
     """Base sample structure with common fields for all prediction types."""
     
     # Core HF dataset fields
-    prediction_type: str
     id: str
     task: str
     lang_vector: np.ndarray
@@ -28,7 +27,8 @@ class BaseSample:
     # Progress fields
     target_progress_A: Optional[List[float]] = None  # Progress values for trajectory A
     target_progress_B: Optional[List[float]] = None  # Progress values for trajectory B
-    
+    prediction_type: Optional[str] = None
+
     # Metadata field
     metadata: Optional[Dict] = None
 
@@ -171,13 +171,18 @@ class BatchCollator:
         }
     
     def _convert_frames_to_pil_images(self, frames):
-        """Convert frames to PIL images if they are numpy arrays."""
+        """Convert frames to PIL images if they are numpy arrays or serialized bytes."""
         if frames is None:
             return None
         
         # If frames are already paths (strings), return as is
         if isinstance(frames, str) or (isinstance(frames, list) and all(isinstance(f, str) for f in frames)):
             return frames
+        
+        # If frames are serialized bytes, deserialize first
+        if isinstance(frames, bytes):
+            # Deserialize bytes to numpy array (TxHxWxC)
+            frames = np.frombuffer(frames, dtype=np.uint8).reshape(32, 240, 240, 3)
         
         # If frames are numpy array (TxHxWxC), convert to list of PIL images
         if isinstance(frames, np.ndarray):
@@ -232,7 +237,7 @@ class BatchCollator:
             self.processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=False, add_vision_id=True)
             for msg in all_messages
         ]
-        
+
         image_inputs, video_inputs, video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
         
         # Process through the processor in one batch
@@ -241,7 +246,7 @@ class BatchCollator:
             images=image_inputs,
             videos=video_inputs,
             padding=True,
-            truncation=True,
+            truncation=False,
             max_length=self.max_length,
             return_tensors="pt",
             **video_kwargs,
@@ -321,8 +326,8 @@ class BatchCollator:
             text=texts,
             images=image_inputs,
             videos=video_inputs,
-            padding="max_length",
-            truncation=True,
+            padding=True,
+            truncation=False,
             max_length=self.max_length,
             return_tensors="pt",
             **video_kwargs,

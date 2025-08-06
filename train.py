@@ -20,7 +20,7 @@ import os
 import yaml
 from typing import List, Dict, Optional, Union, Any
 from peft import get_peft_model, LoraConfig, PeftModel
-from data.data_generator import BatchCollator, DataGeneratorDataset, DataGenerator
+from rfm.data.data_generator import BatchCollator, DataGeneratorDataset, DataGenerator
 from models.rfm import RFMModel
 from tqdm import tqdm
 from dataclasses import dataclass, field

@@ -106,12 +106,12 @@ def convert_dataset_to_hf_format(
     
     for trajectory_idx, trajectory in enumerate(tqdm(trajectories, desc="Processing trajectories")):            
         # Create output directory for this trajectory
-        trajectory_dir = os.path.join(output_dir, dataset_name.lower(), f"trajectory_{trajectory_idx:04d}")
-        os.makedirs(trajectory_dir, exist_ok=True)
+        trajectory_dir = os.path.join(output_dir, dataset_name.lower(), f"trajectory_{trajectory_idx:04d}.mp4")
+        os.makedirs(os.path.dirname(trajectory_dir), exist_ok=True)
         
         trajectory = hf_creator_fn(
             traj_dict=trajectory,
-            output_dir=trajectory_dir,
+            video_path=trajectory_dir,
             lang_model=lang_model,
             max_frames=max_frames,
             dataset_name=dataset_name,
@@ -173,14 +173,13 @@ def convert_dataset_to_hf_format(
             print(f"\nPushing video files to HuggingFace Hub...")
             from huggingface_hub import HfApi
             api = HfApi(token=hub_token)
-            
+  
             # Upload the entire output directory (which contains all the video files)
-            api.upload_folder(
+            api.upload_large_folder(
                 folder_path=output_dir,
-                path_in_repo=dataset_name.lower(),
                 repo_id=hub_repo_id,
                 repo_type="dataset",
-                commit_message=f"Add video files for {dataset_name} dataset"
+                # commit_message=f"Add video files for {dataset_name} dataset"
             )
             print(f"✅ Successfully pushed video files to: https://huggingface.co/datasets/{hub_repo_id}")
             

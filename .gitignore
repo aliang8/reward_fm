@@ -7,11 +7,11 @@ pick_up_green_block/*
 rendered_examples/*
 square/*
 videos/*
-old/*
-wandb/*
+rfm/old/*
+rfm/wandb/*
 LIBERO/*
 __pycache__/*
 datasets/*
 visualizations/*
-rfm_dataset/*
+rfm/rfm_dataset/*
 .DS_Store

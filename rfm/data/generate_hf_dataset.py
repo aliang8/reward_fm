@@ -9,18 +9,30 @@ import os
 import numpy as np
 from typing import List, Dict, Tuple, Optional, Callable, Any
 from pathlib import Path
-from datasets import Dataset
+from datasets import Dataset, Audio
+import datasets
 from tqdm import tqdm
 from dataclasses import dataclass, field
 from pyrallis import wrap
-from helpers import (
+from rfm.data.helpers import (
     load_sentence_transformer_model, 
     create_output_directory,
     flatten_task_data,
     create_hf_trajectory
 )
-from dataset_types import Trajectory
+from rfm.data.dataset_types import Trajectory
 from functools import partial
+
+# Global dataset features definition
+BASE_FEATURES = {
+    "id": datasets.Value("string"),
+    "task": datasets.Value("string"),
+    "lang_vector": datasets.Sequence(datasets.Value("float32")),
+    "data_source": datasets.Value("string"),
+    "frames": None,  # Will be set based on use_video parameter
+    "optimal": datasets.Value("string"),
+    "is_robot": datasets.Value("bool"),
+}
 
 @dataclass
 class DatasetConfig:
@@ -94,14 +106,12 @@ def convert_dataset_to_hf_format(
     
     for trajectory_idx, trajectory in enumerate(tqdm(trajectories, desc="Processing trajectories")):            
         # Create output directory for this trajectory
-        trajectory_dir = os.path.join(output_dir, f"trajectory_{trajectory_idx:04d}")
+        trajectory_dir = os.path.join(output_dir, dataset_name.lower(), f"trajectory_{trajectory_idx:04d}")
         os.makedirs(trajectory_dir, exist_ok=True)
-        sequence_name = f"trajectory_{trajectory_idx:04d}"
         
         trajectory = hf_creator_fn(
             traj_dict=trajectory,
             output_dir=trajectory_dir,
-            sequence_name=sequence_name,
             lang_model=lang_model,
             max_frames=max_frames,
             dataset_name=dataset_name,
@@ -111,9 +121,30 @@ def convert_dataset_to_hf_format(
         
         all_entries.append(trajectory)
     
-    # Create HuggingFace dataset
+    # Create HuggingFace dataset with proper features
     print(f"Creating HuggingFace dataset with {len(all_entries)} entries...")
-    dataset = Dataset.from_list(all_entries)
+    
+    # Convert list of entries to dictionary format for from_dict()
+    data_dict = {
+        "id": [entry["id"] for entry in all_entries],
+        "task": [entry["task"] for entry in all_entries],
+        "lang_vector": [entry["lang_vector"] for entry in all_entries],
+        "data_source": [entry["data_source"] for entry in all_entries],
+        "frames": [entry["frames"] for entry in all_entries],
+        "optimal": [entry["optimal"] for entry in all_entries],
+        "is_robot": [entry["is_robot"] for entry in all_entries],
+    }
+    
+    # Set frames feature based on video mode
+    features_dict = BASE_FEATURES.copy()
+    if use_video:
+        features_dict["frames"] = datasets.Value("string")  # Video file paths as strings
+    else:
+        features_dict["frames"] = datasets.Sequence(datasets.Image())
+    
+    features = datasets.Features(features_dict)
+    
+    dataset = Dataset.from_dict(data_dict, features=features)
     
     # Save dataset as a split
     dataset_path = os.path.join(output_dir, dataset_name.lower())
@@ -138,6 +169,20 @@ def convert_dataset_to_hf_format(
             print(f"✅ Successfully pushed dataset to: https://huggingface.co/datasets/{hub_repo_id}")
             print(f"📁 Dataset available as config: {dataset_name.lower()}")
             
+            # Also push the video files folder to the hub
+            print(f"\nPushing video files to HuggingFace Hub...")
+            from huggingface_hub import HfApi
+            api = HfApi(token=hub_token)
+            
+            # Upload the entire output directory (which contains all the video files)
+            api.upload_folder(
+                folder_path=output_dir,
+                repo_id=hub_repo_id,
+                repo_type="dataset",
+                commit_message=f"Add video files for {dataset_name} dataset"
+            )
+            print(f"✅ Successfully pushed video files to: https://huggingface.co/datasets/{hub_repo_id}")
+            
         except Exception as e:
             print(f"❌ Error pushing to hub: {e}")
             print("Dataset was created locally but failed to push to hub")
@@ -156,12 +201,12 @@ def main(cfg: GenerateConfig):
     
     # Import the appropriate dataset loader and trajectory creator
     if "libero" in cfg.dataset.dataset_name:
-        from libero_loader import load_libero_dataset
+        from dataset_loaders.libero_loader import load_libero_dataset
         # Load the trajectories using the loader
         task_data = load_libero_dataset(cfg.dataset.dataset_path)
         trajectories = flatten_task_data(task_data)
     elif "agibotworld" in cfg.dataset.dataset_name.lower():
-        from agibotworld_loader import load_agibotworld_dataset
+        from dataset_loaders.agibotworld_loader import load_agibotworld_dataset
         # Load the trajectories using the loader with max_trajectories limit
         print(f"Loading AgiBotWorld dataset from: {cfg.dataset.dataset_path}")
         task_data = load_agibotworld_dataset(
@@ -175,7 +220,7 @@ def main(cfg: GenerateConfig):
     # Convert dataset
     convert_dataset_to_hf_format(
         trajectories=trajectories,
-        hf_creator_fn=partial(create_hf_trajectory, dataset_name=cfg.dataset.dataset_name, use_video=cfg.output.use_video, fps=cfg.output.fps, shortest_edge_size=cfg.output.shortest_edge_size, center_crop=cfg.output.center_crop),
+        hf_creator_fn=partial(create_hf_trajectory, dataset_name=cfg.dataset.dataset_name, use_video=cfg.output.use_video, fps=cfg.output.fps, shortest_edge_size=cfg.output.shortest_edge_size, center_crop=cfg.output.center_crop, hub_repo_id=cfg.hub.hub_repo_id),
         output_dir=cfg.output.output_dir,
         dataset_name=cfg.dataset.dataset_name,
         max_trajectories=cfg.output.max_trajectories,

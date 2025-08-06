@@ -6,7 +6,57 @@
 
 This repository contains the official PyTorch implementation for "Reward Foundation Model" (RFM). 
 
+## Package Structure
+
+The project is organized as follows:
+
+```
+reward_fm/
+├── rfm/                    # Main package directory
+│   ├── data/              # Data processing and dataset utilities
+│   ├── configs/           # Configuration files
+│   └── models/            # Model definitions
+├── rfm_visualizer/        # Gradio web interface for dataset visualization
+├── train.py              # Main training script
+├── setup.py              # Package installation script
+└── pyproject.toml        # Project configuration
+```
+
 ## Setup and Installation
+
+This project can be installed as a Python package called `rfm`. We provide multiple installation methods:
+
+### Method 1: Install as a Package (Recommended)
+
+Install the RFM package directly:
+
+```bash
+# Clone the repository
+git clone https://github.com/aliang8/reward_fm.git
+cd reward_fm
+
+# Install the package in development mode
+pip install -e .
+
+# Or use the installation script
+python install.py
+```
+
+After installation, you can use the package:
+
+```python
+import rfm
+
+# Access the visualizer
+from rfm_visualizer.app import demo
+demo.launch()
+
+# Or use the console scripts
+# rfm-visualizer  # Launch the visualizer
+# rfm-train       # Run training
+```
+
+### Method 2: Using uv (Development)
 
 This project uses `uv` for fast and reliable dependency management. We recommend it over `pip` and `venv` for a much better developer experience.
 
@@ -84,30 +134,30 @@ RFM supports multiple robotic datasets with automatic video processing:
 ### Quick Examples
 ```bash
 # AgiBotWorld (streaming, ~600GB dataset)
-uv run python data/generate_hf_dataset.py --config_path=configs/data_gen_configs/agibot_world.yaml
+uv run python rfm/data/generate_hf_dataset.py --config_path=rfm/configs/data_gen_configs/agibot_world.yaml
 
 # LIBERO (local files)
-uv run python data/generate_hf_dataset.py \
-    --config_path=configs/data_gen.yaml \
+uv run python rfm/data/generate_hf_dataset.py \
+    --config_path=rfm/configs/data_gen.yaml \
     --dataset.dataset_path=LIBERO/libero/datasets/libero_90 \
     --dataset.dataset_name=libero_90
 
 # Custom parameters
-uv run python data/generate_hf_dataset.py \
+uv run python rfm/data/generate_hf_dataset.py \
     --dataset.dataset_name=agibotworld \
     --output.max_frames=16 \
     --output.max_trajectories=100
 ```
 
-📖 **Detailed Guide**: [data/README_ADDING_DATASETS.md](data/README_ADDING_DATASETS.md)
+📖 **Detailed Guide**: [rfm/data/README_ADDING_DATASETS.md](rfm/data/README_ADDING_DATASETS.md)
 
 ## Training and Evaluation
 ```bash
 # Training
-uv run accelerate launch --config_file configs/fsdp.yaml train.py --config_path=configs/config.yaml
+uv run accelerate launch --config_file rfm/configs/fsdp.yaml train.py --config_path=rfm/configs/config.yaml
 
 # Evaluation
-uv run accelerate launch --config_file configs/fsdp.yaml train.py --mode=evaluate
+uv run accelerate launch --config_file rfm/configs/fsdp.yaml train.py --mode=evaluate
 ```
 
 ## Development

@@ -32,13 +32,30 @@ uv run python data/generate_hf_dataset.py --config_path=configs/data_gen.yaml
 
 Each dataset type has its own loader module. The main converter (`generate_hf_dataset.py`) is dataset-agnostic and works with any dataset-specific loader that follows the established interface.
 
+### Output Formats
+
+The converter supports two output formats:
+
+**Video Mode** (`--output.use_video=true`):
+- Creates MP4 video files using H.264 encoding
+- Videos are stored in organized directories: `trajectory_XXXX/trajectory.mp4`
+- Uses `datasets.Video()` feature for proper HuggingFace video display
+- Supports configurable frame rate, resolution, and cropping
+
+**Frame Mode** (`--output.use_video=false`):
+- Creates individual JPG image files
+- Images are stored in organized directories: `trajectory_XXXX/frame_XX.jpg`
+- Uses `datasets.Sequence(datasets.Image())` feature for image galleries
+- Supports configurable frame count and resolution
+
 ### Video Processing Features
 
-Modern dataset loaders (like AgiBotWorld) include built-in video processing:
-- **📹 Automatic Resizing**: Videos resized to consistent dimensions (e.g., 256x256)
-- **⏱️ Frame Interpolation**: Downsamples to configurable frame count (e.g., 32 frames)
-- **💾 Size Optimization**: 99%+ reduction in file size for efficient training
+The dataset converter includes built-in video processing:
+- **📹 Automatic Resizing**: Videos resized to consistent dimensions (configurable shortest edge size)
+- **⏱️ Frame Interpolation**: Downsamples to configurable frame count (default: all frames preserved)
+- **🎬 MP4 Creation**: Creates H.264 encoded MP4 files for optimal HuggingFace compatibility
 - **🎯 Quality Preservation**: Maintains visual quality while standardizing format
+- **📁 File Organization**: Organizes videos in trajectory-specific directories
 
 ## Dataset Structure Requirements
 
@@ -46,7 +63,7 @@ Your dataset loader must produce trajectories in the following format:
 
 ```python
 {
-    'frames': Union[List[str], bytes], # Video file paths OR processed video bytes (recommended)
+    'frames': Union[str, List[str]],   # Video file path (video mode) or list of image file paths (frame mode)
     'actions': np.ndarray,             # Actions 
     'is_robot': bool,                  # Whether this is robot data (True) or human data (False)
     'task': str,                       # Human-readable task description
@@ -54,7 +71,7 @@ Your dataset loader must produce trajectories in the following format:
 }
 ```
 
-**Note**: Modern loaders should process videos during loading (resize, downsample frames) and store as bytes for optimal performance.
+**Note**: The dataset converter automatically creates MP4 video files or individual frame images based on the `use_video` setting.
 
 ## Step-by-Step Guide
 
@@ -142,7 +159,7 @@ Add your dataset type to the main converter in `generate_hf_dataset.py`:
 ```python
 # In the main() function, add your dataset type:
 elif cfg.dataset.dataset_type == "droid":
-    from droid_loader import load_droid_dataset
+    from dataset_loaders.droid_loader import load_droid_dataset
     # Load the trajectories using your loader
     task_data = load_droid_dataset(cfg.dataset.dataset_path)
     trajectories = flatten_task_data(task_data)
@@ -172,13 +189,16 @@ Use the main converter with your new dataset:
 
 ```bash
 uv run python data/generate_hf_dataset.py \
-    --config_path=configs/data_gen.yaml \
+    --config_path=configs/dataset_.yaml \
     --dataset.dataset_name=your_dataset \
     --dataset.dataset_path=/path/to/your/dataset \
     --output.output_dir=your_dataset_rfm \
     --output.max_trajectories=1000 \
+    --output.max_frames=-1 \
     --output.use_video=true \
-    --output.fps=10
+    --output.fps=10 \
+    --output.shortest_edge_size=240 \
+    --output.center_crop=false
 ```
 
 ### Visualize the Dataset

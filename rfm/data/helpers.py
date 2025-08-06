@@ -134,6 +134,14 @@ def create_trajectory_video_optimized(
     if len(frames) == 0:
         raise ValueError("No frames provided for video creation")
 
+
+    video_path = os.path.join(output_dir, f"trajectory.mp4")
+    print(f"Saving optimized video to: {video_path}")
+
+    if os.path.exists(video_path):
+        print(f"Video already exists at: {video_path}, skipping video creation")
+        return video_path
+    
     # Downsample frames by selecting indices, which is memory-cheap
     processed_frames = downsample_frames(frames, max_frames)
     
@@ -156,9 +164,6 @@ def create_trajectory_video_optimized(
     # Ensure dimensions are even, as required by some codecs like H.264
     target_width = target_width if target_width % 2 == 0 else target_width + 1
     target_height = target_height if target_height % 2 == 0 else target_height + 1
-    
-    video_path = os.path.join(output_dir, f"trajectory.mp4")
-    print(f"Saving optimized video to: {video_path}")
 
     # FFmpeg command for creating a web-optimized H.264 video
     # This pipes raw video frames from stdin

@@ -177,6 +177,7 @@ def convert_dataset_to_hf_format(
             # Upload the entire output directory (which contains all the video files)
             api.upload_folder(
                 folder_path=output_dir,
+                path_in_repo=dataset_name.lower(),
                 repo_id=hub_repo_id,
                 repo_type="dataset",
                 commit_message=f"Add video files for {dataset_name} dataset"

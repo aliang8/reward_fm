@@ -13,6 +13,91 @@ from pathlib import Path
 from tqdm import tqdm
 
 
+class EgoDexFrameLoader:
+    """Pickle-able frame loader for EgoDex videos."""
+    
+    def __init__(self, mp4_path: str):
+        self.mp4_path = mp4_path
+    
+    def __call__(self) -> np.ndarray:
+        """Load frames from the MP4 file when called."""
+        return self._load_video_frames(Path(self.mp4_path))
+    
+    def _load_video_frames(self, mp4_path: Path) -> np.ndarray:
+        """
+        Load video frames from MP4 file with robust codec handling.
+        
+        Args:
+            mp4_path: Path to MP4 video file
+            
+        Returns:
+            Numpy array of video frames (T, H, W, C)
+        """
+        # Try multiple backends for better codec support
+        backends = [
+            cv2.CAP_FFMPEG,  # FFmpeg backend (best for various codecs)
+            cv2.CAP_ANY,     # Any available backend
+        ]
+        
+        cap = None
+        for backend in backends:
+            try:
+                cap = cv2.VideoCapture(str(mp4_path), backend)
+                if cap.isOpened():
+                    # Test if we can actually read frames
+                    ret, test_frame = cap.read()
+                    if ret and test_frame is not None:
+                        # Reset to beginning
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        break
+                    else:
+                        cap.release()
+                        cap = None
+                else:
+                    if cap:
+                        cap.release()
+                    cap = None
+            except Exception as e:
+                print(f"Backend {backend} failed for {mp4_path}: {e}")
+                if cap:
+                    cap.release()
+                cap = None
+        
+        if cap is None or not cap.isOpened():
+            raise ValueError(f"Could not open video file with any backend: {mp4_path}")
+        
+        # Get video properties
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        
+        print(f"Loading video: {mp4_path.name} ({frame_count} frames @ {fps:.1f} FPS)")
+        
+        frames = []
+        frame_idx = 0
+        
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            if frame is None:
+                print(f"Warning: Got None frame at index {frame_idx}")
+                continue
+            
+            # Convert BGR to RGB
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frames.append(frame_rgb)
+            frame_idx += 1
+        
+        cap.release()
+        
+        if not frames:
+            raise ValueError(f"No frames could be loaded from video: {mp4_path}")
+        
+        print(f"Successfully loaded {len(frames)} frames from {mp4_path.name}")
+        return np.array(frames)
+
+
 class EgoDexIterator:
     """Iterator for EgoDex dataset that yields trajectories one at a time to manage memory efficiently."""
     
@@ -79,10 +164,10 @@ class EgoDexIterator:
         Returns:
             Dictionary containing trajectory data
         """
-        if self.max_trajectories and self.trajectory_count >= self.max_trajectories and self.max_trajectories != -1:
+        if self.trajectory_count >= len(self.trajectory_files):
             raise StopIteration
         
-        if self.trajectory_count >= len(self.trajectory_files) and self.max_trajectories != -1:
+        if self.max_trajectories and self.trajectory_count >= self.max_trajectories and self.max_trajectories != -1:
             raise StopIteration
         
         hdf5_path, mp4_path, task_name = self.trajectory_files[self.trajectory_count]
@@ -113,14 +198,12 @@ class EgoDexIterator:
         # Load pose data and metadata from HDF5 (lightweight)
         pose_data, task_description = self._load_hdf5_data(hdf5_path)
         
-        # Create a frame loader function that will be called on-demand
-        def load_frames():
-            """Load frames from the MP4 file when called."""
-            return self._load_video_frames(mp4_path)
+        # Create a frame loader using a pickle-able class
+        frame_loader = EgoDexFrameLoader(str(mp4_path))
         
         # Create trajectory dictionary with frame loader function
         trajectory = {
-            'frames': load_frames,  # Callable that returns frames when needed
+            'frames': frame_loader,  # Callable that returns frames when needed
             'actions': pose_data,  # Use pose data as actions
             'is_robot': False,  # EgoDex is human egocentric data
             'task': task_description or f"EgoDex {task_name}",
@@ -132,75 +215,6 @@ class EgoDexIterator:
         return trajectory
     
 
-    
-    def _load_video_frames(self, mp4_path: Path) -> np.ndarray:
-        """
-        Load video frames from MP4 file with robust codec handling.
-        
-        Args:
-            mp4_path: Path to MP4 video file
-            
-        Returns:
-            Numpy array of video frames (T, H, W, C)
-        """
-        # Try multiple backends for better codec support
-        backends = [
-            cv2.CAP_FFMPEG,  # FFmpeg backend (best for various codecs)
-            cv2.CAP_ANY,     # Any available backend
-        ]
-        
-        cap = None
-        for backend in backends:
-            try:
-                cap = cv2.VideoCapture(str(mp4_path), backend)
-                if cap.isOpened():
-                    # Test if we can actually read frames
-                    ret, test_frame = cap.read()
-                    if ret and test_frame is not None:
-                        # Reset to beginning
-                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                        break
-                    else:
-                        cap.release()
-                        cap = None
-                else:
-                    if cap:
-                        cap.release()
-                    cap = None
-            except Exception as e:
-                print(f"Backend {backend} failed for {mp4_path}: {e}")
-                if cap:
-                    cap.release()
-                cap = None
-        
-        if cap is None or not cap.isOpened():
-            raise ValueError(f"Could not open video file with any backend: {mp4_path}")
-        
-        frames = []
-        frame_count = 0
-        max_frames_to_try = 10000  # Prevent infinite loops
-        
-        while frame_count < max_frames_to_try:
-            ret, frame = cap.read()
-            if not ret or frame is None:
-                break
-            
-            # Convert BGR to RGB for consistency
-            try:
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                frames.append(rgb_frame)
-                frame_count += 1
-            except Exception as e:
-                print(f"Warning: Failed to convert frame {frame_count} from {mp4_path}: {e}")
-                continue
-        
-        cap.release()
-        
-        if len(frames) == 0:
-            raise ValueError(f"No frames could be extracted from video: {mp4_path}")
-        
-        print(f"  📹 Loaded {len(frames)} frames from {mp4_path.name}")
-        return np.array(frames)
     
     def _load_hdf5_data(self, hdf5_path: Path) -> Tuple[np.ndarray, str]:
         """
@@ -220,7 +234,7 @@ class EgoDexIterator:
                     # Check which description to use for reversible tasks
                     if 'which_llm_description' in f.attrs:
                         which_desc = f.attrs['which_llm_description']
-                        if which_desc == 2 and 'llm_description2' in f.attrs:
+                        if int(which_desc) == 2 and 'llm_description2' in f.attrs:
                             desc = f.attrs['llm_description2']
                         else:
                             desc = f.attrs['llm_description']

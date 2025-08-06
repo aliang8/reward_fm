@@ -246,7 +246,7 @@ def generate_unique_id() -> str:
 def create_hf_trajectory(
     traj_dict: Dict,
     video_path: str,
-    lang_model: SentenceTransformer,
+    lang_vector: np.ndarray,
     max_frames: int = -1,
     dataset_name: str = "",
     use_video: bool = True,
@@ -269,24 +269,20 @@ def create_hf_trajectory(
         frames = frames_data  # Already loaded frames (legacy datasets)
     
     video_path = create_trajectory_video_optimized(frames, video_path, max_frames, fps, shortest_edge_size, center_crop)
-    frames = "/".join(video_path.split("/")[1:])
     
     # Generate unique ID
     unique_id = generate_unique_id()
     
     # Get task description
     task_description = traj_dict["task"]
-    
-    # Generate language embedding
-    lang_vector = lang_model.encode(task_description)
 
     # Create dataset trajectory
     trajectory = {
         "id": unique_id,
         "task": task_description,
-        "lang_vector": lang_vector,
+        "lang_vector": lang_vector,  # Pre-computed language vector
         "data_source": dataset_name,
-        "frames": frames,
+        "frames": video_path,
         "optimal": traj_dict['optimal'],
         "is_robot": traj_dict['is_robot'],
     }

@@ -111,7 +111,7 @@ def create_trajectory_video(frames, output_dir: str, max_frames: int = -1, fps: 
 
 def create_trajectory_video_optimized(
     frames, 
-    output_dir: str, 
+    video_path: str, 
     max_frames: int = -1, 
     fps: int = 10, 
     shortest_edge_size: int = 240, 
@@ -134,8 +134,6 @@ def create_trajectory_video_optimized(
     if len(frames) == 0:
         raise ValueError("No frames provided for video creation")
 
-
-    video_path = os.path.join(output_dir, f"trajectory.mp4")
     print(f"Saving optimized video to: {video_path}")
 
     if os.path.exists(video_path):
@@ -247,7 +245,7 @@ def generate_unique_id() -> str:
 
 def create_hf_trajectory(
     traj_dict: Dict,
-    output_dir: str,
+    video_path: str,
     lang_model: SentenceTransformer,
     max_frames: int = -1,
     dataset_name: str = "",
@@ -259,28 +257,8 @@ def create_hf_trajectory(
 ) -> Dict:
     """Create a HuggingFace dataset trajectory."""
     
-    if use_video:
-        # Create trajectory video using optimized FFmpeg method
-        # try:
-        video_path = create_trajectory_video_optimized(traj_dict['frames'], output_dir, max_frames, fps, shortest_edge_size, center_crop)
-        # except Exception as e:
-        #     print(f"FFmpeg failed, falling back to OpenCV: {e}")
-        #     video_path = create_trajectory_video(traj_dict['frames'], output_dir, max_frames, fps, shortest_edge_size, center_crop)
-        
-        # If hub_repo_id is provided, create HuggingFace Hub path
-        if hub_repo_id:
-            # Get just the filename from the video path
-            video_filename = os.path.basename(video_path)
-            folder = "/".join(output_dir.split("/")[1:])
-            # Create HuggingFace Hub path
-            frames = f"https://huggingface.co/datasets/{hub_repo_id}/resolve/main/{folder}/{video_filename}"
-        else:
-            frames = video_path
-    else:
-        # Create trajectory sequence (original behavior)
-        frame_paths = create_trajectory_sequence(traj_dict['frames'], output_dir, max_frames)
-        # Store relative paths to frame files
-        frames = [os.path.relpath(frame_path, output_dir) for frame_path in frame_paths]
+    video_path = create_trajectory_video_optimized(traj_dict['frames'], video_path, max_frames, fps, shortest_edge_size, center_crop)
+    frames = "/".join(video_path.split("/")[1:])
     
     # Generate unique ID
     unique_id = generate_unique_id()

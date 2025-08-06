@@ -5,6 +5,7 @@
 # Experiment Mode
 # =====================================================================================
 mode: "train"  # "train" or "evaluate"
+debug: false  # Set to true for debugging (reduces dataset size, enables debug features)
 
 # =====================================================================================
 # Model Configuration
@@ -67,6 +68,7 @@ training:
   dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
   shuffle: true
   seed: 42
+  num_proc: 1  # Number of processes for dataset processing (1 for safety, increase for speed)
 
 # =====================================================================================
 # PEFT Configuration

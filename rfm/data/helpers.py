@@ -255,9 +255,20 @@ def create_hf_trajectory(
     center_crop: bool = False,
     hub_repo_id: str = None
 ) -> Dict:
-    """Create a HuggingFace dataset trajectory."""
+    """Create a HuggingFace dataset trajectory with unified frame loading."""
     
-    video_path = create_trajectory_video_optimized(traj_dict['frames'], video_path, max_frames, fps, shortest_edge_size, center_crop)
+    # Handle frames - could be np.array, callable, or missing
+    frames_data = traj_dict.get('frames')
+    if frames_data is None:
+        raise ValueError("Trajectory must contain 'frames'")
+    
+    # If frames is callable, call it to get the actual frames
+    if callable(frames_data):
+        frames = frames_data()  # Load frames on-demand
+    else:
+        frames = frames_data  # Already loaded frames (legacy datasets)
+    
+    video_path = create_trajectory_video_optimized(frames, video_path, max_frames, fps, shortest_edge_size, center_crop)
     frames = "/".join(video_path.split("/")[1:])
     
     # Generate unique ID
@@ -281,6 +292,7 @@ def create_hf_trajectory(
     }
     
     return trajectory
+
 
 
 def load_sentence_transformer_model() -> SentenceTransformer:

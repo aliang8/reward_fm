@@ -12,29 +12,28 @@ EgoDex is a large-scale egocentric manipulation dataset with **native iterative 
 - **🏷️ Rich Annotations**: LLM-generated task descriptions from HDF5 metadata
 - **⚡ Efficient Processing**: Direct MP4 + HDF5 processing
 - **🔄 Graceful Error Handling**: Skips corrupted samples automatically
-- **📊 Multi-Split Support**: Process specific dataset splits (part1-5, test, extra)
+- **🔄 Flexible Processing**: Process different dataset parts by pointing to specific directories
 
 ## Dataset Structure
 
-The EgoDex dataset consists of paired HDF5 and MP4 files organized by task:
+The EgoDex dataset consists of paired HDF5 and MP4 files organized by task. Each dataset part (part1, part2, etc.) should be processed separately by pointing directly to that directory:
 
 ```
-dataset_root/
-├── part1/
-│   ├── task1/
-│   │   ├── 0.hdf5      # Pose annotations
-│   │   ├── 0.mp4       # Egocentric video
-│   │   ├── 1.hdf5
-│   │   ├── 1.mp4
-│   │   └── ...
-│   └── task2/
-│       └── ...
-├── part2/
-├── part3/
-├── part4/
-├── part5/
-├── test/
-└── extra/
+part1/  # Point dataset_path here for part1
+├── task1/
+│   ├── 0.hdf5      # Pose annotations
+│   ├── 0.mp4       # Egocentric video
+│   ├── 1.hdf5
+│   ├── 1.mp4
+│   └── ...
+├── task2/
+│   └── ...
+└── ...
+
+part2/  # Point dataset_path here for part2
+├── task1/
+│   └── ...
+└── ...
 ```
 
 ## Prerequisites
@@ -56,38 +55,46 @@ pip install h5py opencv-python numpy tqdm
 
 ### Option 1: Use Pre-configured Settings (Test Split)
 ```bash
-uv run python data/generate_hf_dataset.py --config_path=configs/data_gen_configs/egodex.yaml
+uv run python rfm/data/generate_hf_dataset.py --config_path=rfm/configs/data_gen_configs/egodex.yaml
 ```
 
 ### Option 2: Manual Configuration
 ```bash
-uv run python data/generate_hf_dataset.py \
-    --config_path=configs/data_gen_configs/egodex.yaml \
-    --dataset.dataset_path="/path/to/egodex/dataset" \
-    --dataset.splits="[\"test\"]" \
+uv run python rfm/data/generate_hf_dataset.py \
+    --config_path=rfm/configs/data_gen_configs/egodex.yaml \
+    --dataset.dataset_path="/path/to/egodex/test" \
+    --dataset.dataset_name="egodex_test" \
     --output.max_trajectories=50 \
     --output.max_frames=32
 ```
 
-### Option 3: Process Multiple Splits
+### Option 3: Process Different Parts
 ```bash
-uv run python data/generate_hf_dataset.py \
-    --config_path=configs/data_gen_configs/egodex.yaml \
-    --dataset.dataset_path="/path/to/egodex/dataset" \
-    --dataset.splits="[\"part1\", \"part2\", \"test\"]" \
-    --output.max_trajectories=1000 \
+# Process part1
+uv run python rfm/data/generate_hf_dataset.py \
+    --config_path=rfm/configs/data_gen_configs/egodex.yaml \
+    --dataset.dataset_path="/path/to/egodex/part1" \
+    --dataset.dataset_name="egodex_part1" \
+    --output.max_trajectories=-1 \
+    --hub.push_to_hub=false
+
+# Process part2 with different dataset name
+uv run python rfm/data/generate_hf_dataset.py \
+    --config_path=rfm/configs/data_gen_configs/egodex.yaml \
+    --dataset.dataset_path="/path/to/egodex/part2" \
+    --dataset.dataset_name="egodex_part2" \
+    --output.max_trajectories=-1 \
     --hub.push_to_hub=false
 ```
 
 ## Configuration Options
 
-Edit `configs/data_gen_configs/egodex.yaml`:
+Edit `rfm/configs/data_gen_configs/egodex.yaml`:
 
 ```yaml
 dataset:
-  dataset_path: "/path/to/egodex/dataset"  # Local path to dataset
-  dataset_name: egodex
-  splits: ["test"]  # Available: ["part1", "part2", "part3", "part4", "part5", "test", "extra"]
+  dataset_path: "/path/to/egodex/test"  # Local path to dataset part (e.g., test, part1, part2)
+  dataset_name: egodex_test  # Use different names: egodex_test, egodex_part1, egodex_part2, etc.
 
 output:
   output_dir: egodex_dataset
@@ -171,9 +178,8 @@ from egodex_loader import get_egodex_iterator
 
 # Create iterator
 iterator = get_egodex_iterator(
-    dataset_path="/path/to/egodex",
-    max_trajectories=100,
-    splits=["test"]
+    dataset_path="/path/to/egodex/test",
+    max_trajectories=100
 )
 
 # Process one trajectory at a time
@@ -188,8 +194,7 @@ for trajectory in iterator:
 
 ### Processing Progress
 ```
-Loading EgoDex dataset from: /data/egodex
-Found 156 trajectory pairs across 1 splits
+
 Will process up to 100 trajectories
 
 Loading trajectories: 100%|████████| 100/100 [02:34<00:00,  1.54it/s]
@@ -231,7 +236,7 @@ MemoryError: Unable to allocate array
 ```
 **Solution**: The iterator design should prevent this, but if it occurs:
 - Reduce `max_trajectories`
-- Process splits separately
+- Process dataset parts separately
 - Check available system memory
 
 ### Video Processing Errors
@@ -245,28 +250,33 @@ Error: Could not open video file: /data/egodex/test/task1/0.mp4
 
 ## Large Scale Processing
 
-For processing thousands of trajectories across multiple splits:
-
-```bash
-# Process all training data (will take hours/days)
-uv run python data/generate_hf_dataset.py \
-    --config_path=configs/data_gen_configs/egodex.yaml \
-    --dataset.dataset_path="/data/egodex" \
-    --dataset.splits="[\"part1\", \"part2\", \"part3\", \"part4\", \"part5\"]" \
-    --output.max_trajectories=10000 \
-    --output.max_frames=16 \
-    --hub.push_to_hub=false
-```
+For processing thousands of trajectories from different parts:
 
 ### Recommended Batch Processing
 ```bash
-# Process each split separately to manage resources
-for split in part1 part2 part3 part4 part5; do
-    uv run python data/generate_hf_dataset.py \
-        --config_path=configs/data_gen_configs/egodex.yaml \
-        --dataset.splits="[\"$split\"]" \
-        --output.output_dir="egodex_${split}" \
-        --output.max_trajectories=2000
+# Process each part separately to manage resources and create different datasets
+for part in part1 part2 part3 part4 part5; do
+    uv run python rfm/data/generate_hf_dataset.py \
+        --config_path=rfm/configs/data_gen_configs/egodex.yaml \
+        --dataset.dataset_path="/data/egodex/${part}" \
+        --dataset.dataset_name="egodex_${part}" \
+        --output.output_dir="egodex_${part}_dataset" \
+        --output.max_trajectories=2000 \
+        --hub.push_to_hub=true
+done
+```
+
+### Processing with Same Hub Repo but Different Dataset Names
+```bash
+# All parts go to same hub repo but with different dataset names
+for part in part1 part2 part3 part4 part5; do
+    uv run python rfm/data/generate_hf_dataset.py \
+        --config_path=rfm/configs/data_gen_configs/egodex.yaml \
+        --dataset.dataset_path="/data/egodx/${part}" \
+        --dataset.dataset_name="egodx_${part}" \
+        --hub.hub_repo_id="your-username/egodx_rfm" \
+        --output.max_trajectories=5000 \
+        --hub.push_to_hub=true
 done
 ```
 

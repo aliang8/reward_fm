@@ -16,22 +16,29 @@ LIBERO is a benchmark for lifelong robot learning with built-in support in the R
 # Clone or download LIBERO dataset
 git clone https://github.com/Lifelong-Robot-Learning/LIBERO.git
 # Follow LIBERO installation instructions for dataset download
+
+# This should work too
+git submodule update --init --recursive
+
+uv run python benchmark_scripts/download_libero_datasets.py --datasets DATASET
 ```
+where DATASET is chosen from `[libero_spatial, libero_object, libero_100, libero_goal]`.
+
 
 ## Quick Start
 
 ### Option 1: Use Default Configuration
 ```bash
 uv run python rfm/data/generate_hf_dataset.py \
-    --config_path=configs/data_gen.yaml \
-    --dataset.dataset_path=LIBERO/libero/datasets/libero_90 \
+    --config_path=rfm/configs/data_gen_configs/libero.yaml\
+    --dataset.dataset_path=deps/libero/LIBERO/libero/datasets/libero_90 \
     --dataset.dataset_name=libero_90
 ```
 
 ### Option 2: Custom Configuration
 ```bash
 uv run python rfm/data/generate_hf_dataset.py \
-    --config_path=configs/data_gen.yaml \
+    --config_path=rfm/configs/data_gen_configs/libero.yaml \
     --dataset.dataset_path=/path/to/your/libero/dataset \
     --dataset.dataset_name=libero_custom \
     --output.output_dir=libero_rfm_dataset \

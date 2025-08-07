@@ -64,7 +64,10 @@ class EgoDexFrameLoader:
                 cap = None
         
         if cap is None or not cap.isOpened():
-            raise ValueError(f"Could not open video file with any backend: {mp4_path}")
+            print(f"Could not open video file with any backend: {mp4_path}. Skipping this trajectory...")
+            # Skip the trajectory
+            return None
+            # raise ValueError(f"Could not open video file with any backend: {mp4_path}")
         
         # Get video properties
         fps = cap.get(cv2.CAP_PROP_FPS)

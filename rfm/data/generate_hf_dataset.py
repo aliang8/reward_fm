@@ -24,6 +24,20 @@ from rfm.data.helpers import (
 )
 from rfm.data.dataset_types import Trajectory
 
+def get_trajectory_subdir_path(trajectory_idx: int, files_per_subdir: int = 1000) -> str:
+    """
+    Generate subdirectory path for a trajectory to avoid too many files per directory.
+    
+    Args:
+        trajectory_idx: Index of the trajectory
+        files_per_subdir: Maximum files per subdirectory (default: 1000)
+    
+    Returns:
+        str: Subdirectory name like 'batch_0000'
+    """
+    subdir_index = trajectory_idx // files_per_subdir
+    return f"batch_{subdir_index:04d}"
+
 # Global dataset features definition
 BASE_FEATURES = {
     "id": datasets.Value("string"),
@@ -83,20 +97,26 @@ def process_single_trajectory(args):
     trajectory_idx, trajectory, lang_vector, hf_creator_fn, output_dir, dataset_name, max_frames, use_video, fps = args
     
     try:
-        # Create output directory for this trajectory
-        trajectory_dir = os.path.join(output_dir, dataset_name.lower(), f"trajectory_{trajectory_idx:04d}.mp4")
-        os.makedirs(os.path.dirname(trajectory_dir), exist_ok=True)
+        # Create output directory for this trajectory with subdirectory structure
+        subdir_name = get_trajectory_subdir_path(trajectory_idx)
+        full_video_path = os.path.join(output_dir, dataset_name.lower(), subdir_name, f"trajectory_{trajectory_idx:04d}.mp4")
+        relative_video_path = os.path.join(dataset_name.lower(), subdir_name, f"trajectory_{trajectory_idx:04d}.mp4")
+        os.makedirs(os.path.dirname(full_video_path), exist_ok=True)
         
         # Process trajectory (lang_vector is already computed)
         processed_trajectory = hf_creator_fn(
             traj_dict=trajectory,
-            video_path=trajectory_dir,
+            video_path=full_video_path,
             lang_vector=lang_vector,  # Pre-computed language vector
             max_frames=max_frames,
             dataset_name=dataset_name,
             use_video=use_video,
             fps=fps
         )
+        
+        # Replace the full path with relative path in the processed trajectory
+        if processed_trajectory and 'frames' in processed_trajectory:
+            processed_trajectory['frames'] = relative_video_path
         
         return processed_trajectory
         
@@ -168,8 +188,9 @@ def convert_dataset_to_hf_format(
     if num_workers == 1:
         # Sequential processing (using pre-computed embeddings)
         for trajectory_idx, (trajectory, lang_vector) in enumerate(tqdm(zip(trajectories, lang_vectors), desc="Processing trajectories")):            
-            # Create output directory for this trajectory
-            trajectory_dir = os.path.join(output_dir, dataset_name.lower(), f"trajectory_{trajectory_idx:04d}.mp4")
+            # Create output directory for this trajectory with subdirectory structure
+            subdir_name = get_trajectory_subdir_path(trajectory_idx)
+            trajectory_dir = os.path.join(output_dir, dataset_name.lower(), subdir_name, f"trajectory_{trajectory_idx:04d}.mp4")
             os.makedirs(os.path.dirname(trajectory_dir), exist_ok=True)
             
             processed_trajectory = hf_creator_fn(

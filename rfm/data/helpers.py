@@ -131,8 +131,7 @@ def create_trajectory_video_optimized(
     Returns:
         str: The path to the created video file.
     """
-    if len(frames) == 0:
-        raise ValueError("No frames provided for video creation")
+
 
     print(f"Saving optimized video to: {video_path}")
 
@@ -140,6 +139,16 @@ def create_trajectory_video_optimized(
         print(f"Video already exists at: {video_path}, skipping video creation")
         return video_path
     
+    # If frames is callable, call it to get the actual frames
+    if callable(frames):
+        frames = frames()  # Load frames on-demand
+    else:
+        frames = frames  # Already loaded frames (legacy datasets)
+        
+    if frames is None:
+        return None
+    if len(frames) == 0:
+        raise ValueError("No frames provided for video creation")
     # Downsample frames by selecting indices, which is memory-cheap
     processed_frames = downsample_frames(frames, max_frames)
     
@@ -262,13 +271,12 @@ def create_hf_trajectory(
     if frames_data is None:
         raise ValueError("Trajectory must contain 'frames'")
     
-    # If frames is callable, call it to get the actual frames
-    if callable(frames_data):
-        frames = frames_data()  # Load frames on-demand
-    else:
-        frames = frames_data  # Already loaded frames (legacy datasets)
     
-    video_path = create_trajectory_video_optimized(frames, video_path, max_frames, fps, shortest_edge_size, center_crop)
+    video_path = create_trajectory_video_optimized(frames_data, video_path, max_frames, fps, shortest_edge_size, center_crop)
+    
+    if video_path is None:
+        print(f"Skipping trajectory {traj_dict['trajectory_id']} because frames are None")
+        return None
     
     # Generate unique ID
     unique_id = generate_unique_id()

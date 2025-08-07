@@ -25,6 +25,43 @@ def save_frame_as_image(frame_data: np.ndarray, output_path: str) -> str:
     return output_path
 
 
+def motion_aware_downsample(frames: np.ndarray,
+                            max_frames: int = 32) -> np.ndarray:
+    if len(frames) <= max_frames:
+        return frames
+    T = len(frames)
+    resize_long_side = 256
+    min_gap = 1
+
+    def _prep(f):
+        if resize_long_side:
+            h, w = f.shape[:2]
+            scale = resize_long_side / max(h, w)
+            if scale < 1.0:
+                f = cv2.resize(f, (int(w * scale), int(h * scale)),
+                               interpolation=cv2.INTER_AREA)
+        return cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).astype(np.float32)
+
+    gray = [_prep(f) for f in frames]
+
+    scores = np.zeros(T, dtype=np.float32)
+    fb_args = dict(pyr_scale=0.5, levels=3, winsize=15,
+                   iterations=3, poly_n=5, poly_sigma=1.2, flags=0)
+    for i in range(T - 1):
+        flow = cv2.calcOpticalFlowFarneback(gray[i], gray[i + 1], None, **fb_args)
+        scores[i + 1] = np.linalg.norm(flow, axis=-1).mean()
+
+    keep = {0, T - 1}
+    if max_frames > 2:
+        for idx in np.argsort(scores)[::-1]:
+            if len(keep) >= max_frames:
+                break
+            if all(abs(idx - k) >= min_gap for k in keep):
+                keep.add(int(idx))
+
+    return frames[sorted(keep)]
+
+
 def downsample_frames(frames: np.ndarray, max_frames: int = 32) -> np.ndarray:
     """Downsample frames to at most max_frames using linear interpolation."""
     # If max_frames is -1, don't downsample

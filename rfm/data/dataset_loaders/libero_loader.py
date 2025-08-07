@@ -62,9 +62,9 @@ def load_libero_dataset(base_path: str) -> Dict[str, List[Dict]]:
                     if 'obs' in trajectory and 'agentview_rgb' in trajectory['obs']:
                         frames = trajectory['obs']['agentview_rgb'][:]  # (T, H, W, 3)
                         # Rotate frames by 180 degrees to correct LIBERO camera orientation
-                        # Equivalent to flipping vertically and horizontally
+                        # TODO: check this is correct long-term
                         if isinstance(frames, np.ndarray) and frames.ndim == 4 and frames.shape[-1] == 3:
-                            frames = frames[:, ::-1, ::-1, :].copy()
+                            frames = frames[:, ::-1, :, :].copy()
                         trajectory_info['frames'] = frames
                     
                     # Get actions if available

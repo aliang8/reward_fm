@@ -24,6 +24,8 @@ from rfm.data.helpers import (
 )
 from rfm.data.dataset_types import Trajectory
 
+os.environ["TOKENIZERS_PARALLELISM"] = "true"
+
 def get_trajectory_subdir_path(trajectory_idx: int, files_per_subdir: int = 1000) -> str:
     """
     Generate subdirectory path for a trajectory to avoid too many files per directory.
@@ -319,10 +321,13 @@ def main(cfg: GenerateConfig):
     if cfg.hub.hub_token is None:
         cfg.hub.hub_token = os.getenv("HF_TOKEN")
     
-    # check that HF_USERNAME is set
-    if os.getenv("HF_USERNAME") is None:
-        raise ValueError("HF_USERNAME is not set. Please set it in the environment variables with your HuggingFace username or organization name.")
-    cfg.hub.hub_repo_id = os.getenv("HF_USERNAME") + '/' + cfg.hub.hub_repo_id
+    # Only require HF_USERNAME if pushing to hub
+    if cfg.hub.push_to_hub:
+        username = os.getenv("HF_USERNAME")
+        if not username:
+            raise ValueError("HF_USERNAME is not set. Please export it to push to the Hub, or set hub.push_to_hub=false.")
+        if cfg.hub.hub_repo_id:
+            cfg.hub.hub_repo_id = username + '/' + cfg.hub.hub_repo_id
     
     # Import the appropriate dataset loader and trajectory creator
     if "libero" in cfg.dataset.dataset_name:
@@ -330,15 +335,55 @@ def main(cfg: GenerateConfig):
         # Load the trajectories using the loader
         task_data = load_libero_dataset(cfg.dataset.dataset_path)
         trajectories = flatten_task_data(task_data)
-    elif "agibotworld" in cfg.dataset.dataset_name.lower():
-        from rfm.data.dataset_loaders.agibotworld_loader import load_agibotworld_dataset
-        # Load the trajectories using the loader with max_trajectories limit
-        print(f"Loading AgiBotWorld dataset from: {cfg.dataset.dataset_path}")
-        task_data = load_agibotworld_dataset(
-            cfg.dataset.dataset_path, 
-            cfg.output.max_trajectories,
+    elif "agibotworld" in (cfg.dataset.dataset_name or "").lower():
+        # Stream + convert directly inside the AgiBotWorld loader
+        from rfm.data.dataset_loaders.agibotworld_loader import (
+            convert_agibotworld_streaming_to_hf,
         )
-        trajectories = flatten_task_data(task_data)
+        dataset = convert_agibotworld_streaming_to_hf(
+            dataset_name=cfg.dataset.dataset_path,
+            output_dir=cfg.output.output_dir,
+            dataset_label=cfg.dataset.dataset_name or "agibotworld",
+            max_trajectories=cfg.output.max_trajectories,
+            max_frames=cfg.output.max_frames,
+            fps=cfg.output.fps,
+            num_workers=cfg.output.num_workers,
+        )
+        # Handle pushing/saving consistently
+        if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
+            print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")
+            try:
+                # Push the arrow table
+                dataset.push_to_hub(
+                    cfg.hub.hub_repo_id,
+                    config_name=(cfg.dataset.dataset_name or "agibotworld").lower(),
+                    token=cfg.hub.hub_token,
+                    private=False,
+                    commit_message=f"Add {cfg.dataset.dataset_name} dataset for RFM training",
+                )
+                print(f"✅ Successfully pushed dataset to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}")
+
+                # Push the large video folder(s)
+                print(f"\nPushing video files to HuggingFace Hub...")
+                from huggingface_hub import HfApi
+                api = HfApi(token=cfg.hub.hub_token)
+                api.upload_large_folder(
+                    folder_path=cfg.output.output_dir,
+                    repo_id=cfg.hub.hub_repo_id,
+                    repo_type="dataset",
+                )
+                print(
+                    f"✅ Successfully pushed video files to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}"
+                )
+            except Exception as e:
+                print(f"❌ Error pushing to hub: {e}")
+                print("Dataset was created locally but failed to push videos and/or metadata to hub")
+        else:
+            dataset_path = os.path.join(cfg.output.output_dir, (cfg.dataset.dataset_name or "agibotworld").lower())
+            dataset.save_to_disk(dataset_path)
+            print(f"Dataset saved locally to: {dataset_path}")
+        print("Dataset conversion complete!")
+        return
 
     elif "egodex" in cfg.dataset.dataset_name.lower():
         from rfm.data.dataset_loaders.egodex_loader import load_egodex_dataset
@@ -352,7 +397,7 @@ def main(cfg: GenerateConfig):
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")
     
-    # Convert dataset
+    # Convert dataset (non-streaming datasets)
     convert_dataset_to_hf_format(
         trajectories=trajectories,
         hf_creator_fn=partial(create_hf_trajectory, dataset_name=cfg.dataset.dataset_name, use_video=cfg.output.use_video, fps=cfg.output.fps, shortest_edge_size=cfg.output.shortest_edge_size, center_crop=cfg.output.center_crop, hub_repo_id=cfg.hub.hub_repo_id),

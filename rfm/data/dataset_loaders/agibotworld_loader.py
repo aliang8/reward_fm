@@ -10,11 +10,420 @@ import h5py
 import numpy as np
 import cv2
 import tempfile
-from typing import List, Dict, Tuple, Optional, Callable, Any
+from typing import List, Dict, Tuple, Optional, Callable, Any, Iterable
 from pathlib import Path
-from datasets import load_dataset
+from datasets import load_dataset, Dataset
+import datasets as hfds
+import datasets as hfds
 from tqdm import tqdm
-from helpers import downsample_frames
+from helpers import (
+    downsample_frames,
+    create_trajectory_video_optimized,
+    load_sentence_transformer_model,
+    create_hf_trajectory,
+)
+import subprocess
+import shutil
+from multiprocessing import Pool, cpu_count
+from functools import partial
+
+# Episode/task helpers built earlier
+try:
+    from rfm.data.data_scripts.agibot import get_episode_record
+except Exception:
+    # Fallback for direct execution context
+    from ..data_scripts.agibot.agibot_helper import get_episode_record  # type: ignore
+
+
+# ------------------------------
+# Small utilities
+# ------------------------------
+
+CAMERA_KEYS = {
+    "head_color",
+    "head_left_fisheye_color",
+    "head_right_fisheye_color",
+    "head_center_fisheye_color",
+}
+
+
+def _stable_shard_for_episode(episode_id: str, shard_modulus: int = 1000) -> str:
+    """Return a stable top-level shard name based on episode id.
+
+    Keeps at most ~shard_modulus episode directories per shard.
+    """
+
+    try:
+        idx = int(episode_id)
+    except Exception:
+        idx = abs(hash(episode_id))
+    shard_index = idx // shard_modulus
+    return f"shard_{shard_index:04d}"
+
+
+def _parse_episode_and_camera(key: str) -> Tuple[str, Optional[str]]:
+    """Parse __key__ like '678985/videos/head_color' -> ('678985', 'head_color')."""
+    parts = key.split("/")
+    if len(parts) < 3:
+        return parts[0], None
+    return parts[0], parts[2]
+
+
+def _build_video_paths(
+    output_dir: str,
+    dataset_name: str,
+    episode_id: str,
+    subtask_idx: int,
+    camera: str,
+) -> Tuple[str, str]:
+    """Return (full_path, relative_path) using a two-level shard + per-episode layout.
+
+    Layout:
+      <output>/<dataset>/<shard_X>/<episode_id>/clip_<k>@<camera>.mp4
+    This avoids >1k files per directory while keeping resume-friendly structure.
+    """
+    shard_dir = _stable_shard_for_episode(episode_id)
+    episode_dir = os.path.join(output_dir, dataset_name.lower(), shard_dir, f"episode_{episode_id}")
+    os.makedirs(episode_dir, exist_ok=True)
+    filename = f"clip_{subtask_idx}@{camera}.mp4"
+    full_path = os.path.join(episode_dir, filename)
+    rel_path = os.path.join(dataset_name.lower(), shard_dir, f"episode_{episode_id}", filename)
+    return full_path, rel_path
+
+
+def _collect_unique_texts_for_batch(
+    records: List[Tuple[str, dict]]
+) -> List[str]:
+    """Collect unique instruction texts from a list of (episode_id, record) pairs."""
+    texts: List[str] = []
+    seen: set = set()
+    for _episode_id, rec in records:
+        # Full trajectory instruction
+        full_text = rec.get("task_name") or rec.get("task_description") or ""
+        if full_text and full_text not in seen:
+            seen.add(full_text)
+            texts.append(full_text)
+
+        # Subtasks
+        actions = (
+            rec.get("label_info", {})
+            .get("action_config", [])
+        )
+        for a in actions:
+            t = (a or {}).get("action_text", "").strip()
+            if t and t not in seen:
+                seen.add(t)
+                texts.append(t)
+    return texts
+
+
+def _encode_texts(texts: List[str], model) -> Dict[str, Any]:
+    """Encode a list of texts to vectors using a preloaded model, with caching."""
+    if not texts:
+        return {}
+    vectors = model.encode(texts)
+    return {t: v for t, v in zip(texts, vectors)}
+
+
+def _frames_for_subrange(frames: np.ndarray, start: int, end: int) -> np.ndarray:
+    """Return frames[start:end] with guardrails; [start, end) semantics."""
+    start = max(int(start), 0)
+    end = min(int(end), len(frames))
+    if start >= end:
+        return np.empty((0,), dtype=object)
+    return frames[start:end]
+
+
+def _process_single_stream_sample(
+    sample: Dict[str, Any],
+    embeddings: Dict[str, Any],
+    output_dir: str,
+    dataset_name: str,
+    max_frames: int,
+    fps: int,
+) -> List[Dict]:
+    """Process one streaming sample: returns zero or more HF entries.
+
+    This function does not load any language model; it expects embeddings for
+    the relevant instruction texts to be provided.
+    """
+
+    result_entries: List[Dict] = []
+
+    # Extract key and keep only camera samples we care about
+    key = sample.get("__key__") or ""
+    episode_id, camera = _parse_episode_and_camera(key)
+    if not camera or camera not in CAMERA_KEYS:
+        return result_entries
+
+    # Load associated episode record for task/subtasks
+    try:
+        _json_path, rec = get_episode_record(episode_id)
+    except Exception:
+        return result_entries
+
+    # Get video bytes (dataset exposes only 'mp4', '__key__', '__url__')
+    video_bytes = sample.get("mp4")
+    if not video_bytes:
+        return result_entries
+
+    # Decode the video to frames once
+    try:
+        frames = _process_video_for_dataset(video_bytes)
+    except Exception:
+        return result_entries
+
+    if frames is None or len(frames) == 0:
+        return result_entries
+
+    # Build entries: full + subtasks
+    # Full trajectory
+    full_text = rec.get("task_name") or rec.get("task_description") or ""
+    if full_text:
+        subtask_idx = 0
+        full_out_path, rel_path = _build_video_paths(
+            output_dir, dataset_name, episode_id, subtask_idx, camera
+        )
+        # Create video if missing
+        if not os.path.exists(full_out_path):
+            _ = create_trajectory_video_optimized(
+                frames, full_out_path, max_frames=max_frames, fps=fps
+            )
+
+        lang_vec = embeddings.get(full_text)
+        if lang_vec is None:
+            # As a fallback, keep empty vector to avoid crashing
+            lang_vec = np.zeros((384,), dtype=np.float32)
+
+        traj_dict = {
+            "trajectory_id": f"{episode_id}_{subtask_idx}@{camera}",
+            "frames": frames,  # Not used by create_hf_trajectory now since we already wrote, but pass for API
+            "task": full_text,
+            "optimal": "optimal",
+            "is_robot": True,
+        }
+        entry = create_hf_trajectory(
+            traj_dict=traj_dict,
+            video_path=full_out_path,
+            lang_vector=lang_vec,
+            max_frames=max_frames,
+            dataset_name=dataset_name,
+            use_video=True,
+            fps=fps,
+        )
+        if entry:
+            entry["frames"] = rel_path
+            result_entries.append(entry)
+
+    # Subtasks
+    actions = (
+        rec.get("label_info", {})
+        .get("action_config", [])
+    )
+    for i, a in enumerate(actions, start=1):
+        if not isinstance(a, dict):
+            continue
+        text = (a.get("action_text") or "").strip()
+        if not text:
+            continue
+        start = a.get("start_frame", 0)
+        end = a.get("end_frame", len(frames))
+        sub_frames = _frames_for_subrange(frames, start, end)
+        if sub_frames.size == 0:
+            continue
+
+        out_path, rel_path = _build_video_paths(
+            output_dir, dataset_name, episode_id, i, camera
+        )
+        if not os.path.exists(out_path):
+            _ = create_trajectory_video_optimized(
+                sub_frames, out_path, max_frames=max_frames, fps=fps
+            )
+
+        lang_vec = embeddings.get(text)
+        if lang_vec is None:
+            lang_vec = np.zeros((384,), dtype=np.float32)
+
+        traj_dict = {
+            "trajectory_id": f"{episode_id}_{i}@{camera}",
+            "frames": sub_frames,
+            "task": text,
+            "optimal": "optimal",
+            "is_robot": True,
+        }
+        entry = create_hf_trajectory(
+            traj_dict=traj_dict,
+            video_path=out_path,
+            lang_vector=lang_vec,
+            max_frames=max_frames,
+            dataset_name=dataset_name,
+            use_video=True,
+            fps=fps,
+        )
+        if entry:
+            entry["frames"] = rel_path
+            result_entries.append(entry)
+
+    return result_entries
+
+
+def convert_agibotworld_streaming_to_hf(
+    dataset_name: str,
+    output_dir: str,
+    dataset_label: str = "agibotworld",
+    max_trajectories: Optional[int] = None,
+    max_frames: int = 64,
+    fps: int = 10,
+    num_workers: int = -1,
+) -> Dataset:
+    """Stream AgiBotWorld, extract camera videos, and write HF entries.
+
+    Returns a datasets.Dataset built from the collected entries. All videos are
+    saved to disk under output_dir.
+    """
+
+    # Load streaming dataset
+    ds = load_dataset(dataset_name, streaming=True, split="train")
+    # Some shards expose PNG frames instead of MP4. Widen features so casting
+    # does not fail during iteration; we'll simply skip non-MP4 samples.
+    widened = hfds.Features({
+        "__key__": hfds.Value("string"),
+        "__url__": hfds.Value("string"),
+        "mp4": hfds.Value("binary"),
+        "png": hfds.Value("binary"),
+    })
+    try:
+        ds = ds.cast(widened)
+    except Exception:
+        pass
+
+    # Determine workers
+    if num_workers == -1:
+        num_workers = max(1, min(cpu_count(), 8))
+    elif num_workers == 0:
+        num_workers = 1
+
+    # Language model for batch embedding
+    lang_model = load_sentence_transformer_model()
+
+    entries: List[Dict] = []
+    processed = 0  # number of streaming samples actually flushed/processed
+    default_batch_size = 64
+    batch_size = default_batch_size if (max_trajectories is None) else min(default_batch_size, max_trajectories)
+    batch_samples: List[Dict[str, Any]] = []
+    batch_records: List[Tuple[str, dict]] = []
+
+    # Simple live stats
+    seen_samples = 0
+    skipped_camera = 0
+    skipped_no_record = 0
+    skipped_no_mp4 = 0
+    decode_fail = 0
+
+    def flush_batch():
+        nonlocal entries, processed, batch_samples, batch_records
+        if not batch_samples:
+            return
+
+        # Collect unique texts and encode once
+        unique_texts = _collect_unique_texts_for_batch(batch_records)
+        emb_map = _encode_texts(unique_texts, lang_model)
+
+        if num_workers == 1:
+            for sample in tqdm(batch_samples, desc="Batch (seq)", leave=False):
+                res = _process_single_stream_sample(
+                    sample=sample,
+                    embeddings=emb_map,
+                    output_dir=output_dir,
+                    dataset_name=dataset_label,
+                    max_frames=max_frames,
+                    fps=fps,
+                )
+                # res is a list; extend and update decode_fail if nothing produced due to decode error
+                entries.extend(res)
+        else:
+            with Pool(processes=num_workers) as pool:
+                worker = partial(
+                    _process_single_stream_sample,
+                    embeddings=emb_map,
+                    output_dir=output_dir,
+                    dataset_name=dataset_label,
+                    max_frames=max_frames,
+                    fps=fps,
+                )
+                for res in tqdm(
+                    pool.imap_unordered(worker, batch_samples),
+                    total=len(batch_samples),
+                    desc=f"Batch (workers={num_workers})",
+                    leave=False,
+                ):
+                    entries.extend(res)
+
+        processed += len(batch_samples)
+        batch_samples = []
+        batch_records = []
+
+    print(f"Streaming {dataset_name}; workers={num_workers}, batch_size={batch_size}")
+    stream_pbar = tqdm(desc="Streaming samples", unit="sample", dynamic_ncols=True)
+
+    for sample in ds:
+        if max_trajectories is not None and processed >= max_trajectories:
+            break
+
+        key = sample.get("__key__", "")
+        episode_id, camera = _parse_episode_and_camera(key)
+        seen_samples += 1
+        stream_pbar.update(1)
+        if not camera or camera not in CAMERA_KEYS:
+            skipped_camera += 1
+            continue
+
+        # Ensure episode record exists; gather for embedding planning
+        try:
+            _json_path, rec = get_episode_record(episode_id)
+        except Exception:
+            skipped_no_record += 1
+            continue
+
+        # Require mp4 content; if absent (e.g., png-only shard), skip early
+        if not sample.get("mp4"):
+            skipped_no_mp4 += 1
+            continue
+
+        batch_samples.append(sample)
+        batch_records.append((episode_id, rec))
+
+        if len(batch_samples) >= batch_size:
+            flush_batch()
+
+        # If user asked for a very small number, don't wait for another full batch
+        if max_trajectories is not None and (processed + len(batch_samples)) >= max_trajectories:
+            flush_batch()
+            break
+
+    # Final flush
+    flush_batch()
+    stream_pbar.close()
+
+    # Build HF dataset from entries
+    if not entries:
+        return Dataset.from_dict({
+            "id": [],
+            "task": [],
+            "lang_vector": [],
+            "data_source": [],
+            "frames": [],
+            "optimal": [],
+            "is_robot": [],
+        })
+
+    # datasets can infer features; rely on default
+    print(
+        f"Done. seen={seen_samples}, entries={len(entries)}, "
+        f"skipped_camera={skipped_camera}, skipped_no_record={skipped_no_record}, "
+        f"skipped_no_mp4={skipped_no_mp4}"
+    )
+    return Dataset.from_list(entries)
 
 def load_agibotworld_dataset(dataset_name_or_path: str, max_trajectories: int = 100) -> Dict[str, List[Dict]]:
     """Load AgiBotWorld dataset using HuggingFace streaming and extract head_color.mp4 files.
@@ -46,6 +455,7 @@ def load_agibotworld_dataset(dataset_name_or_path: str, max_trajectories: int = 
     return task_data
 
 
+# NOTE: As the dataset is too large, we did not test this function extensively and it may be out of date.
 def _load_local_agibotworld(base_path: str, max_trajectories: int = 100, max_frames: int = 32) -> Dict[str, List[Dict]]:
     """Load AgiBotWorld dataset from local files, starting with task_info JSON files."""
     base_path = Path(base_path)
@@ -161,155 +571,10 @@ def _load_local_agibotworld(base_path: str, max_trajectories: int = 100, max_fra
 
 
 def _load_streaming_agibotworld(dataset_name: str, max_trajectories: int = 100) -> Dict[str, List[Dict]]:
-    """Load AgiBotWorld dataset using HuggingFace streaming with webdataset format."""
-    print(f"Streaming from HuggingFace dataset: {dataset_name}")
-    print("Processing webdataset format...")
-    
-    # Try to load as streaming dataset without enforcing schema
-    try:
-        # Load dataset with streaming
-        dataset = load_dataset(dataset_name, streaming=True, split='train')
-        print(f"Successfully loaded streaming dataset: {dataset_name}")
-        
-        # Inspect first few samples to understand structure
-        task_data = {}
-        sample_count = 0
-        processed_count = 0
-        
-        print("Inspecting dataset structure and processing valid samples...")
-        
-        # Use itertools to handle the casting errors gracefully
-        import itertools
-        dataset_iter = iter(dataset)
-        
-        # Use max_trajectories parameter with reasonable sample examination limit
-        max_samples_to_examine = max(max_trajectories * 10, 1000)  # Examine more samples to find valid ones
-        print(f"Looking for up to {max_trajectories} trajectories by examining up to {max_samples_to_examine} samples...")
-        
-        while processed_count < max_trajectories and sample_count < max_samples_to_examine:
-            try:
-                # Get next example, handling casting errors gracefully
-                try:
-                    example = next(dataset_iter)
-                except StopIteration:
-                    print(f"Reached end of dataset stream after {sample_count} samples")
-                    break
-                except Exception as cast_error:
-                    # Only print first few casting errors to avoid spam
-                    if sample_count <= 10:
-                        print(f"Skipping sample due to casting error: {cast_error}")
-                    elif sample_count % 100 == 0:
-                        print(f"Processed {sample_count} samples, found {processed_count} valid head camera videos...")
-                    sample_count += 1
-                    continue
-                
-                sample_count += 1
-                
-                # Print structure of first valid sample
-                if processed_count == 0:
-                    print(f"Sample structure: {list(example.keys())}")
-                    for key, value in example.items():
-                        if value is not None:
-                            print(f"  {key}: {type(value)} - {len(value) if hasattr(value, '__len__') else 'no len'}")
-                
-                # Extract key information from webdataset format
-                key = example.get('__key__', f'sample_{sample_count}')
-                
-                # Print all keys for first 20 samples to understand data structure
-                if sample_count <= 20:
-                    print(f"Sample {sample_count}: key='{key}'")
-                
-                # More flexible filtering - accept any video that might be a camera view
-                is_video_sample = any(pattern in key.lower() for pattern in [
-                    'head_color', 'head_rgb', 'head_cam', 'head', 'color', 'rgb', 'camera', 'cam', 'video'
-                ])
-                
-                if not is_video_sample:
-                    # Print skipped keys occasionally for debugging
-                    if sample_count <= 10:
-                        print(f"  ❌ Skipping non-video sample: {key}")
-                    continue
-                else:
-                    if sample_count <= 20:
-                        print(f"  ✅ Potential video sample: {key}")
-                
-                # Look for video data in various fields
-                video_data = None
-                if 'mp4' in example and example['mp4'] is not None:
-                    video_data = example['mp4']
-                elif 'webm' in example and example['webm'] is not None:
-                    video_data = example['webm']
-                elif 'avi' in example and example['avi'] is not None:
-                    video_data = example['avi']
-                
-                # Skip if no video data found
-                if video_data is None or len(video_data) == 0:
-                    continue
-                
-                # Parse task information from key 
-                # Key format might be like: observations/327/648642/videos/head_color
-                parts = key.split('/')
-                task_id = None
-                episode_id = None
-                
-                # Try to extract task and episode IDs from path structure
-                for i, part in enumerate(parts):
-                    if part.isdigit() and len(part) <= 4:  # Task ID (short number)
-                        task_id = part
-                        if i + 1 < len(parts) and parts[i + 1].isdigit():
-                            episode_id = parts[i + 1]
-                        break
-                
-                if task_id is None:
-                    task_id = f"{processed_count // 10}"  # Group into tasks
-                    episode_id = f"{processed_count}"
-                
-                task_name = f"task_{task_id}"
-                
-                print(f"✅ Found valid head camera video #{processed_count+1}: {key} (task {task_id}, episode {episode_id}, {len(video_data)} bytes)")
-                
-                # Process video: resize to 256x256 and downsample frames
-                try:
-                    processed_frames = _process_video_for_dataset(video_data)
-                    
-                    # Create trajectory entry
-                    trajectory = {
-                        'frames': processed_frames,  # Processed video frames
-                        'actions': np.random.randn(50, 14),  # Placeholder actions (longer sequence)
-                        'is_robot': True,
-                        'task': f"AgiBotWorld task {task_id} - episode {episode_id}",
-                        'optimal': 'optimal'
-                    }
-                except Exception as e:
-                    print(f"  ❌ Failed to process video for {key}: {e}")
-                    continue
-                
-                # Add to task data
-                if task_name not in task_data:
-                    task_data[task_name] = []
-                task_data[task_name].append(trajectory)
-                
-                processed_count += 1
-                
-                # Print progress every 10 valid samples
-                if processed_count % 10 == 0:
-                    print(f"📊 Progress: {processed_count} valid videos found from {sample_count} samples examined")
-                
-            except Exception as e:
-                print(f"Error processing sample {sample_count}: {e}")
-                continue
-        
-        print(f"Processed {processed_count} valid samples from {sample_count} total samples")
-        return task_data
-        
-    except Exception as e:
-        print(f"Failed to load as streaming dataset: {e}")
-        print("The AgiBotWorld dataset may require authentication or different access method.")
-        print("Try:")
-        print("1. Logging into HuggingFace: huggingface-cli login")
-        print("2. Accepting the dataset license on the HuggingFace page")
-        print("3. Using a local download instead")
-        return {}
+    """Legacy helper no longer used. Kept for compatibility."""
+    raise NotImplementedError(
+        "Use convert_agibotworld_streaming_to_hf() for streaming conversion."
+    )
 
 
 def _load_task_info(task_info_file: Path) -> List[Dict]:
@@ -337,20 +602,121 @@ def _process_video_for_dataset(video_input) -> np.ndarray:
     Returns:
         Processed video frames as numpy array
     """
+    # Helper utilities
+    def _ffprobe_codec_name(path: str) -> Optional[str]:
+        """Return codec_name for the first video stream using ffprobe, or None on failure."""
+        if shutil.which("ffprobe") is None:
+            return None
+        try:
+            completed = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=codec_name",
+                    "-of",
+                    "default=nk=1:nw=1",
+                    path,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+                text=True,
+            )
+            codec_name = completed.stdout.strip().splitlines()[0] if completed.stdout.strip() else None
+            return codec_name
+        except Exception:
+            return None
+
+    def _reencode_to_h264(input_path: str) -> Optional[str]:
+        """Re-encode input video to H.264 yuv420p if ffmpeg is available. Returns output path or None."""
+        if shutil.which("ffmpeg") is None:
+            return None
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_out:
+            output_path = tmp_out.name
+        try:
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    input_path,
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-movflags",
+                    "+faststart",
+                    output_path,
+                ],
+                check=True,
+            )
+            return output_path
+        except Exception:
+            try:
+                os.unlink(output_path)
+            except Exception:
+                pass
+            return None
+
+    def _open_with_best_backend(path: str) -> Optional[cv2.VideoCapture]:
+        """Try multiple OpenCV backends and return an opened capture or None."""
+        backends = [
+            getattr(cv2, "CAP_FFMPEG", cv2.CAP_ANY),
+            cv2.CAP_ANY,
+        ]
+        for backend in backends:
+            try:
+                cap_try = cv2.VideoCapture(path, backend)
+                if cap_try.isOpened():
+                    # Validate we can read at least one frame
+                    ret, test_frame = cap_try.read()
+                    if ret and test_frame is not None:
+                        cap_try.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        return cap_try
+                cap_try.release()
+            except Exception:
+                try:
+                    cap_try.release()
+                except Exception:
+                    pass
+        return None
+
     # Load video frames
+    temp_files_to_cleanup: List[str] = []
+    cap: Optional[cv2.VideoCapture] = None
+
     if isinstance(video_input, (str, Path)):
         # Load from file path
         video_path = str(video_input)
-        cap = cv2.VideoCapture(video_path)
+        cap = _open_with_best_backend(video_path)
     else:
         # Load from bytes - save to temp file first
         with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as temp_file:
             temp_file.write(video_input)
-            temp_path = temp_file.name
-        cap = cv2.VideoCapture(temp_path)
+            temp_input_path = temp_file.name
+        temp_files_to_cleanup.append(temp_input_path)
+
+        # If the input is AV1 (common in webdatasets), transcode to H.264 for compatibility
+        codec_name = _ffprobe_codec_name(temp_input_path)
+        decodable_path = temp_input_path
+        if codec_name == "av1":
+            h264_path = _reencode_to_h264(temp_input_path)
+            if h264_path is not None:
+                temp_files_to_cleanup.append(h264_path)
+                decodable_path = h264_path
+        cap = _open_with_best_backend(decodable_path)
     
     try:
         frames = []
+        if cap is None or not cap.isOpened():
+            raise ValueError("Could not open video file with available backends. If the source is AV1, install AV1 support or enable ffmpeg re-encode.")
+
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -362,9 +728,12 @@ def _process_video_for_dataset(video_input) -> np.ndarray:
         
         cap.release()
         
-        # Clean up temp file if we created one
-        if not isinstance(video_input, (str, Path)):
-            os.unlink(temp_path)
+        # Clean up temp file(s) if we created any
+        for path in temp_files_to_cleanup:
+            try:
+                os.unlink(path)
+            except Exception:
+                pass
         
         if len(frames) == 0:
             raise ValueError("No frames could be extracted from video")
@@ -377,10 +746,10 @@ def _process_video_for_dataset(video_input) -> np.ndarray:
     except Exception as e:
         cap.release()
         # Clean up temp files in case of error
-        if not isinstance(video_input, (str, Path)) and 'temp_path' in locals():
+        for path in temp_files_to_cleanup:
             try:
-                os.unlink(temp_path)
-            except:
+                os.unlink(path)
+            except Exception:
                 pass
         raise e
 

@@ -4,7 +4,7 @@ dataset:
   dataset_name: agibotworld
 
 output:
-  output_dir: agibotworld_dataset
+  output_dir: datasets/agibotworld_dataset
   max_trajectories: 100  # Limit for testing, increase for full dataset
   max_frames: 64
   use_video: true

@@ -24,6 +24,14 @@ Your dataset loader must produce trajectories in this format:
 }
 ```
 
+## Step 0: Set Hugging Face repo ID
+Before we start, you must have an HF account which will be pushed to.
+You will set this by setting
+```
+export HF_USERNAME=<insert HF username here>
+```
+
+
 ## Step 1: Create Dataset Loader
 
 Create `data/{dataset_name}_loader.py`:

@@ -16,6 +16,13 @@ AgiBotWorld is a large-scale robotic dataset with **native streaming support** a
 
 ## Prerequisites
 
+### 0. Set Hugging Face repo ID
+Before we start, you must have an HF account which will be pushed to.
+You will set this by setting
+```
+export HF_USERNAME=<insert HF username here>
+```
+
 ### 1. HuggingFace Authentication
 ```bash
 uv run hf auth login

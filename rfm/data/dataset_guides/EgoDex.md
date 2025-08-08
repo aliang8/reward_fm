@@ -38,6 +38,13 @@ part2/  # Point dataset_path here for part2
 
 ## Prerequisites
 
+### 0. Set Hugging Face repo ID
+Before we start, you must have an HF account which will be pushed to.
+You will set this by setting
+```
+export HF_USERNAME=<insert HF username here>
+```
+
 ### 1. Dataset Download
 Download and extract the EgoDex dataset splits you want to process:
 - `part1.zip` through `part5.zip` (training data, <350GB each)

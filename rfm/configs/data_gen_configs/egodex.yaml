@@ -14,4 +14,4 @@ output:
 
 hub:
   push_to_hub: true 
-  hub_repo_id: abraranwar/egodex_rfm
+  hub_repo_id: egodex_rfm

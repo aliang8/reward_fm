@@ -6,10 +6,10 @@ dataset:
 output:
   output_dir: agibotworld_dataset
   max_trajectories: 100  # Limit for testing, increase for full dataset
-  max_frames: 32
+  max_frames: 64
   use_video: true
   fps: 30
 
 hub:
   push_to_hub: true  # Set to true when ready to upload
-  hub_repo_id: jesbu1/agibotworld_rfm
+  hub_repo_id: agibotworld_rfm

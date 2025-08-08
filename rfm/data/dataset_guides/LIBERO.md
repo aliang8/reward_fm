@@ -27,6 +27,13 @@ where DATASET is chosen from `[libero_spatial, libero_object, libero_100, libero
 
 ## Quick Start
 
+### 0. Set Hugging Face repo ID
+Before we start, you must have an HF account which will be pushed to.
+You will set this by setting
+```
+export HF_USERNAME=<insert HF username here>
+```
+
 ### Option 1: Use Default Configuration
 ```bash
 uv run python rfm/data/generate_hf_dataset.py \

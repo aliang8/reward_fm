@@ -31,11 +31,16 @@ uv run hf auth login
 ### 2. Accept Dataset License
 Visit [https://huggingface.co/datasets/agibot-world/AgiBotWorld-Alpha](https://huggingface.co/datasets/agibot-world/AgiBotWorld-Alpha) and accept the license agreement.
 
+### 3. Download task information which gets put in a temporary folder. This is so we can index task and subtask information.
+```
+ uv run rfm/data/data_scripts/agibot/download_task_jsons.py 
+ ```
+ 
 ## Quick Start
 
 ### Option 1: Use Pre-configured Settings
 ```bash
-uv run python data/generate_hf_dataset.py --config_path=configs/data_gen_configs/agibot_world.yaml
+uv run python rfm/data/generate_hf_dataset.py --config_path=rfm/configs/data_gen_configs/agibot_world.yaml
 ```
 
 ### Option 2: Manual Configuration

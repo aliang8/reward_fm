@@ -133,10 +133,10 @@ def create_trajectory_video_optimized(
     """
 
 
-    print(f"Saving optimized video to: {video_path}")
+    # print(f"Saving optimized video to: {video_path}")
 
     if os.path.exists(video_path):
-        print(f"Video already exists at: {video_path}, skipping video creation")
+        # print(f"Video already exists at: {video_path}, skipping video creation")
         return video_path
     
     # If frames is callable, call it to get the actual frames
@@ -225,7 +225,7 @@ def create_trajectory_video_optimized(
         print(stderr)
         raise RuntimeError("FFmpeg process failed to encode the video.")
     
-    print("Video created successfully.")
+    # print("Video created successfully.")
     return video_path
 
 

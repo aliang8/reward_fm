@@ -319,6 +319,11 @@ def main(cfg: GenerateConfig):
     if cfg.hub.hub_token is None:
         cfg.hub.hub_token = os.getenv("HF_TOKEN")
     
+    # check that HF_USERNAME is set
+    if os.getenv("HF_USERNAME") is None:
+        raise ValueError("HF_USERNAME is not set. Please set it in the environment variables with your HuggingFace username or organization name.")
+    cfg.hub.hub_repo_id = os.getenv("HF_USERNAME") + '/' + cfg.hub.hub_repo_id
+    
     # Import the appropriate dataset loader and trajectory creator
     if "libero" in cfg.dataset.dataset_name:
         from rfm.data.dataset_loaders.libero_loader import load_libero_dataset

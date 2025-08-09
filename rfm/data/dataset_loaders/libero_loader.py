@@ -11,6 +11,46 @@ from typing import List, Dict
 from pathlib import Path
 from tqdm import tqdm
 
+class LiberoFrameLoader:
+    """Pickle-able loader that reads LIBERO frames from an HDF5 dataset on demand.
+
+    Stores only simple fields so it can be safely passed across processes.
+    """
+
+    def __init__(self, hdf5_path: str, dataset_path: str, rotate_180: bool = True):
+        self.hdf5_path = hdf5_path
+        self.dataset_path = dataset_path  # e.g., "data/<trajectory_key>/obs/agentview_rgb"
+        self.rotate_180 = rotate_180
+
+    def __call__(self) -> np.ndarray:
+        """Load frames from HDF5 when called.
+
+        Returns:
+            np.ndarray of shape (T, H, W, 3), dtype uint8
+        """
+        with h5py.File(self.hdf5_path, 'r') as f:
+            if self.dataset_path not in f:
+                raise KeyError(f"Dataset path '{self.dataset_path}' not found in {self.hdf5_path}")
+
+            frames = f[self.dataset_path][:]
+
+        # Ensure shape and dtype sanity
+        if not isinstance(frames, np.ndarray) or frames.ndim != 4 or frames.shape[-1] != 3:
+            raise ValueError(
+                f"Unexpected frames shape for {self.dataset_path} in {self.hdf5_path}: "
+                f"{getattr(frames, 'shape', None)}"
+            )
+
+        # Match existing behavior: flip vertically (previous code called this 180-degree rotate)
+        if self.rotate_180:
+            frames = frames[:, ::-1, :, :].copy()
+
+        # Ensure uint8
+        if frames.dtype != np.uint8:
+            frames = frames.astype(np.uint8, copy=False)
+
+        return frames
+
 def load_libero_dataset(base_path: str) -> Dict[str, List[Dict]]:
     """Load LIBERO dataset from HDF5 files and organize by task.
     
@@ -58,14 +98,14 @@ def load_libero_dataset(base_path: str) -> Dict[str, List[Dict]]:
                         'actions': []
                     }
                     
-                    # Get trajectory length from observations
+                    # Set up lazy frame loader to avoid loading frames into memory up front
                     if 'obs' in trajectory and 'agentview_rgb' in trajectory['obs']:
-                        frames = trajectory['obs']['agentview_rgb'][:]  # (T, H, W, 3)
-                        # Rotate frames by 180 degrees to correct LIBERO camera orientation
-                        # TODO: check this is correct long-term
-                        if isinstance(frames, np.ndarray) and frames.ndim == 4 and frames.shape[-1] == 3:
-                            frames = frames[:, ::-1, :, :].copy()
-                        trajectory_info['frames'] = frames
+                        dataset_path = f"data/{trajectory_key}/obs/agentview_rgb"
+                        trajectory_info['frames'] = LiberoFrameLoader(
+                            hdf5_path=str(file_path),
+                            dataset_path=dataset_path,
+                            rotate_180=True,
+                        )
                     
                     # Get actions if available
                     if 'actions' in trajectory:

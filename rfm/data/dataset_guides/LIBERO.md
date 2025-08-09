@@ -20,6 +20,7 @@ git clone https://github.com/Lifelong-Robot-Learning/LIBERO.git
 # This should work too
 git submodule update --init --recursive
 
+cd deps/libero/LIBERO
 uv run python benchmark_scripts/download_libero_datasets.py --datasets DATASET
 ```
 where DATASET is chosen from `[libero_spatial, libero_object, libero_100, libero_goal]`.
@@ -33,6 +34,8 @@ You will set this by setting
 ```
 export HF_USERNAME=<insert HF username here>
 ```
+
+Then, for each dataset, run with the all the datasets you would like to process
 
 ### Option 1: Use Default Configuration
 ```bash

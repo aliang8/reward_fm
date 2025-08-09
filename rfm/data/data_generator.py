@@ -412,8 +412,10 @@ class DataGenerator:
             from datasets import load_dataset, Video, Features
             rank_0_print(f"Loading from HuggingFace Hub: {dataset_path}")
 
+            dataset_name = dataset_path.split("/")[-1]
+
             def patch_path(old_path):
-                root_dir = "/workspace/vlm_reward_model/rfm_dataset"
+                root_dir = f"/workspace/vlm_reward_model/rfm_dataset/{dataset_name}"
                 return f"{root_dir}/{old_path}"       # e.g., "./videos/trajectory_0000.mp4"
             
             ds = load_dataset(dataset_path, name=subset, split="train")
@@ -954,7 +956,9 @@ def test():
     
     # Create data generator
     generator = DataGenerator(
-        dataset_path="aliangdw/rfm",
+        # dataset_path="aliangdw/rfm",
+        # dataset_subsets=["libero_10"],
+        dataset_path="abraranwar/libero_rfm",
         dataset_subsets=["libero_10"],
         preference_ratio=0.5,
         similarity_ratio=0.5,

@@ -42,6 +42,42 @@ def downsample_frames(frames: np.ndarray, max_frames: int = 32) -> np.ndarray:
     unique_indices = np.unique(indices)
     return frames[unique_indices]
 
+def motion_aware_downsample(frames: np.ndarray,
+                            max_frames: int = 32) -> np.ndarray:
+    if len(frames) <= max_frames:
+        return frames
+    T = len(frames)
+    resize_long_side = 256
+    min_gap = 1
+
+    def _prep(f):
+        if resize_long_side:
+            h, w = f.shape[:2]
+            scale = resize_long_side / max(h, w)
+            if scale < 1.0:
+                f = cv2.resize(f, (int(w * scale), int(h * scale)),
+                               interpolation=cv2.INTER_AREA)
+        return cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).astype(np.float32)
+
+    gray = [_prep(f) for f in frames]
+
+    scores = np.zeros(T, dtype=np.float32)
+    fb_args = dict(pyr_scale=0.5, levels=3, winsize=15,
+                   iterations=3, poly_n=5, poly_sigma=1.2, flags=0)
+    for i in range(T - 1):
+        flow = cv2.calcOpticalFlowFarneback(gray[i], gray[i + 1], None, **fb_args)
+        scores[i + 1] = np.linalg.norm(flow, axis=-1).mean()
+
+    keep = {0, T - 1}
+    if max_frames > 2:
+        for idx in np.argsort(scores)[::-1]:
+            if len(keep) >= max_frames:
+                break
+            if all(abs(idx - k) >= min_gap for k in keep):
+                keep.add(int(idx))
+
+    return frames[sorted(keep)]
+
 
 def create_trajectory_video(frames, output_dir: str, max_frames: int = -1, fps: int = 10, shortest_edge_size: int = 240, center_crop: bool = False) -> str:
     """Create a trajectory video from frames and save as MP4 file."""

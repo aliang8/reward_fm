@@ -10,6 +10,7 @@ import numpy as np
 from typing import List, Dict
 from pathlib import Path
 from tqdm import tqdm
+from rfm.data.helpers import generate_unique_id
 
 class LiberoFrameLoader:
     """Pickle-able loader that reads LIBERO frames from an HDF5 dataset on demand.
@@ -111,9 +112,11 @@ def load_libero_dataset(base_path: str) -> Dict[str, List[Dict]]:
                     if 'actions' in trajectory:
                         trajectory_info['actions'] = trajectory['actions'][:]
 
-                    # Assume all LIBERO trajectories are successful
-                    trajectory_info['optimal'] = "optimal"
+                    # Core attributes
                     trajectory_info['is_robot'] = True
+                    trajectory_info['quality_label'] = 'successful'
+                    trajectory_info['preference_group_id'] = None
+                    trajectory_info['preference_rank'] = None
                     
                     # Parse the original file path to extract scene and task info
                     file_name = os.path.basename(file_path).replace('.hdf5', '')
@@ -144,7 +147,9 @@ def load_libero_dataset(base_path: str) -> Dict[str, List[Dict]]:
                     
                     
                     # Add parsed information to trajectory
-                    trajectory_info['task'] = task_string.strip()                    
+                    trajectory_info['task'] = task_string.strip()
+                    # Assign unique UUID id
+                    trajectory_info['id'] = generate_unique_id()
                     trajectories.append(trajectory_info)
             
             task_data[task_name] = trajectories

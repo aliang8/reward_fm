@@ -45,6 +45,11 @@ uv run python rfm/data/generate_hf_dataset.py \
     --dataset.dataset_name=libero_90
 ```
 
+If all your LIBERO data exists in the path above, you can use the following utility script
+```bash
+uv run bash rfm/data/data_scripts/libero/gen_all_libero.sh
+```
+
 ### Option 2: Custom Configuration
 ```bash
 uv run python rfm/data/generate_hf_dataset.py \

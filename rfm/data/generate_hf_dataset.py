@@ -47,8 +47,10 @@ BASE_FEATURES = {
     "lang_vector": datasets.Sequence(datasets.Value("float32")),
     "data_source": datasets.Value("string"),
     "frames": None,  # Will be set based on use_video parameter
-    "optimal": datasets.Value("string"),
     "is_robot": datasets.Value("bool"),
+    "quality_label": datasets.Value("string"),
+    "preference_group_id": datasets.Value("string"),
+    "preference_rank": datasets.Value("int32"),
 }
 
 @dataclass
@@ -251,8 +253,10 @@ def convert_dataset_to_hf_format(
         "lang_vector": [entry["lang_vector"] for entry in all_entries],
         "data_source": [entry["data_source"] for entry in all_entries],
         "frames": [entry["frames"] for entry in all_entries],
-        "optimal": [entry["optimal"] for entry in all_entries],
         "is_robot": [entry["is_robot"] for entry in all_entries],
+        "quality_label": [entry.get("quality_label") for entry in all_entries],
+        "preference_group_id": [entry.get("preference_group_id") for entry in all_entries],
+        "preference_rank": [entry.get("preference_rank") for entry in all_entries],
     }
     
     # Set frames feature based on video mode

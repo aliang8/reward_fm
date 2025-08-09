@@ -4,7 +4,7 @@ dataset:
   dataset_name: libero_90  # This will be the dataset name / data source
 
 output:
-  output_dir: datasets/libero_dataset
+  output_dir: datasets/libero_rfm
   max_trajectories: -1
   max_frames: 64
   use_video: true

@@ -12,16 +12,18 @@ import numpy as np
 @dataclass
 class Trajectory:
     """Standard trajectory structure for HuggingFace format."""
-    
+
     id: str
     task: str
     lang_vector: np.ndarray
     data_source: str
-    frames: List[str]
-    optimal: bool
+    frames: str
     is_robot: bool
+    quality_label: str
+    preference_group_id: Optional[str] = None
+    preference_rank: Optional[int] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary format for HuggingFace dataset trajectory."""
         return {
@@ -30,8 +32,10 @@ class Trajectory:
             "lang_vector": self.lang_vector,
             "data_source": self.data_source,
             "frames": self.frames,
-            "optimal": self.optimal,
             "is_robot": self.is_robot,
+            "quality_label": self.quality_label,
+            "preference_group_id": self.preference_group_id,
+            "preference_rank": self.preference_rank,
             "metadata": self.metadata,
         }
         

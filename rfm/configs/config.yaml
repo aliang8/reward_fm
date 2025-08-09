@@ -1,0 +1,130 @@
+# RFM (Reward Foundation Model) Configuration
+# Configuration file for training and evaluating the RFM model with three objectives
+
+# =====================================================================================
+# Experiment Mode
+# =====================================================================================
+mode: "train"  # "train" or "evaluate"
+debug: false  # Set to true for debugging (reduces dataset size, enables debug features)
+
+# =====================================================================================
+# Model Configuration
+# =====================================================================================
+model:
+  base_model_id: "Qwen/Qwen2.5-VL-3B-Instruct"
+  torch_dtype: "bfloat16"
+  trust_remote_code: true
+
+# =====================================================================================
+# Data Configuration
+# =====================================================================================
+data:
+  # Dataset paths and sources
+  dataset_path: "aliangdw/rfm"
+  dataset_subsets: ["libero_10"]
+  
+  # Evaluation dataset settings
+  eval_dataset_path: "aliangdw/rfm" 
+  eval_dataset_subsets: ["libero_10"]  # Different subset for evaluation
+  eval_subset_size: 100  # Number of evaluation examples
+  
+  # Video processing settings
+  max_frames: 4  # Maximum frames per trajectory
+  video_frame_sampling: "uniform"  # "uniform", "random", "first", "middle"
+  resized_height: 128  # Height to resize images/videos to
+  resized_width: 128   # Width to resize images/videos to
+  
+  # Data generation settings
+  preference_ratio: 0.5  # Ratio of preference prediction samples
+  similarity_ratio: 0.5  # Ratio of similarity scoring samples
+  dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
+  shuffle: true
+  seed: 42
+  num_proc: 1  # Number of processes for dataset processing (1 for safety, increase for speed)
+  force_reprocess: false  # Force reprocessing of dataset even if cached version exists
+  
+  # Data loading settings
+  dataloader_pin_memory: false
+  dataloader_num_workers: 0
+
+# =====================================================================================
+# Training Configuration
+# =====================================================================================
+training:  
+  # Output and logging
+  output_dir: "./logs/rfm"
+  
+  # Training parameters
+  per_device_train_batch_size: 8
+  gradient_accumulation_steps: 1
+  learning_rate: 2e-5
+  num_train_epochs: -1  # Number of epochs to train for
+  save_strategy: "steps"
+  logging_steps: 1
+  save_steps: 50
+  max_steps: 500  # -1 means no limit, use num_train_epochs instead
+  
+  # Evaluation settings
+  evaluation_strategy: "steps"  # Options: "no", "steps", "epoch"
+  eval_steps: 50  # Evaluate every 50 steps
+  per_device_eval_batch_size: 4  # Evaluation batch size per device
+  do_eval: true  # Enable evaluation during training
+  prediction_loss_only: true # Only compute loss for the prediction head
+  
+  # Model settings
+  max_seq_length: 1024
+  beta: 0.1  # DPO beta parameter
+  
+  # Resume training
+  resume_from_checkpoint: null  # Set to checkpoint path to resume, null for fresh start
+  
+  # Mixed precision and optimization
+  bf16: true
+  fp16: false
+  remove_unused_columns: false
+  gradient_checkpointing: true  # Re-enabled since FSDP is handled by accelerate config
+    
+  # Distributed training settings
+  ddp_find_unused_parameters: true
+  ddp_bucket_cap_mb: 25
+
+# =====================================================================================
+# PEFT Configuration
+# =====================================================================================
+peft:
+  use_peft: false  # Set to false to train the full model instead of using PEFT/LoRA
+  r: 32
+  lora_alpha: 64
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+  lora_dropout: 0.05
+  bias: "none"
+  # Additional options for more comprehensive training (when use_peft: false)
+  train_vision_encoder: true  # Whether to train the vision encoder
+  train_language_model: false   # Whether to train the language model
+  train_progress_head: true     # Whether to train the progress prediction head
+  train_preference_head: true   # Whether to train the preference prediction head
+  train_similarity_head: true   # Whether to train the similarity scoring head
+
+# =====================================================================================
+# Evaluation Configuration
+# =====================================================================================
+evaluation:
+  model_path: "./rfm_model_output/checkpoint-200"
+  eval_subset_size: -1  # Number of examples to use for evaluation
+  # Evaluation dataset path (same as training for now)
+  eval_dataset_path: "aliangdw/rfm"
+  eval_dataset_subsets: ["libero_10"]
+  eval_base_dir: "libero_dpo_dataset"
+
+# =====================================================================================
+# Logging and Output Configuration
+# =====================================================================================
+logging:
+  save_model: true
+  save_processor: true
+  print_trainable_parameters: true
+  # Wandb configuration
+  use_wandb: false
+  wandb_project: "rfm-model"
+  wandb_entity: null  # Set to your wandb username if needed
+  wandb_run_name: "rfm-training"  

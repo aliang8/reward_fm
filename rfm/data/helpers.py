@@ -311,24 +311,28 @@ def create_hf_trajectory(
     video_path = create_trajectory_video_optimized(frames_data, video_path, max_frames, fps, shortest_edge_size, center_crop)
     
     if video_path is None:
-        print(f"Skipping trajectory {traj_dict['trajectory_id']} because frames are None")
+        print(f"Skipping trajectory {traj_dict.get('id', 'UNKNOWN')} because frames are None")
         return None
     
-    # Generate unique ID
-    unique_id = generate_unique_id()
-    
-    # Get task description
+    # Get identifiers and fields
+    id = traj_dict.get("id", generate_unique_id())
     task_description = traj_dict["task"]
+    is_robot: bool = bool(traj_dict.get("is_robot", False))
+    quality_label: str = str(traj_dict.get("quality_label", "successful"))
+    preference_group_id = traj_dict.get("preference_group_id", None)
+    preference_rank = traj_dict.get("preference_rank", None)
 
     # Create dataset trajectory
     trajectory = {
-        "id": unique_id,
+        "id": id,
         "task": task_description,
         "lang_vector": lang_vector,  # Pre-computed language vector
         "data_source": dataset_name,
         "frames": video_path,
-        "optimal": traj_dict['optimal'],
-        "is_robot": traj_dict['is_robot'],
+        "is_robot": is_robot,
+        "quality_label": quality_label,
+        "preference_group_id": preference_group_id,
+        "preference_rank": preference_rank,
     }
     
     return trajectory

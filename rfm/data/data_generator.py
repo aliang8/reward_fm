@@ -178,7 +178,7 @@ class DataGenerator:
         
         # Stack frames into tensor and convert to numpy
         # Each frame["data"] should be HxWxC, stacking gives TxHxWxC
-        frames_tensor = torch.stack([frame["data"] for frame in all_frames])
+        frames_tensor = torch.stack([frame for frame in all_frames])
         frames_array = frames_tensor.numpy()
         
         # Ensure we have the correct shape: (T, H, W, C)
@@ -463,16 +463,21 @@ class DataGenerator:
         self.robot_trajectories = [traj for traj in self.trajectories if traj.get('is_robot', True)]
         self.human_trajectories = [traj for traj in self.trajectories if not traj.get('is_robot', True)]
         
-        # Categorize by optimal vs suboptimal
-        self.optimal_trajectories = [traj for traj in self.trajectories if traj.get('optimal', True)]
-        self.suboptimal_trajectories = [traj for traj in self.trajectories if not traj.get('optimal', True)]
+        # Categorize by quality labels but keep legacy names (optimal == successful)
+        def is_success(traj: Dict) -> bool:
+            return str(traj.get('quality_label', 'successful')).lower() == 'successful'
+        def is_suboptimal(traj: Dict) -> bool:
+            return str(traj.get('quality_label', '')).lower() == 'suboptimal'
+
+        self.optimal_trajectories = [traj for traj in self.trajectories if is_success(traj)]
+        self.suboptimal_trajectories = [traj for traj in self.trajectories if is_suboptimal(traj)]
         
-        # Categorize by task and optimality
+        # Categorize by task (legacy naming)
         self.optimal_by_task = {}
         self.suboptimal_by_task = {}
         for task_name, task_trajectories in self.task_groups.items():
-            self.optimal_by_task[task_name] = [traj for traj in task_trajectories if traj.get('optimal', True)]
-            self.suboptimal_by_task[task_name] = [traj for traj in task_trajectories if not traj.get('optimal', True)]
+            self.optimal_by_task[task_name] = [traj for traj in task_trajectories if is_success(traj)]
+            self.suboptimal_by_task[task_name] = [traj for traj in task_trajectories if is_suboptimal(traj)]
         
         # Categorize by data source
         self.trajectories_by_source = {}
@@ -586,7 +591,7 @@ class DataGenerator:
             data_source=optimal_traj['data_source'],
             frames=optimal_traj['frames'],
             frames_shape=optimal_frames_shape,
-            optimal=optimal_traj['optimal'],
+            quality_label=optimal_traj.get('quality_label', 'successful'),
             is_robot=optimal_traj['is_robot'],
             metadata=optimal_traj.get('metadata'),
             # Preference-specific fields - using chosen/rejected naming
@@ -601,7 +606,7 @@ class DataGenerator:
             rejected_task=negative_traj['task'],
             rejected_lang_vector=negative_traj['lang_vector'],
             rejected_data_source=negative_traj['data_source'],
-            rejected_optimal=negative_traj['optimal'],
+            rejected_quality_label=negative_traj.get('quality_label'),
             rejected_is_robot=negative_traj['is_robot'],
             # Progress fields
             target_progress_A=target_progress_A,
@@ -884,7 +889,7 @@ class DataGenerator:
             data_source=ref_traj['data_source'],
             frames=ref_traj['frames'],
             frames_shape=ref_frames_shape,
-            optimal=ref_traj['optimal'],
+            quality_label=ref_traj.get('quality_label', 'successful'),
             is_robot=ref_traj['is_robot'],
             metadata=ref_traj.get('metadata'),
             # Similarity-specific fields - using traj_sim/traj_diff naming
@@ -904,13 +909,13 @@ class DataGenerator:
             traj_sim_task=traj_sim['task'],
             traj_sim_lang_vector=traj_sim['lang_vector'],
             traj_sim_data_source=traj_sim['data_source'],
-            traj_sim_optimal=traj_sim['optimal'],
+            traj_sim_quality_label=traj_sim.get('quality_label'),
             traj_sim_is_robot=traj_sim['is_robot'],
             # Different trajectory fields
             traj_diff_task=traj_diff['task'],
             traj_diff_lang_vector=traj_diff['lang_vector'],
             traj_diff_data_source=traj_diff['data_source'],
-            traj_diff_optimal=traj_diff['optimal'],
+            traj_diff_quality_label=traj_diff.get('quality_label'),
             traj_diff_is_robot=traj_diff['is_robot'],
             # Progress fields
             target_progress_A=target_progress_A,

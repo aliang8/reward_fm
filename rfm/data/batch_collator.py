@@ -21,7 +21,7 @@ class BaseSample:
     lang_vector: np.ndarray
     data_source: str
     frames: Union[List[str], np.ndarray]
-    optimal: bool
+    quality_label: str
     is_robot: bool
     
     # Frame shape information for deserialization
@@ -51,7 +51,7 @@ class PreferenceSample(BaseSample):
     rejected_task: Optional[str] = None
     rejected_lang_vector: Optional[np.ndarray] = None
     rejected_data_source: Optional[str] = None
-    rejected_optimal: Optional[bool] = None
+    rejected_quality_label: Optional[str] = None
     rejected_is_robot: Optional[bool] = None
     
     def __post_init__(self):
@@ -79,12 +79,12 @@ class SimilaritySample(BaseSample):
     traj_sim_task: Optional[str] = None
     traj_sim_lang_vector: Optional[np.ndarray] = None
     traj_sim_data_source: Optional[str] = None
-    traj_sim_optimal: Optional[bool] = None
+    traj_sim_quality_label: Optional[str] = None
     traj_sim_is_robot: Optional[bool] = None
     traj_diff_task: Optional[str] = None
     traj_diff_lang_vector: Optional[np.ndarray] = None
     traj_diff_data_source: Optional[str] = None
-    traj_diff_optimal: Optional[bool] = None
+    traj_diff_quality_label: Optional[str] = None
     traj_diff_is_robot: Optional[bool] = None
    
     def __post_init__(self):

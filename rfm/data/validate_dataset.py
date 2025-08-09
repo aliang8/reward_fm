@@ -29,18 +29,17 @@ def validate_dataset_fields_and_types(dataset: Dataset, sample_size: int = 10) -
     }
     
     # Expected schema for the new format
-    expected_schema = {
-        "id": str,
-        "task": str,
-        "lang_vector": np.ndarray,
-        "data_source": str,
-        "frames": list,
-        "optimal": bool,
-        "ranking": int,
-        "preference_embedding": np.ndarray,
-        "is_robot": bool,
-        "metadata": dict
-    }
+    expected_fields = [
+        "id",
+        "task",
+        "lang_vector",
+        "data_source",
+        "frames",
+        "is_robot",
+        "quality_label",
+        "preference_group_id",
+        "preference_rank",
+    ]
     
     # Check if dataset has features
     if not hasattr(dataset, 'features') or dataset.features is None:
@@ -52,7 +51,7 @@ def validate_dataset_fields_and_types(dataset: Dataset, sample_size: int = 10) -
     print(f"Dataset features: {list(dataset.features.keys())}")
     
     # Check required fields
-    for field_name, expected_type in expected_schema.items():
+    for field_name in expected_fields:
         if field_name not in dataset.features:
             validation_results["valid"] = False
             validation_results["errors"].append(f"Missing required field: {field_name}")
@@ -74,49 +73,41 @@ def validate_dataset_fields_and_types(dataset: Dataset, sample_size: int = 10) -
             if not isinstance(trajectory["task"], str):
                 validation_results["errors"].append(f"Trajectory {idx}: 'task' is not a string")
             
-            if not isinstance(trajectory["lang_vector"], np.ndarray):
-                validation_results["errors"].append(f"Trajectory {idx}: 'lang_vector' is not a numpy array")
-            elif trajectory["lang_vector"].shape != (384,):
-                validation_results["errors"].append(f"Trajectory {idx}: 'lang_vector' shape is {trajectory['lang_vector'].shape}, expected (384,)")
+            # lang_vector should be length-384 sequence
+            lv = trajectory["lang_vector"]
+            if isinstance(lv, np.ndarray):
+                if lv.shape != (384,):
+                    validation_results["errors"].append(f"Trajectory {idx}: 'lang_vector' shape is {lv.shape}, expected (384,)")
+            elif isinstance(lv, list):
+                if len(lv) != 384:
+                    validation_results["errors"].append(f"Trajectory {idx}: 'lang_vector' length is {len(lv)}, expected 384")
+                else:
+                    # check element types
+                    if not all(isinstance(x, (int, float, np.floating, np.integer)) for x in lv):
+                        validation_results["warnings"].append(f"Trajectory {idx}: 'lang_vector' contains non-numeric elements")
+            else:
+                validation_results["errors"].append(f"Trajectory {idx}: 'lang_vector' has unexpected type {type(lv)}")
             
             if not isinstance(trajectory["data_source"], str):
                 validation_results["errors"].append(f"Trajectory {idx}: 'data_source' is not a string")
             
-            if not isinstance(trajectory["frames"], list):
-                validation_results["errors"].append(f"Trajectory {idx}: 'frames' is not a list")
-            else:
-                for frame_path in trajectory["frames"]:
-                    if not isinstance(frame_path, str):
-                        validation_results["errors"].append(f"Trajectory {idx}: frame path is not a string")
-            
-            if not isinstance(trajectory["optimal"], bool):
-                validation_results["errors"].append(f"Trajectory {idx}: 'optimal' is not a boolean")
-            
-            if not isinstance(trajectory["ranking"], int):
-                validation_results["errors"].append(f"Trajectory {idx}: 'ranking' is not an integer")
-            
-            if not isinstance(trajectory["preference_embedding"], np.ndarray):
-                validation_results["errors"].append(f"Trajectory {idx}: 'preference_embedding' is not a numpy array")
-            elif trajectory["preference_embedding"].shape != (384,):
-                validation_results["errors"].append(f"Trajectory {idx}: 'preference_embedding' shape is {trajectory['preference_embedding'].shape}, expected (384,)")
+            if not isinstance(trajectory["frames"], str):
+                validation_results["errors"].append(f"Trajectory {idx}: 'frames' is not a string path")
             
             if not isinstance(trajectory["is_robot"], bool):
                 validation_results["errors"].append(f"Trajectory {idx}: 'is_robot' is not a boolean")
             
-            if not isinstance(trajectory["metadata"], dict):
-                validation_results["errors"].append(f"Trajectory {idx}: 'metadata' is not a dictionary")
+            if not isinstance(trajectory["quality_label"], str):
+                validation_results["errors"].append(f"Trajectory {idx}: 'quality_label' is not a string")
             else:
-                # Check metadata fields
-                expected_metadata_fields = ["original_file", "scene", "demo_id", "trajectory_info", "trajectory_length", "file_path"]
-                for field in expected_metadata_fields:
-                    if field not in trajectory["metadata"]:
-                        validation_results["warnings"].append(f"Trajectory {idx}: metadata missing field '{field}'")
-                
-                # Print sample metadata for first trajectory
-                if idx == sample_indices[0]:
-                    print(f"\nSample metadata from first trajectory:")
-                    for key, value in trajectory["metadata"].items():
-                        print(f"  {key}: {value}")
+                if trajectory["quality_label"] not in {"successful", "failure", "suboptimal"}:
+                    validation_results["warnings"].append(f"Trajectory {idx}: 'quality_label' has unexpected value '{trajectory['quality_label']}'")
+            
+            # preference fields can be None
+            if trajectory.get("preference_group_id") is not None and not isinstance(trajectory["preference_group_id"], str):
+                validation_results["errors"].append(f"Trajectory {idx}: 'preference_group_id' is neither None nor string")
+            if trajectory.get("preference_rank") is not None and not isinstance(trajectory["preference_rank"], int):
+                validation_results["errors"].append(f"Trajectory {idx}: 'preference_rank' is neither None nor int")
             
             # Print sample task for first trajectory
             if idx == sample_indices[0]:

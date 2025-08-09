@@ -2,6 +2,9 @@
 """
 RFM (Reward Foundation Model) implementation.
 Contains the RFMModel class with three prediction heads for different objectives.
+
+Note: make sure that the forward pass uses all of the
+heads or there will be some problems with FSDP sharding.
 """
 
 import torch
@@ -60,6 +63,58 @@ class RFMModel(PreTrainedModel):
         second_per_grid_ts=None,
         **kwargs,
     ):   
+        """
+        Forward pass for the RFM (Reward Foundation Model).
+        
+        This method handles three types of predictions:
+        1. **Preference prediction**: Binary classification comparing two trajectories
+        2. **Similarity prediction**: Scoring how similar a trajectory is to a reference
+        3. **Progress prediction**: Regression predicting task completion progress (0-1)
+        
+        Args:
+            input_ids (torch.LongTensor, optional): 
+                Indices of input sequence tokens in the vocabulary. Shape: [batch_size, sequence_length]
+                
+            attention_mask (torch.Tensor, optional): 
+                Mask to avoid performing attention on padding token indices. Shape: [batch_size, sequence_length]
+                Values: 1 for tokens that are NOT masked, 0 for tokens that are masked.
+                
+            pixel_values_videos (torch.FloatTensor, optional): 
+                Pixel values for video frames. Shape: [sequence_length, embedding_dim]
+                
+            image_grid_thw (torch.LongTensor, optional): 
+                Image grid dimensions (N, 3) for image processing
+                
+            video_grid_thw (torch.LongTensor, optional): 
+                Video grid dimensions (N, 3) for video processing
+                
+            prediction_type (str, optional): 
+                Type of prediction to perform:
+                - "preference": Uses preference head with <|pref_token|> for binary trajectory comparison
+                - "similarity": Uses similarity head with <|reward_token|> for trajectory-reference scoring
+                - None: No specific prediction, returns zero logits
+                
+            target_progress (torch.FloatTensor, optional): 
+                Target progress values for progress prediction. Shape: [batch_size, sequence_length]
+                If provided, progress prediction will be computed using the last token position.
+                
+            second_per_grid_ts (torch.FloatTensor, optional): 
+                Time stamps for video grid processing.
+                
+            **kwargs: Additional keyword arguments passed to the base model.
+        
+        Returns:
+            tuple: (model_outputs, progress_logits)
+                - model_outputs (SequenceClassifierOutputWithPast): 
+                    Contains logits for the specified prediction type:
+                    - For preference: Binary logits [batch_size, 1] 
+                    - For similarity: Continuous similarity scores [batch_size, 1]
+                    - For none: Zero tensor [batch_size, 1]
+                    
+                - progress_logits (torch.FloatTensor or None):
+                    Progress prediction logits [batch_size, 1] if target_progress is provided, else None.
+                    Values should be in range [0, 1] representing task completion percentage.
+        """
         model_kwargs = {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
@@ -126,8 +181,4 @@ class RFMModel(PreTrainedModel):
             else:  # similarity (default)
                 logits = self.similarity_head(token_hidden_states)
         
-        if logits is not None:
-            return SequenceClassifierOutputWithPast(logits=logits), progress_logits
-        else:
-            # No prediction requested
-            return SequenceClassifierOutputWithPast(logits=torch.zeros(input_ids.shape[0], 1, device=input_ids.device)), progress_logits    
+        return SequenceClassifierOutputWithPast(logits=logits), progress_logits

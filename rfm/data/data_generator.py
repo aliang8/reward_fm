@@ -703,56 +703,122 @@ class DataGenerator:
         else:
             num_frames = len(frames)
         
-            # For optimal trajectories, use linear progress (0.0 to 1.0)
-            return [i / (num_frames - 1) for i in range(num_frames)]
+        # For optimal trajectories, use linear progress (0.0 to 1.0)
+        return [i / (num_frames - 1) for i in range(num_frames)]
     
     def _create_similarity_sample(self) -> SimilaritySample:
-        """Create a similarity scoring sample: o^1 and o^2 ranked against o^ref."""
+        """Create a similarity scoring sample: o^1 and o^2 ranked against o^ref.
+        
+        Rules:
+        - o^1 is always from the same task as o^ref (different trajectory)
+        - o^1 is always preferred over o^2 relative to o^ref
+        - If o^1 is suboptimal, then o^2 must be from a different task
+        - If o^1 is optimal, then o^2 can be suboptimal from the same task or from a different task
+        
+        Minimal requirements:
+        - At least 2 trajectories in the reference task (for o^ref and o^1)
+        - At least 1 other trajectory available for o^2 (same or different task)
+        """
         
         # Get available tasks
         task_names = list(self.task_groups.keys())
         
-        if len(task_names) < 2:
-            # If only one task, use same task for all
-            task_ref = task_names[0]
-            task_other = task_names[0]
-        else:
-            # Randomly select two different tasks
-            task_ref, task_other = random.sample(task_names, 2)
+        # Select reference task
+        task_ref = random.choice(task_names)
         
-        # Get optimal trajectories from reference task
-        ref_trajectories = self.get_optimal_trajectories_by_task(task_ref)
-        if not ref_trajectories:
+        # Get optimal and all trajectories from reference task
+        ref_optimal_trajectories = self.get_optimal_trajectories_by_task(task_ref)
+        ref_all_trajectories = self.task_groups[task_ref]
+        
+        # Check minimal requirements for reference task
+        if len(ref_all_trajectories) < 2:
+            raise ValueError(f"Task '{task_ref}' has only {len(ref_all_trajectories)} trajectory(ies). "
+                           f"Need at least 2 trajectories in reference task for similarity sample.")
+        
+        if not ref_optimal_trajectories:
             # Fall back to all trajectories if no optimal ones
-            ref_trajectories = self.task_groups[task_ref]
-        ref_traj = random.choice(ref_trajectories)
+            ref_optimal_trajectories = ref_all_trajectories
         
-        # Get trajectories from other task
-        other_trajectories = self.task_groups[task_other]
-        other_traj = random.choice(other_trajectories)
+        # Select reference trajectory (can be optimal or suboptimal)
+        ref_traj = random.choice(ref_all_trajectories)
         
-        # For o^1, use a trajectory from the same task as reference (optimal)
-        if task_ref == task_other:
-            # Same task case - pick different trajectory
-            same_task_trajectories = [t for t in ref_trajectories if t['id'] != ref_traj['id']]
-            if same_task_trajectories:
-                traj_1 = random.choice(same_task_trajectories)
+        # Decide if o^1 should be optimal or suboptimal
+        use_optimal_o1 = random.choice([True, False])
+        
+        if use_optimal_o1 and ref_optimal_trajectories:
+            # o^1 is optimal from the same task as ref (must be different trajectory)
+            available_o1 = [t for t in ref_optimal_trajectories if t['id'] != ref_traj['id']]
+            if not available_o1:
+                raise ValueError(f"Cannot create optimal o^1: no optimal trajectories available in task '{task_ref}' "
+                               f"different from reference trajectory {ref_traj['id']}")
+            traj_1 = random.choice(available_o1)
+            
+            # o^2 can be suboptimal from same task OR from different task
+            if len(task_names) > 1 and random.choice([True, False]):
+                # Choose o^2 from different task
+                other_task = random.choice([t for t in task_names if t != task_ref])
+                other_trajectories = self.task_groups[other_task]
+                if not other_trajectories:
+                    raise ValueError(f"Task '{other_task}' has no trajectories available for o^2")
+                traj_2 = random.choice(other_trajectories)
             else:
-                traj_1 = ref_traj  # Fallback
+                # Choose o^2 as suboptimal from same task
+                ref_suboptimal_trajectories = [t for t in ref_all_trajectories 
+                                             if t not in ref_optimal_trajectories 
+                                             and t['id'] not in [ref_traj['id'], traj_1['id']]]
+                if not ref_suboptimal_trajectories:
+                    # Try any trajectory from same task that's different from ref and o^1
+                    available_same_task = [t for t in ref_all_trajectories 
+                                         if t['id'] not in [ref_traj['id'], traj_1['id']]]
+                    if not available_same_task:
+                        # Must use different task
+                        if len(task_names) < 2:
+                            raise ValueError(f"Cannot create o^2: only one task available and no trajectories "
+                                           f"in task '{task_ref}' different from ref {ref_traj['id']} and o^1 {traj_1['id']}")
+                        other_task = random.choice([t for t in task_names if t != task_ref])
+                        other_trajectories = self.task_groups[other_task]
+                        if not other_trajectories:
+                            raise ValueError(f"Task '{other_task}' has no trajectories available for o^2")
+                        traj_2 = random.choice(other_trajectories)
+                    else:
+                        traj_2 = random.choice(available_same_task)
+                else:
+                    traj_2 = random.choice(ref_suboptimal_trajectories)
         else:
-            # Different task case - use trajectory from other task
-            traj_1 = other_traj
-        
-        # For o^2, use a trajectory from different task (suboptimal)
-        if task_ref != task_other:
-            traj_2 = other_traj
-        else:
-            # Same task case - pick another trajectory
-            same_task_trajectories = [t for t in ref_trajectories if t['id'] not in [ref_traj['id'], traj_1['id']]]
-            if same_task_trajectories:
-                traj_2 = random.choice(same_task_trajectories)
+            # o^1 is suboptimal from the same task as ref (must be different trajectory)
+            ref_suboptimal_trajectories = [t for t in ref_all_trajectories 
+                                         if t not in ref_optimal_trajectories 
+                                         and t['id'] != ref_traj['id']]
+            if not ref_suboptimal_trajectories:
+                # Fallback to any trajectory from same task different from ref
+                available_same_task = [t for t in ref_all_trajectories if t['id'] != ref_traj['id']]
+                if not available_same_task:
+                    raise ValueError(f"Cannot create o^1: no trajectories available in task '{task_ref}' "
+                                   f"different from reference trajectory {ref_traj['id']}")
+                traj_1 = random.choice(available_same_task)
             else:
-                traj_2 = traj_1  # Fallback
+                traj_1 = random.choice(ref_suboptimal_trajectories)
+            
+            # o^2 MUST be from different task (since o^1 is suboptimal)
+            if len(task_names) < 2:
+                raise ValueError(f"Cannot create o^2: o^1 is suboptimal so o^2 must be from different task, "
+                               f"but only one task '{task_ref}' is available")
+            
+            other_task = random.choice([t for t in task_names if t != task_ref])
+            other_trajectories = self.task_groups[other_task]
+            if not other_trajectories:
+                raise ValueError(f"Task '{other_task}' has no trajectories available for o^2")
+            traj_2 = random.choice(other_trajectories)
+        
+        # Final validation
+        if traj_1['id'] == ref_traj['id']:
+            raise ValueError(f"o^1 and o^ref have the same trajectory ID: {traj_1['id']}")
+        
+        if traj_2['id'] == ref_traj['id']:
+            raise ValueError(f"o^2 and o^ref have the same trajectory ID: {traj_2['id']}")
+        
+        if traj_1['id'] == traj_2['id']:
+            raise ValueError(f"o^1 and o^2 have the same trajectory ID: {traj_1['id']}")
         
         # Deserialize frames once for all trajectories
         traj_1_frames_shape = traj_1.get('frames_shape')

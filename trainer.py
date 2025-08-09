@@ -76,6 +76,197 @@ class RFMTrainer(Trainer):
         super().__init__(*args, **kwargs)
         self.beta = beta
         self.compute_metrics = compute_metrics
+        # Initialize custom loss tracking
+        self.custom_losses = {}
+
+    def training_step(self, model, inputs, num_items_in_batch=None):
+        """
+        Perform a training step and log custom losses.
+        """
+        # Call the parent training_step to handle all the standard training logic
+        loss = super().training_step(model, inputs, num_items_in_batch)
+        
+        # Log custom losses at specified intervals
+        if self.state.global_step % self.args.logging_steps == 0:
+            self._log_custom_losses()
+        
+        return loss
+
+    def _log_custom_losses(self):
+        """Log custom RFM losses to wandb and console."""
+        if not self.custom_losses:
+            return
+
+        # Aggregate custom losses across all processes if using distributed training
+        aggregated_losses = self._aggregate_custom_losses()
+
+        # Prepare logging data using aggregated losses
+        log_data = {
+            "step": self.state.global_step,
+        }
+
+        # Add individual loss components
+        if "preference_loss" in aggregated_losses:
+            log_data["train/preference_loss"] = aggregated_losses["preference_loss"]
+        
+        if "similarity_loss" in aggregated_losses:
+            log_data["train/similarity_loss"] = aggregated_losses["similarity_loss"]
+        
+        if "progress_loss" in aggregated_losses:
+            log_data["train/progress_loss"] = aggregated_losses["progress_loss"]
+
+        # Add batch composition info
+        if "preference_count" in aggregated_losses:
+            log_data["train/preference_samples"] = aggregated_losses["preference_count"]
+        
+        if "similarity_count" in aggregated_losses:
+            log_data["train/similarity_samples"] = aggregated_losses["similarity_count"]
+        
+        if "progress_count" in aggregated_losses:
+            log_data["train/progress_samples"] = aggregated_losses["progress_count"]
+
+        # Calculate batch composition percentages
+        total_samples = aggregated_losses.get("preference_count", 0) + aggregated_losses.get("similarity_count", 0)
+        if total_samples > 0:
+            log_data["train/pref_ratio"] = aggregated_losses.get("preference_count", 0) / total_samples
+            log_data["train/sim_ratio"] = aggregated_losses.get("similarity_count", 0) / total_samples
+
+        # Log to wandb if available and configured (only on rank 0)
+        if self.args.report_to and "wandb" in self.args.report_to and is_rank_0():
+            try:
+                import wandb
+                if wandb.run is not None:
+                    wandb.log(log_data)
+            except ImportError:
+                rank_0_print("Warning: wandb not available for logging custom losses")
+
+        # Log to console on rank 0
+        if is_rank_0():
+            rank_0_print(f"Step {self.state.global_step} Custom Losses (Aggregated):")
+            if "preference_loss" in aggregated_losses:
+                rank_0_print(f"  Preference Loss: {aggregated_losses['preference_loss']:.6f}")
+            if "similarity_loss" in aggregated_losses:
+                rank_0_print(f"  Similarity Loss: {aggregated_losses['similarity_loss']:.6f}")
+            if "progress_loss" in aggregated_losses:
+                rank_0_print(f"  Progress Loss: {aggregated_losses['progress_loss']:.6f}")
+            if total_samples > 0:
+                rank_0_print(f"  Batch Composition: {aggregated_losses.get('preference_count', 0)} pref, {aggregated_losses.get('similarity_count', 0)} sim")
+
+    def _aggregate_custom_losses(self):
+        """Aggregate custom losses across all processes using all_reduce."""
+        if not self.custom_losses:
+            return {}
+        
+        import torch.distributed as dist
+        
+        # If not using distributed training, return losses as-is
+        if not dist.is_initialized():
+            return self.custom_losses.copy()
+        
+        aggregated = {}
+        
+        # Aggregate loss values (averages)
+        loss_keys = ["preference_loss", "similarity_loss", "progress_loss"]
+        for key in loss_keys:
+            if key in self.custom_losses:
+                # Convert to tensor for all_reduce
+                loss_tensor = torch.tensor(self.custom_losses[key], device=self.accelerator.device)
+                
+                # Sum across all processes
+                dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
+                
+                # Average by world size
+                aggregated[key] = (loss_tensor / dist.get_world_size()).item()
+        
+        # Aggregate count values (sums)
+        count_keys = ["preference_count", "similarity_count", "progress_count"]
+        for key in count_keys:
+            if key in self.custom_losses:
+                # Convert to tensor for all_reduce
+                count_tensor = torch.tensor(self.custom_losses[key], device=self.accelerator.device)
+                
+                # Sum across all processes
+                dist.all_reduce(count_tensor, op=dist.ReduceOp.SUM)
+                
+                # Keep as sum (total across all processes)
+                aggregated[key] = count_tensor.item()
+        
+        return aggregated
+
+    def prediction_step(self, model, inputs, prediction_loss_only: bool, ignore_keys=None):
+        """
+        Override prediction_step to handle RFM-specific input structure during evaluation.
+        """
+        model.eval()
+        
+        # Extract the separate batches (same as in compute_loss)
+        preference_inputs = inputs.get("preference_inputs", {})
+        similarity_inputs = inputs.get("similarity_inputs", {})
+        num_preferences = inputs.get("num_preferences", 0)
+        num_similarities = inputs.get("num_similarities", 0)
+        
+        # If we have no properly structured inputs, fall back to default behavior
+        if not preference_inputs and not similarity_inputs:
+            return super().prediction_step(model, inputs, prediction_loss_only, ignore_keys)
+        
+        losses = []
+        all_logits = []
+        all_labels = []
+        
+        with torch.no_grad():
+            # Process preference inputs if available
+            if num_preferences > 0 and preference_inputs:
+                pref_loss, pref_outputs = self._compute_preference_loss(model, preference_inputs, return_outputs=True)
+                losses.append(pref_loss.detach())
+                
+                # Extract logits and labels for metrics computation
+                if "preference_scores" in pref_outputs:
+                    # Preference scores are [batch_size], reshape to [batch_size, 1] for consistency
+                    pref_logits = pref_outputs["preference_scores"].detach()
+                    if pref_logits.dim() == 1:
+                        pref_logits = pref_logits.unsqueeze(-1)  # [batch_size] -> [batch_size, 1]
+                    all_logits.append(pref_logits)
+                if "preference_labels" in pref_outputs:
+                    all_labels.append(pref_outputs["preference_labels"].detach())
+            
+            # Process similarity inputs if available
+            if num_similarities > 0 and similarity_inputs:
+                sim_loss, sim_outputs = self._compute_similarity_loss(model, similarity_inputs, return_outputs=True)
+                losses.append(sim_loss.detach())
+                
+                # Extract logits for metrics computation
+                if "score_ref_A" in sim_outputs and "score_ref_B" in sim_outputs:
+                    # Stack A and B scores for metrics computation -> [batch_size, 2]
+                    score_A = sim_outputs["score_ref_A"].detach()
+                    score_B = sim_outputs["score_ref_B"].detach()
+                    
+                    # Ensure both scores are [batch_size, 1] before stacking
+                    if score_A.dim() == 1:
+                        score_A = score_A.unsqueeze(-1)
+                    if score_B.dim() == 1:
+                        score_B = score_B.unsqueeze(-1)
+                    
+                    sim_logits = torch.cat([score_A, score_B], dim=1)  # [batch_size, 2]
+                    all_logits.append(sim_logits)
+        
+        # Combine losses
+        if losses:
+            total_loss = torch.stack(losses).mean()
+        else:
+            total_loss = torch.tensor(0.0, device=model.device)
+        
+        # Combine logits and labels
+        if all_logits:
+            combined_logits = torch.cat(all_logits, dim=0)
+        else:
+            combined_logits = None
+            
+        if all_labels:
+            combined_labels = torch.cat(all_labels, dim=0)
+        else:
+            combined_labels = None
+        
+        return (total_loss, combined_logits, combined_labels)
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         """Compute loss for separate preference and similarity batches."""
@@ -118,6 +309,9 @@ class RFMTrainer(Trainer):
         if total_batch_size > 0:
             total_loss = total_loss / total_batch_size
         
+        # Always store custom losses for logging (even when return_outputs=False)
+        self.custom_losses = loss_metadata
+        
         if return_outputs:
             # Combine outputs from all loss functions
             combined_outputs = {
@@ -129,14 +323,11 @@ class RFMTrainer(Trainer):
         
         return total_loss
 
-    def _compute_progress_loss_from_outputs(self, outputs, target_progress_A, target_progress_B=None):
+    def _compute_progress_loss_from_outputs(self, progress_logits, target_progress_A, target_progress_B=None):
         """Helper function to compute progress loss from model outputs."""
         progress_loss = 0.0
         progress_metadata = {}
-        
-        # Unpack tuple (outputs, progress_logits)
-        model_outputs, progress_logits = outputs
-        
+
         # Compute progress loss for trajectory A if target_progress_A is provided
         if target_progress_A is not None and progress_logits is not None:
             predicted_progress_A = progress_logits.squeeze(-1)  # [batch_size]
@@ -163,7 +354,7 @@ class RFMTrainer(Trainer):
         """Compute preference prediction loss using Bradley-Terry model."""
         # Single forward pass with both trajectories concatenated
         # The model should handle the preference prediction at the end
-        outputs = model(
+        model_outputs, progress_logits = model(
             input_ids=inputs["input_ids"],
             attention_mask=inputs["attention_mask"],
             pixel_values=inputs.get("pixel_values"),
@@ -174,10 +365,7 @@ class RFMTrainer(Trainer):
             target_progress=inputs.get("target_progress_A"),  # Pass target progress for trajectory A
             prediction_type="preference"
         )
-        
-        # Handle tuple return (outputs, progress_logits)
-        model_outputs, progress_logits = outputs
-        
+                
         # Get preference scores from the preference head
         preference_scores = model_outputs.logits.squeeze(-1)  # [batch_size]
         
@@ -187,11 +375,11 @@ class RFMTrainer(Trainer):
         # Binary cross entropy loss for preference prediction
         preference_loss = F.binary_cross_entropy_with_logits(preference_scores, preference_labels.float())
         
-        # Compute progress loss if progress_logits exist
+        # Compute progress loss if progress_logits existe
         progress_loss, progress_metadata = self._compute_progress_loss_from_outputs(
-            outputs, 
-            inputs.get("target_progress_A"), 
-            inputs.get("target_progress_B")
+            progress_logits, 
+            inputs["target_progress_A"], 
+            inputs["target_progress_B"]
         )
         
         # Combine losses
@@ -211,7 +399,7 @@ class RFMTrainer(Trainer):
     def _compute_similarity_loss(self, model, inputs, return_outputs=False):
         """Compute similarity scoring loss (DPO-style)."""
         # Forward pass for reference vs trajectory A
-        outputs_ref_A = model(
+        model_outputs_ref_A, progress_logits_ref_A = model(
             input_ids=inputs["input_ids_ref_A"],
             attention_mask=inputs["attention_mask_ref_A"],
             pixel_values=inputs.get("pixel_values_ref_A"),
@@ -223,7 +411,7 @@ class RFMTrainer(Trainer):
         )
         
         # Forward pass for reference vs trajectory B
-        outputs_ref_B = model(
+        model_outputs_ref_B, progress_logits_ref_B = model(
             input_ids=inputs["input_ids_ref_B"],
             attention_mask=inputs["attention_mask_ref_B"],
             pixel_values=inputs.get("pixel_values_ref_B"),
@@ -233,10 +421,6 @@ class RFMTrainer(Trainer):
             target_progress=inputs.get("target_progress_B"),  # Pass target progress for trajectory B
             prediction_type="similarity"
         )
-        
-        # Handle tuple returns (outputs, progress_logits)
-        model_outputs_ref_A, progress_logits_ref_A = outputs_ref_A
-        model_outputs_ref_B, progress_logits_ref_B = outputs_ref_B
         
         # Extract similarity scores
         score_ref_A = model_outputs_ref_A.logits.squeeze(-1)
@@ -248,12 +432,12 @@ class RFMTrainer(Trainer):
         
         # Compute progress loss for both forward passes
         progress_loss_A, progress_metadata_A = self._compute_progress_loss_from_outputs(
-            outputs_ref_A, 
-            inputs.get("target_progress_A")
+            progress_logits_ref_A, 
+            inputs["target_progress_A"]
         )
         progress_loss_B, progress_metadata_B = self._compute_progress_loss_from_outputs(
-            outputs_ref_B, 
-            inputs.get("target_progress_B")
+            progress_logits_ref_B, 
+            inputs["target_progress_B"]
         )
         
         # Combine losses

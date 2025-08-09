@@ -4,7 +4,7 @@
 # Environment settings
 compute_environment: LOCAL_MACHINE
 distributed_type: FSDP
-num_processes: 2  # The number of GPUs you want to use
+num_processes: 4  # The number of GPUs you want to use
 machine_rank: 0
 num_machines: 1
 main_training_function: main
@@ -32,7 +32,3 @@ fsdp_config:
 
   # Set the state dict type for saving sharded model checkpoints
   fsdp_state_dict_type: SHARDED_STATE_DICT 
-
-  # ignored_modules:
-  #   - model.model.visual.patch_embed.proj
-  #   - model.model.language_model.embed_tokens

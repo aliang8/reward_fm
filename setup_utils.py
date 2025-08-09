@@ -115,13 +115,7 @@ def setup_peft_model(rfm_model: RFMModel, cfg: ExperimentConfig) -> RFMModel:
             rank_0_print(f"  - Progress head: {cfg.peft.train_progress_head}")
             rank_0_print(f"  - Preference head: {cfg.peft.train_preference_head}")
             rank_0_print(f"  - Similarity head: {cfg.peft.train_similarity_head}")
-            # Store for later printing
-            peft_rfm_model._training_info = {
-                'trainable_params': trainable_params,
-                'all_params': all_params,
-                'config': cfg.peft
-            }
-        
+
         return peft_rfm_model
 
 
@@ -145,7 +139,15 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
         "dataloader_num_workers": cfg.data.dataloader_num_workers,
         "save_safetensors": True,
         "save_total_limit": 2,
+        # Evaluation settings
+        "eval_strategy": cfg.training.evaluation_strategy,
+        "per_device_eval_batch_size": cfg.training.per_device_eval_batch_size,
+        "do_eval": cfg.training.do_eval,
     }
+    
+    # Add eval_steps if evaluation_strategy is "steps"
+    if cfg.training.evaluation_strategy == "steps" and cfg.training.eval_steps is not None:
+        base_args["eval_steps"] = cfg.training.eval_steps
     
     if is_eval:
         # Evaluation-specific arguments
@@ -163,7 +165,6 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
             "report_to": ["wandb"] if cfg.logging.use_wandb else [],
         })
     
-    rank_0_print(f"Training arguments created with FSDP strategy: {fsdp_strategy}")
     return TrainingArguments(**base_args)
 
 
@@ -197,6 +198,80 @@ def setup_data_generator(cfg: ExperimentConfig) -> DataGenerator:
     return data_generator
 
 
+def setup_eval_data_generator(cfg: ExperimentConfig) -> DataGenerator:
+    """Shared function to create DataGenerator for evaluation"""
+    
+    # Get current rank for logging
+    import torch.distributed as dist
+    rank = dist.get_rank() if dist.is_initialized() else 0
+    
+    if rank == 0:
+        rank_0_print(f"Setting up evaluation data generator on rank {rank}...")
+    
+    # Use eval-specific settings if provided, otherwise fall back to training settings
+    eval_dataset_path = cfg.data.eval_dataset_path or cfg.data.dataset_path
+    eval_dataset_subsets = cfg.data.eval_dataset_subsets or cfg.data.dataset_subsets
+    
+    eval_data_generator = DataGenerator(
+        dataset_path=eval_dataset_path,
+        dataset_subsets=eval_dataset_subsets,
+        preference_ratio=cfg.data.preference_ratio,
+        similarity_ratio=cfg.data.similarity_ratio,
+        max_frames=cfg.data.max_frames,
+        dataset_preference_ratio=cfg.data.dataset_preference_ratio,
+        shuffle=cfg.data.shuffle,
+        seed=cfg.data.seed + 1000,  # Different seed for eval to avoid overlap
+        num_proc=cfg.data.num_proc,
+        debug=cfg.debug,
+        force_reprocess=False
+    )
+    
+    if rank == 0:
+        rank_0_print(f"Evaluation data generator initialized on rank {rank}")
+        rank_0_print(f"  - Dataset path: {eval_dataset_path}")
+        rank_0_print(f"  - Subsets: {eval_dataset_subsets}")
+    
+    return eval_data_generator
+
+
+def setup_dataset(data_generator: DataGenerator, max_samples: int = 1000000, dataset_type: str = "train") -> InfiniteDataGeneratorDataset:
+    """Shared function to create training or evaluation dataset"""
+    
+    rank_0_print(f"Setting up {dataset_type} dataset with max_samples={max_samples}")
+    
+    dataset = InfiniteDataGeneratorDataset(data_generator, max_samples=max_samples)
+    
+    rank_0_print(f"{dataset_type.capitalize()} dataset created successfully")
+    return dataset
+
+
+def setup_eval_dataset(cfg: ExperimentConfig) -> InfiniteDataGeneratorDataset:
+    """Create evaluation dataset using eval-specific configuration"""
+    
+    # Create evaluation data generator
+    eval_data_generator = setup_eval_data_generator(cfg)
+    
+    # Create evaluation dataset with limited size
+    eval_dataset = setup_dataset(
+        eval_data_generator, 
+        max_samples=cfg.data.eval_subset_size,
+        dataset_type="evaluation"
+    )
+    
+    return eval_dataset
+
+
+def setup_train_dataset(data_generator: DataGenerator, max_samples: int = 1000000) -> InfiniteDataGeneratorDataset:
+    """Shared function to create training dataset (deprecated - use setup_dataset instead)"""
+    
+    rank_0_print(f"Setting up training dataset with max_samples={max_samples}")
+    
+    dataset = InfiniteDataGeneratorDataset(data_generator, max_samples=max_samples)
+    
+    rank_0_print("Training dataset created successfully")
+    return dataset
+
+
 def setup_batch_collator(processor: AutoProcessor, cfg: ExperimentConfig) -> BatchCollator:
     """Shared function to create BatchCollator"""
     
@@ -210,15 +285,4 @@ def setup_batch_collator(processor: AutoProcessor, cfg: ExperimentConfig) -> Bat
     )
     
     rank_0_print("Batch collator created successfully")
-    return batch_collator
-
-
-def setup_train_dataset(data_generator: DataGenerator, max_samples: int = 1000000) -> InfiniteDataGeneratorDataset:
-    """Shared function to create training dataset"""
-    
-    rank_0_print(f"Setting up training dataset with max_samples={max_samples}")
-    
-    dataset = InfiniteDataGeneratorDataset(data_generator, max_samples=max_samples)
-    
-    rank_0_print("Training dataset created successfully")
-    return dataset 
+    return batch_collator 

@@ -22,7 +22,11 @@ data:
   # Dataset paths and sources
   dataset_path: "aliangdw/rfm"
   dataset_subsets: ["libero_10"]
-  base_dir: "libero_dpo_dataset"
+  
+  # Evaluation dataset settings
+  eval_dataset_path: "aliangdw/rfm" 
+  eval_dataset_subsets: ["libero_10"]  # Different subset for evaluation
+  eval_subset_size: 100  # Number of evaluation examples
   
   # Video processing settings
   max_frames: 4  # Maximum frames per trajectory
@@ -46,22 +50,25 @@ data:
 # =====================================================================================
 # Training Configuration
 # =====================================================================================
-training:
-  # Hardware settings
-  num_gpus: 2  # Number of GPUs to use for training (set to 1 for single GPU)
-  
+training:  
   # Output and logging
   output_dir: "./logs/rfm"
   
   # Training parameters
-  per_device_train_batch_size: 2
+  per_device_train_batch_size: 8
   gradient_accumulation_steps: 1
   learning_rate: 2e-5
   num_train_epochs: -1  # Number of epochs to train for
   save_strategy: "steps"
-  logging_steps: 20
+  logging_steps: 1
   save_steps: 50
   max_steps: 500  # -1 means no limit, use num_train_epochs instead
+  
+  # Evaluation settings
+  evaluation_strategy: "steps"  # Options: "no", "steps", "epoch"
+  eval_steps: 50  # Evaluate every 50 steps
+  per_device_eval_batch_size: 4  # Evaluation batch size per device
+  do_eval: true  # Enable evaluation during training
   
   # Model settings
   max_seq_length: 1024

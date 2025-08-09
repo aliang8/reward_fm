@@ -42,7 +42,11 @@ class DataConfig:
     # Dataset paths and sources
     dataset_path: str = field(default="aliangdw/rfm")
     dataset_subsets: List[str] = field(default_factory=lambda: ["libero_90"])
-    base_dir: str = field(default="libero_dpo_dataset")
+    
+    # Evaluation dataset settings (separate from training)
+    eval_dataset_path: Optional[str] = field(default=None, metadata={"help": "Path for evaluation dataset (defaults to dataset_path if None)"})
+    eval_dataset_subsets: Optional[List[str]] = field(default=None, metadata={"help": "Subsets for evaluation dataset (defaults to dataset_subsets if None)"})
+    eval_subset_size: int = field(default=100, metadata={"help": "Number of examples to use for evaluation dataset"})
     
     # Video processing settings
     max_frames: int = field(default=32)  # Maximum frames per trajectory
@@ -92,8 +96,11 @@ class TrainingConfig:
     max_steps: Optional[int] = field(default=-1)  # -1 means no limit, use num_train_epochs instead
     save_steps: int = field(default=100)
     
-    # FSDP configuration
-    fsdp_strategy: str = field(default="fsdp2", metadata={"help": "FSDP strategy: 'fsdp' or 'fsdp2'"})
+    # Evaluation settings
+    evaluation_strategy: str = field(default="no", metadata={"help": "Evaluation strategy: 'no', 'steps', 'epoch'"})
+    eval_steps: Optional[int] = field(default=None, metadata={"help": "Number of steps between evaluations (required if evaluation_strategy='steps')"})
+    per_device_eval_batch_size: int = field(default=1, metadata={"help": "Batch size for evaluation"})
+    do_eval: bool = field(default=False, metadata={"help": "Whether to run evaluation during training"})
 
 
 @dataclass

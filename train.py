@@ -37,7 +37,8 @@ from setup_utils import (
     create_training_arguments,
     setup_data_generator,
     setup_batch_collator,
-    setup_train_dataset
+    setup_dataset,
+    setup_eval_dataset
 )
 
 # Suppress FSDP ShardedTensor deprecation warning
@@ -54,8 +55,8 @@ def train(cfg: ExperimentConfig):
     # Create DataGenerator for training using shared utility
     data_generator = setup_data_generator(cfg)
     
-    # Initialize wandb if enabled
-    if cfg.logging.use_wandb:
+    # Initialize wandb if enabled (only on rank 0)
+    if cfg.logging.use_wandb and is_rank_0():
         # Convert config to dict for wandb using dataclass asdict
         from dataclasses import asdict
         config_dict = asdict(cfg)
@@ -67,6 +68,8 @@ def train(cfg: ExperimentConfig):
             config=config_dict
         )
         rank_0_print(f"Wandb initialized: {wandb.run.name}")
+    elif cfg.logging.use_wandb:
+        rank_0_print("Wandb logging enabled but skipped on non-rank-0 processes")
     
     # Set memory management
     torch.backends.cudnn.benchmark = True
@@ -84,12 +87,19 @@ def train(cfg: ExperimentConfig):
     
     # Use the shared utilities for batch collator and dataset
     batch_collator = setup_batch_collator(processor, cfg)
-    train_dataset = setup_train_dataset(data_generator)
+    train_dataset = setup_dataset(data_generator)
+    
+    # Set up evaluation dataset if evaluation is enabled
+    eval_dataset = None
+    if cfg.training.do_eval:
+        eval_dataset = setup_eval_dataset(cfg)
+        rank_0_print(f"Evaluation dataset created with {cfg.data.eval_subset_size} samples")
     
     trainer = RFMTrainer(
         model=peft_rfm_model,
         args=training_args,
         train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
         data_collator=batch_collator,
         beta=cfg.training.beta,
         compute_metrics=compute_metrics,  # Pass the compute_metrics function
@@ -222,7 +232,6 @@ def display_config(cfg: ExperimentConfig):
     
     # Data config
     table.add_row("Data", "Dataset Path", cfg.data.dataset_path)
-    table.add_row("Data", "Base Directory", cfg.data.base_dir)
     table.add_row("Data", "Dataset Subsets", ", ".join(cfg.data.dataset_subsets))
     table.add_row("Data", "Max Frames", str(cfg.data.max_frames))
     table.add_row("Data", "Video Frame Sampling", cfg.data.video_frame_sampling)

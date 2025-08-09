@@ -204,11 +204,7 @@ class RFMTrainer(Trainer):
         similarity_inputs = inputs.get("similarity_inputs", {})
         num_preferences = inputs.get("num_preferences", 0)
         num_similarities = inputs.get("num_similarities", 0)
-        
-        # If we have no properly structured inputs, fall back to default behavior
-        if not preference_inputs and not similarity_inputs:
-            return super().prediction_step(model, inputs, prediction_loss_only, ignore_keys)
-        
+
         losses = []
         all_logits = []
         all_labels = []
@@ -255,18 +251,7 @@ class RFMTrainer(Trainer):
         else:
             total_loss = torch.tensor(0.0, device=model.device)
         
-        # Combine logits and labels
-        if all_logits:
-            combined_logits = torch.cat(all_logits, dim=0)
-        else:
-            combined_logits = None
-            
-        if all_labels:
-            combined_labels = torch.cat(all_labels, dim=0)
-        else:
-            combined_labels = None
-        
-        return (total_loss, combined_logits, combined_labels)
+        return total_loss, None, None
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         """Compute loss for separate preference and similarity batches."""

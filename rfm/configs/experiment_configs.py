@@ -101,7 +101,7 @@ class TrainingConfig:
     eval_steps: Optional[int] = field(default=None, metadata={"help": "Number of steps between evaluations (required if evaluation_strategy='steps')"})
     per_device_eval_batch_size: int = field(default=1, metadata={"help": "Batch size for evaluation"})
     do_eval: bool = field(default=False, metadata={"help": "Whether to run evaluation during training"})
-
+    prediction_loss_only: bool = field(default=True, metadata={"help": "Only compute loss for the prediction head"})
 
 @dataclass
 class LoggingConfig:

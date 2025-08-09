@@ -12,4 +12,5 @@ accelerate launch \
     --data.resized_width 128 \
     --data.max_frames 4 \
     --data.force_reprocess true \
-    --logging.use_wandb true
+    --logging.use_wandb true \
+    --debug true

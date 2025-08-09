@@ -69,6 +69,7 @@ training:
   eval_steps: 50  # Evaluate every 50 steps
   per_device_eval_batch_size: 4  # Evaluation batch size per device
   do_eval: true  # Enable evaluation during training
+  prediction_loss_only: true # Only compute loss for the prediction head
   
   # Model settings
   max_seq_length: 1024

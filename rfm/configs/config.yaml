@@ -20,11 +20,15 @@ model:
 # =====================================================================================
 data:
   # Dataset paths and sources
-  dataset_path: "aliangdw/rfm"
+  # dataset_path: "aliangdw/rfm"
+  # dataset_subsets: ["libero_10"]
+  dataset_path: "abraranwar/libero_rfm"
   dataset_subsets: ["libero_10"]
   
   # Evaluation dataset settings
-  eval_dataset_path: "aliangdw/rfm" 
+  # eval_dataset_path: "aliangdw/rfm" 
+  # eval_dataset_subsets: ["libero_10"]  # Different subset for evaluation
+  eval_dataset_path: "abraranwar/libero_rfm"
   eval_dataset_subsets: ["libero_10"]  # Different subset for evaluation
   eval_subset_size: 100  # Number of evaluation examples
   

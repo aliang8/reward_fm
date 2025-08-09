@@ -17,11 +17,14 @@ class RFMModel(PreTrainedModel):
     
     config_class = Qwen2_5_VLModel.config_class
 
-    def __init__(self, config, tokenizer):
+    def __init__(self, config, tokenizer, base_model=None):
         super().__init__(config)
         # The RFMModel now owns and creates its submodules.
         # This is the standard pattern for PreTrainedModel.
-        self.model = Qwen2_5_VLModel(config)
+        if base_model is not None:
+            self.model = base_model
+        else:
+            self.model = Qwen2_5_VLModel(config)
         
         # Three prediction heads for different objectives
         self.progress_head = nn.Linear(config.hidden_size, 1, bias=False)  # Progress prediction (0-1)

@@ -16,12 +16,41 @@ model:
   trust_remote_code: true
 
 # =====================================================================================
+# Data Configuration
+# =====================================================================================
+data:
+  # Dataset paths and sources
+  dataset_path: "aliangdw/rfm"
+  dataset_subsets: ["libero_10"]
+  base_dir: "libero_dpo_dataset"
+  
+  # Video processing settings
+  max_frames: 4  # Maximum frames per trajectory
+  video_frame_sampling: "uniform"  # "uniform", "random", "first", "middle"
+  resized_height: 128  # Height to resize images/videos to
+  resized_width: 128   # Width to resize images/videos to
+  
+  # Data generation settings
+  preference_ratio: 0.5  # Ratio of preference prediction samples
+  similarity_ratio: 0.5  # Ratio of similarity scoring samples
+  dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
+  shuffle: true
+  seed: 42
+  num_proc: 1  # Number of processes for dataset processing (1 for safety, increase for speed)
+  force_reprocess: false  # Force reprocessing of dataset even if cached version exists
+  
+  # Data loading settings
+  dataloader_pin_memory: false
+  dataloader_num_workers: 0
+
+# =====================================================================================
 # Training Configuration
 # =====================================================================================
 training:
-  # Data paths (RFM dataset with LIBERO90)
-  dataset_path: "aliangdw/rfm"
-  dataset_subsets: ["libero_90"]
+  # Hardware settings
+  num_gpus: 2  # Number of GPUs to use for training (set to 1 for single GPU)
+  
+  # Output and logging
   output_dir: "./logs/rfm"
   
   # Training parameters
@@ -34,13 +63,9 @@ training:
   save_steps: 50
   max_steps: 500  # -1 means no limit, use num_train_epochs instead
   
-  # Multi-objective training ratios
-  preference_ratio: 0.5  # Ratio of preference prediction samples
-  similarity_ratio: 0.5  # Ratio of similarity scoring samples
-   
   # Model settings
   max_seq_length: 1024
-  max_frames: 32  # Maximum frames per trajectory
+  beta: 0.1  # DPO beta parameter
   
   # Resume training
   resume_from_checkpoint: null  # Set to checkpoint path to resume, null for fresh start
@@ -49,26 +74,11 @@ training:
   bf16: true
   fp16: false
   remove_unused_columns: false
-  gradient_checkpointing: true
-  
-  # FSDP configuration
-  use_fsdp: false  # Set to true to enable FSDP
-  fsdp: "full_shard"
-  fsdp_config:
-    fsdp_transformer_layer_cls_to_wrap: ["Qwen2_5_VLDecoderLayer"]
-    fsdp_offload_params: true
-  
-  # Data loading
-  dataloader_pin_memory: false
-  dataloader_num_workers: 0
-  ddp_find_unused_parameters: false
+  gradient_checkpointing: true  # Re-enabled since FSDP is handled by accelerate config
+    
+  # Distributed training settings
+  ddp_find_unused_parameters: true
   ddp_bucket_cap_mb: 25
-  
-  # Data generation settings
-  dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
-  shuffle: true
-  seed: 42
-  num_proc: 1  # Number of processes for dataset processing (1 for safety, increase for speed)
 
 # =====================================================================================
 # PEFT Configuration
@@ -95,7 +105,8 @@ evaluation:
   eval_subset_size: -1  # Number of examples to use for evaluation
   # Evaluation dataset path (same as training for now)
   eval_dataset_path: "aliangdw/rfm"
-  eval_dataset_subsets: ["libero_90"]
+  eval_dataset_subsets: ["libero_10"]
+  eval_base_dir: "libero_dpo_dataset"
 
 # =====================================================================================
 # Logging and Output Configuration

@@ -24,6 +24,9 @@ class BaseSample:
     optimal: bool
     is_robot: bool
     
+    # Frame shape information for deserialization
+    frames_shape: Optional[tuple] = None  # Shape of frames (T, H, W, C)
+    
     # Progress fields
     target_progress_A: Optional[List[float]] = None  # Progress values for trajectory A
     target_progress_B: Optional[List[float]] = None  # Progress values for trajectory B
@@ -40,6 +43,8 @@ class PreferenceSample(BaseSample):
     # Preference-specific fields
     trajectory_A_frames: Optional[Union[List[str], np.ndarray]] = None
     trajectory_B_frames: Optional[Union[List[str], np.ndarray]] = None
+    trajectory_A_frames_shape: Optional[tuple] = None  # Shape of trajectory A frames
+    trajectory_B_frames_shape: Optional[tuple] = None  # Shape of trajectory B frames
     preferred_trajectory: Optional[str] = None  # "A" or "B"
     trajectory_A_id: Optional[str] = None
     trajectory_B_id: Optional[str] = None
@@ -62,6 +67,9 @@ class SimilaritySample(BaseSample):
     reference_frames: Optional[Union[List[str], np.ndarray]] = None  # o^ref
     trajectory_A_frames: Optional[Union[List[str], np.ndarray]] = None  # o^1
     trajectory_B_frames: Optional[Union[List[str], np.ndarray]] = None  # o^2
+    reference_frames_shape: Optional[tuple] = None  # Shape of reference frames
+    trajectory_A_frames_shape: Optional[tuple] = None  # Shape of trajectory A frames
+    trajectory_B_frames_shape: Optional[tuple] = None  # Shape of trajectory B frames
     task_ref: Optional[str] = None
     task_A: Optional[str] = None
     task_B: Optional[str] = None
@@ -84,25 +92,23 @@ class SimilaritySample(BaseSample):
         self.prediction_type = "similarity"
 
 
-
-
-
-
-
-
 class BatchCollator:
     """Batch collator that processes Sample objects through the processor."""
     
-    def __init__(self, processor: AutoProcessor, max_length: int = 1024):
+    def __init__(self, processor: AutoProcessor, max_length: int = 1024, resized_height: int = 128, resized_width: int = 128):
         """
         Initialize the batch collator.
         
         Args:
             processor: HuggingFace processor for text and vision processing
             max_length: Maximum sequence length for text
+            resized_height: Height to resize images/videos to (default: 128)
+            resized_width: Width to resize images/videos to (default: 128)
         """
         self.processor = processor
         self.max_length = max_length
+        self.resized_height = resized_height
+        self.resized_width = resized_width
     
     def _pad_target_progress(self, progress_list):
         """Helper function to pad target progress sequences to max length."""
@@ -170,7 +176,7 @@ class BatchCollator:
             "num_similarities": len(similarity_samples)
         }
     
-    def _convert_frames_to_pil_images(self, frames):
+    def _convert_frames_to_pil_images(self, frames, frames_shape=None):
         """Convert frames to PIL images if they are numpy arrays or serialized bytes."""
         if frames is None:
             return None
@@ -181,18 +187,41 @@ class BatchCollator:
         
         # If frames are serialized bytes, deserialize first
         if isinstance(frames, bytes):
-            # Deserialize bytes to numpy array (TxHxWxC)
-            frames = np.frombuffer(frames, dtype=np.uint8).reshape(32, 240, 240, 3)
+            # Deserialize bytes to numpy array (TxHxWxC) using provided shape
+            if frames_shape is not None:
+                # Convert to tuple if it's a list
+                if isinstance(frames_shape, list):
+                    frames_shape = tuple(frames_shape)
+                try:
+                    frames = np.frombuffer(frames, dtype=np.uint8).reshape(frames_shape)
+                except Exception as e:
+                    print(f"Warning: Failed to reshape with provided shape {frames_shape}: {e}")
+                    # Fall back to 1D array
+                    frames = np.frombuffer(frames, dtype=np.uint8)
+            else:
+                # No shape provided, try to infer
+                frames = np.frombuffer(frames, dtype=np.uint8)
         
         # If frames are numpy array (TxHxWxC), convert to list of PIL images
         if isinstance(frames, np.ndarray):
             from PIL import Image
             pil_images = []
-            for i in range(frames.shape[0]):  # Iterate over time dimension
-                frame = frames[i]  # HxWxC
-                # Convert to PIL Image (already in HxWxC format)
-                pil_image = Image.fromarray(frame.astype(np.uint8))
+            
+            # Handle different array shapes
+            if len(frames.shape) == 4:  # TxHxWxC
+                for i in range(frames.shape[0]):  # Iterate over time dimension
+                    frame = frames[i]  # HxWxC
+                    # Convert to PIL Image (already in HxWxC format)
+                    pil_image = Image.fromarray(frame.astype(np.uint8))
+                    pil_images.append(pil_image)
+            elif len(frames.shape) == 3:  # HxWxC (single frame)
+                pil_image = Image.fromarray(frames.astype(np.uint8))
                 pil_images.append(pil_image)
+            else:
+                # Try to reshape as 1D array (backward compatibility)
+                print(f"Warning: Unexpected frames shape {frames.shape}, treating as 1D array")
+                return frames
+            
             return pil_images
         
         # If frames are list of numpy arrays, convert each to PIL
@@ -213,9 +242,9 @@ class BatchCollator:
         all_messages = []
         
         for sample in preference_samples:
-            # Convert frames to appropriate format
-            trajectory_A_frames = self._convert_frames_to_pil_images(sample.trajectory_A_frames)
-            trajectory_B_frames = self._convert_frames_to_pil_images(sample.trajectory_B_frames)
+            # Convert frames to appropriate format using stored shapes
+            trajectory_A_frames = self._convert_frames_to_pil_images(sample.trajectory_A_frames, sample.trajectory_A_frames_shape)
+            trajectory_B_frames = self._convert_frames_to_pil_images(sample.trajectory_B_frames, sample.trajectory_B_frames_shape)
             
             # Single conversation with both videos: task + video A + <|split_token|> + video B + <|pref_token|>
             conversation = [
@@ -223,9 +252,9 @@ class BatchCollator:
                     "role": "user",
                     "content": [
                         {"type": "text", "text": f"Task: {sample.task}"},
-                        {"type": "video", "video": trajectory_A_frames},
+                        {"type": "video", "video": trajectory_A_frames, "resized_height": self.resized_height, "resized_width": self.resized_width},
                         {"type": "text", "text": "<|split_token|>"},
-                        {"type": "video", "video": trajectory_B_frames},
+                        {"type": "video", "video": trajectory_B_frames, "resized_height": self.resized_height, "resized_width": self.resized_width},
                         {"type": "text", "text": "<|pref_token|>"}
                     ]
                 }
@@ -278,10 +307,10 @@ class BatchCollator:
         all_messages = []
         
         for sample in similarity_samples:
-            # Convert frames to appropriate format
-            reference_frames = self._convert_frames_to_pil_images(sample.reference_frames)
-            trajectory_A_frames = self._convert_frames_to_pil_images(sample.trajectory_A_frames)
-            trajectory_B_frames = self._convert_frames_to_pil_images(sample.trajectory_B_frames)
+            # Convert frames to appropriate format using stored shapes
+            reference_frames = self._convert_frames_to_pil_images(sample.reference_frames, sample.reference_frames_shape)
+            trajectory_A_frames = self._convert_frames_to_pil_images(sample.trajectory_A_frames, sample.trajectory_A_frames_shape)
+            trajectory_B_frames = self._convert_frames_to_pil_images(sample.trajectory_B_frames, sample.trajectory_B_frames_shape)
             
             # Process reference vs trajectory A
             conversation_ref_A = [
@@ -289,9 +318,9 @@ class BatchCollator:
                     "role": "user",
                     "content": [
                         {"type": "text", "text": f"Reference task: {sample.task_ref}"},
-                        {"type": "video", "video": reference_frames},
+                        {"type": "video", "video": reference_frames, "resized_height": self.resized_height, "resized_width": self.resized_width},
                         {"type": "text", "text": "<|split_token|>"},
-                        {"type": "video", "video": trajectory_A_frames},
+                        {"type": "video", "video": trajectory_A_frames, "resized_height": self.resized_height, "resized_width": self.resized_width},
                         {"type": "text", "text": "<|reward_token|>"}
                     ]
                 }
@@ -303,9 +332,9 @@ class BatchCollator:
                     "role": "user",
                     "content": [
                         {"type": "text", "text": f"Reference task: {sample.task_ref}"},
-                        {"type": "video", "video": reference_frames},
+                        {"type": "video", "video": reference_frames, "resized_height": self.resized_height, "resized_width": self.resized_width},
                         {"type": "text", "text": "<|split_token|>"},
-                        {"type": "video", "video": trajectory_B_frames},
+                        {"type": "video", "video": trajectory_B_frames, "resized_height": self.resized_height, "resized_width": self.resized_width},
                         {"type": "text", "text": "<|reward_token|>"}
                     ]
                 }
@@ -385,4 +414,7 @@ class BatchCollator:
         Returns:
             Dictionary containing the processed tensors
         """
-        return self(batch) 
+        return self(batch)
+
+
+ 

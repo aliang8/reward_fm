@@ -420,9 +420,9 @@ class DataGenerator:
             ds = ds.map(lambda x: {"frames_path": patch_path(x["frames"])})
             ds = ds.cast_column("frames_path", Video(decode=True))
             # Only select a small subset for debugging
-            if self.debug:
-                ds = ds.select(range(5))
-                rank_0_print("  Debug mode: Using only first 5 samples")
+            # if self.debug:
+            #     ds = ds.select(range(5))
+            #     rank_0_print("  Debug mode: Using only first 5 samples")
             return ds
 
         else:
@@ -514,84 +514,14 @@ class DataGenerator:
         return self.suboptimal_trajectories
     
     def _create_preference_sample(self) -> PreferenceSample:
-        """Create a preference prediction sample: o^1 vs o^2 where o^1 is preferred."""
+        """Create a preference prediction sample: chosen vs rejected where chosen is preferred."""
         
-        # Decide whether to use dataset preferences or generated preferences
-        use_dataset_preference = (
-            self.preferences and 
-            random.random() < self.dataset_preference_ratio
-        )
-        
-        if use_dataset_preference:
-            # Use preference dataset
-            preference = random.choice(self.preferences)
-            
-            # Get the trajectories by ID
-            chosen_traj = self.traj_id_to_traj.get(preference.chosen_id)
-            rejected_traj = self.traj_id_to_traj.get(preference.rejected_id)
-            
-            if chosen_traj is None or rejected_traj is None:
-                raise ValueError(f"Could not find trajectories for preference {preference.traj_id}")
-            
-            # Deserialize frames once for both trajectories
-            chosen_frames_shape = chosen_traj.get('frames_shape')
-            if isinstance(chosen_frames_shape, list):
-                chosen_frames_shape = tuple(chosen_frames_shape)
-            chosen_frames = self._deserialize_frames(chosen_traj['frames'], shape=chosen_frames_shape) if isinstance(chosen_traj['frames'], bytes) else chosen_traj['frames']
-            
-            rejected_frames_shape = rejected_traj.get('frames_shape')
-            if isinstance(rejected_frames_shape, list):
-                rejected_frames_shape = tuple(rejected_frames_shape)
-            rejected_frames = self._deserialize_frames(rejected_traj['frames'], shape=rejected_frames_shape) if isinstance(rejected_traj['frames'], bytes) else rejected_traj['frames']
-            
-            # Calculate target progress for both trajectories using pre-deserialized frames
-            target_progress_A = self._calculate_target_progress(chosen_traj, chosen_frames)
-            target_progress_B = self._calculate_target_progress(rejected_traj, rejected_frames)
-            
-            # Get frame shapes and convert to tuples if needed
-            chosen_frames_shape = chosen_traj.get('frames_shape')
-            if isinstance(chosen_frames_shape, list):
-                chosen_frames_shape = tuple(chosen_frames_shape)
-            
-            rejected_frames_shape = rejected_traj.get('frames_shape')
-            if isinstance(rejected_frames_shape, list):
-                rejected_frames_shape = tuple(rejected_frames_shape)
-            
-            # Create preference sample structure
-            sample = PreferenceSample(
-                # Core HF dataset fields (from chosen trajectory)
-                id=chosen_traj['id'],
-                task=chosen_traj['task'],
-                lang_vector=chosen_traj['lang_vector'],
-                data_source=chosen_traj['data_source'],
-                frames=chosen_traj['frames'],
-                frames_shape=chosen_frames_shape,
-                optimal=chosen_traj['optimal'],
-                is_robot=chosen_traj['is_robot'],
-                metadata=chosen_traj.get('metadata'),
-                # Preference-specific fields
-                trajectory_A_frames=chosen_traj['frames'],
-                trajectory_B_frames=rejected_traj['frames'],
-                trajectory_A_frames_shape=chosen_frames_shape,
-                trajectory_B_frames_shape=rejected_frames_shape,
-                preferred_trajectory="A",  # A is the chosen trajectory
-                trajectory_A_id=chosen_traj['id'],
-                trajectory_B_id=rejected_traj['id'],
-                # Trajectory B fields
-                trajectory_B_task=rejected_traj['task'],
-                trajectory_B_lang_vector=rejected_traj['lang_vector'],
-                trajectory_B_data_source=rejected_traj['data_source'],
-                trajectory_B_optimal=rejected_traj['optimal'],
-                trajectory_B_is_robot=rejected_traj['is_robot'],
-                # Progress fields
-                target_progress_A=target_progress_A,
-                target_progress_B=target_progress_B,
-            )
+        if random.random() < self.dataset_preference_ratio and self.preferences:
+            # Use preference trajectories from dataset
+            return self._create_preference_sample_from_dataset()
         else:
-            sample = self._create_subopt_rewind_traj()
+            return self._create_subopt_rewind_traj()
         
-        return sample
-    
     def _create_subopt_rewind_traj(self) -> PreferenceSample:
         """Create a preference prediction sample using various negative generation strategies."""
         
@@ -655,20 +585,20 @@ class DataGenerator:
             optimal=optimal_traj['optimal'],
             is_robot=optimal_traj['is_robot'],
             metadata=optimal_traj.get('metadata'),
-            # Preference-specific fields
-            trajectory_A_frames=optimal_traj['frames'],
-            trajectory_B_frames=negative_traj['frames'],
-            trajectory_A_frames_shape=optimal_frames_shape,
-            trajectory_B_frames_shape=negative_frames_shape,
-            preferred_trajectory="A",  # A is the optimal trajectory
-            trajectory_A_id=optimal_traj['id'],
-            trajectory_B_id=negative_traj['id'],
-            # Trajectory B fields
-            trajectory_B_task=negative_traj['task'],
-            trajectory_B_lang_vector=negative_traj['lang_vector'],
-            trajectory_B_data_source=negative_traj['data_source'],
-            trajectory_B_optimal=negative_traj['optimal'],
-            trajectory_B_is_robot=negative_traj['is_robot'],
+            # Preference-specific fields - using chosen/rejected naming
+            chosen_frames=optimal_frames,
+            rejected_frames=negative_frames,
+            chosen_frames_shape=optimal_frames_shape,
+            rejected_frames_shape=negative_frames_shape,
+            preferred_trajectory="chosen",  # chosen is the optimal trajectory
+            chosen_id=optimal_traj['id'],
+            rejected_id=negative_traj['id'],
+            # Rejected trajectory fields
+            rejected_task=negative_traj['task'],
+            rejected_lang_vector=negative_traj['lang_vector'],
+            rejected_data_source=negative_traj['data_source'],
+            rejected_optimal=negative_traj['optimal'],
+            rejected_is_robot=negative_traj['is_robot'],
             # Progress fields
             target_progress_A=target_progress_A,
             target_progress_B=target_progress_B,
@@ -709,15 +639,83 @@ class DataGenerator:
     def _create_similarity_sample(self) -> SimilaritySample:
         """Create a similarity scoring sample: o^1 and o^2 ranked against o^ref.
         
+        Two modes (50/50 split):
+        1. Rewind mode: o^1 is rewound from same task, o^2 is from different task
+        2. Optimal/Suboptimal mode: o^1 is optimal/suboptimal from same task, o^2 varies
+        """
+        
+        # Randomly choose between rewind mode and optimal/suboptimal mode
+        use_rewind_mode = random.choice([True, False])
+        
+        if use_rewind_mode:
+            return self._create_rewind_similarity_sample()
+        else:
+            return self._create_optimal_similarity_sample()
+    
+    def _create_rewind_similarity_sample(self) -> SimilaritySample:
+        """Create similarity sample using rewind logic.
+        
         Rules:
-        - o^1 is always from the same task as o^ref (different trajectory)
-        - o^1 is always preferred over o^2 relative to o^ref
-        - If o^1 is suboptimal, then o^2 must be from a different task
-        - If o^1 is optimal, then o^2 can be suboptimal from the same task or from a different task
+        - traj_sim is rewound trajectory from same task as o^ref (different trajectory)
+        - traj_diff MUST be from different task
+        - traj_sim is preferred over traj_diff relative to o^ref
         
         Minimal requirements:
-        - At least 2 trajectories in the reference task (for o^ref and o^1)
-        - At least 1 other trajectory available for o^2 (same or different task)
+        - At least 2 trajectories in reference task (for o^ref and traj_sim rewind)
+        - At least 2 tasks (for traj_diff from different task)
+        """
+        
+        # Get available tasks
+        task_names = list(self.task_groups.keys())
+        
+        # Check minimal requirements
+        if len(task_names) < 2:
+            raise ValueError(f"Rewind similarity sample requires at least 2 tasks, but only {len(task_names)} available")
+        
+        # Select reference task
+        task_ref = random.choice(task_names)
+        ref_all_trajectories = self.task_groups[task_ref]
+        
+        # Check minimal requirements for reference task
+        if len(ref_all_trajectories) < 2:
+            raise ValueError(f"Task '{task_ref}' has only {len(ref_all_trajectories)} trajectory(ies). "
+                           f"Need at least 2 trajectories in reference task for rewind similarity sample.")
+        
+        # Select reference trajectory
+        ref_traj = random.choice(ref_all_trajectories)
+        
+        # traj_sim is a rewound trajectory from same task (different from ref)
+        available_sim = [t for t in ref_all_trajectories if t['id'] != ref_traj['id']]
+        if not available_sim:
+            raise ValueError(f"Cannot create rewound traj_sim: no trajectories available in task '{task_ref}' "
+                           f"different from reference trajectory {ref_traj['id']}")
+        traj_sim = random.choice(available_sim)
+        
+        # traj_diff MUST be from different task
+        other_task = random.choice([t for t in task_names if t != task_ref])
+        other_trajectories = self.task_groups[other_task]
+        if not other_trajectories:
+            raise ValueError(f"Task '{other_task}' has no trajectories available for traj_diff")
+        traj_diff = random.choice(other_trajectories)
+        
+        # Final validation
+        self._validate_similarity_trajectories(ref_traj, traj_sim, traj_diff)
+        
+        # Deserialize frames and create sample
+        return self._build_similarity_sample(ref_traj, traj_sim, traj_diff, is_rewind=True)
+    
+    def _create_optimal_similarity_sample(self) -> SimilaritySample:
+        """Create similarity sample using optimal/suboptimal logic.
+        
+        Rules:
+        - traj_sim is always from the same task as o^ref (different trajectory)
+        - traj_sim is always preferred over traj_diff relative to o^ref
+        - If traj_sim is suboptimal, then traj_diff must be from a different task
+        - If traj_sim is optimal, then traj_diff can be suboptimal from the same task or from a different task
+        
+        Minimal requirements:
+        - At least 2 trajectories in the reference task (for o^ref and traj_sim)
+        - At least 1 other trajectory available for traj_diff (same or different task)
         """
         
         # Get available tasks
@@ -733,7 +731,7 @@ class DataGenerator:
         # Check minimal requirements for reference task
         if len(ref_all_trajectories) < 2:
             raise ValueError(f"Task '{task_ref}' has only {len(ref_all_trajectories)} trajectory(ies). "
-                           f"Need at least 2 trajectories in reference task for similarity sample.")
+                           f"Need at least 2 trajectories in reference task for optimal similarity sample.")
         
         if not ref_optimal_trajectories:
             # Fall back to all trajectories if no optimal ones
@@ -742,111 +740,136 @@ class DataGenerator:
         # Select reference trajectory (can be optimal or suboptimal)
         ref_traj = random.choice(ref_all_trajectories)
         
-        # Decide if o^1 should be optimal or suboptimal
-        use_optimal_o1 = random.choice([True, False])
+        # Decide if traj_sim should be optimal or suboptimal
+        use_optimal_sim = random.choice([True, False])
         
-        if use_optimal_o1 and ref_optimal_trajectories:
-            # o^1 is optimal from the same task as ref (must be different trajectory)
-            available_o1 = [t for t in ref_optimal_trajectories if t['id'] != ref_traj['id']]
-            if not available_o1:
-                raise ValueError(f"Cannot create optimal o^1: no optimal trajectories available in task '{task_ref}' "
-                               f"different from reference trajectory {ref_traj['id']}")
-            traj_1 = random.choice(available_o1)
-            
-            # o^2 can be suboptimal from same task OR from different task
-            if len(task_names) > 1 and random.choice([True, False]):
-                # Choose o^2 from different task
-                other_task = random.choice([t for t in task_names if t != task_ref])
-                other_trajectories = self.task_groups[other_task]
-                if not other_trajectories:
-                    raise ValueError(f"Task '{other_task}' has no trajectories available for o^2")
-                traj_2 = random.choice(other_trajectories)
-            else:
-                # Choose o^2 as suboptimal from same task
-                ref_suboptimal_trajectories = [t for t in ref_all_trajectories 
-                                             if t not in ref_optimal_trajectories 
-                                             and t['id'] not in [ref_traj['id'], traj_1['id']]]
-                if not ref_suboptimal_trajectories:
-                    # Try any trajectory from same task that's different from ref and o^1
-                    available_same_task = [t for t in ref_all_trajectories 
-                                         if t['id'] not in [ref_traj['id'], traj_1['id']]]
-                    if not available_same_task:
-                        # Must use different task
-                        if len(task_names) < 2:
-                            raise ValueError(f"Cannot create o^2: only one task available and no trajectories "
-                                           f"in task '{task_ref}' different from ref {ref_traj['id']} and o^1 {traj_1['id']}")
-                        other_task = random.choice([t for t in task_names if t != task_ref])
-                        other_trajectories = self.task_groups[other_task]
-                        if not other_trajectories:
-                            raise ValueError(f"Task '{other_task}' has no trajectories available for o^2")
-                        traj_2 = random.choice(other_trajectories)
-                    else:
-                        traj_2 = random.choice(available_same_task)
-                else:
-                    traj_2 = random.choice(ref_suboptimal_trajectories)
+        if use_optimal_sim and ref_optimal_trajectories:
+            traj_sim, traj_diff = self._select_optimal_sim_trajectories(
+                task_ref, task_names, ref_traj, ref_optimal_trajectories, ref_all_trajectories
+            )
         else:
-            # o^1 is suboptimal from the same task as ref (must be different trajectory)
-            ref_suboptimal_trajectories = [t for t in ref_all_trajectories 
-                                         if t not in ref_optimal_trajectories 
-                                         and t['id'] != ref_traj['id']]
-            if not ref_suboptimal_trajectories:
-                # Fallback to any trajectory from same task different from ref
-                available_same_task = [t for t in ref_all_trajectories if t['id'] != ref_traj['id']]
-                if not available_same_task:
-                    raise ValueError(f"Cannot create o^1: no trajectories available in task '{task_ref}' "
-                                   f"different from reference trajectory {ref_traj['id']}")
-                traj_1 = random.choice(available_same_task)
-            else:
-                traj_1 = random.choice(ref_suboptimal_trajectories)
-            
-            # o^2 MUST be from different task (since o^1 is suboptimal)
-            if len(task_names) < 2:
-                raise ValueError(f"Cannot create o^2: o^1 is suboptimal so o^2 must be from different task, "
-                               f"but only one task '{task_ref}' is available")
-            
+            traj_sim, traj_diff = self._select_suboptimal_sim_trajectories(
+                task_ref, task_names, ref_traj, ref_optimal_trajectories, ref_all_trajectories
+            )
+        
+        # Final validation
+        self._validate_similarity_trajectories(ref_traj, traj_sim, traj_diff)
+        
+        # Deserialize frames and create sample
+        return self._build_similarity_sample(ref_traj, traj_sim, traj_diff, is_rewind=False)
+    
+    def _select_optimal_sim_trajectories(self, task_ref, task_names, ref_traj, ref_optimal_trajectories, ref_all_trajectories):
+        """Select trajectories when traj_sim should be optimal."""
+        # traj_sim is optimal from the same task as ref (must be different trajectory)
+        available_sim = [t for t in ref_optimal_trajectories if t['id'] != ref_traj['id']]
+        if not available_sim:
+            raise ValueError(f"Cannot create optimal traj_sim: no optimal trajectories available in task '{task_ref}' "
+                           f"different from reference trajectory {ref_traj['id']}")
+        traj_sim = random.choice(available_sim)
+        
+        # traj_diff can be suboptimal from same task OR from different task
+        if len(task_names) > 1 and random.choice([True, False]):
+            # Choose traj_diff from different task
             other_task = random.choice([t for t in task_names if t != task_ref])
             other_trajectories = self.task_groups[other_task]
             if not other_trajectories:
-                raise ValueError(f"Task '{other_task}' has no trajectories available for o^2")
-            traj_2 = random.choice(other_trajectories)
+                raise ValueError(f"Task '{other_task}' has no trajectories available for traj_diff")
+            traj_diff = random.choice(other_trajectories)
+        else:
+            # Choose traj_diff as suboptimal from same task
+            ref_suboptimal_trajectories = [t for t in ref_all_trajectories 
+                                         if t not in ref_optimal_trajectories 
+                                         and t['id'] not in [ref_traj['id'], traj_sim['id']]]
+            if not ref_suboptimal_trajectories:
+                # Try any trajectory from same task that's different from ref and traj_sim
+                available_same_task = [t for t in ref_all_trajectories 
+                                     if t['id'] not in [ref_traj['id'], traj_sim['id']]]
+                if not available_same_task:
+                    # Must use different task
+                    if len(task_names) < 2:
+                        raise ValueError(f"Cannot create traj_diff: only one task available and no trajectories "
+                                       f"in task '{task_ref}' different from ref {ref_traj['id']} and traj_sim {traj_sim['id']}")
+                    other_task = random.choice([t for t in task_names if t != task_ref])
+                    other_trajectories = self.task_groups[other_task]
+                    if not other_trajectories:
+                        raise ValueError(f"Task '{other_task}' has no trajectories available for traj_diff")
+                    traj_diff = random.choice(other_trajectories)
+                else:
+                    traj_diff = random.choice(available_same_task)
+            else:
+                traj_diff = random.choice(ref_suboptimal_trajectories)
         
-        # Final validation
-        if traj_1['id'] == ref_traj['id']:
-            raise ValueError(f"o^1 and o^ref have the same trajectory ID: {traj_1['id']}")
+        return traj_sim, traj_diff
+    
+    def _select_suboptimal_sim_trajectories(self, task_ref, task_names, ref_traj, ref_optimal_trajectories, ref_all_trajectories):
+        """Select trajectories when traj_sim should be suboptimal."""
+        # traj_sim is suboptimal from the same task as ref (must be different trajectory)
+        ref_suboptimal_trajectories = [t for t in ref_all_trajectories 
+                                     if t not in ref_optimal_trajectories 
+                                     and t['id'] != ref_traj['id']]
+        if not ref_suboptimal_trajectories:
+            # Fallback to any trajectory from same task different from ref
+            available_same_task = [t for t in ref_all_trajectories if t['id'] != ref_traj['id']]
+            if not available_same_task:
+                raise ValueError(f"Cannot create traj_sim: no trajectories available in task '{task_ref}' "
+                               f"different from reference trajectory {ref_traj['id']}")
+            traj_sim = random.choice(available_same_task)
+        else:
+            traj_sim = random.choice(ref_suboptimal_trajectories)
         
-        if traj_2['id'] == ref_traj['id']:
-            raise ValueError(f"o^2 and o^ref have the same trajectory ID: {traj_2['id']}")
+        # traj_diff MUST be from different task (since traj_sim is suboptimal)
+        if len(task_names) < 2:
+            raise ValueError(f"Cannot create traj_diff: traj_sim is suboptimal so traj_diff must be from different task, "
+                           f"but only one task '{task_ref}' is available")
         
-        if traj_1['id'] == traj_2['id']:
-            raise ValueError(f"o^1 and o^2 have the same trajectory ID: {traj_1['id']}")
+        other_task = random.choice([t for t in task_names if t != task_ref])
+        other_trajectories = self.task_groups[other_task]
+        if not other_trajectories:
+            raise ValueError(f"Task '{other_task}' has no trajectories available for traj_diff")
+        traj_diff = random.choice(other_trajectories)
         
+        return traj_sim, traj_diff
+    
+    def _validate_similarity_trajectories(self, ref_traj, traj_sim, traj_diff):
+        """Validate that all trajectories have unique IDs."""
+        if traj_sim['id'] == ref_traj['id']:
+            raise ValueError(f"traj_sim and o^ref have the same trajectory ID: {traj_sim['id']}")
+        
+        if traj_diff['id'] == ref_traj['id']:
+            raise ValueError(f"traj_diff and o^ref have the same trajectory ID: {traj_diff['id']}")
+        
+        if traj_sim['id'] == traj_diff['id']:
+            raise ValueError(f"traj_sim and traj_diff have the same trajectory ID: {traj_sim['id']}")
+    
+    def _build_similarity_sample(self, ref_traj, traj_sim, traj_diff, is_rewind=False):
+        """Build the final similarity sample from trajectories."""
         # Deserialize frames once for all trajectories
-        traj_1_frames_shape = traj_1.get('frames_shape')
-        if isinstance(traj_1_frames_shape, list):
-            traj_1_frames_shape = tuple(traj_1_frames_shape)
-        traj_1_frames = self._deserialize_frames(traj_1['frames'], shape=traj_1_frames_shape) if isinstance(traj_1['frames'], bytes) else traj_1['frames']
+        traj_sim_frames_shape = traj_sim.get('frames_shape')
+        if isinstance(traj_sim_frames_shape, list):
+            traj_sim_frames_shape = tuple(traj_sim_frames_shape)
+        traj_sim_frames = self._deserialize_frames(traj_sim['frames'], shape=traj_sim_frames_shape) if isinstance(traj_sim['frames'], bytes) else traj_sim['frames']
         
-        traj_2_frames_shape = traj_2.get('frames_shape')
-        if isinstance(traj_2_frames_shape, list):
-            traj_2_frames_shape = tuple(traj_2_frames_shape)
-        traj_2_frames = self._deserialize_frames(traj_2['frames'], shape=traj_2_frames_shape) if isinstance(traj_2['frames'], bytes) else traj_2['frames']
+        traj_diff_frames_shape = traj_diff.get('frames_shape')
+        if isinstance(traj_diff_frames_shape, list):
+            traj_diff_frames_shape = tuple(traj_diff_frames_shape)
+        traj_diff_frames = self._deserialize_frames(traj_diff['frames'], shape=traj_diff_frames_shape) if isinstance(traj_diff['frames'], bytes) else traj_diff['frames']
         
         # Calculate target progress for all trajectories using pre-deserialized frames
-        target_progress_A = self._calculate_target_progress(traj_1, traj_1_frames)
-        target_progress_B = self._calculate_target_progress(traj_2, traj_2_frames)
+        target_progress_A = self._calculate_target_progress(traj_sim, traj_sim_frames)
+        target_progress_B = self._calculate_target_progress(traj_diff, traj_diff_frames)
         
         # Get frame shapes and convert to tuples if needed
         ref_frames_shape = ref_traj.get('frames_shape')
         if isinstance(ref_frames_shape, list):
             ref_frames_shape = tuple(ref_frames_shape)
         
-        traj_1_frames_shape = traj_1.get('frames_shape')
-        if isinstance(traj_1_frames_shape, list):
-            traj_1_frames_shape = tuple(traj_1_frames_shape)
+        traj_sim_frames_shape = traj_sim.get('frames_shape')
+        if isinstance(traj_sim_frames_shape, list):
+            traj_sim_frames_shape = tuple(traj_sim_frames_shape)
         
-        traj_2_frames_shape = traj_2.get('frames_shape')
-        if isinstance(traj_2_frames_shape, list):
-            traj_2_frames_shape = tuple(traj_2_frames_shape)
+        traj_diff_frames_shape = traj_diff.get('frames_shape')
+        if isinstance(traj_diff_frames_shape, list):
+            traj_diff_frames_shape = tuple(traj_diff_frames_shape)
         
         # Create similarity sample structure
         sample = SimilaritySample(
@@ -860,31 +883,31 @@ class DataGenerator:
             optimal=ref_traj['optimal'],
             is_robot=ref_traj['is_robot'],
             metadata=ref_traj.get('metadata'),
-            # Comparative-specific fields
+            # Similarity-specific fields - using traj_sim/traj_diff naming
             reference_frames=ref_traj['frames'],  # o^ref
-            trajectory_A_frames=traj_1['frames'],  # o^1
-            trajectory_B_frames=traj_2['frames'],  # o^2
+            traj_sim_frames=traj_sim['frames'],   # Similar trajectory
+            traj_diff_frames=traj_diff['frames'], # Different trajectory
             reference_frames_shape=ref_frames_shape,
-            trajectory_A_frames_shape=traj_1_frames_shape,
-            trajectory_B_frames_shape=traj_2_frames_shape,
-            task_ref=task_ref,
-            task_A=traj_1['task'],
-            task_B=traj_2['task'],
+            traj_sim_frames_shape=traj_sim_frames_shape,
+            traj_diff_frames_shape=traj_diff_frames_shape,
+            task_ref=ref_traj['task'],
+            task_sim=traj_sim['task'],
+            task_diff=traj_diff['task'],
             ref_trajectory_id=ref_traj['id'],
-            trajectory_A_id=traj_1['id'],
-            trajectory_B_id=traj_2['id'],
-            # Trajectory A fields (o^1)
-            trajectory_A_task=traj_1['task'],
-            trajectory_A_lang_vector=traj_1['lang_vector'],
-            trajectory_A_data_source=traj_1['data_source'],
-            trajectory_A_optimal=traj_1['optimal'],
-            trajectory_A_is_robot=traj_1['is_robot'],
-            # Trajectory B fields (o^2)
-            trajectory_B_task=traj_2['task'],
-            trajectory_B_lang_vector=traj_2['lang_vector'],
-            trajectory_B_data_source=traj_2['data_source'],
-            trajectory_B_optimal=traj_2['optimal'],
-            trajectory_B_is_robot=traj_2['is_robot'],
+            traj_sim_id=traj_sim['id'],
+            traj_diff_id=traj_diff['id'],
+            # Similar trajectory fields
+            traj_sim_task=traj_sim['task'],
+            traj_sim_lang_vector=traj_sim['lang_vector'],
+            traj_sim_data_source=traj_sim['data_source'],
+            traj_sim_optimal=traj_sim['optimal'],
+            traj_sim_is_robot=traj_sim['is_robot'],
+            # Different trajectory fields
+            traj_diff_task=traj_diff['task'],
+            traj_diff_lang_vector=traj_diff['lang_vector'],
+            traj_diff_data_source=traj_diff['data_source'],
+            traj_diff_optimal=traj_diff['optimal'],
+            traj_diff_is_robot=traj_diff['is_robot'],
             # Progress fields
             target_progress_A=target_progress_A,
             target_progress_B=target_progress_B,

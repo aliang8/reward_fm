@@ -38,59 +38,58 @@ class BaseSample:
 
 @dataclass
 class PreferenceSample(BaseSample):
-    """Sample structure for preference prediction: o^1 vs o^2 where o^1 is preferred."""
+    """Sample structure for preference prediction: chosen vs rejected where chosen is preferred."""
     
-    # Preference-specific fields
-    trajectory_A_frames: Optional[Union[List[str], np.ndarray]] = None
-    trajectory_B_frames: Optional[Union[List[str], np.ndarray]] = None
-    trajectory_A_frames_shape: Optional[tuple] = None  # Shape of trajectory A frames
-    trajectory_B_frames_shape: Optional[tuple] = None  # Shape of trajectory B frames
-    preferred_trajectory: Optional[str] = None  # "A" or "B"
-    trajectory_A_id: Optional[str] = None
-    trajectory_B_id: Optional[str] = None
-    trajectory_B_task: Optional[str] = None
-    trajectory_B_lang_vector: Optional[np.ndarray] = None
-    trajectory_B_data_source: Optional[str] = None
-    trajectory_B_optimal: Optional[bool] = None
-    trajectory_B_is_robot: Optional[bool] = None
+    # Preference-specific fields using chosen/rejected naming
+    chosen_frames: Optional[Union[List[str], np.ndarray]] = None
+    rejected_frames: Optional[Union[List[str], np.ndarray]] = None
+    chosen_frames_shape: Optional[tuple] = None  # Shape of chosen trajectory frames
+    rejected_frames_shape: Optional[tuple] = None  # Shape of rejected trajectory frames
+    preferred_trajectory: Optional[str] = None  # "chosen" or "rejected" (should always be "chosen")
+    chosen_id: Optional[str] = None
+    rejected_id: Optional[str] = None
+    rejected_task: Optional[str] = None
+    rejected_lang_vector: Optional[np.ndarray] = None
+    rejected_data_source: Optional[str] = None
+    rejected_optimal: Optional[bool] = None
+    rejected_is_robot: Optional[bool] = None
     
     def __post_init__(self):
-        """Set the prediction type after initialization."""
+        """Set the prediction type after initialization and handle field mapping."""
         self.prediction_type = "preference"
-
+        
 
 @dataclass
 class SimilaritySample(BaseSample):
-    """Sample structure for similarity scoring: o^1 and o^2 ranked against o^ref."""
+    """Sample structure for similarity scoring: traj_sim and traj_diff ranked against o^ref."""
     
-    # Comparative-specific fields
+    # Similarity-specific fields using traj_sim/traj_diff naming
     reference_frames: Optional[Union[List[str], np.ndarray]] = None  # o^ref
-    trajectory_A_frames: Optional[Union[List[str], np.ndarray]] = None  # o^1
-    trajectory_B_frames: Optional[Union[List[str], np.ndarray]] = None  # o^2
+    traj_sim_frames: Optional[Union[List[str], np.ndarray]] = None  # Similar trajectory
+    traj_diff_frames: Optional[Union[List[str], np.ndarray]] = None  # Different trajectory
     reference_frames_shape: Optional[tuple] = None  # Shape of reference frames
-    trajectory_A_frames_shape: Optional[tuple] = None  # Shape of trajectory A frames
-    trajectory_B_frames_shape: Optional[tuple] = None  # Shape of trajectory B frames
+    traj_sim_frames_shape: Optional[tuple] = None  # Shape of similar trajectory frames
+    traj_diff_frames_shape: Optional[tuple] = None  # Shape of different trajectory frames
     task_ref: Optional[str] = None
-    task_A: Optional[str] = None
-    task_B: Optional[str] = None
+    task_sim: Optional[str] = None
+    task_diff: Optional[str] = None
     ref_trajectory_id: Optional[str] = None
-    trajectory_A_id: Optional[str] = None
-    trajectory_B_id: Optional[str] = None
-    trajectory_A_task: Optional[str] = None
-    trajectory_A_lang_vector: Optional[np.ndarray] = None
-    trajectory_A_data_source: Optional[str] = None
-    trajectory_A_optimal: Optional[bool] = None
-    trajectory_A_is_robot: Optional[bool] = None
-    trajectory_B_task: Optional[str] = None
-    trajectory_B_lang_vector: Optional[np.ndarray] = None
-    trajectory_B_data_source: Optional[str] = None
-    trajectory_B_optimal: Optional[bool] = None
-    trajectory_B_is_robot: Optional[bool] = None
-    
+    traj_sim_id: Optional[str] = None
+    traj_diff_id: Optional[str] = None
+    traj_sim_task: Optional[str] = None
+    traj_sim_lang_vector: Optional[np.ndarray] = None
+    traj_sim_data_source: Optional[str] = None
+    traj_sim_optimal: Optional[bool] = None
+    traj_sim_is_robot: Optional[bool] = None
+    traj_diff_task: Optional[str] = None
+    traj_diff_lang_vector: Optional[np.ndarray] = None
+    traj_diff_data_source: Optional[str] = None
+    traj_diff_optimal: Optional[bool] = None
+    traj_diff_is_robot: Optional[bool] = None
+   
     def __post_init__(self):
-        """Set the prediction type after initialization."""
+        """Set the prediction type after initialization and handle field mapping."""
         self.prediction_type = "similarity"
-
 
 class BatchCollator:
     """Batch collator that processes Sample objects through the processor."""
@@ -243,8 +242,8 @@ class BatchCollator:
         
         for sample in preference_samples:
             # Convert frames to appropriate format using stored shapes
-            trajectory_A_frames = self._convert_frames_to_pil_images(sample.trajectory_A_frames, sample.trajectory_A_frames_shape)
-            trajectory_B_frames = self._convert_frames_to_pil_images(sample.trajectory_B_frames, sample.trajectory_B_frames_shape)
+            chosen_frames = self._convert_frames_to_pil_images(sample.chosen_frames, sample.chosen_frames_shape)
+            rejected_frames = self._convert_frames_to_pil_images(sample.rejected_frames, sample.rejected_frames_shape)
             
             # Single conversation with both videos: task + video A + <|split_token|> + video B + <|pref_token|>
             conversation = [
@@ -252,9 +251,9 @@ class BatchCollator:
                     "role": "user",
                     "content": [
                         {"type": "text", "text": f"Task: {sample.task}"},
-                        {"type": "video", "video": trajectory_A_frames, "resized_height": self.resized_height, "resized_width": self.resized_width},
+                        {"type": "video", "video": chosen_frames, "resized_height": self.resized_height, "resized_width": self.resized_width},
                         {"type": "text", "text": "<|split_token|>"},
-                        {"type": "video", "video": trajectory_B_frames, "resized_height": self.resized_height, "resized_width": self.resized_width},
+                        {"type": "video", "video": rejected_frames, "resized_height": self.resized_height, "resized_width": self.resized_width},
                         {"type": "text", "text": "<|pref_token|>"}
                     ]
                 }
@@ -309,8 +308,8 @@ class BatchCollator:
         for sample in similarity_samples:
             # Convert frames to appropriate format using stored shapes
             reference_frames = self._convert_frames_to_pil_images(sample.reference_frames, sample.reference_frames_shape)
-            trajectory_A_frames = self._convert_frames_to_pil_images(sample.trajectory_A_frames, sample.trajectory_A_frames_shape)
-            trajectory_B_frames = self._convert_frames_to_pil_images(sample.trajectory_B_frames, sample.trajectory_B_frames_shape)
+            traj_sim_frames = self._convert_frames_to_pil_images(sample.traj_sim_frames, sample.traj_sim_frames_shape)
+            traj_diff_frames = self._convert_frames_to_pil_images(sample.traj_diff_frames, sample.traj_diff_frames_shape)
             
             # Process reference vs trajectory A
             conversation_ref_A = [
@@ -320,7 +319,7 @@ class BatchCollator:
                         {"type": "text", "text": f"Reference task: {sample.task_ref}"},
                         {"type": "video", "video": reference_frames, "resized_height": self.resized_height, "resized_width": self.resized_width},
                         {"type": "text", "text": "<|split_token|>"},
-                        {"type": "video", "video": trajectory_A_frames, "resized_height": self.resized_height, "resized_width": self.resized_width},
+                        {"type": "video", "video": traj_sim_frames, "resized_height": self.resized_height, "resized_width": self.resized_width},
                         {"type": "text", "text": "<|reward_token|>"}
                     ]
                 }
@@ -334,7 +333,7 @@ class BatchCollator:
                         {"type": "text", "text": f"Reference task: {sample.task_ref}"},
                         {"type": "video", "video": reference_frames, "resized_height": self.resized_height, "resized_width": self.resized_width},
                         {"type": "text", "text": "<|split_token|>"},
-                        {"type": "video", "video": trajectory_B_frames, "resized_height": self.resized_height, "resized_width": self.resized_width},
+                        {"type": "video", "video": traj_diff_frames, "resized_height": self.resized_height, "resized_width": self.resized_width},
                         {"type": "text", "text": "<|reward_token|>"}
                     ]
                 }

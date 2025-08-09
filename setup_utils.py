@@ -143,6 +143,7 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
         "eval_strategy": cfg.training.evaluation_strategy,
         "per_device_eval_batch_size": cfg.training.per_device_eval_batch_size,
         "do_eval": cfg.training.do_eval,
+        "prediction_loss_only": cfg.training.prediction_loss_only,
     }
     
     # Add eval_steps if evaluation_strategy is "steps"

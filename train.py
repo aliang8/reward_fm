@@ -83,6 +83,11 @@ def train(cfg: ExperimentConfig):
     peft_rfm_model = setup_peft_model(rfm_model, cfg)
     
     # Create training arguments from config
+    if cfg.debug:
+        cfg.training.save_steps = 2 
+        cfg.training.logging_steps = 2
+        cfg.training.eval_steps = 2
+
     training_args = create_training_arguments(cfg, cfg.training.output_dir)
     
     # Use the shared utilities for batch collator and dataset

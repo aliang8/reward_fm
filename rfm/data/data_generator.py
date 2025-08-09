@@ -415,7 +415,9 @@ class DataGenerator:
             dataset_name = dataset_path.split("/")[-1]
 
             def patch_path(old_path):
-                root_dir = f"/workspace/vlm_reward_model/rfm_dataset/{dataset_name}"
+                # RFM_DATASET_PATH is set in the environment variable
+                root_dir = os.environ.get("RFM_DATASET_PATH")
+                root_dir = f"{root_dir}/{dataset_name}"
                 return f"{root_dir}/{old_path}"       # e.g., "./videos/trajectory_0000.mp4"
             
             ds = load_dataset(dataset_path, name=subset, split="train")

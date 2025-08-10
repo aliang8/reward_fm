@@ -26,7 +26,7 @@ reward_fm/
 
 This project can be installed as a Python package called `rfm`. We provide multiple installation methods:
 
-### Method 1: Install as a Package (Recommended)
+### Method 1: Install as a Package (DEPRECATED, DON"T use)
 
 Install the RFM package directly:
 

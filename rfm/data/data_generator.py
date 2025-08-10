@@ -178,7 +178,7 @@ class DataGenerator:
         
         # Stack frames into tensor and convert to numpy
         # Each frame["data"] should be HxWxC, stacking gives TxHxWxC
-        frames_tensor = torch.stack([frame for frame in all_frames])
+        frames_tensor = torch.stack([frame["data"] for frame in all_frames])
         frames_array = frames_tensor.numpy()
         
         # Ensure we have the correct shape: (T, H, W, C)
@@ -307,6 +307,7 @@ class DataGenerator:
         else:
             # If frames are lists, use regular concatenation
             combined_frames = forward_frames + reverse_frames
+
         combined_progress = forward_progress + reverse_progress
         
         # Create new trajectory with rewind frames
@@ -416,8 +417,8 @@ class DataGenerator:
 
             def patch_path(old_path):
                 # RFM_DATASET_PATH is set in the environment variable
-                root_dir = os.environ.get("RFM_DATASET_PATH")
-                root_dir = f"{root_dir}/{dataset_name}"
+                # root_dir = os.environ.get("RFM_DATASET_PATH")
+                root_dir = f"/workspace/vlm_reward_model/rfm_dataset/{dataset_name}"
                 return f"{root_dir}/{old_path}"       # e.g., "./videos/trajectory_0000.mp4"
             
             ds = load_dataset(dataset_path, name=subset, split="train")
@@ -545,7 +546,7 @@ class DataGenerator:
         
         if strategy < 0.5:
             # Strategy 1: Use rewind-generated suboptimal trajectory
-                negative_traj = self._create_rewind_trajectory(optimal_traj)
+            negative_traj = self._create_rewind_trajectory(optimal_traj)
         else:
             # Strategy 2: Use random suboptimal trajectory from same task
             same_task_suboptimal = [

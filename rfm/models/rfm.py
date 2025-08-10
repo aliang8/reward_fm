@@ -111,9 +111,11 @@ class RFMModel(PreTrainedModel):
                     - For similarity: Continuous similarity scores [batch_size, 1]
                     - For none: Zero tensor [batch_size, 1]
                     
-                - progress_logits (torch.FloatTensor or None):
-                    Progress prediction logits [batch_size, 1] if target_progress is provided, else None.
-                    Values should be in range [0, 1] representing task completion percentage.
+                - progress_logits (Dict[str, List[torch.Tensor]] or None):
+                    Progress prediction logits split by trajectory:
+                    - 'A': List of tensors for trajectory A (before split token), each [seq_len_A]
+                    - 'B': List of tensors for trajectory B (after split token), each [seq_len_B]
+                    Values should be in range [0, 1] representing task completion percentage at each timestep.
         """
         model_kwargs = {
             "input_ids": input_ids,
@@ -131,20 +133,41 @@ class RFMModel(PreTrainedModel):
         outputs = self.model(**model_kwargs)
         last_hidden_state = outputs.hidden_states[-1]
 
-        # Always compute progress for trajectory A if target_progress is provided
+        # Always compute progress for all timesteps if target_progress is provided
         progress_logits = None
         if target_progress is not None:
-            # Use the last token position for each sequence
-            last_positions = attention_mask.sum(dim=1) - 1  # [batch_size]
-            token_hidden_states = torch.gather(
-                last_hidden_state,
-                1,
-                last_positions.view(-1, 1, 1).expand(
-                    -1, -1, last_hidden_state.size(-1)
-                ).long(),
-            ).squeeze(1)  # [batch_size, hidden_size]
+            # Apply progress head to all timesteps
+            progress_logits_full = self.progress_head(last_hidden_state)  # [batch_size, seq_len, 1]
+            progress_logits_full = progress_logits_full.squeeze(-1)  # [batch_size, seq_len]
             
-            progress_logits = self.progress_head(token_hidden_states)  # [batch_size, 1]
+            # Split progress predictions based on split token
+            progress_logits_A = []
+            progress_logits_B = []
+            
+            split_token_id = self.tokenizer.convert_tokens_to_ids("<|split_token|>")
+            
+            for i, seq_ids in enumerate(input_ids):
+                # Find the position of the split token
+                split_positions = (seq_ids == split_token_id).nonzero(as_tuple=True)[0]
+                
+                if len(split_positions) > 0:
+                    split_pos = split_positions[0].item()
+                    
+                    # Split the sequence at the split token
+                    seq_A = progress_logits_full[i, :split_pos]  # Before split token
+                    seq_B = progress_logits_full[i, split_pos+1:]  # After split token
+                    
+                    progress_logits_A.append(seq_A)
+                    progress_logits_B.append(seq_B)
+                else:
+                    # No split token found, treat entire sequence as trajectory A
+                    progress_logits_A.append(progress_logits_full[i])
+                    progress_logits_B.append(torch.empty(0, device=progress_logits_full.device))
+            
+            progress_logits = {
+                'A': progress_logits_A,
+                'B': progress_logits_B
+            }
 
         # For preference and similarity, use specific tokens
         logits = None

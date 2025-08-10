@@ -22,8 +22,8 @@ data:
   # Dataset paths and sources
   # dataset_path: "aliangdw/rfm"
   # dataset_subsets: ["libero_10"]
-  dataset_path: "abraranwar/agibotworld_rfm"
-  dataset_subsets: ["agibotworld"]
+  dataset_path: "abraranwar/libero_rfm"
+  dataset_subsets: ["libero_10"]
   
   # Evaluation dataset settings
   # eval_dataset_path: "aliangdw/rfm" 

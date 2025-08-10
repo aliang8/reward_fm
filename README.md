@@ -115,6 +115,22 @@ This project uses `uv` for fast and reliable dependency management. We recommend
     uv run python -c "import torch; print(f'PyTorch version: {torch.__version__}')"
     uv run python -c "import transformers; print(f'Transformers version: {transformers.__version__}')"
     ```
+### Next: Dataset Setup
+We now download the dataset to the local `./rfm_dataset` directory (by default).
+For space reasons, you should symlink `~/.cache/huggingface/datasets` to some other location with ample space first, as that's where the dataset is downloaded to by default before being symlinked to `./rfm_dataset`.
+
+```bash
+# Download the dataset
+./setup.sh
+```
+
+Add to your `.bashrc` the following export:
+
+```bash
+export RFM_DATASET_PATH=/path/to/your/rfm_dataset
+```
+
+
 
 ### Troubleshooting
 

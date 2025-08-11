@@ -70,6 +70,7 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str,
     print("LOADING OXE DATASET")
     print("=" * 100)
 
+
     dataset_path = Path(os.path.expanduser(dataset_path))
     if not dataset_path.exists():
         raise FileNotFoundError(f"Dataset path not found: {dataset_path}")
@@ -135,4 +136,4 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str,
             if valid_samples >= max_traj_per_dataset:
                 break
         print(f"Loaded {valid_samples} trajectories for {dataset_name}")
-    return task_data
+    return len(task_data), task_data

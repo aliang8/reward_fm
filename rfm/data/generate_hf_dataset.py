@@ -403,10 +403,12 @@ def main(cfg: GenerateConfig):
 
         # Load the trajectories using the loader with max_trajectories limit
         print(f"Loading OXE dataset from: {cfg.dataset.dataset_path}")
-        task_data = load_oxe_dataset(
+        max_num_trajs, task_data = load_oxe_dataset(
             cfg.dataset.dataset_path,
             cfg.output.max_trajectories,
         )
+        cfg.output.max_trajectories = max_num_trajs
+        print(f"Resetting max_trajectories to {max_num_trajs} for OXE because it contains multiple datasets")
         trajectories = flatten_task_data(task_data)
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")

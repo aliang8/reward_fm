@@ -56,12 +56,6 @@ class OXEFrameLoader:
         images = []
         # Use tfds.as_numpy to safely iterate nested RLDS steps
         for step in self.episode["steps"]:
-            if isinstance(step["observation"][self.image_key], tf.Tensor):
-                print(
-                    f"Found tensor for {self.image_key} in {self.dataset_name}",
-                    step["observation"][self.image_key].shape,
-                )
-                breakpoint()
             images.append(step["observation"][self.image_key].numpy())
         return np.stack(images)
 

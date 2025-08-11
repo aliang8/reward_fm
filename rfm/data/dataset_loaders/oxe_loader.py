@@ -65,14 +65,11 @@ class OXEFrameLoader:
         os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
         tf.config.set_visible_devices([], "GPU")
         builder = tfds.builder_from_directory(self.builder_dir)
-        dataset = builder.as_dataset(split="train")
+        dataset = builder.as_dataset(split=f"train[{self.episode_index}:{self.episode_index + 1}]")
 
-        target_episode = None
-
-        # Faster: Use itertools.islice to jump directly to the desired episode index
-        target_episode = next(itertools.islice(dataset, self.episode_index, self.episode_index + 1), None)
-
-        if target_episode is None:
+        try:
+            target_episode = next(iter(tfds.as_numpy(dataset)))
+        except StopIteration:
             return None
 
         images = []

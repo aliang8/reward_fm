@@ -60,7 +60,7 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str,
     if max_trajectories == -1:
         max_traj_per_dataset = float("inf")
     else:
-        max_traj_per_dataset = min(max_trajectories // len(OXE_VALID_DATASETS), 1)
+        max_traj_per_dataset = max(max_trajectories // len(OXE_VALID_DATASETS), 1)
     print(f"max_trajectories per task for OXE is: {max_traj_per_dataset}")
     print(f"Loading OXE dataset from: {dataset_path}")
     print("=" * 100)

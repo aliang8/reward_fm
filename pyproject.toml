@@ -55,6 +55,8 @@ dependencies = [
     "requests>=2.32.4",
     "torchcodec>=0.6.0",
     "tensorflow-datasets>=4.9.9",
+    "tensorflow>=2.19.0",
+    "tf-keras>=2.19.0",
 ]
 
 [project.urls]

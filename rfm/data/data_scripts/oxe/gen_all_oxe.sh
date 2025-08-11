@@ -3,6 +3,7 @@ OXE_VALID_DATASETS=(
     "austin_sirius_dataset_converted_externally_to_rlds"
     "berkeley_cable_routing"
     "berkeley_fanuc_manipulation"
+    "bc_z"
     "bridge_v2"
     "dlr_edan_shared_control_converted_externally_to_rlds"
     "droid"

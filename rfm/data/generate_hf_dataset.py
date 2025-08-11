@@ -15,6 +15,7 @@ from tqdm import tqdm
 from dataclasses import dataclass, field
 from pyrallis import wrap
 from multiprocessing import Pool, cpu_count
+import multiprocessing as mp
 from functools import partial
 from rfm.data.helpers import (
     load_sentence_transformer_model, 
@@ -227,7 +228,13 @@ def convert_dataset_to_hf_format(
                 fps
             )
             worker_args.append(args)
-        
+
+        # Use spawn to avoid CUDA context issues from forking after TF import
+        try:
+            mp.set_start_method("spawn", force=True)
+        except RuntimeError:
+            pass
+
         # Process trajectories in parallel
         with Pool(processes=num_workers) as pool:
             results = list(tqdm(
@@ -399,6 +406,8 @@ def main(cfg: GenerateConfig):
         )
         trajectories = flatten_task_data(task_data)
     elif cfg.dataset.dataset_name.lower().startswith("oxe_"):
+        # Disable GPUs for TF in OXE path to avoid CUDA context issues in workers
+        os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
         from rfm.data.dataset_loaders.oxe_loader import load_oxe_dataset
 
         # Load the trajectories using the loader with max_trajectories limit

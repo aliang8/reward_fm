@@ -1,14 +1,15 @@
-import tensorflow as tf
-from tqdm import tqdm
-tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
-from rfm.data.dataset_helpers.oxe_helper import OXE_DATASET_CONFIGS
 import os
 import itertools
-import tensorflow_datasets as tfds
-import numpy as np
+from tqdm import tqdm
 from typing import Dict, List
 from pathlib import Path
-from rfm.data.helpers import generate_unique_id
+import numpy as np
+from rfm.data.dataset_helpers.oxe_helper import OXE_DATASET_CONFIGS
+
+# Disable GPUs for TensorFlow in this loader to avoid CUDA context issues in workers
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+
+import tensorflow_datasets as tfds
 
 OXE_VALID_DATASETS = [
     "austin_buds_dataset_converted_externally_to_rlds",
@@ -59,6 +60,14 @@ class OXEFrameLoader:
 
     def __call__(self) -> np.ndarray:
         """Re-open TFDS from builder_dir and extract frames for the episode index."""
+        # Ensure TF runs CPU-only in worker processes to avoid CUDA context issues
+        os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+        try:
+            import tensorflow as _tf
+
+            _tf.config.set_visible_devices([], "GPU")
+        except Exception:
+            pass
         builder = tfds.builder_from_directory(self.builder_dir)
         dataset = builder.as_dataset(split="train")
 

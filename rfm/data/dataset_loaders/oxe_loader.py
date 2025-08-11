@@ -132,6 +132,7 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str,
                     }
 
                     task_data.setdefault(task, []).append(trajectory)
-                    if valid_samples >= max_traj_per_dataset:
-                        break
-        return task_data
+            if valid_samples >= max_traj_per_dataset:
+                break
+        print(f"Loaded {valid_samples} trajectories for {dataset_name}")
+    return task_data

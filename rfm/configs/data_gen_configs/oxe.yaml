@@ -9,7 +9,7 @@ output:
   max_frames: 64
   shortest_edge_size: 240
   use_video: true
-  fps: 30
+  fps: 10
   center_crop: false
 
 hub:

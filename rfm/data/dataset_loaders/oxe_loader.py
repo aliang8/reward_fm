@@ -1,3 +1,6 @@
+import tensorflow as tf
+
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 from rfm.data.dataset_helpers.oxe_helper import OXE_DATASET_CONFIGS
 import os
 import tensorflow_datasets as tfds

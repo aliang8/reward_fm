@@ -405,7 +405,7 @@ def main(cfg: GenerateConfig):
         print(f"Loading OXE dataset from: {cfg.dataset.dataset_path}")
         task_data = load_oxe_dataset(
             cfg.dataset.dataset_path,
-            cfg.output.max_trajectories_per_task,
+            cfg.output.max_trajectories,
         )
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")

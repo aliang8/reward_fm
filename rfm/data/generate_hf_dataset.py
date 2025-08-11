@@ -7,6 +7,18 @@ This is a generic converter that works with any dataset-specific loader.
 import json
 import os
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # hide INFO/WARN/ERROR; only FATAL remains
+try:
+    import absl.logging as absl_logging
+
+    absl_logging.set_verbosity(absl_logging.ERROR)
+except Exception:
+    pass
+try:
+    import tensorflow as tf
+
+    tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+except Exception:
+    pass
 import numpy as np
 from typing import List, Dict, Tuple, Optional, Callable, Any
 from pathlib import Path

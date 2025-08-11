@@ -148,7 +148,7 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str,
             if dataset_name == "language_table":
                 if valid_samples >= MAX_LANGTABLE_EPISODES:
                     break
-            elif valid_samples >= max_traj_per_dataset:
+            if valid_samples >= max_traj_per_dataset:
                 break
         print(f"Loaded {valid_samples} trajectories for {dataset_name}")
         total_trajs += valid_samples

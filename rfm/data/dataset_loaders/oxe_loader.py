@@ -1,5 +1,5 @@
 import tensorflow as tf
-
+from tqdm import tqdm
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 from rfm.data.dataset_helpers.oxe_helper import OXE_DATASET_CONFIGS
 import os
@@ -96,8 +96,9 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str,
         # load each possible valid key as a separate traj and make sure that if they're all black images don't include.
         # skip data loading if no lang
         valid_samples = 0
-        for episode in dataset:
+        for episode in tqdm(dataset, desc=f"Processing {dataset_name} episodes"):
             first_step = next(episode["steps"].as_numpy_iterator())
+            task = None
             for key in POSSIBLE_LANG_INSTRUCTION_KEYS:
                 if key in first_step["observation"]:
                     if dataset_name == "language_table":
@@ -133,4 +134,4 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str,
                     task_data.setdefault(task, []).append(trajectory)
                     if valid_samples >= max_traj_per_dataset:
                         break
-    return task_data
+        return task_data

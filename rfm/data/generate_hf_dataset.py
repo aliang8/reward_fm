@@ -6,6 +6,7 @@ This is a generic converter that works with any dataset-specific loader.
 
 import json
 import os
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # hide INFO/WARN/ERROR; only FATAL remains
 import numpy as np
 from typing import List, Dict, Tuple, Optional, Callable, Any
 from pathlib import Path

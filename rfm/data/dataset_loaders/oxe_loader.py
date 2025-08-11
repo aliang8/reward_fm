@@ -35,6 +35,9 @@ POSSIBLE_LANG_INSTRUCTION_KEYS = [  # valid keys for language instruction in OXE
     "language_instruction",
     "instruction",
 ]
+MAX_LANGTABLE_EPISODES = (
+    50_000  # for language table, we only want to label the first 50k episodes b/c it's way too many
+)
 possible_valid_keys = ["primary", "secondary", "tertiary"]
 
 # TODO: double check toto since everything is just "pour". Maybe "pour into the cup"? for all?
@@ -52,8 +55,14 @@ class OXEFrameLoader:
         """Load frames from the MP4 file when called."""
         images = []
         # Use tfds.as_numpy to safely iterate nested RLDS steps
-        for step in tfds.as_numpy(self.episode["steps"]):
-            images.append(step["observation"][self.image_key])
+        for step in self.episode["steps"]:
+            if isinstance(step["observation"][self.image_key], tf.Tensor):
+                print(
+                    f"Found tensor for {self.image_key} in {self.dataset_name}",
+                    step["observation"][self.image_key].shape,
+                )
+                breakpoint()
+            images.append(step["observation"][self.image_key].numpy())
         return np.stack(images)
 
 
@@ -136,7 +145,10 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str,
                     }
 
                     task_data.setdefault(task, []).append(trajectory)
-            if valid_samples >= max_traj_per_dataset:
+            if dataset_name == "language_table":
+                if valid_samples >= MAX_LANGTABLE_EPISODES:
+                    break
+            elif valid_samples >= max_traj_per_dataset:
                 break
         print(f"Loaded {valid_samples} trajectories for {dataset_name}")
         total_trajs += valid_samples

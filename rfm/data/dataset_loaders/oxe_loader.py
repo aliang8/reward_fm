@@ -51,11 +51,10 @@ class OXEFrameLoader:
     def __call__(self) -> np.ndarray:
         """Load frames from the MP4 file when called."""
         images = []
-        for step in self.episode["steps"].as_numpy_iterator():
-            # extract video
+        # Use tfds.as_numpy to safely iterate nested RLDS steps
+        for step in tfds.as_numpy(self.episode["steps"]):
             images.append(step["observation"][self.image_key])
-        images = np.stack(images)
-        return images
+        return np.stack(images)
 
 
 def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str, List[Dict]]:
@@ -74,7 +73,7 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str,
     dataset_path = Path(os.path.expanduser(dataset_path))
     if not dataset_path.exists():
         raise FileNotFoundError(f"Dataset path not found: {dataset_path}")
-
+    total_trajs = 0
     task_data: Dict[str, List[Dict]] = {}
     for dataset_name in OXE_VALID_DATASETS:
         print(f"Loading {dataset_name}")
@@ -98,7 +97,11 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str,
         # skip data loading if no lang
         valid_samples = 0
         for episode in tqdm(dataset, desc=f"Processing {dataset_name} episodes"):
-            first_step = next(episode["steps"].as_numpy_iterator())
+            # Safely materialize the first step via tfds.as_numpy to avoid TF variant conversion issues
+            try:
+                first_step = next(iter(tfds.as_numpy(episode["steps"])))
+            except StopIteration:
+                continue
             task = None
             for key in POSSIBLE_LANG_INSTRUCTION_KEYS:
                 if key in first_step["observation"]:
@@ -136,4 +139,5 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str,
             if valid_samples >= max_traj_per_dataset:
                 break
         print(f"Loaded {valid_samples} trajectories for {dataset_name}")
-    return len(task_data), task_data
+        total_trajs += valid_samples
+    return total_trajs, task_data

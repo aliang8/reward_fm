@@ -96,6 +96,9 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str,
         if dataset is None:
             raise ValueError(f"No dataset found for {dataset_name} in {dataset_path}")
         img_key_to_name = OXE_DATASET_CONFIGS[dataset_name]["image_obs_keys"]
+        img_key_to_name = {
+            k: v for k, v in img_key_to_name.items() if k != "wrist"
+        }  # remove wrist since it's not a great view
         # load each possible valid key as a separate traj and make sure that if they're all black images don't include.
         # skip data loading if no lang
         valid_samples = 0
@@ -121,7 +124,7 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str,
                 continue
 
             # create a trajectory for each image key in case trajectory has multiple valid viewpoints
-            for _, img_name_in_step in img_key_to_name.items():
+            for img_key, img_name_in_step in img_key_to_name.items():
                 if img_name_in_step in first_step["observation"]:
                     # if all black then skip
                     if np.all(first_step["observation"][img_name_in_step] == 0):

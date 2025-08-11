@@ -3,33 +3,34 @@ from tqdm import tqdm
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 from rfm.data.dataset_helpers.oxe_helper import OXE_DATASET_CONFIGS
 import os
+import itertools
 import tensorflow_datasets as tfds
 import numpy as np
 from typing import Dict, List
 from pathlib import Path
 from rfm.data.helpers import generate_unique_id
 
-OXE_VALID_DATASETS = sorted([
+OXE_VALID_DATASETS = [
     "austin_buds_dataset_converted_externally_to_rlds",
-    "dlr_edan_shared_control_converted_externally_to_rlds",
-    "iamlab_cmu_pickup_insert_converted_externally_to_rlds",
-    "toto",
     "austin_sirius_dataset_converted_externally_to_rlds",
-    "droid",
-    "jaco_play",
-    "ucsd_kitchen_dataset_converted_externally_to_rlds",
     "berkeley_cable_routing",
-    "fmb",
-    "language_table",
-    "utaustin_mutex",
     "berkeley_fanuc_manipulation",
-    "fractal20220817_data",
-    "stanford_hydra_dataset_converted_externally_to_rlds",
-    "viola",
     "bridge_v2",
+    "dlr_edan_shared_control_converted_externally_to_rlds",
+    "droid",
+    "fmb",
+    "fractal20220817_data",
     "furniture_bench_dataset_converted_externally_to_rlds",
+    "iamlab_cmu_pickup_insert_converted_externally_to_rlds",
+    "jaco_play",
+    "language_table",
+    "stanford_hydra_dataset_converted_externally_to_rlds",
     "taco_play",
-])
+    "toto",
+    "ucsd_kitchen_dataset_converted_externally_to_rlds",
+    "utaustin_mutex",
+    "viola",
+]
 POSSIBLE_LANG_INSTRUCTION_KEYS = [  # valid keys for language instruction in OXE
     "natural_language_instruction",
     "language_instruction",
@@ -44,41 +45,62 @@ possible_valid_keys = ["primary", "secondary", "tertiary"]
 
 
 class OXEFrameLoader:
-    """Pickle-able frame loader for OXE videos."""
+    """Serializable frame loader that re-opens TFDS and extracts a specific episode.
 
-    def __init__(self, episode, image_key: str, dataset_name: str):
-        self.episode = episode
-        self.image_key = image_key
+    Stores only serializable identifiers so it can be pickled for multiprocessing.
+    """
+
+    def __init__(self, builder_dir: str, dataset_name: str, image_key: str, episode_index: int):
+        self.builder_dir = builder_dir
         self.dataset_name = dataset_name
+        self.image_key = image_key
+        self.episode_index = int(episode_index)
 
     def __call__(self) -> np.ndarray:
-        """Load frames from the MP4 file when called."""
+        """Re-open TFDS from builder_dir and extract frames for the episode index."""
+        builder = tfds.builder_from_directory(self.builder_dir)
+        dataset = builder.as_dataset(split="train")
+
+        target_episode = None
+
+        # Faster: Use itertools.islice to jump directly to the desired episode index
+        target_episode = next(itertools.islice(dataset, self.episode_index, self.episode_index + 1), None)
+
+        if target_episode is None:
+            return None
+
         images = []
-        # Use tfds.as_numpy to safely iterate nested RLDS steps
-        for step in self.episode["steps"]:
-            images.append(step["observation"][self.image_key].numpy())
-        return np.stack(images)
+        for step in tfds.as_numpy(target_episode["steps"]):
+            if self.image_key in step["observation"]:
+                images.append(step["observation"][self.image_key])
+
+        return np.stack(images) if len(images) > 0 else None
 
 
-def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str, List[Dict]]:
+def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1, dataset_name: str = None) -> Dict[str, List[Dict]]:
     """Load OXE dataset and organize by task, without a separate iterator class."""
+
+    if dataset_name is None:
+        datasets_to_iterate = OXE_VALID_DATASETS
+    else:
+        datasets_to_iterate = [dataset_name]
+
     if max_trajectories == -1:
         max_traj_per_dataset = float("inf")
     else:
-        max_traj_per_dataset = max(max_trajectories // len(OXE_VALID_DATASETS), 1)
+        max_traj_per_dataset = max(max_trajectories // len(datasets_to_iterate), 1)
     print(f"max_trajectories per task for OXE is: {max_traj_per_dataset}")
     print(f"Loading OXE dataset from: {dataset_path}")
     print("=" * 100)
     print("LOADING OXE DATASET")
     print("=" * 100)
 
-
     dataset_path = Path(os.path.expanduser(dataset_path))
     if not dataset_path.exists():
         raise FileNotFoundError(f"Dataset path not found: {dataset_path}")
     total_trajs = 0
     task_data: Dict[str, List[Dict]] = {}
-    for dataset_name in OXE_VALID_DATASETS:
+    for dataset_name in datasets_to_iterate:
         print(f"Loading {dataset_name}")
         # make the builder locally to avoid calls to google
         # check which version is available
@@ -99,10 +121,12 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str,
         img_key_to_name = {
             k: v for k, v in img_key_to_name.items() if k != "wrist"
         }  # remove wrist since it's not a great view
+        valid_img_keys = list(img_key_to_name.values())
         # load each possible valid key as a separate traj and make sure that if they're all black images don't include.
         # skip data loading if no lang
         valid_samples = 0
-        for episode in tqdm(dataset, desc=f"Processing {dataset_name} episodes"):
+        builder_dir = os.path.join(str(dataset_path), dataset_name, version)
+        for ep_idx, episode in enumerate(tqdm(dataset, desc=f"Processing {dataset_name} episodes")):
             # Safely materialize the first step via tfds.as_numpy to avoid TF variant conversion issues
             try:
                 first_step = next(iter(tfds.as_numpy(episode["steps"])))
@@ -124,12 +148,17 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str,
                 continue
 
             # create a trajectory for each image key in case trajectory has multiple valid viewpoints
-            for img_key, img_name_in_step in img_key_to_name.items():
+            for img_name_in_step in valid_img_keys:
                 if img_name_in_step in first_step["observation"]:
                     # if all black then skip
                     if np.all(first_step["observation"][img_name_in_step] == 0):
                         continue
-                    frame_loader = OXEFrameLoader(episode, img_name_in_step, dataset_name)
+                    frame_loader = OXEFrameLoader(
+                        builder_dir=builder_dir,
+                        dataset_name=dataset_name,
+                        image_key=img_name_in_step,
+                        episode_index=ep_idx,
+                    )
                     valid_samples += 1
                     trajectory = {
                         "frames": frame_loader,

@@ -51,12 +51,14 @@ class OXEFrameLoader:
         for step in self.episode["steps"].as_numpy_iterator():
             # extract video
             images.append(step["observation"][self.image_key])
+        images = np.stack(images)
         return images
 
 
 def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str, List[Dict]]:
     """Load OXE dataset and organize by task, without a separate iterator class."""
-    print(f"max_trajectories per task for OXE is: {max_trajectories}")
+    max_traj_per_dataset = max_trajectories // len(OXE_VALID_DATASETS)
+    print(f"max_trajectories per task for OXE is: {max_traj_per_dataset}")
     print(f"Loading OXE dataset from: {dataset_path}")
     print("=" * 100)
     print("LOADING OXE DATASET")
@@ -89,7 +91,7 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str,
         # skip data loading if no lang
         valid_samples = 0
         for episode in dataset:
-            if valid_samples >= max_trajectories:
+            if valid_samples >= max_traj_per_dataset:
                 break
             first_step = next(episode["steps"].as_numpy_iterator())
             for key in POSSIBLE_LANG_INSTRUCTION_KEYS:
@@ -112,11 +114,6 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str,
                     # if all black then skip
                     if np.all(first_step["observation"][img_name_in_step] == 0):
                         continue
-                    # iterate to get the actions
-                    actions = []
-                    for step in episode["steps"]:
-                        actions.append(step["action"])
-                    actions = np.array(actions)
                     frame_loader = OXEFrameLoader(episode, img_name_in_step, dataset_name)
                     valid_samples += 1
                     trajectory = {

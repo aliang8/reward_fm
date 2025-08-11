@@ -94,8 +94,6 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str,
         # skip data loading if no lang
         valid_samples = 0
         for episode in dataset:
-            if valid_samples >= max_traj_per_dataset:
-                break
             first_step = next(episode["steps"].as_numpy_iterator())
             for key in POSSIBLE_LANG_INSTRUCTION_KEYS:
                 if key in first_step["observation"]:
@@ -130,4 +128,6 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str,
                     }
 
                     task_data.setdefault(task, []).append(trajectory)
+                    if valid_samples >= max_traj_per_dataset:
+                        break
     return task_data

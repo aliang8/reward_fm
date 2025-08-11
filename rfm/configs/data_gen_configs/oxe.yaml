@@ -4,7 +4,7 @@ dataset:
   dataset_name: oxe
 
 output:
-  output_dir: datasets/oxe_rfm_test
+  output_dir: datasets/oxe_rfm
   max_trajectories: -1
   max_frames: 64
   shortest_edge_size: 240
@@ -14,4 +14,4 @@ output:
 
 hub:
   push_to_hub: true 
-  hub_repo_id: oxe_rfm_test
+  hub_repo_id: oxe_rfm

@@ -152,7 +152,7 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1, dataset_name
                 elif key in first_step:
                     task = first_step[key].decode()
                     break
-            if task is None:
+            if task is None or task == "":
                 continue
 
             # create a trajectory for each image key in case trajectory has multiple valid viewpoints

@@ -398,6 +398,15 @@ def main(cfg: GenerateConfig):
             cfg.output.max_trajectories,
         )
         trajectories = flatten_task_data(task_data)
+    elif "oxe" == cfg.dataset.dataset_name.lower():
+        from rfm.data.dataset_loaders.oxe_loader import load_oxe_dataset
+
+        # Load the trajectories using the loader with max_trajectories limit
+        print(f"Loading OXE dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_oxe_dataset(
+            cfg.dataset.dataset_path,
+            cfg.output.max_trajectories_per_task,
+        )
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")
     

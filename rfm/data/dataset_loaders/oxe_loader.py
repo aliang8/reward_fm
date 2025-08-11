@@ -57,7 +57,10 @@ class OXEFrameLoader:
 
 def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str, List[Dict]]:
     """Load OXE dataset and organize by task, without a separate iterator class."""
-    max_traj_per_dataset = max_trajectories // len(OXE_VALID_DATASETS)
+    if max_trajectories == -1:
+        max_traj_per_dataset = float("inf")
+    else:
+        max_traj_per_dataset = min(max_trajectories // len(OXE_VALID_DATASETS), 1)
     print(f"max_trajectories per task for OXE is: {max_traj_per_dataset}")
     print(f"Loading OXE dataset from: {dataset_path}")
     print("=" * 100)

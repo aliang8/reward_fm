@@ -80,10 +80,12 @@ class OXEFrameLoader:
 def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1, dataset_name: str = None) -> Dict[str, List[Dict]]:
     """Load OXE dataset and organize by task, without a separate iterator class."""
 
+    # pop the oxe_ prefix from the dataset name
+    dataset_name = dataset_name.replace("oxe_", "")
+
     if dataset_name is None:
-        datasets_to_iterate = OXE_VALID_DATASETS
-    else:
-        datasets_to_iterate = [dataset_name]
+        raise ValueError("Dataset name is required")
+    datasets_to_iterate = [dataset_name]
 
     if max_trajectories == -1:
         max_traj_per_dataset = float("inf")

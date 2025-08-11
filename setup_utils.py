@@ -5,7 +5,7 @@ This file contains setup functions that can be reused across different training 
 """
 
 import torch
-from transformers import AutoProcessor, Qwen2_5_VLModel, TrainingArguments
+from transformers import AutoProcessor, Qwen2_5_VLModel, TrainingArguments, Qwen2_5_VLConfig
 from peft import get_peft_model, LoraConfig
 from typing import Tuple, Optional
 
@@ -27,11 +27,23 @@ def setup_model_and_processor(cfg: ExperimentConfig) -> Tuple[AutoProcessor, RFM
     
     # Load processor and tokenizer
     processor = AutoProcessor.from_pretrained(
-        cfg.model.base_model_id, trust_remote_code=cfg.model.trust_remote_code
+        cfg.model.base_model_id, trust_remote_code=cfg.model.trust_remote_code, 
+        # temporal_patch_size=1,
+        # fps=1,
+        # num_frames=cfg.data.max_frames,
+        do_sample_frames=False, # disable frame sampling here since we do this in the data generator
+        # max_frames=cfg.data.max_frames,
     )
+    
+    rank_0_print(f"Processor: {processor}")
+
     if processor.tokenizer.pad_token is None:
         processor.tokenizer.pad_token = processor.tokenizer.eos_token
     
+
+    # config = Qwen2_5_VLConfig.from_pretrained(cfg.model.base_model_id)
+    # config.vision_config.temporal_patch_size = 1
+
     # Create a fresh model instance
     base_model = Qwen2_5_VLModel.from_pretrained(cfg.model.base_model_id)
 
@@ -55,7 +67,9 @@ def setup_model_and_processor(cfg: ExperimentConfig) -> Tuple[AutoProcessor, RFM
     if rank == 0:
         rank_0_print(f"Initializing RFM model on rank {rank}...")
     rfm_model = RFMModel(
-        config=base_model.config, tokenizer=processor.tokenizer, base_model=base_model
+        config=base_model.config, 
+        processor=processor,
+        base_model=base_model
     )
 
     # Only print model architecture on rank 0
@@ -184,13 +198,13 @@ def setup_data_generator(cfg: ExperimentConfig) -> DataGenerator:
         dataset_subsets=cfg.data.dataset_subsets,
         preference_ratio=cfg.data.preference_ratio,
         similarity_ratio=cfg.data.similarity_ratio,
-        max_frames=cfg.data.max_frames,
         dataset_preference_ratio=cfg.data.dataset_preference_ratio,
         shuffle=cfg.data.shuffle,
         seed=cfg.data.seed,
         num_proc=cfg.data.num_proc,
         debug=cfg.debug,
-        force_reprocess=cfg.data.force_reprocess
+        force_reprocess=cfg.data.force_reprocess,
+        max_frames=cfg.data.max_frames,
     )
     
     if rank == 0:
@@ -218,13 +232,13 @@ def setup_eval_data_generator(cfg: ExperimentConfig) -> DataGenerator:
         dataset_subsets=eval_dataset_subsets,
         preference_ratio=cfg.data.preference_ratio,
         similarity_ratio=cfg.data.similarity_ratio,
-        max_frames=cfg.data.max_frames,
         dataset_preference_ratio=cfg.data.dataset_preference_ratio,
         shuffle=cfg.data.shuffle,
         seed=cfg.data.seed + 1000,  # Different seed for eval to avoid overlap
         num_proc=cfg.data.num_proc,
         debug=cfg.debug,
-        force_reprocess=False
+        force_reprocess=False,
+        max_frames=cfg.data.max_frames,
     )
     
     if rank == 0:

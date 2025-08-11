@@ -15,7 +15,7 @@ from typing import List, Dict, Optional, Union, Any
 from peft import get_peft_model, LoraConfig, PeftModel
 from rfm.data.data_generator import BatchCollator, InfiniteDataGeneratorDataset, DataGenerator
 from rfm.models.rfm import RFMModel
-from trainer import RFMTrainer, compute_metrics
+from trainer import RFMTrainer
 from rfm.utils.logging import is_rank_0, rank_0_print
 from tqdm import tqdm
 from dataclasses import dataclass, field
@@ -107,7 +107,6 @@ def train(cfg: ExperimentConfig):
         eval_dataset=eval_dataset,
         data_collator=batch_collator,
         beta=cfg.training.beta,
-        compute_metrics=compute_metrics,  # Pass the compute_metrics function
     )
   
     if is_rank_0():

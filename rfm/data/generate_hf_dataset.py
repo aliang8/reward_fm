@@ -25,6 +25,8 @@ from rfm.data.helpers import (
     create_hf_trajectory
 )
 from rfm.data.dataset_types import Trajectory
+
+# make sure these come after importing torch. otherwise something breaks...
 try:
     import absl.logging as absl_logging
 

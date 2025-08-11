@@ -1,7 +1,7 @@
 # EgoDex dataset configuration
 dataset:
   dataset_path: "/home1/jessez/scratch_data/tensorflow_datasets/openx_datasets/"  # Local path to EgoDex dataset directory
-  dataset_name: bc_z # TODO: fill in dataset name
+  dataset_name: oxe_bc_z # TODO: fill in dataset name
 
 output:
   output_dir: datasets/oxe_rfm

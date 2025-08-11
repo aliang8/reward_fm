@@ -398,7 +398,7 @@ def main(cfg: GenerateConfig):
             cfg.output.max_trajectories,
         )
         trajectories = flatten_task_data(task_data)
-    elif "oxe" == cfg.dataset.dataset_name.lower():
+    elif cfg.dataset.dataset_name.lower().startswith("oxe_"):
         from rfm.data.dataset_loaders.oxe_loader import load_oxe_dataset
 
         # Load the trajectories using the loader with max_trajectories limit

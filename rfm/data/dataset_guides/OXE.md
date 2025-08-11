@@ -25,7 +25,7 @@ OXE refers to a collection of RLDS-format robot datasets accessible via TensorFl
 - Using the provided config to generate individual datasets:
 
 ```bash
-uv run python rfm/data/generate_hf_dataset.py --config_path=rfm/configs/data_gen_configs/oxe.yaml  --dataset.dataset_name <dataset_name>
+uv run python rfm/data/generate_hf_dataset.py --config_path=rfm/configs/data_gen_configs/oxe.yaml  --dataset.dataset_name oxe_<dataset_name>
 ```
 - Using the provided script to generate all datasets:
 

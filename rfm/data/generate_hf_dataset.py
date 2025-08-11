@@ -407,6 +407,7 @@ def main(cfg: GenerateConfig):
             cfg.dataset.dataset_path,
             cfg.output.max_trajectories,
         )
+        trajectories = flatten_task_data(task_data)
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")
     

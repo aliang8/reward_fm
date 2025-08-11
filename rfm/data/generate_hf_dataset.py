@@ -408,6 +408,8 @@ def main(cfg: GenerateConfig):
             cfg.output.max_trajectories,
         )
         cfg.output.max_trajectories = max_num_trajs
+        cfg.output.num_workers = 0
+        print(f"Resetting num workers to 0 for OXE because of some unknown issues when converting tf data to numpy loading frames")
         print(f"Resetting max_trajectories to {max_num_trajs} for OXE because it contains multiple datasets")
         trajectories = flatten_task_data(task_data)
     else:

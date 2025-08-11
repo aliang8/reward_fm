@@ -6,7 +6,7 @@ from typing import Dict, List
 from pathlib import Path
 from rfm.data.helpers import generate_unique_id
 
-OXE_VALID_DATASETS = [
+OXE_VALID_DATASETS = sorted([
     "austin_buds_dataset_converted_externally_to_rlds",
     "dlr_edan_shared_control_converted_externally_to_rlds",
     "iamlab_cmu_pickup_insert_converted_externally_to_rlds",
@@ -26,7 +26,7 @@ OXE_VALID_DATASETS = [
     "bridge_v2",
     "furniture_bench_dataset_converted_externally_to_rlds",
     "taco_play",
-].sorted()
+])
 POSSIBLE_LANG_INSTRUCTION_KEYS = [  # valid keys for language instruction in OXE
     "natural_language_instruction",
     "language_instruction",
@@ -40,7 +40,7 @@ possible_valid_keys = ["primary", "secondary", "tertiary"]
 class OXEFrameLoader:
     """Pickle-able frame loader for OXE videos."""
 
-    def __init__(self, episode: tfds.data.Dataset, image_key: str, dataset_name: str):
+    def __init__(self, episode, image_key: str, dataset_name: str):
         self.episode = episode
         self.image_key = image_key
         self.dataset_name = dataset_name

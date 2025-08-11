@@ -31,14 +31,10 @@ uv run python rfm/data/generate_hf_dataset.py --config_path=rfm/configs/data_gen
 - Manual CLI example:
 
 ```bash
-uv run python rfm/data/generate_hf_dataset.py \
-  --dataset.dataset_name=oxe \
-  --dataset.dataset_path="/path/to/tensorflow_datasets/openx_datasets" \
-  --output.output_dir=datasets/oxe_rfm \
-  --output.max_trajectories=200 \
-  --output.max_frames=64 \
-  --output.use_video=true \
-  --output.fps=10
+uv run rfm/data/generate_hf_dataset.py     
+    --config_path=rfm/configs/data_gen_configs/oxe.yaml \
+    --output.max_trajectories=10 \
+    --output.output_dir ~/scratch_data/oxe_rfm_test
 ```
 
 ### Supported TFDS datasets (enabled in this loader)

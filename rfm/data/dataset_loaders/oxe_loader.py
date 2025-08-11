@@ -68,7 +68,21 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str,
 
     task_data: Dict[str, List[Dict]] = {}
     for dataset_name in OXE_VALID_DATASETS:
-        dataset = tfds.load(dataset_name, data_dir=dataset_path, split="train")
+        # make the builder locally to avoid calls to google
+        # check which version is available
+        versions = os.listdir(f"{dataset_path}/{dataset_name}")
+        if len(versions) == 0:
+            raise ValueError(f"No versions found for {dataset_name} in {dataset_path}")
+        else:
+            for version in versions:
+                if "incomplete" in version:
+                    continue
+                else:
+                    builder = tfds.builder_from_directory(f"{dataset_path}/{dataset_name}/{version}")
+                    dataset = builder.as_dataset(split="train")
+                    break
+        if dataset is None:
+            raise ValueError(f"No dataset found for {dataset_name} in {dataset_path}")
         img_key_to_name = OXE_DATASET_CONFIGS[dataset_name]["image_obs_keys"]
         # load each possible valid key as a separate traj and make sure that if they're all black images don't include.
         # skip data loading if no lang

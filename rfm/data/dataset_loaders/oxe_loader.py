@@ -68,6 +68,7 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1) -> Dict[str,
 
     task_data: Dict[str, List[Dict]] = {}
     for dataset_name in OXE_VALID_DATASETS:
+        print(f"Loading {dataset_name}")
         # make the builder locally to avoid calls to google
         # check which version is available
         versions = os.listdir(f"{dataset_path}/{dataset_name}")

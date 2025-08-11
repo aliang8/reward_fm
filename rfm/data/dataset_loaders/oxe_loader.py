@@ -13,6 +13,7 @@ from rfm.data.helpers import generate_unique_id
 OXE_VALID_DATASETS = [
     "austin_buds_dataset_converted_externally_to_rlds",
     "austin_sirius_dataset_converted_externally_to_rlds",
+    "bc_z",
     "berkeley_cable_routing",
     "berkeley_fanuc_manipulation",
     "bridge_v2",

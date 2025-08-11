@@ -71,7 +71,7 @@ training:
   # Evaluation settings
   evaluation_strategy: "steps"  # Options: "no", "steps", "epoch"
   eval_steps: 50  # Evaluate every 50 steps
-  per_device_eval_batch_size: 4  # Evaluation batch size per device
+  per_device_eval_batch_size: 8  # Evaluation batch size per device
   do_eval: true  # Enable evaluation during training
   prediction_loss_only: true # Only compute loss for the prediction head
   

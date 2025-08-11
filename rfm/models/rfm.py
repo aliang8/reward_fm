@@ -20,7 +20,7 @@ class RFMModel(PreTrainedModel):
     
     config_class = Qwen2_5_VLModel.config_class
 
-    def __init__(self, config, tokenizer, base_model=None):
+    def __init__(self, config, processor, base_model=None):
         super().__init__(config)
         # The RFMModel now owns and creates its submodules.
         # This is the standard pattern for PreTrainedModel.
@@ -40,7 +40,7 @@ class RFMModel(PreTrainedModel):
         self.preference_head = self.preference_head.to(dtype=self.model_dtype)
         self.similarity_head = self.similarity_head.to(dtype=self.model_dtype)
         
-        self.tokenizer = tokenizer
+        self.processor = processor
 
     def gradient_checkpointing_enable(self, **kwargs):
         """Delegates gradient checkpointing enabling to the base model."""
@@ -59,7 +59,6 @@ class RFMModel(PreTrainedModel):
         image_grid_thw=None,
         video_grid_thw=None,
         prediction_type=None,  # "preference" or "similarity"
-        target_progress=None,  # For progress prediction on trajectory A
         second_per_grid_ts=None,
         **kwargs,
     ):   
@@ -113,8 +112,8 @@ class RFMModel(PreTrainedModel):
                     
                 - progress_logits (Dict[str, List[torch.Tensor]] or None):
                     Progress prediction logits split by trajectory:
-                    - 'A': List of tensors for trajectory A (before split token), each [seq_len_A]
-                    - 'B': List of tensors for trajectory B (after split token), each [seq_len_B]
+                    - 'A': List of tensors for trajectory A (before vision_end token), each [seq_len_A]
+                    - 'B': List of tensors for trajectory B (after vision_end token), each [seq_len_B]
                     Values should be in range [0, 1] representing task completion percentage at each timestep.
         """
         model_kwargs = {
@@ -131,51 +130,121 @@ class RFMModel(PreTrainedModel):
 
         # Forward pass through the model
         outputs = self.model(**model_kwargs)
+
+        # [batch_size, seq_len, hidden_size]
         last_hidden_state = outputs.hidden_states[-1]
 
         # Always compute progress for all timesteps if target_progress is provided
         progress_logits = None
-        if target_progress is not None:
-            # Apply progress head to all timesteps
-            progress_logits_full = self.progress_head(last_hidden_state)  # [batch_size, seq_len, 1]
-            progress_logits_full = progress_logits_full.squeeze(-1)  # [batch_size, seq_len]
+        # Find vision_start_token and split_token for trajectory separation
+        vision_start_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|vision_start|>")
+        split_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|split_token|>")
+        
+        progress_logits_A = []
+        progress_logits_B = []
+
+        tps = self.model.config.vision_config.temporal_patch_size
+        
+        for i, seq_ids in enumerate(input_ids):
+            # the input_ids is structured as follows
+            # the split demarcates the end of trajectory A and the start of trajectory B
+            # NOTE: base Qwen2.5_VL model has a temporal_patch_size of 2, so we can only 
+            # predict the progress for every 2 frames. 
+            # [vision_start, frame_1/2_tokens, ..., frame_N/2_tokens, split_token, frame_1/2_tokens, frame_2/2_tokens, ..., frame_N/2_tokens]
+            # we want to extract the hidden_states at the frame boundaries for both trajectories
+            # Find the position of the vision_start token
+            vision_start_positions = (seq_ids == vision_start_token_id).nonzero(as_tuple=True)[0]
+            if len(vision_start_positions) <= 0:
+                raise ValueError(f"vision_start_token not found in sequence {i}")
             
-            # Split progress predictions based on split token
-            progress_logits_A = []
-            progress_logits_B = []
+            # Find the position of the split token after vision_start
+            vision_start_pos = vision_start_positions[0].item()
+            split_positions = (seq_ids == split_token_id).nonzero(as_tuple=True)[0]
+            # Filter split positions to only those after vision_start
+            split_positions = split_positions[split_positions > vision_start_pos]
             
-            split_token_id = self.tokenizer.convert_tokens_to_ids("<|split_token|>")
+            if len(split_positions) <= 0:
+                raise ValueError(f"split_token not found after vision_start in sequence {i}")
             
-            for i, seq_ids in enumerate(input_ids):
-                # Find the position of the split token
-                split_positions = (seq_ids == split_token_id).nonzero(as_tuple=True)[0]
-                
-                if len(split_positions) > 0:
-                    split_pos = split_positions[0].item()
-                    
-                    # Split the sequence at the split token
-                    seq_A = progress_logits_full[i, :split_pos]  # Before split token
-                    seq_B = progress_logits_full[i, split_pos+1:]  # After split token
-                    
-                    progress_logits_A.append(seq_A)
-                    progress_logits_B.append(seq_B)
-                else:
-                    # No split token found, treat entire sequence as trajectory A
-                    progress_logits_A.append(progress_logits_full[i])
-                    progress_logits_B.append(torch.empty(0, device=progress_logits_full.device))
+            # Get video grid dimensions for this sample
+            if video_grid_thw is None or i >= len(video_grid_thw):
+                raise ValueError(f"video_grid_thw is required for progress prediction. Got: {video_grid_thw}")
             
-            progress_logits = {
-                'A': progress_logits_A,
-                'B': progress_logits_B
-            }
+            # For trajectory A: use video_grid_thw[i]
+            current_video_grid_A = video_grid_thw[i * tps]  # [T, H, W]
+            T_A, H_A, W_A = current_video_grid_A
+            
+            # For trajectory B: use video_grid_thw[i+1] 
+            if i + 1 >= len(video_grid_thw):
+                raise ValueError(f"video_grid_thw index {i+1} out of bounds for trajectory B")
+            current_video_grid_B = video_grid_thw[i * tps + 1]  # [T, H, W]
+            T_B, H_B, W_B = current_video_grid_B
+            
+            # Calculate tokens per frame for trajectory A: (H_A * W_A) // merge_size^2
+            merge_size = self.processor.video_processor.merge_size
+            tokens_per_frame_A = (H_A * W_A) // (merge_size ** 2)
+            
+            # Calculate tokens per frame for trajectory B: (H_B * W_B) // merge_size^2
+            tokens_per_frame_B = (H_B * W_B) // (merge_size ** 2)
+            
+            # Calculate frame boundary positions for trajectory A
+            frame_boundary_positions_A = []
+            current_pos = vision_start_pos + 1  # Start after vision_start token
+            
+            # Find where each frame ends in trajectory A
+            for frame_idx in range(T_A):
+                # Each frame takes tokens_per_frame_A tokens
+                frame_end = current_pos + tokens_per_frame_A
+                frame_boundary_positions_A.append(frame_end)
+                current_pos = frame_end
+            
+            # Get split_pos before using it in trajectory B calculations
+            split_pos = split_positions[0].item()
+            
+            # Calculate frame boundary positions for trajectory B (after split_token)
+            frame_boundary_positions_B = []
+            current_pos = split_pos + 1  # Start after split_token
+            
+            # Find where each frame ends in trajectory B
+            for frame_idx in range(T_B):
+                # Each frame takes tokens_per_frame_B tokens
+                frame_end = current_pos + tokens_per_frame_B
+                frame_boundary_positions_B.append(frame_end)
+                current_pos = frame_end
+            
+            # For trajectory A: extract hidden states at frame boundaries before split_token
+            trajectory_A_boundaries = torch.tensor([pos for pos in frame_boundary_positions_A if pos < split_pos])
+            trajectory_B_boundaries = torch.tensor([pos for pos in frame_boundary_positions_B if pos > split_pos])
+            
+            # Apply progress head to hidden states at frame boundary positions for trajectory A
+            if trajectory_A_boundaries.numel() > 0:
+                boundary_hidden_states_A = last_hidden_state[i][trajectory_A_boundaries]  # [num_frames_A, hidden_dim]
+                progress_A = self.progress_head(boundary_hidden_states_A).squeeze(-1)  # [num_frames_A]
+                progress_logits_A.append(progress_A)
+            else:
+                progress_logits_A.append(torch.empty(0, device=last_hidden_state.device))
+            
+            # Apply progress head to hidden states at frame boundary positions for trajectory B
+            if trajectory_B_boundaries.numel() > 0:
+                boundary_hidden_states_B = last_hidden_state[i][trajectory_B_boundaries]  # [num_frames_B, hidden_dim]
+                progress_B = self.progress_head(boundary_hidden_states_B).squeeze(-1)  # [num_frames_B]
+                progress_logits_B.append(progress_B)
+            else:
+                progress_logits_B.append(torch.empty(0, device=last_hidden_state.device))
+
+        
+        progress_logits = {
+            'A': progress_logits_A,
+            'B': progress_logits_B
+        }
 
         # For preference and similarity, use specific tokens
         logits = None
         if prediction_type is not None:
             if prediction_type == "preference":
-                token_id = self.tokenizer.convert_tokens_to_ids("<|pref_token|>")
+                token_id = self.processor.tokenizer.convert_tokens_to_ids("<|pref_token|>")
             else:  # similarity (default)
-                token_id = self.tokenizer.convert_tokens_to_ids("<|reward_token|>")
+                token_id = self.processor.tokenizer.convert_tokens_to_ids("<|reward_token|>")
             
             # Find all positions where the target token appears
             token_positions = []

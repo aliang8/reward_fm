@@ -200,6 +200,8 @@ class DataGenerator:
             # Uniform sampling across the video
             frame_indices = [int(i * total_frames / num_frames) for i in range(num_frames)]
             return frames_array[frame_indices]
+
+        return frames_array
     
     def _process_dataset_videos_map(self, dataset):
         """
@@ -293,12 +295,15 @@ class DataGenerator:
         
         # Extract forward segment
         forward_frames = frames[start_idx:end_idx]
-        forward_progress = [(i + 1) / (end_idx - start_idx) for i in range(end_idx - start_idx)]
+        # Progress should be relative to original trajectory, not just the segment
+        forward_progress = [(start_idx + i + 1) / num_frames for i in range(end_idx - start_idx)]
         
         # Create rewind segment (reverse the forward segment)
         selected_end_point = random.randint(2, len(forward_frames) - 1)
         reverse_frames = forward_frames[::-1][1:selected_end_point]
-        reverse_progress = forward_progress[::-1][1:selected_end_point]
+        # Reverse progress should also be relative to original trajectory
+        # Calculate progress for the reversed frames in the correct order
+        reverse_progress = [(end_idx - 1 - i) / num_frames for i in range(len(reverse_frames))]
         
         # Combine forward and reverse segments
         if isinstance(forward_frames, np.ndarray):
@@ -315,7 +320,7 @@ class DataGenerator:
         rewind_traj['frames'] = combined_frames
         rewind_traj['frames_shape'] = combined_frames.shape  # Store shape for the rewind trajectory
         rewind_traj['id'] = f"{original_traj['id']}_rewind_{random.randint(1000, 9999)}"
-        rewind_traj['optimal'] = False  # Mark as suboptimal
+        rewind_traj['quality_label'] = 'suboptimal'  # Mark as suboptimal
         rewind_traj['metadata'] = rewind_traj.get('metadata', {}).copy()
         rewind_traj['metadata']['rewind_generated'] = True
         rewind_traj['metadata']['original_traj_id'] = original_traj['id']
@@ -854,6 +859,11 @@ class DataGenerator:
     def _build_similarity_sample(self, ref_traj, traj_sim, traj_diff, is_rewind=False):
         """Build the final similarity sample from trajectories."""
         # Deserialize frames once for all trajectories
+        ref_frames_shape = ref_traj.get('frames_shape')
+        if isinstance(ref_frames_shape, list):
+            ref_frames_shape = tuple(ref_frames_shape)
+        ref_frames = self._deserialize_frames(ref_traj['frames'], shape=ref_frames_shape) if isinstance(ref_traj['frames'], bytes) else ref_traj['frames']
+
         traj_sim_frames_shape = traj_sim.get('frames_shape')
         if isinstance(traj_sim_frames_shape, list):
             traj_sim_frames_shape = tuple(traj_sim_frames_shape)
@@ -867,7 +877,8 @@ class DataGenerator:
         # Calculate target progress for all trajectories using pre-deserialized frames
         target_progress_A = self._calculate_target_progress(traj_sim, traj_sim_frames)
         target_progress_B = self._calculate_target_progress(traj_diff, traj_diff_frames)
-        
+        target_progress_ref = self._calculate_target_progress(ref_traj, ref_frames)
+
         # Get frame shapes and convert to tuples if needed
         ref_frames_shape = ref_traj.get('frames_shape')
         if isinstance(ref_frames_shape, list):
@@ -921,6 +932,7 @@ class DataGenerator:
             # Progress fields
             target_progress_A=target_progress_A,
             target_progress_B=target_progress_B,
+            target_progress_ref=target_progress_ref,
         )
         
         return sample
@@ -995,12 +1007,13 @@ def test():
     
     # Test the batch collator with infinite dataset
     rank_0_print("\nTesting batch collator with infinite dataset...")
+    
     processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct")
     batch_collator = BatchCollator(processor, max_length=1024)
     
     # Generate a batch from the infinite dataset
     batch = []
-    for i in range(4):  # Generate 4 samples
+    for i in range(10):  # Generate 4 samples
         sample = infinite_dataset[i]
         batch.append(sample)
     
@@ -1044,6 +1057,7 @@ def test():
     rfm_model = rfm_model.to(device)
     inputs = processed_batch["preference_inputs"]
 
+    import ipdb; ipdb.set_trace()
     # Debug video grid dimensions in test
     rank_0_print(f"TEST DEBUG: video_grid_thw shape: {inputs.get('video_grid_thw').shape if inputs.get('video_grid_thw') is not None else None}")
     rank_0_print(f"TEST DEBUG: pixel_values_videos shape: {inputs.get('pixel_values_videos').shape if inputs.get('pixel_values_videos') is not None else None}")

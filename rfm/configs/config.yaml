@@ -23,17 +23,17 @@ data:
   # dataset_path: "aliangdw/rfm"
   # dataset_subsets: ["libero_10"]
   dataset_path: "abraranwar/libero_rfm"
-  dataset_subsets: ["libero_10"]
+  dataset_subsets: ["libero_90"]
   
   # Evaluation dataset settings
   # eval_dataset_path: "aliangdw/rfm" 
   # eval_dataset_subsets: ["libero_10"]  # Different subset for evaluation
   eval_dataset_path: "abraranwar/libero_rfm"
   eval_dataset_subsets: ["libero_10"]  # Different subset for evaluation
-  eval_subset_size: 100  # Number of evaluation examples
+  eval_subset_size: 500  # Number of evaluation examples
   
   # Video processing settings
-  max_frames: 4  # Maximum frames per trajectory
+  max_frames: 8  # Maximum frames per trajectory
   video_frame_sampling: "uniform"  # "uniform", "random", "first", "middle"
   resized_height: 128  # Height to resize images/videos to
   resized_width: 128   # Width to resize images/videos to
@@ -65,8 +65,8 @@ training:
   num_train_epochs: -1  # Number of epochs to train for
   save_strategy: "steps"
   logging_steps: 1
-  save_steps: 50
-  max_steps: 500  # -1 means no limit, use num_train_epochs instead
+  save_steps: 100
+  max_steps: 1000  # -1 means no limit, use num_train_epochs instead
   
   # Evaluation settings
   evaluation_strategy: "steps"  # Options: "no", "steps", "epoch"
@@ -76,7 +76,7 @@ training:
   prediction_loss_only: true # Only compute loss for the prediction head
   
   # Model settings
-  max_seq_length: 1024
+  max_seq_length: 1024 # currently not used
   beta: 0.1  # DPO beta parameter
   
   # Resume training
@@ -129,6 +129,6 @@ logging:
   print_trainable_parameters: true
   # Wandb configuration
   use_wandb: false
-  wandb_project: "rfm-model"
-  wandb_entity: null  # Set to your wandb username if needed
-  wandb_run_name: "rfm-training"  
+  wandb_project: "rfm"
+  wandb_entity: clvr
+  wandb_run_name: "rfm"

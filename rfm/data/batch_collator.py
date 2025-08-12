@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from transformers import AutoProcessor
 from qwen_vl_utils import process_vision_info
 import numpy as np
+import random
 
 
 @dataclass
@@ -276,6 +277,7 @@ class BatchCollator:
         """Process a batch of preference samples."""
         # Collect all messages for batch processing
         all_messages = []
+        preference_labels = []
 
         for sample in preference_samples:
             # Convert frames to appropriate format using stored shapes
@@ -286,29 +288,63 @@ class BatchCollator:
                 sample.rejected_frames, sample.rejected_frames_shape
             )
 
-            # Single conversation with both videos: task + video A + <|split_token|> + video B + <|pref_token|>
-            conversation = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": f"Task: {sample.task}"},
-                        {
-                            "type": "video",
-                            "video": chosen_frames,
-                            "resized_height": self.resized_height,
-                            "resized_width": self.resized_width
-                        },
-                        {"type": "text", "text": "<|split_token|>"},
-                        {
-                            "type": "video",
-                            "video": rejected_frames,
-                            "resized_height": self.resized_height,
-                            "resized_width": self.resized_width,
-                        },
-                        {"type": "text", "text": "<|pref_token|>"},
-                    ],
-                }
-            ]
+            # Randomly decide whether chosen trajectory goes first or second
+            # This prevents the model from learning position bias
+            chosen_first = random.choice([True, False])
+            
+            if chosen_first:
+                # Chosen trajectory first: task + video A (chosen) + <|split_token|> + video B (rejected) + <|pref_token|>
+                conversation = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": f"Task: {sample.task}"},
+                            {
+                                "type": "video",
+                                "video": chosen_frames,
+                                "resized_height": self.resized_height,
+                                "resized_width": self.resized_width
+                            },
+                            {"type": "text", "text": "<|split_token|>"},
+                            {
+                                "type": "video",
+                                "video": rejected_frames,
+                                "resized_height": self.resized_height,
+                                "resized_width": self.resized_width,
+                            },
+                            {"type": "text", "text": "<|pref_token|>"},
+                        ],
+                    }
+                ]
+                # Label: 1.0 means first trajectory (chosen) is preferred
+                preference_labels.append(1.0)
+            else:
+                # Chosen trajectory second: task + video A (rejected) + <|split_token|> + video B (chosen) + <|pref_token|>
+                conversation = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": f"Task: {sample.task}"},
+                            {
+                                "type": "video",
+                                "video": rejected_frames,
+                                "resized_height": self.resized_height,
+                                "resized_width": self.resized_width
+                            },
+                            {"type": "text", "text": "<|split_token|>"},
+                            {
+                                "type": "video",
+                                "video": chosen_frames,
+                                "resized_height": self.resized_height,
+                                "resized_width": self.resized_width,
+                            },
+                            {"type": "text", "text": "<|pref_token|>"},
+                        ],
+                    }
+                ]
+                # Label: 0.0 means second trajectory (chosen) is preferred
+                preference_labels.append(0.0)
+            
             all_messages.append(conversation)
 
         # Process all messages in one batch
@@ -340,9 +376,8 @@ class BatchCollator:
 
         # Add metadata
         batch_inputs["prediction_type"] = ["preference"] * len(preference_samples)
-        batch_inputs["preference_labels"] = torch.ones(
-            len(preference_samples), dtype=torch.float32
-        )  # A is preferred
+        # Use the dynamically generated preference labels based on trajectory order
+        batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
 
         # Add target progress for both trajectories
         target_progress_A_list = []

@@ -207,7 +207,7 @@ def compute_batch_metrics(model, tokenizer, batch_inputs: Dict[str, torch.Tensor
         if isinstance(progress_logits, dict) and progress_logits.get("A") is not None and targA is not None:
             # progress_logits['A'] is a list of 1D tensors with variable lengths
             pred_list = progress_logits["A"]
-            targets_np = targA.detach().cpu().numpy()[::2] # split every 2 because Qwen predicts 1 pred for every 2 frames
+            targets_np = targA.detach().cpu().numpy()[:, ::2] # split every 2 because Qwen predicts 1 pred for every 2 frames
 
             for i, seq in enumerate(pred_list):
                 if seq is None or seq.numel() == 0:

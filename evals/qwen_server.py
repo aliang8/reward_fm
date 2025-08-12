@@ -25,7 +25,7 @@ Returns metrics per-batch consistent with train.py evaluate printout:
   - eval_reward_diff
   - eval_avg_reward_chosen
   - eval_avg_reward_rejected
-  - demo_reward_alignment (per-frame Spearman rho, list or single float)
+  - demo_reward_alignment (Spearman rho, single float)
 
 e.g.: uv run /home/jessez/reward_fm/evals/server.py --config_path=/home/jessez/reward_fm/rfm/configs/config.yaml --host=0.0.0.0 --port=8000
 """
@@ -42,9 +42,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from PIL import Image
+from scipy.stats import spearmanr
 
 from rfm.configs.experiment_configs import ExperimentConfig
-from setup_utils import setup_model_and_processor, setup_peft_model
+from setup_utils import (
+    setup_model_and_processor,
+    setup_peft_model,
+    create_training_arguments,
+    setup_eval_dataset,
+    setup_batch_collator,
+)
+from trainer import RFMTrainer
 
 
 class SamplePayload(BaseModel):
@@ -58,6 +66,10 @@ class SamplePayload(BaseModel):
 
 class BatchPayload(BaseModel):
     samples: List[SamplePayload]
+
+
+class EvalRequest(BaseModel):
+    eval_subset_size: Optional[int] = None
 
 
 def decode_frames_b64(frames_b64: List[str]) -> List[Image.Image]:
@@ -191,16 +203,36 @@ def compute_batch_metrics(model, tokenizer, batch_inputs: Dict[str, torch.Tensor
 
         # Spearman correlation for progress prediction per sample if available
         per_sample_spearman: List[float] = []
-        if progress_logits is not None and batch_inputs.get("target_progress_A") is not None:
-            pred_prog = progress_logits.squeeze(-1).cpu().numpy()  # [B]
-            # Compare against final-frame target or average over time; server has only last-step logits.
-            # We estimate per-sample alignment using constant prediction vs provided sequence -> not meaningful.
-            # Instead, return a single rho=nan; or use rank of logits vs rank of mean target.
-            targets = batch_inputs["target_progress_A"].cpu().numpy()  # [B, T]
-            for i in range(targets.shape[0]):
-                # Compare scalar prediction with last target value; rho undefined – return 1.0 if orders agree over batch
-                per_sample_spearman.append(np.nan)
-        demo_reward_alignment: Any = per_sample_spearman if per_sample_spearman else []
+        targA = batch_inputs.get("target_progress_A")
+        if isinstance(progress_logits, dict) and progress_logits.get("A") is not None and targA is not None:
+            # progress_logits['A'] is a list of 1D tensors with variable lengths
+            pred_list = progress_logits["A"]
+            targets_np = targA.detach().cpu().numpy()[:, ::2] # split every 2 because Qwen predicts 1 pred for every 2 frames
+
+            for i, seq in enumerate(pred_list):
+                if seq is None or seq.numel() == 0:
+                    per_sample_spearman.append(float("nan"))
+                    continue
+                pred_np = seq.detach().cpu().numpy()
+                # TODO: hacky thing right now, not sure if it's correct
+                if len(pred_np) != len(targets_np[i]):
+                    print(
+                        f"WARNING: pred_np and targets_np have different lengths: pred_np: {pred_np}, targets_np: {targets_np[i]}"
+                    )
+                    print(f"pred_np length: {len(pred_np)}")
+                    print(f"targets_np length: {len(targets_np[i])}")
+                    print(f"pred_np shape: {pred_np.shape}, targets_np shape: {targets_np[i].shape}")
+                    print(f"pred_np: {pred_np}")
+                    print(f"targets_np: {targets_np[i]}")
+                    print(f"pred_np: {pred_np}")
+                L = min(len(pred_np), targets_np.shape[1])
+                if L < 2:
+                    per_sample_spearman.append(float("nan"))
+                    continue
+                res = spearmanr(pred_np[:L], targets_np[i, :L])
+                rho = float(res.correlation) if hasattr(res, "correlation") else float(res[0])
+                per_sample_spearman.append(rho)
+        spearman_rho = np.mean(per_sample_spearman)
 
         return {
             "eval_loss": float(bce.item()),
@@ -208,7 +240,7 @@ def compute_batch_metrics(model, tokenizer, batch_inputs: Dict[str, torch.Tensor
             "eval_reward_diff": float(reward_diff),
             "eval_avg_reward_chosen": float(avg_reward_chosen),
             "eval_avg_reward_rejected": float(avg_reward_rejected),
-            "demo_reward_alignment": demo_reward_alignment,
+            "demo_reward_alignment": float(spearman_rho),
         }
 
 
@@ -234,12 +266,12 @@ def create_app(cfg: ExperimentConfig):
         pref_samples = [s for s in batch.samples if s.prediction_type == "preference"]
         if not pref_samples:
             return {
-                "eval_loss": 0.0,
-                "eval_accuracy": 0.0,
-                "eval_reward_diff": 0.0,
-                "eval_avg_reward_chosen": 0.0,
-                "eval_avg_reward_rejected": 0.0,
-                "demo_reward_alignment": [],
+                "eval_loss": None,
+                "eval_accuracy": None,
+                "eval_reward_diff": None,
+                "eval_avg_reward_chosen": None,
+                "eval_avg_reward_rejected": None,
+                "demo_reward_alignment": None,
             }
 
         batch_inputs = build_preference_batch(
@@ -247,6 +279,34 @@ def create_app(cfg: ExperimentConfig):
         )
         metrics = compute_batch_metrics(model, processor.tokenizer, batch_inputs)
         return metrics
+
+    @app.post("/evaluate_internal")
+    def evaluate_internal(req: EvalRequest):
+        # Optionally override eval subset size for this run
+        if req.eval_subset_size is not None and req.eval_subset_size > 0:
+            cfg.data.eval_subset_size = req.eval_subset_size
+
+        # Prepare eval dataset and args similar to train.py:evaluate
+        eval_dataset = setup_eval_dataset(cfg)
+        eval_args = create_training_arguments(cfg, "./eval_output", is_eval=True)
+        batch_collator = setup_batch_collator(processor, cfg)
+
+        trainer = RFMTrainer(
+            model=model,
+            args=eval_args,
+            train_dataset=eval_dataset,
+            eval_dataset=eval_dataset,
+            data_collator=batch_collator,
+            beta=cfg.training.beta,
+        )
+
+        # Load checkpoint if provided
+        if cfg.evaluation.model_path:
+            trainer.train(resume_from_checkpoint=cfg.evaluation.model_path)
+
+        # Run evaluation
+        eval_results = trainer.evaluate()
+        return eval_results
 
     return app
 

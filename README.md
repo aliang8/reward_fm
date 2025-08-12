@@ -192,8 +192,8 @@ Run the external client to send video batches and receive metrics:
 uv run python evals/run_model_eval.py \
   --config_path=rfm/configs/config.yaml \
   --server_url=http://localhost:8000 \
-  --num_batches=50 \
-  --batch_size=12
+  --batch_size=12 \
+  --iterate_all_preferences
 ```
 
 Optionally, trigger full internal evaluation (same flow as train.py evaluate):

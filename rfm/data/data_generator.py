@@ -91,6 +91,14 @@ class DataGenerator:
         # Initialize sentence transformer model
         self.lang_model = SentenceTransformer('all-MiniLM-L6-v2')
         
+        # Initialize strategy tracking for debugging
+        self.strategy_counts = {
+            "rewind_same_task": 0,
+            "suboptimal_same_task": 0,
+            "different_task": 0,
+            "rewind_same_task_fallback": 0
+        }
+        
         rank_0_print(f"DataGenerator initialized with {len(self.trajectories)} total trajectories")
         rank_0_print(f"Loaded datasets: {dataset_subsets}")
         if self.preferences:
@@ -529,16 +537,48 @@ class DataGenerator:
         return self.suboptimal_trajectories
     
     def _create_preference_sample(self) -> PreferenceSample:
-        """Create a preference prediction sample: chosen vs rejected where chosen is preferred."""
+        """Create a preference prediction sample: chosen vs rejected where chosen is preferred.
+        
+        This method implements three different strategies for generating negative trajectories
+        to create diverse and robust preference learning data:
+        
+        **Strategy 1: Rewind Same Task (33%)**
+        - Creates a suboptimal trajectory by rewinding the optimal trajectory
+        - Same task, different trajectory ID
+        - Good for learning task-specific failure modes and temporal dynamics
+        
+        **Strategy 2: Suboptimal Same Task (33%)**
+        - Uses existing suboptimal trajectories from the same task
+        - Same task, different trajectory ID
+        - Good for learning from real failure examples and task-specific suboptimal patterns
+        
+        **Strategy 3: Different Task (33%)**
+        - Uses trajectories from completely different tasks
+        - Different task, can be optimal or suboptimal
+        - Good for learning cross-task generalization and what makes trajectories "good" 
+          across different contexts
+        
+        The strategies are chosen with equal probability to ensure balanced learning
+        across different types of negative examples. This helps the model learn robust
+        preference patterns that generalize well across tasks and scenarios.
+        
+        Returns:
+            PreferenceSample: A preference sample with chosen (optimal) vs rejected 
+            (negative) trajectories and associated metadata
+        """
         
         if random.random() < self.dataset_preference_ratio and self.preferences:
             # Use preference trajectories from dataset
             return self._create_preference_sample_from_dataset()
         else:
-            return self._create_subopt_rewind_traj()
+            return self._create_preference_sample_with_strategies()
         
-    def _create_subopt_rewind_traj(self) -> PreferenceSample:
-        """Create a preference prediction sample using various negative generation strategies."""
+    def _create_preference_sample_with_strategies(self) -> PreferenceSample:
+        """Create a preference prediction sample using various negative generation strategies.
+        
+        Implements three strategies for generating negative trajectories to create diverse
+        preference learning data. Each strategy is chosen with equal probability (33% each).
+        """
         
         # Use preprocessed optimal trajectories
         if not self.optimal_trajectories:
@@ -546,13 +586,14 @@ class DataGenerator:
         
         optimal_traj = random.choice(self.optimal_trajectories)
         
-        # Choose negative generation strategy (equal probability for rewind vs same-task suboptimal)
+        # Choose negative generation strategy (equal probability for three strategies)
         strategy = random.random()
         
-        if strategy < 0.5:
-            # Strategy 1: Use rewind-generated suboptimal trajectory
+        if strategy < 0.33:
+            # Strategy 1: Use rewind-generated suboptimal trajectory from same task
             negative_traj = self._create_rewind_trajectory(optimal_traj)
-        else:
+            strategy_used = "rewind_same_task"
+        elif strategy < 0.66:
             # Strategy 2: Use random suboptimal trajectory from same task
             same_task_suboptimal = [
                 traj for traj in self.suboptimal_trajectories 
@@ -560,9 +601,30 @@ class DataGenerator:
             ]
             if same_task_suboptimal:
                 negative_traj = random.choice(same_task_suboptimal)
+                strategy_used = "suboptimal_same_task"
             else:
                 # Fall back to rewind if no same-task suboptimal trajectories
                 negative_traj = self._create_rewind_trajectory(optimal_traj)
+                strategy_used = "rewind_same_task_fallback"
+        else:
+            # Strategy 3: Use trajectory from different task (can be optimal or suboptimal)
+            other_tasks = [task for task in self.task_groups.keys() if task != optimal_traj['task']]
+            if other_tasks:
+                other_task = random.choice(other_tasks)
+                other_task_trajectories = self.task_groups[other_task]
+                # Filter out the current optimal trajectory to avoid duplicates
+                available_other_task = [traj for traj in other_task_trajectories if traj['id'] != optimal_traj['id']]
+                if available_other_task:
+                    negative_traj = random.choice(available_other_task)
+                    strategy_used = "different_task"
+                else:
+                    # Fall back to rewind if no other trajectories available
+                    negative_traj = self._create_rewind_trajectory(optimal_traj)
+                    strategy_used = "rewind_same_task_fallback"
+            else:
+                # Fall back to rewind if only one task available
+                negative_traj = self._create_rewind_trajectory(optimal_traj)
+                strategy_used = "rewind_same_task_fallback"
         
         # Deserialize frames once for both trajectories
         optimal_frames_shape = optimal_traj.get('frames_shape')
@@ -587,7 +649,7 @@ class DataGenerator:
         negative_frames_shape = negative_traj.get('frames_shape')
         if isinstance(negative_frames_shape, list):
             negative_frames_shape = tuple(negative_frames_shape)
-        
+    
         # Create preference sample structure
         sample = PreferenceSample(
             # Core HF dataset fields (from optimal trajectory)
@@ -599,7 +661,7 @@ class DataGenerator:
             frames_shape=optimal_frames_shape,
             quality_label=optimal_traj.get('quality_label', 'successful'),
             is_robot=optimal_traj['is_robot'],
-            metadata=optimal_traj.get('metadata'),
+            metadata=optimal_traj.get('metadata', {}).copy() if optimal_traj.get('metadata') else {},
             # Preference-specific fields - using chosen/rejected naming
             chosen_frames=optimal_frames,
             rejected_frames=negative_frames,
@@ -617,8 +679,8 @@ class DataGenerator:
             # Progress fields
             target_progress_A=target_progress_A,
             target_progress_B=target_progress_B,
-        )
-        
+            sample_type=strategy_used
+        )    
         return sample
     
     def _calculate_target_progress(self, trajectory: Dict, frames: np.ndarray = None) -> List[float]:
@@ -717,7 +779,7 @@ class DataGenerator:
         self._validate_similarity_trajectories(ref_traj, traj_sim, traj_diff)
         
         # Deserialize frames and create sample
-        return self._build_similarity_sample(ref_traj, traj_sim, traj_diff, is_rewind=True)
+        return self._build_similarity_sample(ref_traj, traj_sim, traj_diff, is_rewind=True, strategy_used="rewind_same_task")
     
     def _create_optimal_similarity_sample(self) -> SimilaritySample:
         """Create similarity sample using optimal/suboptimal logic.
@@ -771,7 +833,7 @@ class DataGenerator:
         self._validate_similarity_trajectories(ref_traj, traj_sim, traj_diff)
         
         # Deserialize frames and create sample
-        return self._build_similarity_sample(ref_traj, traj_sim, traj_diff, is_rewind=False)
+        return self._build_similarity_sample(ref_traj, traj_sim, traj_diff, is_rewind=False, strategy_used="optimal_same_task")
     
     def _select_optimal_sim_trajectories(self, task_ref, task_names, ref_traj, ref_optimal_trajectories, ref_all_trajectories):
         """Select trajectories when traj_sim should be optimal."""
@@ -856,7 +918,7 @@ class DataGenerator:
         if traj_sim['id'] == traj_diff['id']:
             raise ValueError(f"traj_sim and traj_diff have the same trajectory ID: {traj_sim['id']}")
     
-    def _build_similarity_sample(self, ref_traj, traj_sim, traj_diff, is_rewind=False):
+    def _build_similarity_sample(self, ref_traj, traj_sim, traj_diff, is_rewind=False, strategy_used=None):
         """Build the final similarity sample from trajectories."""
         # Deserialize frames once for all trajectories
         ref_frames_shape = ref_traj.get('frames_shape')
@@ -933,6 +995,7 @@ class DataGenerator:
             target_progress_A=target_progress_A,
             target_progress_B=target_progress_B,
             target_progress_ref=target_progress_ref,
+            sample_type=strategy_used
         )
         
         return sample

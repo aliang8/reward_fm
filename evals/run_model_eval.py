@@ -100,13 +100,23 @@ def main():
         "demo_reward_alignment",
     ]
     agg = {k: 0.0 for k in keys}
+    # keeps track of which keys are always None
+    none_keys = {k: [] for k in keys}
     n = max(1, len(results))
     for r in results:
         for k in keys:
-            if k in r and isinstance(r[k], (int, float)):
+            if k in r and r[k] is None:
+                none_keys[k].append(1)
+            elif k in r and isinstance(r[k], (int, float)):
+                none_keys[k].append(0)
                 agg[k] += float(r[k])
     for k in keys:
         agg[k] /= n
+    for k in none_keys:
+        if all(none_keys[k]):
+            print(f"WARNING: {k} is always None, removing")
+            agg.pop(k)
+            continue
 
     print("\nEvaluation summary (averaged across batches):")
     for k, v in agg.items():

@@ -240,7 +240,7 @@ def compute_batch_metrics(model, tokenizer, batch_inputs: Dict[str, torch.Tensor
             "eval_reward_diff": float(reward_diff),
             "eval_avg_reward_chosen": float(avg_reward_chosen),
             "eval_avg_reward_rejected": float(avg_reward_rejected),
-            "demo_reward_alignment": spearman_rho,
+            "demo_reward_alignment": float(spearman_rho),
         }
 
 
@@ -266,12 +266,12 @@ def create_app(cfg: ExperimentConfig):
         pref_samples = [s for s in batch.samples if s.prediction_type == "preference"]
         if not pref_samples:
             return {
-                "eval_loss": 0.0,
-                "eval_accuracy": 0.0,
-                "eval_reward_diff": 0.0,
-                "eval_avg_reward_chosen": 0.0,
-                "eval_avg_reward_rejected": 0.0,
-                "demo_reward_alignment": 0.0,
+                "eval_loss": None,
+                "eval_accuracy": None,
+                "eval_reward_diff": None,
+                "eval_avg_reward_chosen": None,
+                "eval_avg_reward_rejected": None,
+                "demo_reward_alignment": None,
             }
 
         batch_inputs = build_preference_batch(

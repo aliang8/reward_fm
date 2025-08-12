@@ -193,7 +193,7 @@ uv run python evals/run_model_eval.py \
   --config_path=rfm/configs/config.yaml \
   --server_url=http://localhost:8000 \
   --num_batches=50 \
-  --batch_size=4
+  --batch_size=12
 ```
 
 Optionally, trigger full internal evaluation (same flow as train.py evaluate):

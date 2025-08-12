@@ -54,6 +54,10 @@ def train(cfg: ExperimentConfig):
 
     # Create DataGenerator for training using shared utility
     data_generator = setup_data_generator(cfg)
+
+    run_name = f"{cfg.logging.wandb_run_name}"
+    if cfg.debug:
+        run_name += "_debug"
     
     # Initialize wandb if enabled (only on rank 0)
     if cfg.logging.use_wandb and is_rank_0():
@@ -64,7 +68,7 @@ def train(cfg: ExperimentConfig):
         wandb.init(
             project=cfg.logging.wandb_project,
             entity=cfg.logging.wandb_entity,
-            name=cfg.logging.wandb_run_name,
+            name=run_name,
             config=config_dict
         )
         rank_0_print(f"Wandb initialized: {wandb.run.name}")

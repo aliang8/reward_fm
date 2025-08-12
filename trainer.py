@@ -1,3 +1,4 @@
+import wandb
 import warnings
 import torch
 import torch.nn as nn
@@ -174,9 +175,6 @@ class RFMTrainer(Trainer):
 
         # Set model to eval mode
         self.model.eval()
-
-        print(f"DEBUG: evaluation dataset size: {len(eval_dataset)}")
-        print(f"DEBUG: evaluation dataloader size: {len(eval_dataloader)}")
 
         # Run evaluation
         with torch.no_grad():
@@ -383,6 +381,11 @@ class RFMTrainer(Trainer):
                 rank_0_print(f"{key}: {value:.6f}")
             rank_0_print("=" * 50)
 
+        # Also log to wandb if available and configured (only on rank 0)
+        if self.args.report_to and "wandb" in self.args.report_to and is_rank_0():
+            if wandb.run is not None:
+                wandb.log(metrics)
+
         return metrics
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
@@ -529,7 +532,7 @@ class RFMTrainer(Trainer):
         # Get preference scores from the preference head
         preference_scores = model_outputs.logits.squeeze(-1)  # [batch_size]
 
-        # Get preference labels (1 if A is preferred, 0 if B is preferred)
+        # Get preference labels (1 if first trajectory is preferred, 0 if second trajectory is preferred)
         preference_labels = inputs["preference_labels"]
 
         # Binary cross entropy loss for preference prediction
@@ -538,17 +541,42 @@ class RFMTrainer(Trainer):
         )
 
         # Get frame shapes for splicing target progress to match predicted lengths
+        # Since the order is randomized, we need to use preference labels to determine which is which
         chosen_frames_shape = inputs.get("chosen_frames_shape", None)
         rejected_frames_shape = inputs.get("rejected_frames_shape", None)
+        
+        # Determine which frame shape corresponds to which trajectory based on preference labels
+        # preference_labels: 1.0 = first trajectory preferred, 0.0 = second trajectory preferred
+        # We need to map this to chosen vs rejected for progress loss calculation
+        
+        # For each sample, determine which trajectory (first or second) is the chosen one
+        batch_size = len(preference_labels)
+        first_trajectory_shapes = []
+        second_trajectory_shapes = []
+        
+        for i in range(batch_size):
+            if preference_labels[i] == 1.0:
+                # First trajectory is preferred (chosen)
+                first_trajectory_shapes.append(chosen_frames_shape[i])
+                second_trajectory_shapes.append(rejected_frames_shape[i])
+            else:
+                # Second trajectory is preferred (chosen)
+                first_trajectory_shapes.append(rejected_frames_shape[i])
+                second_trajectory_shapes.append(chosen_frames_shape[i])
+        
+        # Convert to tensors for the helper function
+        first_trajectory_shapes = torch.stack(first_trajectory_shapes)
+        second_trajectory_shapes = torch.stack(second_trajectory_shapes)
 
         # Compute progress loss for both trajectories using the helper function
+        # Now we know which shape corresponds to which trajectory based on preference labels
         progress_loss_A = self._compute_progress_loss(
-            progress_logits["A"], inputs["target_progress_A"], chosen_frames_shape, "A"
+            progress_logits["A"], inputs["target_progress_A"], first_trajectory_shapes, "A"
         )
         progress_loss_B = self._compute_progress_loss(
             progress_logits["B"],
             inputs["target_progress_B"],
-            rejected_frames_shape,
+            second_trajectory_shapes,
             "B",
         )
 

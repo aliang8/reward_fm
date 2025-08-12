@@ -68,14 +68,14 @@ class OXEFrameLoader:
         dataset = builder.as_dataset(split=f"train[{self.episode_index}:{self.episode_index + 1}]")
 
         try:
-            target_episode = next(iter(tfds.as_numpy(dataset)))
+            target_episode = next(iter(dataset))
         except StopIteration:
             return None
 
         images = []
-        for step in tfds.as_numpy(target_episode["steps"]):
+        for step in target_episode["steps"]:
             if self.image_key in step["observation"]:
-                images.append(step["observation"][self.image_key])
+                images.append(step["observation"][self.image_key].numpy())
 
         return np.stack(images) if len(images) > 0 else None
 

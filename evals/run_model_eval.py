@@ -34,6 +34,15 @@ from evals.eval_utils import (
     post_batch,
 )
 
+KEY_TO_MEANING = {
+    "eval_loss": "Loss",
+    "eval_accuracy": "Accuracy of Predicting the Correct Preference",
+    "eval_reward_diff": "Reward Difference between Chosen and Rejected",
+    "eval_avg_reward_chosen": "Average Reward Assigned to (Chosen)",
+    "eval_avg_reward_rejected": "Average Reward (Rejected)",
+    "demo_reward_alignment": "Spearman Correlation between Predicted Progress and Ground Truth Progress (per-frame ordering)",
+}
+
 
 def iter_eval_batches(
     cfg: ExperimentConfig,
@@ -88,6 +97,7 @@ def main():
         "eval_reward_diff",
         "eval_avg_reward_chosen",
         "eval_avg_reward_rejected",
+        "demo_reward_alignment",
     ]
     agg = {k: 0.0 for k in keys}
     n = max(1, len(results))
@@ -101,6 +111,7 @@ def main():
     print("\nEvaluation summary (averaged across batches):")
     for k, v in agg.items():
         print(f"  {k}: {v:.6f}")
+        print(f"explanation:    {KEY_TO_MEANING[k]}")
 
 
 if __name__ == "__main__":

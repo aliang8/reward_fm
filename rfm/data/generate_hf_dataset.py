@@ -133,6 +133,9 @@ def process_single_trajectory(args):
             use_video=use_video,
             fps=fps
         )
+
+        if processed_trajectory is None:
+            return None
         
         # Replace the full path with relative path in the processed trajectory
         if processed_trajectory and 'frames' in processed_trajectory:

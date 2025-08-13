@@ -321,7 +321,6 @@ def convert_oxe_dataset_to_hf(
         # Iterate all steps once to avoid re-materializing for each view
         steps_np = list(tfds.as_numpy(episode["steps"]))
 
-        valid_view_found = False
         for img_key in valid_img_keys:
             # Check first frame for all-black to prune
             if img_key not in steps_np[0]["observation"]:
@@ -333,7 +332,6 @@ def convert_oxe_dataset_to_hf(
             if not frames:
                 continue
 
-            valid_view_found = True
             full_path, rel_path = _build_oxe_video_paths(
                 output_dir=output_dir,
                 dataset_label=dataset_name,

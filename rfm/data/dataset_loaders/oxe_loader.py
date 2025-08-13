@@ -281,7 +281,7 @@ def convert_oxe_dataset_to_hf(
 
     entries: List[Dict[str, Any]] = []
     produced = 0
-    max_limit = float("inf") if max_trajectories is None else int(max_trajectories)
+    max_limit = float("inf") if (max_trajectories is None or max_trajectories == -1) else int(max_trajectories)
 
     for ep_idx, episode in enumerate(tqdm(dataset, desc=f"Converting {base_ds_name} episodes")):
         if produced >= max_limit:

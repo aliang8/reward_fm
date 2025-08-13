@@ -225,7 +225,8 @@ def convert_dataset_to_hf_format(
                 use_video=use_video,
                 fps=fps
             )
-            
+            if processed_trajectory is None:
+                continue
             all_entries.append(processed_trajectory)
     else:
         # Parallel processing

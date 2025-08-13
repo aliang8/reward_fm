@@ -1,24 +1,25 @@
+# large datasets near the end
 OXE_VALID_DATASETS=(
     "austin_buds_dataset_converted_externally_to_rlds"
     "austin_sirius_dataset_converted_externally_to_rlds"
     "berkeley_cable_routing"
     "berkeley_fanuc_manipulation"
-    "bc_z"
-    "bridge_v2"
     "dlr_edan_shared_control_converted_externally_to_rlds"
-    "droid"
     "fmb"
-    "fractal20220817_data"
     "furniture_bench_dataset_converted_externally_to_rlds"
     "iamlab_cmu_pickup_insert_converted_externally_to_rlds"
     "jaco_play"
-    "language_table"
     "stanford_hydra_dataset_converted_externally_to_rlds"
     "taco_play"
     "toto"
     "ucsd_kitchen_dataset_converted_externally_to_rlds"
     "utaustin_mutex"
     "viola"
+    "fractal20220817_data"
+    "bc_z"
+    "language_table"
+    "bridge_v2"
+    "droid"
 )
 
 for dataset_name in ${OXE_VALID_DATASETS[@]}; do

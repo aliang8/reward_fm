@@ -65,7 +65,8 @@ class OXEFrameLoader:
         os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
         tf.config.set_visible_devices([], "GPU")
         builder = tfds.builder_from_directory(self.builder_dir)
-        dataset = builder.as_dataset(split=f"train[{self.episode_index}:{self.episode_index + 1}]")
+        # Use deterministic ordering to ensure index alignment with the metadata pass
+        dataset = builder.as_dataset(split=f"train[{self.episode_index}:{self.episode_index + 1}]", shuffle_files=False)
 
         try:
             target_episode = next(iter(dataset))
@@ -118,7 +119,8 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1, dataset_name
                     continue
                 else:
                     builder = tfds.builder_from_directory(f"{dataset_path}/{dataset_name}/{version}")
-                    dataset = builder.as_dataset(split="train")
+                    # Disable shuffling to keep a stable episode order across processes
+                    dataset = builder.as_dataset(split="train", shuffle_files=False)
                     break
         if dataset is None:
             raise ValueError(f"No dataset found for {dataset_name} in {dataset_path}")

@@ -425,20 +425,54 @@ def main(cfg: GenerateConfig):
         )
         trajectories = flatten_task_data(task_data)
     elif cfg.dataset.dataset_name.lower().startswith("oxe_"):
-        # Disable GPUs for TF in OXE path to avoid CUDA context issues in workers
+        # Treat OXE like AgiBotWorld: create videos and HF entries directly in the loader
         os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
-        from rfm.data.dataset_loaders.oxe_loader import load_oxe_dataset
+        from rfm.data.dataset_loaders.oxe_loader import convert_oxe_dataset_to_hf
 
-        # Load the trajectories using the loader with max_trajectories limit
-        print(f"Loading OXE dataset from: {cfg.dataset.dataset_path}")
-        max_num_trajs, task_data = load_oxe_dataset(
-            cfg.dataset.dataset_path,
-            cfg.output.max_trajectories,
-            cfg.dataset.dataset_name,
+        print(f"Converting OXE dataset directly to HF from: {cfg.dataset.dataset_path}")
+        dataset = convert_oxe_dataset_to_hf(
+            dataset_path=cfg.dataset.dataset_path,
+            dataset_name=cfg.dataset.dataset_name,
+            output_dir=cfg.output.output_dir,
+            max_trajectories=cfg.output.max_trajectories,
+            max_frames=cfg.output.max_frames,
+            fps=cfg.output.fps,
         )
-        cfg.output.max_trajectories = max_num_trajs
-        print(f"Resetting max_trajectories to {max_num_trajs} for OXE because it contains multiple datasets")
-        trajectories = flatten_task_data(task_data)
+
+        # Handle pushing/saving consistently
+        if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
+            print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")
+            try:
+                dataset.push_to_hub(
+                    cfg.hub.hub_repo_id,
+                    config_name=(cfg.dataset.dataset_name).lower(),
+                    token=cfg.hub.hub_token,
+                    private=False,
+                    commit_message=f"Add {cfg.dataset.dataset_name} dataset for RFM training",
+                )
+                print(f"✅ Successfully pushed dataset to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}")
+
+                # Push the large video folder(s)
+                print(f"\nPushing video files to HuggingFace Hub...")
+                from huggingface_hub import HfApi
+                api = HfApi(token=cfg.hub.hub_token)
+                api.upload_large_folder(
+                    folder_path=cfg.output.output_dir,
+                    repo_id=cfg.hub.hub_repo_id,
+                    repo_type="dataset",
+                )
+                print(
+                    f"✅ Successfully pushed video files to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}"
+                )
+            except Exception as e:
+                print(f"❌ Error pushing to hub: {e}")
+                print("Dataset was created locally but failed to push videos and/or metadata to hub")
+        else:
+            dataset_path = os.path.join(cfg.output.output_dir, (cfg.dataset.dataset_name).lower())
+            dataset.save_to_disk(dataset_path)
+            print(f"Dataset saved locally to: {dataset_path}")
+        print("Dataset conversion complete!")
+        return
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")
     

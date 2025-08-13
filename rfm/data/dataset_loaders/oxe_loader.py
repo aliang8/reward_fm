@@ -2,7 +2,6 @@ import os
 import itertools
 from tqdm import tqdm
 from typing import Dict, List
-import hashlib
 from pathlib import Path
 import numpy as np
 from rfm.data.dataset_helpers.oxe_helper import OXE_DATASET_CONFIGS
@@ -54,13 +53,11 @@ class OXEFrameLoader:
     Stores only serializable identifiers so it can be pickled for multiprocessing.
     """
 
-    def __init__(self, builder_dir: str, dataset_name: str, image_key: str, episode_index: int, expected_task: str = None, expected_first_frame_hash: str = None):
+    def __init__(self, builder_dir: str, dataset_name: str, image_key: str, episode_index: int):
         self.builder_dir = builder_dir
         self.dataset_name = dataset_name
         self.image_key = image_key
         self.episode_index = int(episode_index)
-        self.expected_task = expected_task
-        self.expected_first_frame_hash = expected_first_frame_hash
 
     def __call__(self) -> np.ndarray:
         """Re-open TFDS from builder_dir and extract frames for the episode index."""
@@ -69,76 +66,19 @@ class OXEFrameLoader:
         tf.config.set_visible_devices([], "GPU")
         builder = tfds.builder_from_directory(self.builder_dir)
         # Use deterministic ordering to ensure index alignment with the metadata pass
-        read_config = tfds.ReadConfig(
-            shuffle_seed=0,
-            shuffle_reshuffle_each_iteration=False,
-            try_autocache=False,
-        )
-        dataset = builder.as_dataset(
-            split="train",
-            shuffle_files=False,
-            read_config=read_config,
-        )
-        # Force deterministic tf.data behavior
-        options = tf.data.Options()
-        try:
-            options.experimental_deterministic = True
-        except Exception:
-            pass
-        dataset = dataset.with_options(options)
+        dataset = builder.as_dataset(split=f"train[{self.episode_index}:{self.episode_index + 1}]", shuffle_files=False)
 
         try:
-            # Access the specific episode via tf.data ops to avoid split slicing edge-cases
-            target_dataset = dataset.skip(self.episode_index).take(1)
-            target_episode = next(iter(target_dataset))
+            target_episode = next(iter(dataset))
         except StopIteration:
             return None
-
-        # Optional verification: recompute instruction and warn if mismatch
-        if self.expected_task is not None:
-            try:
-                first_step_np = next(iter(tfds.as_numpy(target_episode["steps"])))
-                recomputed_task = None
-                for key in POSSIBLE_LANG_INSTRUCTION_KEYS:
-                    if key in first_step_np.get("observation", {}):
-                        if self.dataset_name == "language_table":
-                            task_bytes = first_step_np["observation"][key]
-                            recomputed_task = bytes(task_bytes[np.where(task_bytes != 0)].tolist()).decode("utf-8")
-                        else:
-                            recomputed_task = first_step_np["observation"][key].decode()
-                        break
-                    elif key in first_step_np:
-                        recomputed_task = first_step_np[key].decode()
-                        break
-                if recomputed_task is not None and recomputed_task != self.expected_task:
-                    print(
-                        f"[WARN] OXE episode instruction mismatch at index {self.episode_index}: expected '{self.expected_task}' but got '{recomputed_task}'."
-                    )
-            except Exception:
-                pass
 
         images = []
         for step in target_episode["steps"]:
             if self.image_key in step["observation"]:
                 images.append(step["observation"][self.image_key].numpy())
 
-        if len(images) == 0:
-            return None
-
-        # First-frame hash verification to guard against rare misalignment
-        if self.expected_first_frame_hash is not None:
-            try:
-                first_frame = images[0]
-                frame_hash = hashlib.sha1(first_frame.tobytes()).hexdigest()[:16]
-                if frame_hash != self.expected_first_frame_hash:
-                    print(
-                        f"[WARN] OXE first-frame hash mismatch at index {self.episode_index}: expected {self.expected_first_frame_hash} but got {frame_hash}. Skipping."
-                    )
-                    return None
-            except Exception:
-                pass
-
-        return np.stack(images)
+        return np.stack(images) if len(images) > 0 else None
 
 
 def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1, dataset_name: str = None) -> Dict[str, List[Dict]]:
@@ -170,7 +110,7 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1, dataset_name
         print(f"Loading {dataset_name}")
         # make the builder locally to avoid calls to google
         # check which version is available
-        versions = sorted(os.listdir(f"{dataset_path}/{dataset_name}"), reverse=True)
+        versions = os.listdir(f"{dataset_path}/{dataset_name}")
         if len(versions) == 0:
             raise ValueError(f"No versions found for {dataset_name} in {dataset_path}")
         else:
@@ -180,18 +120,7 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1, dataset_name
                 else:
                     builder = tfds.builder_from_directory(f"{dataset_path}/{dataset_name}/{version}")
                     # Disable shuffling to keep a stable episode order across processes
-                    read_config = tfds.ReadConfig(
-                        shuffle_seed=0,
-                        shuffle_reshuffle_each_iteration=False,
-                        try_autocache=False,
-                    )
-                    dataset = builder.as_dataset(split="train", shuffle_files=False, read_config=read_config)
-                    options = tf.data.Options()
-                    try:
-                        options.experimental_deterministic = True
-                    except Exception:
-                        pass
-                    dataset = dataset.with_options(options)
+                    dataset = builder.as_dataset(split="train", shuffle_files=False)
                     break
         if dataset is None:
             raise ValueError(f"No dataset found for {dataset_name} in {dataset_path}")
@@ -231,19 +160,11 @@ def load_oxe_dataset(dataset_path: str, max_trajectories: int = -1, dataset_name
                     # if all black then skip
                     if np.all(first_step["observation"][img_name_in_step] == 0):
                         continue
-                    # compute a small hash of the first frame for this view to verify later
-                    try:
-                        _ff = first_step["observation"][img_name_in_step]
-                        expected_first_frame_hash = hashlib.sha1(_ff.tobytes()).hexdigest()[:16]
-                    except Exception:
-                        expected_first_frame_hash = None
                     frame_loader = OXEFrameLoader(
                         builder_dir=builder_dir,
                         dataset_name=dataset_name,
                         image_key=img_name_in_step,
                         episode_index=ep_idx,
-                        expected_task=task,
-                        expected_first_frame_hash=expected_first_frame_hash,
                     )
                     valid_samples += 1
                     trajectory = {

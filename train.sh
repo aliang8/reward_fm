@@ -11,5 +11,6 @@ accelerate launch \
     --config rfm/configs/config.yaml \
     --data.resized_height 128 \
     --data.resized_width 128 \
-    --data.force_reprocess true \
-    --logging.use_wandb true
+    --data.force_reprocess false \
+    --logging.use_wandb false \
+    --debug true

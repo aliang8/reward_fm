@@ -73,9 +73,7 @@ class OXEFrameLoader:
         tf.config.set_visible_devices([], "GPU")
         builder = tfds.builder_from_directory(self.builder_dir)
         # Use deterministic ordering to ensure index alignment with the metadata pass
-        #dataset = builder.as_dataset(split=f"train[{self.episode_index}:{self.episode_index + 1}]", shuffle_files=False)
-        dataset = builder.as_dataset(split="train", shuffle_files=False)
-        dataset = dataset.skip(self.episode_index)
+        dataset = builder.as_dataset(split=f"train[{self.episode_index}:{self.episode_index + 1}]", shuffle_files=False)
 
         try:
             target_episode = next(iter(dataset))

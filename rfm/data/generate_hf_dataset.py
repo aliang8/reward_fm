@@ -450,7 +450,7 @@ def main(cfg: GenerateConfig):
                     private=False,
                     commit_message=f"Add {cfg.dataset.dataset_name} dataset for RFM training",
                 )
-                print(f"✅ Successfully pushed dataset to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}")
+                print(f"✅ Successfully pushed dataset {cfg.dataset.dataset_name} to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}")
 
                 # Push the large video folder(s)
                 print(f"\nPushing video files to HuggingFace Hub...")
@@ -462,7 +462,7 @@ def main(cfg: GenerateConfig):
                     repo_type="dataset",
                 )
                 print(
-                    f"✅ Successfully pushed video files to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}"
+                    f"✅ Successfully pushed video files for {cfg.dataset.dataset_name} to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}"
                 )
             except Exception as e:
                 print(f"❌ Error pushing to hub: {e}")

@@ -33,6 +33,7 @@ class BaseSample:
     target_progress_A: Optional[List[float]] = None  # Progress values for trajectory A
     target_progress_B: Optional[List[float]] = None  # Progress values for trajectory B
     prediction_type: Optional[str] = None
+    sample_type: Optional[str] = None                # how this sample was generated
 
     # Metadata field
     metadata: Optional[Dict] = None

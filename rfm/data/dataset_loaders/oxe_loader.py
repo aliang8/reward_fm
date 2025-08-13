@@ -283,6 +283,9 @@ def convert_oxe_dataset_to_hf(
     produced = 0
     max_limit = float("inf") if (max_trajectories is None or max_trajectories == -1) else int(max_trajectories)
 
+    if "language_table" in base_ds_name:
+        max_limit = MAX_LANGTABLE_EPISODES
+
     for ep_idx, episode in enumerate(tqdm(dataset, desc=f"Converting {base_ds_name} episodes")):
         if produced >= max_limit:
             break

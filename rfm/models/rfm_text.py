@@ -1,44 +1,34 @@
 #!/usr/bin/env python3
 """
-RFM (Reward Foundation Model) implementation.
-Contains the RFMModel class with three prediction heads for different objectives.
-
-Note: make sure that the forward pass uses all of the
-heads or there will be some problems with FSDP sharding.
+RFM Text Model implementation.
+Contains the RFMText class for generating text descriptions of trajectory progress.
 """
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from transformers import PreTrainedModel, Qwen2_5_VLModel
-from transformers.modeling_outputs import SequenceClassifierOutputWithPast
+from transformers import PreTrainedModel, Qwen2_5_VLForConditionalGeneration
 from typing import Optional, Dict, Any
 
 
-class RFMModel(PreTrainedModel):
-    """Reward Foundation Model with three prediction heads for different objectives."""
+class RFMText(PreTrainedModel):
+    """RFM Text Model that generates text descriptions of trajectory progress."""
     
-    config_class = Qwen2_5_VLModel.config_class
+    config_class = Qwen2_5_VLForConditionalGeneration.config_class
 
     def __init__(self, config, processor, base_model=None):
         super().__init__(config)
-        # The RFMModel now owns and creates its submodules.
-        # This is the standard pattern for PreTrainedModel.
+        # Use Qwen2_5VLForConditionalGeneration for text generation
         if base_model is not None:
             self.model = base_model
         else:
-            self.model = Qwen2_5_VLModel(config)
+            self.model = Qwen2_5_VLForConditionalGeneration(config)
         
-        # Three prediction heads for different objectives
-        self.progress_head = nn.Linear(config.hidden_size, 1, bias=False)  # Progress prediction (0-1)
-        self.preference_head = nn.Linear(config.hidden_size, 1, bias=False)  # Preference prediction (binary)
-        self.similarity_head = nn.Linear(config.hidden_size, 1, bias=False)  # Similarity scoring (reward)
-
-        # Ensure all heads have the same dtype as the base model
+        # Only progress head for text generation
+        self.progress_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)  # Progress text generation
+        
+        # Ensure progress head has the same dtype as the base model
         self.model_dtype = self.model.dtype
         self.progress_head = self.progress_head.to(dtype=self.model_dtype)
-        self.preference_head = self.preference_head.to(dtype=self.model_dtype)
-        self.similarity_head = self.similarity_head.to(dtype=self.model_dtype)
         
         self.processor = processor
 
@@ -58,17 +48,15 @@ class RFMModel(PreTrainedModel):
         pixel_values_videos=None,
         image_grid_thw=None,
         video_grid_thw=None,
-        prediction_type=None,  # "preference" or "similarity"
+        labels=None,
         second_per_grid_ts=None,
         **kwargs,
     ):   
         """
-        Forward pass for the RFM (Reward Foundation Model).
+        Forward pass for the RFM Text Model.
         
-        This method handles three types of predictions:
-        1. **Preference prediction**: Binary classification comparing two trajectories
-        2. **Similarity prediction**: Scoring how similar a trajectory is to a reference
-        3. **Progress prediction**: Regression predicting task completion progress (0-1)
+        This method generates text descriptions of trajectory progress for both trajectories A and B.
+        It uses the progress head to generate text at frame boundaries.
         
         Args:
             input_ids (torch.LongTensor, optional): 
@@ -87,15 +75,8 @@ class RFMModel(PreTrainedModel):
             video_grid_thw (torch.LongTensor, optional): 
                 Video grid dimensions (N, 3) for video processing
                 
-            prediction_type (str, optional): 
-                Type of prediction to perform:
-                - "preference": Uses preference head with <|pref_token|> for binary trajectory comparison
-                - "similarity": Uses similarity head with <|reward_token|> for trajectory-reference scoring
-                - None: No specific prediction, returns zero logits
-                
-            target_progress (torch.FloatTensor, optional): 
-                Target progress values for progress prediction. Shape: [batch_size, sequence_length]
-                If provided, progress prediction will be computed using the last token position.
+            labels (torch.LongTensor, optional): 
+                Labels for computing the language modeling loss. Shape: [batch_size, sequence_length]
                 
             second_per_grid_ts (torch.FloatTensor, optional): 
                 Time stamps for video grid processing.
@@ -103,18 +84,10 @@ class RFMModel(PreTrainedModel):
             **kwargs: Additional keyword arguments passed to the base model.
         
         Returns:
-            tuple: (model_outputs, progress_logits)
-                - model_outputs (SequenceClassifierOutputWithPast): 
-                    Contains logits for the specified prediction type:
-                    - For preference: Binary logits [batch_size, 1] 
-                    - For similarity: Continuous similarity scores [batch_size, 1]
-                    - For none: Zero tensor [batch_size, 1]
-                    
-                - progress_logits (Dict[str, List[torch.Tensor]] or None):
-                    Progress prediction logits split by trajectory:
-                    - 'A': List of tensors for trajectory A (before vision_end token), each [seq_len_A]
-                    - 'B': List of tensors for trajectory B (after vision_end token), each [seq_len_B]
-                    Values should be in range [0, 1] representing task completion percentage at each timestep.
+            Qwen2VLCausalLMOutputWithPast or tuple(torch.FloatTensor):
+                - If labels is provided: Returns the language modeling loss
+                - If no labels: Returns the generated text logits
+                - Also returns progress_logits for both trajectories
         """
         model_kwargs = {
             "input_ids": input_ids,
@@ -134,8 +107,6 @@ class RFMModel(PreTrainedModel):
         # [batch_size, seq_len, hidden_size]
         last_hidden_state = outputs.hidden_states[-1]
 
-        # Always compute progress for all timesteps if target_progress is provided
-        progress_logits = None
         # Find vision_start_token and split_token for trajectory separation
         vision_start_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|vision_start|>")
         split_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|split_token|>")
@@ -146,12 +117,6 @@ class RFMModel(PreTrainedModel):
         tps = self.model.config.vision_config.temporal_patch_size
         
         for i, seq_ids in enumerate(input_ids):
-            # the input_ids is structured as follows
-            # the split demarcates the end of trajectory A and the start of trajectory B
-            # NOTE: base Qwen2.5_VL model has a temporal_patch_size of 2, so we can only 
-            # predict the progress for every 2 frames. 
-            # [vision_start, frame_1/2_tokens, ..., frame_N/2_tokens, split_token, frame_1/2_tokens, frame_2/2_tokens, ..., frame_N/2_tokens]
-            # we want to extract the hidden_states at the frame boundaries for both trajectories
             # Find the position of the vision_start token
             vision_start_positions = (seq_ids == vision_start_token_id).nonzero(as_tuple=True)[0]
             if len(vision_start_positions) <= 0:
@@ -219,7 +184,7 @@ class RFMModel(PreTrainedModel):
             # Apply progress head to hidden states at frame boundary positions for trajectory A
             if trajectory_A_boundaries.numel() > 0:
                 boundary_hidden_states_A = last_hidden_state[i][trajectory_A_boundaries]  # [num_frames_A, hidden_dim]
-                progress_A = self.progress_head(boundary_hidden_states_A).squeeze(-1)  # [num_frames_A]
+                progress_A = self.progress_head(boundary_hidden_states_A)  # [num_frames_A, vocab_size]
                 progress_logits_A.append(progress_A)
             else:
                 progress_logits_A.append(torch.empty(0, device=last_hidden_state.device))
@@ -227,7 +192,7 @@ class RFMModel(PreTrainedModel):
             # Apply progress head to hidden states at frame boundary positions for trajectory B
             if trajectory_B_boundaries.numel() > 0:
                 boundary_hidden_states_B = last_hidden_state[i][trajectory_B_boundaries]  # [num_frames_B, hidden_dim]
-                progress_B = self.progress_head(boundary_hidden_states_B).squeeze(-1)  # [num_frames_B]
+                progress_B = self.progress_head(boundary_hidden_states_B)  # [num_frames_B, vocab_size]
                 progress_logits_B.append(progress_B)
             else:
                 progress_logits_B.append(torch.empty(0, device=last_hidden_state.device))
@@ -238,39 +203,25 @@ class RFMModel(PreTrainedModel):
             'B': progress_logits_B
         }
 
-        # For preference and similarity, use specific tokens
-        logits = None
-        if prediction_type is not None:
-            if prediction_type == "preference":
-                token_id = self.processor.tokenizer.convert_tokens_to_ids("<|pref_token|>")
-            else:  # similarity (default)
-                token_id = self.processor.tokenizer.convert_tokens_to_ids("<|reward_token|>")
+        # If labels are provided, compute language modeling loss
+        if labels is not None:
+            # Use the base model's language modeling head for the main loss
+            lm_loss = outputs.loss
             
-            # Find all positions where the target token appears
-            token_positions = []
-            for i, seq_ids in enumerate(input_ids):
-                # Find the last occurrence of token_id in this sequence
-                positions = (seq_ids == token_id).nonzero(as_tuple=True)[0]
-                if len(positions) > 0:
-                    token_positions.append(positions[-1].item())
-                else:
-                    # Fallback to last token if target token not found
-                    token_positions.append(attention_mask[i].sum().item() - 1)
-            token_positions = torch.tensor(token_positions, device=input_ids.device, dtype=torch.long)
+            # Add progress text generation loss if we have progress targets
+            progress_loss = 0.0
+            if hasattr(self, 'progress_labels') and self.progress_labels is not None:
+                # This would be implemented if we want to supervise the progress text generation
+                pass
             
-            # Extract hidden states at the target token positions
-            token_hidden_states = torch.gather(
-                last_hidden_state,
-                1,
-                token_positions.view(-1, 1, 1).expand(
-                    -1, -1, last_hidden_state.size(-1)
-                ),
-            ).squeeze(1)
+            total_loss = lm_loss + progress_loss
             
-            # Apply the appropriate head
-            if prediction_type == "preference":
-                logits = self.preference_head(token_hidden_states)
-            else:  # similarity (default)
-                logits = self.similarity_head(token_hidden_states)
+            # Return the loss
+            return total_loss, progress_logits
         
-        return SequenceClassifierOutputWithPast(logits=logits), progress_logits
+        # If no labels, return the generated text logits
+        return outputs.logits, progress_logits
+
+    def generate(self, *args, **kwargs):
+        """Delegates text generation to the base model."""
+        return self.model.generate(*args, **kwargs)

@@ -2,14 +2,18 @@
 
 Direct VLM preference evaluation following RL-VLM-F approach. Queries Gemini for trajectory comparisons without training a reward model.
 
-## Structure
+## Folder Structure
 ```
 evals/baselines/rlvlmf_base/
-├── vlm_baseline.py      # Core VLM logic (RL-VLM-F baseline + temporal extension)
-├── vlm_server.py        # FastAPI server (drop-in replacement for main server.py)
-├── test_vlm.py          # Setup verification
-├── pyproject.toml       # Minimal deps (no GPU required)
-└── README.md
+├── eval_config.yaml          # Evaluation config for baseline comparison
+├── vlm_server.py             # FastAPI server mimicking main server API
+├── vlm_baseline.py           # VLM preference logic (Gemini/GPT-4V)
+├── test_vlm.py              # Setup validation script
+├── pyproject.toml           # Minimal dependencies
+├── README.md                # This file
+└── vlm_eval_logs/           # Detailed evaluation logs (auto-created)
+    ├── vlm_eval_YYYYMMDD_HHMMSS.json    # JSON logs with VLM responses
+    └── samples_YYYYMMDD_HHMMSS/         # Sample frames for debugging
 ```
 
 ## Setup
@@ -27,20 +31,32 @@ python test_vlm.py
 
 ## Usage
 
-### Start VLM Server
+### Quick Test (5 samples)
 ```bash
 cd evals/baselines/rlvlmf_base
+uv run python vlm_server.py --task "pick up red block" --port 8002
 
-# RL-VLM-F baseline (DEFAULT) - exact paper reproduction
-uv run python vlm_server.py --task "pick up red block"
-
-# Temporal-aware prompting (EXPERIMENTAL) - for multi-frame trajectories  
-uv run python vlm_server.py --task "pick up red block" --temporal
+# In another terminal
+cd /path/to/reward_fm
+source .venv/bin/activate
+python evals/run_model_eval.py --config_path evals/eval_config_local.yaml --server_url http://localhost:8002 --num_batches 1 --batch_size 1
 ```
 
-### Run Evaluation (from repo root)
+### Baseline Comparison (100 samples)
 ```bash
-python evals/run_model_eval.py --server_url http://localhost:8000 --num_batches 10
+cd evals/baselines/rlvlmf_base
+uv run python vlm_server.py --task "robot manipulation" --port 8002
+
+# In another terminal  
+cd /path/to/reward_fm
+source .venv/bin/activate
+python evals/run_model_eval.py --config_path evals/baselines/rlvlmf_base/eval_config.yaml --server_url http://localhost:8002 --num_batches 10 --batch_size 10
+```
+
+### Temporal Experiments (EXPERIMENTAL)
+```bash
+cd evals/baselines/rlvlmf_base
+uv run python vlm_server.py --task "robot manipulation" --temporal --port 8002
 ```
 
 ## Prompting Strategies

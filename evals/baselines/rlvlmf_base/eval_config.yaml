@@ -1,0 +1,46 @@
+# RL-VLM-F Baseline Evaluation Config
+# Minimal changes from main config for proper baseline comparison
+
+# Evaluation mode
+mode: "evaluate"
+debug: false
+
+# Model (not used by VLM baseline, but required by config structure)
+model:
+  base_model_id: "Qwen/Qwen2.5-VL-3B-Instruct"
+  torch_dtype: "bfloat16"
+  trust_remote_code: true
+
+# Data Configuration - key changes for RL-VLM-F baseline
+data:
+  # Use same dataset as main config
+  dataset_path: "abraranwar/libero_rfm"
+  dataset_subsets: ["libero_90"]
+  
+  # Evaluation dataset settings
+  eval_dataset_path: "abraranwar/libero_rfm"
+  eval_dataset_subsets: ["libero_10"]  # Same eval data as main config
+  eval_subset_size: 100  # Reasonable size for baseline comparison
+  
+  # RL-VLM-F specific: single frame per trajectory
+  max_frames: 1  # KEY: 1 frame per trajectory = 2 total frames (matches RL-VLM-F paper)
+  video_frame_sampling: "uniform"
+  resized_height: 128
+  resized_width: 128
+  
+  # Data generation - focus on preferences only
+  preference_ratio: 1.0  # Only preferences for VLM baseline
+  similarity_ratio: 0.0  # No similarity samples
+  dataset_preference_ratio: 1.0
+  shuffle: true
+  seed: 42
+  num_proc: 1
+  force_reprocess: false
+  
+  # Data loading
+  dataloader_pin_memory: false
+  dataloader_num_workers: 0
+
+# Training section (required by config structure, not used by VLM baseline)
+training:
+  output_dir: "./logs/rlvlmf_eval" 

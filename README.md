@@ -39,7 +39,39 @@ make eval
 make status
 ```
 
-## Configuration
+### Evaluation via HTTP server
+You can run evaluations through a lightweight HTTP server that hosts the model and returns metrics.
+
+Start the server (optionally override YAML fields with --set):
+```bash
+uv run evals/qwen_server.py \
+  --config_path=rfm/configs/config.yaml \
+  --host=0.0.0.0 --port=8000 \
+  --set 'evaluation.model_path="aliangdw/rfm_v0"'
+```
+
+Run the external client to send video batches and receive metrics:
+```bash
+uv run python evals/run_model_eval.py \
+  --config_path=rfm/configs/config.yaml \
+  --server_url=http://localhost:8000 \
+  --batch_size=12 \
+  --iterate_all_preferences
+```
+
+Optionally, trigger full internal evaluation (same flow as train.py evaluate):
+```bash
+curl -X POST http://localhost:8000/evaluate_internal \
+  -H 'Content-Type: application/json' \
+  -d '{"eval_subset_size": 100}'
+```
+
+Notes:
+- Set `RFM_DATASET_PATH` to the directory holding your downloaded datasets so the server/client can resolve video paths.
+- The external endpoint `/evaluate_batch` accepts pre-batched, base64-encoded videos and returns per-batch metrics.
+- The internal endpoint `/evaluate_internal` reuses the trainer evaluation pipeline to compute a full eval in one call.
+
+## Development
 
 Training configs are in `rfm/configs/`. Modify `config.yaml` for your experiments.
 

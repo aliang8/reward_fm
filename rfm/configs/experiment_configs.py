@@ -39,13 +39,13 @@ class PEFTConfig:
 @dataclass
 class DataConfig:
     """Config for data settings"""
-    # Dataset paths and sources
-    dataset_path: str = field(default="aliangdw/rfm")
-    dataset_subsets: List[str] = field(default_factory=lambda: ["libero_90"])
+    # Training datasets and subsets
+    train_datasets: List[str] = field(default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of training dataset names (e.g., ['abraranwar/libero_rfm', 'ykorkmaz/libero_failure_rfm'])"})
+    train_subsets: List[str] = field(default_factory=lambda: ["libero_90"], metadata={"help": "List of training dataset subsets (e.g., ['libero_90', 'libero_failure_90'])"})
     
-    # Evaluation dataset settings (separate from training)
-    eval_dataset_path: Optional[str] = field(default=None, metadata={"help": "Path for evaluation dataset (defaults to dataset_path if None)"})
-    eval_dataset_subsets: Optional[List[str]] = field(default=None, metadata={"help": "Subsets for evaluation dataset (defaults to dataset_subsets if None)"})
+    # Evaluation datasets and subsets
+    eval_datasets: List[str] = field(default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of evaluation dataset names (e.g., ['abraranwar/libero_rfm', 'ykorkmaz/libero_failure_rfm'])"})
+    eval_subsets: List[str] = field(default_factory=lambda: ["libero_10"], metadata={"help": "List of evaluation dataset subsets (e.g., ['libero_10', 'libero_failure_10'])"})
     eval_subset_size: int = field(default=100, metadata={"help": "Number of examples to use for evaluation dataset"})
     
     # Video processing settings
@@ -102,6 +102,11 @@ class TrainingConfig:
     per_device_eval_batch_size: int = field(default=1, metadata={"help": "Batch size for evaluation"})
     do_eval: bool = field(default=False, metadata={"help": "Whether to run evaluation during training"})
     prediction_loss_only: bool = field(default=True, metadata={"help": "Only compute loss for the prediction head"})
+
+    # Optimizer settings
+    lr_scheduler_type: str = field(default="cosine")
+    warmup_steps: int = field(default=0)
+    warmup_ratio: float = field(default=0.1)
 
 @dataclass
 class LoggingConfig:

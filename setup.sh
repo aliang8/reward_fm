@@ -29,8 +29,9 @@ download_dataset() {
     --local-dir-use-symlinks True
 }
 
-download_dataset abraranwar/agibotworld_rfm
+# download_dataset abraranwar/agibotworld_rfm
 download_dataset abraranwar/libero_rfm
-download_dataset abraranwar/egodex_rfm
+# download_dataset abraranwar/egodex_rfm
+download_dataset ykorkmaz/libero_failure_rfm
 
 echo "Done. Set RFM_DATASET_PATH=${BASE_DIR} for training/eval."

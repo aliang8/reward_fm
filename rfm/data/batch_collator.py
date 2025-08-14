@@ -380,15 +380,24 @@ class BatchCollator:
         # Use the dynamically generated preference labels based on trajectory order
         batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
 
-        # Add target progress for both trajectories
+        # Add target progress for both trajectories based on conversation order
         target_progress_A_list = []
         target_progress_B_list = []
 
-        for sample in preference_samples:
-            if sample.target_progress_A is not None:
-                target_progress_A_list.append(sample.target_progress_A)
-            if sample.target_progress_B is not None:
-                target_progress_B_list.append(sample.target_progress_B)
+        for i, sample in enumerate(preference_samples):
+            # Get the preference label to determine which trajectory went first
+            if preference_labels[i] == 1.0:
+                # First trajectory is chosen (chosen_frames), second is rejected (rejected_frames)
+                if sample.target_progress_A is not None:
+                    target_progress_A_list.append(sample.target_progress_A)  # chosen progress
+                if sample.target_progress_B is not None:
+                    target_progress_B_list.append(sample.target_progress_B)  # rejected progress
+            else:
+                # First trajectory is rejected (rejected_frames), second is chosen (chosen_frames)
+                if sample.target_progress_B is not None:
+                    target_progress_A_list.append(sample.target_progress_B)  # rejected progress (now first)
+                if sample.target_progress_A is not None:
+                    target_progress_B_list.append(sample.target_progress_A)  # chosen progress (now second)
 
         # Pad target progress tensors to max length in last dimension
         batch_inputs["target_progress_A"] = self._pad_target_progress(

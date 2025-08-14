@@ -430,10 +430,9 @@ class DataGenerator:
             dataset_name = dataset_path.split("/")[-1]
 
             def patch_path(old_path):
-                # RFM_DATASET_PATH is set in the environment variable
-                root_dir = f"{os.environ.get('RFM_DATASET_PATH')}/{dataset_name}"
-                # root_dir = f"/workspace/vlm_reward_model/rfm_dataset/{dataset_name}"
-                return f"{root_dir}/{old_path}"       # e.g., "./videos/trajectory_0000.mp4"
+                # Use local dataset path instead of hardcoded Docker path
+                root_dir = os.path.join(os.getcwd(), "rfm_dataset", dataset_name)
+                return os.path.join(root_dir, old_path)       # e.g., "./videos/trajectory_0000.mp4"
             
             ds = load_dataset(dataset_path, name=subset, split="train")
             ds = ds.map(lambda x: {"frames_path": patch_path(x["frames"])})
@@ -712,7 +711,12 @@ class DataGenerator:
             num_frames = len(frames)
         
         # For optimal trajectories, use linear progress (0.0 to 1.0)
-        return [i / (num_frames - 1) for i in range(num_frames)]
+        if num_frames == 1:
+            # Single frame: complete progress (end of trajectory)
+            return [1.0]
+        else:
+            # Multiple frames: linear progression from 0.0 to 1.0
+            return [i / (num_frames - 1) for i in range(num_frames)]
     
     def _create_similarity_sample(self) -> SimilaritySample:
         """Create a similarity scoring sample: o^1 and o^2 ranked against o^ref.

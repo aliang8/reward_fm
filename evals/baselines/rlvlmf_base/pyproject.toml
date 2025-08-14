@@ -1,0 +1,22 @@
+[project]
+name = "vlm-baseline"
+version = "0.1.0"
+description = "Direct VLM baseline for preference comparison"
+requires-python = ">=3.9"
+
+dependencies = [
+    "pillow>=9.0.0",
+    "numpy>=1.21.0",
+    "google-generativeai>=0.3.0", # For Gemini
+    "openai>=1.0.0", # For GPT-4V
+    "requests>=2.28.0",
+    "fastapi>=0.116.1",
+    "pydantic>=2.11.7",
+    "uvicorn>=0.35.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=22.0.0",
+] 

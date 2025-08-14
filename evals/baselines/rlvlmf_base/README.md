@@ -5,11 +5,10 @@ Direct VLM preference evaluation following RL-VLM-F approach. Queries Gemini for
 ## Folder Structure
 ```
 evals/baselines/rlvlmf_base/
-├── eval_config.yaml          # Evaluation config for baseline comparison
-├── vlm_server.py             # FastAPI server mimicking main server API
-├── vlm_baseline.py           # VLM preference logic (Gemini/GPT-4V)
-├── test_vlm.py              # Setup validation script
-├── pyproject.toml           # Minimal dependencies
+├── eval_config.yaml         # RL-VLM-F evaluation config (1 frame per trajectory)
+├── vlm_server.py             # FastAPI server (drop-in replacement for server.py)
+├── vlm_baseline.py           # VLM preference logic (Gemini/GPT-4V) 
+├── pyproject.toml           # Minimal dependencies (no GPU required)
 ├── README.md                # This file
 └── vlm_eval_logs/           # Detailed evaluation logs (auto-created)
     ├── vlm_eval_YYYYMMDD_HHMMSS.json    # JSON logs with VLM responses
@@ -31,26 +30,30 @@ python test_vlm.py
 
 ## Usage
 
-### Quick Test (5 samples)
-```bash
-cd evals/baselines/rlvlmf_base
-uv run python vlm_server.py --task "pick up red block" --port 8002
-
-# In another terminal
-cd /path/to/reward_fm
-source .venv/bin/activate
-python evals/run_model_eval.py --config_path evals/eval_config_local.yaml --server_url http://localhost:8002 --num_batches 1 --batch_size 1
-```
-
-### Baseline Comparison (100 samples)
+### Start VLM Server (standalone)
 ```bash
 cd evals/baselines/rlvlmf_base
 uv run python vlm_server.py --task "robot manipulation" --port 8002
+```
 
-# In another terminal  
-cd /path/to/reward_fm
-source .venv/bin/activate
+### Run Evaluation
+
+#### Option 1: Use dedicated RL-VLM-F config (recommended for baseline)
+```bash
+# RL-VLM-F baseline evaluation (1 frame per trajectory)
 python evals/run_model_eval.py --config_path evals/baselines/rlvlmf_base/eval_config.yaml --server_url http://localhost:8002 --num_batches 10 --batch_size 10
+
+# Quick test
+python evals/run_model_eval.py --config_path evals/baselines/rlvlmf_base/eval_config.yaml --server_url http://localhost:8002 --num_batches 2 --batch_size 5
+```
+
+#### Option 2: Override main config  
+```bash
+# Override frame count in main config
+python evals/run_model_eval.py --config_path rfm/configs/config.yaml --server_url http://localhost:8002 --num_batches 10 --batch_size 10 --set data.max_frames=1
+
+# Multi-frame comparison with main config
+python evals/run_model_eval.py --config_path rfm/configs/config.yaml --server_url http://localhost:8002 --num_batches 10 --batch_size 10 --set data.max_frames=3
 ```
 
 ### Temporal Experiments (EXPERIMENTAL)

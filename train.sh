@@ -12,5 +12,5 @@ accelerate launch \
     --data.resized_height 128 \
     --data.resized_width 128 \
     --data.force_reprocess false \
-    --logging.use_wandb false \
-    --debug true
+    --logging.use_wandb true \
+    --debug false

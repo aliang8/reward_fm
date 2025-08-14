@@ -26,8 +26,8 @@ class DataGenerator:
     
     def __init__(
         self,
-        dataset_path: str = "rfm_dataset",
-        dataset_subsets: List[str] = ["libero"],
+        datasets: List[str],
+        subsets: List[str],
         preference_dataset_path: Optional[str] = None,
         preference_dataset_subset: Optional[str] = None,
         preference_ratio: float = 0.5,
@@ -58,8 +58,13 @@ class DataGenerator:
             debug: Whether to enable debug mode (reduces dataset size, enables debug features)
             force_reprocess: Whether to force reprocessing of dataset even if cached version exists
         """
-        self.dataset_path = dataset_path
-        self.dataset_subsets = dataset_subsets
+        # Validate that datasets and subsets have the same length
+        if len(datasets) != len(subsets):
+            raise ValueError(f"datasets and subsets must have the same length. Got {len(datasets)} datasets and {len(subsets)} subsets")
+        
+        self.datasets = datasets
+        self.subsets = subsets
+        
         self.preference_dataset_path = preference_dataset_path
         self.preference_dataset_subset = preference_dataset_subset
         self.preference_ratio = preference_ratio
@@ -186,8 +191,8 @@ class DataGenerator:
         
         # Stack frames into tensor and convert to numpy
         # Each frame["data"] should be HxWxC, stacking gives TxHxWxC
-        # frames_tensor = torch.stack([frame["data"] for frame in all_frames])
-        frames_tensor = torch.stack(all_frames)
+        frames_tensor = torch.stack([frame["data"] for frame in all_frames])
+        # frames_tensor = torch.stack(all_frames)
         frames_array = frames_tensor.numpy()
         
         # Ensure we have the correct shape: (T, H, W, C)
@@ -339,14 +344,15 @@ class DataGenerator:
     
     def _load_trajectory_dataset(self):
         """Load the trajectory dataset from disk or hub."""
-        rank_0_print(f"Loading trajectory dataset from: {self.dataset_path}")
+        rank_0_print(f"Loading {len(self.datasets)} datasets with corresponding subsets")
         
-        # Load multiple subsets and combine them
+        # Load multiple datasets and subsets
         all_datasets = []
         
-        for dataset_name in self.dataset_subsets:
-            rank_0_print(f"Loading dataset: {dataset_name}")
-            dataset = self._load_dataset_from_path(self.dataset_path, dataset_name)
+        for i, (dataset_path, subset) in enumerate(zip(self.datasets, self.subsets)):
+            rank_0_print(f"Loading dataset {i+1}/{len(self.datasets)}: {dataset_path} with subset: {subset}")
+            
+            dataset = self._load_dataset_from_path(dataset_path, subset)
             
             # Handle DatasetDict by accessing the train split
             if hasattr(dataset, 'keys') and 'train' in dataset:
@@ -370,7 +376,7 @@ class DataGenerator:
                 rank_0_print(f"  Empty dataset, skipping frame processing")
             
             all_datasets.append(dataset)
-            rank_0_print(f"  Loaded {len(dataset)} trajectories from dataset '{dataset_name}'")
+            rank_0_print(f"  Loaded {len(dataset)} trajectories from {dataset_path}/{subset}")
         
         # Combine all datasets
         if len(all_datasets) == 1:
@@ -378,7 +384,7 @@ class DataGenerator:
         else:
             self.trajectories = concatenate_datasets(all_datasets)
         
-        rank_0_print(f"Combined {len(self.trajectories)} total trajectories from {len(self.dataset_subsets)} datasets")
+        rank_0_print(f"Combined {len(self.trajectories)} total trajectories from {len(self.datasets)} datasets")
     
     def _load_preference_dataset(self):
         """Load the preference dataset from disk or hub if provided."""
@@ -1040,10 +1046,8 @@ def test():
     
     # Create data generator
     generator = DataGenerator(
-        # dataset_path="aliangdw/rfm",
-        # dataset_subsets=["libero_10"],
-        dataset_path="abraranwar/libero_rfm",
-        dataset_subsets=["libero_10"],
+        datasets=["abraranwar/libero_rfm"],
+        subsets=["libero_10"],
         preference_ratio=0.5,
         similarity_ratio=0.5,
         shuffle=True,

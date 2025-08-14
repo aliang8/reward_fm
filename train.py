@@ -85,12 +85,13 @@ def train(cfg: ExperimentConfig):
 
     # Apply PEFT if enabled
     peft_rfm_model = setup_peft_model(rfm_model, cfg)
-    
+
     # Create training arguments from config
     if cfg.debug:
         cfg.training.save_steps = 2 
         cfg.training.logging_steps = 2
         cfg.training.eval_steps = 2
+        cfg.data.eval_subset_size = 10
 
     training_args = create_training_arguments(cfg, cfg.training.output_dir)
     
@@ -110,7 +111,7 @@ def train(cfg: ExperimentConfig):
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=batch_collator,
-        beta=cfg.training.beta,
+        config=cfg,
     )
   
     if is_rank_0():
@@ -134,83 +135,6 @@ def train(cfg: ExperimentConfig):
     trainer.train(resume_from_checkpoint=cfg.training.resume_from_checkpoint)
     trainer.save_model(cfg.training.output_dir)
     rank_0_print(f"Training complete! Check {cfg.training.output_dir} for checkpoints and final model.")
-
-
-def evaluate(cfg: ExperimentConfig):
-    """Evaluate the trained RFM model using a subset of training data"""
-    rank_0_print("--- Evaluating RFM Model ---")
-    
-    # Use the shared function to set up model and processor
-    processor, rfm_model = setup_model_and_processor(cfg)
-    
-    # Apply PEFT configuration (same as training) to ensure parameter groups match
-    model = setup_peft_model(rfm_model, cfg)
-    
-    # Create DataGenerator for evaluation using shared utility
-    eval_data_generator = setup_data_generator(cfg)
-    
-    rank_0_print(f"Using DataGenerator for evaluation with {cfg.evaluation.eval_subset_size} examples")
-    
-    # Create evaluation dataset using infinite generation
-    eval_dataset = InfiniteDataGeneratorDataset(eval_data_generator, max_samples=cfg.evaluation.eval_subset_size)
-    
-    # Use the shared function to create training arguments for evaluation
-    eval_args = create_training_arguments(cfg, "./eval_output", is_eval=True)
-    
-    # Use the shared utilities for batch collator
-    batch_collator = setup_batch_collator(processor, cfg)
-    
-    # Initialize the Trainer
-    trainer = RFMTrainer(
-        model=model,  # Use the PEFT-configured model
-        args=eval_args,
-        train_dataset=eval_dataset,
-        eval_dataset=eval_dataset,
-        data_collator=batch_collator,
-        beta=cfg.training.beta,
-        compute_metrics=compute_metrics,  # Pass the compute_metrics function
-    )
-    
-    # Load the checkpoint using trainer's resume_from_checkpoint feature
-    # This will automatically load all weights including the base model into RFMModel
-    rank_0_print(f"Loading checkpoint from: {cfg.evaluation.model_path}")
-    
-    # Now that training arguments match, we can use resume_from_checkpoint safely
-    trainer.train(resume_from_checkpoint=cfg.evaluation.model_path)
-    
-    # Run evaluation using trainer's evaluation infrastructure
-    rank_0_print("Running evaluation...")
-    
-    # Use trainer's evaluation method which properly handles FSDP
-    eval_results = trainer.evaluate()
-    
-    # Only the main process should print the results
-    if trainer.is_world_process_zero():
-        rank_0_print(f"Evaluation results: {eval_results}")
-        rank_0_print("\n=== Evaluation Results ===")
-        
-        # Helper function to safely format metrics
-        def safe_format(metric_name, default_value=0.0):
-            value = eval_results.get(metric_name, default_value)
-            if isinstance(value, (int, float)):
-                return f"{value:.6f}"
-            else:
-                return str(value)
-        
-        rank_0_print(f"Evaluation Loss: {safe_format('eval_loss')}")
-        rank_0_print(f"Accuracy (B > C): {safe_format('eval_accuracy')} ({safe_format('eval_accuracy', 0)}%)")
-        rank_0_print(f"Average Reward Difference (B - C): {safe_format('eval_reward_diff')}")
-        rank_0_print(f"Average Reward for B (chosen): {safe_format('eval_avg_reward_chosen')}")
-        rank_0_print(f"Average Reward for C (rejected): {safe_format('eval_avg_reward_rejected')}")
-        
-        # Print interpretation
-        accuracy = eval_results.get('eval_accuracy', 0)
-        if isinstance(accuracy, (int, float)) and accuracy > 0.5:
-            rank_0_print(f"✅ Model correctly prefers B over C in {accuracy*100:.1f}% of cases")
-        else:
-            rank_0_print(f"❌ Model incorrectly prefers C over B in {(1-accuracy)*100:.1f}% of cases")
-    
-    return eval_results
 
 
 def display_config(cfg: ExperimentConfig):
@@ -239,8 +163,10 @@ def display_config(cfg: ExperimentConfig):
     table.add_row("Model", "Trust Remote Code", str(cfg.model.trust_remote_code))
     
     # Data config
-    table.add_row("Data", "Dataset Path", cfg.data.dataset_path)
-    table.add_row("Data", "Dataset Subsets", ", ".join(cfg.data.dataset_subsets))
+    table.add_row("Data", "Training Datasets", ", ".join(cfg.data.train_datasets))
+    table.add_row("Data", "Training Subsets", ", ".join(cfg.data.train_subsets))
+    table.add_row("Data", "Eval Datasets", ", ".join(cfg.data.eval_datasets))
+    table.add_row("Data", "Eval Subsets", ", ".join(cfg.data.eval_subsets))
     table.add_row("Data", "Max Frames", str(cfg.data.max_frames))
     table.add_row("Data", "Video Frame Sampling", cfg.data.video_frame_sampling)
     table.add_row("Data", "Resized Height", str(cfg.data.resized_height))
@@ -294,10 +220,7 @@ def display_config(cfg: ExperimentConfig):
     # Evaluation config (if applicable)
     if cfg.mode == "evaluate":
         table.add_row("Evaluation", "Model Path", cfg.evaluation.model_path)
-        table.add_row("Evaluation", "Eval Subset Size", str(cfg.evaluation.eval_subset_size))
-        table.add_row("Evaluation", "Eval Dataset Path", cfg.evaluation.eval_dataset_path)
-        table.add_row("Evaluation", "Eval Base Directory", cfg.evaluation.eval_base_dir)
-        table.add_row("Evaluation", "Eval Dataset Subsets", ", ".join(cfg.evaluation.eval_dataset_subsets))
+        table.add_row("Evaluation", "Eval Subset Size", str(cfg.data.eval_subset_size))
     
     console.print(table)
 
@@ -311,12 +234,6 @@ def main(cfg: ExperimentConfig):
         if is_rank_0():
             rprint(Panel.fit("🚀 Starting RFM Training", style="bold green"))
         train(cfg)
-        
-    elif cfg.mode == "evaluate":
-        if is_rank_0():
-            rprint(Panel.fit("🔍 Starting RFM Evaluation", style="bold blue"))
-        evaluate(cfg)
-        
     else:
         raise ValueError(f"Unknown mode: {cfg.mode}. Must be 'train' or 'evaluate'")
 

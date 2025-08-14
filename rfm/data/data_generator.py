@@ -177,8 +177,43 @@ class DataGenerator:
             return np.array([])
         
         # Stack frames into tensor and convert to numpy
-        # Each frame["data"] should be HxWxC, stacking gives TxHxWxC
-        frames_tensor = torch.stack([frame["data"] for frame in all_frames])
+        # Handle different frame structures from VideoDecoder
+        try:
+            # Try the original structure first: frame["data"]
+            frames_tensor = torch.stack([frame["data"] for frame in all_frames])
+        except (KeyError, IndexError) as e:
+            # If that fails, frames might be direct tensors
+            try:
+                frames_tensor = torch.stack(all_frames)
+            except Exception as e2:
+                # If still fails, try to handle as numpy arrays
+                try:
+                    frames_list = []
+                    for frame in all_frames:
+                        if isinstance(frame, dict):
+                            # Try different possible keys
+                            if "data" in frame:
+                                frames_list.append(torch.from_numpy(frame["data"]) if isinstance(frame["data"], np.ndarray) else frame["data"])
+                            elif "image" in frame:
+                                frames_list.append(torch.from_numpy(frame["image"]) if isinstance(frame["image"], np.ndarray) else frame["image"])
+                            else:
+                                # Use the first tensor/array value in the dict
+                                for v in frame.values():
+                                    if isinstance(v, (torch.Tensor, np.ndarray)):
+                                        frames_list.append(torch.from_numpy(v) if isinstance(v, np.ndarray) else v)
+                                        break
+                        else:
+                            # Frame is directly a tensor or array
+                            frames_list.append(torch.from_numpy(frame) if isinstance(frame, np.ndarray) else frame)
+                    frames_tensor = torch.stack(frames_list)
+                except Exception as e3:
+                    print(f"Error processing video frames: {e3}")
+                    print(f"Frame structure: {type(all_frames[0]) if all_frames else 'No frames'}")
+                    if all_frames:
+                        print(f"First frame keys: {list(all_frames[0].keys()) if isinstance(all_frames[0], dict) else 'Not a dict'}")
+                        print(f"First frame shape: {all_frames[0].shape if hasattr(all_frames[0], 'shape') else 'No shape'}")
+                    return np.array([])
+        
         frames_array = frames_tensor.numpy()
         
         # Ensure we have the correct shape: (T, H, W, C)
@@ -421,10 +456,9 @@ class DataGenerator:
             dataset_name = dataset_path.split("/")[-1]
 
             def patch_path(old_path):
-                # RFM_DATASET_PATH is set in the environment variable
-                # root_dir = os.environ.get("RFM_DATASET_PATH")
-                root_dir = f"/workspace/vlm_reward_model/rfm_dataset/{dataset_name}"
-                return f"{root_dir}/{old_path}"       # e.g., "./videos/trajectory_0000.mp4"
+                # Use local dataset path instead of hardcoded Docker path
+                root_dir = os.path.join(os.getcwd(), "rfm_dataset", dataset_name)
+                return os.path.join(root_dir, old_path)       # e.g., "./videos/trajectory_0000.mp4"
             
             ds = load_dataset(dataset_path, name=subset, split="train")
             ds = ds.map(lambda x: {"frames_path": patch_path(x["frames"])})

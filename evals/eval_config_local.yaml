@@ -1,0 +1,40 @@
+# Local evaluation config with path fix
+mode: "evaluate"
+debug: false
+
+model:
+  base_model_id: "Qwen/Qwen2.5-VL-3B-Instruct"
+  torch_dtype: "bfloat16"
+  trust_remote_code: true
+
+data:
+  # Use HuggingFace Hub but with local path override
+  dataset_path: "abraranwar/libero_rfm"
+  dataset_subsets: ["libero_10"]
+  
+  # Evaluation settings
+  eval_dataset_path: "abraranwar/libero_rfm"
+  eval_dataset_subsets: ["libero_10"]
+  eval_subset_size: 5  # Very small for testing
+  
+  # Video processing
+  max_frames: 3  # Reduce frames for faster processing
+  video_frame_sampling: "uniform"
+  resized_height: 128
+  resized_width: 128
+  
+  # Data generation
+  preference_ratio: 1.0  # Only preferences for VLM testing
+  similarity_ratio: 0.0
+  dataset_preference_ratio: 1.0
+  shuffle: true
+  seed: 42
+  num_proc: 1
+  force_reprocess: false
+  
+  # Data loading
+  dataloader_pin_memory: false
+  dataloader_num_workers: 0
+
+training:
+  output_dir: "./logs/eval" 

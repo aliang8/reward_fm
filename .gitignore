@@ -24,3 +24,4 @@ rfm_dataset/*
 rfm_visualizer/
 uv.lock
 evals/baselines/rlvlmf_base/vlm_eval_logs/*
+RL-VLM-F/

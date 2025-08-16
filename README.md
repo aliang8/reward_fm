@@ -184,7 +184,7 @@ Start the server (optionally override YAML fields with --set):
 uv run evals/qwen_server.py \
   --config_path=rfm/configs/config.yaml \
   --host=0.0.0.0 --port=8000 \
-  --set 'evaluation.model_path="aliangdw/rfm_v0"'
+  --set 'evaluation.model_path="aliangdw/rfm_v1"'
 ```
 
 Run the external client to send video batches and receive metrics:

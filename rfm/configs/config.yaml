@@ -30,16 +30,16 @@ data:
     - "abraranwar/libero_rfm"
     - "ykorkmaz/libero_failure_rfm"
   train_subsets:
-    - "libero_90"
-    - "libero_90_failure"
+    - ["libero_90"]
+    - ["libero_90_failure"]
   
   # Evaluation dataset settings
   eval_datasets :
     - "abraranwar/libero_rfm"
     - "ykorkmaz/libero_failure_rfm"
   eval_subsets:
-    - "libero_10"
-    - "libero_10_failure"
+    - ["libero_10", "libero_goal", "libero_object", "libero_spatial"]
+    - ["libero_10_failure"]
   eval_subset_size: 1000  # Number of evaluation examples
   
   # Video processing settings

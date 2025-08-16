@@ -25,3 +25,4 @@ rfm_visualizer/
 uv.lock
 visualizer/
 *.log
+old/

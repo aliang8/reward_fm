@@ -4,12 +4,12 @@ FastAPI server to evaluate RFM model batches.
 
 Endpoint:
   POST /evaluate_batch
-Payload schema:
+Request payload (JSON):
   {
     "samples": [
       {
         "task": str,
-        "prediction_type": "preference",  # currently required
+        "prediction_type": "preference",
         "chosen_frames_b64": [str, ...],
         "rejected_frames_b64": [str, ...],
         "target_progress_A": [float, ...] | null,
@@ -19,12 +19,12 @@ Payload schema:
     ]
   }
 
-Returns per-sample outputs so the client can compute aggregate metrics:
-  - predictions: List[int] (1 if chosen preferred, else 0)
-  - reward_chosen: List[List[float]] (per-frame rewards from progress head for chosen trajectory; maps to A)
-  - reward_rejected: List[List[float]] (per-frame rewards from progress head for rejected trajectory; maps to B)
-  - progress_pred_A: List[List[float]] (per-sample progress predictions for A)
-  - progress_pred_B: List[List[float]] (per-sample progress predictions for B)
+Response payload (JSON), per-sample outputs for client-side aggregation:
+  {
+    "predictions": List[int],              # 1 if chosen preferred, else 0
+    "reward_chosen": List[List[float]],    # per-frame rewards for chosen (maps to progress head A)
+    "reward_rejected": List[List[float]]   # per-frame rewards for rejected (maps to progress head B)
+  }
 
 e.g.: uv run /home/jessez/reward_fm/evals/server.py --config_path=/home/jessez/reward_fm/rfm/configs/config.yaml --host=0.0.0.0 --port=8000
 """

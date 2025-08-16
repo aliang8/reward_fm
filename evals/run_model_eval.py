@@ -39,9 +39,12 @@ from evals.eval_utils import (
 )
 
 KEY_TO_MEANING = {
-    "predictions": "Preference predictions for each sample in the batch (1 if chosen preferred, else 0, -1 means no preference)",
-    "reward_chosen": "List of list of per-frame rewards for the chosen trajectory",
-    "reward_rejected": "List of list of per-frame rewards for the rejected trajectory",
+    "eval_loss": "Loss",
+    "eval_accuracy": "Accuracy of Predicting the Correct Preference",
+    "eval_reward_diff": "Reward Difference between Chosen and Rejected",
+    "eval_avg_reward_chosen": "Average Reward Assigned to (Chosen)",
+    "eval_avg_reward_rejected": "Average Reward (Rejected)",
+    "demo_reward_alignment": "Spearman Correlation between Predicted Progress and Ground Truth Progress (per-frame ordering)",
 }
 
 
@@ -52,6 +55,7 @@ def _compute_metrics_from_response(samples: List[Any], resp: Dict[str, Any]) -> 
 
     n = max(1, len(preds))
     eval_accuracy = float(sum(1 for p in preds if int(p) == 1) / n)
+    # TODO: handle -1 response separately? only applies to models like RL-VLM-F now where no preference is an option
 
     flat_chosen = [x for seq in rewards_chosen for x in (seq or [])]
     flat_rejected = [x for seq in rewards_rejected for x in (seq or [])]
@@ -138,13 +142,12 @@ def iter_eval_all_preferences(
 
     data_generator = setup_eval_data_generator(cfg)
 
-    optimal = list(data_generator.get_optimal_trajectories())
-    suboptimal = list(data_generator.get_suboptimal_trajectories())
+    # Build flattened lists of indices from preprocessed maps
+    optimal_indices: List[int] = []
+    for inds in data_generator.optimal_by_task.values():
+        optimal_indices.extend(inds)
 
-    # Map task -> suboptimal list for quick lookup
-    subs_by_task: Dict[str, List[dict]] = {}
-    for traj in suboptimal:
-        subs_by_task.setdefault(traj["task"], []).append(traj)
+    subs_by_task_indices: Dict[str, List[int]] = data_generator.suboptimal_by_task
 
     def deserialize(frames, frames_shape):
         # Use data_generator's helper to deserialize bytes → np.ndarray
@@ -159,41 +162,42 @@ def iter_eval_all_preferences(
 
     # Build all PreferenceSample items
     samples: List[PreferenceSample] = []
-    for opt in optimal:
+    for opt_idx in optimal_indices:
+        opt = data_generator.dataset[opt_idx]
         task = opt["task"]
-        neg: Optional[dict] = None
-        # Prefer suboptimal from same task
-        candidates = [t for t in subs_by_task.get(task, []) if t["id"] != opt["id"]]
-        if candidates:
-            neg = candidates[0]
-        else:
-            # Fallback: rewind-generated negative
-            neg = data_generator._create_rewind_trajectory(opt)
 
-        # Deserialize frames once for both
-        opt_shape = opt.get("frames_shape")
-        rej_shape = neg.get("frames_shape")
-        opt_frames = deserialize(opt["frames"], opt_shape)
-        rej_frames = deserialize(neg["frames"], rej_shape)
+        # Prefer suboptimal from same task; choose any index != opt_idx
+        neg_idx: Optional[int] = None
+        cand_indices = [idx for idx in subs_by_task_indices.get(task, []) if idx != opt_idx]
+        if cand_indices:
+            neg_idx = cand_indices[0]
+            neg = data_generator.dataset[neg_idx]
+            # Load frames from npz
+            rej_frames = data_generator._load_frames_from_npz(neg["frames"])
+        else:
+            # Fallback: rewind-generated negative dict with numpy frames
+            neg = data_generator._create_rewind_trajectory(opt)
+            rej_frames = neg["frames"]
+
+        # Load optimal frames from npz
+        opt_frames = data_generator._get_trajectory_frames(opt_idx)
 
         # Target progress
-        tp_A = calc_progress(opt, opt_frames)
-        tp_B = calc_progress(neg, rej_frames)
+        tp_A = data_generator._calculate_target_progress(opt, opt_frames)
+        tp_B = data_generator._calculate_target_progress(neg, rej_frames)
 
-        # Normalize shapes to tuples
-        if isinstance(opt_shape, list):
-            opt_shape = tuple(opt_shape)
-        if isinstance(rej_shape, list):
-            rej_shape = tuple(rej_shape)
+        # Shapes
+        opt_shape = tuple(opt_frames.shape) if hasattr(opt_frames, "shape") else None
+        rej_shape = tuple(rej_frames.shape) if hasattr(rej_frames, "shape") else None
 
         samples.append(
             PreferenceSample(
-                id=str(opt["id"]),
-                task=str(opt["task"]),
+                id=str(opt.get("id")),
+                task=str(opt.get("task")),
                 lang_vector=opt.get("lang_vector"),
                 data_source=str(opt.get("data_source", "")),
-                frames=opt["frames"],
-                frames_shape=opt_shape,
+                frames=opt.get("frames"),
+                frames_shape=opt.get("frames_shape"),
                 quality_label=str(opt.get("quality_label", "successful")),
                 is_robot=bool(opt.get("is_robot", True)),
                 metadata=opt.get("metadata"),
@@ -202,13 +206,13 @@ def iter_eval_all_preferences(
                 chosen_frames_shape=opt_shape,
                 rejected_frames_shape=rej_shape,
                 preferred_trajectory="chosen",
-                chosen_id=str(opt["id"]),
-                rejected_id=str(neg["id"]),
-                rejected_task=str(neg["task"]),
-                rejected_lang_vector=neg.get("lang_vector"),
-                rejected_data_source=str(neg.get("data_source", "")),
-                rejected_quality_label=str(neg.get("quality_label", "")),
-                rejected_is_robot=bool(neg.get("is_robot", True)),
+                chosen_id=str(opt.get("id")),
+                rejected_id=str(neg.get("id")) if isinstance(neg, dict) else str(neg.get("id")),
+                rejected_task=str(neg.get("task")) if isinstance(neg, dict) else str(neg.get("task")),
+                rejected_lang_vector=neg.get("lang_vector") if isinstance(neg, dict) else neg.get("lang_vector"),
+                rejected_data_source=str(neg.get("data_source", "")) if isinstance(neg, dict) else str(neg.get("data_source", "")),
+                rejected_quality_label=str(neg.get("quality_label", "")) if isinstance(neg, dict) else str(neg.get("quality_label", "")),
+                rejected_is_robot=bool(neg.get("is_robot", True)) if isinstance(neg, dict) else bool(neg.get("is_robot", True)),
                 target_progress_A=tp_A,
                 target_progress_B=tp_B,
             )

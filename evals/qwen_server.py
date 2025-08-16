@@ -232,8 +232,6 @@ def create_app(cfg: ExperimentConfig):
                 "predictions": [],
                 "reward_chosen": [],
                 "reward_rejected": [],
-                "progress_pred_A": [],
-                "progress_pred_B": [],
             }
 
         batch_inputs = build_preference_batch(

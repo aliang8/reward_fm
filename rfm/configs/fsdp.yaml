@@ -23,7 +23,7 @@ fsdp_config:
   # Sharding strategy: FULL_SHARD is the most memory-efficient
   fsdp_sharding_strategy: FULL_SHARD # 1 for FULL_SHARD, 2 for SHARD_GRAD_OP
 
-  # CPU Offloading: Offload parameters and gradients to CPU RAM to save VRAM.
+# CPU Offloading: Offload parameters and gradients to CPU RAM to save VRAM.
   # This is crucial for fitting large models.
   fsdp_offload_params: true
 

@@ -20,279 +20,189 @@ import torch
 from rfm.data.batch_collator import BaseSample, PreferenceSample, SimilaritySample, BatchCollator
 from datasets import concatenate_datasets
 from rfm.utils.logging import rank_0_print
+from datasets import Dataset
+import json
+from rfm.utils.logging import timer
 
 class DataGenerator:
     """Data generator for producing batches of prediction data with controlled ratios."""
     
-    def __init__(
-        self,
-        datasets: List[str],
-        subsets: List[str],
-        preference_dataset_path: Optional[str] = None,
-        preference_dataset_subset: Optional[str] = None,
-        preference_ratio: float = 0.5,
-        similarity_ratio: float = 0.5,
-        max_frames: int = 32,
-        shuffle: bool = True,
-        seed: Optional[int] = None,
-        dataset_preference_ratio: float = 0.7,
-        num_proc: int = 1,
-        debug: bool = False,
-        force_reprocess: bool = False
-    ):
-        """
-        Initialize the data generator.
+    def __init__(self, config, is_evaluation=False):
+        """Initialize DataGenerator with configuration."""
+        self.config = config
+        self.is_evaluation = is_evaluation
         
-        Args:
-            dataset_path: Path to the HuggingFace dataset or dataset name
-            dataset_subsets: List of dataset names to load (e.g., ["libero", "droid"] or ["libero"])
-            preference_dataset_path: Optional path to preference dataset
-            preference_dataset_subset: Optional subset name for preference dataset
-            preference_ratio: Ratio of preference prediction samples (0.0 to 1.0)
-            similarity_ratio: Ratio of similarity scoring samples (0.0 to 1.0)
-            max_frames: Maximum frames per trajectory
-            shuffle: Whether to shuffle the data
-            seed: Random seed for reproducibility
-            dataset_preference_ratio: Ratio of preferences from dataset vs generated (0.0 to 1.0)
-            num_proc: Number of processes to use for dataset processing (default: 1)
-            debug: Whether to enable debug mode (reduces dataset size, enables debug features)
-            force_reprocess: Whether to force reprocessing of dataset even if cached version exists
-        """
-        # Validate that datasets and subsets have the same length
-        if len(datasets) != len(subsets):
-            raise ValueError(f"datasets and subsets must have the same length. Got {len(datasets)} datasets and {len(subsets)} subsets")
+        # Choose datasets based on whether this is for evaluation or training
+        if is_evaluation and config.data.eval_datasets:
+            self.datasets = config.data.eval_datasets
+            self.subsets = config.data.eval_subsets
+        else:
+            self.datasets = config.data.train_datasets
+            self.subsets = config.data.train_subsets
+            
+        self.force_reprocess = config.data.force_reprocess
         
-        self.datasets = datasets
-        self.subsets = subsets
+        # Initialize dataset and index mappings
+        self.dataset = None
+        self.robot_trajectories = []
+        self.human_trajectories = []
+        self.optimal_by_task = {}
+        self.suboptimal_by_task = {}
+        self.quality_indices = {}
+        self.task_indices = {}
+        self.source_indices = {}
         
-        self.preference_dataset_path = preference_dataset_path
-        self.preference_dataset_subset = preference_dataset_subset
-        self.preference_ratio = preference_ratio
-        self.similarity_ratio = similarity_ratio
-        self.max_frames = max_frames
-        self.shuffle = shuffle
-        self.seed = seed
-        self.dataset_preference_ratio = dataset_preference_ratio
-        self.num_proc = num_proc
-        self.debug = debug 
-        self.force_reprocess = force_reprocess
+        # Legacy attributes for compatibility
+        self.preferences = []
+        self.preference_ratio = config.data.preference_ratio
+        self.similarity_ratio = config.data.similarity_ratio
+        self.dataset_preference_ratio = config.data.dataset_preference_ratio
         
-        if seed is not None:
-            random.seed(seed)
-            np.random.seed(seed)
-        
-        # Load trajectory dataset (includes frame processing)
+        # Load trajectory dataset
         self._load_trajectory_dataset()
         
-        # Load preference dataset if provided
+        # Initialize preference and similarity datasets
         self._load_preference_dataset()
+        self._load_similarity_dataset()
         
-        # Group trajectories by task for efficient sampling
-        self._group_trajectories_by_task()
-        
-        # Preprocess trajectory categories for efficient sampling
-        self._preprocess_trajectory_categories()
-        
-        # Initialize sentence transformer model
-        self.lang_model = SentenceTransformer('all-MiniLM-L6-v2')
-        
-        # Initialize strategy tracking for debugging
-        self.strategy_counts = {
-            "rewind_same_task": 0,
-            "suboptimal_same_task": 0,
-            "different_task": 0,
-            "rewind_same_task_fallback": 0
-        }
-        
-        rank_0_print(f"DataGenerator initialized with {len(self.trajectories)} total trajectories")
-        rank_0_print(f"Loaded datasets: {dataset_subsets}")
-        if self.preferences:
-            rank_0_print(f"Loaded {len(self.preferences)} preference pairs")
-        rank_0_print(f"Ratios - Preference: {preference_ratio}, Similarity: {similarity_ratio}")
-        rank_0_print(f"Dataset preference ratio: {dataset_preference_ratio}")
+        rank_0_print(f"DataGenerator initialized with {len(self.dataset)} total trajectories")
+        rank_0_print(f"  Robot trajectories: {len(self.robot_trajectories)}")
+        rank_0_print(f"  Human trajectories: {len(self.human_trajectories)}")
+        rank_0_print(f"  Tasks: {len(self.task_indices)}")
+        rank_0_print(f"  Quality labels: {len(self.quality_indices)}")
+        rank_0_print(f"  Data sources: {len(self.source_indices)}")
     
-    def _serialize_frames(self, frames_array: np.ndarray) -> bytes:
-        """
-        Serialize frames array to bytes for efficient storage.
-        
-        Args:
-            frames_array: numpy array with shape (T, H, W, C)
-            
-        Returns:
-            Serialized bytes
-        """
-        if frames_array.size == 0:
-            return b''
-        return frames_array.tobytes()
-    
-    def _deserialize_frames(self, bytes_blob: bytes, shape: tuple = None) -> np.ndarray:
-        """
-        Deserialize bytes back to frames array.
-        
-        Args:
-            bytes_blob: Serialized bytes
-            shape: Expected shape of the frames array (T, H, W, C). If None, will try to infer.
-            
-        Returns:
-            Deserialized numpy array
-        """
-        if not bytes_blob:
-            return np.array([])
-        
-        # If shape is provided, use it directly
-        if shape is not None and len(shape) > 0:
-            try:
-                # Validate shape
-                if any(dim <= 0 for dim in shape):
-                    print(f"Warning: Invalid shape dimensions {shape}, falling back to inference")
-                else:
-                    return np.frombuffer(bytes_blob, dtype=np.uint8).reshape(shape)
-            except Exception as e:
-                print(f"Warning: Failed to reshape with provided shape {shape}: {e}")
-                # Fall back to inference
-        
-        # Try to infer shape if not provided (backward compatibility)
-        try:
-            total_elements = len(bytes_blob)
-            # Try to find a reasonable shape - assume square frames and 3 channels
-            for T in range(1, min(33, total_elements // 3 + 1)):
-                remaining = total_elements // T
-                if remaining % 3 == 0:  # Must be divisible by 3 for RGB
-                    H = W = int(np.sqrt(remaining // 3))
-                    if H * H * 3 * T == total_elements:
-                        return np.frombuffer(bytes_blob, dtype=np.uint8).reshape(T, H, W, 3)
-            
-            # If no reasonable shape found, return as 1D array
-            return np.frombuffer(bytes_blob, dtype=np.uint8)
-        except Exception as e:
-            print(f"Warning: Failed to infer shape: {e}")
-            return np.frombuffer(bytes_blob, dtype=np.uint8)
-    
-    def _preprocess_videos(self, frames, num_frames: int = 32) -> np.ndarray:
-        """
-        Downsample frames to the specified number using uniform sampling and pad to max_frames.
-        
-        Args:
-            frames: VideoReader object from HuggingFace Video feature
-            num_frames: Number of frames to extract (default: 32)
-            
-        Returns:
-            frames as numpy arrays with shape (max_frames, H, W, C) where T is time dimension
-        """
-        if not frames:
-            return np.array([])
-        
-        # Convert VideoReader to list of frames
-        all_frames = list(frames)
-        total_frames = len(all_frames)
-        
-        if total_frames == 0:
-            return np.array([])
-        
-        # Stack frames into tensor and convert to numpy
-        # Each frame["data"] should be HxWxC, stacking gives TxHxWxC
-        frames_tensor = torch.stack([frame["data"] for frame in all_frames])
-        # frames_tensor = torch.stack(all_frames)
-        frames_array = frames_tensor.numpy()
-        
-        # Ensure we have the correct shape: (T, H, W, C)
-        if len(frames_array.shape) != 4:
-            raise ValueError(f"Expected 4D array (T, H, W, C), got shape {frames_array.shape}")
-        
-        # Convert from CxHxW to HxWxC
-        if frames_array.shape[1] == 3:
-            frames_array = np.transpose(frames_array, (0, 2, 3, 1))
-
-        if total_frames <= num_frames:
-            # If video has fewer frames than requested, pad with last frame
-            if total_frames < num_frames:
-                last_frame = frames_array[-1]  # Get the last frame
-                padding_frames = np.repeat(last_frame[np.newaxis, :, :, :], num_frames - total_frames, axis=0)
-                frames_array = np.concatenate([frames_array, padding_frames], axis=0)
-            return frames_array
+    def _load_trajectory_dataset(self):
+        """Load trajectory dataset using preprocessed index-based cache."""
+        if self.is_evaluation:
+            cache_dir = f"./processed_datasets/eval_cache"
+            cache_type = "evaluation"
         else:
-            # Uniform sampling across the video
-            frame_indices = [int(i * total_frames / num_frames) for i in range(num_frames)]
-            return frames_array[frame_indices]
-
-        return frames_array
+            cache_dir = f"./processed_datasets/train_cache"
+            cache_type = "training"
+        
+        # Check if preprocessed cache exists
+        if os.path.exists(cache_dir) and not self.force_reprocess:
+            rank_0_print(f"Found preprocessed {cache_type} cache at {cache_dir}, loading...")
+            try:
+                self._load_preprocessed_cache(cache_dir, is_training=not self.is_evaluation)
+                rank_0_print(f"Successfully loaded preprocessed {cache_type} cache with {len(self.dataset)} trajectory indices")
+            except Exception as e:
+                rank_0_print(f"Failed to load preprocessed {cache_type} cache: {e}, will reprocess datasets")
+                # Remove corrupted cache
+                shutil.rmtree(cache_dir, ignore_errors=True)
+                raise RuntimeError(
+                    f"{cache_type.capitalize()} dataset preprocessing required. Please run:\n"
+                    "python preprocess_datasets.py\n"
+                    "This will create the necessary index-based cache for efficient data loading."
+                )
+        else:
+            # If no cache exists, we need to run the preprocessor first
+            rank_0_print(f"No preprocessed {cache_type} cache found. Please run preprocess_datasets.py first to create the cache.")
+            raise RuntimeError(
+                f"{cache_type.capitalize()} dataset preprocessing required. Please run:\n"
+                "python preprocess_datasets.py\n"
+                "This will create the necessary index-based cache for efficient data loading."
+            )
     
-    def _process_dataset_videos_map(self, dataset):
-        """
-        Process dataset frames using .map() method for efficient on-the-fly processing.
+    def _load_preprocessed_cache(self, cache_dir: str, is_training: bool = True):
+        """Load the preprocessed cache with index mappings."""
+        # Load the processed dataset
+        dataset_cache_dir = os.path.join(cache_dir, "processed_dataset")
+        self.dataset = Dataset.load_from_disk(dataset_cache_dir)
+
+        # Load index mappings
+        mappings_file = os.path.join(cache_dir, "index_mappings.json")
+        with open(mappings_file, 'r') as f:
+            index_mappings = json.load(f)
+        
+        # Store the index mappings for fast access
+        self.robot_trajectories = index_mappings['robot_trajectories']
+        self.human_trajectories = index_mappings['human_trajectories']
+        self.optimal_by_task = index_mappings['optimal_by_task']
+        self.suboptimal_by_task = index_mappings['suboptimal_by_task']
+        self.quality_indices = index_mappings['quality_indices']
+        self.task_indices = index_mappings['task_indices']
+        self.source_indices = index_mappings['source_indices']
+        
+        dataset_type = "training" if is_training else "evaluation"
+        rank_0_print(f"Loaded {len(self.dataset)} trajectory indices from preprocessed {dataset_type} cache")
+    
+    def _load_frames_from_npz(self, npz_filepath: str) -> np.ndarray:
+        """Load frames on-demand from npz file.
         
         Args:
-            dataset: HuggingFace dataset containing trajectories
+            npz_filepath: Path to the .npz file containing frames
             
         Returns:
-            Dataset with processed frames
+            numpy array with shape (T, H, W, C) containing the video frames
         """
-        # Check if frames are already processed (serialized bytes or numpy arrays)
-        sample_item = dataset[0]
-        frames_data = sample_item.get('frames')
+        if not npz_filepath or not os.path.exists(npz_filepath):
+            raise ValueError(f"NPZ file not found: {npz_filepath}")
         
-        if (isinstance(frames_data, bytes) or isinstance(frames_data, np.ndarray)) and not self.force_reprocess:
-            rank_0_print("Frames already processed, skipping downsampling.")
-            return dataset
-        elif self.force_reprocess and (isinstance(frames_data, bytes) or isinstance(frames_data, np.ndarray)):
-            rank_0_print("Force reprocessing enabled. Reprocessing frames despite being already processed.")
+        try:
+            # Load frames from npz file
+            with np.load(npz_filepath) as data:
+                frames = data['frames']
+                # Verify the data structure
+                if 'shape' in data:
+                    expected_shape = tuple(data['shape'])
+                    if frames.shape != expected_shape:
+                        rank_0_print(f"Warning: Loaded frames shape {frames.shape} doesn't match expected {expected_shape}")
+                
+                return frames
+        except Exception as e:
+            rank_0_print(f"Error loading frames from {npz_filepath}: {e}")
+            raise RuntimeError(f"Failed to load frames from {npz_filepath}: {e}")
+    
+    def _get_trajectory_frames(self, trajectory_idx: int) -> np.ndarray:
+        """Get frames for a trajectory by index, loading from npz if needed.
         
-        rank_0_print("Downsampling video frames using .map()...")
-        
-        def process_videos(example):
-            """Downsample frames in a single example and serialize."""
-            frames = example.get('frames_path')
-            frames_array = self._preprocess_videos(frames, self.max_frames)
+        Args:
+            trajectory_idx: Index of the trajectory in the dataset
             
-            # Store the shape information for later deserialization
-            frames_shape = frames_array.shape
+        Returns:
+            numpy array with shape (T, H, W, C) containing the video frames
+        """
+        trajectory = self.dataset[trajectory_idx]
+        npz_filepath = trajectory.get('frames')
+        
+        if not npz_filepath:
+            raise ValueError(f"No frames path found for trajectory {trajectory_idx}")
+        
+        return self._load_frames_from_npz(npz_filepath)
+    
+    def _get_batch_frames(self, trajectory_indices: List[int]) -> List[np.ndarray]:
+        """Get frames for multiple trajectories efficiently.
+        
+        Args:
+            trajectory_indices: List of trajectory indices to load
             
-            # Serialize frames to bytes for efficient storage
-            frames_bytes = self._serialize_frames(frames_array)
-            
-            # Update the example with serialized frames and shape information
-            del example["frames_path"]
-            example["frames"] = frames_bytes
-            example["frames_shape"] = frames_shape  # Store shape for later use
-            return example
+        Returns:
+            List of numpy arrays with shapes (T, H, W, C) for each trajectory
+        """
+        frames_list = []
+        for idx in trajectory_indices:
+            try:
+                frames = self._get_trajectory_frames(idx)
+                frames_list.append(frames)
+            except Exception as e:
+                rank_0_print(f"Warning: Failed to load frames for trajectory {idx}: {e}")
+                # Return empty frames as fallback
+                frames_list.append(np.array([]))
         
-        # Apply the mapping function to the dataset
-        processed_dataset = dataset.map(
-            process_videos,
-            desc="Processing videos",
-            num_proc=self.num_proc
-        )
-
-        rank_0_print(f"Frame downsampling complete. Each trajectory now has {self.max_frames} frames.")
-        
-        # Save the processed dataset to disk for future fast loading
-        cache_dir = f"./processed_datasets/{self.dataset_path.replace('/', '_')}_{self.max_frames}frames"
-        rank_0_print(f"Saving processed dataset to {cache_dir} for future fast loading...")
-        processed_dataset.save_to_disk(cache_dir)
-        rank_0_print(f"Processed dataset saved to {cache_dir}")
-        
-        return processed_dataset
+        return frames_list
     
     def _create_rewind_trajectory(self, original_traj: Dict) -> Dict:
         """Create a suboptimal trajectory by rewinding the original trajectory."""
-        frames_data = original_traj['frames']
-        
-        # Deserialize frames if they're bytes
-        if isinstance(frames_data, bytes):
-            # Get the stored shape if available
-            frames_shape = original_traj.get('frames_shape')
-            # Convert to tuple if it's a list
-            if isinstance(frames_shape, list):
-                frames_shape = tuple(frames_shape)
-            frames = self._deserialize_frames(frames_data, shape=frames_shape)
-        else:
-            frames = frames_data
+        # Load frames from npz file
+        frames_data = self._load_frames_from_npz(original_traj['frames'])
         
         # Get the number of frames
-        if hasattr(frames, 'shape'):
-            num_frames = frames.shape[0]  # Use shape[0] for numpy array
+        if hasattr(frames_data, 'shape'):
+            num_frames = frames_data.shape[0]  # Use shape[0] for numpy array
         else:
-            num_frames = len(frames)
+            num_frames = len(frames_data)
         
         if num_frames < 4:
             # If trajectory is too short, just return the original
@@ -308,7 +218,7 @@ class DataGenerator:
             end_idx = random.randint(num_frames // 2, num_frames)
         
         # Extract forward segment
-        forward_frames = frames[start_idx:end_idx]
+        forward_frames = frames_data[start_idx:end_idx]
         # Progress should be relative to original trajectory, not just the segment
         forward_progress = [(start_idx + i + 1) / num_frames for i in range(end_idx - start_idx)]
         
@@ -342,206 +252,33 @@ class DataGenerator:
         
         return rewind_traj
     
-    def _load_trajectory_dataset(self):
-        """Load the trajectory dataset from disk or hub."""
-        rank_0_print(f"Loading {len(self.datasets)} datasets with corresponding subsets")
+    def _create_preference_sample_from_dataset(self) -> PreferenceSample:
+        """Create a preference sample from the loaded preference dataset."""
+        if not self.preferences:
+            raise ValueError("No preferences loaded from dataset")
         
-        # Load multiple datasets and subsets
-        all_datasets = []
+        # For now, return a simple preference sample
+        # This can be enhanced later when we have actual preference data
+        preference = random.choice(self.preferences)
         
-        for i, (dataset_path, subset) in enumerate(zip(self.datasets, self.subsets)):
-            rank_0_print(f"Loading dataset {i+1}/{len(self.datasets)}: {dataset_path} with subset: {subset}")
-            
-            dataset = self._load_dataset_from_path(dataset_path, subset)
-            
-            # Handle DatasetDict by accessing the train split
-            if hasattr(dataset, 'keys') and 'train' in dataset:
-                rank_0_print(f"  Found DatasetDict with train split, accessing train data...")
-                dataset = dataset['train']
-            
-            # Check if frames need processing by examining the first sample
-            if len(dataset) > 0:
-                sample_item = dataset[0]
-                frames_data = sample_item.get('frames')
-                
-                # If frames are already numpy arrays, skip processing
-                if isinstance(frames_data, np.ndarray):
-                    rank_0_print(f"  Frames already processed (numpy arrays), skipping frame processing")
-                elif isinstance(frames_data, bytes):
-                    rank_0_print(f"  Frames are serialized bytes, will be deserialized on-demand")
-                else:
-                    rank_0_print(f"  Frames need processing, applying .map()...")
-                    dataset = self._process_dataset_videos_map(dataset)
-            else:
-                rank_0_print(f"  Empty dataset, skipping frame processing")
-            
-            all_datasets.append(dataset)
-            rank_0_print(f"  Loaded {len(dataset)} trajectories from {dataset_path}/{subset}")
-        
-        # Combine all datasets
-        if len(all_datasets) == 1:
-            self.trajectories = all_datasets[0]
-        else:
-            self.trajectories = concatenate_datasets(all_datasets)
-        
-        rank_0_print(f"Combined {len(self.trajectories)} total trajectories from {len(self.datasets)} datasets")
+        # This is a placeholder - would need to be implemented based on actual preference data structure
+        raise NotImplementedError("Preference sample creation from dataset not yet implemented")
     
     def _load_preference_dataset(self):
         """Load the preference dataset from disk or hub if provided."""
         self.preferences = []
         
-        if not self.preference_dataset_path:
-            rank_0_print("No preference dataset provided, will use random sampling for preferences")
-            return
-        
-        rank_0_print(f"Loading preference dataset from: {self.preference_dataset_path}")
-        
-        # Load preference dataset using helper method
-        preference_dataset = self._load_dataset_from_path(
-            self.preference_dataset_path, 
-            self.preference_dataset_subset
-        )
-        
-        # Convert to Preference objects
-        for item in preference_dataset:
-            from dataset_types import Preference
-            preference = Preference(
-                traj_id=item['traj_id'],
-                chosen_id=item['chosen_id'],
-                rejected_id=item['rejected_id']
-            )
-            self.preferences.append(preference)
-        
-        rank_0_print(f"Loaded {len(self.preferences)} preference pairs from subset '{self.preference_dataset_subset}'")
-        
-    def _load_dataset_from_path(self, dataset_path: str, subset: str = None):
-        """Helper method to load a dataset from path (local or hub)."""
-
-        if '/' in dataset_path and not os.path.exists(dataset_path):
-            # Check for cached processed dataset first
-            cache_dir = f"./processed_datasets/{dataset_path.replace('/', '_')}_{self.max_frames}frames"
-            if os.path.exists(cache_dir) and not self.force_reprocess:
-                rank_0_print(f"Found cached processed dataset at {cache_dir}, loading...")
-                ds = load_from_disk(cache_dir)
-                return ds
-            elif self.force_reprocess and os.path.exists(cache_dir):
-                rank_0_print(f"Force reprocessing enabled. Removing cached dataset at {cache_dir}...")
-                shutil.rmtree(cache_dir)
-                rank_0_print(f"Removed cached dataset. Will reprocess and save to {cache_dir}")
-            
-            # Load from HuggingFace Hub
-            from datasets import load_dataset, Video, Features
-            rank_0_print(f"Loading from HuggingFace Hub: {dataset_path}")
-
-            dataset_name = dataset_path.split("/")[-1]
-
-            def patch_path(old_path):
-                # RFM_DATASET_PATH is set in the environment variable
-                root_dir = f"{os.environ.get('RFM_DATASET_PATH')}/{dataset_name}"
-                # root_dir = f"/workspace/vlm_reward_model/rfm_dataset/{dataset_name}"
-                return f"{root_dir}/{old_path}"       # e.g., "./videos/trajectory_0000.mp4"
-            
-            ds = load_dataset(dataset_path, name=subset, split="train")
-            ds = ds.map(lambda x: {"frames_path": patch_path(x["frames"])})
-            ds = ds.cast_column("frames_path", Video(decode=True))
-            # Only select a small subset for debugging
-            # if self.debug:
-            #     ds = ds.select(range(5))
-            #     rank_0_print("  Debug mode: Using only first 5 samples")
-            return ds
-
-        else:
-            # Load from local disk
-            if os.path.isdir(dataset_path):
-                # It's a directory, load the specific subset
-                dataset = load_from_disk(dataset_path)
-                if subset:
-                    return dataset[subset]
-                else:
-                    return dataset
-            else:
-                # It's a file, load directly
-                return load_from_disk(dataset_path)
+        # For now, we'll use empty preferences since the config structure has changed
+        # This can be updated later if needed
+        rank_0_print("No preference dataset provided, will use random sampling for preferences")
+        return
     
-    def _group_trajectories_by_task(self):
-        """Group trajectories by task name for efficient sampling."""
-        self.task_groups = {}
-        for traj in self.trajectories:
-            task_name = traj['task']
-            if task_name not in self.task_groups:
-                self.task_groups[task_name] = []
-            self.task_groups[task_name].append(traj)
-        
-        rank_0_print(f"Grouped trajectories into {len(self.task_groups)} tasks")
-        
-        # Create trajectory ID mapping for quick lookup
-        self.traj_id_to_traj = {traj['id']: traj for traj in self.trajectories}
-    
-    def _preprocess_trajectory_categories(self):
-        """Preprocess trajectories into categories for efficient sampling."""
-        
-        # Categorize by robot vs human
-        self.robot_trajectories = [traj for traj in self.trajectories if traj.get('is_robot', True)]
-        self.human_trajectories = [traj for traj in self.trajectories if not traj.get('is_robot', True)]
-        
-        # Categorize by quality labels but keep legacy names (optimal == successful)
-        def is_success(traj: Dict) -> bool:
-            return str(traj.get('quality_label', 'successful')).lower() == 'successful'
-        def is_suboptimal(traj: Dict) -> bool:
-            return str(traj.get('quality_label', '')).lower() == 'suboptimal'
-
-        self.optimal_trajectories = [traj for traj in self.trajectories if is_success(traj)]
-        self.suboptimal_trajectories = [traj for traj in self.trajectories if is_suboptimal(traj)]
-        
-        # Categorize by task (legacy naming)
-        self.optimal_by_task = {}
-        self.suboptimal_by_task = {}
-        for task_name, task_trajectories in self.task_groups.items():
-            self.optimal_by_task[task_name] = [traj for traj in task_trajectories if is_success(traj)]
-            self.suboptimal_by_task[task_name] = [traj for traj in task_trajectories if is_suboptimal(traj)]
-        
-        # Categorize by data source
-        self.trajectories_by_source = {}
-        for traj in self.trajectories:
-            source = traj.get('data_source', 'unknown')
-            if source not in self.trajectories_by_source:
-                self.trajectories_by_source[source] = []
-            self.trajectories_by_source[source].append(traj)
-        
-        rank_0_print(f"Preprocessed trajectory categories:")
-        rank_0_print(f"  Robot trajectories: {len(self.robot_trajectories)}")
-        rank_0_print(f"  Human trajectories: {len(self.human_trajectories)}")
-        rank_0_print(f"  Optimal trajectories: {len(self.optimal_trajectories)}")
-        rank_0_print(f"  Suboptimal trajectories: {len(self.suboptimal_trajectories)}")
-        rank_0_print(f"  Data sources: {list(self.trajectories_by_source.keys())}")
-    
-    def get_optimal_trajectories_by_task(self, task_name: str) -> List[Dict]:
-        """Get optimal trajectories for a specific task."""
-        return self.optimal_by_task.get(task_name, [])
-    
-    def get_suboptimal_trajectories_by_task(self, task_name: str) -> List[Dict]:
-        """Get suboptimal trajectories for a specific task."""
-        return self.suboptimal_by_task.get(task_name, [])
-    
-    def get_trajectories_by_source(self, source: str) -> List[Dict]:
-        """Get trajectories from a specific data source."""
-        return self.trajectories_by_source.get(source, [])
-    
-    def get_robot_trajectories(self) -> List[Dict]:
-        """Get all robot trajectories."""
-        return self.robot_trajectories
-    
-    def get_human_trajectories(self) -> List[Dict]:
-        """Get all human trajectories."""
-        return self.human_trajectories
-    
-    def get_optimal_trajectories(self) -> List[Dict]:
-        """Get all optimal trajectories."""
-        return self.optimal_trajectories
-    
-    def get_suboptimal_trajectories(self) -> List[Dict]:
-        """Get all suboptimal trajectories."""
-        return self.suboptimal_trajectories
+    def _load_similarity_dataset(self):
+        """Load the similarity dataset if provided."""
+        # For now, we'll use empty similarity dataset
+        # This can be updated later if needed
+        rank_0_print("No similarity dataset provided, will use random sampling for similarities")
+        return
     
     def _create_preference_sample(self) -> PreferenceSample:
         """Create a preference prediction sample: chosen vs rejected where chosen is preferred.
@@ -554,8 +291,8 @@ class DataGenerator:
         - Same task, different trajectory ID
         - Good for learning task-specific failure modes and temporal dynamics
         
-        **Strategy 2: Suboptimal Same Task (33%)**
-        - Uses existing suboptimal trajectories from the same task
+        **Strategy 2: Suboptimal/Failure Same Task (33%)**
+        - Uses existing suboptimal/failure trajectories from the same task
         - Same task, different trajectory ID
         - Good for learning from real failure examples and task-specific suboptimal patterns
         
@@ -574,11 +311,12 @@ class DataGenerator:
             (negative) trajectories and associated metadata
         """
         
-        if random.random() < self.dataset_preference_ratio and self.preferences:
-            # Use preference trajectories from dataset
-            return self._create_preference_sample_from_dataset()
-        else:
-            return self._create_preference_sample_with_strategies()
+        with timer("create_preference_sample", verbose=False):
+            if random.random() < self.dataset_preference_ratio and self.preferences:
+                # Use preference trajectories from dataset
+                return self._create_preference_sample_from_dataset()
+            else:
+                return self._create_preference_sample_with_strategies()
         
     def _create_preference_sample_with_strategies(self) -> PreferenceSample:
         """Create a preference prediction sample using various negative generation strategies.
@@ -587,12 +325,15 @@ class DataGenerator:
         preference learning data. Each strategy is chosen with equal probability (33% each).
         """
         
-        # Use preprocessed optimal trajectories
-        if not self.optimal_trajectories:
+        # Use preprocessed optimal trajectories from index maps
+        if not self.optimal_by_task:
             raise ValueError("No optimal trajectories found for preference generation")
         
-        optimal_traj = random.choice(self.optimal_trajectories)
-        
+        # Get a random task and optimal trajectory from it
+        task_name = random.choice(list(self.optimal_by_task.keys()))
+        optimal_idx = random.choice(self.optimal_by_task[task_name])
+        optimal_traj = self.dataset[optimal_idx]
+
         # Choose negative generation strategy (equal probability for three strategies)
         strategy = random.random()
         
@@ -602,9 +343,10 @@ class DataGenerator:
             strategy_used = "rewind_same_task"
         elif strategy < 0.66:
             # Strategy 2: Use random suboptimal trajectory from same task
+            same_task_suboptimal_indices = self.suboptimal_by_task.get(task_name, [])
             same_task_suboptimal = [
-                traj for traj in self.suboptimal_trajectories 
-                if traj['task'] == optimal_traj['task'] and traj['id'] != optimal_traj['id']
+                self.dataset[idx] for idx in same_task_suboptimal_indices 
+                if self.dataset[idx]['id'] != optimal_traj['id']
             ]
             if same_task_suboptimal:
                 negative_traj = random.choice(same_task_suboptimal)
@@ -615,15 +357,22 @@ class DataGenerator:
                 strategy_used = "rewind_same_task_fallback"
         else:
             # Strategy 3: Use trajectory from different task (can be optimal or suboptimal)
-            other_tasks = [task for task in self.task_groups.keys() if task != optimal_traj['task']]
+            other_tasks = [task for task in self.optimal_by_task.keys() if task != optimal_traj['task']]
             if other_tasks:
                 other_task = random.choice(other_tasks)
-                other_task_trajectories = self.task_groups[other_task]
-                # Filter out the current optimal trajectory to avoid duplicates
-                available_other_task = [traj for traj in other_task_trajectories if traj['id'] != optimal_traj['id']]
-                if available_other_task:
-                    negative_traj = random.choice(available_other_task)
-                    strategy_used = "different_task"
+                # Get random index from other task and access dataset directly
+                other_task_indices = self.optimal_by_task[other_task]
+                if other_task_indices:
+                    other_idx = random.choice(other_task_indices)
+                    other_traj = self.dataset[other_idx]
+                    # Check if it's not the same trajectory
+                    if other_traj['id'] != optimal_traj['id']:
+                        negative_traj = other_traj
+                        strategy_used = "different_task"
+                    else:
+                        # Fall back to rewind if same trajectory
+                        negative_traj = self._create_rewind_trajectory(optimal_traj)
+                        strategy_used = "rewind_same_task_fallback"
                 else:
                     # Fall back to rewind if no other trajectories available
                     negative_traj = self._create_rewind_trajectory(optimal_traj)
@@ -633,22 +382,27 @@ class DataGenerator:
                 negative_traj = self._create_rewind_trajectory(optimal_traj)
                 strategy_used = "rewind_same_task_fallback"
         
-        # Deserialize frames once for both trajectories
-        optimal_frames_shape = optimal_traj.get('frames_shape')
-        if isinstance(optimal_frames_shape, list):
-            optimal_frames_shape = tuple(optimal_frames_shape)
-        optimal_frames = self._deserialize_frames(optimal_traj['frames'], shape=optimal_frames_shape) if isinstance(optimal_traj['frames'], bytes) else optimal_traj['frames']
+        # Get frames from npz files
+        optimal_frames = self._get_trajectory_frames(optimal_idx)
         
-        negative_frames_shape = negative_traj.get('frames_shape')
-        if isinstance(negative_frames_shape, list):
-            negative_frames_shape = tuple(negative_frames_shape)
-        negative_frames = self._deserialize_frames(negative_traj['frames'], shape=negative_frames_shape) if isinstance(negative_traj['frames'], bytes) else negative_traj['frames']
+        # Handle negative trajectory frames - could be from dataset (npz) or rewind-generated (numpy)
+        if isinstance(negative_traj, dict) and 'frames' in negative_traj:
+            if isinstance(negative_traj['frames'], str) and negative_traj['frames'].endswith('.npz'):
+                # Regular trajectory with npz path
+                negative_frames = self._load_frames_from_npz(negative_traj['frames'])
+            elif isinstance(negative_traj['frames'], np.ndarray):
+                # Rewind trajectory with numpy array
+                negative_frames = negative_traj['frames']
+            else:
+                raise ValueError(f"Unexpected frames format in negative trajectory: {type(negative_traj['frames'])}")
+        else:
+            raise ValueError(f"Invalid negative trajectory format: {type(negative_traj)}")
         
-        # Calculate target progress for both trajectories using pre-deserialized frames
+        # Calculate target progress for both trajectories
         target_progress_A = self._calculate_target_progress(optimal_traj, optimal_frames)
         target_progress_B = self._calculate_target_progress(negative_traj, negative_frames)
         
-        # Get frame shapes and convert to tuples if needed
+        # Get frame shapes
         optimal_frames_shape = optimal_traj.get('frames_shape')
         if isinstance(optimal_frames_shape, list):
             optimal_frames_shape = tuple(optimal_frames_shape)
@@ -664,7 +418,7 @@ class DataGenerator:
             task=optimal_traj['task'],
             lang_vector=optimal_traj['lang_vector'],
             data_source=optimal_traj['data_source'],
-            frames=optimal_traj['frames'],
+            frames=np.array(optimal_traj['frames']),
             frames_shape=optimal_frames_shape,
             quality_label=optimal_traj.get('quality_label', 'successful'),
             is_robot=optimal_traj['is_robot'],
@@ -700,16 +454,9 @@ class DataGenerator:
             # Use the rewind progress that was calculated during rewind generation
             return trajectory['metadata']['rewind_progress']
         
-        # If frames not provided, deserialize them
+        # If frames not provided, get them from trajectory
         if frames is None:
-            frames_data = trajectory['frames']
-            if isinstance(frames_data, bytes):
-                frames_shape = trajectory.get('frames_shape')
-                if isinstance(frames_shape, list):
-                    frames_shape = tuple(frames_shape)
-                frames = self._deserialize_frames(frames_data, shape=frames_shape)
-            else:
-                frames = frames_data
+            frames = self._load_frames_from_npz(trajectory['frames'])
         
         # Calculate number of frames
         if hasattr(frames, 'shape'):
@@ -750,7 +497,7 @@ class DataGenerator:
         """
         
         # Get available tasks
-        task_names = list(self.task_groups.keys())
+        task_names = list(self.optimal_by_task.keys())
         
         # Check minimal requirements
         if len(task_names) < 2:
@@ -758,29 +505,32 @@ class DataGenerator:
         
         # Select reference task
         task_ref = random.choice(task_names)
-        ref_all_trajectories = self.task_groups[task_ref]
+        ref_task_indices = self.optimal_by_task[task_ref]
         
         # Check minimal requirements for reference task
-        if len(ref_all_trajectories) < 2:
-            raise ValueError(f"Task '{task_ref}' has only {len(ref_all_trajectories)} trajectory(ies). "
+        if len(ref_task_indices) < 2:
+            raise ValueError(f"Task '{task_ref}' has only {len(ref_task_indices)} trajectory(ies). "
                            f"Need at least 2 trajectories in reference task for rewind similarity sample.")
         
         # Select reference trajectory
-        ref_traj = random.choice(ref_all_trajectories)
+        ref_idx = random.choice(ref_task_indices)
+        ref_traj = self.dataset[ref_idx]
         
         # traj_sim is a rewound trajectory from same task (different from ref)
-        available_sim = [t for t in ref_all_trajectories if t['id'] != ref_traj['id']]
-        if not available_sim:
+        available_sim_indices = [idx for idx in ref_task_indices if idx != ref_idx]
+        if not available_sim_indices:
             raise ValueError(f"Cannot create rewound traj_sim: no trajectories available in task '{task_ref}' "
                            f"different from reference trajectory {ref_traj['id']}")
-        traj_sim = random.choice(available_sim)
+        sim_idx = random.choice(available_sim_indices)
+        traj_sim = self.dataset[sim_idx]
         
         # traj_diff MUST be from different task
         other_task = random.choice([t for t in task_names if t != task_ref])
-        other_trajectories = self.task_groups[other_task]
-        if not other_trajectories:
+        other_task_indices = self.optimal_by_task[other_task]
+        if not other_task_indices:
             raise ValueError(f"Task '{other_task}' has no trajectories available for traj_diff")
-        traj_diff = random.choice(other_trajectories)
+        diff_idx = random.choice(other_task_indices)
+        traj_diff = self.dataset[diff_idx]
         
         # Final validation
         self._validate_similarity_trajectories(ref_traj, traj_sim, traj_diff)
@@ -803,37 +553,38 @@ class DataGenerator:
         """
         
         # Get available tasks
-        task_names = list(self.task_groups.keys())
+        task_names = list(self.optimal_by_task.keys())
         
         # Select reference task
         task_ref = random.choice(task_names)
         
         # Get optimal and all trajectories from reference task
-        ref_optimal_trajectories = self.get_optimal_trajectories_by_task(task_ref)
-        ref_all_trajectories = self.task_groups[task_ref]
+        ref_optimal_indices = self.optimal_by_task[task_ref]
+        ref_all_indices = self.optimal_by_task[task_ref] + self.suboptimal_by_task.get(task_ref, [])
         
         # Check minimal requirements for reference task
-        if len(ref_all_trajectories) < 2:
-            raise ValueError(f"Task '{task_ref}' has only {len(ref_all_trajectories)} trajectory(ies). "
+        if len(ref_all_indices) < 2:
+            raise ValueError(f"Task '{task_ref}' has only {len(ref_all_indices)} trajectory(ies). "
                            f"Need at least 2 trajectories in reference task for optimal similarity sample.")
         
-        if not ref_optimal_trajectories:
+        if not ref_optimal_indices:
             # Fall back to all trajectories if no optimal ones
-            ref_optimal_trajectories = ref_all_trajectories
+            ref_optimal_indices = ref_all_indices
         
         # Select reference trajectory (can be optimal or suboptimal)
-        ref_traj = random.choice(ref_all_trajectories)
+        ref_idx = random.choice(ref_all_indices)
+        ref_traj = self.dataset[ref_idx]
         
         # Decide if traj_sim should be optimal or suboptimal
         use_optimal_sim = random.choice([True, False])
         
-        if use_optimal_sim and ref_optimal_trajectories:
+        if use_optimal_sim and ref_optimal_indices:
             traj_sim, traj_diff = self._select_optimal_sim_trajectories(
-                task_ref, task_names, ref_traj, ref_optimal_trajectories, ref_all_trajectories
+                task_ref, task_names, ref_traj, ref_optimal_indices, ref_all_indices
             )
         else:
             traj_sim, traj_diff = self._select_suboptimal_sim_trajectories(
-                task_ref, task_names, ref_traj, ref_optimal_trajectories, ref_all_trajectories
+                task_ref, task_names, ref_traj, ref_optimal_indices, ref_all_indices
             )
         
         # Final validation
@@ -842,64 +593,71 @@ class DataGenerator:
         # Deserialize frames and create sample
         return self._build_similarity_sample(ref_traj, traj_sim, traj_diff, is_rewind=False, strategy_used="optimal_same_task")
     
-    def _select_optimal_sim_trajectories(self, task_ref, task_names, ref_traj, ref_optimal_trajectories, ref_all_trajectories):
+    def _select_optimal_sim_trajectories(self, task_ref, task_names, ref_traj, ref_optimal_indices, ref_all_indices):
         """Select trajectories when traj_sim should be optimal."""
         # traj_sim is optimal from the same task as ref (must be different trajectory)
-        available_sim = [t for t in ref_optimal_trajectories if t['id'] != ref_traj['id']]
-        if not available_sim:
+        available_sim_indices = [idx for idx in ref_optimal_indices if self.dataset[idx]['id'] != ref_traj['id']]
+        if not available_sim_indices:
             raise ValueError(f"Cannot create optimal traj_sim: no optimal trajectories available in task '{task_ref}' "
                            f"different from reference trajectory {ref_traj['id']}")
-        traj_sim = random.choice(available_sim)
+        sim_idx = random.choice(available_sim_indices)
+        traj_sim = self.dataset[sim_idx]
         
         # traj_diff can be suboptimal from same task OR from different task
         if len(task_names) > 1 and random.choice([True, False]):
             # Choose traj_diff from different task
             other_task = random.choice([t for t in task_names if t != task_ref])
-            other_trajectories = self.task_groups[other_task]
-            if not other_trajectories:
+            other_task_indices = self.optimal_by_task[other_task]
+            if not other_task_indices:
                 raise ValueError(f"Task '{other_task}' has no trajectories available for traj_diff")
-            traj_diff = random.choice(other_trajectories)
+            diff_idx = random.choice(other_task_indices)
+            traj_diff = self.dataset[diff_idx]
         else:
             # Choose traj_diff as suboptimal from same task
-            ref_suboptimal_trajectories = [t for t in ref_all_trajectories 
-                                         if t not in ref_optimal_trajectories 
-                                         and t['id'] not in [ref_traj['id'], traj_sim['id']]]
-            if not ref_suboptimal_trajectories:
+            ref_suboptimal_indices = [idx for idx in ref_all_indices 
+                                    if idx not in ref_optimal_indices 
+                                    and self.dataset[idx]['id'] not in [ref_traj['id'], traj_sim['id']]]
+            if not ref_suboptimal_indices:
                 # Try any trajectory from same task that's different from ref and traj_sim
-                available_same_task = [t for t in ref_all_trajectories 
-                                     if t['id'] not in [ref_traj['id'], traj_sim['id']]]
-                if not available_same_task:
+                available_same_task_indices = [idx for idx in ref_all_indices 
+                                            if self.dataset[idx]['id'] not in [ref_traj['id'], traj_sim['id']]]
+                if not available_same_task_indices:
                     # Must use different task
                     if len(task_names) < 2:
                         raise ValueError(f"Cannot create traj_diff: only one task available and no trajectories "
                                        f"in task '{task_ref}' different from ref {ref_traj['id']} and traj_sim {traj_sim['id']}")
                     other_task = random.choice([t for t in task_names if t != task_ref])
-                    other_trajectories = self.task_groups[other_task]
-                    if not other_trajectories:
+                    other_task_indices = self.optimal_by_task[other_task]
+                    if not other_task_indices:
                         raise ValueError(f"Task '{other_task}' has no trajectories available for traj_diff")
-                    traj_diff = random.choice(other_trajectories)
+                    diff_idx = random.choice(other_task_indices)
+                    traj_diff = self.dataset[diff_idx]
                 else:
-                    traj_diff = random.choice(available_same_task)
+                    diff_idx = random.choice(available_same_task_indices)
+                    traj_diff = self.dataset[diff_idx]
             else:
-                traj_diff = random.choice(ref_suboptimal_trajectories)
+                diff_idx = random.choice(ref_suboptimal_indices)
+                traj_diff = self.dataset[diff_idx]
         
         return traj_sim, traj_diff
     
-    def _select_suboptimal_sim_trajectories(self, task_ref, task_names, ref_traj, ref_optimal_trajectories, ref_all_trajectories):
+    def _select_suboptimal_sim_trajectories(self, task_ref, task_names, ref_traj, ref_optimal_indices, ref_all_indices):
         """Select trajectories when traj_sim should be suboptimal."""
         # traj_sim is suboptimal from the same task as ref (must be different trajectory)
-        ref_suboptimal_trajectories = [t for t in ref_all_trajectories 
-                                     if t not in ref_optimal_trajectories 
-                                     and t['id'] != ref_traj['id']]
-        if not ref_suboptimal_trajectories:
+        ref_suboptimal_indices = [idx for idx in ref_all_indices 
+                                     if idx not in ref_optimal_indices 
+                                     and self.dataset[idx]['id'] != ref_traj['id']]
+        if not ref_suboptimal_indices:
             # Fallback to any trajectory from same task different from ref
-            available_same_task = [t for t in ref_all_trajectories if t['id'] != ref_traj['id']]
-            if not available_same_task:
+            available_same_task_indices = [idx for idx in ref_all_indices if self.dataset[idx]['id'] != ref_traj['id']]
+            if not available_same_task_indices:
                 raise ValueError(f"Cannot create traj_sim: no trajectories available in task '{task_ref}' "
                                f"different from reference trajectory {ref_traj['id']}")
-            traj_sim = random.choice(available_same_task)
+            sim_idx = random.choice(available_same_task_indices)
+            traj_sim = self.dataset[sim_idx]
         else:
-            traj_sim = random.choice(ref_suboptimal_trajectories)
+            sim_idx = random.choice(ref_suboptimal_indices)
+            traj_sim = self.dataset[sim_idx]
         
         # traj_diff MUST be from different task (since traj_sim is suboptimal)
         if len(task_names) < 2:
@@ -907,10 +665,11 @@ class DataGenerator:
                            f"but only one task '{task_ref}' is available")
         
         other_task = random.choice([t for t in task_names if t != task_ref])
-        other_trajectories = self.task_groups[other_task]
-        if not other_trajectories:
+        other_task_indices = self.optimal_by_task[other_task]
+        if not other_task_indices:
             raise ValueError(f"Task '{other_task}' has no trajectories available for traj_diff")
-        traj_diff = random.choice(other_trajectories)
+        diff_idx = random.choice(other_task_indices)
+        traj_diff = self.dataset[diff_idx]
         
         return traj_sim, traj_diff
     
@@ -927,23 +686,12 @@ class DataGenerator:
     
     def _build_similarity_sample(self, ref_traj, traj_sim, traj_diff, is_rewind=False, strategy_used=None):
         """Build the final similarity sample from trajectories."""
-        # Deserialize frames once for all trajectories
-        ref_frames_shape = ref_traj.get('frames_shape')
-        if isinstance(ref_frames_shape, list):
-            ref_frames_shape = tuple(ref_frames_shape)
-        ref_frames = self._deserialize_frames(ref_traj['frames'], shape=ref_frames_shape) if isinstance(ref_traj['frames'], bytes) else ref_traj['frames']
-
-        traj_sim_frames_shape = traj_sim.get('frames_shape')
-        if isinstance(traj_sim_frames_shape, list):
-            traj_sim_frames_shape = tuple(traj_sim_frames_shape)
-        traj_sim_frames = self._deserialize_frames(traj_sim['frames'], shape=traj_sim_frames_shape) if isinstance(traj_sim['frames'], bytes) else traj_sim['frames']
+        # Get frames from npz files
+        ref_frames = self._load_frames_from_npz(ref_traj['frames'])
+        traj_sim_frames = self._load_frames_from_npz(traj_sim['frames'])
+        traj_diff_frames = self._load_frames_from_npz(traj_diff['frames'])
         
-        traj_diff_frames_shape = traj_diff.get('frames_shape')
-        if isinstance(traj_diff_frames_shape, list):
-            traj_diff_frames_shape = tuple(traj_diff_frames_shape)
-        traj_diff_frames = self._deserialize_frames(traj_diff['frames'], shape=traj_diff_frames_shape) if isinstance(traj_diff['frames'], bytes) else traj_diff['frames']
-        
-        # Calculate target progress for all trajectories using pre-deserialized frames
+        # Calculate target progress for all trajectories
         target_progress_A = self._calculate_target_progress(traj_sim, traj_sim_frames)
         target_progress_B = self._calculate_target_progress(traj_diff, traj_diff_frames)
         target_progress_ref = self._calculate_target_progress(ref_traj, ref_frames)
@@ -968,15 +716,15 @@ class DataGenerator:
             task=ref_traj['task'],
             lang_vector=ref_traj['lang_vector'],
             data_source=ref_traj['data_source'],
-            frames=ref_traj['frames'],
+            frames=np.array(ref_traj['frames']),
             frames_shape=ref_frames_shape,
             quality_label=ref_traj.get('quality_label', 'successful'),
             is_robot=ref_traj['is_robot'],
             metadata=ref_traj.get('metadata'),
             # Similarity-specific fields - using traj_sim/traj_diff naming
-            reference_frames=ref_traj['frames'],  # o^ref
-            traj_sim_frames=traj_sim['frames'],   # Similar trajectory
-            traj_diff_frames=traj_diff['frames'], # Different trajectory
+            reference_frames=np.array(ref_traj['frames']),  # o^ref
+            traj_sim_frames=np.array(traj_sim['frames']),   # Similar trajectory
+            traj_diff_frames=np.array(traj_diff['frames']), # Different trajectory
             reference_frames_shape=ref_frames_shape,
             traj_sim_frames_shape=traj_sim_frames_shape,
             traj_diff_frames_shape=traj_diff_frames_shape,
@@ -1007,6 +755,8 @@ class DataGenerator:
         
         return sample
     
+
+
 # Infinite dataset that generates samples on-demand
 class InfiniteDataGeneratorDataset:
     """Infinite dataset that generates samples on-demand with controlled ratios."""
@@ -1044,16 +794,49 @@ def test():
     """Test the BatchCollator with generated samples."""
     from transformers import AutoProcessor
     
-    # Create data generator
-    generator = DataGenerator(
-        datasets=["abraranwar/libero_rfm"],
-        subsets=["libero_10"],
-        preference_ratio=0.5,
-        similarity_ratio=0.5,
+    # Create a mock config for testing
+    from dataclasses import dataclass
+    from typing import List
+    
+    @dataclass
+    class MockDataConfig:
+        train_datasets: List[str] = None
+        train_subsets: List[str] = None
+        eval_datasets: List[str] = None
+        eval_subsets: List[str] = None
+        preference_ratio: float = 1.0
+        similarity_ratio: float = 0.0
+        dataset_preference_ratio: float = 0.7
+        shuffle: bool = True
+        seed: int = 42
+        num_proc: int = 4
+        max_frames: int = 32
+        force_reprocess: bool = False
+        dataloader_pin_memory: bool = False
+        dataloader_num_workers: int = 0
+    
+    @dataclass
+    class MockConfig:
+        data: MockDataConfig = None
+        debug: bool = False
+    
+    # Create mock config
+    mock_data_config = MockDataConfig(
+        train_datasets=["abraranwar/libero_rfm"],
+        train_subsets=["libero_10"],
+        preference_ratio=1.0,
+        similarity_ratio=0.0,
         shuffle=True,
         seed=42,
-        num_proc=4
+        num_proc=4,
+        max_frames=32,
+        force_reprocess=False
     )
+    
+    mock_config = MockConfig(data=mock_data_config, debug=False)
+    
+    # Create data generator with mock config
+    generator = DataGenerator(config=mock_config)
     
     # Test the infinite dataset
     rank_0_print("Testing InfiniteDataGeneratorDataset...")
@@ -1116,7 +899,7 @@ def test():
         base_model.resize_token_embeddings(len(processor.tokenizer))
         rank_0_print(f"Resized token embeddings to {len(processor.tokenizer)}")
     
-    rfm_model = RFMModel(config=base_model.config, tokenizer=processor.tokenizer)
+    rfm_model = RFMModel(config=base_model.config, processor=processor)
     rfm_model.model.load_state_dict(base_model.state_dict())
     
     # Check if CUDA is available

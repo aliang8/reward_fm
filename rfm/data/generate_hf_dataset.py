@@ -473,6 +473,15 @@ def main(cfg: GenerateConfig):
             print(f"Dataset saved locally to: {dataset_path}")
         print("Dataset conversion complete!")
         return
+    elif "robofail" in cfg.dataset.dataset_name.lower():
+        from rfm.data.dataset_loaders.robofail_loader import load_robofail_dataset
+        # Load the trajectories using the loader with max_trajectories limit
+        print(f"Loading RoboFail dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_robofail_dataset(
+            cfg.dataset.dataset_path, 
+            cfg.output.max_trajectories,
+        )
+        trajectories = flatten_task_data(task_data)
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")
     

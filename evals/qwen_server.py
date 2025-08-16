@@ -9,7 +9,7 @@ Payload schema:
     "samples": [
       {
         "task": str,
-        "prediction_type": "preference",  # currently required
+        "sample_type": "preference",  # currently required
         "chosen_frames_b64": [str, ...],
         "rejected_frames_b64": [str, ...],
         "target_progress_A": [float, ...] | null,
@@ -57,7 +57,7 @@ from trainer import RFMTrainer
 
 class SamplePayload(BaseModel):
     task: Optional[str] = ""
-    prediction_type: str
+    sample_type: str
     chosen_frames_b64: List[str]
     rejected_frames_b64: List[str]
     target_progress_A: Optional[List[float]] = None
@@ -168,7 +168,7 @@ def compute_batch_metrics(model, tokenizer, batch_inputs: Dict[str, torch.Tensor
             second_per_grid_ts=batch_inputs.get("second_per_grid_ts", None).to(device)
             if batch_inputs.get("second_per_grid_ts") is not None
             else None,
-            prediction_type="preference",
+            sample_type="preference",
             target_progress=batch_inputs.get("target_progress_A", None).to(device)
             if batch_inputs.get("target_progress_A") is not None
             else None,
@@ -263,7 +263,7 @@ def create_app(cfg: ExperimentConfig):
     @app.post("/evaluate_batch")
     def evaluate_batch(batch: BatchPayload):
         # For now we only support preference-style evaluation
-        pref_samples = [s for s in batch.samples if s.prediction_type == "preference"]
+        pref_samples = [s for s in batch.samples if s.sample_type == "preference"]
         if not pref_samples:
             return {
                 "eval_loss": None,

@@ -82,29 +82,33 @@ def create_app(task_description: str = "", use_temporal_prompts: bool = False) -
             chosen_images = [decode_b64_image(b64) for b64 in sample.chosen_frames_b64]
             rejected_images = [decode_b64_image(b64) for b64 in sample.rejected_frames_b64]
             
-            # Query VLM for preference
+            # Query VLM for preference  
             result = vlm.query_preference(
                 chosen_images,
                 rejected_images,
                 task_description or sample.task
             )
             
-            results.append(result)
-        
-        if not results:
-            return _empty_metrics()
-        
-        # RL-VLM-F only gets discrete labels - we can only compute accuracy
-        num_samples = len(results)
-        total_correct = sum(r["is_correct"] for r in results)
+            # Convert VLM preference to match run_model_eval expectations
+            # run_model_eval expects: 1 = correct (chosen preferred), 0 = incorrect, -1 = tie
+            # VLM baseline now handles randomization internally and returns is_correct
+            if result["is_correct"]:
+                prediction = 1  # VLM correctly chose chosen trajectory
+            elif result["vlm_preference"] == "tie":
+                prediction = -1  # Tie or uncertain
+            else:
+                prediction = 0  # VLM incorrectly chose rejected trajectory
+            
+            predictions.append(prediction)
+            
+            # VLM doesn't provide per-frame rewards, return empty lists
+            reward_chosen.append([])
+            reward_rejected.append([])
         
         return {
-            "eval_loss": 0.0,                               # Placeholder: no probabilities available
-            "eval_accuracy": total_correct / num_samples,   # Meaningful: % correct preferences
-            "eval_reward_diff": 0.0,                        # Placeholder: no absolute reward scale
-            "eval_avg_reward_chosen": 0.0,                  # Placeholder: no absolute reward scale
-            "eval_avg_reward_rejected": 0.0,                # Placeholder: no absolute reward scale
-            "demo_reward_alignment": []                     # Placeholder: VLM doesn't predict progress
+            "predictions": predictions,
+            "reward_chosen": reward_chosen, 
+            "reward_rejected": reward_rejected
         }
     
     def _empty_metrics():

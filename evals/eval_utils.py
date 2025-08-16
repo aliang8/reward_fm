@@ -62,10 +62,10 @@ def _dict_to_dataclass(cfg_dict: Dict[str, Any]) -> ExperimentConfig:
     ]))
 
     data = DataConfig(**subset(cfg_dict.get("data", {}), [
-        "dataset_path",
-        "dataset_subsets",
-        "eval_dataset_path",
-        "eval_dataset_subsets",
+        "train_datasets",
+        "train_subsets",
+        "eval_datasets",
+        "eval_subsets",
         "eval_subset_size",
         "max_frames",
         "video_frame_sampling",

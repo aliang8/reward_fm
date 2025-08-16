@@ -1,4 +1,4 @@
-from re import S
+from re import M, S
 import wandb
 import warnings
 import torch
@@ -13,9 +13,9 @@ from rfm.utils.logging import is_rank_0, rank_0_print
 from rfm.utils.metrics import compute_auc, compute_spearman_correlation
 
 class RFMTrainer(Trainer):
-    def __init__(self, *args, beta=0.1, **kwargs):
+    def __init__(self, config, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.beta = beta
+        self.config = config
         # Initialize custom loss tracking
         self.custom_losses = {}
 
@@ -62,9 +62,9 @@ class RFMTrainer(Trainer):
             rank_0_print(f"Step {self.state.global_step} Custom Losses (Aggregated):")
             log_keys = ["preference_loss", "preference_accuracy", "similarity_loss", "progress_loss", "spearman_corr_avg"]
             for key in log_keys:
-                if key in aggregated_losses:
+                if f"train/{key}" in aggregated_losses:
                     rank_0_print(
-                        f"  {key}: {aggregated_losses[key]:.6f}"
+                        f"  {key}: {aggregated_losses[f'train/{key}']:.6f}"
                 )
 
     def _aggregate_custom_losses(self):
@@ -144,11 +144,12 @@ class RFMTrainer(Trainer):
         # Aggregate outputs
         log_keys = ["preference_loss", "similarity_loss", "progress_loss", "preference_accuracy", "spearman_corr_avg"]  # TODO: add progress_loss_A, progress_loss_B, progress_loss_ref, progress_loss_sim, progress_loss_diff
         aggregated_outputs = {}
+
+        # assume that we already called .item() on the outputs
         for key in log_keys:
             if key in outputs[0]:
-                aggregated_outputs[key] = [output[key] for output in outputs]
-                aggregated_outputs[key] = torch.cat(aggregated_outputs[key], dim=0)
-                aggregated_outputs[key] = aggregated_outputs[key].mean().item() 
+                aggregated_outputs[key] = [output[key] for output in outputs if key in output]
+                aggregated_outputs[key] = np.array(aggregated_outputs[key]).mean()
 
         # Compute metrics   
         metrics = {f"eval/{key}": aggregated_outputs[key] for key in aggregated_outputs}
@@ -181,7 +182,7 @@ class RFMTrainer(Trainer):
         loss_metadata = {}
 
         # Compute preference loss if we have preference samples
-        if num_preferences > 0 and preference_inputs:
+        if num_preferences > 0 and preference_inputs and self.config.peft.train_preference_head:
             preference_loss, preference_outputs = self._compute_preference_loss(
                 model, preference_inputs, return_outputs=True
             )
@@ -189,7 +190,7 @@ class RFMTrainer(Trainer):
             loss_metadata.update(preference_outputs)
 
         # Compute similarity loss if we have similarity samples
-        if num_similarities > 0 and similarity_inputs:
+        if num_similarities > 0 and similarity_inputs and self.config.peft.train_similarity_head:
             similarity_loss, similarity_outputs = self._compute_similarity_loss(
                 model, similarity_inputs, return_outputs=True
             )
@@ -331,21 +332,24 @@ class RFMTrainer(Trainer):
 
         # Compute progress loss for both trajectories using the helper function
         # Now we know which shape corresponds to which trajectory based on preference labels
-        progress_loss_A, spearman_corr_A = self._compute_progress_loss(
-            progress_logits["A"], inputs["target_progress_A"], first_trajectory_shapes, "A"
-        )
-        progress_loss_B, spearman_corr_B = self._compute_progress_loss(
-            progress_logits["B"],
-            inputs["target_progress_B"],
-            second_trajectory_shapes,
-            "B",
-        )
+        if self.config.peft.train_progress_head:
+            progress_loss_A, spearman_corr_A = self._compute_progress_loss(
+                progress_logits["A"], inputs["target_progress_A"], first_trajectory_shapes, "A"
+            )
+            progress_loss_B, spearman_corr_B = self._compute_progress_loss(
+                progress_logits["B"],
+                inputs["target_progress_B"],
+                second_trajectory_shapes,
+                "B",
+            )
 
-        # Combine progress losses
-        progress_loss = progress_loss_A + progress_loss_B
+            # Combine progress losses
+            progress_loss = progress_loss_A + progress_loss_B
 
-        # Combine losses
-        total_loss = preference_loss + progress_loss
+            # Combine losses
+            total_loss = preference_loss + progress_loss
+        else:
+            total_loss = preference_loss
 
         if return_outputs:
             # Compute preference accuracy for training monitoring
@@ -353,32 +357,40 @@ class RFMTrainer(Trainer):
             preference_predictions = (preference_probs > 0.5).float()
             preference_accuracy = (preference_predictions == preference_labels).float().mean().item()
             
-            # Compute average Spearman correlation across trajectories A and B
-            spearman_values = []
-            if isinstance(spearman_corr_A, torch.Tensor):
-                spearman_values.append(spearman_corr_A.item())
-            else:
-                spearman_values.append(spearman_corr_A)
-            if isinstance(spearman_corr_B, torch.Tensor):
-                spearman_values.append(spearman_corr_B.item())
-            else:
-                spearman_values.append(spearman_corr_B)
-            
-            avg_spearman = np.mean(spearman_values) if spearman_values else 0.0
+            if self.config.peft.train_progress_head:
+                # Compute average Spearman correlation across trajectories A and B
+                spearman_values = []
+                if isinstance(spearman_corr_A, torch.Tensor):
+                    spearman_values.append(spearman_corr_A.item())
+                else:
+                    spearman_values.append(spearman_corr_A)
+                if isinstance(spearman_corr_B, torch.Tensor):
+                    spearman_values.append(spearman_corr_B.item())
+                else:
+                    spearman_values.append(spearman_corr_B)
+                
+                avg_spearman = np.mean(spearman_values) if spearman_values else 0.0
             
             outputs_dict = {
                 "preference_scores": preference_scores,
                 "preference_labels": preference_labels,
                 "preference_loss": preference_loss.item(),
                 "preference_accuracy": preference_accuracy,
-                "predicted_progress_A": progress_logits["A"],
-                "predicted_progress_B": progress_logits["B"],
-                "target_progress_A": inputs["target_progress_A"],
-                "target_progress_B": inputs["target_progress_B"],
-                "progress_loss_A": progress_loss_A.item(),
-                "progress_loss_B": progress_loss_B.item(),
-                "spearman_corr_avg": avg_spearman,
             }
+
+            if self.config.peft.train_progress_head:
+                outputs_dict.update(
+                    {
+                        "progress_loss_A": progress_loss_A.item(),
+                        "progress_loss_B": progress_loss_B.item(),
+                        "progress_loss": progress_loss.item(),
+                        "predicted_progress_A": progress_logits["A"],
+                        "predicted_progress_B": progress_logits["B"],
+                        "target_progress_A": inputs["target_progress_A"],
+                        "target_progress_B": inputs["target_progress_B"],
+                        "spearman_corr_avg": avg_spearman,
+                    }
+                )
             return total_loss, outputs_dict
         return total_loss
 
@@ -413,7 +425,7 @@ class RFMTrainer(Trainer):
         # Compute DPO-style loss: encourage trajectory A to be more similar to reference than trajectory B
         # This assumes trajectory A is the "better" trajectory (more similar to reference)
         similarity_loss = -F.logsigmoid(
-            self.beta * (score_ref_sim - score_ref_diff)
+            self.config.training.beta * (score_ref_sim - score_ref_diff)
         ).mean()
 
         # Get frame shapes for splicing target progress to match predicted lengths
@@ -445,6 +457,8 @@ class RFMTrainer(Trainer):
             "diff",
         )
 
+        progress_loss = progress_loss_ref + progress_loss_sim + progress_loss_diff
+
         # Combine losses
         total_loss = (
             similarity_loss + progress_loss_ref + progress_loss_sim + progress_loss_diff
@@ -468,6 +482,7 @@ class RFMTrainer(Trainer):
                 "progress_loss_ref": progress_loss_ref.item(),
                 "progress_loss_sim": progress_loss_sim.item(),
                 "progress_loss_diff": progress_loss_diff.item(),
+                "progress_loss": progress_loss.item(),
                 "predicted_progress_A": progress_logits_ref_sim["A"],
                 "predicted_progress_B": progress_logits_ref_sim["B"],
                 "target_progress_A": inputs["target_progress_A"],

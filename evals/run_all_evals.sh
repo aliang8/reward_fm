@@ -15,9 +15,9 @@ for subset in "libero_10" "libero_goal" "libero_object" "libero_spatial"; do
     
     uv run python evals/run_model_eval.py \
       --config_path=rfm/configs/config.yaml \
-      --server_url=http://localhost:8000 \
+      --server_url=http://localhost:8002 \
       --batch_size=12 \
-      --set evaluation.eval_dataset_path="abrar/libero_rfm" \
+      --set evaluation.eval_dataset_path="abraranwar/libero_rfm" \
       --set evaluation.eval_dataset_subsets=["$subset"] \
       --iterate_all_preferences 2>&1 | tee -a evals/logs/libero_regular_${TIMESTAMP}.log
     

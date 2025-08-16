@@ -3,12 +3,9 @@
 Client script to iteratively generate evaluation batches and send them to an
 evaluation server (e.g., localhost:8000). The server is expected to return a
 dictionary with keys:
-  - eval_loss
-  - eval_accuracy
-  - eval_reward_diff
-  - eval_avg_reward_chosen
-  - eval_avg_reward_rejected
-  - demo_reward_alignment (per-frame Spearman correlation)
+  - predictions: [] # list of predictions for each sample in the batch. (1 if chosen preferred, else 0, -1 means no preference)
+  - reward_chosen: [] # list of list of per-frame rewards for the chosen trajectory
+  - reward_rejected: [] # list of list of per-frame rewards for the rejected trajectory
 
 Usage:
   uv run python evals/run_model_eval.py --config_path=rfm/configs/config.yaml \
@@ -24,6 +21,8 @@ from __future__ import annotations
 import argparse
 import ast
 from typing import Any, Dict, List, Optional
+import numpy as np
+from scipy.stats import spearmanr
 
 from tqdm import tqdm
 
@@ -40,13 +39,63 @@ from evals.eval_utils import (
 )
 
 KEY_TO_MEANING = {
-    "eval_loss": "Loss",
-    "eval_accuracy": "Accuracy of Predicting the Correct Preference",
-    "eval_reward_diff": "Reward Difference between Chosen and Rejected",
-    "eval_avg_reward_chosen": "Average Reward Assigned to (Chosen)",
-    "eval_avg_reward_rejected": "Average Reward (Rejected)",
-    "demo_reward_alignment": "Spearman Correlation between Predicted Progress and Ground Truth Progress (per-frame ordering)",
+    "predictions": "Preference predictions for each sample in the batch (1 if chosen preferred, else 0, -1 means no preference)",
+    "reward_chosen": "List of list of per-frame rewards for the chosen trajectory",
+    "reward_rejected": "List of list of per-frame rewards for the rejected trajectory",
 }
+
+
+def _compute_metrics_from_response(samples: List[Any], resp: Dict[str, Any]) -> Dict[str, Any]:
+    preds: List[int] = resp.get("predictions", []) or []
+    rewards_chosen: List[List[float]] = resp.get("reward_chosen", []) or []
+    rewards_rejected: List[List[float]] = resp.get("reward_rejected", []) or []
+
+    n = max(1, len(preds))
+    eval_accuracy = float(sum(1 for p in preds if int(p) == 1) / n)
+
+    flat_chosen = [x for seq in rewards_chosen for x in (seq or [])]
+    flat_rejected = [x for seq in rewards_rejected for x in (seq or [])]
+    eval_avg_reward_chosen = float(np.mean(flat_chosen)) if flat_chosen else None
+    eval_avg_reward_rejected = float(np.mean(flat_rejected)) if flat_rejected else None
+    eval_reward_diff = (
+        float(eval_avg_reward_chosen - eval_avg_reward_rejected)
+        if (eval_avg_reward_chosen is not None and eval_avg_reward_rejected is not None)
+        else None
+    )
+
+    # Progress alignment using chosen trajectory's per-frame rewards as predictions
+    rhos: List[float] = []
+    for i, s in enumerate(samples):
+        try:
+            targets = getattr(s, "target_progress_A", None)
+            preds_prog = rewards_chosen[i] if i < len(rewards_chosen) else []
+            if not targets or not preds_prog:
+                continue
+            # Heuristic: downsample targets to roughly match model stride (e.g., Qwen predicts ~1 per 2 frames)
+            targets_ds = targets[::2]
+            L = min(len(targets_ds), len(preds_prog))
+            if L < 2:
+                continue
+            rho = spearmanr(preds_prog[:L], targets_ds[:L]).correlation
+            if rho is not None and not np.isnan(rho):
+                rhos.append(float(rho))
+        except Exception:
+            continue
+    demo_reward_alignment = float(np.mean(rhos)) if rhos else None
+
+    return {
+        "eval_accuracy": eval_accuracy,
+        "eval_reward_diff": eval_reward_diff,
+        "eval_avg_reward_chosen": eval_avg_reward_chosen,
+        "eval_avg_reward_rejected": eval_avg_reward_rejected,
+        "demo_reward_alignment": demo_reward_alignment,
+    }
+
+
+def _evaluate_samples(server_url: str, samples: List[Any]) -> Dict[str, Any]:
+    payload = build_batch_payload(samples)
+    resp = post_batch(server_url, payload)
+    return _compute_metrics_from_response(samples, resp)
 
 
 def iter_eval_batches(
@@ -59,7 +108,8 @@ def iter_eval_batches(
     data_generator = setup_eval_data_generator(cfg)
     dataset = type("_Dataset", (), {
         "__len__": lambda self: cfg.data.eval_subset_size if cfg.data.eval_subset_size and cfg.data.eval_subset_size > 0 else 10_000_000,
-        "__getitem__": lambda self, idx: data_generator._create_preference_sample() if idx % 2 == 0 else data_generator._create_similarity_sample(),
+        #"__getitem__": lambda self, idx: data_generator._create_preference_sample() if idx % 2 == 0 else data_generator._create_similarity_sample(),
+        "__getitem__": lambda self, idx: data_generator._create_preference_sample(),
     })()
 
     results: List[Dict[str, Any]] = []
@@ -68,13 +118,7 @@ def iter_eval_batches(
         # Assemble a batch of Sample objects (Preference or Similarity)
         samples = [dataset[idx + j] for j in range(batch_size)]
         idx += batch_size
-
-        # Convert to wire payload (base64 frames)
-        payload = build_batch_payload(samples)
-
-        # POST to server
-        resp = post_batch(server_url, payload)
-        results.append(resp)
+        results.append(_evaluate_samples(server_url, samples))
     return results
 
 
@@ -174,9 +218,7 @@ def iter_eval_all_preferences(
     results: List[Dict[str, Any]] = []
     for i in tqdm(range(0, len(samples), batch_size), desc="Evaluating (all prefs)"):
         batch = samples[i : i + batch_size]
-        payload = build_batch_payload(batch)
-        resp = post_batch(server_url, payload)
-        results.append(resp)
+        results.append(_evaluate_samples(server_url, batch))
     return results
 
 
@@ -234,7 +276,6 @@ def main():
 
     # Print an aggregated summary
     keys = [
-        "eval_loss",
         "eval_accuracy",
         "eval_reward_diff",
         "eval_avg_reward_chosen",

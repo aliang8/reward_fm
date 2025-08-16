@@ -254,8 +254,7 @@ class RFMModel(PreTrainedModel):
                 if len(positions) > 0:
                     token_positions.append(positions[-1].item())
                 else:
-                    # Fallback to last token if target token not found
-                    token_positions.append(attention_mask[i].sum().item() - 1)
+                    raise ValueError(f"token_id {token_id} not found in sequence {i}")
             token_positions = torch.tensor(token_positions, device=input_ids.device, dtype=torch.long)
             
             # Extract hidden states at the target token positions

@@ -4,12 +4,12 @@ FastAPI server to evaluate RFM model batches.
 
 Endpoint:
   POST /evaluate_batch
-Payload schema:
+Request payload (JSON):
   {
     "samples": [
       {
         "task": str,
-        "prediction_type": "preference",  # currently required
+        "prediction_type": "preference",
         "chosen_frames_b64": [str, ...],
         "rejected_frames_b64": [str, ...],
         "target_progress_A": [float, ...] | null,
@@ -19,13 +19,12 @@ Payload schema:
     ]
   }
 
-Returns metrics per-batch consistent with train.py evaluate printout:
-  - eval_loss
-  - eval_accuracy
-  - eval_reward_diff
-  - eval_avg_reward_chosen
-  - eval_avg_reward_rejected
-  - demo_reward_alignment (Spearman rho, single float)
+Response payload (JSON), per-sample outputs for client-side aggregation:
+  {
+    "predictions": List[int],              # 1 if chosen preferred, else 0
+    "reward_chosen": List[List[float]],    # per-frame rewards for chosen (maps to progress head A)
+    "reward_rejected": List[List[float]]   # per-frame rewards for rejected (maps to progress head B)
+  }
 
 e.g.: uv run /home/jessez/reward_fm/evals/server.py --config_path=/home/jessez/reward_fm/rfm/configs/config.yaml --host=0.0.0.0 --port=8000
 """
@@ -145,7 +144,7 @@ def build_preference_batch(processor, samples: List[SamplePayload], resized_h: i
     return batch_inputs
 
 
-def compute_batch_metrics(model, tokenizer, batch_inputs: Dict[str, torch.Tensor]) -> Dict[str, Any]:
+def compute_batch_outputs(model, tokenizer, batch_inputs: Dict[str, torch.Tensor]) -> Dict[str, Any]:
     model.eval()
     device = next(model.parameters()).device
 
@@ -175,72 +174,36 @@ def compute_batch_metrics(model, tokenizer, batch_inputs: Dict[str, torch.Tensor
         )
 
         logits = outputs.logits.squeeze(-1)  # [B]
-        labels = batch_inputs["preference_labels"].to(device)  # [B]
+        probs = torch.sigmoid(logits)  # [B]
+        preds = (probs > 0.5).long()  # [B]
 
-        # Binary cross-entropy with logits
-        bce = torch.nn.functional.binary_cross_entropy_with_logits(logits, labels)
-        probs = torch.sigmoid(logits)
-        preds = (probs > 0.5).float()
-        accuracy = (preds == labels).float().mean().item()
+        predictions = preds.detach().cpu().tolist()
 
-        # Treat preference head logit as reward for chosen; need also rejected reward
-        # To approximate reward for rejected, rebuild batch swapping order.
-        # Build swapped inputs quickly by replacing last video before <|pref_token|>.
-        # Simpler: reuse same text but swap pixel_values_videos pair-wise if available.
-        # If not available, fall back to symmetric estimate (negation) which is imperfect.
-        avg_reward_chosen = probs.mean().item()
+        # Extract progress predictions for A and B if available
+        progress_pred_A: List[List[float]] = []
+        progress_pred_B: List[List[float]] = []
+        if isinstance(progress_logits, dict):
+            if progress_logits.get("A") is not None:
+                for seq in progress_logits["A"]:
+                    if seq is None:
+                        progress_pred_A.append([])
+                    else:
+                        progress_pred_A.append(seq.detach().cpu().flatten().tolist())
+            if progress_logits.get("B") is not None:
+                for seq in progress_logits["B"]:
+                    if seq is None:
+                        progress_pred_B.append([])
+                    else:
+                        progress_pred_B.append(seq.detach().cpu().flatten().tolist())
 
-        if batch_inputs.get("pixel_values_videos") is not None:
-            swapped = {k: v.clone() if isinstance(v, torch.Tensor) else v for k, v in batch_inputs.items()}
-            # pixel_values_videos shape: [B, T, C, H, W] or similar – swapping videos A/B is non-trivial here
-            # For Qwen processor packing, videos are concatenated in a single sequence; exact swap requires re-processing.
-            # As an approximation, compute rejected reward as 1 - chosen_prob.
-            avg_reward_rejected = (1.0 - probs).mean().item()
-        else:
-            avg_reward_rejected = (1.0 - probs).mean().item()
-
-        reward_diff = avg_reward_chosen - avg_reward_rejected
-
-        # Spearman correlation for progress prediction per sample if available
-        per_sample_spearman: List[float] = []
-        targA = batch_inputs.get("target_progress_A")
-        if isinstance(progress_logits, dict) and progress_logits.get("A") is not None and targA is not None:
-            # progress_logits['A'] is a list of 1D tensors with variable lengths
-            pred_list = progress_logits["A"]
-            targets_np = targA.detach().cpu().numpy()[:, ::2] # split every 2 because Qwen predicts 1 pred for every 2 frames
-
-            for i, seq in enumerate(pred_list):
-                if seq is None or seq.numel() == 0:
-                    per_sample_spearman.append(float("nan"))
-                    continue
-                pred_np = seq.detach().cpu().numpy()
-                # TODO: hacky thing right now, not sure if it's correct
-                if len(pred_np) != len(targets_np[i]):
-                    print(
-                        f"WARNING: pred_np and targets_np have different lengths: pred_np: {pred_np}, targets_np: {targets_np[i]}"
-                    )
-                    print(f"pred_np length: {len(pred_np)}")
-                    print(f"targets_np length: {len(targets_np[i])}")
-                    print(f"pred_np shape: {pred_np.shape}, targets_np shape: {targets_np[i].shape}")
-                    print(f"pred_np: {pred_np}")
-                    print(f"targets_np: {targets_np[i]}")
-                    print(f"pred_np: {pred_np}")
-                L = min(len(pred_np), targets_np.shape[1])
-                if L < 2:
-                    per_sample_spearman.append(float("nan"))
-                    continue
-                res = spearmanr(pred_np[:L], targets_np[i, :L])
-                rho = float(res.correlation) if hasattr(res, "correlation") else float(res[0])
-                per_sample_spearman.append(rho)
-        spearman_rho = np.mean(per_sample_spearman)
+        # Map rewards to progress predictions: A corresponds to chosen, B to rejected
+        rewards_chosen = progress_pred_A
+        rewards_rejected = progress_pred_B
 
         return {
-            "eval_loss": float(bce.item()),
-            "eval_accuracy": float(accuracy),
-            "eval_reward_diff": float(reward_diff),
-            "eval_avg_reward_chosen": float(avg_reward_chosen),
-            "eval_avg_reward_rejected": float(avg_reward_rejected),
-            "demo_reward_alignment": float(spearman_rho),
+            "predictions": predictions,
+            "reward_chosen": rewards_chosen,
+            "reward_rejected": rewards_rejected,
         }
 
 
@@ -266,19 +229,16 @@ def create_app(cfg: ExperimentConfig):
         pref_samples = [s for s in batch.samples if s.prediction_type == "preference"]
         if not pref_samples:
             return {
-                "eval_loss": None,
-                "eval_accuracy": None,
-                "eval_reward_diff": None,
-                "eval_avg_reward_chosen": None,
-                "eval_avg_reward_rejected": None,
-                "demo_reward_alignment": None,
+                "predictions": [],
+                "reward_chosen": [],
+                "reward_rejected": [],
             }
 
         batch_inputs = build_preference_batch(
             processor, pref_samples, resized_h=cfg.data.resized_height, resized_w=cfg.data.resized_width
         )
-        metrics = compute_batch_metrics(model, processor.tokenizer, batch_inputs)
-        return metrics
+        outputs = compute_batch_outputs(model, processor.tokenizer, batch_inputs)
+        return outputs
 
     @app.post("/evaluate_internal")
     def evaluate_internal(req: EvalRequest):

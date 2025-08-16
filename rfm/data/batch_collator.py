@@ -32,7 +32,6 @@ class BaseSample:
     # Progress fields
     target_progress_A: Optional[List[float]] = None  # Progress values for trajectory A
     target_progress_B: Optional[List[float]] = None  # Progress values for trajectory B
-    prediction_type: Optional[str] = None
     sample_type: Optional[str] = None                # how this sample was generated
 
     # Metadata field
@@ -60,8 +59,8 @@ class PreferenceSample(BaseSample):
     rejected_is_robot: Optional[bool] = None
 
     def __post_init__(self):
-        """Set the prediction type after initialization and handle field mapping."""
-        self.prediction_type = "preference"
+        """Set the sample type after initialization and handle field mapping."""
+        self.sample_type = "preference"
 
 
 @dataclass
@@ -99,8 +98,42 @@ class SimilaritySample(BaseSample):
     target_progress_ref: Optional[List[float]] = None
 
     def __post_init__(self):
-        """Set the prediction type after initialization and handle field mapping."""
-        self.prediction_type = "similarity"
+        """Set the sample type after initialization."""
+        self.sample_type = "similarity"
+
+
+@dataclass
+class PairedVideoSample(BaseSample):
+    """Sample structure for paired video comparison: traj_A vs traj_B."""
+    
+    # Paired video-specific fields using traj_A/traj_B naming
+    traj_A_frames: Optional[Union[List[str], np.ndarray]] = None
+    traj_B_frames: Optional[Union[List[str], np.ndarray]] = None
+    traj_A_frames_shape: Optional[tuple] = None  # Shape of traj_A frames
+    traj_B_frames_shape: Optional[tuple] = None  # Shape of traj_B frames
+    
+    # Trajectory identifiers
+    traj_A_id: Optional[str] = None
+    traj_B_id: Optional[str] = None
+    
+    # Trajectory metadata
+    traj_A_task: Optional[str] = None
+    traj_B_task: Optional[str] = None
+    traj_A_lang_vector: Optional[np.ndarray] = None
+    traj_B_lang_vector: Optional[np.ndarray] = None
+    traj_A_data_source: Optional[str] = None
+    traj_B_data_source: Optional[str] = None
+    traj_A_quality_label: Optional[str] = None
+    traj_B_quality_label: Optional[str] = None
+    traj_A_is_robot: Optional[bool] = None
+    traj_B_is_robot: Optional[bool] = None
+    
+    # Sample generation info
+    sample_type: Optional[str] = None  # "rewind_paired" or "random_paired"
+    
+    def __post_init__(self):
+        """Set the sample type after initialization."""
+        self.sample_type = "paired_video"
 
 
 class BatchCollator:
@@ -162,15 +195,17 @@ class BatchCollator:
         sample_objects = []
         for sample in samples:
             if isinstance(sample, dict):
-                # Convert dict to appropriate Sample object based on prediction_type
-                prediction_type = sample.get("prediction_type", "unknown")
-                if prediction_type == "preference":
+                # Convert dict to appropriate Sample object based on sample_type
+                sample_type = sample.get("sample_type", "unknown")
+                if sample_type == "preference":
                     sample_obj = PreferenceSample(**sample)
-                elif prediction_type == "similarity":
+                elif sample_type == "similarity":
                     sample_obj = SimilaritySample(**sample)
+                elif sample_type == "paired_video":
+                    sample_obj = PairedVideoSample(**sample)
                 else:
                     raise ValueError(
-                        f"Unknown prediction_type: {prediction_type}. Must be 'preference' or 'similarity'"
+                        f"Unknown sample_type: {sample_type}. Must be 'preference', 'similarity', or 'paired_video'"
                     )
                 sample_objects.append(sample_obj)
             elif isinstance(sample, (BaseSample, PreferenceSample, SimilaritySample)):
@@ -178,12 +213,15 @@ class BatchCollator:
             else:
                 raise ValueError(f"Expected Sample object or dict, got {type(sample)}")
 
-        # Separate samples by prediction type
+        # Separate samples by sample type
         preference_samples = [
-            s for s in sample_objects if s.prediction_type == "preference"
+            s for s in sample_objects if s.sample_type == "preference"
         ]
         similarity_samples = [
-            s for s in sample_objects if s.prediction_type == "similarity"
+            s for s in sample_objects if s.sample_type == "similarity"
+        ]
+        paired_video_samples = [
+            s for s in sample_objects if s.sample_type == "paired_video"
         ]
 
         # Process preferences
@@ -376,7 +414,7 @@ class BatchCollator:
         )
 
         # Add metadata
-        batch_inputs["prediction_type"] = ["preference"] * len(preference_samples)
+        batch_inputs["sample_type"] = ["preference"] * len(preference_samples)
         # Use the dynamically generated preference labels based on trajectory order
         batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
 
@@ -531,7 +569,7 @@ class BatchCollator:
                 ref_diff_inputs[key] = value
 
         # Combine into single batch with ref_A and ref_B suffixes
-        combined_inputs = {"prediction_type": ["similarity"] * num_samples}
+        combined_inputs = {"sample_type": ["similarity"] * num_samples}
 
         # Add ref_sim inputs
         for key, value in ref_sim_inputs.items():

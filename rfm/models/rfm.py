@@ -58,7 +58,7 @@ class RFMModel(PreTrainedModel):
         pixel_values_videos=None,
         image_grid_thw=None,
         video_grid_thw=None,
-        prediction_type=None,  # "preference" or "similarity"
+        sample_type=None,  # "preference", "similarity", or "paired_video"
         second_per_grid_ts=None,
         **kwargs,
     ):   
@@ -87,10 +87,11 @@ class RFMModel(PreTrainedModel):
             video_grid_thw (torch.LongTensor, optional): 
                 Video grid dimensions (N, 3) for video processing
                 
-            prediction_type (str, optional): 
-                Type of prediction to perform:
+            sample_type (str, optional): 
+                Type of sample to process:
                 - "preference": Uses preference head with <|pref_token|> for binary trajectory comparison
                 - "similarity": Uses similarity head with <|reward_token|> for trajectory-reference scoring
+                - "paired_video": Uses similarity head with <|reward_token|> for paired video comparison
                 - None: No specific prediction, returns zero logits
                 
             target_progress (torch.FloatTensor, optional): 
@@ -105,9 +106,10 @@ class RFMModel(PreTrainedModel):
         Returns:
             tuple: (model_outputs, progress_logits)
                 - model_outputs (SequenceClassifierOutputWithPast): 
-                    Contains logits for the specified prediction type:
+                    Contains logits for the specified sample type:
                     - For preference: Binary logits [batch_size, 1] 
                     - For similarity: Continuous similarity scores [batch_size, 1]
+                    - For paired_video: Continuous similarity scores [batch_size, 1]
                     - For none: Zero tensor [batch_size, 1]
                     
                 - progress_logits (Dict[str, List[torch.Tensor]] or None):
@@ -143,7 +145,7 @@ class RFMModel(PreTrainedModel):
         progress_logits_A = []
         progress_logits_B = []
 
-        tps = self.model.config.vision_config.temporal_patch_size
+        tps = self.processor.video_processor.merge_size
         
         for i, seq_ids in enumerate(input_ids):
             # the input_ids is structured as follows
@@ -181,11 +183,10 @@ class RFMModel(PreTrainedModel):
             T_B, H_B, W_B = current_video_grid_B
             
             # Calculate tokens per frame for trajectory A: (H_A * W_A) // merge_size^2
-            merge_size = self.processor.video_processor.merge_size
-            tokens_per_frame_A = (H_A * W_A) // (merge_size ** 2)
+            tokens_per_frame_A = (H_A * W_A) // (tps ** 2)
             
             # Calculate tokens per frame for trajectory B: (H_B * W_B) // merge_size^2
-            tokens_per_frame_B = (H_B * W_B) // (merge_size ** 2)
+            tokens_per_frame_B = (H_B * W_B) // (tps ** 2)
             
             # Calculate frame boundary positions for trajectory A
             frame_boundary_positions_A = []
@@ -240,8 +241,8 @@ class RFMModel(PreTrainedModel):
 
         # For preference and similarity, use specific tokens
         logits = None
-        if prediction_type is not None:
-            if prediction_type == "preference":
+        if sample_type is not None:
+            if sample_type == "preference":
                 token_id = self.processor.tokenizer.convert_tokens_to_ids("<|pref_token|>")
             else:  # similarity (default)
                 token_id = self.processor.tokenizer.convert_tokens_to_ids("<|reward_token|>")
@@ -267,7 +268,7 @@ class RFMModel(PreTrainedModel):
             ).squeeze(1)
             
             # Apply the appropriate head
-            if prediction_type == "preference":
+            if sample_type == "preference":
                 logits = self.preference_head(token_hidden_states)
             else:  # similarity (default)
                 logits = self.similarity_head(token_hidden_states)

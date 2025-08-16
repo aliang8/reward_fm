@@ -4,8 +4,8 @@ set -euo pipefail
 # Fast dataset setup via Hugging Face CLI downloads (avoids slow git-lfs clones)
 # Requires: `pip install huggingface_hub` to provide `huggingface-cli` command.
 
-if ! command -v huggingface-cli >/dev/null 2>&1; then
-  echo "Error: huggingface-cli not found. Install with: pip install huggingface_hub" >&2
+if ! command -v hf download >/dev/null 2>&1; then
+  echo "Error: hf download not found. Install with: uv pip install huggingface_hub. Or check that your venv is activated" >&2
   exit 1
 fi
 
@@ -23,15 +23,14 @@ download_dataset() {
 
   echo "Downloading ${repo_id} -> ${target_dir}"
   # --local-dir-use-symlinks False ensures actual files are materialized
-  huggingface-cli download "${repo_id}" \
+  hf download "${repo_id}" \
     --repo-type dataset \
-    --local-dir "${target_dir}" \
-    --local-dir-use-symlinks True
+    --local-dir "${target_dir}" 
 }
 
-# download_dataset abraranwar/agibotworld_rfm
-# download_dataset abraranwar/libero_rfm
-# download_dataset abraranwar/egodex_rfm
+download_dataset abraranwar/agibotworld_rfm
+download_dataset abraranwar/libero_rfm
+download_dataset abraranwar/egodex_rfm
 download_dataset ykorkmaz/libero_failure_rfm
 
 echo "Done. Set RFM_DATASET_PATH=${BASE_DIR} for training/eval."

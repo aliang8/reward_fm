@@ -13,7 +13,7 @@ import os
 import yaml
 from typing import List, Dict, Optional, Union, Any
 from peft import get_peft_model, LoraConfig, PeftModel
-from rfm.data.data_generator import BatchCollator, InfiniteDataGeneratorDataset, DataGenerator
+from rfm.data.data_generator import BatchCollator, InfiniteDataGeneratorDataset, DataGenerator, InfinitePairedVideoDataset
 from rfm.models.rfm import RFMModel
 from trainer import RFMTrainer
 from rfm.utils.logging import is_rank_0, rank_0_print
@@ -203,12 +203,12 @@ def display_config(cfg: ExperimentConfig):
         table.add_row("PEFT", "LoRA Alpha", str(cfg.peft.lora_alpha))
         table.add_row("PEFT", "LoRA Dropout", str(cfg.peft.lora_dropout))
         table.add_row("PEFT", "Target Modules", ", ".join(cfg.peft.target_modules))
-        table.add_row("PEFT", "Train Vision Encoder", str(cfg.peft.train_vision_encoder))
-        table.add_row("PEFT", "Train Language Model", str(cfg.peft.train_language_model))
-        table.add_row("PEFT", "Train Value Head", str(cfg.peft.train_value_head))
-        table.add_row("PEFT", "Train Progress Head", str(cfg.peft.train_progress_head))
-        table.add_row("PEFT", "Train Preference Head", str(cfg.peft.train_preference_head))
-        table.add_row("PEFT", "Train Similarity Head", str(cfg.peft.train_similarity_head))
+        table.add_row("PEFT", "Train Vision Encoder", str(cfg.model.train_vision_encoder))
+        table.add_row("PEFT", "Train Language Model", str(cfg.model.train_language_model))
+        table.add_row("PEFT", "Train Value Head", str(cfg.model.train_value_head))
+        table.add_row("PEFT", "Train Progress Head", str(cfg.model.train_progress_head))
+        table.add_row("PEFT", "Train Preference Head", str(cfg.model.train_preference_head))
+        table.add_row("PEFT", "Train Similarity Head", str(cfg.model.train_similarity_head))
     
     # Logging config
     table.add_row("Logging", "Use Wandb", str(cfg.logging.use_wandb))

@@ -15,6 +15,15 @@ class ModelConfig:
     base_model_id: str = field(default="Qwen/Qwen2.5-VL-3B-Instruct")
     torch_dtype: str = field(default="bfloat16")
     trust_remote_code: bool = field(default=True)
+    train_vision_encoder: bool = field(default=False, metadata={"help": "Whether to train the vision encoder"})
+    train_language_model: bool = field(default=True, metadata={"help": "Whether to train the language model"})
+    train_value_head: bool = field(default=True, metadata={"help": "Whether to train the value head"})
+    # RFM-specific head training options
+    train_progress_head: bool = field(default=True, metadata={"help": "Whether to train the progress prediction head"})
+    train_preference_head: bool = field(default=True, metadata={"help": "Whether to train the preference prediction head"})
+    train_similarity_head: bool = field(default=True, metadata={"help": "Whether to train the similarity scoring head"})
+
+
 
 
 @dataclass
@@ -26,16 +35,7 @@ class PEFTConfig:
     lora_dropout: float = field(default=0.05)
     bias: str = field(default="none")
     target_modules: List[str] = field(default_factory=lambda: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"])
-    # Additional options for more comprehensive training
-    train_vision_encoder: bool = field(default=False, metadata={"help": "Whether to train the vision encoder"})
-    train_language_model: bool = field(default=True, metadata={"help": "Whether to train the language model"})
-    train_value_head: bool = field(default=True, metadata={"help": "Whether to train the value head"})
-    # RFM-specific head training options
-    train_progress_head: bool = field(default=True, metadata={"help": "Whether to train the progress prediction head"})
-    train_preference_head: bool = field(default=True, metadata={"help": "Whether to train the preference prediction head"})
-    train_similarity_head: bool = field(default=True, metadata={"help": "Whether to train the similarity scoring head"})
-
-
+    
 @dataclass
 class DataConfig:
     """Config for data settings"""
@@ -55,8 +55,8 @@ class DataConfig:
     resized_width: int = field(default=128, metadata={"help": "Width to resize images/videos to"})
     
     # Data generation settings
+    dataset_type: str = field(default="preference", metadata={"help": "Dataset type: 'preference' for preference/similarity samples, 'paired_video' for simple paired video comparison"})
     preference_ratio: float = field(default=0.5)
-    similarity_ratio: float = field(default=0.5)
     dataset_preference_ratio: float = field(default=0.7)
     shuffle: bool = field(default=True)
     seed: int = field(default=42)
@@ -122,16 +122,6 @@ class LoggingConfig:
 
 
 @dataclass
-class EvaluationConfig:
-    """Config for evaluation settings"""
-    model_path: str = field(default="./rfm_model_output")
-    eval_subset_size: int = field(default=10, metadata={"help": "Number of examples to use for evaluation"})
-    eval_dataset_path: str = field(default="aliangdw/rfm")
-    eval_base_dir: str = field(default="libero_dpo_dataset")
-    eval_dataset_subsets: List[str] = field(default_factory=lambda: ["libero_90"])
-
-
-@dataclass
 class ExperimentConfig:
     """Main experiment configuration"""
     mode: str = field(default="train", metadata={"help": "Mode: 'train' or 'evaluate'"})
@@ -141,4 +131,3 @@ class ExperimentConfig:
     data: DataConfig = field(default_factory=DataConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
-    evaluation: EvaluationConfig = field(default_factory=EvaluationConfig) 

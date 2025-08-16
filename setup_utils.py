@@ -7,10 +7,10 @@ This file contains setup functions that can be reused across different training 
 import torch
 from transformers import AutoProcessor, Qwen2_5_VLModel, TrainingArguments, Qwen2_5_VLConfig
 from peft import get_peft_model, LoraConfig
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Union
 
 from rfm.models.rfm import RFMModel
-from rfm.data.data_generator import DataGenerator, InfiniteDataGeneratorDataset, BatchCollator
+from rfm.data.data_generator import DataGenerator, InfiniteDataGeneratorDataset, BatchCollator, InfinitePairedVideoDataset
 from rfm.utils.logging import rank_0_print
 from rfm.configs.experiment_configs import ExperimentConfig
 
@@ -103,20 +103,20 @@ def setup_peft_model(rfm_model: RFMModel, cfg: ExperimentConfig) -> RFMModel:
         for name, param in peft_rfm_model.named_parameters():
             # Train prediction heads based on individual settings
             if "progress_head" in name:
-                param.requires_grad = cfg.peft.train_progress_head
+                param.requires_grad = cfg.model.train_progress_head
             elif "preference_head" in name:
-                param.requires_grad = cfg.peft.train_preference_head
+                param.requires_grad = cfg.model.train_preference_head
             elif "similarity_head" in name:
-                param.requires_grad = cfg.peft.train_similarity_head
+                param.requires_grad = cfg.model.train_similarity_head
             # Train vision encoder if specified
             elif "visual" in name or "vision" in name:
-                param.requires_grad = cfg.peft.train_vision_encoder
+                param.requires_grad = cfg.model.train_vision_encoder
             # Train language model if specified
             elif "model" in name and not ("visual" in name or "vision" in name):
-                param.requires_grad = cfg.peft.train_language_model
+                param.requires_grad = cfg.model.train_language_model
             # Default: train if language model training is enabled
             else:
-                param.requires_grad = cfg.peft.train_language_model
+                param.requires_grad = cfg.model.train_language_model
         
         if cfg.logging.print_trainable_parameters:
             # Count trainable parameters manually - defer printing until after FSDP setup
@@ -124,11 +124,11 @@ def setup_peft_model(rfm_model: RFMModel, cfg: ExperimentConfig) -> RFMModel:
             all_params = sum(p.numel() for p in peft_rfm_model.parameters())
             rank_0_print(f"trainable params: {trainable_params:,} || all params: {all_params:,} || trainable%: {100 * trainable_params / all_params:.4f}")
             rank_0_print(f"Training configuration:")
-            rank_0_print(f"  - Vision encoder: {cfg.peft.train_vision_encoder}")
-            rank_0_print(f"  - Language model: {cfg.peft.train_language_model}")
-            rank_0_print(f"  - Progress head: {cfg.peft.train_progress_head}")
-            rank_0_print(f"  - Preference head: {cfg.peft.train_preference_head}")
-            rank_0_print(f"  - Similarity head: {cfg.peft.train_similarity_head}")
+            rank_0_print(f"  - Vision encoder: {cfg.model.train_vision_encoder}")
+            rank_0_print(f"  - Language model: {cfg.model.train_language_model}")
+            rank_0_print(f"  - Progress head: {cfg.model.train_progress_head}")
+            rank_0_print(f"  - Preference head: {cfg.model.train_preference_head}")
+            rank_0_print(f"  - Similarity head: {cfg.model.train_similarity_head}")
 
         return peft_rfm_model
 
@@ -240,17 +240,24 @@ def setup_eval_data_generator(cfg: ExperimentConfig) -> DataGenerator:
     return eval_data_generator
 
 
-def setup_dataset(data_generator: DataGenerator, max_samples: int = 1000000, dataset_type: str = "train") -> InfiniteDataGeneratorDataset:
-    """Shared function to create training or evaluation dataset"""
+def setup_dataset(data_generator: DataGenerator, max_samples: int = 1000000, dataset_type: str = "train") -> Union[InfiniteDataGeneratorDataset, InfinitePairedVideoDataset]:
+    """Shared function to create training or evaluation dataset based on config"""
     
-    rank_0_print(f"Setting up {dataset_type} dataset with max_samples={max_samples}")
-    dataset = InfiniteDataGeneratorDataset(data_generator, max_samples=max_samples)
+    # Determine which dataset class to use based on config
+    if data_generator.config.data.dataset_type == "paired_video":
+        rank_0_print(f"Setting up {dataset_type} paired video dataset with max_samples={max_samples}")
+        dataset = InfinitePairedVideoDataset(data_generator, max_samples=max_samples)
+        rank_0_print(f"{dataset_type.capitalize()} paired video dataset created successfully")
+    else:
+        # Default to preference/similarity dataset
+        rank_0_print(f"Setting up {dataset_type} preference/similarity dataset with max_samples={max_samples}")
+        dataset = InfiniteDataGeneratorDataset(data_generator, max_samples=max_samples)
+        rank_0_print(f"{dataset_type.capitalize()} preference/similarity dataset created successfully")
     
-    rank_0_print(f"{dataset_type.capitalize()} dataset created successfully")
     return dataset
 
 
-def setup_eval_dataset(cfg: ExperimentConfig) -> InfiniteDataGeneratorDataset:
+def setup_eval_dataset(cfg: ExperimentConfig) -> Union[InfiniteDataGeneratorDataset, InfinitePairedVideoDataset]:
     """Create evaluation dataset using eval-specific configuration"""
     
     # Create evaluation data generator
@@ -264,17 +271,6 @@ def setup_eval_dataset(cfg: ExperimentConfig) -> InfiniteDataGeneratorDataset:
     )
     
     return eval_dataset
-
-
-def setup_train_dataset(data_generator: DataGenerator, max_samples: int = 1000000) -> InfiniteDataGeneratorDataset:
-    """Shared function to create training dataset (deprecated - use setup_dataset instead)"""
-    
-    rank_0_print(f"Setting up training dataset with max_samples={max_samples}")
-    
-    dataset = InfiniteDataGeneratorDataset(data_generator, max_samples=max_samples)
-    
-    rank_0_print("Training dataset created successfully")
-    return dataset
 
 
 def setup_batch_collator(processor: AutoProcessor, cfg: ExperimentConfig) -> BatchCollator:

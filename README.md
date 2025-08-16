@@ -169,6 +169,10 @@ uv run python rfm/data/generate_hf_dataset.py \
 
 ## Training and Evaluation
 ```bash
+
+# Preprocess the dataset
+uv run scripts/preprocess_dataset.py
+
 # Training
 uv run accelerate launch --config_file rfm/configs/fsdp.yaml train.py --config_path=rfm/configs/config.yaml
 

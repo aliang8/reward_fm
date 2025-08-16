@@ -56,6 +56,9 @@ class DataGenerator:
         self.similarity_ratio = 1.0 - config.data.preference_ratio
         self.dataset_preference_ratio = config.data.dataset_preference_ratio
 
+        # Show available datasets for debugging
+        self.show_available_datasets()
+        
         # Load trajectory dataset
         self._load_trajectory_dataset()
         
@@ -104,27 +107,158 @@ class DataGenerator:
             )
     
     def _load_preprocessed_cache(self, cache_dir: str, is_training: bool = True):
-        """Load the preprocessed cache with index mappings."""
-        # Load the processed dataset
-        dataset_cache_dir = os.path.join(cache_dir, "processed_dataset")
-        self.dataset = Dataset.load_from_disk(dataset_cache_dir)
-
-        # Load index mappings
-        mappings_file = os.path.join(cache_dir, "index_mappings.json")
-        with open(mappings_file, 'r') as f:
-            index_mappings = json.load(f)
+        """Load the preprocessed cache with index mappings for specific dataset/subset pairs."""
+        # Check which dataset/subset pairs are available
+        available_datasets = []
+        missing_datasets = []
         
-        # Store the index mappings for fast access
-        self.robot_trajectories = index_mappings['robot_trajectories']
-        self.human_trajectories = index_mappings['human_trajectories']
-        self.optimal_by_task = index_mappings['optimal_by_task']
-        self.suboptimal_by_task = index_mappings['suboptimal_by_task']
-        self.quality_indices = index_mappings['quality_indices']
-        self.task_indices = index_mappings['task_indices']
-        self.source_indices = index_mappings['source_indices']
+        for dataset_path, dataset_subsets in zip(self.datasets, self.subsets):
+            # Handle both single subset (string) and multiple subsets (list)
+            if isinstance(dataset_subsets, str):
+                dataset_subsets = [dataset_subsets]
+            
+            for subset in dataset_subsets:
+                cache_key = f"{dataset_path}/{subset}"
+                individual_cache_dir = os.path.join(cache_dir, cache_key.replace("/", "_").replace(":", "_"))
+                
+                if os.path.exists(individual_cache_dir):
+                    available_datasets.append((dataset_path, subset, individual_cache_dir))
+                else:
+                    missing_datasets.append((dataset_path, subset))
+        
+        # Warn about missing datasets
+        if missing_datasets:
+            rank_0_print(f"⚠️  Warning: The following configured dataset/subset pairs are not available in the cache:")
+            for dataset_path, subset in missing_datasets:
+                rank_0_print(f"    ❌ {dataset_path}/{subset}")
+            rank_0_print(f"  Available dataset/subset pairs will be loaded, but some configured data may be missing.")
+        
+        if not available_datasets:
+            raise RuntimeError(
+                f"No configured dataset/subset pairs are available in the cache. "
+                f"Please run preprocess_datasets.py to create the cache for: {self.datasets}"
+            )
+        
+        # Load available datasets
+        loaded_datasets = []
+        combined_indices = {
+            'robot_trajectories': [],
+            'human_trajectories': [],
+            'optimal_by_task': {},
+            'suboptimal_by_task': {},
+            'quality_indices': {},
+            'task_indices': {},
+            'source_indices': {},
+        }
+        
+        offset = 0
+        
+        for dataset_path, subset, individual_cache_dir in available_datasets:
+            rank_0_print(f"📂 Loading {dataset_path}/{subset} from {individual_cache_dir}")
+            
+            # Load the processed dataset
+            dataset_cache_dir = os.path.join(individual_cache_dir, "processed_dataset")
+            if not os.path.exists(dataset_cache_dir):
+                rank_0_print(f"  ⚠️  Warning: Processed dataset not found at {dataset_cache_dir}, skipping...")
+                continue
+            
+            try:
+                dataset = Dataset.load_from_disk(dataset_cache_dir)
+                loaded_datasets.append(dataset)
+                
+                # Load index mappings
+                mappings_file = os.path.join(individual_cache_dir, "index_mappings.json")
+                if os.path.exists(mappings_file):
+                    with open(mappings_file, 'r') as f:
+                        indices = json.load(f)
+                    
+                    # Adjust indices by adding offset and combine
+                    for key in combined_indices:
+                        if key in indices:
+                            if isinstance(indices[key], list):
+                                # For list indices, add offset
+                                combined_indices[key].extend([idx + offset for idx in indices[key]])
+                            elif isinstance(indices[key], dict):
+                                # For dict indices, add offset to values
+                                for subkey, subindices in indices[key].items():
+                                    if subkey not in combined_indices[key]:
+                                        combined_indices[key][subkey] = []
+                                    combined_indices[key][subkey].extend([idx + offset for idx in subindices])
+                
+                rank_0_print(f"  ✅ Loaded {len(dataset)} trajectories from {dataset_path}/{subset}")
+                offset += len(dataset)
+                
+            except Exception as e:
+                rank_0_print(f"  ❌ Failed to load {dataset_path}/{subset}: {e}")
+                continue
+        
+        if not loaded_datasets:
+            raise RuntimeError("No datasets could be loaded from the cache")
+        
+        # Concatenate datasets if multiple
+        if len(loaded_datasets) == 1:
+            self.dataset = loaded_datasets[0]
+        else:
+            rank_0_print(f"🔗 Concatenating {len(loaded_datasets)} loaded datasets...")
+            self.dataset = concatenate_datasets(loaded_datasets)
+        
+        # Store the combined index mappings
+        self.robot_trajectories = combined_indices['robot_trajectories']
+        self.human_trajectories = combined_indices['human_trajectories']
+        self.optimal_by_task = combined_indices['optimal_by_task']
+        self.suboptimal_by_task = combined_indices['suboptimal_by_task']
+        self.quality_indices = combined_indices['quality_indices']
+        self.task_indices = combined_indices['task_indices']
+        self.source_indices = combined_indices['source_indices']
         
         dataset_type = "training" if is_training else "evaluation"
-        rank_0_print(f"Loaded {len(self.dataset)} trajectory indices from preprocessed {dataset_type} cache")
+        rank_0_print(f"✅ Loaded {len(self.dataset)} total trajectories from preprocessed {dataset_type} cache")
+        rank_0_print(f"  📊 Available dataset/subset pairs: {len(available_datasets)}/{len(missing_datasets) + len(available_datasets)}")
+        rank_0_print(f"  📊 Missing dataset/subset pairs: {len(missing_datasets)}")
+    
+    def show_available_datasets(self):
+        """Show which datasets are available in the cache."""
+        if self.is_evaluation:
+            cache_dir = f"./processed_datasets/eval_cache"
+        else:
+            cache_dir = f"./processed_datasets/train_cache"
+        
+        rank_0_print(f"\n🔍 Available datasets in {cache_dir}:")
+        
+        # List all subdirectories (individual dataset caches)
+        if os.path.exists(cache_dir):
+            subdirs = [d for d in os.listdir(cache_dir) if os.path.isdir(os.path.join(cache_dir, d))]
+            if subdirs:
+                for subdir in sorted(subdirs):
+                    # Try to load dataset info
+                    info_file = os.path.join(cache_dir, subdir, "dataset_info.json")
+                    if os.path.exists(info_file):
+                        try:
+                            with open(info_file, 'r') as f:
+                                info = json.load(f)
+                            dataset_path = info.get('dataset_path', 'unknown')
+                            subset = info.get('subset', 'unknown')
+                            trajectories = info.get('total_trajectories', 0)
+                            rank_0_print(f"  ✅ {dataset_path}/{subset}: {trajectories} trajectories")
+                        except:
+                            rank_0_print(f"  📁 {subdir}: (info file corrupted)")
+                    else:
+                        rank_0_print(f"  📁 {subdir}: (no info file)")
+            else:
+                rank_0_print(f"  ❌ No dataset caches found")
+        else:
+            rank_0_print(f"  ❌ Cache directory does not exist")
+        
+        # Show configured datasets
+        rank_0_print(f"\n⚙️  Configured datasets:")
+        for dataset_path, dataset_subsets in zip(self.datasets, self.subsets):
+            # Handle both single subset (string) and multiple subsets (list)
+            if isinstance(dataset_subsets, str):
+                dataset_subsets = [dataset_subsets]
+            
+            rank_0_print(f"  📋 {dataset_path}: {len(dataset_subsets)} subset(s)")
+            for subset in dataset_subsets:
+                rank_0_print(f"    📂 {subset}")
     
     def _load_frames_from_npz(self, npz_filepath: str) -> np.ndarray:
         """Load frames on-demand from npz file.
@@ -227,6 +361,9 @@ class DataGenerator:
         # Calculate progress for the reversed frames in the correct order
         reverse_progress = [(end_idx - 1 - i) / num_frames for i in range(len(reverse_frames))]
         
+        # Calculate how many frames were rewound
+        num_frames_rewound = len(reverse_frames)
+        
         # Combine forward and reverse segments
         if isinstance(forward_frames, np.ndarray):
             # If frames are numpy arrays, use concatenate
@@ -247,6 +384,7 @@ class DataGenerator:
         rewind_traj['metadata']['rewind_generated'] = True
         rewind_traj['metadata']['original_traj_id'] = original_traj['id']
         rewind_traj['metadata']['rewind_progress'] = combined_progress
+        rewind_traj['metadata']['num_frames_rewound'] = num_frames_rewound
         
         return rewind_traj
     
@@ -408,6 +546,11 @@ class DataGenerator:
         negative_frames_shape = negative_traj.get('frames_shape')
         if isinstance(negative_frames_shape, list):
             negative_frames_shape = tuple(negative_frames_shape)
+        
+        # Get num_frames_rewound if this is a rewound trajectory
+        num_frames_rewound = None
+        if strategy_used.startswith("rewind"):
+            num_frames_rewound = negative_traj.get('metadata', {}).get('num_frames_rewound')
     
         # Create preference sample structure
         sample = PreferenceSample(
@@ -438,7 +581,8 @@ class DataGenerator:
             # Progress fields
             target_progress_A=target_progress_A,
             target_progress_B=target_progress_B,
-            sample_type=strategy_used
+            sample_type=strategy_used,
+            num_frames_rewound=num_frames_rewound
         )    
         return sample
     

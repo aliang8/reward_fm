@@ -31,7 +31,7 @@ from rich import print as rprint
 
 # Import shared configs and utilities
 from rfm.configs.experiment_configs import ExperimentConfig
-from setup_utils import (
+from rfm.utils.setup_utils import (
     setup_model_and_processor,
     setup_peft_model,
     create_training_arguments,

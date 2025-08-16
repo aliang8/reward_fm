@@ -172,6 +172,7 @@ def iter_eval_all_preferences(
         # Prefer suboptimal from same task; choose any index != opt_idx
         neg_idx: Optional[int] = None
         cand_indices = [idx for idx in subs_by_task_indices.get(task, []) if idx != opt_idx]
+
         if cand_indices:
             neg_idx = cand_indices[0]
             neg = data_generator.dataset[neg_idx]

@@ -9,15 +9,15 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 # LIBERO regular datasets
 echo "Running LIBERO regular dataset evaluations at $(date)" | tee evals/logs/libero_regular_${TIMESTAMP}.log
 
-#for subset in "libero_10" "libero_goal" "libero_object" "libero_spatial"; do
-for subset in "libero_10"; do
+for subset in "libero_10" "libero_goal" "libero_object" "libero_spatial"; do
+# for subset in "libero_10"; do
     echo "=== Evaluating subset: $subset ===" | tee -a evals/logs/libero_regular_${TIMESTAMP}.log
     echo "Start time: $(date)" | tee -a evals/logs/libero_regular_${TIMESTAMP}.log
     
     uv run python evals/run_model_eval.py \
       --config_path=rfm/configs/config.yaml \
       --server_url=http://localhost:8000 \
-      --batch_size=12 \
+      --batch_size=32 \
       --set evaluation.eval_dataset_path="abrar/libero_rfm" \
       --set evaluation.eval_dataset_subsets=["$subset"] \
       --iterate_all_preferences 2>&1 | tee -a evals/logs/libero_regular_${TIMESTAMP}.log

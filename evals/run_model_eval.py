@@ -87,13 +87,16 @@ def _compute_metrics_from_response(samples: List[Any], resp: Dict[str, Any]) -> 
             continue
     demo_reward_alignment = float(np.mean(rhos)) if rhos else None
 
-    return {
+    metrics = {
         "eval_accuracy": eval_accuracy,
         "eval_reward_diff": eval_reward_diff,
         "eval_avg_reward_chosen": eval_avg_reward_chosen,
         "eval_avg_reward_rejected": eval_avg_reward_rejected,
         "demo_reward_alignment": demo_reward_alignment,
     }
+
+    print(f"batch metrics: {metrics}")
+    return metrics
 
 
 def _evaluate_samples(server_url: str, samples: List[Any]) -> Dict[str, Any]:

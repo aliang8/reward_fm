@@ -205,19 +205,7 @@ def setup_data_generator(cfg: ExperimentConfig) -> DataGenerator:
         for i, (dataset, subset) in enumerate(zip(cfg.data.train_datasets, cfg.data.train_subsets)):
             rank_0_print(f"  Dataset {i+1}: {dataset} -> {subset}")
     
-    data_generator = DataGenerator(
-        datasets=cfg.data.train_datasets,
-        subsets=cfg.data.train_subsets,
-        preference_ratio=cfg.data.preference_ratio,
-        similarity_ratio=cfg.data.similarity_ratio,
-        dataset_preference_ratio=cfg.data.dataset_preference_ratio,
-        shuffle=cfg.data.shuffle,
-        seed=cfg.data.seed,
-        num_proc=cfg.data.num_proc,
-        debug=cfg.debug,
-        force_reprocess=cfg.data.force_reprocess,
-        max_frames=cfg.data.max_frames,
-    )
+    data_generator = DataGenerator(config=cfg)
     
     if rank == 0:
         rank_0_print(f"Data generator initialized on rank {rank}")
@@ -244,19 +232,7 @@ def setup_eval_data_generator(cfg: ExperimentConfig) -> DataGenerator:
         for i, (dataset, subset) in enumerate(zip(cfg.data.eval_datasets, cfg.data.eval_subsets)):
             rank_0_print(f"  Dataset {i+1}: {dataset} -> {subset}")
     
-    eval_data_generator = DataGenerator(
-        datasets=cfg.data.eval_datasets,
-        subsets=cfg.data.eval_subsets,
-        preference_ratio=cfg.data.preference_ratio,
-        similarity_ratio=cfg.data.similarity_ratio,
-        dataset_preference_ratio=cfg.data.dataset_preference_ratio,
-        shuffle=cfg.data.shuffle,
-        seed=cfg.data.seed + 1000,  # Different seed for eval to avoid overlap
-        num_proc=cfg.data.num_proc,
-        debug=cfg.debug,
-        force_reprocess=False,
-        max_frames=cfg.data.max_frames,
-    )
+    eval_data_generator = DataGenerator(config=cfg, is_evaluation=True)
     
     if rank == 0:
         rank_0_print(f"Evaluation data generator initialized on rank {rank}")
@@ -268,7 +244,6 @@ def setup_dataset(data_generator: DataGenerator, max_samples: int = 1000000, dat
     """Shared function to create training or evaluation dataset"""
     
     rank_0_print(f"Setting up {dataset_type} dataset with max_samples={max_samples}")
-    
     dataset = InfiniteDataGeneratorDataset(data_generator, max_samples=max_samples)
     
     rank_0_print(f"{dataset_type.capitalize()} dataset created successfully")

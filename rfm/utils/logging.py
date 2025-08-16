@@ -1,7 +1,8 @@
 import torch
 import os
 from rich import print as rprint
-
+from contextlib import contextmanager
+import time
 
 def is_rank_0():
     """Check if current process is rank 0 (main process)."""
@@ -24,3 +25,17 @@ def rank_0_print(*args, **kwargs):
     """Print only if on rank 0."""
     if is_rank_0():
         rprint(*args, **kwargs)
+
+@contextmanager
+def timer(name: str, verbose: bool = True):
+    """Context manager for timing operations."""
+    start_time = time.time()
+    if verbose:
+        print(f"    Starting {name}...")
+    try:
+        yield
+    finally:
+        end_time = time.time()
+        duration = end_time - start_time
+        if verbose:
+            print(f"    {name} completed in {duration:.2f}s")

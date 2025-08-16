@@ -13,11 +13,16 @@ dictionary with keys:
 Usage:
   uv run python evals/run_model_eval.py --config_path=rfm/configs/config.yaml \
       --server_url=http://localhost:8000 --num_batches=10 --batch_size=4
+  
+  # Override config values:
+  uv run python evals/run_model_eval.py --config_path=rfm/configs/config.yaml \
+      --set data.max_frames=16 --set data.eval_subset_size=1000
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 from typing import Any, Dict, List, Optional
 
 from tqdm import tqdm
@@ -186,9 +191,36 @@ def main():
         action="store_true",
         help="Evaluate one preference pair per optimal trajectory to cover the dataset.",
     )
+    parser.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        help="Override config with dot-path assignments, e.g., --set data.max_frames=8 --set model.base_model_id='Qwen/...'.",
+    )
     args = parser.parse_args()
 
     cfg = load_experiment_config_from_yaml(args.config_path)
+
+    # Apply overrides from --set key=value (dot-path)
+    for assignment in args.set:
+        if "=" not in assignment:
+            print(f"Warning: Invalid --set argument '{assignment}', skipping. Use format: key=value")
+            continue
+        key, value_str = assignment.split("=", 1)
+        try:
+            value = ast.literal_eval(value_str)
+        except Exception:
+            value = value_str
+        target = cfg
+        parts = key.split(".")
+        for p in parts[:-1]:
+            if not hasattr(target, p):
+                print(f"Warning: Config path '{key}' is invalid, skipping override")
+                break
+            target = getattr(target, p)
+        else:
+            setattr(target, parts[-1], value)
+            print(f"Applied config override: {key} = {value}")
 
     if args.iterate_all_preferences:
         results = iter_eval_all_preferences(cfg=cfg, server_url=args.server_url, batch_size=args.batch_size)

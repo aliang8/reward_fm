@@ -42,7 +42,6 @@ dependencies = [
     "ipdb>=0.13.13",
     "hf_transfer>=0.1.0",
     "gradio>=4.0.0",
-    "datasets>=2.14.0",
     "pillow>=9.0.0",
     "ffmpeg",
     "opencv-python-headless>=4.8.0",

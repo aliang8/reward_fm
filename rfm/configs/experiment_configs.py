@@ -6,7 +6,7 @@ across different training scripts.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Union
 
 
 @dataclass
@@ -38,34 +38,54 @@ class PEFTConfig:
     
 @dataclass
 class DataConfig:
-    """Config for data settings"""
-    # Training datasets and subsets
-    train_datasets: List[str] = field(default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of training dataset names (e.g., ['abraranwar/libero_rfm', 'ykorkmaz/libero_failure_rfm'])"})
-    train_subsets: List[str] = field(default_factory=lambda: ["libero_90"], metadata={"help": "List of training dataset subsets (e.g., ['libero_90', 'libero_failure_90'])"})
+    """Configuration for data loading and processing."""
     
-    # Evaluation datasets and subsets
-    eval_datasets: List[str] = field(default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of evaluation dataset names (e.g., ['abraranwar/libero_rfm', 'ykorkmaz/libero_failure_rfm'])"})
-    eval_subsets: List[str] = field(default_factory=lambda: ["libero_10"], metadata={"help": "List of evaluation dataset subsets (e.g., ['libero_10', 'libero_failure_10'])"})
-    eval_subset_size: int = field(default=100, metadata={"help": "Number of examples to use for evaluation dataset"})
+    # Dataset paths and subsets
+    train_datasets: List[str] = field(default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of training dataset names"})
+    train_subsets: List[Union[str, List[str]]] = field(default_factory=lambda: ["libero_90"], metadata={"help": "List of training dataset subsets"})
+    eval_datasets: List[str] = field(default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of evaluation dataset names"})
+    eval_subsets: List[Union[str, List[str]]] = field(default_factory=lambda: ["libero_10"], metadata={"help": "List of evaluation dataset subsets"})
     
-    # Video processing settings
-    max_frames: int = field(default=32)  # Maximum frames per trajectory
-    video_frame_sampling: str = field(default="uniform")  # "uniform", "random", "first", "middle"
-    resized_height: int = field(default=128, metadata={"help": "Height to resize images/videos to"})
-    resized_width: int = field(default=128, metadata={"help": "Width to resize images/videos to"})
+    # Dataset type and configuration
+    dataset_type: str = field(default="preference", metadata={"help": "Dataset type: 'preference', 'similarity', 'paired_video', 'rewound', 'success_failure'"})
     
-    # Data generation settings
-    dataset_type: str = field(default="preference", metadata={"help": "Dataset type: 'preference' for preference/similarity samples, 'paired_video' for simple paired video comparison"})
-    preference_ratio: float = field(default=0.5)
-    dataset_preference_ratio: float = field(default=0.7)
-    shuffle: bool = field(default=True)
-    seed: int = field(default=42)
-    num_proc: int = field(default=1)
-    force_reprocess: bool = field(default=False, metadata={"help": "Force reprocessing of dataset even if cached version exists"})
+    # Rewound dataset specific parameters
+    # Example rewound config:
+    # dataset_type: "rewound"
+    # rewind_lengths: [1, 2, 4, 8]  # Generate rewinds of 1, 2, 4, and 8 frames
+    # samples_per_trajectory: 2  # Generate 2 preference samples per trajectory
+    # Note: Original trajectories are preferred over rewound versions
+    rewind_lengths: Optional[List[int]] = field(default=None, metadata={"help": "List of rewind lengths for rewound dataset (default: 1 to max_frames)"})
+    samples_per_trajectory: int = field(default=1, metadata={"help": "Number of preference samples to generate per trajectory for rewound dataset"})
     
-    # Data loading settings
-    dataloader_pin_memory: bool = field(default=False)
-    dataloader_num_workers: int = field(default=0)
+    # Success-failure dataset specific parameters
+    # Example success_failure config:
+    # dataset_type: "success_failure"
+    # Note: Generates ALL possible pairs between successful and failed trajectories for each task
+    # Note: Successful trajectories are preferred over failed versions of the same task
+    
+    # Video processing parameters
+    max_frames: int = field(default=8, metadata={"help": "Maximum number of frames to extract from videos"})
+    video_frame_sampling: str = field(default="uniform", metadata={"help": "Frame sampling strategy: 'uniform', 'random', 'start', 'end'"})
+    resized_height: int = field(default=224, metadata={"help": "Height to resize video frames to"})
+    resized_width: int = field(default=224, metadata={"help": "Width to resize video frames to"})
+    
+    # Data generation parameters
+    preference_ratio: float = field(default=0.7, metadata={"help": "Ratio of preference samples to similarity samples"})
+    dataset_preference_ratio: float = field(default=0.8, metadata={"help": "Ratio of dataset preference samples to generated preference samples"})
+    
+    # Processing parameters
+    shuffle: bool = field(default=True, metadata={"help": "Whether to shuffle the dataset"})
+    seed: int = field(default=42, metadata={"help": "Random seed for reproducibility"})
+    num_proc: int = field(default=1, metadata={"help": "Number of processes for dataset processing"})
+    force_reprocess: bool = field(default=False, metadata={"help": "Force reprocessing of datasets even if cache exists"})
+    
+    # Evaluation parameters
+    eval_subset_size: Optional[int] = field(default=100, metadata={"help": "Number of samples to use for evaluation"})
+    
+    # Dataloader parameters
+    dataloader_pin_memory: bool = field(default=True, metadata={"help": "Whether to pin memory in dataloader"})
+    dataloader_num_workers: int = field(default=0, metadata={"help": "Number of worker processes for dataloader"})
 
 
 @dataclass

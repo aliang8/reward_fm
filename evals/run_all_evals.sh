@@ -9,8 +9,8 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 # LIBERO regular datasets
 echo "Running LIBERO regular dataset evaluations at $(date)" | tee evals/logs/libero_regular_${TIMESTAMP}.log
 
-for subset in "libero_10" "libero_goal" "libero_object" "libero_spatial"; do
-# for subset in "libero_10"; do
+# for subset in "libero_10" "libero_goal" "libero_object" "libero_spatial"; do
+for subset in "libero_10"; do
     echo "=== Evaluating subset: $subset ===" | tee -a evals/logs/libero_regular_${TIMESTAMP}.log
     echo "Start time: $(date)" | tee -a evals/logs/libero_regular_${TIMESTAMP}.log
     
@@ -18,9 +18,9 @@ for subset in "libero_10" "libero_goal" "libero_object" "libero_spatial"; do
       --config_path=rfm/configs/config.yaml \
       --server_url=http://localhost:8000 \
       --batch_size=32 \
-      --set evaluation.eval_dataset_path="abrar/libero_rfm" \
-      --set evaluation.eval_dataset_subsets=["$subset"] \
-      --iterate_all_preferences 2>&1 | tee -a evals/logs/libero_regular_${TIMESTAMP}.log
+      --set data.eval_datasets=[\"abraranwar/libero_rfm\",\"ykorkmaz/libero_failure_rfm\"] \
+      --set data.eval_subsets=[\"$subset\",\"libero_10_failure\"] \
+      --set data.dataset_type=success_failure 2>&1 | tee -a evals/logs/libero_regular_${TIMESTAMP}.log
     
     echo "End time: $(date)" | tee -a evals/logs/libero_regular_${TIMESTAMP}.log
     echo "=== Completed subset: $subset ===" | tee -a evals/logs/libero_regular_${TIMESTAMP}.log

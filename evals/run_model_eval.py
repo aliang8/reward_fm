@@ -11,6 +11,10 @@ Usage:
   uv run python evals/run_model_eval.py --config_path=rfm/configs/config.yaml \
       --server_url=http://localhost:8000 --num_batches=10 --batch_size=4
   
+  # Process entire dataset:
+  uv run python evals/run_model_eval.py --config_path=rfm/configs/config.yaml \
+      --server_url=http://localhost:8000 --num_batches=-1 --batch_size=4
+  
   # Override config values:
   uv run python evals/run_model_eval.py --config_path=rfm/configs/config.yaml \
       --set data.max_frames=16 --set data.eval_subset_size=1000
@@ -28,16 +32,15 @@ from tqdm import tqdm
 
 from rfm.configs.experiment_configs import ExperimentConfig
 from rfm.utils.setup_utils import (
-    setup_eval_data_generator,
-    setup_batch_collator,
-    setup_model_and_processor,
+    # setup_eval_data_generator,
+    setup_eval_dataset,
 )
 from evals.eval_utils import (
     load_experiment_config_from_yaml,
     build_batch_payload,
     post_batch,
 )
-from rfm.data.batch_collator import PreferenceSample, SimilaritySample, PairedVideoSample
+from rfm.data.batch_collator import PreferenceSample, SimilaritySample
 
 KEY_TO_MEANING = {
     "eval_loss": "Loss",
@@ -51,7 +54,7 @@ KEY_TO_MEANING = {
 
 def _compute_metrics_from_response(
     response: Dict[str, Any], 
-    samples: List[Union[PreferenceSample, SimilaritySample, PairedVideoSample]]
+    samples: List[Union[PreferenceSample, SimilaritySample]]
 ) -> Dict[str, Any]:
     """Compute metrics from model response and samples."""
     
@@ -212,27 +215,45 @@ def iter_eval_batches(
     batch_size: int = 4,
 ) -> List[Dict[str, Any]]:
     # Create eval data generator and dataset-like iterator
-    data_generator = setup_eval_data_generator(cfg)
-    dataset = type("_Dataset", (), {
-        "__len__": lambda self: cfg.data.eval_subset_size if cfg.data.eval_subset_size and cfg.data.eval_subset_size > 0 else 10_000_000,
-        #"__getitem__": lambda self, idx: data_generator._create_preference_sample() if idx % 2 == 0 else data_generator._create_similarity_sample(),
-        "__getitem__": lambda self, idx: data_generator._create_preference_sample(),
-    })()
+    dataset = setup_eval_dataset(cfg)
+
+    # Determine actual number of batches
+    dataset_size = len(dataset)
+    if num_batches == -1:
+        # Go through the full dataset
+        actual_num_batches = (dataset_size + batch_size - 1) // batch_size  # Ceiling division
+        print(f"\n🔄 Processing FULL DATASET: {dataset_size} samples in {actual_num_batches} batches of size {batch_size}")
+    else:
+        actual_num_batches = num_batches
+        print(f"\n🔄 Processing {actual_num_batches} batches of size {batch_size} (dataset size: {dataset_size})")
 
     results: List[Dict[str, Any]] = []
     idx = 0
-    for batch_idx in tqdm(range(num_batches), desc="Evaluating batches"):
+    for batch_idx in tqdm(range(actual_num_batches), desc="Evaluating batches"):
+        # Check if we've reached the end of the dataset
+        if idx >= dataset_size:
+            print(f"\n⚠️  Reached end of dataset after {batch_idx} batches")
+            break
+            
         # Assemble a batch of Sample objects (Preference or Similarity)
-        samples = [dataset[idx + j] for j in range(batch_size)]
-        idx += batch_size
+        batch_samples = []
+        for j in range(batch_size):
+            if idx + j < dataset_size:
+                batch_samples.append(dataset[idx + j])
+            else:
+                break  # Don't go beyond dataset size
         
+        if not batch_samples:
+            break  # No more samples
+            
         # Evaluate this batch
-        batch_result = _evaluate_samples(server_url, samples)
+        batch_result = _evaluate_samples(server_url, batch_samples)
         results.append(batch_result)
         
         # Print batch results immediately
         print(f"\n" + "="*80)
-        print(f"📦 BATCH {batch_idx + 1} RESULTS (Processed)")
+        print(f"📦 BATCH {batch_idx + 1}/{actual_num_batches} RESULTS (Processed)")
+        print(f"   📊 Progress: {idx}/{dataset_size} samples ({idx/dataset_size*100:.1f}%)")
         print("="*80)
         
         # Extract main metrics for this batch
@@ -254,158 +275,12 @@ def iter_eval_batches(
         generate_metrics_summary(
             metrics=batch_main_metrics,
             granular_metrics=batch_granular,
-            title=f"BATCH {batch_idx + 1} RESULTS",
+            title=f"BATCH {batch_idx + 1}/{actual_num_batches} RESULTS",
             level="batch"
         )
         
         # Add separator between batches (except for the last one)
-        if batch_idx < num_batches - 1:
-            print("\n" + "─" * 80)
-            print("🔄 NEXT BATCH")
-            print("─" * 80)
-    
-    return results
-
-
-def iter_eval_all_preferences(
-    cfg: ExperimentConfig,
-    server_url: str,
-    batch_size: int = 4,
-) -> List[Dict[str, Any]]:
-    """Iterate deterministically over the evaluation dataset by pairing each
-    optimal trajectory with a negative (suboptimal from same task if available,
-    otherwise a rewind), and evaluate all such pairs.
-
-    This covers the entire set of optimal trajectories once, avoiding a fixed
-    num_batches limit.
-    """
-    from rfm.data.batch_collator import PreferenceSample
-
-    data_generator = setup_eval_data_generator(cfg)
-
-    # Build flattened lists of indices from preprocessed maps
-    optimal_indices: List[int] = []
-    for inds in data_generator.optimal_by_task.values():
-        optimal_indices.extend(inds)
-
-    subs_by_task_indices: Dict[str, List[int]] = data_generator.suboptimal_by_task
-
-    def deserialize(frames, frames_shape):
-        # Use data_generator's helper to deserialize bytes → np.ndarray
-        if isinstance(frames_shape, list):
-            frames_shape = tuple(frames_shape)
-        if isinstance(frames, (bytes, bytearray)):
-            return data_generator._deserialize_frames(frames, shape=frames_shape)
-        return frames
-
-    def calc_progress(traj: dict, frames: Optional[Any] = None):
-        return data_generator._calculate_target_progress(traj, frames=frames)
-
-    # Build all PreferenceSample items
-    samples: List[PreferenceSample] = []
-    for opt_idx in optimal_indices:
-        opt = data_generator.dataset[opt_idx]
-        task = opt["task"]
-
-        # Prefer suboptimal from same task; choose any index != opt_idx
-        neg_idx: Optional[int] = None
-        cand_indices = [idx for idx in subs_by_task_indices.get(task, []) if idx != opt_idx]
-
-        if cand_indices:
-            neg_idx = cand_indices[0]
-            neg = data_generator.dataset[neg_idx]
-            # Load frames from npz
-            rej_frames = data_generator._load_frames_from_npz(neg["frames"])
-        else:
-            # Fallback: rewind-generated negative dict with numpy frames
-            neg = data_generator._create_rewind_trajectory(opt)
-            rej_frames = neg["frames"]
-
-        # Load optimal frames from npz
-        opt_frames = data_generator._get_trajectory_frames(opt_idx)
-
-        # Target progress
-        tp_A = data_generator._calculate_target_progress(opt, opt_frames)
-        tp_B = data_generator._calculate_target_progress(neg, rej_frames)
-
-        # Shapes
-        opt_shape = tuple(opt_frames.shape) if hasattr(opt_frames, "shape") else None
-        rej_shape = tuple(rej_frames.shape) if hasattr(rej_frames, "shape") else None
-        
-        # Determine sample type and num_frames_rewound
-        sample_type = "suboptimal_same_task" if neg_idx is not None else "rewind_same_task_fallback"
-        num_frames_rewound = None
-        if neg_idx is None:  # This is a rewound trajectory
-            num_frames_rewound = neg.get('metadata', {}).get('num_frames_rewound')
-
-        samples.append(
-            PreferenceSample(
-                id=str(opt.get("id")),
-                task=str(opt.get("task")),
-                lang_vector=opt.get("lang_vector"),
-                data_source=str(opt.get("data_source", "")),
-                frames=opt.get("frames"),
-                frames_shape=opt.get("frames_shape"),
-                quality_label=str(opt.get("quality_label", "successful")),
-                is_robot=bool(opt.get("is_robot", True)),
-                metadata=opt.get("metadata"),
-                chosen_frames=opt_frames,
-                rejected_frames=rej_frames,
-                chosen_frames_shape=opt_shape,
-                rejected_frames_shape=rej_shape,
-                preferred_trajectory="chosen",
-                chosen_id=str(opt.get("id")),
-                rejected_id=str(neg.get("id")) if isinstance(neg, dict) else str(neg.get("id")),
-                rejected_task=str(neg.get("task")) if isinstance(neg, dict) else str(neg.get("task")),
-                rejected_lang_vector=neg.get("lang_vector") if isinstance(neg, dict) else neg.get("lang_vector"),
-                rejected_data_source=str(neg.get("data_source", "")) if isinstance(neg, dict) else str(neg.get("data_source", "")),
-                rejected_quality_label=str(neg.get("quality_label", "")) if isinstance(neg, dict) else str(neg.get("quality_label", "")),
-                rejected_is_robot=bool(neg.get("is_robot", True)) if isinstance(neg, dict) else bool(neg.get("is_robot", True)),
-                target_progress_A=tp_A,
-                target_progress_B=tp_B,
-                sample_type=sample_type,
-                num_frames_rewound=num_frames_rewound
-            )
-        )
-
-    # Send in batches
-    results: List[Dict[str, Any]] = []
-    total_batches = (len(samples) + batch_size - 1) // batch_size  # Ceiling division
-    for batch_idx, i in enumerate(tqdm(range(0, len(samples), batch_size), desc="Evaluating (all prefs)")):
-        batch = samples[i : i + batch_size]
-        batch_result = _evaluate_samples(server_url, batch)
-        results.append(batch_result)
-        
-        # Print batch results immediately
-        print(f"\n" + "="*80)
-        print(f"📦 BATCH {batch_idx + 1}/{total_batches} RESULTS (All Preferences)")
-        print("="*80)
-        
-        # Extract main metrics for this batch
-        keys = [
-            "eval_accuracy",
-            "eval_reward_diff", 
-            "eval_avg_reward_chosen",
-            "eval_avg_reward_rejected",
-            "demo_reward_alignment",
-        ]
-        batch_main_metrics = {k: batch_result.get(k) for k in keys if k in batch_result}
-        
-        # Extract granular metrics for this batch
-        granular_keys = [k for k in batch_result.keys() 
-                        if k.startswith(("accuracy_", "avg_reward_chosen_", "avg_reward_rejected_", "reward_diff_", "progress_alignment_", "count_"))]
-        batch_granular = {k: batch_result.get(k) for k in granular_keys if k in batch_result}
-        
-        # Print batch summary
-        generate_metrics_summary(
-            metrics=batch_main_metrics,
-            granular_metrics=batch_granular,
-            title=f"BATCH {batch_idx + 1}/{total_batches} RESULTS",
-            level="batch"
-        )
-        
-        # Add separator between batches (except for the last one)
-        if batch_idx < total_batches - 1:
+        if batch_idx < actual_num_batches - 1:
             print("\n" + "─" * 80)
             print("🔄 NEXT BATCH")
             print("─" * 80)
@@ -417,13 +292,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config_path", type=str, default="rfm/configs/config.yaml")
     parser.add_argument("--server_url", type=str, default="http://localhost:8000")
-    parser.add_argument("--num_batches", type=int, default=10)
+    parser.add_argument("--num_batches", type=int, default=10, 
+                       help="Number of batches to evaluate. Use -1 to process the entire dataset.")
     parser.add_argument("--batch_size", type=int, default=4)
-    parser.add_argument(
-        "--iterate_all_preferences",
-        action="store_true",
-        help="Evaluate one preference pair per optimal trajectory to cover the dataset.",
-    )
     parser.add_argument(
         "--set",
         action="append",
@@ -455,15 +326,12 @@ def main():
             setattr(target, parts[-1], value)
             print(f"Applied config override: {key} = {value}")
 
-    if args.iterate_all_preferences:
-        results = iter_eval_all_preferences(cfg=cfg, server_url=args.server_url, batch_size=args.batch_size)
-    else:
-        results = iter_eval_batches(
-            cfg=cfg,
-            server_url=args.server_url,
-            num_batches=args.num_batches,
-            batch_size=args.batch_size,
-        )
+    results = iter_eval_batches(
+        cfg=cfg,
+        server_url=args.server_url,
+        num_batches=args.num_batches,
+        batch_size=args.batch_size,
+    )
 
     # Print an aggregated summary
     keys = [

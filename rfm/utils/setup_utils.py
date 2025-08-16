@@ -10,7 +10,14 @@ from peft import get_peft_model, LoraConfig
 from typing import Tuple, Optional, Union
 
 from rfm.models.rfm import RFMModel
-from rfm.data.data_generator import DataGenerator, InfiniteDataGeneratorDataset, BatchCollator, InfinitePairedVideoDataset
+from rfm.data.data_generator import (
+    DataGenerator, 
+    InfiniteDataGeneratorDataset, 
+    InfinitePairedVideoDataset,
+    RewoundDataset,
+    PairedSuccessFailureDataset,
+    BatchCollator
+)
 from rfm.utils.logging import rank_0_print
 from rfm.configs.experiment_configs import ExperimentConfig
 
@@ -240,20 +247,41 @@ def setup_eval_data_generator(cfg: ExperimentConfig) -> DataGenerator:
     return eval_data_generator
 
 
-def setup_dataset(data_generator: DataGenerator, max_samples: int = 1000000, dataset_type: str = "train") -> Union[InfiniteDataGeneratorDataset, InfinitePairedVideoDataset]:
+def setup_dataset(data_generator: DataGenerator, max_samples: int = 1000000, dataset_type: str = "train") -> Union[InfiniteDataGeneratorDataset, InfinitePairedVideoDataset, RewoundDataset, PairedSuccessFailureDataset]:
     """Shared function to create training or evaluation dataset based on config"""
     
-    # Determine which dataset class to use based on config
-    if data_generator.config.data.dataset_type == "paired_video":
-        rank_0_print(f"Setting up {dataset_type} paired video dataset with max_samples={max_samples}")
+    # Get the dataset type from the data generator config
+    config_dataset_type = data_generator.config.data.dataset_type
+    
+    rank_0_print(f"Setting up {dataset_type} dataset with type: {config_dataset_type}")
+    
+    if config_dataset_type == "rewound":
+        # Get rewind-specific parameters
+        rewind_lengths = getattr(data_generator.config.data, 'rewind_lengths', None)
+        samples_per_trajectory = getattr(data_generator.config.data, 'samples_per_trajectory', 1)
+        rank_0_print(f"Creating rewound dataset with rewind_lengths={rewind_lengths}, samples_per_trajectory={samples_per_trajectory}")
+        dataset = RewoundDataset(
+            data_generator, 
+            max_samples=max_samples,
+            rewind_lengths=rewind_lengths,
+            samples_per_trajectory=samples_per_trajectory
+        )
+    elif config_dataset_type == "success_failure":
+        # Get success-failure specific parameters
+        rank_0_print(f"Creating success-failure dataset (generating all possible pairs)")
+        dataset = PairedSuccessFailureDataset(
+            data_generator,
+            max_samples=max_samples
+        )
+    elif config_dataset_type == "paired_video":
+        rank_0_print("Creating paired video dataset")
         dataset = InfinitePairedVideoDataset(data_generator, max_samples=max_samples)
-        rank_0_print(f"{dataset_type.capitalize()} paired video dataset created successfully")
     else:
         # Default to preference/similarity dataset
-        rank_0_print(f"Setting up {dataset_type} preference/similarity dataset with max_samples={max_samples}")
+        rank_0_print("Creating preference/similarity dataset")
         dataset = InfiniteDataGeneratorDataset(data_generator, max_samples=max_samples)
-        rank_0_print(f"{dataset_type.capitalize()} preference/similarity dataset created successfully")
     
+    rank_0_print(f"{dataset_type.capitalize()} dataset created successfully with {len(dataset)} samples")
     return dataset
 
 
@@ -267,7 +295,7 @@ def setup_eval_dataset(cfg: ExperimentConfig) -> Union[InfiniteDataGeneratorData
     eval_dataset = setup_dataset(
         eval_data_generator, 
         max_samples=cfg.data.eval_subset_size,
-        dataset_type="evaluation"
+        dataset_type=cfg.data.dataset_type
     )
     
     return eval_dataset

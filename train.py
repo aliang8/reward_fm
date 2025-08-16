@@ -13,7 +13,7 @@ import os
 import yaml
 from typing import List, Dict, Optional, Union, Any
 from peft import get_peft_model, LoraConfig, PeftModel
-from rfm.data.data_generator import BatchCollator, InfiniteDataGeneratorDataset, DataGenerator, InfinitePairedVideoDataset
+from rfm.data.data_generator import BatchCollator, InfiniteDataGeneratorDataset, DataGenerator, RewoundDataset, PairedSuccessFailureDataset
 from rfm.models.rfm import RFMModel
 from trainer import RFMTrainer
 from rfm.utils.logging import is_rank_0, rank_0_print

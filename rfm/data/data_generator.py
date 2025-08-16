@@ -17,7 +17,7 @@ import shutil
 import os
 from pathlib import Path
 import torch
-from rfm.data.batch_collator import BaseSample, PreferenceSample, SimilaritySample, PairedVideoSample, BatchCollator
+from rfm.data.batch_collator import BaseSample, PreferenceSample, SimilaritySample, BatchCollator
 from datasets import concatenate_datasets
 from rfm.utils.logging import rank_0_print
 from datasets import Dataset
@@ -325,8 +325,18 @@ class DataGenerator:
         
         return frames_list
     
-    def _create_rewind_trajectory(self, original_traj: Dict) -> Dict:
-        """Create a suboptimal trajectory by rewinding the original trajectory."""
+    def _create_rewind_trajectory(self, original_traj: Dict, rewind_length: Optional[int] = None) -> Dict:
+        """Create a suboptimal trajectory by rewinding the original trajectory.
+        
+        This method creates a trajectory that goes forward then rewinds back:
+        1. Selects a forward segment from the original trajectory
+        2. Creates a rewind segment by reversing part of the forward segment
+        3. Concatenates forward + rewind to create the final trajectory
+        
+        Args:
+            original_traj: Original trajectory dictionary
+            rewind_length: Number of frames to rewind (default: random 1 to max_frames)
+        """
         # Load frames from npz file
         frames_data = self._load_frames_from_npz(original_traj['frames'])
         
@@ -339,6 +349,15 @@ class DataGenerator:
         if num_frames < 4:
             # If trajectory is too short, just return the original
             return original_traj
+        
+        # Determine rewind length
+        if rewind_length is None:
+            # Default: random rewind length between 1 and min(num_frames//2, max_frames)
+            max_rewind = min(num_frames // 2, self.config.data.max_frames)
+            rewind_length = random.randint(1, max_rewind)
+        else:
+            # Ensure rewind length is valid
+            rewind_length = min(rewind_length, num_frames // 2, self.config.data.max_frames)
         
         # Randomly select start and end points for the forward segment
         start_idx = random.randint(0, num_frames // 2)
@@ -371,20 +390,27 @@ class DataGenerator:
         else:
             # If frames are lists, use regular concatenation
             combined_frames = forward_frames + reverse_frames
-
+        
         combined_progress = forward_progress + reverse_progress
         
         # Create new trajectory with rewind frames
         rewind_traj = original_traj.copy()
         rewind_traj['frames'] = combined_frames
         rewind_traj['frames_shape'] = combined_frames.shape  # Store shape for the rewind trajectory
-        rewind_traj['id'] = f"{original_traj['id']}_rewind_{random.randint(1000, 9999)}"
-        rewind_traj['quality_label'] = 'suboptimal'  # Mark as suboptimal
+        rewind_traj['id'] = f"{original_traj['id']}_rewind_{rewind_length}"
+        rewind_traj['quality_label'] = 'rewound'  # Mark as rewound
         rewind_traj['metadata'] = rewind_traj.get('metadata', {}).copy()
         rewind_traj['metadata']['rewind_generated'] = True
         rewind_traj['metadata']['original_traj_id'] = original_traj['id']
         rewind_traj['metadata']['rewind_progress'] = combined_progress
         rewind_traj['metadata']['num_frames_rewound'] = num_frames_rewound
+        rewind_traj['metadata']['forward_start'] = start_idx
+        rewind_traj['metadata']['forward_end'] = end_idx
+        rewind_traj['metadata']['rewind_length'] = rewind_length
+        
+        # Calculate target progress for rewound trajectory
+        if hasattr(self, '_calculate_target_progress'):
+            rewind_traj['target_progress_B'] = self._calculate_target_progress(rewind_traj)
         
         return rewind_traj
     
@@ -933,135 +959,346 @@ class InfiniteDataGeneratorDataset:
 
 
 class InfinitePairedVideoDataset:
-    """Infinite dataset that generates simple paired video comparison samples.
-    
-    This dataset samples two random videos from the dataset and creates comparison samples:
-    - Half the time: second video is rewound from the first video
-    - Half the time: second video is a random other trajectory
+    """Dataset that generates paired video samples by pairing two random videos.
+    Half the time, trajectory B is a rewound version of trajectory A.
+    The other half, trajectory B is a random different trajectory.
     """
     
     def __init__(self, data_generator: DataGenerator, max_samples: int = 1000000):
-        """
-        Initialize the paired video dataset.
-        
-        Args:
-            data_generator: DataGenerator instance to use for generating samples
-            max_samples: Maximum number of samples to generate (for len() method)
-        """
+        super().__init__()
         self.data_generator = data_generator
         self.max_samples = max_samples
-        self.current_idx = 0
+        
+        # Get all trajectory indices
+        self.all_trajectory_indices = list(range(len(data_generator.dataset)))
+        
+        # Get optimal and suboptimal trajectories for pairing
+        self.optimal_indices = []
+        for inds in data_generator.optimal_by_task.values():
+            self.optimal_indices.extend(inds)
+        
+        self.suboptimal_indices = []
+        for inds in data_generator.suboptimal_by_task.values():
+            self.suboptimal_indices.extend(inds)
+        
+        # Get all quality indices for random pairing
+        self.quality_indices = {}
+        for quality, indices in data_generator.quality_indices.items():
+            self.quality_indices[quality] = indices.copy()
     
     def __len__(self):
-        """Return the maximum number of samples."""
         return self.max_samples
     
     def __getitem__(self, idx):
-        """Generate a paired video sample on-demand."""
-        # Randomly choose between rewind and random trajectory for second video
-        use_rewind = random.choice([True, False])
-        
-        if use_rewind:
-            return self._create_rewind_paired_sample()
+        # Randomly choose whether to create a rewind pair or random pair
+        if random.random() < 0.5:
+            # Create rewind pair: trajectory A is optimal, trajectory B is rewound
+            return self._create_rewind_pair()
         else:
-            return self._create_random_paired_sample()
+            # Create random pair: trajectory A is optimal, trajectory B is random different
+            return self._create_random_pair()
     
-    def _create_rewind_paired_sample(self):
-        """Create a sample where the second video is rewound from the first."""
-        # Get a random trajectory
-        if not self.data_generator.optimal_by_task:
-            raise ValueError("No optimal trajectories found for paired video generation")
+    def _create_rewind_pair(self):
+        """Create a pair where trajectory B is a rewound version of trajectory A."""
+        # Choose a random optimal trajectory
+        traj_a_idx = random.choice(self.optimal_indices)
+        traj_a = self.data_generator.dataset[traj_a_idx]
         
-        task_name = random.choice(list(self.data_generator.optimal_by_task.keys()))
-        first_idx = random.choice(self.data_generator.optimal_by_task[task_name])
-        first_traj = self.data_generator.dataset[first_idx]
+        # Create a rewound version of trajectory A
+        rewound_traj = self.data_generator._create_rewind_trajectory(traj_a)
         
-        # Create rewound version of the first trajectory
-        second_traj = self.data_generator._create_rewind_trajectory(first_traj)
+        # Get frames
+        traj_a_frames = self.data_generator._get_trajectory_frames(traj_a_idx)
+        rewound_frames = rewound_traj["frames"]
         
-        # Create a simple paired sample
+        # Get metadata
+        num_frames_rewound = rewound_traj.get('metadata', {}).get('num_frames_rewound', 0)
+        
         return PairedVideoSample(
-            id=f"paired_rewind_{first_traj['id']}",
-            task=first_traj['task'],
-            lang_vector=first_traj['lang_vector'],
-            data_source=first_traj['data_source'],
-            frames=first_traj['frames'],  # BaseSample requirement
-            frames_shape=first_traj.get('frames_shape'),
-            quality_label=first_traj.get('quality_label', 'successful'),
-            is_robot=first_traj.get('is_robot', True),
-            metadata=first_traj.get('metadata', {}),
-            # Paired video specific fields
-            traj_A_frames=self.data_generator._get_trajectory_frames(first_idx),
-            traj_B_frames=second_traj['frames'],  # Already numpy array from rewind
-            traj_A_frames_shape=self.data_generator._get_trajectory_frames(first_idx).shape,
-            traj_B_frames_shape=second_traj['frames'].shape,
-            traj_A_id=first_traj['id'],
-            traj_B_id=second_traj['id'],
-            traj_A_task=first_traj['task'],
-            traj_B_task=second_traj['task'],
-            traj_A_lang_vector=first_traj['lang_vector'],
-            traj_B_lang_vector=second_traj.get('lang_vector'),
-            traj_A_data_source=first_traj['data_source'],
-            traj_B_data_source=second_traj.get('data_source'),
-            traj_A_quality_label=first_traj.get('quality_label', 'successful'),
-            traj_B_quality_label=second_traj.get('quality_label', 'suboptimal'),
-            traj_A_is_robot=first_traj.get('is_robot', True),
-            traj_B_is_robot=second_traj.get('is_robot', True),
-            sample_type='rewind_paired'
+            id=str(traj_a.get("id")),
+            task=str(traj_a.get("task")),
+            lang_vector=traj_a.get("lang_vector"),
+            data_source=str(traj_a.get("data_source", "")),
+            frames=traj_a.get("frames"),
+            frames_shape=traj_a.get("frames_shape"),
+            quality_label=str(traj_a.get("quality_label", "successful")),
+            is_robot=bool(traj_a.get("is_robot", True)),
+            metadata=traj_a.get("metadata"),
+            traj_A_frames=traj_a_frames,
+            traj_B_frames=rewound_frames,
+            traj_A_id=str(traj_a.get("id")),
+            traj_B_id=f"{traj_a.get('id')}_rewound_{num_frames_rewound}",
+            traj_B_task=str(traj_a.get("task")),
+            traj_B_lang_vector=traj_a.get("lang_vector"),
+            traj_B_data_source=str(traj_a.get("data_source", "")),
+            traj_B_quality_label="rewound",
+            traj_B_is_robot=bool(traj_a.get("is_robot", True)),
+            target_progress_A=traj_a.get("target_progress_A"),
+            target_progress_B=rewound_traj.get("target_progress_B"),
+            sample_type="rewound_pair",
+            num_frames_rewound=num_frames_rewound
         )
     
-    def _create_random_paired_sample(self):
-        """Create a sample where the second video is a random other trajectory."""
-        # Get a random trajectory
-        if not self.data_generator.optimal_by_task:
-            raise ValueError("No optimal trajectories found for paired video generation")
+    def _create_random_pair(self):
+        """Create a pair where trajectory B is a random different trajectory."""
+        # Choose a random optimal trajectory for trajectory A
+        traj_a_idx = random.choice(self.optimal_indices)
+        traj_a = self.data_generator.dataset[traj_a_idx]
         
-        task_name = random.choice(list(self.data_generator.optimal_by_task.keys()))
-        first_idx = random.choice(self.data_generator.optimal_by_task[task_name])
-        first_traj = self.data_generator.dataset[first_idx]
+        # Choose a random different trajectory for trajectory B
+        available_indices = [idx for idx in self.all_trajectory_indices if idx != traj_a_idx]
+        traj_b_idx = random.choice(available_indices)
+        traj_b = self.data_generator.dataset[traj_b_idx]
         
-        # Get a random different trajectory (could be from same or different task)
-        all_trajectories = []
-        for task_indices in self.data_generator.optimal_by_task.values():
-            all_trajectories.extend(task_indices)
+        # Get frames
+        traj_a_frames = self.data_generator._get_trajectory_frames(traj_a_idx)
+        traj_b_frames = self.data_generator._get_trajectory_frames(traj_b_idx)
         
-        # Remove the first trajectory from consideration
-        available_indices = [idx for idx in all_trajectories if idx != first_idx]
-        if not available_indices:
-            raise ValueError("No other trajectories available for paired video generation")
-        
-        second_idx = random.choice(available_indices)
-        second_traj = self.data_generator.dataset[second_idx]
-        
-        # Create a simple paired sample
         return PairedVideoSample(
-            id=f"paired_random_{first_traj['id']}_{second_traj['id']}",
-            task=first_traj['task'],
-            lang_vector=first_traj['lang_vector'],
-            data_source=first_traj['data_source'],
-            frames=first_traj['frames'],  # BaseSample requirement
-            frames_shape=first_traj.get('frames_shape'),
-            quality_label=first_traj.get('quality_label', 'successful'),
-            is_robot=first_traj.get('is_robot', True),
-            metadata=first_traj.get('metadata', {}),
-            # Paired video specific fields
-            traj_A_frames=self.data_generator._get_trajectory_frames(first_idx),
-            traj_B_frames=self.data_generator._get_trajectory_frames(second_idx),
-            traj_A_frames_shape=self.data_generator._get_trajectory_frames(first_idx).shape,
-            traj_B_frames_shape=self.data_generator._get_trajectory_frames(second_idx).shape,
-            traj_A_id=first_traj['id'],
-            traj_B_id=second_traj['id'],
-            traj_A_task=first_traj['task'],
-            traj_B_task=second_traj['task'],
-            traj_A_lang_vector=first_traj['lang_vector'],
-            traj_B_lang_vector=second_traj.get('lang_vector'),
-            traj_A_data_source=first_traj['data_source'],
-            traj_B_data_source=second_traj.get('data_source'),
-            traj_A_quality_label=first_traj.get('quality_label', 'successful'),
-            traj_B_quality_label=second_traj.get('quality_label', 'suboptimal'),
-            traj_A_is_robot=first_traj.get('is_robot', True),
-            traj_B_is_robot=second_traj.get('is_robot', True),
-            sample_type='random_paired'
+            id=str(traj_a.get("id")),
+            task=str(traj_a.get("task")),
+            lang_vector=traj_a.get("lang_vector"),
+            data_source=str(traj_a.get("data_source", "")),
+            frames=traj_a.get("frames"),
+            frames_shape=traj_a.get("frames_shape"),
+            quality_label=str(traj_a.get("quality_label", "successful")),
+            is_robot=bool(traj_a.get("is_robot", True)),
+            metadata=traj_a.get("metadata"),
+            traj_A_frames=traj_a_frames,
+            traj_B_frames=traj_b_frames,
+            traj_A_id=str(traj_a.get("id")),
+            traj_B_id=str(traj_b.get("id")),
+            traj_B_task=str(traj_b.get("task")),
+            traj_B_lang_vector=traj_b.get("lang_vector"),
+            traj_B_data_source=str(traj_b.get("data_source", "")),
+            traj_B_quality_label=str(traj_b.get("quality_label", "unknown")),
+            traj_B_is_robot=bool(traj_b.get("is_robot", True)),
+            target_progress_A=traj_a.get("target_progress_A"),
+            target_progress_B=traj_b.get("target_progress_B"),
+            sample_type="random_pair",
+            num_frames_rewound=None
+        )
+
+
+class RewoundDataset:
+    """Dataset that generates preference samples by pairing original trajectories with rewound versions.
+    
+    For each trajectory, generates N preference samples where:
+    - chosen_frames: Original trajectory (preferred)
+    - rejected_frames: Rewound version (less preferred)
+    
+    This teaches the model that forward progress is better than going backwards.
+    """
+    
+    def __init__(self, data_generator: DataGenerator, max_samples: int = 1000000, 
+                 rewind_lengths: Optional[List[int]] = None, samples_per_trajectory: int = 1):
+        super().__init__()
+        self.data_generator = data_generator
+        self.max_samples = max_samples
+        self.samples_per_trajectory = samples_per_trajectory
+        
+        # Get all trajectory indices
+        self.all_trajectory_indices = list(range(len(data_generator.dataset)))
+        
+        # Set rewind lengths - default to 1 to max_frames
+        if rewind_lengths is None:
+            self.rewind_lengths = list(range(1, data_generator.config.data.max_frames + 1))
+        else:
+            self.rewind_lengths = rewind_lengths
+        
+        # Calculate total possible samples
+        self.total_possible_samples = len(self.all_trajectory_indices) * len(self.rewind_lengths) * self.samples_per_trajectory
+        
+        # Create trajectory-rewind length pairs
+        self.trajectory_rewind_pairs = []
+        for traj_idx in self.all_trajectory_indices:
+            for rewind_length in self.rewind_lengths:
+                for _ in range(self.samples_per_trajectory):
+                    self.trajectory_rewind_pairs.append((traj_idx, rewind_length))
+        
+        # Shuffle the pairs for randomness
+        random.shuffle(self.trajectory_rewind_pairs)
+        
+        rank_0_print(f"RewoundDataset initialized:")
+        rank_0_print(f"  📊 Total trajectories: {len(self.all_trajectory_indices)}")
+        rank_0_print(f"  ⏪ Rewind lengths: {self.rewind_lengths}")
+        rank_0_print(f"  🔄 Samples per trajectory: {self.samples_per_trajectory}")
+        rank_0_print(f"  📈 Total possible preference samples: {self.total_possible_samples}")
+        rank_0_print(f"  🎲 Generated {len(self.trajectory_rewind_pairs)} trajectory-rewind pairs")
+        rank_0_print(f"  ✅ Original trajectories will be preferred over rewound versions")
+    
+    def __len__(self):
+        return min(self.max_samples, len(self.trajectory_rewind_pairs))
+    
+    def __getitem__(self, idx):
+        if idx >= len(self.trajectory_rewind_pairs):
+            raise IndexError(f"Index {idx} out of range for {len(self.trajectory_rewind_pairs)} trajectory-rewind pairs")
+        
+        traj_idx, rewind_length = self.trajectory_rewind_pairs[idx]
+        
+        # Get original trajectory
+        original_traj = self.data_generator.dataset[traj_idx]
+        
+        # Create rewound trajectory with specific length
+        rewound_traj = self.data_generator._create_rewind_trajectory(
+            original_traj, 
+            rewind_length=rewind_length
+        )
+        
+        # Get frames
+        original_frames = self.data_generator._get_trajectory_frames(traj_idx)
+        rewound_frames = rewound_traj["frames"]
+        
+        # Get metadata
+        num_frames_rewound = rewound_traj.get('metadata', {}).get('num_frames_rewound', rewind_length)
+        
+        return PreferenceSample(
+            id=str(original_traj.get("id")),
+            task=str(original_traj.get("task")),
+            lang_vector=original_traj.get("lang_vector"),
+            data_source=str(original_traj.get("data_source", "")),
+            frames=original_traj.get("frames"),
+            frames_shape=original_traj.get("frames_shape"),
+            quality_label=str(original_traj.get("quality_label", "successful")),
+            is_robot=bool(original_traj.get("is_robot", True)),
+            metadata=original_traj.get("metadata"),
+            chosen_frames=original_frames,
+            rejected_frames=rewound_frames,
+            chosen_id=str(original_traj.get("id")),
+            rejected_id=f"{original_traj.get('id')}_rewound_{num_frames_rewound}",
+            rejected_task=str(original_traj.get("task")),
+            rejected_lang_vector=original_traj.get("lang_vector"),
+            rejected_data_source=str(original_traj.get("data_source", "")),
+            rejected_quality_label="rewound",
+            rejected_is_robot=bool(original_traj.get("is_robot", True)),
+            target_progress_A=original_traj.get("target_progress_A"),
+            target_progress_B=rewound_traj.get("target_progress_B"),
+            sample_type="rewound_preference",
+            num_frames_rewound=num_frames_rewound
+        )
+
+
+class PairedSuccessFailureDataset:
+    """Dataset that generates preference samples by pairing successful and failed trajectories for the same task.
+    
+    For each task, finds pairs of successful and failed trajectories and creates preference samples where:
+    - chosen_frames: Successful trajectory (preferred)
+    - rejected_frames: Failed trajectory (less preferred)
+    
+    This teaches the model to distinguish between good and bad execution of the same task.
+    
+    Dataset size: Generates ALL possible pairwise combinations between successful and failed trajectories
+    for each task. Total samples = Σ(successful_count × failed_count) for each task.
+    """
+    
+    def __init__(self, data_generator: DataGenerator, max_samples: int = 1000000):
+        super().__init__()
+        self.data_generator = data_generator
+        self.max_samples = max_samples
+        
+        # Create task-based trajectory mapping
+        self.task_trajectories = self._create_task_trajectory_mapping()
+        
+        # Generate preference pairs
+        self.preference_pairs = self._generate_preference_pairs()
+        
+        rank_0_print(f"PairedSuccessFailureDataset initialized:")
+        rank_0_print(f"  📊 Total tasks: {len(self.task_trajectories)}")
+        rank_0_print(f"  ✅ Successful trajectories: {sum(len(trajs['successful']) for trajs in self.task_trajectories.values())}")
+        rank_0_print(f"  ❌ Failed trajectories: {sum(len(trajs['failed']) for trajs in self.task_trajectories.values())}")
+        rank_0_print(f"  🔄 Generating ALL possible pairs (not random sampling)")
+        rank_0_print(f"  📈 Total preference samples: {len(self.preference_pairs)}")
+        rank_0_print(f"  🎯 Successful trajectories will be preferred over failed versions")
+    
+    def _create_task_trajectory_mapping(self):
+        """Create a mapping of task -> {successful: [...], failed: [...]} trajectories."""
+        task_trajectories = {}
+        
+        for idx in range(len(self.data_generator.dataset)):
+            trajectory = self.data_generator.dataset[idx]
+            task = trajectory.get('task', 'unknown')
+            quality = trajectory.get('quality_label', 'unknown').lower()
+            
+            if task not in task_trajectories:
+                task_trajectories[task] = {'successful': [], 'failed': []}
+            
+            # Categorize by quality
+            if quality in ['successful']:
+                task_trajectories[task]['successful'].append(idx)
+            elif quality in ['failure', 'suboptimal']:
+                task_trajectories[task]['failed'].append(idx)
+        
+        # Filter out tasks that don't have both successful and failed trajectories
+        filtered_tasks = {}
+        for task, trajectories in task_trajectories.items():
+            if len(trajectories['successful']) > 0 and len(trajectories['failed']) > 0:
+                filtered_tasks[task] = trajectories
+        
+        return filtered_tasks
+    
+    def _generate_preference_pairs(self):
+        """Generate all possible preference pairs for each task."""
+        preference_pairs = []
+        
+        for task, trajectories in self.task_trajectories.items():
+            successful_indices = trajectories['successful']
+            failed_indices = trajectories['failed']
+            
+            # Generate ALL possible pairs between successful and failed trajectories
+            for successful_idx in successful_indices:
+                for failed_idx in failed_indices:
+                    preference_pairs.append({
+                        'task': task,
+                        'successful_idx': successful_idx,
+                        'failed_idx': failed_idx
+                    })
+        
+        # Shuffle the pairs for randomness in training order
+        random.shuffle(preference_pairs)
+        
+        return preference_pairs
+    
+    def __len__(self):
+        return min(self.max_samples, len(self.preference_pairs))
+    
+    def __getitem__(self, idx):
+        if idx >= len(self.preference_pairs):
+            raise IndexError(f"Index {idx} out of range for {len(self.preference_pairs)} preference pairs")
+        
+        pair = self.preference_pairs[idx]
+        successful_idx = pair['successful_idx']
+        failed_idx = pair['failed_idx']
+        
+        # Get trajectories
+        successful_traj = self.data_generator.dataset[successful_idx]
+        failed_traj = self.data_generator.dataset[failed_idx]
+        
+        # Get frames
+        successful_frames = self.data_generator._get_trajectory_frames(successful_idx)
+        failed_frames = self.data_generator._get_trajectory_frames(failed_idx)
+        
+        return PreferenceSample(
+            id=str(successful_traj.get("id")),
+            task=str(successful_traj.get("task")),
+            lang_vector=successful_traj.get("lang_vector"),
+            data_source=str(successful_traj.get("data_source", "")),
+            frames=successful_traj.get("frames"),
+            frames_shape=successful_traj.get("frames_shape"),
+            quality_label=str(successful_traj.get("quality_label", "successful")),
+            is_robot=bool(successful_traj.get("is_robot", True)),
+            metadata=successful_traj.get("metadata"),
+            chosen_frames=successful_frames,
+            rejected_frames=failed_frames,
+            chosen_id=str(successful_traj.get("id")),
+            rejected_id=str(failed_traj.get("id")),
+            rejected_task=str(failed_traj.get("task")),
+            rejected_lang_vector=failed_traj.get("lang_vector"),
+            rejected_data_source=str(failed_traj.get("data_source", "")),
+            rejected_quality_label=str(failed_traj.get("quality_label", "failed")),
+            rejected_is_robot=bool(failed_traj.get("is_robot", True)),
+            target_progress_A=successful_traj.get("target_progress_A"),
+            target_progress_B=failed_traj.get("target_progress_B"),
+            sample_type="success_failure_preference"
         )
 
 

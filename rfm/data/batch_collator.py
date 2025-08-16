@@ -103,40 +103,6 @@ class SimilaritySample(BaseSample):
         self.sample_type = "similarity"
 
 
-@dataclass
-class PairedVideoSample(BaseSample):
-    """Sample structure for paired video comparison: traj_A vs traj_B."""
-    
-    # Paired video-specific fields using traj_A/traj_B naming
-    traj_A_frames: Optional[Union[List[str], np.ndarray]] = None
-    traj_B_frames: Optional[Union[List[str], np.ndarray]] = None
-    traj_A_frames_shape: Optional[tuple] = None  # Shape of traj_A frames
-    traj_B_frames_shape: Optional[tuple] = None  # Shape of traj_B frames
-    
-    # Trajectory identifiers
-    traj_A_id: Optional[str] = None
-    traj_B_id: Optional[str] = None
-    
-    # Trajectory metadata
-    traj_A_task: Optional[str] = None
-    traj_B_task: Optional[str] = None
-    traj_A_lang_vector: Optional[np.ndarray] = None
-    traj_B_lang_vector: Optional[np.ndarray] = None
-    traj_A_data_source: Optional[str] = None
-    traj_B_data_source: Optional[str] = None
-    traj_A_quality_label: Optional[str] = None
-    traj_B_quality_label: Optional[str] = None
-    traj_A_is_robot: Optional[bool] = None
-    traj_B_is_robot: Optional[bool] = None
-    
-    # Sample generation info
-    sample_type: Optional[str] = None  # "rewind_paired" or "random_paired"
-    
-    def __post_init__(self):
-        """Set the sample type after initialization."""
-        self.sample_type = "paired_video"
-
-
 class BatchCollator:
     """Batch collator that processes Sample objects through the processor."""
 

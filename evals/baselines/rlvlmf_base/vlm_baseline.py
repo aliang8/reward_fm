@@ -248,11 +248,26 @@ OR
         )
         
         try:
-            full_response = response.text
-            result = full_response.split("\n")[-1].strip()
-            
+            # DEBUG: Check response status and safety ratings
             if self.verbose:
-                print(f"Gemini: {result}")
+                print(f"🔍 DEBUG Response candidates: {len(response.candidates) if response.candidates else 0}")
+                if response.candidates:
+                    candidate = response.candidates[0]
+                    print(f"🔍 DEBUG Finish reason: {candidate.finish_reason}")
+                    print(f"🔍 DEBUG Safety ratings: {candidate.safety_ratings}")
+            
+            full_response = response.text
+            # Fix parsing: strip whitespace first, then split and take last non-empty line
+            result = full_response.strip()
+            if "\n" in result:
+                lines = [line.strip() for line in result.split("\n") if line.strip()]
+                result = lines[-1] if lines else ""
+            
+            # DEBUG: Print full response to understand what Gemini is returning
+            if self.verbose:
+                print(f"🔍 DEBUG Gemini Full Response: '{full_response}'")
+                print(f"🔍 DEBUG Parsed Result: '{result}'")
+                print(f"🔍 DEBUG Response Length: {len(full_response)}")
             
             # Parse response
             if "-1" in result:

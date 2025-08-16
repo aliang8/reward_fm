@@ -96,15 +96,15 @@ def create_app(task_description: str = "", debug: bool = False) -> FastAPI:
                 task_to_use
             )
             
-            # Convert VLM preference to raw response values
+            # Convert VLM preference to match run_model_eval expectations
+            # run_model_eval expects: 1 = correct (chosen preferred), 0 = incorrect, -1 = tie
             # VLM returns: "A" (chosen better), "B" (rejected better), "tie" 
-            # Map to: 0 (chosen preferred), 1 (rejected preferred), -1 (tie/other)
             if result["vlm_preference"] == "A":
-                prediction = 0  # Image 1/chosen is better (Gemini outputs "0")
+                prediction = 1  # Chosen is better = CORRECT
             elif result["vlm_preference"] == "B":
-                prediction = 1  # Image 2/rejected is better (Gemini outputs "1") 
+                prediction = 0  # Rejected is better = INCORRECT
             else:  # tie or error
-                prediction = -1  # Tie or uncertain (Gemini outputs "-1")
+                prediction = -1  # Tie or uncertain
             
             predictions.append(prediction)
             

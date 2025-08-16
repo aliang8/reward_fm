@@ -45,6 +45,59 @@ KEY_TO_MEANING = {
 }
 
 
+def _compute_metrics_from_response(samples: List[Any], resp: Dict[str, Any]) -> Dict[str, Any]:
+    preds: List[int] = resp.get("predictions", []) or []
+    rewards_chosen: List[List[float]] = resp.get("reward_chosen", []) or []
+    rewards_rejected: List[List[float]] = resp.get("reward_rejected", []) or []
+
+    n = max(1, len(preds))
+    eval_accuracy = float(sum(1 for p in preds if int(p) == 1) / n)
+
+    flat_chosen = [x for seq in rewards_chosen for x in (seq or [])]
+    flat_rejected = [x for seq in rewards_rejected for x in (seq or [])]
+    eval_avg_reward_chosen = float(np.mean(flat_chosen)) if flat_chosen else None
+    eval_avg_reward_rejected = float(np.mean(flat_rejected)) if flat_rejected else None
+    eval_reward_diff = (
+        float(eval_avg_reward_chosen - eval_avg_reward_rejected)
+        if (eval_avg_reward_chosen is not None and eval_avg_reward_rejected is not None)
+        else None
+    )
+
+    # Progress alignment using chosen trajectory's per-frame rewards as predictions
+    rhos: List[float] = []
+    for i, s in enumerate(samples):
+        try:
+            targets = getattr(s, "target_progress_A", None)
+            preds_prog = rewards_chosen[i] if i < len(rewards_chosen) else []
+            if not targets or not preds_prog:
+                continue
+            # Heuristic: downsample targets to roughly match model stride (e.g., Qwen predicts ~1 per 2 frames)
+            targets_ds = targets[::2]
+            L = min(len(targets_ds), len(preds_prog))
+            if L < 2:
+                continue
+            rho = spearmanr(preds_prog[:L], targets_ds[:L]).correlation
+            if rho is not None and not np.isnan(rho):
+                rhos.append(float(rho))
+        except Exception:
+            continue
+    demo_reward_alignment = float(np.mean(rhos)) if rhos else None
+
+    return {
+        "eval_accuracy": eval_accuracy,
+        "eval_reward_diff": eval_reward_diff,
+        "eval_avg_reward_chosen": eval_avg_reward_chosen,
+        "eval_avg_reward_rejected": eval_avg_reward_rejected,
+        "demo_reward_alignment": demo_reward_alignment,
+    }
+
+
+def _evaluate_samples(server_url: str, samples: List[Any]) -> Dict[str, Any]:
+    payload = build_batch_payload(samples)
+    resp = post_batch(server_url, payload)
+    return _compute_metrics_from_response(samples, resp)
+
+
 def iter_eval_batches(
     cfg: ExperimentConfig,
     server_url: str,
@@ -65,59 +118,7 @@ def iter_eval_batches(
         # Assemble a batch of Sample objects (Preference or Similarity)
         samples = [dataset[idx + j] for j in range(batch_size)]
         idx += batch_size
-
-        # Convert to wire payload (base64 frames)
-        payload = build_batch_payload(samples)
-
-        # POST to server
-        resp = post_batch(server_url, payload)
-
-        # Compute aggregate metrics locally from server outputs
-        preds: List[int] = resp.get("predictions", []) or []
-        # rewards are lists of per-frame predictions
-        rewards_chosen: List[List[float]] = resp.get("reward_chosen", []) or []
-        rewards_rejected: List[List[float]] = resp.get("reward_rejected", []) or []
-
-        n = max(1, len(preds))
-        eval_accuracy = float(sum(1 for p in preds if int(p) == 1) / n)
-        # Average per-frame rewards across batch
-        flat_chosen = [x for seq in rewards_chosen for x in (seq or [])]
-        flat_rejected = [x for seq in rewards_rejected for x in (seq or [])]
-        eval_avg_reward_chosen = float(np.mean(flat_chosen)) if flat_chosen else None
-        eval_avg_reward_rejected = float(np.mean(flat_rejected)) if flat_rejected else None
-        eval_reward_diff = (
-            float(eval_avg_reward_chosen - eval_avg_reward_rejected)
-            if (eval_avg_reward_chosen is not None and eval_avg_reward_rejected is not None)
-            else None
-        )
-
-        # Compute demo_reward_alignment (Spearman) using client-side targets if available
-        rhos: List[float] = []
-        for i, s in enumerate(samples):
-            try:
-                targets = getattr(s, "target_progress_A", None)
-                preds_prog = rewards_chosen[i] if i < len(rewards_chosen) else []
-                if not targets or not preds_prog:
-                    continue
-                # Heuristic: Qwen predicts one value per ~2 frames; downsample targets
-                targets_ds = targets[::2]
-                L = min(len(targets_ds), len(preds_prog))
-                if L < 2:
-                    continue
-                rho = spearmanr(preds_prog[:L], targets_ds[:L]).correlation
-                if rho is not None and not np.isnan(rho):
-                    rhos.append(float(rho))
-            except Exception:
-                continue
-        demo_reward_alignment = float(np.mean(rhos)) if rhos else None
-
-        results.append({
-            "eval_accuracy": eval_accuracy,
-            "eval_reward_diff": eval_reward_diff,
-            "eval_avg_reward_chosen": eval_avg_reward_chosen,
-            "eval_avg_reward_rejected": eval_avg_reward_rejected,
-            "demo_reward_alignment": demo_reward_alignment,
-        })
+        results.append(_evaluate_samples(server_url, samples))
     return results
 
 
@@ -217,53 +218,7 @@ def iter_eval_all_preferences(
     results: List[Dict[str, Any]] = []
     for i in tqdm(range(0, len(samples), batch_size), desc="Evaluating (all prefs)"):
         batch = samples[i : i + batch_size]
-        payload = build_batch_payload(batch)
-        resp = post_batch(server_url, payload)
-
-        preds: List[int] = resp.get("predictions", []) or []
-        rewards_chosen: List[List[float]] = resp.get("reward_chosen", []) or []
-        rewards_rejected: List[List[float]] = resp.get("reward_rejected", []) or []
-        progress_pred_A: List[List[float]] = resp.get("progress_pred_A", []) or []
-
-        n = max(1, len(preds))
-        eval_accuracy = float(sum(1 for p in preds if int(p) == 1) / n)
-        flat_chosen = [x for seq in rewards_chosen for x in (seq or [])]
-        flat_rejected = [x for seq in rewards_rejected for x in (seq or [])]
-        eval_avg_reward_chosen = float(np.mean(flat_chosen)) if flat_chosen else None
-        eval_avg_reward_rejected = float(np.mean(flat_rejected)) if flat_rejected else None
-        eval_reward_diff = (
-            float(eval_avg_reward_chosen - eval_avg_reward_rejected)
-            if (eval_avg_reward_chosen is not None and eval_avg_reward_rejected is not None)
-            else None
-        )
-
-        # TODO: ensure the target_ds works with general models not just qwen
-
-        rhos: List[float] = []
-        for j, s in enumerate(batch):
-            try:
-                targets = getattr(s, "target_progress_A", None)
-                preds_prog = progress_pred_A[j] if j < len(progress_pred_A) else []
-                if not targets or not preds_prog:
-                    continue
-                targets_ds = targets[::2]
-                L = min(len(targets_ds), len(preds_prog))
-                if L < 2:
-                    continue
-                rho = spearmanr(preds_prog[:L], targets_ds[:L]).correlation
-                if rho is not None and not np.isnan(rho):
-                    rhos.append(float(rho))
-            except Exception:
-                continue
-        demo_reward_alignment = float(np.mean(rhos)) if rhos else None
-
-        results.append({
-            "eval_accuracy": eval_accuracy,
-            "eval_reward_diff": eval_reward_diff,
-            "eval_avg_reward_chosen": eval_avg_reward_chosen,
-            "eval_avg_reward_rejected": eval_avg_reward_rejected,
-            "demo_reward_alignment": demo_reward_alignment,
-        })
+        results.append(_evaluate_samples(server_url, batch))
     return results
 
 

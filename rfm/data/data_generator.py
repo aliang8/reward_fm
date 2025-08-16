@@ -17,7 +17,7 @@ import shutil
 import os
 from pathlib import Path
 import torch
-from rfm.data.batch_collator import BaseSample, PreferenceSample, SimilaritySample, BatchCollator
+from rfm.data.batch_collator import BaseSample, PreferenceSample, SimilaritySample, PairedVideoSample, BatchCollator
 from datasets import concatenate_datasets
 from rfm.utils.logging import rank_0_print
 from datasets import Dataset
@@ -52,12 +52,10 @@ class DataGenerator:
         self.task_indices = {}
         self.source_indices = {}
         
-        # Legacy attributes for compatibility
-        self.preferences = []
         self.preference_ratio = config.data.preference_ratio
-        self.similarity_ratio = config.data.similarity_ratio
+        self.similarity_ratio = 1.0 - config.data.preference_ratio
         self.dataset_preference_ratio = config.data.dataset_preference_ratio
-        
+
         # Load trajectory dataset
         self._load_trajectory_dataset()
         
@@ -790,6 +788,139 @@ class InfiniteDataGeneratorDataset:
             return self.data_generator._create_similarity_sample()
 
 
+class InfinitePairedVideoDataset:
+    """Infinite dataset that generates simple paired video comparison samples.
+    
+    This dataset samples two random videos from the dataset and creates comparison samples:
+    - Half the time: second video is rewound from the first video
+    - Half the time: second video is a random other trajectory
+    """
+    
+    def __init__(self, data_generator: DataGenerator, max_samples: int = 1000000):
+        """
+        Initialize the paired video dataset.
+        
+        Args:
+            data_generator: DataGenerator instance to use for generating samples
+            max_samples: Maximum number of samples to generate (for len() method)
+        """
+        self.data_generator = data_generator
+        self.max_samples = max_samples
+        self.current_idx = 0
+    
+    def __len__(self):
+        """Return the maximum number of samples."""
+        return self.max_samples
+    
+    def __getitem__(self, idx):
+        """Generate a paired video sample on-demand."""
+        # Randomly choose between rewind and random trajectory for second video
+        use_rewind = random.choice([True, False])
+        
+        if use_rewind:
+            return self._create_rewind_paired_sample()
+        else:
+            return self._create_random_paired_sample()
+    
+    def _create_rewind_paired_sample(self):
+        """Create a sample where the second video is rewound from the first."""
+        # Get a random trajectory
+        if not self.data_generator.optimal_by_task:
+            raise ValueError("No optimal trajectories found for paired video generation")
+        
+        task_name = random.choice(list(self.data_generator.optimal_by_task.keys()))
+        first_idx = random.choice(self.data_generator.optimal_by_task[task_name])
+        first_traj = self.data_generator.dataset[first_idx]
+        
+        # Create rewound version of the first trajectory
+        second_traj = self.data_generator._create_rewind_trajectory(first_traj)
+        
+        # Create a simple paired sample
+        return PairedVideoSample(
+            id=f"paired_rewind_{first_traj['id']}",
+            task=first_traj['task'],
+            lang_vector=first_traj['lang_vector'],
+            data_source=first_traj['data_source'],
+            frames=first_traj['frames'],  # BaseSample requirement
+            frames_shape=first_traj.get('frames_shape'),
+            quality_label=first_traj.get('quality_label', 'successful'),
+            is_robot=first_traj.get('is_robot', True),
+            metadata=first_traj.get('metadata', {}),
+            # Paired video specific fields
+            traj_A_frames=self.data_generator._get_trajectory_frames(first_idx),
+            traj_B_frames=second_traj['frames'],  # Already numpy array from rewind
+            traj_A_frames_shape=self.data_generator._get_trajectory_frames(first_idx).shape,
+            traj_B_frames_shape=second_traj['frames'].shape,
+            traj_A_id=first_traj['id'],
+            traj_B_id=second_traj['id'],
+            traj_A_task=first_traj['task'],
+            traj_B_task=second_traj['task'],
+            traj_A_lang_vector=first_traj['lang_vector'],
+            traj_B_lang_vector=second_traj.get('lang_vector'),
+            traj_A_data_source=first_traj['data_source'],
+            traj_B_data_source=second_traj.get('data_source'),
+            traj_A_quality_label=first_traj.get('quality_label', 'successful'),
+            traj_B_quality_label=second_traj.get('quality_label', 'suboptimal'),
+            traj_A_is_robot=first_traj.get('is_robot', True),
+            traj_B_is_robot=second_traj.get('is_robot', True),
+            sample_type='rewind_paired'
+        )
+    
+    def _create_random_paired_sample(self):
+        """Create a sample where the second video is a random other trajectory."""
+        # Get a random trajectory
+        if not self.data_generator.optimal_by_task:
+            raise ValueError("No optimal trajectories found for paired video generation")
+        
+        task_name = random.choice(list(self.data_generator.optimal_by_task.keys()))
+        first_idx = random.choice(self.data_generator.optimal_by_task[task_name])
+        first_traj = self.data_generator.dataset[first_idx]
+        
+        # Get a random different trajectory (could be from same or different task)
+        all_trajectories = []
+        for task_indices in self.data_generator.optimal_by_task.values():
+            all_trajectories.extend(task_indices)
+        
+        # Remove the first trajectory from consideration
+        available_indices = [idx for idx in all_trajectories if idx != first_idx]
+        if not available_indices:
+            raise ValueError("No other trajectories available for paired video generation")
+        
+        second_idx = random.choice(available_indices)
+        second_traj = self.data_generator.dataset[second_idx]
+        
+        # Create a simple paired sample
+        return PairedVideoSample(
+            id=f"paired_random_{first_traj['id']}_{second_traj['id']}",
+            task=first_traj['task'],
+            lang_vector=first_traj['lang_vector'],
+            data_source=first_traj['data_source'],
+            frames=first_traj['frames'],  # BaseSample requirement
+            frames_shape=first_traj.get('frames_shape'),
+            quality_label=first_traj.get('quality_label', 'successful'),
+            is_robot=first_traj.get('is_robot', True),
+            metadata=first_traj.get('metadata', {}),
+            # Paired video specific fields
+            traj_A_frames=self.data_generator._get_trajectory_frames(first_idx),
+            traj_B_frames=self.data_generator._get_trajectory_frames(second_idx),
+            traj_A_frames_shape=self.data_generator._get_trajectory_frames(first_idx).shape,
+            traj_B_frames_shape=self.data_generator._get_trajectory_frames(second_idx).shape,
+            traj_A_id=first_traj['id'],
+            traj_B_id=second_traj['id'],
+            traj_A_task=first_traj['task'],
+            traj_B_task=second_traj['task'],
+            traj_A_lang_vector=first_traj['lang_vector'],
+            traj_B_lang_vector=second_traj.get('lang_vector'),
+            traj_A_data_source=first_traj['data_source'],
+            traj_B_data_source=second_traj.get('data_source'),
+            traj_A_quality_label=first_traj.get('quality_label', 'successful'),
+            traj_B_quality_label=second_traj.get('quality_label', 'suboptimal'),
+            traj_A_is_robot=first_traj.get('is_robot', True),
+            traj_B_is_robot=second_traj.get('is_robot', True),
+            sample_type='random_paired'
+        )
+
+
 def test():
     """Test the BatchCollator with generated samples."""
     from transformers import AutoProcessor
@@ -847,11 +978,11 @@ def test():
     
     for i in range(10):
         sample = infinite_dataset[i]
-        if sample.prediction_type == "preference":
+        if sample.sample_type == "preference":
             preference_count += 1
         else:
             similarity_count += 1
-        rank_0_print(f"Sample {i}: {sample.prediction_type}")
+        rank_0_print(f"Sample {i}: {sample.sample_type}")
     
     rank_0_print(f"Generated {preference_count} preference samples and {similarity_count} similarity samples")
     rank_0_print(f"Expected ratio: {generator.preference_ratio:.1f} preference, {generator.similarity_ratio:.1f} similarity")
@@ -873,11 +1004,11 @@ def test():
         rank_0_print(key)
         if key == "preference_inputs":
             for key2, value2 in value.items():
-                if key2 != "prediction_type":
+                if key2 != "sample_type":
                     rank_0_print(f"{key2} {value2.shape}")
         elif key == "similarity_inputs":
             for key2, value2 in value.items():
-                if key2 != "prediction_type":
+                if key2 != "sample_type":
                     rank_0_print(f"{key2} {value2.shape}")
 
     # Do a quick forward pass on RFMModel
@@ -922,7 +1053,7 @@ def test():
         # image_grid_thw=inputs.get("image_grid_thw").to(device),
         video_grid_thw=inputs.get("video_grid_thw").to(device),
         second_per_grid_ts=inputs.get("second_per_grid_ts").to(device),
-        prediction_type="preference",  # Test preference prediction
+        sample_type="preference",  # Test preference prediction
     )
 
     rank_0_print("RFM model output structure:")

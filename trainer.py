@@ -182,20 +182,27 @@ class RFMTrainer(Trainer):
         loss_metadata = {}
 
         # Compute preference loss if we have preference samples
-        if num_preferences > 0 and preference_inputs and self.config.peft.train_preference_head:
-            preference_loss, preference_outputs = self._compute_preference_loss(
+        if num_preferences > 0 and preference_inputs:
+            preference_loss, progress_loss, loss_dict = self._compute_preference_loss(
                 model, preference_inputs, return_outputs=True
             )
-            total_loss += preference_loss 
-            loss_metadata.update(preference_outputs)
+            if self.config.model.train_preference_head:
+                total_loss += preference_loss 
+            if self.config.model.train_progress_head:
+                total_loss += progress_loss
+            
+            loss_metadata.update(loss_dict)
 
         # Compute similarity loss if we have similarity samples
-        if num_similarities > 0 and similarity_inputs and self.config.peft.train_similarity_head:
-            similarity_loss, similarity_outputs = self._compute_similarity_loss(
+        if num_similarities > 0 and similarity_inputs:
+            similarity_loss, progress_loss, loss_dict = self._compute_similarity_loss(
                 model, similarity_inputs, return_outputs=True
             )
-            total_loss += similarity_loss
-            loss_metadata.update(similarity_outputs)
+            if self.config.model.train_similarity_head:
+                total_loss += similarity_loss
+            if self.config.model.train_progress_head:
+                total_loss += progress_loss
+            loss_metadata.update(loss_dict)
 
         # Always store custom losses for logging (even when return_outputs=False)
         self.custom_losses = loss_metadata
@@ -288,76 +295,85 @@ class RFMTrainer(Trainer):
             image_grid_thw=inputs.get("image_grid_thw"),
             video_grid_thw=inputs.get("video_grid_thw"),
             second_per_grid_ts=inputs.get("second_per_grid_ts"),
-            prediction_type="preference",
+            sample_type="preference",
         )
 
-        # Get preference scores from the preference head
-        preference_scores = model_outputs.logits.squeeze(-1)  # [batch_size]
+        preference_loss = 0.0
+        progress_loss = 0.0
 
         # Get preference labels (1 if first trajectory is preferred, 0 if second trajectory is preferred)
         preference_labels = inputs["preference_labels"]
 
-        # Binary cross entropy loss for preference prediction
-        preference_loss = F.binary_cross_entropy_with_logits(
-            preference_scores, preference_labels.float()
-        )
+        if self.config.model.train_preference_head:
+            # Get preference scores from the preference head
+            preference_scores = model_outputs.logits.squeeze(-1)  # [batch_size]
 
-        # Get frame shapes for splicing target progress to match predicted lengths
-        # Since the order is randomized, we need to use preference labels to determine which is which
-        chosen_frames_shape = inputs.get("chosen_frames_shape", None)
-        rejected_frames_shape = inputs.get("rejected_frames_shape", None)
-        
-        # Determine which frame shape corresponds to which trajectory based on preference labels
-        # preference_labels: 1.0 = first trajectory preferred, 0.0 = second trajectory preferred
-        # We need to map this to chosen vs rejected for progress loss calculation
-        
-        # For each sample, determine which trajectory (first or second) is the chosen one
-        batch_size = len(preference_labels)
-        first_trajectory_shapes = []
-        second_trajectory_shapes = []
-        
-        for i in range(batch_size):
-            if preference_labels[i] == 1.0:
-                # First trajectory is preferred (chosen)
-                first_trajectory_shapes.append(chosen_frames_shape[i])
-                second_trajectory_shapes.append(rejected_frames_shape[i])
-            else:
-                # Second trajectory is preferred (chosen)
-                first_trajectory_shapes.append(rejected_frames_shape[i])
-                second_trajectory_shapes.append(chosen_frames_shape[i])
-        
-        # Convert to tensors for the helper function
-        first_trajectory_shapes = torch.stack(first_trajectory_shapes)
-        second_trajectory_shapes = torch.stack(second_trajectory_shapes)
-
-        # Compute progress loss for both trajectories using the helper function
-        # Now we know which shape corresponds to which trajectory based on preference labels
-        if self.config.peft.train_progress_head:
-            progress_loss_A, spearman_corr_A = self._compute_progress_loss(
-                progress_logits["A"], inputs["target_progress_A"], first_trajectory_shapes, "A"
-            )
-            progress_loss_B, spearman_corr_B = self._compute_progress_loss(
-                progress_logits["B"],
-                inputs["target_progress_B"],
-                second_trajectory_shapes,
-                "B",
+            # Binary cross entropy loss for preference prediction
+            preference_loss = F.binary_cross_entropy_with_logits(
+                preference_scores, preference_labels.float()
             )
 
-            # Combine progress losses
-            progress_loss = progress_loss_A + progress_loss_B
+        if self.config.model.train_progress_head:
+            # Get frame shapes for splicing target progress to match predicted lengths
+            # Since the order is randomized, we need to use preference labels to determine which is which
+            chosen_frames_shape = inputs.get("chosen_frames_shape", None)
+            rejected_frames_shape = inputs.get("rejected_frames_shape", None)
+            
+            # Determine which frame shape corresponds to which trajectory based on preference labels
+            # preference_labels: 1.0 = first trajectory preferred, 0.0 = second trajectory preferred
+            # We need to map this to chosen vs rejected for progress loss calculation
+            
+            # For each sample, determine which trajectory (first or second) is the chosen one
+            batch_size = len(preference_labels)
+            first_trajectory_shapes = []
+            second_trajectory_shapes = []
+            
+            for i in range(batch_size):
+                if preference_labels[i] == 1.0:
+                    # First trajectory is preferred (chosen)
+                    first_trajectory_shapes.append(chosen_frames_shape[i])
+                    second_trajectory_shapes.append(rejected_frames_shape[i])
+                else:
+                    # Second trajectory is preferred (chosen)
+                    first_trajectory_shapes.append(rejected_frames_shape[i])
+                    second_trajectory_shapes.append(chosen_frames_shape[i])
+            
+            # Convert to tensors for the helper function
+            first_trajectory_shapes = torch.stack(first_trajectory_shapes)
+            second_trajectory_shapes = torch.stack(second_trajectory_shapes)
 
-            # Combine losses
-            total_loss = preference_loss + progress_loss
-        else:
-            total_loss = preference_loss
+            # Compute progress loss for both trajectories using the helper function
+            # Now we know which shape corresponds to which trajectory based on preference labels
+            if self.config.model.train_progress_head:
+                progress_loss_A, spearman_corr_A = self._compute_progress_loss(
+                    progress_logits["A"], inputs["target_progress_A"], first_trajectory_shapes, "A"
+                )
+                progress_loss_B, spearman_corr_B = self._compute_progress_loss(
+                    progress_logits["B"],
+                    inputs["target_progress_B"],
+                    second_trajectory_shapes,
+                    "B",
+                )
+
+                # Combine progress losses
+                progress_loss = progress_loss_A + progress_loss_B
 
         if return_outputs:
-            # Compute preference accuracy for training monitoring
-            preference_probs = torch.sigmoid(preference_scores)
-            preference_predictions = (preference_probs > 0.5).float()
-            preference_accuracy = (preference_predictions == preference_labels).float().mean().item()
-            
-            if self.config.peft.train_progress_head:
+            outputs_dict = {}
+            if self.config.model.train_preference_head and preference_loss is not None:
+
+                # Compute preference accuracy for training monitoring
+                preference_probs = torch.sigmoid(preference_scores)
+                preference_predictions = (preference_probs > 0.5).float()
+                preference_accuracy = (preference_predictions == preference_labels).float().mean().item()
+                outputs_dict.update({
+                    "preference_scores": preference_scores,
+                    "preference_labels": preference_labels,
+                    "preference_loss": preference_loss.item(),
+                    "preference_accuracy": preference_accuracy,
+                })
+
+            if self.config.model.train_progress_head:
                 # Compute average Spearman correlation across trajectories A and B
                 spearman_values = []
                 if isinstance(spearman_corr_A, torch.Tensor):
@@ -371,14 +387,6 @@ class RFMTrainer(Trainer):
                 
                 avg_spearman = np.mean(spearman_values) if spearman_values else 0.0
             
-            outputs_dict = {
-                "preference_scores": preference_scores,
-                "preference_labels": preference_labels,
-                "preference_loss": preference_loss.item(),
-                "preference_accuracy": preference_accuracy,
-            }
-
-            if self.config.peft.train_progress_head:
                 outputs_dict.update(
                     {
                         "progress_loss_A": progress_loss_A.item(),
@@ -391,8 +399,8 @@ class RFMTrainer(Trainer):
                         "spearman_corr_avg": avg_spearman,
                     }
                 )
-            return total_loss, outputs_dict
-        return total_loss
+            return preference_loss, progress_loss, outputs_dict
+        return preference_loss, progress_loss
 
     def _compute_similarity_loss(self, model, inputs, return_outputs=False):
         """Compute similarity scoring loss (DPO-style)."""
@@ -404,7 +412,7 @@ class RFMTrainer(Trainer):
             pixel_values_videos=inputs.get("pixel_values_videos_ref_sim"),
             image_grid_thw=inputs.get("image_grid_thw_ref_sim"),
             video_grid_thw=inputs.get("video_grid_thw_ref_sim"),
-            prediction_type="similarity",
+            sample_type="similarity",
         )
 
         # Forward pass for reference vs trajectory diff
@@ -415,7 +423,7 @@ class RFMTrainer(Trainer):
             pixel_values_videos=inputs.get("pixel_values_videos_ref_diff"),
             image_grid_thw=inputs.get("image_grid_thw_ref_diff"),
             video_grid_thw=inputs.get("video_grid_thw_ref_diff"),
-            prediction_type="similarity",
+            sample_type="similarity",
         )
 
         # Extract similarity scores

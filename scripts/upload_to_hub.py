@@ -100,7 +100,7 @@ model = AutoModel.from_pretrained("{model_name}", trust_remote_code=True)
 
 # Example usage for preference scoring
 # inputs = processor(images=images, text=text, return_tensors="pt")
-# outputs = model(**inputs, prediction_type="preference")
+# outputs = model(**inputs, sample_type="preference")
 ```
 
 ## Model Capabilities

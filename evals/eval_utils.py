@@ -213,7 +213,7 @@ def similarity_to_preference_payload(sim_sample: Any) -> Dict[str, Any]:
     """
     return {
         "task": sim_sample.task if hasattr(sim_sample, "task") else getattr(sim_sample, "task_ref", ""),
-        "prediction_type": "preference",
+        "sample_type": "preference",
         "chosen_frames_b64": frames_to_base64_images(sim_sample.traj_sim_frames, getattr(sim_sample, "traj_sim_frames_shape", None)),
         "rejected_frames_b64": frames_to_base64_images(sim_sample.traj_diff_frames, getattr(sim_sample, "traj_diff_frames_shape", None)),
         "target_progress_A": getattr(sim_sample, "target_progress_A", None),
@@ -225,7 +225,7 @@ def preference_to_payload(pref_sample: Any) -> Dict[str, Any]:
     """Convert a PreferenceSample to a JSON-serializable payload for the server."""
     return {
         "task": getattr(pref_sample, "task", ""),
-        "prediction_type": "preference",
+        "sample_type": "preference",
         "chosen_frames_b64": frames_to_base64_images(pref_sample.chosen_frames, getattr(pref_sample, "chosen_frames_shape", None)),
         "rejected_frames_b64": frames_to_base64_images(pref_sample.rejected_frames, getattr(pref_sample, "rejected_frames_shape", None)),
         "target_progress_A": getattr(pref_sample, "target_progress_A", None),
@@ -237,10 +237,10 @@ def build_batch_payload(samples: List[Any]) -> Dict[str, Any]:
     """Build a batch payload from samples of either PreferenceSample or SimilaritySample."""
     payload_samples: List[Dict[str, Any]] = []
     for s in samples:
-        pred_type = getattr(s, "prediction_type", None)
-        if pred_type == "preference":
+        sample_type = getattr(s, "sample_type", None)
+        if sample_type == "preference":
             payload_samples.append(preference_to_payload(s))
-        elif pred_type == "similarity":
+        elif sample_type == "similarity":
             payload_samples.append(similarity_to_preference_payload(s))
         else:
             # Skip unknown types

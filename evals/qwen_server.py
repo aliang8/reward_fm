@@ -52,6 +52,7 @@ from setup_utils import (
     setup_batch_collator,
 )
 from trainer import RFMTrainer
+from evals.eval_utils import decode_frames_b64
 
 
 class SamplePayload(BaseModel):
@@ -69,18 +70,6 @@ class BatchPayload(BaseModel):
 
 class EvalRequest(BaseModel):
     eval_subset_size: Optional[int] = None
-
-
-def decode_frames_b64(frames_b64: List[str]) -> List[Image.Image]:
-    images: List[Image.Image] = []
-    for s in frames_b64:
-        try:
-            buf = io.BytesIO(base64.b64decode(s))
-            img = Image.open(buf).convert("RGB")
-            images.append(img)
-        except Exception:
-            continue
-    return images
 
 
 def build_preference_batch(processor, samples: List[SamplePayload], resized_h: int = 128, resized_w: int = 128):

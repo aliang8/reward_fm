@@ -44,6 +44,12 @@ def _dict_to_dataclass(cfg_dict: Dict[str, Any]) -> ExperimentConfig:
         "base_model_id",
         "torch_dtype",
         "trust_remote_code",
+        "train_vision_encoder",
+        "train_language_model",
+        "train_value_head",
+        "train_progress_head",
+        "train_preference_head",
+        "train_similarity_head",
     ]))
 
     peft = PEFTConfig(**subset(cfg_dict.get("peft", {}), [
@@ -52,13 +58,7 @@ def _dict_to_dataclass(cfg_dict: Dict[str, Any]) -> ExperimentConfig:
         "lora_alpha",
         "lora_dropout",
         "bias",
-        "target_modules",
-        "train_vision_encoder",
-        "train_language_model",
-        "train_value_head",
-        "train_progress_head",
-        "train_preference_head",
-        "train_similarity_head",
+        "target_modules"
     ]))
 
     data = DataConfig(**subset(cfg_dict.get("data", {}), [
@@ -72,7 +72,6 @@ def _dict_to_dataclass(cfg_dict: Dict[str, Any]) -> ExperimentConfig:
         "resized_height",
         "resized_width",
         "preference_ratio",
-        "similarity_ratio",
         "dataset_preference_ratio",
         "shuffle",
         "seed",
@@ -121,10 +120,6 @@ def _dict_to_dataclass(cfg_dict: Dict[str, Any]) -> ExperimentConfig:
 
     evaluation = EvaluationConfig(**subset(cfg_dict.get("evaluation", {}), [
         "model_path",
-        "eval_subset_size",
-        "eval_dataset_path",
-        "eval_base_dir",
-        "eval_dataset_subsets",
     ]))
 
     return ExperimentConfig(
@@ -180,6 +175,17 @@ def _ensure_numpy_frames(frames: Any, frames_shape: Optional[Tuple[int, int, int
     return np.empty((0,))
 
 
+def decode_frames_b64(frames_b64: List[str]) -> List[Image.Image]:
+    images: List[Image.Image] = []
+    for s in frames_b64:
+        try:
+            buf = io.BytesIO(base64.b64decode(s))
+            img = Image.open(buf).convert("RGB")
+            images.append(img)
+        except Exception:
+            continue
+    return images
+
 def frames_to_base64_images(frames: Any, frames_shape: Optional[Tuple[int, int, int, int]] = None) -> List[str]:
     """Convert frames to a list of base64-encoded JPEG strings.
 
@@ -203,7 +209,7 @@ def frames_to_base64_images(frames: Any, frames_shape: Optional[Tuple[int, int, 
             frame = frame.astype(np.uint8)
         img = Image.fromarray(frame)
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=85)
+        img.save(buf, format="PNG")
         encoded.append(base64.b64encode(buf.getvalue()).decode("utf-8"))
     return encoded
 
@@ -231,7 +237,6 @@ def preference_to_payload(pref_sample: Any) -> Dict[str, Any]:
         "target_progress_A": getattr(pref_sample, "target_progress_A", None),
         "target_progress_B": getattr(pref_sample, "target_progress_B", None),
     }
-
 
 def build_batch_payload(samples: List[Any]) -> Dict[str, Any]:
     """Build a batch payload from samples of either PreferenceSample or SimilaritySample."""

@@ -172,7 +172,6 @@ def display_config(cfg: ExperimentConfig):
     table.add_row("Data", "Resized Height", str(cfg.data.resized_height))
     table.add_row("Data", "Resized Width", str(cfg.data.resized_width))
     table.add_row("Data", "Preference Ratio", str(cfg.data.preference_ratio))
-    table.add_row("Data", "Similarity Ratio", str(cfg.data.similarity_ratio))
     table.add_row("Data", "Dataset Preference Ratio", str(cfg.data.dataset_preference_ratio))
     table.add_row("Data", "Shuffle", str(cfg.data.shuffle))
     table.add_row("Data", "Seed", str(cfg.data.seed))

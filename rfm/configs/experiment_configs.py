@@ -120,6 +120,11 @@ class LoggingConfig:
     wandb_entity: Optional[str] = field(default=None, metadata={"help": "Wandb entity/username"})
     wandb_run_name: Optional[str] = field(default=None, metadata={"help": "Wandb run name"})
 
+@dataclass
+class EvaluationConfig:
+    """Config for evaluation settings"""
+    model_path: Optional[str] = field(default=None)
+
 
 @dataclass
 class ExperimentConfig:
@@ -131,3 +136,4 @@ class ExperimentConfig:
     data: DataConfig = field(default_factory=DataConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)

@@ -175,6 +175,7 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: Dict[str, torch.Tensor
 
         logits = outputs.logits.squeeze(-1)  # [B]
         probs = torch.sigmoid(logits)  # [B]
+        print(f"predicted preference probabilities: {probs}")
         preds = (probs > 0.5).long()  # [B]
 
         predictions = preds.detach().cpu().tolist()

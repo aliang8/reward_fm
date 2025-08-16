@@ -9,7 +9,8 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 # LIBERO regular datasets
 echo "Running LIBERO regular dataset evaluations at $(date)" | tee evals/logs/libero_regular_${TIMESTAMP}.log
 
-for subset in "libero_10" "libero_goal" "libero_object" "libero_spatial"; do
+#for subset in "libero_10" "libero_goal" "libero_object" "libero_spatial"; do
+for subset in "libero_10"; do
     echo "=== Evaluating subset: $subset ===" | tee -a evals/logs/libero_regular_${TIMESTAMP}.log
     echo "Start time: $(date)" | tee -a evals/logs/libero_regular_${TIMESTAMP}.log
     

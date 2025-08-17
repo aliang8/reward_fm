@@ -542,7 +542,7 @@ class DataGenerator:
             else:
                 # Fall back to rewind if no same-task suboptimal trajectories
                 negative_traj = self._create_rewind_trajectory(optimal_traj)
-                strategy_used = "rewind_same_task_fallback"
+                strategy_used = "rewind_same_task"
         else:
             # Strategy 3: Use trajectory from different task (can be optimal or suboptimal)
             other_tasks = [task for task in self.optimal_by_task.keys() if task != optimal_traj["task"]]
@@ -560,15 +560,15 @@ class DataGenerator:
                     else:
                         # Fall back to rewind if same trajectory
                         negative_traj = self._create_rewind_trajectory(optimal_traj)
-                        strategy_used = "rewind_same_task_fallback"
+                        strategy_used = "rewind_same_task"
                 else:
                     # Fall back to rewind if no other trajectories available
                     negative_traj = self._create_rewind_trajectory(optimal_traj)
-                    strategy_used = "rewind_same_task_fallback"
+                    strategy_used = "rewind_same_task"
             else:
                 # Fall back to rewind if only one task available
                 negative_traj = self._create_rewind_trajectory(optimal_traj)
-                strategy_used = "rewind_same_task_fallback"
+                strategy_used = "rewind_same_task"
 
         # Get frames from npz files
         optimal_frames = self._get_trajectory_frames(optimal_idx)
@@ -632,7 +632,7 @@ class DataGenerator:
             # Progress fields
             target_progress_A=target_progress_A,
             target_progress_B=target_progress_B,
-            sample_type=strategy_used,
+            data_gen_strategy=strategy_used,
             num_frames_rewound=num_frames_rewound,
         )
         return sample
@@ -970,7 +970,7 @@ class DataGenerator:
             target_progress_A=target_progress_A,
             target_progress_B=target_progress_B,
             target_progress_ref=target_progress_ref,
-            sample_type=strategy_used,
+            data_gen_strategy=strategy_used,
         )
 
         return sample

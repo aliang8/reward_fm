@@ -37,6 +37,8 @@ class BaseSample:
     # Metadata field
     metadata: Optional[Dict] = None
 
+    data_gen_strategy: Optional[str] = None  # how this sample was generated (e.g. rewinding, random, etc.)
+
 
 @dataclass
 class PreferenceSample(BaseSample):

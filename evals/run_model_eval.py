@@ -220,21 +220,21 @@ def _compute_metrics_from_response(
 
         return subset_metrics
 
-    # Sample type analysis
-    sample_type_indices = {}
+    # Data gen strategy analysis
+    data_gen_strategy_indices = {}
     for i, sample in enumerate(samples):
-        sample_type = sample.sample_type
-        if sample_type not in sample_type_indices:
-            sample_type_indices[sample_type] = []
-        sample_type_indices[sample_type].append(i)
+        data_gen_strategy = sample.data_gen_strategy
+        if data_gen_strategy not in data_gen_strategy_indices:
+            data_gen_strategy_indices[data_gen_strategy] = []
+        data_gen_strategy_indices[data_gen_strategy].append(i)
 
-    # Add sample type counts
-    for sample_type, indices in sample_type_indices.items():
-        granular_metrics[f"count_{sample_type}"] = len(indices)
+    # Add data gen strategy counts
+    for data_gen_strategy, indices in data_gen_strategy_indices.items():
+        granular_metrics[f"count_{data_gen_strategy}"] = len(indices)
 
-    # Get subset metrics for each sample type
-    for sample_type, indices in sample_type_indices.items():
-        subset_metrics = get_subset_metrics(indices, sample_type)
+    # Get subset metrics for each data gen strategy
+    for data_gen_strategy, indices in data_gen_strategy_indices.items():
+        subset_metrics = get_subset_metrics(indices, data_gen_strategy)
         granular_metrics.update(subset_metrics)
 
     # Rewound frame analysis (for paired video samples)
@@ -598,14 +598,14 @@ def generate_metrics_summary(metrics: dict, granular_metrics: dict, title: str, 
 
         # Group performance metrics by type for better organization
         metric_groups = {
-            "Sample Type Analysis": [],
+            "Data Gen Strategy Analysis": [],
             "Rewound Frame Analysis": [],
             "Rejected Quality Analysis": [],
         }
 
         for k in performance_metrics.keys():
             if k.startswith("accuracy_") and not k.startswith(("accuracy_rewound_", "accuracy_rejected_")):
-                metric_groups["Sample Type Analysis"].append(k)
+                metric_groups["Data Gen Strategy Analysis"].append(k)
             elif k.startswith("accuracy_rewound_"):
                 metric_groups["Rewound Frame Analysis"].append(k)
             elif k.startswith("accuracy_rejected_"):
@@ -621,7 +621,7 @@ def generate_metrics_summary(metrics: dict, granular_metrics: dict, title: str, 
                     elif "rejected_" in k:
                         metric_groups["Rejected Quality Analysis"].append(k)
                     else:
-                        metric_groups["Sample Type Analysis"].append(k)
+                        metric_groups["Data Gen Strategy Analysis"].append(k)
 
         # Print each group with nice formatting
         for group_name, group_metrics in metric_groups.items():

@@ -27,6 +27,8 @@ import ast
 from typing import Any, Dict, List, Optional, Union
 import numpy as np
 from scipy.stats import spearmanr
+from rich.table import Table
+from rich.console import Console
 
 from tqdm import tqdm
 
@@ -65,8 +67,8 @@ def _compute_metrics_from_response(
 
     # Extract predictions and rewards
     preds = response.get("predictions", [])
-    rewards_chosen = response.get("rewards_chosen", [])
-    rewards_rejected = response.get("rewards_rejected", [])
+    reward_chosen = response.get("reward_chosen", [])
+    reward_rejected = response.get("reward_rejected", [])
     progress_predictions = response.get("progress_predictions", [])
 
     # Compute ALL base metrics once for efficiency
@@ -78,10 +80,49 @@ def _compute_metrics_from_response(
         base_metrics["eval_accuracy"] = correct_preds / len(preds)
 
     # Reward metrics
-    if rewards_chosen and rewards_rejected:
-        base_metrics["eval_reward_diff"] = np.mean(rewards_chosen) - np.mean(rewards_rejected)
-        base_metrics["eval_avg_reward_chosen"] = np.mean(rewards_chosen)
-        base_metrics["eval_avg_reward_rejected"] = np.mean(rewards_rejected)
+    if reward_chosen and reward_rejected:
+        # Handle inhomogeneous reward arrays by flattening them
+        try:
+            # Debug: Log the structure of reward arrays
+            print(f"Debug: reward_chosen type: {type(reward_chosen)}, length: {len(reward_chosen)}")
+            print(f"Debug: reward_rejected type: {type(reward_rejected)}, length: {len(reward_rejected)}")
+            if len(reward_chosen) > 0:
+                print(f"Debug: First reward_chosen element type: {type(reward_chosen[0])}, shape: {getattr(reward_chosen[0], 'shape', 'no shape')}")
+            if len(reward_rejected) > 0:
+                print(f"Debug: First reward_rejected element type: {type(reward_rejected[0])}, shape: {getattr(reward_rejected[0], 'shape', 'no shape')}")
+            
+            # Flatten reward arrays to handle different sequence lengths
+            flat_reward_chosen = []
+            flat_reward_rejected = []
+            
+            for chosen_rewards in reward_chosen:
+                if isinstance(chosen_rewards, (list, np.ndarray)):
+                    flat_reward_chosen.extend(chosen_rewards)
+                else:
+                    flat_reward_chosen.append(chosen_rewards)
+            
+            for rejected_rewards in reward_rejected:
+                if isinstance(rejected_rewards, (list, np.ndarray)):
+                    flat_reward_rejected.extend(rejected_rewards)
+                else:
+                    flat_reward_rejected.append(rejected_rewards)
+            
+            # Convert to numpy arrays and compute means
+            flat_reward_chosen = np.array(flat_reward_chosen, dtype=float)
+            flat_reward_rejected = np.array(flat_reward_rejected, dtype=float)
+            
+            print(f"Debug: Flattened reward_chosen shape: {flat_reward_chosen.shape}")
+            print(f"Debug: Flattened reward_rejected shape: {flat_reward_rejected.shape}")
+            
+            base_metrics["eval_reward_diff"] = np.mean(flat_reward_chosen) - np.mean(flat_reward_rejected)
+            base_metrics["eval_avg_reward_chosen"] = np.mean(flat_reward_chosen)
+            base_metrics["eval_avg_reward_rejected"] = np.mean(flat_reward_rejected)
+            
+        except Exception as e:
+            print(f"Warning: Could not compute reward metrics due to inhomogeneous shapes: {e}")
+            base_metrics["eval_reward_diff"] = None
+            base_metrics["eval_avg_reward_chosen"] = None
+            base_metrics["eval_avg_reward_rejected"] = None
 
     # Progress alignment (for similarity samples)
     if progress_predictions and any(s.sample_type == "similarity" for s in samples):
@@ -106,8 +147,8 @@ def _compute_metrics_from_response(
 
         # Filter predictions and rewards for this subset
         subset_preds = [preds[i] for i in indices if i < len(preds)]
-        subset_rewards_chosen = [rewards_chosen[i] for i in indices if i < len(rewards_chosen)]
-        subset_rewards_rejected = [rewards_rejected[i] for i in indices if i < len(rewards_rejected)]
+        subset_reward_chosen = [reward_chosen[i] for i in indices if i < len(reward_chosen)]
+        subset_reward_rejected = [reward_rejected[i] for i in indices if i < len(reward_rejected)]
 
         if not subset_preds:
             return {}
@@ -117,14 +158,50 @@ def _compute_metrics_from_response(
         subset_metrics[f"accuracy_{metric_prefix}"] = correct / len(subset_preds)
 
         # Compute reward metrics for this subset
-        if subset_rewards_chosen:
-            subset_metrics[f"avg_reward_chosen_{metric_prefix}"] = np.mean(subset_rewards_chosen)
-        if subset_rewards_rejected:
-            subset_metrics[f"avg_reward_rejected_{metric_prefix}"] = np.mean(subset_rewards_rejected)
-        if subset_rewards_chosen and subset_rewards_rejected:
-            subset_metrics[f"reward_diff_{metric_prefix}"] = np.mean(subset_rewards_chosen) - np.mean(
-                subset_rewards_rejected
-            )
+        flat_reward_chosen = None
+        flat_reward_rejected = None
+        
+        if subset_reward_chosen:
+            try:
+                # Flatten reward arrays to handle different sequence lengths
+                flat_reward_chosen = []
+                for chosen_rewards in subset_reward_chosen:
+                    if isinstance(chosen_rewards, (list, np.ndarray)):
+                        flat_reward_chosen.extend(chosen_rewards)
+                    else:
+                        flat_reward_chosen.append(chosen_rewards)
+                
+                flat_reward_chosen = np.array(flat_reward_chosen, dtype=float)
+                subset_metrics[f"avg_reward_chosen_{metric_prefix}"] = np.mean(flat_reward_chosen)
+            except Exception as e:
+                print(f"Warning: Could not compute chosen reward metrics for {metric_prefix}: {e}")
+                subset_metrics[f"avg_reward_chosen_{metric_prefix}"] = None
+                flat_reward_chosen = None
+                
+        if subset_reward_rejected:
+            try:
+                # Flatten reward arrays to handle different sequence lengths
+                flat_reward_rejected = []
+                for rejected_rewards in subset_reward_rejected:
+                    if isinstance(rejected_rewards, (list, np.ndarray)):
+                        flat_reward_rejected.extend(rejected_rewards)
+                    else:
+                        flat_reward_rejected.append(rejected_rewards)
+                
+                flat_reward_rejected = np.array(flat_reward_rejected, dtype=float)
+                subset_metrics[f"avg_reward_rejected_{metric_prefix}"] = np.mean(flat_reward_rejected)
+            except Exception as e:
+                print(f"Warning: Could not compute rejected reward metrics for {metric_prefix}: {e}")
+                subset_metrics[f"avg_reward_rejected_{metric_prefix}"] = None
+                flat_reward_rejected = None
+                
+        if flat_reward_chosen is not None and flat_reward_rejected is not None:
+            try:
+                # Both arrays are already flattened above
+                subset_metrics[f"reward_diff_{metric_prefix}"] = np.mean(flat_reward_chosen) - np.mean(flat_reward_rejected)
+            except Exception as e:
+                print(f"Warning: Could not compute reward difference for {metric_prefix}: {e}")
+                subset_metrics[f"reward_diff_{metric_prefix}"] = None
 
         # Compute progress alignment for this subset (if applicable)
         if progress_predictions and any(s.sample_type == "similarity" for s in [samples[i] for i in indices]):
@@ -226,11 +303,11 @@ def iter_eval_batches(
         # Go through the full dataset
         actual_num_batches = (dataset_size + batch_size - 1) // batch_size  # Ceiling division
         print(
-            f"\n🔄 Processing FULL DATASET: {dataset_size} samples in {actual_num_batches} batches of size {batch_size}"
+            f"\nProcessing FULL DATASET: {dataset_size} samples in {actual_num_batches} batches of size {batch_size}"
         )
     else:
         actual_num_batches = num_batches
-        print(f"\n🔄 Processing {actual_num_batches} batches of size {batch_size} (dataset size: {dataset_size})")
+        print(f"\nProcessing {actual_num_batches} batches of size {batch_size} (dataset size: {dataset_size})")
 
     results: List[Dict[str, Any]] = []
     idx = 0
@@ -241,7 +318,7 @@ def iter_eval_batches(
     for batch_idx in range(actual_num_batches):
         # Check if we've reached the end of the dataset
         if idx >= dataset_size:
-            print(f"\n⚠️  Reached end of dataset after {batch_idx} batches")
+            print(f"\nReached end of dataset after {batch_idx} batches")
             break
 
         # Assemble a batch of Sample objects (Preference or Similarity)
@@ -263,8 +340,8 @@ def iter_eval_batches(
         print(
             f"\n" + "=" * 80,
         )
-        print(f"📦 BATCH {batch_idx + 1}/{actual_num_batches} RESULTS (Processed)")
-        print(f"   📊 Progress: {idx}/{dataset_size} samples ({idx / dataset_size * 100:.1f}%)")
+        print(f"BATCH {batch_idx + 1}/{actual_num_batches} RESULTS (Processed)")
+        print(f"   Progress: {idx}/{dataset_size} samples ({idx / dataset_size * 100:.1f}%)")
         print("=" * 80)
 
         # Extract main metrics for this batch
@@ -305,7 +382,7 @@ def iter_eval_batches(
         # Add separator between batches (except for the last one)
         if batch_idx < actual_num_batches - 1:
             print("\n" + "─" * 80)
-            print("🔄 NEXT BATCH")
+            print("NEXT BATCH")
             print("─" * 80)
 
         import sys
@@ -433,7 +510,7 @@ def main():
 
 
 def generate_metrics_summary(metrics: dict, granular_metrics: dict, title: str, level: str = "batch"):
-    """Generate a nicely formatted metrics summary print.
+    """Generate a nicely formatted metrics summary print using tables.
 
     Args:
         metrics: Dictionary of main metrics
@@ -442,60 +519,57 @@ def generate_metrics_summary(metrics: dict, granular_metrics: dict, title: str, 
         level: Either "batch" or "final" to indicate the level of detail
     """
     print(f"\n" + "=" * 80)
-    print(f"📊 {title}")
+    print(f"{title}")
     print("=" * 80)
 
     # Print main metrics
     if metrics:
-        print(f"\n📈 Main Metrics")
+        print(f"\nMain Metrics")
         print("-" * 12)
+        
+        # Create table for main metrics
+        console = Console()
+        main_table = Table(show_header=True, header_style="bold")
+        main_table.add_column("Metric", style="cyan", no_wrap=True)
+        main_table.add_column("Value", style="green")
+        main_table.add_column("Description", style="yellow")
+        
         for k in sorted(metrics.keys()):
             if metrics[k] is not None:
                 value = metrics[k]
+                # Round to 2 decimal places
+                if isinstance(value, (int, float)):
+                    value = round(value, 2)
+                
                 # Format the metric name for better readability
                 display_name = k.replace("_", " ").title()
-
-                # Add emojis for different metric types
+                
+                # Add description based on metric type
                 if k.startswith("accuracy"):
-                    metric_icon = "🎯"
-                elif k.startswith("reward_diff"):
-                    metric_icon = "📊"
+                    description = "Accuracy of Predicting the Correct Preference"
                 elif k.startswith("avg_reward_chosen"):
-                    metric_icon = "✅"
+                    description = "Average Reward Assigned to (Chosen)"
                 elif k.startswith("avg_reward_rejected"):
-                    metric_icon = "❌"
-                elif k.startswith("progress_alignment"):
-                    metric_icon = "📈"
-                else:
-                    metric_icon = "📋"
-
-                print(f"  {metric_icon} {display_name}: {value:.6f}")
-
-                # Add explanation based on metric type
-                if k.startswith("accuracy"):
-                    print(f"     💡 Accuracy of Predicting the Correct Preference ({level} level)")
-                elif k.startswith("avg_reward_chosen"):
-                    print(f"     💡 Average Reward Assigned to (Chosen) ({level} level)")
-                elif k.startswith("avg_reward_rejected"):
-                    print(f"     💡 Average Reward (Rejected) ({level} level)")
+                    description = "Average Reward (Rejected)"
                 elif k.startswith("reward_diff"):
-                    print(f"     💡 Reward Difference between Chosen and Rejected ({level} level)")
+                    description = "Reward Difference between Chosen and Rejected"
                 elif k.startswith("progress_alignment"):
-                    print(
-                        f"     💡 Spearman Correlation between Predicted Progress and Ground Truth Progress ({level} level)"
-                    )
+                    description = "Spearman Correlation between Predicted Progress and Ground Truth Progress"
                 else:
-                    print(f"     💡 {k}")
+                    description = k
+                
+                main_table.add_row(display_name, str(value), description)
             else:
                 # Handle None values
                 display_name = k.replace("_", " ").title()
-                print(f"  ❌ {display_name}: Not Available")
-                print(f"     💡 This metric was not computed for any samples in this {level}")
+                main_table.add_row(display_name, "Not Available", f"This metric was not computed for any samples in this {level}")
+        
+        console.print(main_table)
 
     # Print granular metrics if available
     if granular_metrics:
         print(f"\n" + "=" * 80)
-        print(f"🔍 GRANULAR METRICS ANALYSIS ({level.upper()} LEVEL)")
+        print(f"GRANULAR METRICS ANALYSIS ({level.upper()} LEVEL)")
         print("=" * 80)
 
         # Separate count metrics from performance metrics
@@ -505,39 +579,37 @@ def generate_metrics_summary(metrics: dict, granular_metrics: dict, title: str, 
         # Print count metrics first
         if count_metrics:
             total_samples = sum(count_metrics.values())
-            print(f"\n📊 Sample Counts (Total: {total_samples})")
+            print(f"\nSample Counts (Total: {total_samples})")
             print("-" * 15)
+            
+            count_table = Table(show_header=True, header_style="bold")
+            count_table.add_column("Category", style="cyan", no_wrap=True)
+            count_table.add_column("Count", style="green")
+            count_table.add_column("Description", style="yellow")
+            
             for k in sorted(count_metrics.keys()):
                 if count_metrics[k] is not None:
                     value = count_metrics[k]
                     # Format the metric name for better readability
                     display_name = k.replace("count_", "").replace("_", " ").title()
-
-                    # Add emojis for different count types
-                    if "rewound" in k:
-                        metric_icon = "⏪"
-                    elif "rejected" in k:
-                        metric_icon = "❌"
-                    else:
-                        metric_icon = "📊"
-
-                    print(f"  {metric_icon} {display_name}: {value}")
-                    print(f"     💡 Number of samples in this category")
+                    count_table.add_row(display_name, str(value), "Number of samples in this category")
+            
+            console.print(count_table)
 
         # Group performance metrics by type for better organization
         metric_groups = {
-            "🎯 Sample Type Analysis": [],
-            "⏪ Rewound Frame Analysis": [],
-            "❌ Rejected Quality Analysis": [],
+            "Sample Type Analysis": [],
+            "Rewound Frame Analysis": [],
+            "Rejected Quality Analysis": [],
         }
 
         for k in performance_metrics.keys():
             if k.startswith("accuracy_") and not k.startswith(("accuracy_rewound_", "accuracy_rejected_")):
-                metric_groups["🎯 Sample Type Analysis"].append(k)
+                metric_groups["Sample Type Analysis"].append(k)
             elif k.startswith("accuracy_rewound_"):
-                metric_groups["⏪ Rewound Frame Analysis"].append(k)
+                metric_groups["Rewound Frame Analysis"].append(k)
             elif k.startswith("accuracy_rejected_"):
-                metric_groups["❌ Rejected Quality Analysis"].append(k)
+                metric_groups["Rejected Quality Analysis"].append(k)
             elif k.startswith(("avg_reward_chosen_", "avg_reward_rejected_", "reward_diff_", "progress_alignment_")):
                 # Add to appropriate group based on the metric type
                 if any(
@@ -545,11 +617,11 @@ def generate_metrics_summary(metrics: dict, granular_metrics: dict, title: str, 
                     for prefix in ["avg_reward_chosen_", "avg_reward_rejected_", "reward_diff_", "progress_alignment_"]
                 ):
                     if "rewound_" in k:
-                        metric_groups["⏪ Rewound Frame Analysis"].append(k)
+                        metric_groups["Rewound Frame Analysis"].append(k)
                     elif "rejected_" in k:
-                        metric_groups["❌ Rejected Quality Analysis"].append(k)
+                        metric_groups["Rejected Quality Analysis"].append(k)
                     else:
-                        metric_groups["🎯 Sample Type Analysis"].append(k)
+                        metric_groups["Sample Type Analysis"].append(k)
 
         # Print each group with nice formatting
         for group_name, group_metrics in metric_groups.items():
@@ -557,51 +629,46 @@ def generate_metrics_summary(metrics: dict, granular_metrics: dict, title: str, 
                 print(f"\n{group_name}")
                 print("-" * len(group_name))
 
+                # Create table for this group
+                group_table = Table(show_header=True, header_style="bold")
+                group_table.add_column("Metric", style="cyan", no_wrap=True)
+                group_table.add_column("Value", style="green")
+                group_table.add_column("Description", style="yellow")
+
                 # Sort metrics within each group for consistent display
                 sorted_metrics = sorted(group_metrics)
 
                 for k in sorted_metrics:
                     if k in performance_metrics and performance_metrics[k] is not None:
                         value = performance_metrics[k]
+                        # Round to 2 decimal places
+                        if isinstance(value, (int, float)):
+                            value = round(value, 2)
+                        
                         # Format the metric name for better readability
                         display_name = k.replace("_", " ").title()
 
-                        # Add emojis for different metric types
+                        # Add description for granular metrics
                         if k.startswith("accuracy_"):
-                            metric_icon = "🎯"
+                            description = "Accuracy of Predicting the Correct Preference (granular breakdown)"
                         elif k.startswith("avg_reward_chosen_"):
-                            metric_icon = "✅"
+                            description = "Average Reward Assigned to (Chosen) (granular breakdown)"
                         elif k.startswith("avg_reward_rejected_"):
-                            metric_icon = "❌"
+                            description = "Average Reward (Rejected) (granular breakdown)"
                         elif k.startswith("reward_diff_"):
-                            metric_icon = "📊"
+                            description = "Reward Difference between Chosen and Rejected (granular breakdown)"
                         elif k.startswith("progress_alignment_"):
-                            metric_icon = "📈"
+                            description = "Spearman Correlation between Predicted Progress and Ground Truth Progress (granular breakdown)"
                         else:
-                            metric_icon = "📋"
+                            description = k
 
-                        print(f"  {metric_icon} {display_name}: {value:.6f}")
-
-                        # Add explanation for granular metrics
-                        if k.startswith("accuracy_"):
-                            print(f"     💡 Accuracy of Predicting the Correct Preference (granular breakdown)")
-                        elif k.startswith("avg_reward_chosen_"):
-                            print(f"     💡 Average Reward Assigned to (Chosen) (granular breakdown)")
-                        elif k.startswith("avg_reward_rejected_"):
-                            print(f"     💡 Average Reward (Rejected) (granular breakdown)")
-                        elif k.startswith("reward_diff_"):
-                            print(f"     💡 Reward Difference between Chosen and Rejected (granular breakdown)")
-                        elif k.startswith("progress_alignment_"):
-                            print(
-                                f"     💡 Spearman Correlation between Predicted Progress and Ground Truth Progress (granular breakdown)"
-                            )
-                        else:
-                            print(f"     💡 {k}")
+                        group_table.add_row(display_name, str(value), description)
                     elif k in performance_metrics and performance_metrics[k] is None:
                         # Handle None values in granular metrics
                         display_name = k.replace("_", " ").title()
-                        print(f"  ❌ {display_name}: Not Available")
-                        print(f"     💡 This metric was not computed for any samples in this category")
+                        group_table.add_row(display_name, "Not Available", "This metric was not computed for any samples in this category")
+
+                console.print(group_table)
 
     print("\n" + "=" * 80)
 

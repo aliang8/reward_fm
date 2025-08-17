@@ -61,8 +61,8 @@ class DataConfig:
 
     # Dataset type and configuration
     dataset_type: str = field(
-        default="preference",
-        metadata={"help": "Dataset type: 'preference', 'similarity', 'paired_video', 'rewound', 'success_failure'"},
+        default="default",
+        metadata={"help": "Dataset type: 'default', 'rewound', 'success_failure'"},
     )
 
     # Rewound dataset specific parameters

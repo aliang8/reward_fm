@@ -94,7 +94,7 @@ class DataGenerator:
             )
             raise RuntimeError(
                 f"{cache_type.capitalize()} dataset preprocessing required. Please run:\n"
-                "python preprocess_datasets.py\n"
+                "uv run scripts/preprocess_datasets.py\n"
                 "This will create the necessary index-based cache for efficient data loading."
             )
 

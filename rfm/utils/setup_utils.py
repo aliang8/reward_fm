@@ -252,7 +252,7 @@ def setup_eval_data_generator(cfg: ExperimentConfig) -> DataGenerator:
 
 
 def setup_dataset(
-    data_generator: DataGenerator, dataset_type: str = "train", dataset_kwargs: dict = {}
+    data_generator: DataGenerator, dataset_type: str = "default", dataset_kwargs: dict = {}
 ) -> Union[InfiniteDataGeneratorDataset, RewoundDataset, PairedSuccessFailureDataset]:
     """Shared function to create training or evaluation dataset based on config"""
 
@@ -260,7 +260,7 @@ def setup_dataset(
     config_dataset_type = data_generator.config.data.dataset_type
 
     rank_0_print(f"Setting up {dataset_type} dataset with type: {config_dataset_type}")
-
+    
     if config_dataset_type == "rewound":
         rank_0_print(f"Creating rewound dataset")
         dataset = RewoundDataset(data_generator, **dataset_kwargs)
@@ -283,7 +283,7 @@ def setup_eval_dataset(cfg: ExperimentConfig) -> Union[InfiniteDataGeneratorData
     eval_data_generator = setup_eval_data_generator(cfg)
 
     # Create evaluation dataset
-    eval_dataset = setup_dataset(eval_data_generator, dataset_type="evaluation", dataset_kwargs={"max_samples": cfg.data.eval_subset_size})
+    eval_dataset = setup_dataset(eval_data_generator, dataset_type=cfg.data.dataset_type, dataset_kwargs={"max_samples": cfg.data.eval_subset_size})
 
     return eval_dataset
 

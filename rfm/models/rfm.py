@@ -119,10 +119,13 @@ class RFMModel(PreTrainedModel):
                     - 'A': List of tensors for trajectory A (before vision_end token), each [seq_len_A]
                     - 'B': List of tensors for trajectory B (after vision_end token), each [seq_len_B]
                     Values should be in range [0, 1] representing task completion percentage at each timestep.
+                
+                - timing_raw (Dict[str, float]):
+                    Timing information for the forward pass.
         """
         if timing_raw is None:
             timing_raw = {}
-            
+
         model_kwargs = {
             "input_ids": input_ids,
             "attention_mask": attention_mask,

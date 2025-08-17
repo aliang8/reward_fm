@@ -296,7 +296,7 @@ class RFMTrainer(Trainer):
         # Single forward pass with both trajectories concatenated
         # The model should handle the preference prediction at the end
         with _timer("time/pref_forward", timing_raw=self.timing_raw):
-            model_outputs, progress_logits = model(
+            model_outputs, progress_logits, model_timing_raw = model(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
                 pixel_values=inputs.get("pixel_values"),
@@ -307,6 +307,7 @@ class RFMTrainer(Trainer):
                 sample_type="preference",
                 timing_raw=self.timing_raw,
             )
+            self.timing_raw.update(model_timing_raw)
 
         preference_loss = 0.0
         progress_loss = 0.0

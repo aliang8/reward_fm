@@ -402,13 +402,11 @@ class DataGenerator:
         forward_progress = [i / (len(forward_frames) - 1) for i in range(len(forward_frames))]
 
         # Create rewind segment (reverse the forward segment)
-        if rewind_length is None:
-            selected_end_point = random.randint(2, len(forward_frames) - 1)
-        else:
-            selected_end_point = rewind_length + 1
+        selected_end_point = rewind_length + 1
 
+        # ignore the first frame of the forward segment 
         reverse_frames = forward_frames[::-1][1:selected_end_point]
-        reverse_progress = forward_progress[::-1][1:]
+        reverse_progress = forward_progress[::-1][1:selected_end_point]
 
         # Calculate how many frames were rewound
         num_frames_rewound = len(reverse_frames)

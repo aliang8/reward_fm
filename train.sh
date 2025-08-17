@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script to run RFM training with FSDP using accelerate launch
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7
 export RFM_DATASET_PATH=/workspace/vlm_reward_model/rfm_dataset
 
 # Run training with FSDP using accelerate launch

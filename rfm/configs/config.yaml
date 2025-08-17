@@ -75,7 +75,7 @@ training:
   save_strategy: "steps"
   logging_steps: 1
   save_steps: 100
-  max_steps: 1000  # -1 means no limit, use num_train_epochs instead
+  max_steps: 2000  # -1 means no limit, use num_train_epochs instead
   
   # Evaluation settings
   evaluation_strategy: "steps"  # Options: "no", "steps", "epoch"

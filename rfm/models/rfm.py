@@ -272,4 +272,4 @@ class RFMModel(PreTrainedModel):
                 else:  # similarity (default)
                     logits = self.similarity_head(token_hidden_states)
 
-        return SequenceClassifierOutputWithPast(logits=logits), progress_logits
+        return SequenceClassifierOutputWithPast(logits=logits), progress_logits, timing_raw

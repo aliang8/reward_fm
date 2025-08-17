@@ -22,7 +22,6 @@ class BaseSample:
     task: str
     lang_vector: np.ndarray
     data_source: str
-    frames: Union[List[str], np.ndarray]
     quality_label: str
     is_robot: bool
 

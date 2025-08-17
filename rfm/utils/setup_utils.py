@@ -11,10 +11,11 @@ from typing import Tuple, Optional, Union
 
 from rfm.models.rfm import RFMModel
 from rfm.data.data_generator import DataGenerator, BatchCollator
-from rfm.data.datasets import InfiniteDataGeneratorDataset, RewoundDataset, PairedSuccessFailureDataset
+from rfm.data.dataset import InfiniteDataGeneratorDataset, RewoundDataset, PairedSuccessFailureDataset
 from rfm.utils.logging import rank_0_print
 from rfm.configs.experiment_configs import ExperimentConfig
 
+from rfm.utils.logging import _timer
 
 def setup_model_and_processor(cfg: ExperimentConfig) -> Tuple[AutoProcessor, RFMModel]:
     """Shared function to set up model, processor, and tokenizer for both training and evaluation"""
@@ -251,7 +252,7 @@ def setup_eval_data_generator(cfg: ExperimentConfig) -> DataGenerator:
 
 
 def setup_dataset(
-    data_generator: DataGenerator, dataset_type: str = "train"
+    data_generator: DataGenerator, dataset_type: str = "train", dataset_kwargs: dict = {}
 ) -> Union[InfiniteDataGeneratorDataset, RewoundDataset, PairedSuccessFailureDataset]:
     """Shared function to create training or evaluation dataset based on config"""
 
@@ -262,14 +263,14 @@ def setup_dataset(
 
     if config_dataset_type == "rewound":
         rank_0_print(f"Creating rewound dataset")
-        dataset = RewoundDataset(data_generator)
+        dataset = RewoundDataset(data_generator, **dataset_kwargs)
     elif config_dataset_type == "success_failure":
         rank_0_print(f"Creating success-failure dataset (generating all possible pairs)")
-        dataset = PairedSuccessFailureDataset(data_generator)
+        dataset = PairedSuccessFailureDataset(data_generator, **dataset_kwargs)
     else:
         # Default to preference/similarity dataset
         rank_0_print("Creating preference/similarity dataset")
-        dataset = InfiniteDataGeneratorDataset(data_generator)
+        dataset = InfiniteDataGeneratorDataset(data_generator, **dataset_kwargs)
         
     rank_0_print(f"{dataset_type.capitalize()} dataset created successfully with {len(dataset)} samples")
     return dataset
@@ -282,7 +283,7 @@ def setup_eval_dataset(cfg: ExperimentConfig) -> Union[InfiniteDataGeneratorData
     eval_data_generator = setup_eval_data_generator(cfg)
 
     # Create evaluation dataset
-    eval_dataset = setup_dataset(eval_data_generator, dataset_type="evaluation")
+    eval_dataset = setup_dataset(eval_data_generator, dataset_type="evaluation", dataset_kwargs={"max_samples": cfg.data.eval_subset_size})
 
     return eval_dataset
 

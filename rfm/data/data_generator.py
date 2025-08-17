@@ -11,16 +11,13 @@ The generator allows controlling the ratio between different prediction types.
 import random
 import numpy as np
 from typing import List, Dict, Tuple, Optional, Iterator, Union
-from datasets import load_from_disk
-from sentence_transformers import SentenceTransformer
 import shutil
 import os
 from pathlib import Path
 import torch
 from rfm.data.batch_collator import BaseSample, PreferenceSample, SimilaritySample, BatchCollator
-from datasets import concatenate_datasets
+from datasets import concatenate_datasets, Dataset
 from rfm.utils.logging import rank_0_print
-from datasets import Dataset
 import json
 from rfm.utils.logging import timer
 
@@ -614,7 +611,6 @@ class DataGenerator:
             task=optimal_traj["task"],
             lang_vector=optimal_traj["lang_vector"],
             data_source=optimal_traj["data_source"],
-            frames=np.array(optimal_traj["frames"]),
             frames_shape=optimal_frames_shape,
             quality_label=optimal_traj.get("quality_label", "successful"),
             is_robot=optimal_traj["is_robot"],
@@ -1013,7 +1009,7 @@ def test():
     # Create mock config
     mock_data_config = MockDataConfig(
         train_datasets=["abraranwar/libero_rfm"],
-        train_subsets=["libero_10"],
+        train_subsets=["libero_90"],
         preference_ratio=1.0,
         similarity_ratio=0.0,
         shuffle=True,
@@ -1030,7 +1026,7 @@ def test():
 
     # Test the infinite dataset
     rank_0_print("Testing InfiniteDataGeneratorDataset...")
-    from rfm.data.datasets import InfiniteDataGeneratorDataset
+    from rfm.data.dataset import InfiniteDataGeneratorDataset
 
     infinite_dataset = InfiniteDataGeneratorDataset(generator)
 

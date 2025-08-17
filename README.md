@@ -124,6 +124,12 @@ For space reasons, you should symlink `~/.cache/huggingface/datasets` to some ot
 ./setup.sh
 ```
 
+If you're running into issues with HuggingFace's API while downloading the dataset, you can use 
+```bash
+RFM_DOWNLOAD_METHOD=git ./setup.sh
+```
+to download via git-lfs instead. Make sure `git-lfs` is first installed.
+
 Add to your `.bashrc` the following export:
 
 ```bash

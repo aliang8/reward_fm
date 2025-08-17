@@ -138,7 +138,7 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: Dict[str, torch.Tensor
     device = next(model.parameters()).device
 
     with torch.no_grad():
-        outputs, progress_logits = model(
+        outputs, progress_logits, _ = model(
             input_ids=batch_inputs["input_ids"].to(device),
             attention_mask=batch_inputs["attention_mask"].to(device),
             pixel_values=batch_inputs.get("pixel_values", None).to(device)

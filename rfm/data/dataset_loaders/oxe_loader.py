@@ -51,6 +51,7 @@ MAX_LANGTABLE_EPISODES = (
 )
 possible_valid_keys = ["primary", "secondary", "tertiary"]
 
+
 def _stable_shard_for_index(index: int, shard_modulus: int = 1000) -> str:
     try:
         idx = int(index)
@@ -222,16 +223,18 @@ def convert_oxe_dataset_to_hf(
             break
 
     if not entries:
-        return Dataset.from_dict({
-            "id": [],
-            "task": [],
-            "lang_vector": [],
-            "data_source": [],
-            "frames": [],
-            "is_robot": [],
-            "quality_label": [],
-            "preference_group_id": [],
-            "preference_rank": [],
-        })
+        return Dataset.from_dict(
+            {
+                "id": [],
+                "task": [],
+                "lang_vector": [],
+                "data_source": [],
+                "frames": [],
+                "is_robot": [],
+                "quality_label": [],
+                "preference_group_id": [],
+                "preference_rank": [],
+            }
+        )
 
     return Dataset.from_list(entries)

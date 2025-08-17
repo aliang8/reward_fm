@@ -51,7 +51,7 @@ from rfm.utils.setup_utils import (
     setup_eval_dataset,
     setup_batch_collator,
 )
-from rfm.trainer import RFMTrainer
+from rfm.trainers.trainer import RFMTrainer
 from evals.eval_utils import decode_frames_b64
 
 

@@ -40,87 +40,107 @@ def _dict_to_dataclass(cfg_dict: Dict[str, Any]) -> ExperimentConfig:
     def subset(d: Dict[str, Any], keys: List[str]) -> Dict[str, Any]:
         return {k: d[k] for k in keys if k in d}
 
-    model = ModelConfig(**subset(cfg_dict.get("model", {}), [
-        "base_model_id",
-        "torch_dtype",
-        "trust_remote_code",
-        "train_vision_encoder",
-        "train_language_model",
-        "train_value_head",
-        "train_progress_head",
-        "train_preference_head",
-        "train_similarity_head",
-    ]))
+    model = ModelConfig(
+        **subset(
+            cfg_dict.get("model", {}),
+            [
+                "base_model_id",
+                "torch_dtype",
+                "trust_remote_code",
+                "train_vision_encoder",
+                "train_language_model",
+                "train_value_head",
+                "train_progress_head",
+                "train_preference_head",
+                "train_similarity_head",
+            ],
+        )
+    )
 
-    peft = PEFTConfig(**subset(cfg_dict.get("peft", {}), [
-        "use_peft",
-        "r",
-        "lora_alpha",
-        "lora_dropout",
-        "bias",
-        "target_modules"
-    ]))
+    peft = PEFTConfig(
+        **subset(cfg_dict.get("peft", {}), ["use_peft", "r", "lora_alpha", "lora_dropout", "bias", "target_modules"])
+    )
 
-    data = DataConfig(**subset(cfg_dict.get("data", {}), [
-        "train_datasets",
-        "train_subsets",
-        "eval_datasets",
-        "eval_subsets",
-        "eval_subset_size",
-        "max_frames",
-        "video_frame_sampling",
-        "resized_height",
-        "resized_width",
-        "preference_ratio",
-        "dataset_preference_ratio",
-        "shuffle",
-        "seed",
-        "num_proc",
-        "force_reprocess",
-        "dataloader_pin_memory",
-        "dataloader_num_workers",
-    ]))
+    data = DataConfig(
+        **subset(
+            cfg_dict.get("data", {}),
+            [
+                "train_datasets",
+                "train_subsets",
+                "eval_datasets",
+                "eval_subsets",
+                "eval_subset_size",
+                "max_frames",
+                "video_frame_sampling",
+                "resized_height",
+                "resized_width",
+                "preference_ratio",
+                "dataset_preference_ratio",
+                "shuffle",
+                "seed",
+                "num_proc",
+                "force_reprocess",
+                "dataloader_pin_memory",
+                "dataloader_num_workers",
+            ],
+        )
+    )
 
-    training = TrainingConfig(**subset(cfg_dict.get("training", {}), [
-        "num_gpus",
-        "output_dir",
-        "max_seq_length",
-        "beta",
-        "resume_from_checkpoint",
-        "per_device_train_batch_size",
-        "gradient_accumulation_steps",
-        "learning_rate",
-        "num_train_epochs",
-        "save_strategy",
-        "logging_steps",
-        "bf16",
-        "fp16",
-        "remove_unused_columns",
-        "gradient_checkpointing",
-        "ddp_find_unused_parameters",
-        "ddp_bucket_cap_mb",
-        "max_steps",
-        "save_steps",
-        "evaluation_strategy",
-        "eval_steps",
-        "per_device_eval_batch_size",
-        "do_eval",
-        "prediction_loss_only",
-    ]))
+    training = TrainingConfig(
+        **subset(
+            cfg_dict.get("training", {}),
+            [
+                "num_gpus",
+                "output_dir",
+                "max_seq_length",
+                "beta",
+                "resume_from_checkpoint",
+                "per_device_train_batch_size",
+                "gradient_accumulation_steps",
+                "learning_rate",
+                "num_train_epochs",
+                "save_strategy",
+                "logging_steps",
+                "bf16",
+                "fp16",
+                "remove_unused_columns",
+                "gradient_checkpointing",
+                "ddp_find_unused_parameters",
+                "ddp_bucket_cap_mb",
+                "max_steps",
+                "save_steps",
+                "evaluation_strategy",
+                "eval_steps",
+                "per_device_eval_batch_size",
+                "do_eval",
+                "prediction_loss_only",
+            ],
+        )
+    )
 
-    logging = LoggingConfig(**subset(cfg_dict.get("logging", {}), [
-        "print_trainable_parameters",
-        "save_model",
-        "save_processor",
-        "use_wandb",
-        "wandb_project",
-        "wandb_entity",
-        "wandb_run_name",
-    ]))
+    logging = LoggingConfig(
+        **subset(
+            cfg_dict.get("logging", {}),
+            [
+                "print_trainable_parameters",
+                "save_model",
+                "save_processor",
+                "use_wandb",
+                "wandb_project",
+                "wandb_entity",
+                "wandb_run_name",
+            ],
+        )
+    )
 
-    evaluation = EvaluationConfig(**subset(cfg_dict.get("evaluation", {}), [
-        "model_path",
-    ]))
+    evaluation = EvaluationConfig(
+        **subset(
+            cfg_dict.get("evaluation", {}),
+            [
+                "model_path",
+            ],
+        )
+    )
 
     return ExperimentConfig(
         mode=cfg_dict.get("mode", "train"),
@@ -186,6 +206,7 @@ def decode_frames_b64(frames_b64: List[str]) -> List[Image.Image]:
             continue
     return images
 
+
 def frames_to_base64_images(frames: Any, frames_shape: Optional[Tuple[int, int, int, int]] = None) -> List[str]:
     """Convert frames to a list of base64-encoded JPEG strings.
 
@@ -215,13 +236,16 @@ def frames_to_base64_images(frames: Any, frames_shape: Optional[Tuple[int, int, 
 
 
 def similarity_to_preference_payload(sim_sample: Any) -> Dict[str, Any]:
-    """Convert a SimilaritySample to a preference-style payload using traj_sim as chosen.
-    """
+    """Convert a SimilaritySample to a preference-style payload using traj_sim as chosen."""
     return {
         "task": sim_sample.task if hasattr(sim_sample, "task") else getattr(sim_sample, "task_ref", ""),
         "sample_type": "preference",
-        "chosen_frames_b64": frames_to_base64_images(sim_sample.traj_sim_frames, getattr(sim_sample, "traj_sim_frames_shape", None)),
-        "rejected_frames_b64": frames_to_base64_images(sim_sample.traj_diff_frames, getattr(sim_sample, "traj_diff_frames_shape", None)),
+        "chosen_frames_b64": frames_to_base64_images(
+            sim_sample.traj_sim_frames, getattr(sim_sample, "traj_sim_frames_shape", None)
+        ),
+        "rejected_frames_b64": frames_to_base64_images(
+            sim_sample.traj_diff_frames, getattr(sim_sample, "traj_diff_frames_shape", None)
+        ),
         "target_progress_A": getattr(sim_sample, "target_progress_A", None),
         "target_progress_B": getattr(sim_sample, "target_progress_B", None),
     }
@@ -232,11 +256,16 @@ def preference_to_payload(pref_sample: Any) -> Dict[str, Any]:
     return {
         "task": getattr(pref_sample, "task", ""),
         "sample_type": "preference",
-        "chosen_frames_b64": frames_to_base64_images(pref_sample.chosen_frames, getattr(pref_sample, "chosen_frames_shape", None)),
-        "rejected_frames_b64": frames_to_base64_images(pref_sample.rejected_frames, getattr(pref_sample, "rejected_frames_shape", None)),
+        "chosen_frames_b64": frames_to_base64_images(
+            pref_sample.chosen_frames, getattr(pref_sample, "chosen_frames_shape", None)
+        ),
+        "rejected_frames_b64": frames_to_base64_images(
+            pref_sample.rejected_frames, getattr(pref_sample, "rejected_frames_shape", None)
+        ),
         "target_progress_A": getattr(pref_sample, "target_progress_A", None),
         "target_progress_B": getattr(pref_sample, "target_progress_B", None),
     }
+
 
 def build_batch_payload(samples: List[Any]) -> Dict[str, Any]:
     """Build a batch payload from samples of either PreferenceSample or SimilaritySample."""
@@ -258,5 +287,3 @@ def post_batch(url: str, payload: Dict[str, Any], timeout_s: float = 120.0) -> D
     resp = requests.post(url.rstrip("/") + "/evaluate_batch", json=payload, timeout=timeout_s)
     resp.raise_for_status()
     return resp.json()
-
-

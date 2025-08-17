@@ -12,6 +12,7 @@ from tqdm import tqdm
 from rfm.utils.logging import is_rank_0, rank_0_print
 from rfm.utils.metrics import compute_auc, compute_spearman_correlation
 
+
 class RFMTrainer(Trainer):
     def __init__(self, config, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -60,12 +61,16 @@ class RFMTrainer(Trainer):
         # Log to console on rank 0
         if is_rank_0():
             rank_0_print(f"Step {self.state.global_step} Custom Losses (Aggregated):")
-            log_keys = ["preference_loss", "preference_accuracy", "similarity_loss", "progress_loss", "spearman_corr_avg"]
+            log_keys = [
+                "preference_loss",
+                "preference_accuracy",
+                "similarity_loss",
+                "progress_loss",
+                "spearman_corr_avg",
+            ]
             for key in log_keys:
                 if f"train/{key}" in aggregated_losses:
-                    rank_0_print(
-                        f"  {key}: {aggregated_losses[f'train/{key}']:.6f}"
-                )
+                    rank_0_print(f"  {key}: {aggregated_losses[f'train/{key}']:.6f}")
 
     def _aggregate_custom_losses(self):
         """Aggregate custom losses across all processes using all_reduce."""
@@ -81,16 +86,11 @@ class RFMTrainer(Trainer):
         aggregated = {}
 
         # Aggregate loss values (averages)
-        loss_keys = [
-            "preference_loss", "similarity_loss", "progress_loss", "preference_accuracy",
-            "spearman_corr_avg"
-        ]
+        loss_keys = ["preference_loss", "similarity_loss", "progress_loss", "preference_accuracy", "spearman_corr_avg"]
         for key in loss_keys:
             if key in self.custom_losses:
                 # Convert to tensor for all_reduce
-                loss_tensor = torch.tensor(
-                    self.custom_losses[key], device=self.accelerator.device
-                )
+                loss_tensor = torch.tensor(self.custom_losses[key], device=self.accelerator.device)
 
                 # Sum across all processes
                 dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
@@ -103,9 +103,7 @@ class RFMTrainer(Trainer):
         for key in count_keys:
             if key in self.custom_losses:
                 # Convert to tensor for all_reduce
-                count_tensor = torch.tensor(
-                    self.custom_losses[key], device=self.accelerator.device
-                )
+                count_tensor = torch.tensor(self.custom_losses[key], device=self.accelerator.device)
 
                 # Sum across all processes
                 dist.all_reduce(count_tensor, op=dist.ReduceOp.SUM)
@@ -115,9 +113,7 @@ class RFMTrainer(Trainer):
 
         return aggregated
 
-    def evaluate(
-        self, eval_dataset=None, ignore_keys=None, metric_key_prefix="eval"
-    ) -> Dict[str, float]:
+    def evaluate(self, eval_dataset=None, ignore_keys=None, metric_key_prefix="eval") -> Dict[str, float]:
         """
         Override evaluate method to implement custom RFM evaluation metrics.
         """
@@ -140,9 +136,15 @@ class RFMTrainer(Trainer):
 
                 _, loss_dicts = self.compute_loss(self.model, inputs, return_outputs=True)
                 outputs.append(loss_dicts)
-    
+
         # Aggregate outputs
-        log_keys = ["preference_loss", "similarity_loss", "progress_loss", "preference_accuracy", "spearman_corr_avg"]  # TODO: add progress_loss_A, progress_loss_B, progress_loss_ref, progress_loss_sim, progress_loss_diff
+        log_keys = [
+            "preference_loss",
+            "similarity_loss",
+            "progress_loss",
+            "preference_accuracy",
+            "spearman_corr_avg",
+        ]  # TODO: add progress_loss_A, progress_loss_B, progress_loss_ref, progress_loss_sim, progress_loss_diff
         aggregated_outputs = {}
 
         # assume that we already called .item() on the outputs
@@ -151,7 +153,7 @@ class RFMTrainer(Trainer):
                 aggregated_outputs[key] = [output[key] for output in outputs if key in output]
                 aggregated_outputs[key] = np.array(aggregated_outputs[key]).mean()
 
-        # Compute metrics   
+        # Compute metrics
         metrics = {f"eval/{key}": aggregated_outputs[key] for key in aggregated_outputs}
 
         # Log metrics
@@ -187,10 +189,10 @@ class RFMTrainer(Trainer):
                 model, preference_inputs, return_outputs=True
             )
             if self.config.model.train_preference_head:
-                total_loss += preference_loss 
+                total_loss += preference_loss
             if self.config.model.train_progress_head:
                 total_loss += progress_loss
-            
+
             loss_metadata.update(loss_dict)
 
         # Compute similarity loss if we have similarity samples
@@ -242,17 +244,15 @@ class RFMTrainer(Trainer):
             return 0.0, 0.0
 
         # Ensure we have the same number of samples
-        assert len(progress_logits) == len(
-            target_progress
-        ), f"{trajectory_name}: Progress logits and target progress have different batch sizes"
+        assert len(progress_logits) == len(target_progress), (
+            f"{trajectory_name}: Progress logits and target progress have different batch sizes"
+        )
 
         # Splice both predicted and target logits based on frame shapes
         spliced_progress_logits = []
         spliced_target_progress = []
 
-        for i, (pred, target, shape) in enumerate(
-            zip(progress_logits, target_progress, frame_shape)
-        ):
+        for i, (pred, target, shape) in enumerate(zip(progress_logits, target_progress, frame_shape)):
             # Extract frame count from shape (first dimension)
             num_frames = shape[0] if len(shape) > 0 else 0
             num_frames = num_frames // 2  # add this because of temporal_patch_size
@@ -265,13 +265,11 @@ class RFMTrainer(Trainer):
         # Compute MSE loss per element and then stack into a tensor
         progress_losses = []
         spearman_correlations = []
-        
-        for i, (pred, target) in enumerate(
-            zip(spliced_progress_logits, spliced_target_progress)
-        ):
+
+        for i, (pred, target) in enumerate(zip(spliced_progress_logits, spliced_target_progress)):
             loss = F.mse_loss(pred, target)
             progress_losses.append(loss)
-            
+
             # Compute Spearman correlation for this sample
             spearman_corr = compute_spearman_correlation(pred, target)
             spearman_correlations.append(spearman_corr)
@@ -309,25 +307,23 @@ class RFMTrainer(Trainer):
             preference_scores = model_outputs.logits.squeeze(-1)  # [batch_size]
 
             # Binary cross entropy loss for preference prediction
-            preference_loss = F.binary_cross_entropy_with_logits(
-                preference_scores, preference_labels.float()
-            )
+            preference_loss = F.binary_cross_entropy_with_logits(preference_scores, preference_labels.float())
 
         if self.config.model.train_progress_head:
             # Get frame shapes for splicing target progress to match predicted lengths
             # Since the order is randomized, we need to use preference labels to determine which is which
             chosen_frames_shape = inputs.get("chosen_frames_shape", None)
             rejected_frames_shape = inputs.get("rejected_frames_shape", None)
-            
+
             # Determine which frame shape corresponds to which trajectory based on preference labels
             # preference_labels: 1.0 = first trajectory preferred, 0.0 = second trajectory preferred
             # We need to map this to chosen vs rejected for progress loss calculation
-            
+
             # For each sample, determine which trajectory (first or second) is the chosen one
             batch_size = len(preference_labels)
             first_trajectory_shapes = []
             second_trajectory_shapes = []
-            
+
             for i in range(batch_size):
                 if preference_labels[i] == 1.0:
                     # First trajectory is preferred (chosen)
@@ -337,7 +333,7 @@ class RFMTrainer(Trainer):
                     # Second trajectory is preferred (chosen)
                     first_trajectory_shapes.append(rejected_frames_shape[i])
                     second_trajectory_shapes.append(chosen_frames_shape[i])
-            
+
             # Convert to tensors for the helper function
             first_trajectory_shapes = torch.stack(first_trajectory_shapes)
             second_trajectory_shapes = torch.stack(second_trajectory_shapes)
@@ -361,17 +357,18 @@ class RFMTrainer(Trainer):
         if return_outputs:
             outputs_dict = {}
             if self.config.model.train_preference_head and preference_loss is not None:
-
                 # Compute preference accuracy for training monitoring
                 preference_probs = torch.sigmoid(preference_scores)
                 preference_predictions = (preference_probs > 0.5).float()
                 preference_accuracy = (preference_predictions == preference_labels).float().mean().item()
-                outputs_dict.update({
-                    "preference_scores": preference_scores,
-                    "preference_labels": preference_labels,
-                    "preference_loss": preference_loss.item(),
-                    "preference_accuracy": preference_accuracy,
-                })
+                outputs_dict.update(
+                    {
+                        "preference_scores": preference_scores,
+                        "preference_labels": preference_labels,
+                        "preference_loss": preference_loss.item(),
+                        "preference_accuracy": preference_accuracy,
+                    }
+                )
 
             if self.config.model.train_progress_head:
                 # Compute average Spearman correlation across trajectories A and B
@@ -384,9 +381,9 @@ class RFMTrainer(Trainer):
                     spearman_values.append(spearman_corr_B.item())
                 else:
                     spearman_values.append(spearman_corr_B)
-                
+
                 avg_spearman = np.mean(spearman_values) if spearman_values else 0.0
-            
+
                 outputs_dict.update(
                     {
                         "progress_loss_A": progress_loss_A.item(),
@@ -432,9 +429,7 @@ class RFMTrainer(Trainer):
 
         # Compute DPO-style loss: encourage trajectory A to be more similar to reference than trajectory B
         # This assumes trajectory A is the "better" trajectory (more similar to reference)
-        similarity_loss = -F.logsigmoid(
-            self.config.training.beta * (score_ref_sim - score_ref_diff)
-        ).mean()
+        similarity_loss = -F.logsigmoid(self.config.training.beta * (score_ref_sim - score_ref_diff)).mean()
 
         # Get frame shapes for splicing target progress to match predicted lengths
         # For similarity samples, we use traj_sim_frames_shape and traj_diff_frames_shape
@@ -468,9 +463,7 @@ class RFMTrainer(Trainer):
         progress_loss = progress_loss_ref + progress_loss_sim + progress_loss_diff
 
         # Combine losses
-        total_loss = (
-            similarity_loss + progress_loss_ref + progress_loss_sim + progress_loss_diff
-        )
+        total_loss = similarity_loss + progress_loss_ref + progress_loss_sim + progress_loss_diff
 
         if return_outputs:
             # Compute average Spearman correlation across all trajectories (ref, sim, diff)
@@ -480,9 +473,9 @@ class RFMTrainer(Trainer):
                     spearman_values.append(corr.item())
                 else:
                     spearman_values.append(corr)
-            
+
             avg_spearman = np.mean(spearman_values) if spearman_values else 0.0
-            
+
             outputs_dict = {
                 "score_ref_sim": score_ref_sim,
                 "score_ref_diff": score_ref_diff,

@@ -53,83 +53,96 @@ KEY_TO_MEANING = {
 
 
 def _compute_metrics_from_response(
-    response: Dict[str, Any], 
-    samples: List[Union[PreferenceSample, SimilaritySample]]
+    response: Dict[str, Any], samples: List[Union[PreferenceSample, SimilaritySample]]
 ) -> Dict[str, Any]:
-    """Compute metrics from model response and samples."""
-    
+    """Compute metrics from model response and samples.
+
+    This function efficiently computes metrics by:
+    1. Computing all base metrics once for the entire batch
+    2. Creating granular metrics by subsetting the base metrics for each category
+    3. Avoiding redundant calculations for different granular breakdowns
+    """
+
     # Extract predictions and rewards
     preds = response.get("predictions", [])
     rewards_chosen = response.get("rewards_chosen", [])
     rewards_rejected = response.get("rewards_rejected", [])
     progress_predictions = response.get("progress_predictions", [])
-    
-    if not preds or not rewards_chosen or not rewards_rejected:
-        return {}
-    
-    # Base metrics computation (compute once for efficiency)
-    metrics = {}
-    
+
+    # Compute ALL base metrics once for efficiency
+    base_metrics = {}
+
     # Preference accuracy
     if any(s.sample_type == "preference" for s in samples):
-        correct_preds = sum(1 for p in preds if p == 1) # this is because the first trajectory is the chosen trajectory
-        metrics["eval_accuracy"] = correct_preds / len(preds)
-    
+        correct_preds = sum(1 for p in preds if p == 1)  # 1 means chosen trajectory is preferred
+        base_metrics["eval_accuracy"] = correct_preds / len(preds)
+
     # Reward metrics
     if rewards_chosen and rewards_rejected:
-        metrics["eval_reward_diff"] = np.mean(rewards_chosen) - np.mean(rewards_rejected)
-        metrics["eval_avg_reward_chosen"] = np.mean(rewards_chosen)
-        metrics["eval_avg_reward_rejected"] = np.mean(rewards_rejected)
-    
+        base_metrics["eval_reward_diff"] = np.mean(rewards_chosen) - np.mean(rewards_rejected)
+        base_metrics["eval_avg_reward_chosen"] = np.mean(rewards_chosen)
+        base_metrics["eval_avg_reward_rejected"] = np.mean(rewards_rejected)
+
     # Progress alignment (for similarity samples)
     if progress_predictions and any(s.sample_type == "similarity" for s in samples):
         progress_targets = [s.target_progress for s in samples if s.sample_type == "similarity"]
         if len(progress_predictions) == len(progress_targets):
             try:
                 correlation, _ = spearmanr(progress_predictions, progress_targets)
-                metrics["demo_reward_alignment"] = correlation if not np.isnan(correlation) else None
+                base_metrics["demo_reward_alignment"] = correlation if not np.isnan(correlation) else None
             except:
-                metrics["demo_reward_alignment"] = None
-    
-    # Granular metrics computation
+                base_metrics["demo_reward_alignment"] = None
+
+    # Now create granular metrics by subsetting the base metrics
     granular_metrics = {}
-    
-    # Helper function to compute metrics for a subset of indices
-    def get_metrics_for_subset(indices: List[int], metric_name: str) -> Optional[float]:
-        """Compute a specific metric for a subset of samples."""
+
+    # Helper function to subset metrics for a specific category
+    def get_subset_metrics(indices: List[int], metric_prefix: str) -> Dict[str, Optional[float]]:
+        """Get subset metrics for a specific category by filtering base metrics."""
         if not indices:
-            return None
-        
+            return {}
+
+        subset_metrics = {}
+
+        # Filter predictions and rewards for this subset
         subset_preds = [preds[i] for i in indices if i < len(preds)]
         subset_rewards_chosen = [rewards_chosen[i] for i in indices if i < len(rewards_chosen)]
         subset_rewards_rejected = [rewards_rejected[i] for i in indices if i < len(rewards_rejected)]
-        
+
         if not subset_preds:
-            return None
-        
-        if metric_name.startswith("accuracy_"):
-            correct = sum(1 for p in subset_preds if p == "chosen")
-            return correct / len(subset_preds)
-        elif metric_name.startswith("avg_reward_chosen_"):
-            return np.mean(subset_rewards_chosen) if subset_rewards_chosen else None
-        elif metric_name.startswith("avg_reward_rejected_"):
-            return np.mean(subset_rewards_rejected) if subset_rewards_rejected else None
-        elif metric_name.startswith("reward_diff_"):
-            if subset_rewards_chosen and subset_rewards_rejected:
-                return np.mean(subset_rewards_chosen) - np.mean(subset_rewards_rejected)
-            return None
-        elif metric_name.startswith("progress_alignment_"):
+            return {}
+
+        # Compute accuracy for this subset
+        correct = sum(1 for p in subset_preds if p == 1)  # 1 means chosen trajectory is preferred
+        subset_metrics[f"accuracy_{metric_prefix}"] = correct / len(subset_preds)
+
+        # Compute reward metrics for this subset
+        if subset_rewards_chosen:
+            subset_metrics[f"avg_reward_chosen_{metric_prefix}"] = np.mean(subset_rewards_chosen)
+        if subset_rewards_rejected:
+            subset_metrics[f"avg_reward_rejected_{metric_prefix}"] = np.mean(subset_rewards_rejected)
+        if subset_rewards_chosen and subset_rewards_rejected:
+            subset_metrics[f"reward_diff_{metric_prefix}"] = np.mean(subset_rewards_chosen) - np.mean(
+                subset_rewards_rejected
+            )
+
+        # Compute progress alignment for this subset (if applicable)
+        if progress_predictions and any(s.sample_type == "similarity" for s in [samples[i] for i in indices]):
             subset_progress_preds = [progress_predictions[i] for i in indices if i < len(progress_predictions)]
-            subset_progress_targets = [s.target_progress for i, s in enumerate(samples) if i in indices and s.sample_type == "similarity"]
+            subset_progress_targets = [
+                s.target_progress for i, s in enumerate(samples) if i in indices and s.sample_type == "similarity"
+            ]
             if len(subset_progress_preds) == len(subset_progress_targets) and subset_progress_preds:
                 try:
                     correlation, _ = spearmanr(subset_progress_preds, subset_progress_targets)
-                    return correlation if not np.isnan(correlation) else None
+                    subset_metrics[f"progress_alignment_{metric_prefix}"] = (
+                        correlation if not np.isnan(correlation) else None
+                    )
                 except:
-                    return None
-            return None
-        return None
-    
+                    subset_metrics[f"progress_alignment_{metric_prefix}"] = None
+
+        return subset_metrics
+
     # Sample type analysis
     sample_type_indices = {}
     for i, sample in enumerate(samples):
@@ -137,22 +150,20 @@ def _compute_metrics_from_response(
         if sample_type not in sample_type_indices:
             sample_type_indices[sample_type] = []
         sample_type_indices[sample_type].append(i)
-    
+
     # Add sample type counts
     for sample_type, indices in sample_type_indices.items():
         granular_metrics[f"count_{sample_type}"] = len(indices)
-    
-    # Sample type metrics
+
+    # Get subset metrics for each sample type
     for sample_type, indices in sample_type_indices.items():
-        granular_metrics[f"accuracy_{sample_type}"] = get_metrics_for_subset(indices, "accuracy_")
-        granular_metrics[f"avg_reward_chosen_{sample_type}"] = get_metrics_for_subset(indices, "avg_reward_chosen_")
-        granular_metrics[f"avg_reward_rejected_{sample_type}"] = get_metrics_for_subset(indices, "avg_reward_rejected_")
-        granular_metrics[f"reward_diff_{sample_type}"] = get_metrics_for_subset(indices, "reward_diff_")
-        if any(s.sample_type == "similarity" for s in [samples[i] for i in indices]):
-            granular_metrics[f"progress_alignment_{sample_type}"] = get_metrics_for_subset(indices, "progress_alignment_")
-    
+        subset_metrics = get_subset_metrics(indices, sample_type)
+        granular_metrics.update(subset_metrics)
+
     # Rewound frame analysis (for paired video samples)
-    rewound_indices = [i for i, s in enumerate(samples) if hasattr(s, 'num_frames_rewound') and s.num_frames_rewound is not None]
+    rewound_indices = [
+        i for i, s in enumerate(samples) if hasattr(s, "num_frames_rewound") and s.num_frames_rewound is not None
+    ]
     if rewound_indices:
         rewound_frame_counts = {}
         for i in rewound_indices:
@@ -160,45 +171,37 @@ def _compute_metrics_from_response(
             if num_frames not in rewound_frame_counts:
                 rewound_frame_counts[num_frames] = []
             rewound_frame_counts[num_frames].append(i)
-        
+
         # Add rewound frame counts
         for num_frames, indices in rewound_frame_counts.items():
             granular_metrics[f"count_rewound_{num_frames}"] = len(indices)
-        
-        # Rewound frame metrics
+
+        # Get subset metrics for each rewound frame category
         for num_frames, indices in rewound_frame_counts.items():
-            granular_metrics[f"accuracy_rewound_{num_frames}"] = get_metrics_for_subset(indices, "accuracy_")
-            granular_metrics[f"avg_reward_chosen_rewound_{num_frames}"] = get_metrics_for_subset(indices, "avg_reward_chosen_")
-            granular_metrics[f"avg_reward_rejected_rewound_{num_frames}"] = get_metrics_for_subset(indices, "avg_reward_rejected_")
-            granular_metrics[f"reward_diff_rewound_{num_frames}"] = get_metrics_for_subset(indices, "reward_diff_")
-            if any(s.sample_type == "similarity" for s in [samples[i] for i in indices]):
-                granular_metrics[f"progress_alignment_rewound_{num_frames}"] = get_metrics_for_subset(indices, "progress_alignment_")
-    
+            subset_metrics = get_subset_metrics(indices, f"rewound_{num_frames}")
+            granular_metrics.update(subset_metrics)
+
     # Rejected quality analysis (for paired video samples)
     rejected_quality_indices = {}
     for i, sample in enumerate(samples):
-        if hasattr(sample, 'rejected_quality_label') and sample.rejected_quality_label:
+        if hasattr(sample, "rejected_quality_label") and sample.rejected_quality_label:
             quality = sample.rejected_quality_label
             if quality not in rejected_quality_indices:
                 rejected_quality_indices[quality] = []
             rejected_quality_indices[quality].append(i)
-    
+
     # Add rejected quality counts
     for quality, indices in rejected_quality_indices.items():
         granular_metrics[f"count_rejected_{quality}"] = len(indices)
-    
-    # Rejected quality metrics
+
+    # Get subset metrics for each rejected quality category
     for quality, indices in rejected_quality_indices.items():
-        granular_metrics[f"accuracy_rejected_{quality}"] = get_metrics_for_subset(indices, "accuracy_")
-        granular_metrics[f"avg_reward_chosen_rejected_{quality}"] = get_metrics_for_subset(indices, "avg_reward_chosen_")
-        granular_metrics[f"avg_reward_rejected_rejected_{quality}"] = get_metrics_for_subset(indices, "avg_reward_rejected_")
-        granular_metrics[f"reward_diff_rejected_{quality}"] = get_metrics_for_subset(indices, "reward_diff_")
-        if any(s.sample_type == "similarity" for s in [samples[i] for i in indices]):
-            granular_metrics[f"progress_alignment_rejected_{quality}"] = get_metrics_for_subset(indices, "progress_alignment_")
-    
+        subset_metrics = get_subset_metrics(indices, f"rejected_{quality}")
+        granular_metrics.update(subset_metrics)
+
     return {
-        **metrics,  # Include base metrics
-        **granular_metrics  # Include all granular metrics
+        **base_metrics,  # Include base metrics
+        **granular_metrics,  # Include all granular metrics
     }
 
 
@@ -222,19 +225,25 @@ def iter_eval_batches(
     if num_batches == -1:
         # Go through the full dataset
         actual_num_batches = (dataset_size + batch_size - 1) // batch_size  # Ceiling division
-        print(f"\n🔄 Processing FULL DATASET: {dataset_size} samples in {actual_num_batches} batches of size {batch_size}")
+        print(
+            f"\n🔄 Processing FULL DATASET: {dataset_size} samples in {actual_num_batches} batches of size {batch_size}"
+        )
     else:
         actual_num_batches = num_batches
         print(f"\n🔄 Processing {actual_num_batches} batches of size {batch_size} (dataset size: {dataset_size})")
 
     results: List[Dict[str, Any]] = []
     idx = 0
-    for batch_idx in tqdm(range(actual_num_batches), desc="Evaluating batches"):
+    batch_idx = 0
+
+    # for batch_idx in tqdm(range(actual_num_batches), desc=f"Evaluating batch [{batch_idx+1}/{actual_num_batches}]"):
+
+    for batch_idx in range(actual_num_batches):
         # Check if we've reached the end of the dataset
         if idx >= dataset_size:
             print(f"\n⚠️  Reached end of dataset after {batch_idx} batches")
             break
-            
+
         # Assemble a batch of Sample objects (Preference or Similarity)
         batch_samples = []
         for j in range(batch_size):
@@ -242,49 +251,66 @@ def iter_eval_batches(
                 batch_samples.append(dataset[idx + j])
             else:
                 break  # Don't go beyond dataset size
-        
+
         if not batch_samples:
             break  # No more samples
-            
+
         # Evaluate this batch
         batch_result = _evaluate_samples(server_url, batch_samples)
         results.append(batch_result)
-        
+
         # Print batch results immediately
-        print(f"\n" + "="*80)
+        print(
+            f"\n" + "=" * 80,
+        )
         print(f"📦 BATCH {batch_idx + 1}/{actual_num_batches} RESULTS (Processed)")
-        print(f"   📊 Progress: {idx}/{dataset_size} samples ({idx/dataset_size*100:.1f}%)")
-        print("="*80)
-        
+        print(f"   📊 Progress: {idx}/{dataset_size} samples ({idx / dataset_size * 100:.1f}%)")
+        print("=" * 80)
+
         # Extract main metrics for this batch
         keys = [
             "eval_accuracy",
-            "eval_reward_diff", 
+            "eval_reward_diff",
             "eval_avg_reward_chosen",
             "eval_avg_reward_rejected",
             "demo_reward_alignment",
         ]
         batch_main_metrics = {k: batch_result.get(k) for k in keys if k in batch_result}
-        
+
         # Extract granular metrics for this batch
-        granular_keys = [k for k in batch_result.keys() 
-                        if k.startswith(("accuracy_", "avg_reward_chosen_", "avg_reward_rejected_", "reward_diff_", "progress_alignment_", "count_"))]
+        granular_keys = [
+            k
+            for k in batch_result.keys()
+            if k.startswith(
+                (
+                    "accuracy_",
+                    "avg_reward_chosen_",
+                    "avg_reward_rejected_",
+                    "reward_diff_",
+                    "progress_alignment_",
+                    "count_",
+                )
+            )
+        ]
         batch_granular = {k: batch_result.get(k) for k in granular_keys if k in batch_result}
-        
+
         # Print batch summary
         generate_metrics_summary(
             metrics=batch_main_metrics,
             granular_metrics=batch_granular,
             title=f"BATCH {batch_idx + 1}/{actual_num_batches} RESULTS",
-            level="batch"
+            level="batch",
         )
-        
+
         # Add separator between batches (except for the last one)
         if batch_idx < actual_num_batches - 1:
             print("\n" + "─" * 80)
             print("🔄 NEXT BATCH")
             print("─" * 80)
-    
+
+        import sys
+
+        sys.stdout.flush()
     return results
 
 
@@ -292,8 +318,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config_path", type=str, default="rfm/configs/config.yaml")
     parser.add_argument("--server_url", type=str, default="http://localhost:8000")
-    parser.add_argument("--num_batches", type=int, default=10, 
-                       help="Number of batches to evaluate. Use -1 to process the entire dataset.")
+    parser.add_argument(
+        "--num_batches",
+        type=int,
+        default=10,
+        help="Number of batches to evaluate. Use -1 to process the entire dataset.",
+    )
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument(
         "--set",
@@ -341,18 +371,27 @@ def main():
         "eval_avg_reward_rejected",
         "demo_reward_alignment",
     ]
-    
+
     # Add granular metrics keys
     granular_keys = []
     for r in results:
         for k in r.keys():
-            if k.startswith(("accuracy_", "avg_reward_chosen_", "avg_reward_rejected_", "reward_diff_", "progress_alignment_", "count_")):
+            if k.startswith(
+                (
+                    "accuracy_",
+                    "avg_reward_chosen_",
+                    "avg_reward_rejected_",
+                    "reward_diff_",
+                    "progress_alignment_",
+                    "count_",
+                )
+            ):
                 if k not in granular_keys:
                     granular_keys.append(k)
-    
+
     # Sort granular keys for consistent display
     granular_keys.sort()
-    
+
     agg = {k: 0.0 for k in keys + granular_keys}
     # keeps track of which keys are always None
     none_keys = {k: [] for k in keys + granular_keys}
@@ -367,14 +406,14 @@ def main():
                 none_keys[k].append(0)
                 agg[k] += float(r[k])
                 metric_counts[k] += 1
-    
+
     # Only average metrics that actually appeared in some batches
     for k in keys + granular_keys:
         if metric_counts[k] > 0:
             agg[k] /= metric_counts[k]
         else:
             agg[k] = None  # Set to None if metric never appeared
-    
+
     for k in none_keys:
         if all(none_keys[k]):
             print(f"WARNING: {k} is always None, removing")
@@ -384,28 +423,28 @@ def main():
     # Print evaluation summary (averaged across batches)
     # Create granular metrics dictionary from aggregated results
     granular_metrics = {k: agg[k] for k in granular_keys if k in agg}
-    
+
     generate_metrics_summary(
         metrics=agg,
         granular_metrics=granular_metrics,
         title="EVALUATION SUMMARY (Averaged Across Batches)",
-        level="final"
+        level="final",
     )
 
 
 def generate_metrics_summary(metrics: dict, granular_metrics: dict, title: str, level: str = "batch"):
     """Generate a nicely formatted metrics summary print.
-    
+
     Args:
         metrics: Dictionary of main metrics
         granular_metrics: Dictionary of granular metrics
         title: Title for the summary section
         level: Either "batch" or "final" to indicate the level of detail
     """
-    print(f"\n" + "="*80)
+    print(f"\n" + "=" * 80)
     print(f"📊 {title}")
-    print("="*80)
-    
+    print("=" * 80)
+
     # Print main metrics
     if metrics:
         print(f"\n📈 Main Metrics")
@@ -415,7 +454,7 @@ def generate_metrics_summary(metrics: dict, granular_metrics: dict, title: str, 
                 value = metrics[k]
                 # Format the metric name for better readability
                 display_name = k.replace("_", " ").title()
-                
+
                 # Add emojis for different metric types
                 if k.startswith("accuracy"):
                     metric_icon = "🎯"
@@ -429,9 +468,9 @@ def generate_metrics_summary(metrics: dict, granular_metrics: dict, title: str, 
                     metric_icon = "📈"
                 else:
                     metric_icon = "📋"
-                
+
                 print(f"  {metric_icon} {display_name}: {value:.6f}")
-                
+
                 # Add explanation based on metric type
                 if k.startswith("accuracy"):
                     print(f"     💡 Accuracy of Predicting the Correct Preference ({level} level)")
@@ -442,7 +481,9 @@ def generate_metrics_summary(metrics: dict, granular_metrics: dict, title: str, 
                 elif k.startswith("reward_diff"):
                     print(f"     💡 Reward Difference between Chosen and Rejected ({level} level)")
                 elif k.startswith("progress_alignment"):
-                    print(f"     💡 Spearman Correlation between Predicted Progress and Ground Truth Progress ({level} level)")
+                    print(
+                        f"     💡 Spearman Correlation between Predicted Progress and Ground Truth Progress ({level} level)"
+                    )
                 else:
                     print(f"     💡 {k}")
             else:
@@ -450,17 +491,17 @@ def generate_metrics_summary(metrics: dict, granular_metrics: dict, title: str, 
                 display_name = k.replace("_", " ").title()
                 print(f"  ❌ {display_name}: Not Available")
                 print(f"     💡 This metric was not computed for any samples in this {level}")
-    
+
     # Print granular metrics if available
     if granular_metrics:
-        print(f"\n" + "="*80)
+        print(f"\n" + "=" * 80)
         print(f"🔍 GRANULAR METRICS ANALYSIS ({level.upper()} LEVEL)")
-        print("="*80)
-        
+        print("=" * 80)
+
         # Separate count metrics from performance metrics
         count_metrics = {k: v for k, v in granular_metrics.items() if k.startswith("count_")}
         performance_metrics = {k: v for k, v in granular_metrics.items() if not k.startswith("count_")}
-        
+
         # Print count metrics first
         if count_metrics:
             total_samples = sum(count_metrics.values())
@@ -471,7 +512,7 @@ def generate_metrics_summary(metrics: dict, granular_metrics: dict, title: str, 
                     value = count_metrics[k]
                     # Format the metric name for better readability
                     display_name = k.replace("count_", "").replace("_", " ").title()
-                    
+
                     # Add emojis for different count types
                     if "rewound" in k:
                         metric_icon = "⏪"
@@ -479,17 +520,17 @@ def generate_metrics_summary(metrics: dict, granular_metrics: dict, title: str, 
                         metric_icon = "❌"
                     else:
                         metric_icon = "📊"
-                    
+
                     print(f"  {metric_icon} {display_name}: {value}")
                     print(f"     💡 Number of samples in this category")
-        
+
         # Group performance metrics by type for better organization
         metric_groups = {
             "🎯 Sample Type Analysis": [],
             "⏪ Rewound Frame Analysis": [],
-            "❌ Rejected Quality Analysis": []
+            "❌ Rejected Quality Analysis": [],
         }
-        
+
         for k in performance_metrics.keys():
             if k.startswith("accuracy_") and not k.startswith(("accuracy_rewound_", "accuracy_rejected_")):
                 metric_groups["🎯 Sample Type Analysis"].append(k)
@@ -499,29 +540,32 @@ def generate_metrics_summary(metrics: dict, granular_metrics: dict, title: str, 
                 metric_groups["❌ Rejected Quality Analysis"].append(k)
             elif k.startswith(("avg_reward_chosen_", "avg_reward_rejected_", "reward_diff_", "progress_alignment_")):
                 # Add to appropriate group based on the metric type
-                if any(k.startswith(prefix) for prefix in ["avg_reward_chosen_", "avg_reward_rejected_", "reward_diff_", "progress_alignment_"]):
+                if any(
+                    k.startswith(prefix)
+                    for prefix in ["avg_reward_chosen_", "avg_reward_rejected_", "reward_diff_", "progress_alignment_"]
+                ):
                     if "rewound_" in k:
                         metric_groups["⏪ Rewound Frame Analysis"].append(k)
                     elif "rejected_" in k:
                         metric_groups["❌ Rejected Quality Analysis"].append(k)
                     else:
                         metric_groups["🎯 Sample Type Analysis"].append(k)
-        
+
         # Print each group with nice formatting
         for group_name, group_metrics in metric_groups.items():
             if group_metrics:
                 print(f"\n{group_name}")
                 print("-" * len(group_name))
-                
+
                 # Sort metrics within each group for consistent display
                 sorted_metrics = sorted(group_metrics)
-                
+
                 for k in sorted_metrics:
                     if k in performance_metrics and performance_metrics[k] is not None:
                         value = performance_metrics[k]
                         # Format the metric name for better readability
                         display_name = k.replace("_", " ").title()
-                        
+
                         # Add emojis for different metric types
                         if k.startswith("accuracy_"):
                             metric_icon = "🎯"
@@ -535,9 +579,9 @@ def generate_metrics_summary(metrics: dict, granular_metrics: dict, title: str, 
                             metric_icon = "📈"
                         else:
                             metric_icon = "📋"
-                        
+
                         print(f"  {metric_icon} {display_name}: {value:.6f}")
-                        
+
                         # Add explanation for granular metrics
                         if k.startswith("accuracy_"):
                             print(f"     💡 Accuracy of Predicting the Correct Preference (granular breakdown)")
@@ -548,7 +592,9 @@ def generate_metrics_summary(metrics: dict, granular_metrics: dict, title: str, 
                         elif k.startswith("reward_diff_"):
                             print(f"     💡 Reward Difference between Chosen and Rejected (granular breakdown)")
                         elif k.startswith("progress_alignment_"):
-                            print(f"     💡 Spearman Correlation between Predicted Progress and Ground Truth Progress (granular breakdown)")
+                            print(
+                                f"     💡 Spearman Correlation between Predicted Progress and Ground Truth Progress (granular breakdown)"
+                            )
                         else:
                             print(f"     💡 {k}")
                     elif k in performance_metrics and performance_metrics[k] is None:
@@ -556,11 +602,9 @@ def generate_metrics_summary(metrics: dict, granular_metrics: dict, title: str, 
                         display_name = k.replace("_", " ").title()
                         print(f"  ❌ {display_name}: Not Available")
                         print(f"     💡 This metric was not computed for any samples in this category")
-    
-    print("\n" + "="*80)
+
+    print("\n" + "=" * 80)
 
 
 if __name__ == "__main__":
     main()
-
-

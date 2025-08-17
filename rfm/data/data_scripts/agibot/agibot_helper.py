@@ -46,9 +46,7 @@ def build_episode_to_task_index(
     """
 
     if not os.path.isdir(task_info_dir):
-        raise FileNotFoundError(
-            f"Task info directory not found: {os.path.abspath(task_info_dir)}"
-        )
+        raise FileNotFoundError(f"Task info directory not found: {os.path.abspath(task_info_dir)}")
 
     episode_to_task: Dict[str, str] = {}
     duplicate_episode_ids: List[str] = []
@@ -64,9 +62,7 @@ def build_episode_to_task_index(
 
         if not isinstance(entries, list):
             if verbose:
-                print(
-                    f"[agibot_helper] Unexpected JSON structure in {json_path}; expected a list."
-                )
+                print(f"[agibot_helper] Unexpected JSON structure in {json_path}; expected a list.")
             continue
 
         for item in entries:
@@ -104,8 +100,7 @@ def load_episode_to_task_index(index_path: str = DEFAULT_INDEX_PATH) -> Dict[str
 
     if not os.path.isfile(index_path):
         raise FileNotFoundError(
-            f"Episode index not found: {os.path.abspath(index_path)}. "
-            f"Build it with build_episode_to_task_index()."
+            f"Episode index not found: {os.path.abspath(index_path)}. Build it with build_episode_to_task_index()."
         )
     with open(index_path, "r", encoding="utf-8") as f:
         return json.load(f)
@@ -137,9 +132,7 @@ def find_task_json_for_episode(
     index = ensure_episode_index(task_info_dir=task_info_dir, index_path=index_path)
     key = str(episode_id)
     if key not in index:
-        raise KeyError(
-            f"Episode id {episode_id} not found in index at {os.path.abspath(index_path)}"
-        )
+        raise KeyError(f"Episode id {episode_id} not found in index at {os.path.abspath(index_path)}")
     return index[key]
 
 
@@ -155,18 +148,14 @@ def get_episode_record(
     present.
     """
 
-    json_path = find_task_json_for_episode(
-        episode_id=episode_id, task_info_dir=task_info_dir, index_path=index_path
-    )
+    json_path = find_task_json_for_episode(episode_id=episode_id, task_info_dir=task_info_dir, index_path=index_path)
     with open(json_path, "r", encoding="utf-8") as f:
         entries = json.load(f)
     key = int(episode_id)
     for item in entries:
         if isinstance(item, dict) and int(item.get("episode_id", -1)) == key:
             return json_path, item
-    raise KeyError(
-        f"Episode id {episode_id} not found inside file {os.path.abspath(json_path)}"
-    )
+    raise KeyError(f"Episode id {episode_id} not found inside file {os.path.abspath(json_path)}")
 
 
 __all__ = [
@@ -179,4 +168,3 @@ __all__ = [
     "find_task_json_for_episode",
     "get_episode_record",
 ]
-

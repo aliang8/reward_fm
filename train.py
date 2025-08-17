@@ -14,7 +14,7 @@ import yaml
 from typing import List, Dict, Optional, Union, Any
 from peft import get_peft_model, LoraConfig, PeftModel
 from rfm.data.data_generator import BatchCollator, DataGenerator
-from rfm.data.datasets import InfiniteDataGeneratorDataset, RewoundDataset, PairedSuccessFailureDataset
+from rfm.data.dataset import InfiniteDataGeneratorDataset, RewoundDataset, PairedSuccessFailureDataset
 from rfm.models.rfm import RFMModel
 from rfm.trainers.trainer import RFMTrainer
 from rfm.utils.logging import is_rank_0, rank_0_print
@@ -42,6 +42,8 @@ from rfm.utils.setup_utils import (
     setup_eval_dataset,
 )
 
+from rfm.utils.logging import _timer
+
 # Suppress FSDP ShardedTensor deprecation warning
 warnings.filterwarnings("ignore", message="Please use DTensor instead and we are deprecating ShardedTensor")
 
@@ -53,8 +55,10 @@ def train(cfg: ExperimentConfig):
     if isinstance(cfg, str):
         cfg = ExperimentConfig.from_yaml(cfg)
 
+    timing_raw = {}
     # Create DataGenerator for training using shared utility
-    data_generator = setup_data_generator(cfg)
+    with _timer("time/setup_data_generator", timing_raw=timing_raw):
+        data_generator = setup_data_generator(cfg)
 
     run_name = f"{cfg.logging.wandb_run_name}"
     if cfg.debug:
@@ -80,7 +84,8 @@ def train(cfg: ExperimentConfig):
         torch.cuda.empty_cache()
 
     # Use the shared function to set up model and processor
-    processor, rfm_model = setup_model_and_processor(cfg)
+    with _timer("time/setup_model_and_processor", timing_raw=timing_raw):
+        processor, rfm_model = setup_model_and_processor(cfg)
 
     # Apply PEFT if enabled
     peft_rfm_model = setup_peft_model(rfm_model, cfg)
@@ -90,13 +95,14 @@ def train(cfg: ExperimentConfig):
         cfg.training.save_steps = 2
         cfg.training.logging_steps = 2
         cfg.training.eval_steps = 2
-        cfg.data.eval_subset_size = 10
+    cfg.data.eval_subset_size = 10
 
     training_args = create_training_arguments(cfg, cfg.training.output_dir)
 
     # Use the shared utilities for batch collator and dataset
-    batch_collator = setup_batch_collator(processor, cfg)
-    train_dataset = setup_dataset(data_generator)
+    with _timer("time/setup_data", timing_raw=timing_raw):
+        batch_collator = setup_batch_collator(processor, cfg)
+        train_dataset = setup_dataset(data_generator)
 
     # Set up evaluation dataset if evaluation is enabled
     eval_dataset = None
@@ -130,6 +136,11 @@ def train(cfg: ExperimentConfig):
             print("ERROR: Trainer has no 'accelerator' attribute yet. This check needs to be later.")
         print("=" * 80 + "\n")
 
+    # log timing_raw to wandb
+    if cfg.logging.use_wandb and is_rank_0():
+        wandb.log(timing_raw)
+
+    rank_0_print(f"Timing raw: {timing_raw}")
     rank_0_print(f"Training from checkpoint: {cfg.training.resume_from_checkpoint}")
     trainer.train(resume_from_checkpoint=cfg.training.resume_from_checkpoint)
     trainer.save_model(cfg.training.output_dir)

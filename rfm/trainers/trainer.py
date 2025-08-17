@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 from rfm.utils.logging import is_rank_0, rank_0_print
 from rfm.utils.metrics import compute_auc, compute_spearman_correlation
-
+from rfm.utils.logging import _timer
 
 class RFMTrainer(Trainer):
     def __init__(self, config, *args, **kwargs):
@@ -19,13 +19,15 @@ class RFMTrainer(Trainer):
         self.config = config
         # Initialize custom loss tracking
         self.custom_losses = {}
+        self.timing_raw = {}
 
     def training_step(self, model, inputs, num_items_in_batch=None):
         """
         Perform a training step and log custom losses.
         """
-        # Call the parent training_step to handle all the standard training logic
-        loss = super().training_step(model, inputs, num_items_in_batch)
+        with _timer("time/training_step", timing_raw=self.timing_raw):
+            # Call the parent training_step to handle all the standard training logic
+            loss = super().training_step(model, inputs, num_items_in_batch)
 
         # Log custom losses at specified intervals
         if self.state.global_step % self.args.logging_steps == 0:
@@ -45,6 +47,7 @@ class RFMTrainer(Trainer):
         # Prepare logging data using aggregated losses
         log_data = {
             "step": self.state.global_step,
+            **self.timing_raw,
         }
         log_data.update(aggregated_losses)
 
@@ -71,6 +74,9 @@ class RFMTrainer(Trainer):
             for key in log_keys:
                 if f"train/{key}" in aggregated_losses:
                     rank_0_print(f"  {key}: {aggregated_losses[f'train/{key}']:.6f}")
+            
+            rounded_times = {k: round(v, 2) for k, v in self.timing_raw.items()}
+            rank_0_print(f"Timing raw: {rounded_times}")
 
     def _aggregate_custom_losses(self):
         """Aggregate custom losses across all processes using all_reduce."""
@@ -125,17 +131,18 @@ class RFMTrainer(Trainer):
 
         # Run evaluation
         outputs = []
-        with torch.no_grad():
-            for step, inputs in tqdm(
-                enumerate(eval_dataloader),
-                total=len(eval_dataloader),
-                desc="Evaluating",
-            ):
-                # Move inputs to device
-                inputs = self._prepare_inputs(inputs)
+        with _timer("time/evaluate", timing_raw=self.timing_raw):
+            with torch.no_grad():
+                for step, inputs in tqdm(
+                    enumerate(eval_dataloader),
+                    total=len(eval_dataloader),
+                    desc="Evaluating",
+                ):
+                    # Move inputs to device
+                    inputs = self._prepare_inputs(inputs)
 
-                _, loss_dicts = self.compute_loss(self.model, inputs, return_outputs=True)
-                outputs.append(loss_dicts)
+                    _, loss_dicts = self.compute_loss(self.model, inputs, return_outputs=True)
+                    outputs.append(loss_dicts)
 
         # Aggregate outputs
         log_keys = [
@@ -184,10 +191,12 @@ class RFMTrainer(Trainer):
         loss_metadata = {}
 
         # Compute preference loss if we have preference samples
+
         if num_preferences > 0 and preference_inputs:
-            preference_loss, progress_loss, loss_dict = self._compute_preference_loss(
-                model, preference_inputs, return_outputs=True
-            )
+            with _timer("time/compute_preference_loss", timing_raw=self.timing_raw):
+                preference_loss, progress_loss, loss_dict = self._compute_preference_loss(
+                    model, preference_inputs, return_outputs=True
+                )
             if self.config.model.train_preference_head:
                 total_loss += preference_loss
             if self.config.model.train_progress_head:
@@ -197,9 +206,10 @@ class RFMTrainer(Trainer):
 
         # Compute similarity loss if we have similarity samples
         if num_similarities > 0 and similarity_inputs:
-            similarity_loss, progress_loss, loss_dict = self._compute_similarity_loss(
-                model, similarity_inputs, return_outputs=True
-            )
+            with _timer("time/compute_similarity_loss", timing_raw=self.timing_raw):
+                similarity_loss, progress_loss, loss_dict = self._compute_similarity_loss(
+                    model, similarity_inputs, return_outputs=True
+                )
             if self.config.model.train_similarity_head:
                 total_loss += similarity_loss
             if self.config.model.train_progress_head:
@@ -285,16 +295,18 @@ class RFMTrainer(Trainer):
         """Compute preference prediction loss using Bradley-Terry model."""
         # Single forward pass with both trajectories concatenated
         # The model should handle the preference prediction at the end
-        model_outputs, progress_logits = model(
-            input_ids=inputs["input_ids"],
-            attention_mask=inputs["attention_mask"],
-            pixel_values=inputs.get("pixel_values"),
-            pixel_values_videos=inputs.get("pixel_values_videos"),
-            image_grid_thw=inputs.get("image_grid_thw"),
-            video_grid_thw=inputs.get("video_grid_thw"),
-            second_per_grid_ts=inputs.get("second_per_grid_ts"),
-            sample_type="preference",
-        )
+        with _timer("time/pref_forward", timing_raw=self.timing_raw):
+            model_outputs, progress_logits = model(
+                input_ids=inputs["input_ids"],
+                attention_mask=inputs["attention_mask"],
+                pixel_values=inputs.get("pixel_values"),
+                pixel_values_videos=inputs.get("pixel_values_videos"),
+                image_grid_thw=inputs.get("image_grid_thw"),
+                video_grid_thw=inputs.get("video_grid_thw"),
+                second_per_grid_ts=inputs.get("second_per_grid_ts"),
+                sample_type="preference",
+                timing_raw=self.timing_raw,
+            )
 
         preference_loss = 0.0
         progress_loss = 0.0

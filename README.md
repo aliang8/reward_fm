@@ -124,6 +124,12 @@ For space reasons, you should symlink `~/.cache/huggingface/datasets` to some ot
 ./setup.sh
 ```
 
+If you're running into issues with HuggingFace's API while downloading the dataset, you can use 
+```bash
+RFM_DOWNLOAD_METHOD=git ./setup.sh
+```
+to download via git-lfs instead. Make sure `git-lfs` is first installed.
+
 Add to your `.bashrc` the following export:
 
 ```bash
@@ -197,7 +203,8 @@ uv run python evals/run_model_eval.py \
   --config_path=rfm/configs/config.yaml \
   --server_url=http://localhost:8000 \
   --batch_size=15 \
-  --iterate_all_preferences
+  --num-batches=-1  
+# -1 downloads full datasets
 ```
 
 Optionally, trigger full internal evaluation (same flow as train.py evaluate):

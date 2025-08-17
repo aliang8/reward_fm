@@ -20,7 +20,7 @@ def save_frame_as_image(frame_data: np.ndarray, output_path: str) -> str:
     # Convert from HDF5 format to PIL Image
     if frame_data.dtype != np.uint8:
         frame_data = (frame_data * 255).astype(np.uint8)
-    
+
     image = Image.fromarray(frame_data)
     image.save(output_path, "JPEG", quality=95)
     return output_path
@@ -31,10 +31,10 @@ def downsample_frames(frames: np.ndarray, max_frames: int = 32) -> np.ndarray:
     # If max_frames is -1, don't downsample
     if max_frames == -1:
         return frames
-    
+
     if len(frames) <= max_frames:
         return frames
-    
+
     # Use linear interpolation to downsample
     indices = np.linspace(0, len(frames) - 1, max_frames, dtype=int)
 
@@ -42,8 +42,8 @@ def downsample_frames(frames: np.ndarray, max_frames: int = 32) -> np.ndarray:
     unique_indices = np.unique(indices)
     return frames[unique_indices]
 
-def motion_aware_downsample(frames: np.ndarray,
-                            max_frames: int = 32) -> np.ndarray:
+
+def motion_aware_downsample(frames: np.ndarray, max_frames: int = 32) -> np.ndarray:
     if len(frames) <= max_frames:
         return frames
     T = len(frames)
@@ -55,15 +55,13 @@ def motion_aware_downsample(frames: np.ndarray,
             h, w = f.shape[:2]
             scale = resize_long_side / max(h, w)
             if scale < 1.0:
-                f = cv2.resize(f, (int(w * scale), int(h * scale)),
-                               interpolation=cv2.INTER_AREA)
+                f = cv2.resize(f, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
         return cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).astype(np.float32)
 
     gray = [_prep(f) for f in frames]
 
     scores = np.zeros(T, dtype=np.float32)
-    fb_args = dict(pyr_scale=0.5, levels=3, winsize=15,
-                   iterations=3, poly_n=5, poly_sigma=1.2, flags=0)
+    fb_args = dict(pyr_scale=0.5, levels=3, winsize=15, iterations=3, poly_n=5, poly_sigma=1.2, flags=0)
     for i in range(T - 1):
         flow = cv2.calcOpticalFlowFarneback(gray[i], gray[i + 1], None, **fb_args)
         scores[i + 1] = np.linalg.norm(flow, axis=-1).mean()
@@ -79,20 +77,27 @@ def motion_aware_downsample(frames: np.ndarray,
     return frames[sorted(keep)]
 
 
-def create_trajectory_video(frames, output_dir: str, max_frames: int = -1, fps: int = 10, shortest_edge_size: int = 240, center_crop: bool = False) -> str:
+def create_trajectory_video(
+    frames,
+    output_dir: str,
+    max_frames: int = -1,
+    fps: int = 10,
+    shortest_edge_size: int = 240,
+    center_crop: bool = False,
+) -> str:
     """Create a trajectory video from frames and save as MP4 file."""
-    
+
     # Handle numpy array of frames (traditional case)
     if not isinstance(frames, np.ndarray):
         frames = np.array(frames)
-    
+
     # Downsample frames
     frames = downsample_frames(frames, max_frames)
-    
+
     # Get video dimensions from first frame
     if len(frames) == 0:
         raise ValueError("No frames provided for video creation")
-    
+
     height, width = frames[0].shape[:2]
 
     # First, optionally center crop to min(height, width)
@@ -101,7 +106,7 @@ def create_trajectory_video(frames, output_dir: str, max_frames: int = -1, fps: 
         crop_h = min(height, width)
         y_start = max((height - crop_h) // 2, 0)
         x_start = max((width - crop_h) // 2, 0)
-        frames = frames[y_start:y_start+crop_h, x_start:x_start+crop_h]
+        frames = frames[y_start : y_start + crop_h, x_start : x_start + crop_h]
         height, width = frames[0].shape[:2]
 
     # Figure out target dimensions for all frames
@@ -117,18 +122,18 @@ def create_trajectory_video(frames, output_dir: str, max_frames: int = -1, fps: 
     video_path = os.path.join(output_dir, f"trajectory.mp4")
     print(f"Saving video to: {video_path}")
 
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     video_writer = cv2.VideoWriter(video_path, fourcc, fps, (target_width, target_height))
-    
+
     if not video_writer.isOpened():
         raise Exception(f"Could not create video writer with any codec")
-    
+
     # Write frames to video
     for frame in frames:
         # Ensure frame is in uint8 format
         if frame.dtype != np.uint8:
             frame = (frame * 255).astype(np.uint8)
-        
+
         # Resize frame to target dimensions if needed
         if frame.shape[:2] != (target_height, target_width):
             frame = cv2.resize(frame, (target_width, target_height), interpolation=cv2.INTER_AREA)
@@ -136,26 +141,26 @@ def create_trajectory_video(frames, output_dir: str, max_frames: int = -1, fps: 
         # Convert RGB to BGR for OpenCV
         if len(frame.shape) == 3 and frame.shape[2] == 3:
             frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        
+
         video_writer.write(frame)
-    
+
     # Release video writer
     video_writer.release()
-    
+
     return video_path
 
 
 def create_trajectory_video_optimized(
-    frames, 
-    video_path: str, 
-    max_frames: int = -1, 
-    fps: int = 10, 
-    shortest_edge_size: int = 240, 
-    center_crop: bool = False
+    frames,
+    video_path: str,
+    max_frames: int = -1,
+    fps: int = 10,
+    shortest_edge_size: int = 240,
+    center_crop: bool = False,
 ) -> str:
     """
     Creates a web-optimized trajectory video using a memory-efficient FFmpeg pipe.
-    
+
     Args:
         frames (list or np.ndarray): A list or array of frames (as RGB, uint8 arrays).
         output_dir (str): Directory to save the video.
@@ -168,26 +173,25 @@ def create_trajectory_video_optimized(
         str: The path to the created video file.
     """
 
-
     # print(f"Saving optimized video to: {video_path}")
 
     if os.path.exists(video_path):
         # print(f"Video already exists at: {video_path}, skipping video creation")
         return video_path
-    
+
     # If frames is callable, call it to get the actual frames
     if callable(frames):
         frames = frames()  # Load frames on-demand
     else:
         frames = frames  # Already loaded frames (legacy datasets)
-        
+
     if frames is None:
         return None
     if len(frames) == 0:
         raise ValueError("No frames provided for video creation")
     # Downsample frames by selecting indices, which is memory-cheap
     processed_frames = downsample_frames(frames, max_frames)
-    
+
     # Get dimensions from the first frame
     first_frame = processed_frames[0]
     height, width = first_frame.shape[:2]
@@ -199,7 +203,7 @@ def create_trajectory_video_optimized(
         x_start = max((width - crop_size) // 2, 0)
         # After cropping, the frame is a square
         height, width = crop_size, crop_size
-    
+
     scale_factor = shortest_edge_size / min(height, width)
     target_width = int(width * scale_factor)
     target_height = int(height * scale_factor)
@@ -211,20 +215,30 @@ def create_trajectory_video_optimized(
     # FFmpeg command for creating a web-optimized H.264 video
     # This pipes raw video frames from stdin
     command = [
-        'ffmpeg',
-        '-y',  # Overwrite output file if it exists
-        '-f', 'rawvideo',
-        '-vcodec', 'rawvideo',
-        '-s', f'{target_width}x{target_height}',  # Final size of frames sent to pipe
-        '-pix_fmt', 'bgr24',  # OpenCV provides BGR frames
-        '-r', str(fps),
-        '-i', '-',  # Input comes from stdin
-        '-an',  # No audio
-        '-c:v', 'libx264',  # Use the H.264 codec
-        '-profile:v', 'high',
-        '-pix_fmt', 'yuv420p',  # Pixel format for maximum web compatibility
-        '-movflags', '+faststart', # CRITICAL: For web streaming
-        video_path
+        "ffmpeg",
+        "-y",  # Overwrite output file if it exists
+        "-f",
+        "rawvideo",
+        "-vcodec",
+        "rawvideo",
+        "-s",
+        f"{target_width}x{target_height}",  # Final size of frames sent to pipe
+        "-pix_fmt",
+        "bgr24",  # OpenCV provides BGR frames
+        "-r",
+        str(fps),
+        "-i",
+        "-",  # Input comes from stdin
+        "-an",  # No audio
+        "-c:v",
+        "libx264",  # Use the H.264 codec
+        "-profile:v",
+        "high",
+        "-pix_fmt",
+        "yuv420p",  # Pixel format for maximum web compatibility
+        "-movflags",
+        "+faststart",  # CRITICAL: For web streaming
+        video_path,
     ]
 
     # Start the FFmpeg subprocess
@@ -234,11 +248,11 @@ def create_trajectory_video_optimized(
         # Ensure frame is in uint8 format
         if frame.dtype != np.uint8:
             frame = (frame * 255).astype(np.uint8)
-        
+
         # Apply transformations one frame at a time
         if center_crop:
-            frame = frame[y_start:y_start+crop_size, x_start:x_start+crop_size]
-        
+            frame = frame[y_start : y_start + crop_size, x_start : x_start + crop_size]
+
         # Resize frame to target dimensions
         if frame.shape[0] != target_height or frame.shape[1] != target_width:
             frame = cv2.resize(frame, (target_width, target_height), interpolation=cv2.INTER_AREA)
@@ -260,26 +274,28 @@ def create_trajectory_video_optimized(
         print("FFmpeg Error:")
         print(stderr)
         raise RuntimeError("FFmpeg process failed to encode the video.")
-    
+
     # print("Video created successfully.")
     return video_path
 
 
-def create_trajectory_sequence(frames: List[str], output_dir: str, sequence_name: str, max_frames: int = -1) -> List[str]:
+def create_trajectory_sequence(
+    frames: List[str], output_dir: str, sequence_name: str, max_frames: int = -1
+) -> List[str]:
     """Create a trajectory sequence from frames and save as images."""
-    
+
     sequence_dir = os.path.join(output_dir, sequence_name)
     os.makedirs(sequence_dir, exist_ok=True)
-    
+
     # Downsample frames
     frames = downsample_frames(frames, max_frames)
-    
+
     frame_paths = []
     for i, frame in enumerate(frames):
         frame_path = os.path.join(sequence_dir, f"frame_{i:02d}.jpg")
         saved_path = save_frame_as_image(frame, frame_path)
         frame_paths.append(saved_path)
-    
+
     return frame_paths
 
 
@@ -298,22 +314,23 @@ def create_hf_trajectory(
     fps: int = 10,
     shortest_edge_size: int = 240,
     center_crop: bool = False,
-    hub_repo_id: str = None
+    hub_repo_id: str = None,
 ) -> Dict:
     """Create a HuggingFace dataset trajectory with unified frame loading."""
-    
+
     # Handle frames - could be np.array, callable, or missing
-    frames_data = traj_dict.get('frames')
+    frames_data = traj_dict.get("frames")
     if frames_data is None:
         raise ValueError("Trajectory must contain 'frames'")
-    
-    
-    video_path = create_trajectory_video_optimized(frames_data, video_path, max_frames, fps, shortest_edge_size, center_crop)
-    
+
+    video_path = create_trajectory_video_optimized(
+        frames_data, video_path, max_frames, fps, shortest_edge_size, center_crop
+    )
+
     if video_path is None:
         print(f"Skipping trajectory {traj_dict.get('id', 'UNKNOWN')} because frames are None")
         return None
-    
+
     # Get identifiers and fields
     id = traj_dict.get("id", generate_unique_id())
     task_description = traj_dict["task"]
@@ -334,14 +351,13 @@ def create_hf_trajectory(
         "preference_group_id": preference_group_id,
         "preference_rank": preference_rank,
     }
-    
-    return trajectory
 
+    return trajectory
 
 
 def load_sentence_transformer_model() -> SentenceTransformer:
     """Load the sentence transformer model for language embeddings."""
-    return SentenceTransformer('all-MiniLM-L6-v2')
+    return SentenceTransformer("all-MiniLM-L6-v2")
 
 
 def create_output_directory(output_dir: str) -> None:
@@ -354,6 +370,6 @@ def flatten_task_data(task_data: Dict[str, List[Dict]]) -> List[Dict]:
     all_trajectories = []
     for task_name, trajectories in task_data.items():
         for trajectory in trajectories:
-            trajectory['task_name'] = task_name
+            trajectory["task_name"] = task_name
             all_trajectories.append(trajectory)
-    return all_trajectories 
+    return all_trajectories

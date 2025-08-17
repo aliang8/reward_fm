@@ -9,6 +9,24 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 # LIBERO regular datasets
 echo "Running LIBERO regular dataset evaluations at $(date)" | tee evals/logs/libero_regular_${TIMESTAMP}.log
 
+# Run success/failure evaluation
+uv run python evals/run_model_eval.py \
+      --config_path=rfm/configs/config.yaml \
+      --server_url=http://localhost:8000 \
+      --batch_size=32 \
+      --set data.eval_datasets=[\"abraranwar/libero_rfm\",\"ykorkmaz/libero_failure_rfm\"] \
+      --set data.eval_subsets=[\"libero_10\",\"libero_10_failure\"] \
+      --set data.dataset_type=success_failure 2>&1 | tee -a evals/logs/libero_regular_${TIMESTAMP}.log
+
+# Run rewound evaluation
+uv run python evals/run_model_eval.py \
+      --config_path=rfm/configs/config.yaml \
+      --server_url=http://localhost:8000 \
+      --batch_size=32 \
+      --set data.eval_datasets=[\"abraranwar/libero_rfm\"] \
+      --set data.eval_subsets=[\"libero_10\"] \
+      --set data.dataset_type=rewound 2>&1 | tee -a evals/logs/libero_regular_${TIMESTAMP}.log
+
 # for subset in "libero_10" "libero_goal" "libero_object" "libero_spatial"; do
 for subset in "libero_10"; do
     echo "=== Evaluating subset: $subset ===" | tee -a evals/logs/libero_regular_${TIMESTAMP}.log

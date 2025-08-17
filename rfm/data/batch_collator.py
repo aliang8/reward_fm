@@ -32,8 +32,8 @@ class BaseSample:
     # Progress fields
     target_progress_A: Optional[List[float]] = None  # Progress values for trajectory A
     target_progress_B: Optional[List[float]] = None  # Progress values for trajectory B
-    sample_type: Optional[str] = None                # how this sample was generated
-    num_frames_rewound: Optional[int] = None         # number of frames rewound (for rewound trajectories)
+    sample_type: Optional[str] = None  # how this sample was generated
+    num_frames_rewound: Optional[int] = None  # number of frames rewound (for rewound trajectories)
 
     # Metadata field
     metadata: Optional[Dict] = None
@@ -48,15 +48,18 @@ class PreferenceSample(BaseSample):
     rejected_frames: Optional[Union[List[str], np.ndarray]] = None
     chosen_frames_shape: Optional[tuple] = None  # Shape of chosen trajectory frames
     rejected_frames_shape: Optional[tuple] = None  # Shape of rejected trajectory frames
-    preferred_trajectory: Optional[str] = (
-        None  # "chosen" or "rejected" (should always be "chosen")
-    )
+    preferred_trajectory: Optional[str] = None  # "chosen" or "rejected" (should always be "chosen")
     chosen_id: Optional[str] = None
     rejected_id: Optional[str] = None
+    chosen_task: Optional[str] = None
     rejected_task: Optional[str] = None
+    chosen_lang_vector: Optional[np.ndarray] = None
     rejected_lang_vector: Optional[np.ndarray] = None
+    chosen_data_source: Optional[str] = None
     rejected_data_source: Optional[str] = None
+    chosen_quality_label: Optional[str] = None
     rejected_quality_label: Optional[str] = None
+    chosen_is_robot: Optional[bool] = None
     rejected_is_robot: Optional[bool] = None
 
     def __post_init__(self):
@@ -71,14 +74,10 @@ class SimilaritySample(BaseSample):
     # Similarity-specific fields using traj_sim/traj_diff naming
     reference_frames: Optional[Union[List[str], np.ndarray]] = None  # o^ref
     traj_sim_frames: Optional[Union[List[str], np.ndarray]] = None  # Similar trajectory
-    traj_diff_frames: Optional[Union[List[str], np.ndarray]] = (
-        None  # Different trajectory
-    )
+    traj_diff_frames: Optional[Union[List[str], np.ndarray]] = None  # Different trajectory
     reference_frames_shape: Optional[tuple] = None  # Shape of reference frames
     traj_sim_frames_shape: Optional[tuple] = None  # Shape of similar trajectory frames
-    traj_diff_frames_shape: Optional[tuple] = (
-        None  # Shape of different trajectory frames
-    )
+    traj_diff_frames_shape: Optional[tuple] = None  # Shape of different trajectory frames
     task_ref: Optional[str] = None
     task_sim: Optional[str] = None
     task_diff: Optional[str] = None
@@ -126,7 +125,7 @@ class BatchCollator:
         self.max_length = max_length
         self.resized_height = resized_height
         self.resized_width = resized_width
-        
+
     def _pad_target_progress(self, progress_list):
         """Helper function to pad target progress sequences to max length."""
         if not progress_list:
@@ -145,9 +144,7 @@ class BatchCollator:
 
     def __call__(
         self,
-        samples: Union[
-            List[BaseSample], List[PreferenceSample], List[SimilaritySample], List[dict]
-        ],
+        samples: Union[List[BaseSample], List[PreferenceSample], List[SimilaritySample], List[dict]],
     ) -> Dict[str, torch.Tensor]:
         """
         Collate a list of samples into separate batches for preferences and similarities.
@@ -181,15 +178,9 @@ class BatchCollator:
                 raise ValueError(f"Expected Sample object or dict, got {type(sample)}")
 
         # Separate samples by sample type
-        preference_samples = [
-            s for s in sample_objects if s.sample_type == "preference"
-        ]
-        similarity_samples = [
-            s for s in sample_objects if s.sample_type == "similarity"
-        ]
-        paired_video_samples = [
-            s for s in sample_objects if s.sample_type == "paired_video"
-        ]
+        preference_samples = [s for s in sample_objects if s.sample_type == "preference"]
+        similarity_samples = [s for s in sample_objects if s.sample_type == "similarity"]
+        paired_video_samples = [s for s in sample_objects if s.sample_type == "paired_video"]
 
         # Process preferences
         preference_inputs = {}
@@ -215,9 +206,7 @@ class BatchCollator:
             return None
 
         # If frames are already paths (strings), return as is
-        if isinstance(frames, str) or (
-            isinstance(frames, list) and all(isinstance(f, str) for f in frames)
-        ):
+        if isinstance(frames, str) or (isinstance(frames, list) and all(isinstance(f, str) for f in frames)):
             return frames
 
         # If frames are serialized bytes, deserialize first
@@ -230,9 +219,7 @@ class BatchCollator:
                 try:
                     frames = np.frombuffer(frames, dtype=np.uint8).reshape(frames_shape)
                 except Exception as e:
-                    print(
-                        f"Warning: Failed to reshape with provided shape {frames_shape}: {e}"
-                    )
+                    print(f"Warning: Failed to reshape with provided shape {frames_shape}: {e}")
                     # Fall back to 1D array
                     frames = np.frombuffer(frames, dtype=np.uint8)
             else:
@@ -257,9 +244,7 @@ class BatchCollator:
                 pil_images.append(pil_image)
             else:
                 # Try to reshape as 1D array (backward compatibility)
-                print(
-                    f"Warning: Unexpected frames shape {frames.shape}, treating as 1D array"
-                )
+                print(f"Warning: Unexpected frames shape {frames.shape}, treating as 1D array")
                 return frames
 
             return pil_images
@@ -277,9 +262,7 @@ class BatchCollator:
 
         return frames
 
-    def _process_preference_batch(
-        self, preference_samples: List[PreferenceSample]
-    ) -> Dict[str, torch.Tensor]:
+    def _process_preference_batch(self, preference_samples: List[PreferenceSample]) -> Dict[str, torch.Tensor]:
         """Process a batch of preference samples."""
         # Collect all messages for batch processing
         all_messages = []
@@ -287,17 +270,13 @@ class BatchCollator:
 
         for sample in preference_samples:
             # Convert frames to appropriate format using stored shapes
-            chosen_frames = self._convert_frames_to_pil_images(
-                sample.chosen_frames, sample.chosen_frames_shape
-            )
-            rejected_frames = self._convert_frames_to_pil_images(
-                sample.rejected_frames, sample.rejected_frames_shape
-            )
+            chosen_frames = self._convert_frames_to_pil_images(sample.chosen_frames, sample.chosen_frames_shape)
+            rejected_frames = self._convert_frames_to_pil_images(sample.rejected_frames, sample.rejected_frames_shape)
 
             # Randomly decide whether chosen trajectory goes first or second
             # This prevents the model from learning position bias
             chosen_first = random.choice([True, False])
-            
+
             if chosen_first:
                 # Chosen trajectory first: task + video A (chosen) + <|split_token|> + video B (rejected) + <|pref_token|>
                 conversation = [
@@ -309,7 +288,7 @@ class BatchCollator:
                                 "type": "video",
                                 "video": chosen_frames,
                                 "resized_height": self.resized_height,
-                                "resized_width": self.resized_width
+                                "resized_width": self.resized_width,
                             },
                             {"type": "text", "text": "<|split_token|>"},
                             {
@@ -335,7 +314,7 @@ class BatchCollator:
                                 "type": "video",
                                 "video": rejected_frames,
                                 "resized_height": self.resized_height,
-                                "resized_width": self.resized_width
+                                "resized_width": self.resized_width,
                             },
                             {"type": "text", "text": "<|split_token|>"},
                             {
@@ -350,7 +329,7 @@ class BatchCollator:
                 ]
                 # Label: 0.0 means second trajectory (chosen) is preferred
                 preference_labels.append(0.0)
-            
+
             all_messages.append(conversation)
 
         # Process all messages in one batch
@@ -365,9 +344,7 @@ class BatchCollator:
             for msg in all_messages
         ]
 
-        image_inputs, video_inputs, video_kwargs = process_vision_info(
-            all_messages, return_video_kwargs=True
-        )
+        image_inputs, video_inputs, video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
 
         # Process through the processor in one batch
         batch_inputs = self.processor(
@@ -405,28 +382,20 @@ class BatchCollator:
                     target_progress_B_list.append(sample.target_progress_A)  # chosen progress (now second)
 
         # Pad target progress tensors to max length in last dimension
-        batch_inputs["target_progress_A"] = self._pad_target_progress(
-            target_progress_A_list
-        )
-        batch_inputs["target_progress_B"] = self._pad_target_progress(
-            target_progress_B_list
-        )
+        batch_inputs["target_progress_A"] = self._pad_target_progress(target_progress_A_list)
+        batch_inputs["target_progress_B"] = self._pad_target_progress(target_progress_B_list)
 
         # Also add the frame_shapes
         batch_inputs["chosen_frames_shape"] = torch.tensor(
-            [sample.chosen_frames_shape for sample in preference_samples],
-            dtype=torch.int32
+            [sample.chosen_frames_shape for sample in preference_samples], dtype=torch.int32
         )
         batch_inputs["rejected_frames_shape"] = torch.tensor(
-            [sample.rejected_frames_shape for sample in preference_samples],
-            dtype=torch.int32
+            [sample.rejected_frames_shape for sample in preference_samples], dtype=torch.int32
         )
 
         return batch_inputs
 
-    def _process_similarity_batch(
-        self, similarity_samples: List[SimilaritySample]
-    ) -> Dict[str, torch.Tensor]:
+    def _process_similarity_batch(self, similarity_samples: List[SimilaritySample]) -> Dict[str, torch.Tensor]:
         """Process a batch of similarity samples."""
         # Collect all messages for batch processing (ref and traj_sim for each sample)
         all_messages = []
@@ -436,9 +405,7 @@ class BatchCollator:
             reference_frames = self._convert_frames_to_pil_images(
                 sample.reference_frames, sample.reference_frames_shape
             )
-            traj_sim_frames = self._convert_frames_to_pil_images(
-                sample.traj_sim_frames, sample.traj_sim_frames_shape
-            )
+            traj_sim_frames = self._convert_frames_to_pil_images(sample.traj_sim_frames, sample.traj_sim_frames_shape)
             traj_diff_frames = self._convert_frames_to_pil_images(
                 sample.traj_diff_frames, sample.traj_diff_frames_shape
             )
@@ -505,9 +472,7 @@ class BatchCollator:
             for msg in all_messages
         ]
 
-        image_inputs, video_inputs, video_kwargs = process_vision_info(
-            all_messages, return_video_kwargs=True
-        )
+        image_inputs, video_inputs, video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
 
         # Process through the processor in one batch
         batch_inputs = self.processor(
@@ -562,34 +527,23 @@ class BatchCollator:
                 target_progress_ref_list.append(sample.target_progress_ref)
 
         # Pad target progress tensors to max length in last dimension
-        combined_inputs["target_progress_A"] = self._pad_target_progress(
-            target_progress_sim_list
-        )
-        combined_inputs["target_progress_B"] = self._pad_target_progress(
-            target_progress_diff_list
-        )
-        combined_inputs["target_progress_ref"] = self._pad_target_progress(
-            target_progress_ref_list
-        )
+        combined_inputs["target_progress_A"] = self._pad_target_progress(target_progress_sim_list)
+        combined_inputs["target_progress_B"] = self._pad_target_progress(target_progress_diff_list)
+        combined_inputs["target_progress_ref"] = self._pad_target_progress(target_progress_ref_list)
 
         # Also add the frame_shapes
         combined_inputs["ref_frames_shape"] = torch.tensor(
-            [sample.reference_frames_shape for sample in similarity_samples],
-            dtype=torch.int32
+            [sample.reference_frames_shape for sample in similarity_samples], dtype=torch.int32
         )
         combined_inputs["traj_sim_frames_shape"] = torch.tensor(
-            [sample.traj_sim_frames_shape for sample in similarity_samples],
-            dtype=torch.int32
+            [sample.traj_sim_frames_shape for sample in similarity_samples], dtype=torch.int32
         )
         combined_inputs["traj_diff_frames_shape"] = torch.tensor(
-            [sample.traj_diff_frames_shape for sample in similarity_samples],
-            dtype=torch.int32
+            [sample.traj_diff_frames_shape for sample in similarity_samples], dtype=torch.int32
         )
         return combined_inputs
 
-    def collate_fn(
-        self, batch: List[Union[BaseSample, PreferenceSample, SimilaritySample]]
-    ) -> Dict[str, torch.Tensor]:
+    def collate_fn(self, batch: List[Union[BaseSample, PreferenceSample, SimilaritySample]]) -> Dict[str, torch.Tensor]:
         """
         Alternative method name for compatibility with PyTorch DataLoader.
 

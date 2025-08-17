@@ -25,6 +25,7 @@ class RFMTrainer(Trainer):
         """
         Perform a training step and log custom losses.
         """
+        self.timing_raw = {}
         with _timer("time/training_step", timing_raw=self.timing_raw):
             # Call the parent training_step to handle all the standard training logic
             loss = super().training_step(model, inputs, num_items_in_batch)

@@ -151,20 +151,24 @@ class PairedSuccessFailureDataset:
         # Group trajectories by task and success status
         task_success_trajs = {}
         task_failure_trajs = {}
+
+        print(f"Generating success-failure samples for {len(self.data_generator.robot_trajectories)} trajectories")
         
         for traj_idx in self.data_generator.robot_trajectories:
             traj = self.data_generator.dataset[traj_idx]
-            task = traj.get("task_name", "unknown")
-            is_success = traj.get("is_success", True)
+            task = traj.get("task", "unknown")
+            quality_label = traj.get("quality_label", "unknown")
             
             if task not in task_success_trajs:
                 task_success_trajs[task] = []
                 task_failure_trajs[task] = []
             
-            if is_success:
+            if quality_label == "successful":
                 task_success_trajs[task].append(traj_idx)
-            else:
+            elif quality_label == "failure":
                 task_failure_trajs[task].append(traj_idx)
+        
+        print(f"Generated {len(task_success_trajs)} success tasks and {len(task_failure_trajs)} failure tasks")
         
         # Generate all possible pairs
         for task in tqdm(task_success_trajs, desc="Generating success-failure samples"):

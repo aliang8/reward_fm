@@ -17,7 +17,7 @@ OXE_VALID_DATASETS=(
     "viola"
     #"fractal20220817_data"
     "bc_z"
-    "language_table"
+    #"language_table"
     "bridge_v2"
     "droid"
 )

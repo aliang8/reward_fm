@@ -1,7 +1,7 @@
-# large datasets near the end
+# comment out things which have no eval split
 OXE_VALID_DATASETS=(
-    "austin_buds_dataset_converted_externally_to_rlds"
-    "austin_sirius_dataset_converted_externally_to_rlds"
+    #"austin_buds_dataset_converted_externally_to_rlds"
+    #"austin_sirius_dataset_converted_externally_to_rlds"
     "berkeley_cable_routing"
     "berkeley_fanuc_manipulation"
     "dlr_edan_shared_control_converted_externally_to_rlds"

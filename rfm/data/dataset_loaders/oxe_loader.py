@@ -129,17 +129,25 @@ def convert_oxe_dataset_to_hf(
         raise ValueError(f"No valid builder found for {base_ds_name} in {root}")
 
     if EVAL_MODE:
-        splits = ["val", "test"]
-        for split in splits:
-            try:
-                dataset = builder.as_dataset(split=split, shuffle_files=False)
-                break
-            except Exception as e:
-                print(f"Error loading {split} split: {e}")
-                dataset = None
-                continue
-        if dataset is None:
+        dataset, info = builder.as_dataset(with_info=True)
+        splits = list(info.splits.keys())
+        splits.pop("train")
+        if len(splits) == 0:
             raise ValueError(f"No valid {EVAL_MODE} dataset found for {base_ds_name} in {root}")
+        else:
+            dataset = builder.as_dataset(split=splits[0], shuffle_files=False)
+        print(f"Loaded {EVAL_MODE} dataset for {base_ds_name} in {root}")
+        #splits = ["val", "test"]
+        #for split in splits:
+        #    try:
+        #        dataset = builder.as_dataset(split=split, shuffle_files=False)
+        #        break
+        #    except Exception as e:
+        #        print(f"Error loading {split} split: {e}")
+        #        dataset = None
+        #        continue
+        #if dataset is None:
+        #    raise ValueError(f"No valid {EVAL_MODE} dataset found for {base_ds_name} in {root}")
     else:
         dataset = builder.as_dataset(split="train", shuffle_files=False)
 

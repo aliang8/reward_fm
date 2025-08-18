@@ -497,6 +497,7 @@ def main(cfg: GenerateConfig):
                     folder_path=cfg.output.output_dir,
                     repo_id=cfg.hub.hub_repo_id,
                     repo_type="dataset",
+                    num_workers=min(4, cpu_count()), # low number of workers to avoid running into upload limits
                 )
                 print(
                     f"✅ Successfully pushed video files for {cfg.dataset.dataset_name} to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}"

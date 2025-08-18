@@ -103,6 +103,13 @@ def convert_oxe_dataset_to_hf(
         raise ValueError("dataset_name is required")
 
     base_ds_name = dataset_name.replace("oxe_", "")
+
+    if base_ds_name.endswith("_eval"):
+        base_ds_name = base_ds_name[:-5]
+        EVAL_MODE = True
+        # use eval/val/test
+    else:
+        EVAL_MODE = False
     root = Path(os.path.expanduser(dataset_path))
     if not root.exists():
         raise FileNotFoundError(f"Dataset path not found: {root}")
@@ -121,7 +128,30 @@ def convert_oxe_dataset_to_hf(
     if builder is None:
         raise ValueError(f"No valid builder found for {base_ds_name} in {root}")
 
-    dataset = builder.as_dataset(split="train", shuffle_files=False)
+    if EVAL_MODE:
+        ds_all_dict = builder.as_dataset()
+        splits = list(ds_all_dict.keys())
+        splits.remove("train")
+        if len(splits) == 0:
+            raise ValueError(f"No valid EVAL dataset found for {base_ds_name} in {root}")
+        elif len(splits) == 1:
+            dataset = builder.as_dataset(split=splits[0], shuffle_files=False)
+        else:
+            raise ValueError(f"Multiple EVAL splits found for {base_ds_name} in {root}: {splits}")
+        print(f"Loaded EVAL dataset for {base_ds_name} in {root}")
+        #splits = ["val", "test"]
+        #for split in splits:
+        #    try:
+        #        dataset = builder.as_dataset(split=split, shuffle_files=False)
+        #        break
+        #    except Exception as e:
+        #        print(f"Error loading {split} split: {e}")
+        #        dataset = None
+        #        continue
+        #if dataset is None:
+        #    raise ValueError(f"No valid {EVAL_MODE} dataset found for {base_ds_name} in {root}")
+    else:
+        dataset = builder.as_dataset(split="train", shuffle_files=False)
 
     # Determine valid image observation keys
     img_key_to_name = OXE_DATASET_CONFIGS[base_ds_name]["image_obs_keys"]

@@ -17,6 +17,7 @@ from rfm.configs.experiment_configs import ExperimentConfig
 
 from rfm.utils.logging import _timer
 
+
 def setup_model_and_processor(cfg: ExperimentConfig) -> Tuple[AutoProcessor, RFMModel]:
     """Shared function to set up model, processor, and tokenizer for both training and evaluation"""
 
@@ -27,6 +28,8 @@ def setup_model_and_processor(cfg: ExperimentConfig) -> Tuple[AutoProcessor, RFM
 
     if rank == 0:
         rank_0_print(f"Setting up model and processor on rank {rank}...")
+
+    model_id = cfg.model.base_model_id
 
     # Load processor and tokenizer
     processor = AutoProcessor.from_pretrained(
@@ -48,7 +51,7 @@ def setup_model_and_processor(cfg: ExperimentConfig) -> Tuple[AutoProcessor, RFM
     # config.vision_config.temporal_patch_size = 1
 
     # Create a fresh model instance
-    base_model = Qwen2_5_VLModel.from_pretrained(cfg.model.base_model_id)
+    base_model = Qwen2_5_VLModel.from_pretrained(model_id)
 
     # Add RFM special tokens if they don't exist
     special_tokens = ["<|split_token|>", "<|reward_token|>", "<|pref_token|>"]
@@ -70,6 +73,15 @@ def setup_model_and_processor(cfg: ExperimentConfig) -> Tuple[AutoProcessor, RFM
     if rank == 0:
         rank_0_print(f"Initializing RFM model on rank {rank}...")
     rfm_model = RFMModel(config=base_model.config, processor=processor, base_model=base_model)
+
+    if cfg.evaluation.model_path:
+        model_id = cfg.evaluation.model_path
+        rank_0_print(f"Loading model from {model_id} on rank {rank}")
+
+        # before = rfm_model.model.visual.blocks[0].mlp.down_proj.weight
+        # before = rfm_model.preference_head.weight
+        # load the model from the evaluation path
+        rfm_model = RFMModel.from_pretrained(model_id, processor=processor, base_model=base_model)
 
     # Only print model architecture on rank 0
     if rank == 0:
@@ -260,7 +272,7 @@ def setup_dataset(
     config_dataset_type = data_generator.config.data.dataset_type
 
     rank_0_print(f"Setting up {dataset_type} dataset with type: {config_dataset_type}")
-    
+
     if config_dataset_type == "rewound":
         rank_0_print(f"Creating rewound dataset")
         dataset = RewoundDataset(data_generator, **dataset_kwargs)
@@ -271,7 +283,7 @@ def setup_dataset(
         # Default to preference/similarity dataset
         rank_0_print("Creating preference/similarity dataset")
         dataset = InfiniteDataGeneratorDataset(data_generator, **dataset_kwargs)
-        
+
     rank_0_print(f"{dataset_type.capitalize()} dataset created successfully with {len(dataset)} samples")
     return dataset
 
@@ -283,7 +295,11 @@ def setup_eval_dataset(cfg: ExperimentConfig) -> Union[InfiniteDataGeneratorData
     eval_data_generator = setup_eval_data_generator(cfg)
 
     # Create evaluation dataset
-    eval_dataset = setup_dataset(eval_data_generator, dataset_type=cfg.data.dataset_type, dataset_kwargs={"max_samples": cfg.data.eval_subset_size})
+    eval_dataset = setup_dataset(
+        eval_data_generator,
+        dataset_type=cfg.data.dataset_type,
+        dataset_kwargs={"max_samples": cfg.data.eval_subset_size},
+    )
 
     return eval_dataset
 

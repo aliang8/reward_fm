@@ -34,42 +34,47 @@ class BaseSample:
     sample_type: Optional[str] = None  # how this sample was generated
     num_frames_rewound: Optional[int] = None  # number of frames rewound (for rewound trajectories)
 
-    # Metadata field
-    metadata: Optional[Dict] = None
+    data_gen_strategy: Optional[str] = None  # how this sample was generated (e.g. rewinding, random, etc.)
+
+
+@dataclass
+class PreferenceSample:
+    """Sample structure for preference prediction: chosen vs rejected where chosen is preferred."""
+
+    # Preference-specific fields using chosen/rejected naming
+
+    # chosen metadata
+    chosen_frames: Optional[Union[List[str], np.ndarray]] = None
+    chosen_frames_shape: Optional[tuple] = None
+    chosen_id: Optional[str] = None
+    chosen_task: Optional[str] = None
+    chosen_lang_vector: Optional[np.ndarray] = None
+    chosen_data_source: Optional[str] = None
+    chosen_quality_label: Optional[str] = None
+    chosen_is_robot: Optional[bool] = None
+
+    # rejected metadata
+    rejected_frames: Optional[Union[List[str], np.ndarray]] = None
+    rejected_frames_shape: Optional[tuple] = None  # Shape of rejected trajectory frames
+    preferred_trajectory: Optional[str] = None  # "chosen" or "rejected" (should always be "chosen")
+    rejected_id: Optional[str] = None
+    rejected_task: Optional[str] = None
+    rejected_lang_vector: Optional[np.ndarray] = None
+    rejected_data_source: Optional[str] = None
+    rejected_quality_label: Optional[str] = None
+    rejected_is_robot: Optional[bool] = None
+
+    target_progress_A: Optional[List[float]] = None  # Progress values for trajectory A
+    target_progress_B: Optional[List[float]] = None  # Progress values for trajectory B
+
+    num_frames_rewound: Optional[int] = None  # number of frames rewound (for rewound trajectories)
+    sample_type: Optional[str] = "preference"
 
     data_gen_strategy: Optional[str] = None  # how this sample was generated (e.g. rewinding, random, etc.)
 
 
 @dataclass
-class PreferenceSample(BaseSample):
-    """Sample structure for preference prediction: chosen vs rejected where chosen is preferred."""
-
-    # Preference-specific fields using chosen/rejected naming
-    chosen_frames: Optional[Union[List[str], np.ndarray]] = None
-    rejected_frames: Optional[Union[List[str], np.ndarray]] = None
-    chosen_frames_shape: Optional[tuple] = None  # Shape of chosen trajectory frames
-    rejected_frames_shape: Optional[tuple] = None  # Shape of rejected trajectory frames
-    preferred_trajectory: Optional[str] = None  # "chosen" or "rejected" (should always be "chosen")
-    chosen_id: Optional[str] = None
-    rejected_id: Optional[str] = None
-    chosen_task: Optional[str] = None
-    rejected_task: Optional[str] = None
-    chosen_lang_vector: Optional[np.ndarray] = None
-    rejected_lang_vector: Optional[np.ndarray] = None
-    chosen_data_source: Optional[str] = None
-    rejected_data_source: Optional[str] = None
-    chosen_quality_label: Optional[str] = None
-    rejected_quality_label: Optional[str] = None
-    chosen_is_robot: Optional[bool] = None
-    rejected_is_robot: Optional[bool] = None
-
-    def __post_init__(self):
-        """Set the sample type after initialization and handle field mapping."""
-        self.sample_type = "preference"
-
-
-@dataclass
-class SimilaritySample(BaseSample):
+class SimilaritySample:
     """Sample structure for similarity scoring: traj_sim and traj_diff ranked against o^ref."""
 
     # Similarity-specific fields using traj_sim/traj_diff naming
@@ -97,10 +102,10 @@ class SimilaritySample(BaseSample):
     traj_diff_is_robot: Optional[bool] = None
 
     target_progress_ref: Optional[List[float]] = None
+    target_progress_sim: Optional[List[float]] = None
+    target_progress_diff: Optional[List[float]] = None
 
-    def __post_init__(self):
-        """Set the sample type after initialization."""
-        self.sample_type = "similarity"
+    sample_type: Optional[str] = "similarity"
 
 
 class BatchCollator:
@@ -166,8 +171,6 @@ class BatchCollator:
                     sample_obj = PreferenceSample(**sample)
                 elif sample_type == "similarity":
                     sample_obj = SimilaritySample(**sample)
-                elif sample_type == "paired_video":
-                    sample_obj = PairedVideoSample(**sample)
                 else:
                     raise ValueError(
                         f"Unknown sample_type: {sample_type}. Must be 'preference', 'similarity', or 'paired_video'"
@@ -284,7 +287,7 @@ class BatchCollator:
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": f"Task: {sample.task}"},
+                            {"type": "text", "text": f"Task: {sample.chosen_task}"},
                             {
                                 "type": "video",
                                 "video": chosen_frames,
@@ -310,7 +313,7 @@ class BatchCollator:
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": f"Task: {sample.task}"},
+                            {"type": "text", "text": f"Task: {sample.chosen_task}"},
                             {
                                 "type": "video",
                                 "video": rejected_frames,

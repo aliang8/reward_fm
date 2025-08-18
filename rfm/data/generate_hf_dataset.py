@@ -493,7 +493,7 @@ def main(cfg: GenerateConfig):
                 from huggingface_hub import HfApi
 
                 api = HfApi(token=cfg.hub.hub_token)
-                api.upload_large_folder(
+                api.upload_folder(
                     folder_path=cfg.output.output_dir,
                     repo_id=cfg.hub.hub_repo_id,
                     repo_type="dataset",

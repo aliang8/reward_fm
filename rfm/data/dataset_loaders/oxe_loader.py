@@ -133,12 +133,12 @@ def convert_oxe_dataset_to_hf(
         splits = list(ds_all_dict.keys())
         splits.remove("train")
         if len(splits) == 0:
-            raise ValueError(f"No valid {EVAL_MODE} dataset found for {base_ds_name} in {root}")
+            raise ValueError(f"No valid EVAL dataset found for {base_ds_name} in {root}")
         elif len(splits) == 1:
             dataset = builder.as_dataset(split=splits[0], shuffle_files=False)
         else:
-            raise ValueError(f"Multiple {EVAL_MODE} splits found for {base_ds_name} in {root}: {splits}")
-        print(f"Loaded {EVAL_MODE} dataset for {base_ds_name} in {root}")
+            raise ValueError(f"Multiple EVAL splits found for {base_ds_name} in {root}: {splits}")
+        print(f"Loaded EVAL dataset for {base_ds_name} in {root}")
         #splits = ["val", "test"]
         #for split in splits:
         #    try:

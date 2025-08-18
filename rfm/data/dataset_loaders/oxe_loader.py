@@ -103,6 +103,13 @@ def convert_oxe_dataset_to_hf(
         raise ValueError("dataset_name is required")
 
     base_ds_name = dataset_name.replace("oxe_", "")
+
+    if base_ds_name.endswith("_eval"):
+        base_ds_name = base_ds_name[:-5]
+        EVAL_MODE = True
+        # use eval/val/test
+    else:
+        EVAL_MODE = False
     root = Path(os.path.expanduser(dataset_path))
     if not root.exists():
         raise FileNotFoundError(f"Dataset path not found: {root}")
@@ -121,7 +128,19 @@ def convert_oxe_dataset_to_hf(
     if builder is None:
         raise ValueError(f"No valid builder found for {base_ds_name} in {root}")
 
-    dataset = builder.as_dataset(split="train", shuffle_files=False)
+    if EVAL_MODE:
+        splits = ["train", "val", "test"]
+        for split in splits:
+            try:
+                dataset = builder.as_dataset(split=split, shuffle_files=False)
+                break
+            except Exception as e:
+                print(f"Error loading {split} split: {e}")
+                continue
+        if dataset is None:
+            raise ValueError(f"No valid {EVAL_MODE} dataset found for {base_ds_name} in {root}")
+    else:
+        dataset = builder.as_dataset(split="train", shuffle_files=False)
 
     # Determine valid image observation keys
     img_key_to_name = OXE_DATASET_CONFIGS[base_ds_name]["image_obs_keys"]

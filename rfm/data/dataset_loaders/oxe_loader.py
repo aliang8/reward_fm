@@ -136,6 +136,7 @@ def convert_oxe_dataset_to_hf(
                 break
             except Exception as e:
                 print(f"Error loading {split} split: {e}")
+                dataset = None
                 continue
         if dataset is None:
             raise ValueError(f"No valid {EVAL_MODE} dataset found for {base_ds_name} in {root}")

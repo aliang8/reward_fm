@@ -493,10 +493,11 @@ def main(cfg: GenerateConfig):
                 from huggingface_hub import HfApi
 
                 api = HfApi(token=cfg.hub.hub_token)
-                api.upload_folder(
+                api.upload_large_folder(
                     folder_path=cfg.output.output_dir,
                     repo_id=cfg.hub.hub_repo_id,
                     repo_type="dataset",
+                    num_workers=2, # low number of workers to avoid running into upload limits
                 )
                 print(
                     f"✅ Successfully pushed video files for {cfg.dataset.dataset_name} to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}"

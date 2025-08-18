@@ -131,7 +131,7 @@ def convert_oxe_dataset_to_hf(
     if EVAL_MODE:
         ds_all_dict = builder.as_dataset()
         splits = list(ds_all_dict.keys())
-        splits.pop("train")
+        splits.remove("train")
         if len(splits) == 0:
             raise ValueError(f"No valid {EVAL_MODE} dataset found for {base_ds_name} in {root}")
         elif len(splits) == 1:

@@ -119,7 +119,7 @@ class RFMModel(PreTrainedModel):
                     - 'A': List of tensors for trajectory A (before vision_end token), each [seq_len_A]
                     - 'B': List of tensors for trajectory B (after vision_end token), each [seq_len_B]
                     Values should be in range [0, 1] representing task completion percentage at each timestep.
-                
+
                 - timing_raw (Dict[str, float]):
                     Timing information for the forward pass.
         """
@@ -229,7 +229,9 @@ class RFMModel(PreTrainedModel):
 
                 # Apply progress head to hidden states at frame boundary positions for trajectory A
                 if trajectory_A_boundaries.numel() > 0:
-                    boundary_hidden_states_A = last_hidden_state[i][trajectory_A_boundaries]  # [num_frames_A, hidden_dim]
+                    boundary_hidden_states_A = last_hidden_state[i][
+                        trajectory_A_boundaries
+                    ]  # [num_frames_A, hidden_dim]
                     progress_A = self.progress_head(boundary_hidden_states_A).squeeze(-1)  # [num_frames_A]
                     progress_logits_A.append(progress_A)
                 else:
@@ -237,7 +239,9 @@ class RFMModel(PreTrainedModel):
 
                 # Apply progress head to hidden states at frame boundary positions for trajectory B
                 if trajectory_B_boundaries.numel() > 0:
-                    boundary_hidden_states_B = last_hidden_state[i][trajectory_B_boundaries]  # [num_frames_B, hidden_dim]
+                    boundary_hidden_states_B = last_hidden_state[i][
+                        trajectory_B_boundaries
+                    ]  # [num_frames_B, hidden_dim]
                     progress_B = self.progress_head(boundary_hidden_states_B).squeeze(-1)  # [num_frames_B]
                     progress_logits_B.append(progress_B)
                 else:
@@ -257,12 +261,17 @@ class RFMModel(PreTrainedModel):
                 # Find all positions where the target token appears
                 token_positions = []
                 for i, seq_ids in enumerate(input_ids):
-                    # Find the last occurrence of token_id in this sequence
+                    # Find all occurrences of token_id in this sequence
                     positions = (seq_ids == token_id).nonzero(as_tuple=True)[0]
-                    if len(positions) > 0:
-                        token_positions.append(positions[-1].item())
-                    else:
+                    if len(positions) == 0:
                         raise ValueError(f"token_id {token_id} not found in sequence {i}")
+                    elif len(positions) > 1:
+                        raise ValueError(
+                            f"token_id {token_id} appears {len(positions)} times in sequence {i}, expected exactly 1"
+                        )
+                    else:
+                        # Exactly one occurrence
+                        token_positions.append(positions[0].item())
                 token_positions = torch.tensor(token_positions, device=input_ids.device, dtype=torch.long)
 
                 # Extract hidden states at the target token positions

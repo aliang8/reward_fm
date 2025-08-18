@@ -129,7 +129,7 @@ def convert_oxe_dataset_to_hf(
         raise ValueError(f"No valid builder found for {base_ds_name} in {root}")
 
     if EVAL_MODE:
-        splits = ["train", "val", "test"]
+        splits = ["val", "test"]
         for split in splits:
             try:
                 dataset = builder.as_dataset(split=split, shuffle_files=False)

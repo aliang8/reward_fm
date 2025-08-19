@@ -11,6 +11,8 @@ accelerate launch \
     --config rfm/configs/config.yaml \
     --data.resized_height 128 \
     --data.resized_width 128 \
-    --data.force_reprocess false \
     --logging.use_wandb true \
-    --debug false
+    --debug false \
+    --model.train_preference_head true \
+    --model.train_progress_head true \
+    --training.output_dir ./logs/rfm_progress_pref

@@ -153,7 +153,7 @@ class RFMTrainer(Trainer):
             "progress_loss",
             "preference_accuracy",
             "spearman_corr_avg",
-        ]  # TODO: add progress_loss_A, progress_loss_B, progress_loss_ref, progress_loss_sim, progress_loss_diff
+        ]
         aggregated_outputs = {}
 
         # assume that we already called .item() on the outputs
@@ -237,6 +237,7 @@ class RFMTrainer(Trainer):
         progress_logits,
         target_progress,
         frame_shape,
+        target_progress_mask,
         trajectory_name="trajectory",
     ):
         """
@@ -265,13 +266,9 @@ class RFMTrainer(Trainer):
         spliced_target_progress = []
 
         for i, (pred, target, shape) in enumerate(zip(progress_logits, target_progress, frame_shape)):
-            # Extract frame count from shape (first dimension)
             num_frames = shape[0] if len(shape) > 0 else 0
-            num_frames = num_frames // 2  # add this because of temporal_patch_size
-            # Splice both predicted and target to match frame count
-            spliced_pred = pred[:num_frames]
-            spliced_target = target[:num_frames]  # TODO: check if this is correct
-            spliced_progress_logits.append(spliced_pred)
+            spliced_target = target[:num_frames][::2]
+            spliced_progress_logits.append(pred)
             spliced_target_progress.append(spliced_target)
 
         # Compute MSE loss per element and then stack into a tensor
@@ -287,9 +284,18 @@ class RFMTrainer(Trainer):
             spearman_correlations.append(spearman_corr)
 
         if progress_losses:
-            progress_loss = torch.stack(progress_losses).mean()
+            progress_loss = torch.stack(progress_losses) * target_progress_mask
+            if target_progress_mask.sum() > 0:
+                progress_loss = progress_loss.sum() / target_progress_mask.sum()
+            else:
+                progress_loss = progress_loss.mean()
             # Average the Spearman correlations
-            mean_spearman = torch.stack(spearman_correlations).mean()
+            mean_spearman = torch.stack(spearman_correlations) * target_progress_mask
+            if target_progress_mask.sum() > 0:
+                mean_spearman = mean_spearman.sum() / target_progress_mask.sum()
+            else:
+                mean_spearman = mean_spearman.mean()
+
             return progress_loss, mean_spearman
         return 0.0, 0.0
 
@@ -357,12 +363,13 @@ class RFMTrainer(Trainer):
             # Now we know which shape corresponds to which trajectory based on preference labels
             if self.config.model.train_progress_head:
                 progress_loss_A, spearman_corr_A = self._compute_progress_loss(
-                    progress_logits["A"], inputs["target_progress_A"], first_trajectory_shapes, "A"
+                    progress_logits["A"], inputs["target_progress_A"], first_trajectory_shapes, inputs["target_progress_A_mask"], "A"
                 )
                 progress_loss_B, spearman_corr_B = self._compute_progress_loss(
                     progress_logits["B"],
                     inputs["target_progress_B"],
                     second_trajectory_shapes,
+                    inputs["target_progress_B_mask"],
                     "B",
                 )
 
@@ -459,12 +466,14 @@ class RFMTrainer(Trainer):
             progress_logits_ref_sim["A"],
             inputs["target_progress_ref"],
             ref_frames_shape,
+            inputs["target_progress_ref_mask"],
             "A",
         )
         progress_loss_sim, spearman_corr_sim = self._compute_progress_loss(
             progress_logits_ref_sim["B"],
             inputs["target_progress_A"],
             traj_sim_frames_shape,
+            inputs["target_progress_sim_mask"],
             "sim",
         )
 
@@ -472,6 +481,7 @@ class RFMTrainer(Trainer):
             progress_logits_ref_diff["B"],
             inputs["target_progress_B"],
             traj_diff_frames_shape,
+            inputs["target_progress_diff_mask"],
             "diff",
         )
 

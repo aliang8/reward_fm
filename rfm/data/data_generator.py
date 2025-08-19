@@ -52,7 +52,21 @@ class DataGenerator:
 
         self.preference_ratio = config.data.preference_ratio
         self.similarity_ratio = 1.0 - config.data.preference_ratio
-        self.dataset_preference_ratio = config.data.dataset_preference_ratio
+        self.dataset_preference_ratio = getattr(config.data, "dataset_preference_ratio", 0.7)
+
+        # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task]
+        default_strategy_ratio = [0.8, 0.1, 0.1]
+        self.preference_strategy_ratio: List[float] = getattr(
+            config.data, "preference_strategy_ratio", default_strategy_ratio
+        )
+        # Normalize if not summing to 1 and validate
+        total_ratio = sum(self.preference_strategy_ratio)
+        if total_ratio <= 0:
+            self.preference_strategy_ratio = default_strategy_ratio
+        else:
+            self.preference_strategy_ratio = [v / total_ratio for v in self.preference_strategy_ratio]
+        if len(self.preference_strategy_ratio) != 3:
+            self.preference_strategy_ratio = default_strategy_ratio
 
         # Show available datasets for debugging
         self.show_available_datasets()
@@ -244,8 +258,12 @@ class DataGenerator:
 
     def show_available_datasets(self):
         """Show which datasets are available in the cache."""
-        cache_dir = "./processed_datasets"
-        cache_type = "evaluation" if self.is_evaluation else "training"
+        if self.is_evaluation:
+            cache_dir = f"./processed_datasets/eval_cache"
+            cache_type = "evaluation"
+        else:
+            cache_dir = f"./processed_datasets/train_cache"
+            cache_type = "training"
 
         rank_0_print(f"\n🔍 Available datasets in {cache_dir} ({cache_type}):")
 
@@ -262,18 +280,8 @@ class DataGenerator:
                                 info = json.load(f)
                             dataset_path = info.get("dataset_path", "unknown")
                             subset = info.get("subset", "unknown")
-                            dataset_type = info.get("dataset_type", "unknown")
                             trajectories = info.get("total_trajectories", 0)
-
-                            # Only show datasets that match our intended type
-                            if dataset_type == cache_type:
-                                rank_0_print(
-                                    f"  ✅ {dataset_type}: {dataset_path}/{subset}: {trajectories} trajectories"
-                                )
-                            else:
-                                rank_0_print(
-                                    f"  📁 {dataset_type}: {dataset_path}/{subset}: {trajectories} trajectories (not for {cache_type})"
-                                )
+                            rank_0_print(f"  ✅ {dataset_path}/{subset}: {trajectories} trajectories")
                         except:
                             rank_0_print(f"  📁 {subdir}: (info file corrupted)")
                     else:
@@ -450,11 +458,6 @@ class DataGenerator:
         rewind_traj["metadata"]["forward_start"] = start_idx
         rewind_traj["metadata"]["forward_end"] = end_idx
         rewind_traj["metadata"]["rewind_length"] = rewind_length
-
-        # Calculate target progress for rewound trajectory
-        if hasattr(self, "_calculate_target_progress"):
-            rewind_traj["target_progress_B"] = self._calculate_target_progress(rewind_traj)
-
         return rewind_traj
 
     def _create_preference_sample_from_dataset(self) -> PreferenceSample:
@@ -491,25 +494,24 @@ class DataGenerator:
         This method implements three different strategies for generating negative trajectories
         to create diverse and robust preference learning data:
 
-        **Strategy 1: Rewind Same Task (33%)**
+        **Strategy 1: Rewind Same Task**
         - Creates a suboptimal trajectory by rewinding the optimal trajectory
         - Same task, different trajectory ID
         - Good for learning task-specific failure modes and temporal dynamics
 
-        **Strategy 2: Suboptimal/Failure Same Task (33%)**
+        **Strategy 2: Suboptimal/Failure Same Task**
         - Uses existing suboptimal/failure trajectories from the same task
         - Same task, different trajectory ID
         - Good for learning from real failure examples and task-specific suboptimal patterns
 
-        **Strategy 3: Different Task (33%)**
+        **Strategy 3: Different Task**
         - Uses trajectories from completely different tasks
         - Different task, can be optimal or suboptimal
         - Good for learning cross-task generalization and what makes trajectories "good"
           across different contexts
 
-        The strategies are chosen with equal probability to ensure balanced learning
-        across different types of negative examples. This helps the model learn robust
-        preference patterns that generalize well across tasks and scenarios.
+        The strategy ratios are controlled by config.data.preference_strategy_ratio
+        with default [0.8, 0.1, 0.1] for [rewind_same_task, suboptimal_same_task, different_task].
 
         Returns:
             PreferenceSample: A preference sample with chosen (optimal) vs rejected
@@ -527,7 +529,7 @@ class DataGenerator:
         """Create a preference prediction sample using various negative generation strategies.
 
         Implements three strategies for generating negative trajectories to create diverse
-        preference learning data. Each strategy is chosen with equal probability (33% each).
+        preference learning data. Strategy chosen according to self.preference_strategy_ratio.
         """
 
         # Use preprocessed optimal trajectories from index maps
@@ -539,20 +541,25 @@ class DataGenerator:
         optimal_idx = random.choice(self.optimal_by_task[task_name])
         optimal_traj = self.dataset[optimal_idx]
 
-        # Choose negative generation strategy (equal probability for three strategies)
-        strategy = random.random()
+        # Choose negative generation strategy using configured ratios
+        r = random.random()
+        rewind_ratio, subopt_ratio, diff_ratio = self.preference_strategy_ratio
+        if r < rewind_ratio:
+            strategy_choice = 0
+        elif r < rewind_ratio + subopt_ratio:
+            strategy_choice = 1
+        else:
+            strategy_choice = 2
 
-        if strategy < 0.33:
+        if strategy_choice == 0:
             # Strategy 1: Use rewind-generated suboptimal trajectory from same task
             negative_traj = self._create_rewind_trajectory(optimal_traj)
             strategy_used = "rewind_same_task"
-        elif strategy < 0.66:
+        elif strategy_choice == 1:
             # Strategy 2: Use random suboptimal trajectory from same task
             same_task_suboptimal_indices = self.suboptimal_by_task.get(task_name, [])
             same_task_suboptimal = [
-                self.dataset[idx]
-                for idx in same_task_suboptimal_indices
-                if self.dataset[idx]["id"] != optimal_traj["id"]
+                self.dataset[idx] for idx in same_task_suboptimal_indices if self.dataset[idx]["id"] != optimal_traj["id"]
             ]
             if same_task_suboptimal:
                 negative_traj = random.choice(same_task_suboptimal)
@@ -1076,11 +1083,11 @@ def test():
         if key == "preference_inputs":
             for key2, value2 in value.items():
                 if key2 != "sample_type":
-                    rank_0_print(f"{key2} {value2.shape}")
+                    rank_0_print(f"{key2} {value2.shape if hasattr(value2, 'shape') else type(value2)}")
         elif key == "similarity_inputs":
             for key2, value2 in value.items():
                 if key2 != "sample_type":
-                    rank_0_print(f"{key2} {value2.shape}")
+                    rank_0_print(f"{key2} {value2.shape if hasattr(value2, 'shape') else type(value2)}")
 
     # Do a quick forward pass on RFMModel
     from transformers import Qwen2_5_VLModel, AutoProcessor

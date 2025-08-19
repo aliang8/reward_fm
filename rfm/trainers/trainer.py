@@ -8,6 +8,7 @@ from transformers import Trainer
 from typing import List, Dict, Optional, Union, Any
 import numpy as np
 from tqdm import tqdm
+import torch.distributed as dist
 
 from rfm.utils.logging import is_rank_0, rank_0_print
 from rfm.utils.metrics import compute_auc, compute_spearman_correlation
@@ -19,7 +20,22 @@ class RFMTrainer(Trainer):
         super().__init__(*args, **kwargs)
         self.config = config
         # Initialize custom loss tracking
-        self.custom_losses = {}
+        self.log_metadata = {}
+        self.loss_keys = [
+            "preference_loss",
+            "similarity_loss",
+            "progress_loss",
+            "preference_accuracy",
+            "spearman_corr_avg",
+        ]
+        
+        self.log_keys = [
+            "rewind_length_min",
+            "rewind_length_max",
+            "rewind_length_mean",   
+            "rewound_count",
+        ]
+        self.global_metadata = {}
         self.timing_raw = {}
 
     def training_step(self, model, inputs, num_items_in_batch=None):
@@ -33,18 +49,19 @@ class RFMTrainer(Trainer):
 
         # Log custom losses at specified intervals
         if self.state.global_step % self.args.logging_steps == 0:
-            self._log_custom_losses()
+            self._log_metadata()
 
         return loss
 
-    def _log_custom_losses(self):
+    def _log_metadata(self):
         """Log custom RFM losses to wandb and console."""
-        if not self.custom_losses:
+        if not self.log_metadata:
             return
 
         # Aggregate custom losses across all processes if using distributed training
-        aggregated_losses = self._aggregate_custom_losses()
-        aggregated_losses = {f"train/{key}": aggregated_losses[key] for key in aggregated_losses}
+        aggregated_metadata = self._aggregate_log_metadata()
+        aggregated_losses = {f"train/{key}": aggregated_metadata[key] for key in self.loss_keys if key in aggregated_metadata}
+        aggregated_log_keys = {f"misc/{key}": aggregated_metadata[key] for key in self.log_keys if key in aggregated_metadata}
 
         # Prepare logging data using aggregated losses
         log_data = {
@@ -52,6 +69,7 @@ class RFMTrainer(Trainer):
             **self.timing_raw,
         }
         log_data.update(aggregated_losses)
+        log_data.update(aggregated_log_keys)
 
         # Log to wandb if available and configured (only on rank 0)
         if self.args.report_to and "wandb" in self.args.report_to and is_rank_0():
@@ -66,39 +84,35 @@ class RFMTrainer(Trainer):
         # Log to console on rank 0
         if is_rank_0():
             rank_0_print(f"Step {self.state.global_step} Custom Losses (Aggregated):")
-            log_keys = [
-                "preference_loss",
-                "preference_accuracy",
-                "similarity_loss",
-                "progress_loss",
-                "spearman_corr_avg",
-            ]
-            for key in log_keys:
+            for key in self.loss_keys:
                 if f"train/{key}" in aggregated_losses:
                     rank_0_print(f"  {key}: {aggregated_losses[f'train/{key}']:.6f}")
+
+            rank_0_print("-" * 50)
+            for key in self.log_keys:
+                if f"misc/{key}" in aggregated_log_keys:
+                    rank_0_print(f"  {key}: {aggregated_log_keys[f'misc/{key}']:.6f}")
 
             rounded_times = {k: round(v, 2) for k, v in self.timing_raw.items()}
             rank_0_print(f"Timing raw: {rounded_times}")
 
-    def _aggregate_custom_losses(self):
+    def _aggregate_log_metadata(self):
         """Aggregate custom losses across all processes using all_reduce."""
-        if not self.custom_losses:
+        if not self.log_metadata:
             return {}
-
-        import torch.distributed as dist
 
         # If not using distributed training, return losses as-is
         if not dist.is_initialized():
-            return self.custom_losses.copy()
+            return self.log_metadata.copy()
 
         aggregated = {}
 
         # Aggregate loss values (averages)
-        loss_keys = ["preference_loss", "similarity_loss", "progress_loss", "preference_accuracy", "spearman_corr_avg"]
-        for key in loss_keys:
-            if key in self.custom_losses:
+
+        for key in self.loss_keys + self.log_keys:
+            if key in self.log_metadata:
                 # Convert to tensor for all_reduce
-                loss_tensor = torch.tensor(self.custom_losses[key], device=self.accelerator.device)
+                loss_tensor = torch.tensor(self.log_metadata[key], device=self.accelerator.device)
 
                 # Sum across all processes
                 dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
@@ -107,11 +121,10 @@ class RFMTrainer(Trainer):
                 aggregated[key] = (loss_tensor / dist.get_world_size()).item()
 
         # Aggregate count values (sums)
-        count_keys = ["preference_count", "similarity_count", "progress_count"]
-        for key in count_keys:
-            if key in self.custom_losses:
+        for key in self.log_keys:
+            if key in self.log_metadata:
                 # Convert to tensor for all_reduce
-                count_tensor = torch.tensor(self.custom_losses[key], device=self.accelerator.device)
+                count_tensor = torch.tensor(self.log_metadata[key], device=self.accelerator.device)
 
                 # Sum across all processes
                 dist.all_reduce(count_tensor, op=dist.ReduceOp.SUM)
@@ -143,21 +156,14 @@ class RFMTrainer(Trainer):
                     # Move inputs to device
                     inputs = self._prepare_inputs(inputs)
 
-                    _, loss_dicts = self.compute_loss(self.model, inputs, return_outputs=True)
+                    _, loss_dicts = self.compute_loss(self.model, inputs, return_outputs=True, training=False)
                     outputs.append(loss_dicts)
 
         # Aggregate outputs
-        log_keys = [
-            "preference_loss",
-            "similarity_loss",
-            "progress_loss",
-            "preference_accuracy",
-            "spearman_corr_avg",
-        ]
         aggregated_outputs = {}
 
         # assume that we already called .item() on the outputs
-        for key in log_keys:
+        for key in self.log_keys:
             if key in outputs[0]:
                 aggregated_outputs[key] = [output[key] for output in outputs if key in output]
                 aggregated_outputs[key] = np.array(aggregated_outputs[key]).mean()
@@ -190,7 +196,7 @@ class RFMTrainer(Trainer):
 
         # Initialize loss components and metadata
         total_loss = 0.0
-        loss_metadata = {}
+        log_metadata = {}
 
         # Compute preference loss if we have preference samples
 
@@ -204,7 +210,7 @@ class RFMTrainer(Trainer):
             if self.config.model.train_progress_head:
                 total_loss += progress_loss
 
-            loss_metadata.update(loss_dict)
+            log_metadata.update(loss_dict)
 
         # Compute similarity loss if we have similarity samples
         if num_similarities > 0 and similarity_inputs:
@@ -216,15 +222,47 @@ class RFMTrainer(Trainer):
                 total_loss += similarity_loss
             if self.config.model.train_progress_head:
                 total_loss += progress_loss
-            loss_metadata.update(loss_dict)
+            log_metadata.update(loss_dict)
+
+        # Log rewind length stats if available in preference inputs
+        rewind_stats = {}
+        if num_preferences > 0 and preference_inputs:
+            rewind_lengths = preference_inputs.get("rewind_lengths", None)
+            if rewind_lengths is not None:
+                rewind_lengths = rewind_lengths.tolist()
+                rewind_length_min = min(rewind_lengths)
+                rewind_length_max = max(rewind_lengths)
+                rewind_length_mean = np.mean(rewind_lengths)
+                rewound_count = np.array(rewind_lengths).nonzero()[0].size
+                rewind_stats = {
+                    "rewind_length_min": rewind_length_min,
+                    "rewind_length_max": rewind_length_max,
+                    "rewind_length_mean": rewind_length_mean,
+                    "rewound_count": rewound_count,
+                }
+                log_metadata.update(rewind_stats)
+
 
         # Always store custom losses for logging (even when return_outputs=False)
-        self.custom_losses = loss_metadata
+        self.log_metadata = log_metadata
+
+
+        # Update global metadata for training 
+        if kwargs.get("training", True) and dist.is_initialized():
+            # add to total batch size and sum across all processes
+            batch_size = num_preferences + num_similarities
+            dist.all_reduce(batch_size, op=dist.ReduceOp.SUM)
+            self.global_metadata["total_batch_size"] = batch_size.item()
+
+            # total rewounded trajectories 
+            rewound_count = rewind_stats.get("rewound_count", 0)
+            dist.all_reduce(rewound_count, op=dist.ReduceOp.SUM)
+            self.global_metadata["total_rewound_count"] = rewound_count.item()
 
         if return_outputs:
             # Combine outputs from all loss functions
             extra_info = {
-                **loss_metadata,
+                **log_metadata,
                 "total_loss": total_loss,
                 "batch_size": num_preferences + num_similarities,
             }
@@ -268,6 +306,7 @@ class RFMTrainer(Trainer):
         for i, (pred, target, shape) in enumerate(zip(progress_logits, target_progress, frame_shape)):
             num_frames = shape[0] if len(shape) > 0 else 0
             spliced_target = target[:num_frames][::2]
+
             spliced_progress_logits.append(pred)
             spliced_target_progress.append(spliced_target)
 
@@ -289,6 +328,7 @@ class RFMTrainer(Trainer):
                 progress_loss = progress_loss.sum() / target_progress_mask.sum()
             else:
                 progress_loss = progress_loss.mean()
+                
             # Average the Spearman correlations
             mean_spearman = torch.stack(spearman_correlations) * target_progress_mask
             if target_progress_mask.sum() > 0:

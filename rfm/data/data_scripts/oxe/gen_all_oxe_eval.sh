@@ -19,7 +19,7 @@ OXE_VALID_DATASETS=(
     "bc_z"
     #"language_table"
     "bridge_v2"
-    "droid"
+    #"droid"
 )
 
 for dataset_name in ${OXE_VALID_DATASETS[@]}; do

@@ -33,10 +33,7 @@ from rich.console import Console
 from tqdm import tqdm
 
 from rfm.configs.experiment_configs import ExperimentConfig
-from rfm.utils.setup_utils import (
-    # setup_eval_data_generator,
-    setup_eval_dataset,
-)
+from rfm.utils.setup_utils import setup_eval_dataset
 from evals.eval_utils import (
     load_experiment_config_from_yaml,
     build_batch_payload,
@@ -47,10 +44,10 @@ from rfm.data.batch_collator import PreferenceSample, SimilaritySample
 KEY_TO_MEANING = {
     "eval_loss": "Loss",
     "eval_accuracy": "Accuracy of Predicting the Correct Preference",
-    "eval_reward_diff": "Reward Difference between Chosen and Rejected",
-    "eval_avg_reward_chosen": "Average Reward Assigned to (Chosen)",
-    "eval_avg_reward_rejected": "Average Reward (Rejected)",
-    "demo_reward_alignment": "Spearman Correlation between Predicted Progress and Ground Truth Progress (per-frame ordering)",
+    "mse_progress_A": "MSE between progress_pred_A and target_progress_A",
+    "mse_progress_B": "MSE between progress_pred_B and target_progress_B",
+    "spearman_progress_A": "Spearman correlation between progress_pred_A and target_progress_A",
+    "spearman_progress_B": "Spearman correlation between progress_pred_B and target_progress_B",
 }
 
 
@@ -64,12 +61,12 @@ def _compute_metrics_from_response(
     2. Creating granular metrics by subsetting the base metrics for each category
     3. Avoiding redundant calculations for different granular breakdowns
     """
-
-    # Extract predictions and rewards
+    # Extract predictions and progress predictions
     preds = response.get("predictions", [])
-    reward_chosen = response.get("reward_chosen", [])
-    reward_rejected = response.get("reward_rejected", [])
-    progress_predictions = response.get("progress_predictions", [])
+    progress_pred_A = response.get("progress_pred_A", [])
+    progress_pred_B = response.get("progress_pred_B", [])
+    target_progress_A = [s.target_progress_A[::2] for s in samples]
+    target_progress_B = [s.target_progress_B[::2] for s in samples]
 
     # Compute ALL base metrics once for efficiency
     base_metrics = {}
@@ -79,64 +76,44 @@ def _compute_metrics_from_response(
         correct_preds = sum(1 for p in preds if p == 1)  # 1 means chosen trajectory is preferred
         base_metrics["eval_accuracy"] = correct_preds / len(preds)
 
-    # Reward metrics
-    if reward_chosen and reward_rejected:
-        # Handle inhomogeneous reward arrays by flattening them
-        try:
-            # Debug: Log the structure of reward arrays
-            print(f"Debug: reward_chosen type: {type(reward_chosen)}, length: {len(reward_chosen)}")
-            print(f"Debug: reward_rejected type: {type(reward_rejected)}, length: {len(reward_rejected)}")
-            if len(reward_chosen) > 0:
-                print(
-                    f"Debug: First reward_chosen element type: {type(reward_chosen[0])}, shape: {getattr(reward_chosen[0], 'shape', 'no shape')}"
-                )
-            if len(reward_rejected) > 0:
-                print(
-                    f"Debug: First reward_rejected element type: {type(reward_rejected[0])}, shape: {getattr(reward_rejected[0], 'shape', 'no shape')}"
-                )
-
-            # Flatten reward arrays to handle different sequence lengths
-            flat_reward_chosen = []
-            flat_reward_rejected = []
-
-            for chosen_rewards in reward_chosen:
-                if isinstance(chosen_rewards, (list, np.ndarray)):
-                    flat_reward_chosen.extend(chosen_rewards)
-                else:
-                    flat_reward_chosen.append(chosen_rewards)
-
-            for rejected_rewards in reward_rejected:
-                if isinstance(rejected_rewards, (list, np.ndarray)):
-                    flat_reward_rejected.extend(rejected_rewards)
-                else:
-                    flat_reward_rejected.append(rejected_rewards)
-
-            # Convert to numpy arrays and compute means
-            flat_reward_chosen = np.array(flat_reward_chosen, dtype=float)
-            flat_reward_rejected = np.array(flat_reward_rejected, dtype=float)
-
-            print(f"Debug: Flattened reward_chosen shape: {flat_reward_chosen.shape}")
-            print(f"Debug: Flattened reward_rejected shape: {flat_reward_rejected.shape}")
-
-            base_metrics["eval_reward_diff"] = np.mean(flat_reward_chosen) - np.mean(flat_reward_rejected)
-            base_metrics["eval_avg_reward_chosen"] = np.mean(flat_reward_chosen)
-            base_metrics["eval_avg_reward_rejected"] = np.mean(flat_reward_rejected)
-
-        except Exception as e:
-            print(f"Warning: Could not compute reward metrics due to inhomogeneous shapes: {e}")
-            base_metrics["eval_reward_diff"] = None
-            base_metrics["eval_avg_reward_chosen"] = None
-            base_metrics["eval_avg_reward_rejected"] = None
-
-    # Progress alignment (for similarity samples)
-    if progress_predictions and any(s.sample_type == "similarity" for s in samples):
-        progress_targets = [s.target_progress for s in samples if s.sample_type == "similarity"]
-        if len(progress_predictions) == len(progress_targets):
+    # Progress metrics: compute MSE and Spearman for A and B
+    def _compute_mse_and_spearman(pred_list, target_list):
+        # Align lengths and compute metrics per-sample, then average
+        mses = []
+        spearmans = []
+        for pred, target in zip(pred_list, target_list):
+            if pred is None or target is None:
+                continue
             try:
-                correlation, _ = spearmanr(progress_predictions, progress_targets)
-                base_metrics["demo_reward_alignment"] = correlation if not np.isnan(correlation) else None
-            except:
-                base_metrics["demo_reward_alignment"] = None
+                pred_arr = np.array(pred, dtype=float)
+                target_arr = np.array(target, dtype=float)
+                # Align lengths by truncation to the shorter length
+                L = min(len(pred_arr), len(target_arr))
+                if L == 0:
+                    continue
+                pred_arr = pred_arr[:L]
+                target_arr = target_arr[:L]
+                mse = float(np.mean((pred_arr - target_arr) ** 2))
+                mses.append(mse)
+                # Spearman correlation
+                corr, _ = spearmanr(pred_arr, target_arr)
+                if corr is not None and not np.isnan(corr):
+                    spearmans.append(float(corr))
+            except Exception as e:
+                # Skip malformed items
+                continue
+        avg_mse = float(np.mean(mses)) if mses else None
+        avg_spear = float(np.mean(spearmans)) if spearmans else None
+        return avg_mse, avg_spear
+
+    mse_A, spear_A = _compute_mse_and_spearman(progress_pred_A, target_progress_A)
+    mse_B, spear_B = _compute_mse_and_spearman(progress_pred_B, target_progress_B)
+    base_metrics["mse_progress_A"] = mse_A
+    base_metrics["mse_progress_B"] = mse_B
+    base_metrics["spearman_progress_A"] = spear_A
+    base_metrics["spearman_progress_B"] = spear_B
+
+    # No global progress alignment computed here; per-sample Spearman handled above for A and B.
 
     # Now create granular metrics by subsetting the base metrics
     granular_metrics = {}
@@ -149,10 +126,12 @@ def _compute_metrics_from_response(
 
         subset_metrics = {}
 
-        # Filter predictions and rewards for this subset
+        # Filter predictions for this subset
         subset_preds = [preds[i] for i in indices if i < len(preds)]
-        subset_reward_chosen = [reward_chosen[i] for i in indices if i < len(reward_chosen)]
-        subset_reward_rejected = [reward_rejected[i] for i in indices if i < len(reward_rejected)]
+        subset_progress_pred_A = [progress_pred_A[i] for i in indices if i < len(progress_pred_A)]
+        subset_progress_pred_B = [progress_pred_B[i] for i in indices if i < len(progress_pred_B)]
+        subset_target_A = [target_progress_A[i] for i in indices if i < len(target_progress_A)]
+        subset_target_B = [target_progress_B[i] for i in indices if i < len(target_progress_B)]
 
         if not subset_preds:
             return {}
@@ -161,68 +140,13 @@ def _compute_metrics_from_response(
         correct = sum(1 for p in subset_preds if p == 1)  # 1 means chosen trajectory is preferred
         subset_metrics[f"accuracy_{metric_prefix}"] = correct / len(subset_preds)
 
-        # Compute reward metrics for this subset
-        flat_reward_chosen = None
-        flat_reward_rejected = None
-
-        if subset_reward_chosen:
-            try:
-                # Flatten reward arrays to handle different sequence lengths
-                flat_reward_chosen = []
-                for chosen_rewards in subset_reward_chosen:
-                    if isinstance(chosen_rewards, (list, np.ndarray)):
-                        flat_reward_chosen.extend(chosen_rewards)
-                    else:
-                        flat_reward_chosen.append(chosen_rewards)
-
-                flat_reward_chosen = np.array(flat_reward_chosen, dtype=float)
-                subset_metrics[f"avg_reward_chosen_{metric_prefix}"] = np.mean(flat_reward_chosen)
-            except Exception as e:
-                print(f"Warning: Could not compute chosen reward metrics for {metric_prefix}: {e}")
-                subset_metrics[f"avg_reward_chosen_{metric_prefix}"] = None
-                flat_reward_chosen = None
-
-        if subset_reward_rejected:
-            try:
-                # Flatten reward arrays to handle different sequence lengths
-                flat_reward_rejected = []
-                for rejected_rewards in subset_reward_rejected:
-                    if isinstance(rejected_rewards, (list, np.ndarray)):
-                        flat_reward_rejected.extend(rejected_rewards)
-                    else:
-                        flat_reward_rejected.append(rejected_rewards)
-
-                flat_reward_rejected = np.array(flat_reward_rejected, dtype=float)
-                subset_metrics[f"avg_reward_rejected_{metric_prefix}"] = np.mean(flat_reward_rejected)
-            except Exception as e:
-                print(f"Warning: Could not compute rejected reward metrics for {metric_prefix}: {e}")
-                subset_metrics[f"avg_reward_rejected_{metric_prefix}"] = None
-                flat_reward_rejected = None
-
-        if flat_reward_chosen is not None and flat_reward_rejected is not None:
-            try:
-                # Both arrays are already flattened above
-                subset_metrics[f"reward_diff_{metric_prefix}"] = np.mean(flat_reward_chosen) - np.mean(
-                    flat_reward_rejected
-                )
-            except Exception as e:
-                print(f"Warning: Could not compute reward difference for {metric_prefix}: {e}")
-                subset_metrics[f"reward_diff_{metric_prefix}"] = None
-
-        # Compute progress alignment for this subset (if applicable)
-        if progress_predictions and any(s.sample_type == "similarity" for s in [samples[i] for i in indices]):
-            subset_progress_preds = [progress_predictions[i] for i in indices if i < len(progress_predictions)]
-            subset_progress_targets = [
-                s.target_progress for i, s in enumerate(samples) if i in indices and s.sample_type == "similarity"
-            ]
-            if len(subset_progress_preds) == len(subset_progress_targets) and subset_progress_preds:
-                try:
-                    correlation, _ = spearmanr(subset_progress_preds, subset_progress_targets)
-                    subset_metrics[f"progress_alignment_{metric_prefix}"] = (
-                        correlation if not np.isnan(correlation) else None
-                    )
-                except:
-                    subset_metrics[f"progress_alignment_{metric_prefix}"] = None
+        # Compute progress metrics for subset (A and B)
+        subset_mse_A, subset_spear_A = _compute_mse_and_spearman(subset_progress_pred_A, subset_target_A)
+        subset_mse_B, subset_spear_B = _compute_mse_and_spearman(subset_progress_pred_B, subset_target_B)
+        subset_metrics[f"mse_progress_A_{metric_prefix}"] = subset_mse_A
+        subset_metrics[f"mse_progress_B_{metric_prefix}"] = subset_mse_B
+        subset_metrics[f"spearman_progress_A_{metric_prefix}"] = subset_spear_A
+        subset_metrics[f"spearman_progress_B_{metric_prefix}"] = subset_spear_B
 
         return subset_metrics
 
@@ -351,10 +275,10 @@ def iter_eval_batches(
         # Extract main metrics for this batch
         keys = [
             "eval_accuracy",
-            "eval_reward_diff",
-            "eval_avg_reward_chosen",
-            "eval_avg_reward_rejected",
-            "demo_reward_alignment",
+            "mse_progress_A",
+            "mse_progress_B",
+            "spearman_progress_A",
+            "spearman_progress_B",
         ]
         batch_main_metrics = {k: batch_result.get(k) for k in keys if k in batch_result}
 
@@ -365,10 +289,10 @@ def iter_eval_batches(
             if k.startswith(
                 (
                     "accuracy_",
-                    "avg_reward_chosen_",
-                    "avg_reward_rejected_",
-                    "reward_diff_",
-                    "progress_alignment_",
+                    "mse_progress_A_",
+                    "mse_progress_B_",
+                    "spearman_progress_A_",
+                    "spearman_progress_B_",
                     "count_",
                 )
             )
@@ -447,10 +371,10 @@ def main():
     # Print an aggregated summary
     keys = [
         "eval_accuracy",
-        "eval_reward_diff",
-        "eval_avg_reward_chosen",
-        "eval_avg_reward_rejected",
-        "demo_reward_alignment",
+        "mse_progress_A",
+        "mse_progress_B",
+        "spearman_progress_A",
+        "spearman_progress_B",
     ]
 
     # Add granular metrics keys
@@ -460,10 +384,10 @@ def main():
             if k.startswith(
                 (
                     "accuracy_",
-                    "avg_reward_chosen_",
-                    "avg_reward_rejected_",
-                    "reward_diff_",
-                    "progress_alignment_",
+                    "mse_progress_A_",
+                    "mse_progress_B_",
+                    "spearman_progress_A_",
+                    "spearman_progress_B_",
                     "count_",
                 )
             ):
@@ -616,18 +540,14 @@ def generate_metrics_summary(metrics: dict, granular_metrics: dict, title: str, 
                 metric_groups["Rewound Frame Analysis"].append(k)
             elif k.startswith("accuracy_rejected_"):
                 metric_groups["Rejected Quality Analysis"].append(k)
-            elif k.startswith(("avg_reward_chosen_", "avg_reward_rejected_", "reward_diff_", "progress_alignment_")):
+            elif k.startswith(("mse_progress_A_", "mse_progress_B_", "spearman_progress_A_", "spearman_progress_B_")):
                 # Add to appropriate group based on the metric type
-                if any(
-                    k.startswith(prefix)
-                    for prefix in ["avg_reward_chosen_", "avg_reward_rejected_", "reward_diff_", "progress_alignment_"]
-                ):
-                    if "rewound_" in k:
-                        metric_groups["Rewound Frame Analysis"].append(k)
-                    elif "rejected_" in k:
-                        metric_groups["Rejected Quality Analysis"].append(k)
-                    else:
-                        metric_groups["Data Gen Strategy Analysis"].append(k)
+                if "rewound_" in k:
+                    metric_groups["Rewound Frame Analysis"].append(k)
+                elif "rejected_" in k:
+                    metric_groups["Rejected Quality Analysis"].append(k)
+                else:
+                    metric_groups["Data Gen Strategy Analysis"].append(k)
 
         # Print each group with nice formatting
         for group_name, group_metrics in metric_groups.items():
@@ -657,14 +577,14 @@ def generate_metrics_summary(metrics: dict, granular_metrics: dict, title: str, 
                         # Add description for granular metrics
                         if k.startswith("accuracy_"):
                             description = "Accuracy of Predicting the Correct Preference (granular breakdown)"
-                        elif k.startswith("avg_reward_chosen_"):
-                            description = "Average Reward Assigned to (Chosen) (granular breakdown)"
-                        elif k.startswith("avg_reward_rejected_"):
-                            description = "Average Reward (Rejected) (granular breakdown)"
-                        elif k.startswith("reward_diff_"):
-                            description = "Reward Difference between Chosen and Rejected (granular breakdown)"
-                        elif k.startswith("progress_alignment_"):
-                            description = "Spearman Correlation between Predicted Progress and Ground Truth Progress (granular breakdown)"
+                        elif k.startswith("mse_progress_A_"):
+                            description = "MSE between progress_pred_A and target_progress_A (granular)"
+                        elif k.startswith("mse_progress_B_"):
+                            description = "MSE between progress_pred_B and target_progress_B (granular)"
+                        elif k.startswith("spearman_progress_A_"):
+                            description = "Spearman correlation between progress_pred_A and target_progress_A (granular)"
+                        elif k.startswith("spearman_progress_B_"):
+                            description = "Spearman correlation between progress_pred_B and target_progress_B (granular)"
                         else:
                             description = k
 

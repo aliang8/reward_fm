@@ -130,9 +130,8 @@ def build_preference_batch(processor, samples: List[SamplePayload], resized_h: i
     batch_inputs["target_progress_A"] = pad_progress([s.target_progress_A for s in samples])
     batch_inputs["target_progress_B"] = pad_progress([s.target_progress_B for s in samples])
 
-    preference_labels = np.ones(len(samples))
     # Labels: 1 means chosen preferred over rejected
-    batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
+    batch_inputs["preference_labels"] = torch.tensor(np.ones(len(samples)), dtype=torch.float32)
     return batch_inputs
 
 
@@ -190,14 +189,10 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: Dict[str, torch.Tensor
                     else:
                         progress_pred_B.append(seq.detach().cpu().flatten().tolist())
 
-        # Map rewards to progress predictions: A corresponds to chosen, B to rejected
-        rewards_chosen = progress_pred_A
-        rewards_rejected = progress_pred_B
-
         return {
             "predictions": predictions,
-            "reward_chosen": rewards_chosen,
-            "reward_rejected": rewards_rejected,
+            "progress_pred_A": progress_pred_A,
+            "progress_pred_B": progress_pred_B,
         }
 
 

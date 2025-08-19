@@ -15,6 +15,9 @@ from tqdm import tqdm
 from rfm.data.batch_collator import BaseSample, PreferenceSample, SimilaritySample
 from rfm.utils.logging import rank_0_print
 
+def calulate_target_progress(frames: np.ndarray) -> List[float]:
+    num_frames = frames.shape[0]
+    return [i / num_frames for i in range(num_frames)]
 
 class InfiniteDataGeneratorDataset:
     """Dataset that generates preference and similarity samples infinitely."""
@@ -99,6 +102,9 @@ class RewoundDataset:
         original_frames = self.data_generator._get_trajectory_frames(original_traj_idx)
         rewound_frames = rewound_traj["frames"]  # Already numpy array
 
+        target_progress_A = calulate_target_progress(original_frames)
+        target_progress_B = rewound_traj["metadata"]["rewind_progress"]
+
         # Create preference sample (original is chosen, rewound is rejected)
         sample = PreferenceSample(
             # chosen metadata
@@ -121,6 +127,8 @@ class RewoundDataset:
             rejected_is_robot=rewound_traj["is_robot"],
             num_frames_rewound=rewound_traj.get("num_frames_rewound", rewind_length),
             data_gen_strategy="rewound",
+            target_progress_A=target_progress_A,
+            target_progress_B=target_progress_B,
         )
 
         return sample
@@ -219,6 +227,9 @@ class PairedSuccessFailureDataset:
         success_frames = self.data_generator._get_trajectory_frames(success_idx)
         failure_frames = self.data_generator._get_trajectory_frames(failure_idx)
 
+        target_progress_A = calulate_target_progress(success_frames)
+        target_progress_B = None
+
         # Create preference sample (successful is chosen, failed is rejected)
         sample = PreferenceSample(
             # chosen metadata
@@ -241,7 +252,9 @@ class PairedSuccessFailureDataset:
             rejected_is_robot=failure_traj["is_robot"],
             data_gen_strategy="success_failure",
             num_frames_rewound=None,  # Not applicable for success-failure pairs
-        )
+            target_progress_A=target_progress_A,
+            target_progress_B=None, # not applicable for failure trajectories
+        ) 
 
         return sample
 

@@ -30,12 +30,15 @@ class RFMTrainer(Trainer):
         ]
         
         self.log_keys = [
-            "rewind_length_min",
+            "num_rewind_frames_min",
             "rewind_length_max",
             "rewind_length_mean",   
             "rewound_count",
         ]
-        self.global_metadata = {}
+        self.global_metadata = {
+            "total_samples": 0,
+            "total_samples_with_rewound_trajs": 0,
+        }
         self.timing_raw = {}
 
     def training_step(self, model, inputs, num_items_in_batch=None):
@@ -71,6 +74,10 @@ class RFMTrainer(Trainer):
         log_data.update(aggregated_losses)
         log_data.update(aggregated_log_keys)
 
+        # also log the global metadata
+        log_global = {f"counts/{key}": self.global_metadata[key] for key in self.global_metadata}
+        log_data.update(log_global)
+
         # Log to wandb if available and configured (only on rank 0)
         if self.args.report_to and "wandb" in self.args.report_to and is_rank_0():
             try:
@@ -93,6 +100,10 @@ class RFMTrainer(Trainer):
                 if f"misc/{key}" in aggregated_log_keys:
                     rank_0_print(f"  {key}: {aggregated_log_keys[f'misc/{key}']:.6f}")
 
+            rank_0_print("-" * 50)
+            for key in log_global:
+                rank_0_print(f"  {key}: {log_global[key]}")
+
             rounded_times = {k: round(v, 2) for k, v in self.timing_raw.items()}
             rank_0_print(f"Timing raw: {rounded_times}")
 
@@ -107,7 +118,7 @@ class RFMTrainer(Trainer):
 
         aggregated = {}
 
-        # Aggregate loss values (averages)
+        # Aggregate loss values (averages) across all processes
 
         for key in self.loss_keys + self.log_keys:
             if key in self.log_metadata:
@@ -120,7 +131,7 @@ class RFMTrainer(Trainer):
                 # Average by world size
                 aggregated[key] = (loss_tensor / dist.get_world_size()).item()
 
-        # Aggregate count values (sums)
+        # Aggregate count values (mean) across all processes
         for key in self.log_keys:
             if key in self.log_metadata:
                 # Convert to tensor for all_reduce
@@ -129,8 +140,8 @@ class RFMTrainer(Trainer):
                 # Sum across all processes
                 dist.all_reduce(count_tensor, op=dist.ReduceOp.SUM)
 
-                # Keep as sum (total across all processes)
-                aggregated[key] = count_tensor.item()
+                # Average by world size
+                aggregated[key] = (count_tensor / dist.get_world_size()).item()
 
         return aggregated
 
@@ -163,7 +174,7 @@ class RFMTrainer(Trainer):
         aggregated_outputs = {}
 
         # assume that we already called .item() on the outputs
-        for key in self.log_keys:
+        for key in self.loss_keys:
             if key in outputs[0]:
                 aggregated_outputs[key] = [output[key] for output in outputs if key in output]
                 aggregated_outputs[key] = np.array(aggregated_outputs[key]).mean()
@@ -228,17 +239,18 @@ class RFMTrainer(Trainer):
         rewind_stats = {}
         if num_preferences > 0 and preference_inputs:
             rewind_lengths = preference_inputs.get("rewind_lengths", None)
+
             if rewind_lengths is not None:
                 rewind_lengths = rewind_lengths.tolist()
-                rewind_length_min = min(rewind_lengths)
-                rewind_length_max = max(rewind_lengths)
-                rewind_length_mean = np.mean(rewind_lengths)
-                rewound_count = np.array(rewind_lengths).nonzero()[0].size
+                num_rewind_frames_min = min(rewind_lengths)
+                num_rewind_frames_max = max(rewind_lengths)
+                num_rewind_frames_mean = np.mean(rewind_lengths)
+                num_rewound_trajs = np.array(rewind_lengths).nonzero()[0].size
                 rewind_stats = {
-                    "rewind_length_min": rewind_length_min,
-                    "rewind_length_max": rewind_length_max,
-                    "rewind_length_mean": rewind_length_mean,
-                    "rewound_count": rewound_count,
+                    "num_rewind_frames_min": num_rewind_frames_min,
+                    "num_rewind_frames_max": num_rewind_frames_max,
+                    "num_rewind_frames_mean": num_rewind_frames_mean,
+                    "num_rewound_trajs": num_rewound_trajs,
                 }
                 log_metadata.update(rewind_stats)
 
@@ -247,17 +259,19 @@ class RFMTrainer(Trainer):
         self.log_metadata = log_metadata
 
 
-        # Update global metadata for training 
+        # Update global metadata for training ]
+        # Keep sum counts over all processes
         if kwargs.get("training", True) and dist.is_initialized():
             # add to total batch size and sum across all processes
-            batch_size = num_preferences + num_similarities
+            batch_size = torch.tensor(num_preferences + num_similarities, device=self.accelerator.device)
             dist.all_reduce(batch_size, op=dist.ReduceOp.SUM)
-            self.global_metadata["total_batch_size"] = batch_size.item()
+            self.global_metadata["total_samples"] += batch_size.item()
 
             # total rewounded trajectories 
-            rewound_count = rewind_stats.get("rewound_count", 0)
-            dist.all_reduce(rewound_count, op=dist.ReduceOp.SUM)
-            self.global_metadata["total_rewound_count"] = rewound_count.item()
+            total_samples_with_rewound_trajs = torch.tensor(rewind_stats.get("rewound_count", 0), device=self.accelerator.device)
+            dist.all_reduce(total_samples_with_rewound_trajs, op=dist.ReduceOp.SUM)
+            self.global_metadata["total_samples_with_rewound_trajs"] += total_samples_with_rewound_trajs.item()
+
 
         if return_outputs:
             # Combine outputs from all loss functions

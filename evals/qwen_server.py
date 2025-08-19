@@ -175,6 +175,7 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: Dict[str, torch.Tensor
         # Extract progress predictions for A and B if available
         progress_pred_A: List[List[float]] = []
         progress_pred_B: List[List[float]] = []
+
         if isinstance(progress_logits, dict):
             if progress_logits.get("A") is not None:
                 for seq in progress_logits["A"]:

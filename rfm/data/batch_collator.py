@@ -270,18 +270,19 @@ class BatchCollator:
         """Process a batch of preference samples."""
         # Collect all messages for batch processing
         all_messages = []
-        preference_labels = []
 
-        for sample in preference_samples:
+        # Randomly decide whether chosen trajectory goes first or second
+        preference_labels = np.random.randint(0, 2, len(preference_samples))
+
+        target_progress_A_mask = []
+        target_progress_B_mask = []
+
+        for i, sample in enumerate(preference_samples):
             # Convert frames to appropriate format using stored shapes
             chosen_frames = self._convert_frames_to_pil_images(sample.chosen_frames, sample.chosen_frames_shape)
             rejected_frames = self._convert_frames_to_pil_images(sample.rejected_frames, sample.rejected_frames_shape)
 
-            # Randomly decide whether chosen trajectory goes first or second
-            # This prevents the model from learning position bias
-            chosen_first = random.choice([True, False])
-
-            if chosen_first:
+            if preference_labels[i] == 1.0:
                 # Chosen trajectory first: task + video A (chosen) + <|split_token|> + video B (rejected) + <|pref_token|>
                 conversation = [
                     {
@@ -305,8 +306,6 @@ class BatchCollator:
                         ],
                     }
                 ]
-                # Label: 1.0 means first trajectory (chosen) is preferred
-                preference_labels.append(1.0)
             else:
                 # Chosen trajectory second: task + video A (rejected) + <|split_token|> + video B (chosen) + <|pref_token|>
                 conversation = [
@@ -331,8 +330,6 @@ class BatchCollator:
                         ],
                     }
                 ]
-                # Label: 0.0 means second trajectory (chosen) is preferred
-                preference_labels.append(0.0)
 
             all_messages.append(conversation)
 
@@ -378,6 +375,17 @@ class BatchCollator:
                     target_progress_A_list.append(sample.target_progress_A)  # chosen progress
                 if sample.target_progress_B is not None:
                     target_progress_B_list.append(sample.target_progress_B)  # rejected progress
+
+                if sample.chosen_quality_label == "successful":
+                    target_progress_A_mask.append(1.0)
+                else:
+                    target_progress_A_mask.append(0.0)
+            
+                if sample.rejected_quality_label == "successful" or sample.data_gen_strategy == "rewound":
+                    target_progress_B_mask.append(1.0)
+                else:
+                    target_progress_B_mask.append(0.0)
+            
             else:
                 # First trajectory is rejected (rejected_frames), second is chosen (chosen_frames)
                 if sample.target_progress_B is not None:
@@ -385,9 +393,22 @@ class BatchCollator:
                 if sample.target_progress_A is not None:
                     target_progress_B_list.append(sample.target_progress_A)  # chosen progress (now second)
 
+
+                if sample.rejected_quality_label == "successful" or sample.data_gen_strategy == "rewound":
+                    target_progress_A_mask.append(1.0)
+                else:
+                    target_progress_A_mask.append(0.0)
+                if sample.chosen_quality_label == "successful":
+                    target_progress_B_mask.append(1.0)
+                else:
+                    target_progress_B_mask.append(0.0)
+
+
         # Pad target progress tensors to max length in last dimension
         batch_inputs["target_progress_A"] = self._pad_target_progress(target_progress_A_list)
         batch_inputs["target_progress_B"] = self._pad_target_progress(target_progress_B_list)
+        batch_inputs["target_progress_A_mask"] = torch.tensor(target_progress_A_mask, dtype=torch.float32)
+        batch_inputs["target_progress_B_mask"] = torch.tensor(target_progress_B_mask, dtype=torch.float32)
 
         # Also add the frame_shapes
         batch_inputs["chosen_frames_shape"] = torch.tensor(

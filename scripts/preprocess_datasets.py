@@ -2,7 +2,7 @@
 """
 Dataset preprocessing script that creates index-based caches for fast trajectory access.
 Uses HuggingFace's .map() for efficient processing and saves trajectory indices.
-Handles both training and evaluation datasets separately.
+Creates one unified cache for each dataset/subset split.
 """
 
 import os
@@ -20,13 +20,12 @@ from rfm.utils.logging import rank_0_print
 from evals.eval_utils import load_experiment_config_from_yaml
 
 
-class BaseDatasetPreprocessor:
-    """Base class for dataset preprocessing with common functionality."""
+class DatasetPreprocessor:
+    """Unified preprocessor for all datasets with individual caching per dataset/subset."""
 
-    def __init__(self, config, cache_dir: str, dataset_type: str):
+    def __init__(self, config, cache_dir: str = "./processed_datasets"):
         self.config = config
         self.cache_dir = cache_dir
-        self.dataset_type = dataset_type
 
         # Add attributes for video processing
         self.max_frames = config.data.max_frames
@@ -35,85 +34,84 @@ class BaseDatasetPreprocessor:
         self.force_reprocess = config.data.force_reprocess
         self.num_proc = config.data.num_proc
 
-        # Dataset storage - now store individual datasets
+        # Dataset storage - store individual datasets
         self.datasets: Dict[str, Dataset] = {}  # key: "dataset_path/subset"
         self.dataset_indices: Dict[str, Dict] = {}  # key: "dataset_path/subset", value: index mappings
 
     def preprocess_datasets(self):
         """Preprocess each dataset/subset pair individually and create index-based caches."""
-        rank_0_print(f"\n🔧 Preprocessing {self.dataset_type} datasets...")
+        rank_0_print(f"\n🔧 Preprocessing all datasets...")
 
-        if self.dataset_type == "training":
-            datasets = self.config.data.train_datasets
-            subsets = self.config.data.train_subsets
-        else:
-            datasets = self.config.data.eval_datasets
-            subsets = self.config.data.eval_subsets
+        # Collect all dataset/subset combinations
+        all_datasets = []
 
-        # Show which datasets are already preprocessed
-        self._show_preprocessed_datasets(datasets, subsets)
-
-        # Process each dataset and its associated subsets
-        for i, (dataset_path, dataset_subsets) in enumerate(zip(datasets, subsets)):
-            rank_0_print(f"\n📚 Processing {self.dataset_type} dataset {i + 1}/{len(datasets)}: {dataset_path}")
-
-            # Handle both single subset (string) and multiple subsets (list)
+        # Add training datasets
+        for dataset_path, dataset_subsets in zip(self.config.data.train_datasets, self.config.data.train_subsets):
             if isinstance(dataset_subsets, str):
                 dataset_subsets = [dataset_subsets]
+            for subset in dataset_subsets:
+                all_datasets.append(("training", dataset_path, subset))
 
-            for j, subset in enumerate(dataset_subsets):
-                rank_0_print(f"  📂 Processing subset {j + 1}/{len(dataset_subsets)}: {subset}")
+        # Add evaluation datasets
+        for dataset_path, dataset_subsets in zip(self.config.data.eval_datasets, self.config.data.eval_subsets):
+            if isinstance(dataset_subsets, str):
+                dataset_subsets = [dataset_subsets]
+            for subset in dataset_subsets:
+                all_datasets.append(("evaluation", dataset_path, subset))
 
-                # Create individual cache key
-                cache_key = f"{dataset_path}/{subset}"
-                individual_cache_dir = os.path.join(self.cache_dir, cache_key.replace("/", "_").replace(":", "_"))
+        # Show which datasets are already preprocessed
+        self._show_preprocessed_datasets(all_datasets)
 
-                # Check if already processed
-                if os.path.exists(individual_cache_dir) and not self.force_reprocess:
-                    rank_0_print(f"    ✅ Cache already exists at {individual_cache_dir}, loading...")
-                    self._load_individual_cache(individual_cache_dir, cache_key)
-                    continue
+        # Process each dataset and its associated subsets
+        for i, (dataset_type, dataset_path, subset) in enumerate(all_datasets):
+            rank_0_print(f"\n📚 Processing {dataset_type} dataset {i + 1}/{len(all_datasets)}: {dataset_path}/{subset}")
 
-                # Load and process individual dataset
-                try:
-                    dataset = self._load_dataset_from_path(dataset_path, subset)
+            # Create individual cache key
+            cache_key = f"{dataset_path}/{subset}"
+            individual_cache_dir = os.path.join(self.cache_dir, cache_key.replace("/", "_").replace(":", "_"))
 
-                    # Handle DatasetDict
-                    if isinstance(dataset, DatasetDict):
-                        if "train" in dataset:
-                            dataset = dataset["train"]
-                        else:
-                            rank_0_print(f"    ⚠️  Warning: No 'train' split found in {dataset_path}/{subset}")
-                            continue
+            # Check if already processed
+            if os.path.exists(individual_cache_dir) and not self.force_reprocess:
+                rank_0_print(f"    ✅ Cache already exists at {individual_cache_dir}, loading...")
+                self._load_individual_cache(individual_cache_dir, cache_key)
+                continue
 
-                    rank_0_print(f"    📥 Loaded {len(dataset)} trajectories from {dataset_path}/{subset}")
+            # Load and process individual dataset
+            try:
+                dataset = self._load_dataset_from_path(dataset_path, subset)
 
-                    # Process this individual dataset
-                    processed_dataset, indices = self._process_individual_dataset(
-                        dataset, individual_cache_dir, cache_key
-                    )
+                # Handle DatasetDict
+                if isinstance(dataset, DatasetDict):
+                    if "train" in dataset:
+                        dataset = dataset["train"]
+                    else:
+                        rank_0_print(f"    ⚠️  Warning: No 'train' split found in {dataset_path}/{subset}")
+                        continue
 
-                    # Store processed dataset and indices
-                    self.datasets[cache_key] = processed_dataset
-                    self.dataset_indices[cache_key] = indices
+                rank_0_print(f"    📥 Loaded {len(dataset)} trajectories from {dataset_path}/{subset}")
 
-                    # Save individual cache
-                    self._save_individual_cache(individual_cache_dir, processed_dataset, indices, dataset_path, subset)
+                # Process this individual dataset
+                processed_dataset, indices = self._process_individual_dataset(dataset, individual_cache_dir, cache_key)
 
-                    rank_0_print(f"    ✅ Successfully processed and cached {dataset_path}/{subset}")
+                # Store processed dataset and indices
+                self.datasets[cache_key] = processed_dataset
+                self.dataset_indices[cache_key] = indices
 
-                except Exception as e:
-                    rank_0_print(f"    ❌ Failed to process {dataset_path}/{subset}: {e}")
-                    continue
+                # Save individual cache
+                self._save_individual_cache(
+                    individual_cache_dir, processed_dataset, indices, dataset_path, subset, dataset_type
+                )
+
+                rank_0_print(f"    ✅ Successfully processed and cached {dataset_path}/{subset}")
+
+            except Exception as e:
+                rank_0_print(f"    ❌ Failed to process {dataset_path}/{subset}: {e}")
+                continue
 
         if not self.datasets:
-            if self.dataset_type == "training":
-                raise ValueError("No training datasets were successfully processed")
-            else:
-                rank_0_print("Warning: No evaluation datasets were successfully processed")
-                return
+            raise ValueError("No datasets were successfully processed")
 
-        rank_0_print(f"✅ Successfully processed {len(self.datasets)} {self.dataset_type} datasets")
+        rank_0_print(f"✅ Successfully processed {len(self.datasets)} datasets")
 
         # Log summary of processed datasets
         total_trajectories = sum(len(dataset) for dataset in self.datasets.values())
@@ -123,7 +121,7 @@ class BaseDatasetPreprocessor:
             rank_0_print(f"  📚 {cache_key}: {len(dataset)} trajectories")
 
         # Show final status summary
-        self._show_final_status_summary(datasets, subsets)
+        self._show_final_status_summary(all_datasets)
 
     def _process_individual_dataset(self, dataset: Dataset, cache_dir: str, cache_key: str):
         """Process a single dataset and build its index mappings."""
@@ -254,10 +252,8 @@ class BaseDatasetPreprocessor:
         def process_videos_and_build_indices(example, idx):
             """Process frames and build index mappings in a single pass."""
             # Debug: Log what we're processing
-            if idx < 5:  # Only log first 5 examples to avoid spam
-                rank_0_print(
-                    f"Processing example {idx}: {example.get('id', 'unknown')} - {example.get('task', 'unknown')}"
-                )
+            if idx < 3:  # Only log first 5 examples to avoid spam
+                rank_0_print(f"Processing example {idx}: {example['id']} - {example['task']}")
 
             # Get the video reader object from the Video feature
             frames = example.get("frames_path")
@@ -265,77 +261,71 @@ class BaseDatasetPreprocessor:
                 rank_0_print(f"Warning: No frames_path for example {idx}")
                 return {"frames": None, "frames_processed": False}
 
-            try:
-                # Process video frames using the _preprocess_videos method
-                frames_array = self._preprocess_videos(frames, self.config.data.max_frames)
+            # Process video frames using the _preprocess_videos method
+            frames_array = self._preprocess_videos(frames, self.config.data.max_frames)
 
-                if frames_array.size == 0:
-                    rank_0_print(f"Warning: No frames processed for example {idx}")
-                    return {"frames": None, "frames_processed": False}
+            if frames_array.size == 0:
+                rank_0_print(f"Warning: No frames processed for example {idx}")
+                return {"frames": None, "frames_processed": False}
 
-                # Save frames as npz file
-                frames_filename = f"trajectory_{idx:06d}_{example.get('id', 'unknown')}.npz"
-                frames_filepath = os.path.join(frames_dir, frames_filename)
+            # Save frames as npz file
+            frames_filename = f"trajectory_{idx:06d}_{example['id']}.npz"
+            frames_filepath = os.path.join(frames_dir, frames_filename)
 
-                # Save frames with metadata
-                np.savez_compressed(
-                    frames_filepath,
-                    frames=frames_array,
-                    shape=frames_array.shape,
-                    num_frames=frames_array.shape[0] if len(frames_array.shape) > 0 else 0,
+            # Save frames with metadata
+            np.savez_compressed(
+                frames_filepath,
+                frames=frames_array,
+                shape=frames_array.shape,
+                num_frames=frames_array.shape[0] if len(frames_array.shape) > 0 else 0,
+            )
+
+            # Store file path and metadata in dataset (not the actual frames)
+            example["frames"] = frames_filepath  # Store path to npz file
+            example["frames_shape"] = frames_array.shape
+            example["num_frames"] = frames_array.shape[0] if len(frames_array.shape) > 0 else 0
+            example["frames_processed"] = True
+
+            # BUILD INDEX MAPPINGS DURING THE SAME PASS
+            # Debug: Log the values we're extracting
+            if idx < 3:
+                rank_0_print(
+                    f"  Example {idx} - is_robot: {example.get('is_robot', True)}, task: {example.get('task', 'unknown')}, quality: {example.get('quality_label', 'successful')}"
                 )
 
-                # Store file path and metadata in dataset (not the actual frames)
-                example["frames"] = frames_filepath  # Store path to npz file
-                example["frames_shape"] = frames_array.shape
-                example["num_frames"] = frames_array.shape[0] if len(frames_array.shape) > 0 else 0
-                example["frames_processed"] = True
+            # Robot/Human trajectories
+            if example.get("is_robot", True):
+                robot_trajectories.append(idx)
+            else:
+                human_trajectories.append(idx)
 
-                # BUILD INDEX MAPPINGS DURING THE SAME PASS
-                # Debug: Log the values we're extracting
-                if idx < 5:
-                    rank_0_print(
-                        f"  Example {idx} - is_robot: {example.get('is_robot', True)}, task: {example.get('task', 'unknown')}, quality: {example.get('quality_label', 'successful')}"
-                    )
+            # Quality-based indices
+            quality = example["quality_label"]
+            if quality not in quality_indices:
+                quality_indices[quality] = []
+            quality_indices[quality].append(idx)
 
-                # Robot/Human trajectories
-                if example.get("is_robot", True):
-                    robot_trajectories.append(idx)
-                else:
-                    human_trajectories.append(idx)
+            # Task-based indices
+            task = example["task"]
+            if task not in task_indices:
+                task_indices[task] = []
+            task_indices[task].append(idx)
 
-                # Quality-based indices
-                quality = example.get("quality_label", "successful")
-                if quality not in quality_indices:
-                    quality_indices[quality] = []
-                quality_indices[quality].append(idx)
+            # Source-based indices
+            source = example["data_source"]
+            if source not in source_indices:
+                source_indices[source] = []
+            source_indices[source].append(idx)
 
-                # Task-based indices
-                task = example.get("task", "unknown")
-                if task not in task_indices:
-                    task_indices[task] = []
-                task_indices[task].append(idx)
+            # Optimal/Suboptimal by task
+            if task not in optimal_by_task:
+                optimal_by_task[task] = []
+                suboptimal_by_task[task] = []
 
-                # Source-based indices
-                source = example.get("data_source", "unknown")
-                if source not in source_indices:
-                    source_indices[source] = []
-                source_indices[source].append(idx)
-
-                # Optimal/Suboptimal by task
-                if task not in optimal_by_task:
-                    optimal_by_task[task] = []
-                    suboptimal_by_task[task] = []
-
-                if quality in ["successful", "optimal"]:
-                    optimal_by_task[task].append(idx)
-                elif quality in ["suboptimal", "failed"]:
-                    suboptimal_by_task[task].append(idx)
-
-            except Exception as e:
-                rank_0_print(f"Warning: Failed to process video frames for example {idx}: {e}")
-                example["frames"] = None
-                example["frames_processed"] = False
+            if quality in ["successful", "optimal"]:
+                optimal_by_task[task].append(idx)
+            elif quality in ["suboptimal", "failed", "failure"]:
+                suboptimal_by_task[task].append(idx)
 
             # Remove the frames_path since we don't need it anymore
             if "frames_path" in example:
@@ -352,7 +342,7 @@ class BaseDatasetPreprocessor:
         )
 
         # Log the built indices
-        rank_0_print(f"Built {self.dataset_type} index mappings for {cache_key}:")
+        rank_0_print(f"Built index mappings for {cache_key}:")
         rank_0_print(f"  Robot trajectories: {len(robot_trajectories)}")
         rank_0_print(f"  Human trajectories: {len(human_trajectories)}")
         rank_0_print(f"  Tasks: {len(task_indices)}")
@@ -370,7 +360,13 @@ class BaseDatasetPreprocessor:
         }
 
     def _save_individual_cache(
-        self, cache_dir: str, processed_dataset: Dataset, indices: Dict, dataset_path: str, subset: str
+        self,
+        cache_dir: str,
+        processed_dataset: Dataset,
+        indices: Dict,
+        dataset_path: str,
+        subset: str,
+        dataset_type: str,
     ):
         """Save the processed dataset and index mappings for an individual dataset/subset."""
         # Create cache directory
@@ -391,6 +387,7 @@ class BaseDatasetPreprocessor:
         dataset_info = {
             "dataset_path": dataset_path,
             "subset": subset,
+            "dataset_type": dataset_type,
             "total_trajectories": len(processed_dataset),
             "cache_timestamp": str(datetime.datetime.now()),
             "config_hash": self._get_config_hash(),
@@ -400,19 +397,14 @@ class BaseDatasetPreprocessor:
         with open(info_file, "w") as f:
             json.dump(dataset_info, f, indent=2)
 
-        rank_0_print(f"Individual {self.dataset_type} cache saved to {cache_dir}")
+        rank_0_print(f"Individual cache saved to {cache_dir}")
 
     def _get_config_hash(self) -> str:
         """Generate a hash of the relevant config parameters."""
         import hashlib
 
-        if self.dataset_type == "training":
-            # Create a string representation of relevant training config parameters
-            config_str = f"train_{self.config.data.train_datasets}_{self.config.data.train_subsets}_{self.config.data.max_frames}_{self.config.data.resized_height}_{self.config.data.resized_width}"
-        else:
-            # Create a string representation of relevant evaluation config parameters
-            config_str = f"eval_{self.config.data.eval_datasets}_{self.config.data.eval_subsets}_{self.config.data.max_frames}_{self.config.data.resized_height}_{self.config.data.resized_width}"
-
+        # Create a string representation of relevant config parameters
+        config_str = f"{self.config.data.max_frames}_{self.config.data.resized_height}_{self.config.data.resized_width}"
         return hashlib.md5(config_str.encode()).hexdigest()
 
     def _load_individual_cache(self, cache_dir: str, cache_key: str):
@@ -433,7 +425,7 @@ class BaseDatasetPreprocessor:
             self.dataset_indices[cache_key] = json.load(f)
 
         # Log loaded cache
-        rank_0_print(f"  📂 Loaded individual {self.dataset_type} cache from {cache_dir}")
+        rank_0_print(f"  📂 Loaded individual cache from {cache_dir}")
 
     def get_combined_indices(self):
         """Get combined index mappings from all individual datasets."""
@@ -515,46 +507,41 @@ class BaseDatasetPreprocessor:
                 dataset = load_dataset(dataset_path)
             return dataset
 
-    def _show_preprocessed_datasets(self, datasets: List[str], subsets: List[str]):
+    def _show_preprocessed_datasets(self, all_datasets: List[tuple]):
         """
         Show which datasets are already preprocessed and which are not.
         This helps avoid re-processing already cached datasets.
         """
-        rank_0_print(f"\n🔍 Checking for pre-existing {self.dataset_type} caches...")
+        rank_0_print(f"\n🔍 Checking for pre-existing caches...")
 
         cached_count = 0
-        total_count = 0
+        total_count = len(all_datasets)
 
-        for i, (dataset_path, dataset_subsets) in enumerate(zip(datasets, subsets)):
-            # Handle both single subset (string) and multiple subsets (list)
-            if isinstance(dataset_subsets, str):
-                dataset_subsets = [dataset_subsets]
+        for dataset_type, dataset_path, subset in all_datasets:
+            cache_key = f"{dataset_path}/{subset}"
+            individual_cache_dir = os.path.join(self.cache_dir, cache_key.replace("/", "_").replace(":", "_"))
 
-            total_count += len(dataset_subsets)
-
-            for subset in dataset_subsets:
-                cache_key = f"{dataset_path}/{subset}"
-                individual_cache_dir = os.path.join(self.cache_dir, cache_key.replace("/", "_").replace(":", "_"))
-
-                if os.path.exists(individual_cache_dir):
-                    cached_count += 1
-                    # Try to load cache info to show details
-                    info_file = os.path.join(individual_cache_dir, "dataset_info.json")
-                    if os.path.exists(info_file):
-                        try:
-                            with open(info_file, "r") as f:
-                                info = json.load(f)
-                            trajectories = info.get("total_trajectories", "unknown")
-                            timestamp = info.get("cache_timestamp", "unknown")
-                            rank_0_print(
-                                f"  ✅ {dataset_path}/{subset}: {trajectories} trajectories (cached at {timestamp})"
-                            )
-                        except:
-                            rank_0_print(f"  ✅ {dataset_path}/{subset}: Cache exists but info file corrupted")
-                    else:
-                        rank_0_print(f"  ✅ {dataset_path}/{subset}: Cache exists (no info file)")
+            if os.path.exists(individual_cache_dir):
+                cached_count += 1
+                # Try to load cache info to show details
+                info_file = os.path.join(individual_cache_dir, "dataset_info.json")
+                if os.path.exists(info_file):
+                    try:
+                        with open(info_file, "r") as f:
+                            info = json.load(f)
+                        trajectories = info.get("total_trajectories", "unknown")
+                        timestamp = info.get("cache_timestamp", "unknown")
+                        rank_0_print(
+                            f"  ✅ {dataset_type}: {dataset_path}/{subset}: {trajectories} trajectories (cached at {timestamp})"
+                        )
+                    except:
+                        rank_0_print(
+                            f"  ✅ {dataset_type}: {dataset_path}/{subset}: Cache exists but info file corrupted"
+                        )
                 else:
-                    rank_0_print(f"  ❌ {dataset_path}/{subset}: No cache found")
+                    rank_0_print(f"  ✅ {dataset_type}: {dataset_path}/{subset}: Cache exists (no info file)")
+            else:
+                rank_0_print(f"  ❌ {dataset_type}: {dataset_path}/{subset}: No cache found")
 
         # Show summary
         rank_0_print(f"\n📊 Cache Status Summary:")
@@ -568,40 +555,33 @@ class BaseDatasetPreprocessor:
         else:
             rank_0_print(f"  🚀 No dataset/subset pairs are cached. All will be processed.")
 
-    def _show_final_status_summary(self, datasets: List[str], subsets: List[str]):
+    def _show_final_status_summary(self, all_datasets: List[tuple]):
         """
         Show a summary of which datasets were processed and which were loaded from cache.
         """
-        rank_0_print(f"\n📊 Final Status Summary for {self.dataset_type} Preprocessing:")
+        rank_0_print(f"\n📊 Final Status Summary for Dataset Preprocessing:")
 
         processed_count = 0
         loaded_count = 0
-        total_count = 0
+        total_count = len(all_datasets)
 
-        for i, (dataset_path, dataset_subsets) in enumerate(zip(datasets, subsets)):
-            # Handle both single subset (string) and multiple subsets (list)
-            if isinstance(dataset_subsets, str):
-                dataset_subsets = [dataset_subsets]
+        for dataset_type, dataset_path, subset in all_datasets:
+            cache_key = f"{dataset_path}/{subset}"
+            individual_cache_dir = os.path.join(self.cache_dir, cache_key.replace("/", "_").replace(":", "_"))
 
-            total_count += len(dataset_subsets)
-
-            for subset in dataset_subsets:
-                cache_key = f"{dataset_path}/{subset}"
-                individual_cache_dir = os.path.join(self.cache_dir, cache_key.replace("/", "_").replace(":", "_"))
-
-                if cache_key in self.datasets:
-                    if os.path.exists(individual_cache_dir):
-                        loaded_count += 1
-                        rank_0_print(
-                            f"  ✅ {dataset_path}/{subset}: Loaded from cache ({len(self.datasets[cache_key])} trajectories)"
-                        )
-                    else:
-                        processed_count += 1
-                        rank_0_print(
-                            f"  🔄 {dataset_path}/{subset}: Newly processed ({len(self.datasets[cache_key])} trajectories)"
-                        )
+            if cache_key in self.datasets:
+                if os.path.exists(individual_cache_dir):
+                    loaded_count += 1
+                    rank_0_print(
+                        f"  ✅ {dataset_type}: {dataset_path}/{subset}: Loaded from cache ({len(self.datasets[cache_key])} trajectories)"
+                    )
                 else:
-                    rank_0_print(f"  ❌ {dataset_path}/{subset}: Failed to load/process")
+                    processed_count += 1
+                    rank_0_print(
+                        f"  🔄 {dataset_type}: {dataset_path}/{subset}: Newly processed ({len(self.datasets[cache_key])} trajectories)"
+                    )
+            else:
+                rank_0_print(f"  ❌ {dataset_type}: {dataset_path}/{subset}: Failed to load/process")
 
         # Show summary counts
         rank_0_print(f"\n📈 Processing Summary:")
@@ -609,20 +589,6 @@ class BaseDatasetPreprocessor:
         rank_0_print(f"  ✅ Loaded from cache: {loaded_count} dataset/subset pairs")
         rank_0_print(f"  ❌ Failed: {total_count - processed_count - loaded_count} dataset/subset pairs")
         rank_0_print(f"  📊 Total available: {processed_count + loaded_count}/{total_count} dataset/subset pairs")
-
-
-class TrainingDatasetPreprocessor(BaseDatasetPreprocessor):
-    """Preprocessor specifically for training datasets."""
-
-    def __init__(self, config):
-        super().__init__(config, "./processed_datasets/train_cache", "training")
-
-
-class EvaluationDatasetPreprocessor(BaseDatasetPreprocessor):
-    """Preprocessor specifically for evaluation datasets."""
-
-    def __init__(self, config):
-        super().__init__(config, "./processed_datasets/eval_cache", "evaluation")
 
 
 def main():
@@ -653,102 +619,67 @@ def main():
     print("   - Single subset: ['subset1'] or 'subset1'")
     print("   - Multiple subsets: ['subset1', 'subset2', 'subset3']")
 
-    # Create separate preprocessors for training and evaluation
-    train_preprocessor = TrainingDatasetPreprocessor(config)
-    eval_preprocessor = EvaluationDatasetPreprocessor(config)
+    # Create unified preprocessor for all datasets
+    preprocessor = DatasetPreprocessor(config)
 
-    # Preprocess training datasets
-    print("\n=== Processing Training Datasets ===")
-    train_preprocessor.preprocess_datasets()
-
-    # Preprocess evaluation datasets
-    print("\n=== Processing Evaluation Datasets ===")
-    eval_preprocessor.preprocess_datasets()
+    # Preprocess all datasets
+    print("\n=== Processing All Datasets ===")
+    preprocessor.preprocess_datasets()
 
     # Test the caches
     print("\n=== Testing Caches ===")
 
-    # Training cache
-    if train_preprocessor.datasets:
-        print(f"\n📚 Training Datasets:")
-        total_train_trajectories = sum(len(dataset) for dataset in train_preprocessor.datasets.values())
-        print(f"  Total trajectories: {total_train_trajectories}")
+    if preprocessor.datasets:
+        print(f"\n📚 All Datasets:")
+        total_trajectories = sum(len(dataset) for dataset in preprocessor.datasets.values())
+        print(f"  Total trajectories: {total_trajectories}")
 
         # Get combined indices
-        combined_indices = train_preprocessor.get_combined_indices()
+        combined_indices = preprocessor.get_combined_indices()
         if combined_indices:
             print(f"  Robot trajectories: {len(combined_indices.get('robot_trajectories', []))}")
             print(f"  Human trajectories: {len(combined_indices.get('human_trajectories', []))}")
             print(f"  Tasks: {list(combined_indices.get('task_indices', {}).keys())}")
 
         # Test direct access to first dataset
-        if train_preprocessor.datasets:
-            first_dataset = next(iter(train_preprocessor.datasets.values()))
-            if len(first_dataset) > 0:
-                test_traj = first_dataset[0]
-                print(f"  Sample trajectory: {test_traj['id']} - {test_traj['task']}")
-
-    # Evaluation cache
-    if eval_preprocessor.datasets:
-        print(f"\n📚 Evaluation Datasets:")
-        total_eval_trajectories = sum(len(dataset) for dataset in eval_preprocessor.datasets.values())
-        print(f"  Total trajectories: {total_eval_trajectories}")
-
-        # Get combined indices
-        combined_indices = eval_preprocessor.get_combined_indices()
-        if combined_indices:
-            print(f"  Robot trajectories: {len(combined_indices.get('robot_trajectories', []))}")
-            print(f"  Human trajectories: {len(combined_indices.get('human_trajectories', []))}")
-            print(f"  Tasks: {list(combined_indices.get('task_indices', {}).keys())}")
-
-        # Test direct access to first dataset
-        if eval_preprocessor.datasets:
-            first_dataset = next(iter(eval_preprocessor.datasets.values()))
+        if preprocessor.datasets:
+            first_dataset = next(iter(preprocessor.datasets.values()))
             if len(first_dataset) > 0:
                 test_traj = first_dataset[0]
                 print(f"  Sample trajectory: {test_traj['id']} - {test_traj['task']}")
 
     print("\n✅ Dataset preprocessing complete!")
-    print(f"Training cache: {train_preprocessor.cache_dir}")
-    print(f"Evaluation cache: {eval_preprocessor.cache_dir}")
+    print(f"Unified cache: {preprocessor.cache_dir}")
 
     # Show individual dataset info
     print(f"\n📊 Individual Dataset Summary:")
-    print(f"Training datasets processed: {len(train_preprocessor.datasets)}")
-    for cache_key, dataset in train_preprocessor.datasets.items():
-        print(f"  ✅ {cache_key}: {len(dataset)} trajectories")
-
-    print(f"Evaluation datasets processed: {len(eval_preprocessor.datasets)}")
-    for cache_key, dataset in eval_preprocessor.datasets.items():
+    print(f"Total datasets processed: {len(preprocessor.datasets)}")
+    for cache_key, dataset in preprocessor.datasets.items():
         print(f"  ✅ {cache_key}: {len(dataset)} trajectories")
 
     # Show dataset structure
     print(f"\n🏗️  Dataset Structure:")
     print(f"Training datasets:")
-    for dataset_path, dataset_subsets in zip(
-        train_preprocessor.config.data.train_datasets, train_preprocessor.config.data.train_subsets
-    ):
+    for dataset_path, dataset_subsets in zip(config.data.train_datasets, config.data.train_subsets):
         if isinstance(dataset_subsets, str):
             dataset_subsets = [dataset_subsets]
         print(f"  📚 {dataset_path}: {len(dataset_subsets)} subset(s)")
         for subset in dataset_subsets:
             cache_key = f"{dataset_path}/{subset}"
-            if cache_key in train_preprocessor.datasets:
-                print(f"    ✅ {subset}: {len(train_preprocessor.datasets[cache_key])} trajectories")
+            if cache_key in preprocessor.datasets:
+                print(f"    ✅ {subset}: {len(preprocessor.datasets[cache_key])} trajectories")
             else:
                 print(f"    ❌ {subset}: Failed to load")
 
     print(f"Evaluation datasets:")
-    for dataset_path, dataset_subsets in zip(
-        eval_preprocessor.config.data.eval_datasets, eval_preprocessor.config.data.eval_subsets
-    ):
+    for dataset_path, dataset_subsets in zip(config.data.eval_datasets, config.data.eval_subsets):
         if isinstance(dataset_subsets, str):
             dataset_subsets = [dataset_subsets]
         print(f"  📚 {dataset_path}: {len(dataset_subsets)} subset(s)")
         for subset in dataset_subsets:
             cache_key = f"{dataset_path}/{subset}"
-            if cache_key in eval_preprocessor.datasets:
-                print(f"    ✅ {subset}: {len(eval_preprocessor.datasets[cache_key])} trajectories")
+            if cache_key in preprocessor.datasets:
+                print(f"    ✅ {subset}: {len(preprocessor.datasets[cache_key])} trajectories")
             else:
                 print(f"    ❌ {subset}: Failed to load")
 

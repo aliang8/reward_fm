@@ -76,39 +76,6 @@ def build_preference_batch(processor, samples: List[SamplePayload], resized_h: i
     from qwen_vl_utils import process_vision_info
 
     conversations = []
-    for s in samples:
-        chosen_imgs = decode_frames_b64(s.chosen_frames_b64)
-        rejected_imgs = decode_frames_b64(s.rejected_frames_b64)
-
-        conv = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": f"Task: {s.task}"},
-                    {"type": "video", "video": chosen_imgs, "resized_height": resized_h, "resized_width": resized_w},
-                    {"type": "text", "text": "<|split_token|>"},
-                    {"type": "video", "video": rejected_imgs, "resized_height": resized_h, "resized_width": resized_w},
-                    {"type": "text", "text": "<|pref_token|>"},
-                ],
-            }
-        ]
-        conversations.append(conv)
-
-    texts = [
-        processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=False, add_vision_id=True)
-        for msg in conversations
-    ]
-    image_inputs, video_inputs, video_kwargs = process_vision_info(conversations, return_video_kwargs=True)
-    batch_inputs = processor(
-        text=texts,
-        images=image_inputs,
-        videos=video_inputs,
-        padding=True,
-        truncation=False,
-        max_length=1024,
-        return_tensors="pt",
-        **video_kwargs,
-    )
 
     # Attach optional target progress
     def pad_progress(progress_lists: List[Optional[List[float]]]):
@@ -125,11 +92,47 @@ def build_preference_batch(processor, samples: List[SamplePayload], resized_h: i
                 arr.append(pad)
         return torch.tensor(arr, dtype=torch.float32)
 
+    for i, s in enumerate(samples):
+        chosen_imgs = decode_frames_b64(s.chosen_frames_b64)
+        rejected_imgs = decode_frames_b64(s.rejected_frames_b64)
+
+        conv = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": f"Task: {s.task}"},
+                    {"type": "video", "video": chosen_imgs, "resized_height": resized_h, "resized_width": resized_w},
+                    {"type": "text", "text": "<|split_token|>"},
+                    {"type": "video", "video": rejected_imgs, "resized_height": resized_h, "resized_width": resized_w},
+                    {"type": "text", "text": "<|pref_token|>"},
+                ],
+            }
+        ]
+
+        conversations.append(conv)
+
+    texts = [
+        processor.apply_chat_template(msg, tokenize=False, add_generation_prompt=False, add_vision_id=True, fps=1)
+        for msg in conversations
+    ]
+    image_inputs, video_inputs, video_kwargs = process_vision_info(conversations, return_video_kwargs=True)
+    batch_inputs = processor(
+        text=texts,
+        images=image_inputs,
+        videos=video_inputs,
+        padding=True,
+        truncation=False,
+        max_length=1024,
+        return_tensors="pt",
+        # **video_kwargs,
+    )
+
     batch_inputs["target_progress_A"] = pad_progress([s.target_progress_A for s in samples])
     batch_inputs["target_progress_B"] = pad_progress([s.target_progress_B for s in samples])
 
+    preference_labels = np.ones(len(samples))
     # Labels: 1 means chosen preferred over rejected
-    batch_inputs["preference_labels"] = torch.ones(len(samples), dtype=torch.float32)
+    batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
     return batch_inputs
 
 

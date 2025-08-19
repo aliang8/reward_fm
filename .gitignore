@@ -26,3 +26,4 @@ uv.lock
 visualizer/
 *.log
 old/
+*.png

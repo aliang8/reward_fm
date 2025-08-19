@@ -73,27 +73,21 @@ class DataGenerator:
 
     def _load_trajectory_dataset(self):
         """Load trajectory dataset using preprocessed index-based cache."""
-        if self.is_evaluation:
-            cache_dir = f"./processed_datasets/eval_cache"
-            cache_type = "evaluation"
-        else:
-            cache_dir = f"./processed_datasets/train_cache"
-            cache_type = "training"
+        cache_dir = "./processed_datasets"
+        cache_type = "evaluation" if self.is_evaluation else "training"
 
         # Check if preprocessed cache exists
         if os.path.exists(cache_dir) and not self.force_reprocess:
-            rank_0_print(f"Found preprocessed {cache_type} cache at {cache_dir}, loading...")
+            rank_0_print(f"Found preprocessed cache at {cache_dir}, loading {cache_type} datasets...")
             self._load_preprocessed_cache(cache_dir, is_training=not self.is_evaluation)
             rank_0_print(
-                f"Successfully loaded preprocessed {cache_type} cache with {len(self.dataset)} trajectory indices"
+                f"Successfully loaded preprocessed {cache_type} datasets with {len(self.dataset)} trajectory indices"
             )
         else:
             # If no cache exists, we need to run the preprocessor first
-            rank_0_print(
-                f"No preprocessed {cache_type} cache found. Please run preprocess_datasets.py first to create the cache."
-            )
+            rank_0_print(f"No preprocessed cache found. Please run preprocess_datasets.py first to create the cache.")
             raise RuntimeError(
-                f"{cache_type.capitalize()} dataset preprocessing required. Please run:\n"
+                f"Dataset preprocessing required. Please run:\n"
                 "uv run scripts/preprocess_datasets.py\n"
                 "This will create the necessary index-based cache for efficient data loading."
             )
@@ -130,8 +124,31 @@ class DataGenerator:
                 individual_cache_dir = os.path.join(cache_dir, cache_key.replace("/", "_").replace(":", "_"))
 
                 if os.path.exists(individual_cache_dir):
-                    available_datasets.append((dataset_path, subset, individual_cache_dir))
-                    rank_0_print(f"      ✅ Found cache: {individual_cache_dir}")
+                    # Check if this cache is for the right dataset type (training vs evaluation)
+                    info_file = os.path.join(individual_cache_dir, "dataset_info.json")
+                    if os.path.exists(info_file):
+                        try:
+                            with open(info_file, "r") as f:
+                                info = json.load(f)
+                            cache_dataset_type = info.get("dataset_type", "unknown")
+
+                            # Only load if it matches our intended dataset type
+                            if cache_dataset_type == ("training" if is_training else "evaluation"):
+                                available_datasets.append((dataset_path, subset, individual_cache_dir))
+                                rank_0_print(f"      ✅ Found {cache_dataset_type} cache: {individual_cache_dir}")
+                            else:
+                                missing_datasets.append((dataset_path, subset))
+                                rank_0_print(
+                                    f"      ❌ Found {cache_dataset_type} cache but need {'training' if is_training else 'evaluation'}: {individual_cache_dir}"
+                                )
+                        except:
+                            # If we can't read the info file, skip this cache
+                            rank_0_print(f"      ⚠️  Cache info file corrupted, skipping: {individual_cache_dir}")
+                            continue
+                    else:
+                        # No info file, skip this cache
+                        rank_0_print(f"      ⚠️  No info file found, skipping: {individual_cache_dir}")
+                        continue
                 else:
                     missing_datasets.append((dataset_path, subset))
                     rank_0_print(f"      ❌ Missing cache: {individual_cache_dir}")
@@ -145,7 +162,7 @@ class DataGenerator:
 
         if not available_datasets:
             raise RuntimeError(
-                f"No configured dataset/subset pairs are available in the cache. "
+                f"No configured dataset/subset pairs are available in the cache for {'training' if is_training else 'evaluation'}. "
                 f"Please run preprocess_datasets.py to create the cache for: {self.datasets}"
             )
 
@@ -174,35 +191,30 @@ class DataGenerator:
                 rank_0_print(f"  ⚠️  Warning: Processed dataset not found at {dataset_cache_dir}, skipping...")
                 continue
 
-            try:
-                dataset = Dataset.load_from_disk(dataset_cache_dir)
-                loaded_datasets.append(dataset)
+            dataset = Dataset.load_from_disk(dataset_cache_dir, keep_in_memory=True)
+            loaded_datasets.append(dataset)
 
-                # Load index mappings
-                mappings_file = os.path.join(individual_cache_dir, "index_mappings.json")
-                if os.path.exists(mappings_file):
-                    with open(mappings_file, "r") as f:
-                        indices = json.load(f)
+            # Load index mappings
+            mappings_file = os.path.join(individual_cache_dir, "index_mappings.json")
+            if os.path.exists(mappings_file):
+                with open(mappings_file, "r") as f:
+                    indices = json.load(f)
 
-                    # Adjust indices by adding offset and combine
-                    for key in combined_indices:
-                        if key in indices:
-                            if isinstance(indices[key], list):
-                                # For list indices, add offset
-                                combined_indices[key].extend([idx + offset for idx in indices[key]])
-                            elif isinstance(indices[key], dict):
-                                # For dict indices, add offset to values
-                                for subkey, subindices in indices[key].items():
-                                    if subkey not in combined_indices[key]:
-                                        combined_indices[key][subkey] = []
-                                    combined_indices[key][subkey].extend([idx + offset for idx in subindices])
+                # Adjust indices by adding offset and combine
+                for key in combined_indices:
+                    if key in indices:
+                        if isinstance(indices[key], list):
+                            # For list indices, add offset
+                            combined_indices[key].extend([idx + offset for idx in indices[key]])
+                        elif isinstance(indices[key], dict):
+                            # For dict indices, add offset to values
+                            for subkey, subindices in indices[key].items():
+                                if subkey not in combined_indices[key]:
+                                    combined_indices[key][subkey] = []
+                                combined_indices[key][subkey].extend([idx + offset for idx in subindices])
 
-                rank_0_print(f"  ✅ Loaded {len(dataset)} trajectories from {dataset_path}/{subset}")
-                offset += len(dataset)
-
-            except Exception as e:
-                rank_0_print(f"  ❌ Failed to load {dataset_path}/{subset}: {e}")
-                continue
+            rank_0_print(f"  ✅ Loaded {len(dataset)} trajectories from {dataset_path}/{subset}")
+            offset += len(dataset)
 
         if not loaded_datasets:
             raise RuntimeError("No datasets could be loaded from the cache")
@@ -224,7 +236,7 @@ class DataGenerator:
         self.source_indices = combined_indices["source_indices"]
 
         dataset_type = "training" if is_training else "evaluation"
-        rank_0_print(f"✅ Loaded {len(self.dataset)} total trajectories from preprocessed {dataset_type} cache")
+        rank_0_print(f"✅ Loaded {len(self.dataset)} total trajectories from preprocessed {dataset_type} datasets")
         rank_0_print(
             f"  📊 Available dataset/subset pairs: {len(available_datasets)}/{len(missing_datasets) + len(available_datasets)}"
         )
@@ -232,12 +244,8 @@ class DataGenerator:
 
     def show_available_datasets(self):
         """Show which datasets are available in the cache."""
-        if self.is_evaluation:
-            cache_dir = f"./processed_datasets/eval_cache"
-            cache_type = "evaluation"
-        else:
-            cache_dir = f"./processed_datasets/train_cache"
-            cache_type = "training"
+        cache_dir = "./processed_datasets"
+        cache_type = "evaluation" if self.is_evaluation else "training"
 
         rank_0_print(f"\n🔍 Available datasets in {cache_dir} ({cache_type}):")
 
@@ -254,8 +262,18 @@ class DataGenerator:
                                 info = json.load(f)
                             dataset_path = info.get("dataset_path", "unknown")
                             subset = info.get("subset", "unknown")
+                            dataset_type = info.get("dataset_type", "unknown")
                             trajectories = info.get("total_trajectories", 0)
-                            rank_0_print(f"  ✅ {dataset_path}/{subset}: {trajectories} trajectories")
+
+                            # Only show datasets that match our intended type
+                            if dataset_type == cache_type:
+                                rank_0_print(
+                                    f"  ✅ {dataset_type}: {dataset_path}/{subset}: {trajectories} trajectories"
+                                )
+                            else:
+                                rank_0_print(
+                                    f"  📁 {dataset_type}: {dataset_path}/{subset}: {trajectories} trajectories (not for {cache_type})"
+                                )
                         except:
                             rank_0_print(f"  📁 {subdir}: (info file corrupted)")
                     else:
@@ -401,7 +419,7 @@ class DataGenerator:
         # Create rewind segment (reverse the forward segment)
         selected_end_point = rewind_length + 1
 
-        # ignore the first frame of the forward segment 
+        # ignore the first frame of the forward segment
         reverse_frames = forward_frames[::-1][1:selected_end_point]
         reverse_progress = forward_progress[::-1][1:selected_end_point]
 
@@ -606,29 +624,23 @@ class DataGenerator:
 
         # Create preference sample structure
         sample = PreferenceSample(
-            # Core HF dataset fields (from optimal trajectory)
-            id=optimal_traj["id"],
-            task=optimal_traj["task"],
-            lang_vector=optimal_traj["lang_vector"],
-            data_source=optimal_traj["data_source"],
-            frames_shape=optimal_frames_shape,
-            quality_label=optimal_traj.get("quality_label", "successful"),
-            is_robot=optimal_traj["is_robot"],
-            metadata=optimal_traj.get("metadata", {}).copy() if optimal_traj.get("metadata") else {},
             # Preference-specific fields - using chosen/rejected naming
             chosen_frames=optimal_frames,
-            rejected_frames=negative_frames,
             chosen_frames_shape=optimal_frames_shape,
+            chosen_id=optimal_traj["id"],
+            chosen_task=optimal_traj["task"],
+            chosen_lang_vector=optimal_traj["lang_vector"],
+            chosen_data_source=optimal_traj["data_source"],
+            chosen_quality_label=optimal_traj.get("quality_label"),
+            chosen_is_robot=optimal_traj["is_robot"],
+            # rejected metadata
+            rejected_frames=negative_frames,
             rejected_frames_shape=negative_frames_shape,
             preferred_trajectory="chosen",  # chosen is the optimal trajectory
-            chosen_id=optimal_traj["id"],
             rejected_id=negative_traj["id"],
-            # Rejected trajectory fields
             rejected_task=negative_traj["task"],
             rejected_lang_vector=negative_traj["lang_vector"],
             rejected_data_source=negative_traj["data_source"],
-            rejected_quality_label=negative_traj.get("quality_label"),
-            rejected_is_robot=negative_traj["is_robot"],
             # Progress fields
             target_progress_A=target_progress_A,
             target_progress_B=target_progress_B,

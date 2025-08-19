@@ -13,6 +13,7 @@ from rfm.utils.logging import is_rank_0, rank_0_print
 from rfm.utils.metrics import compute_auc, compute_spearman_correlation
 from rfm.utils.logging import _timer
 
+
 class RFMTrainer(Trainer):
     def __init__(self, config, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -75,7 +76,7 @@ class RFMTrainer(Trainer):
             for key in log_keys:
                 if f"train/{key}" in aggregated_losses:
                     rank_0_print(f"  {key}: {aggregated_losses[f'train/{key}']:.6f}")
-            
+
             rounded_times = {k: round(v, 2) for k, v in self.timing_raw.items()}
             rank_0_print(f"Timing raw: {rounded_times}")
 

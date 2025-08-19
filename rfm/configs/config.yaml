@@ -40,7 +40,7 @@ data:
   eval_subsets:
     - ["libero_10"]
     - ["libero_10_failure"]
-  eval_subset_size: 200  # Number of evaluation examples
+  eval_subset_size: 500  # Number of evaluation examples
   
   # Video processing settings
   max_frames: 8  # Maximum frames per trajectory
@@ -118,7 +118,7 @@ peft:
   bias: "none"
 
 evaluation:
-  model_path: "./logs/rfm_progress_pref"
+  model_path: ""
 
 # =====================================================================================
 # Logging and Output Configuration

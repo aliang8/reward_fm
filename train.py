@@ -95,7 +95,7 @@ def train(cfg: ExperimentConfig):
         cfg.training.save_steps = 2
         cfg.training.logging_steps = 2
         cfg.training.eval_steps = 2
-    cfg.data.eval_subset_size = 10
+        cfg.data.eval_subset_size = 10
 
     training_args = create_training_arguments(cfg, cfg.training.output_dir)
 

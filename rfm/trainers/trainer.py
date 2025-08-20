@@ -268,7 +268,7 @@ class RFMTrainer(Trainer):
             self.global_metadata["total_samples"] += batch_size.item()
 
             # total rewounded trajectories 
-            total_samples_with_rewound_trajs = torch.tensor(rewind_stats.get("rewound_count", 0), device=self.accelerator.device)
+            total_samples_with_rewound_trajs = torch.tensor(rewind_stats["num_rewound_trajs"], device=self.accelerator.device)
             dist.all_reduce(total_samples_with_rewound_trajs, op=dist.ReduceOp.SUM)
             self.global_metadata["total_samples_with_rewound_trajs"] += total_samples_with_rewound_trajs.item()
 

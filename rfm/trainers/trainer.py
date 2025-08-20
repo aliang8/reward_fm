@@ -398,16 +398,22 @@ class RFMTrainer(Trainer):
             batch_size = len(preference_labels)
             first_trajectory_shapes = []
             second_trajectory_shapes = []
+            first_trajectory_progress = []
+            second_trajectory_progress = []
 
             for i in range(batch_size):
                 if preference_labels[i] == 1.0:
                     # First trajectory is preferred (chosen)
                     first_trajectory_shapes.append(chosen_frames_shape[i])
                     second_trajectory_shapes.append(rejected_frames_shape[i])
+                    first_trajectory_progress.append(inputs["target_progress_chosen"][i])
+                    second_trajectory_progress.append(inputs["target_progress_rejected"][i])
                 else:
                     # Second trajectory is preferred (chosen)
                     first_trajectory_shapes.append(rejected_frames_shape[i])
                     second_trajectory_shapes.append(chosen_frames_shape[i])
+                    first_trajectory_progress.append(inputs["target_progress_rejected"][i])
+                    second_trajectory_progress.append(inputs["target_progress_chosen"][i])
 
             # Convert to tensors for the helper function
             first_trajectory_shapes = torch.stack(first_trajectory_shapes)
@@ -417,13 +423,13 @@ class RFMTrainer(Trainer):
             # Now we know which shape corresponds to which trajectory based on preference labels
             if self.config.model.train_progress_head:
                 progress_loss_A, spearman_corr_A = self._compute_progress_loss(
-                    progress_logits["A"], inputs["target_progress_A"], first_trajectory_shapes, inputs["target_progress_A_mask"], "A"
+                    progress_logits["A"], first_trajectory_progress, first_trajectory_shapes, inputs["target_progress_chosen_mask"], "A"
                 )
                 progress_loss_B, spearman_corr_B = self._compute_progress_loss(
                     progress_logits["B"],
-                    inputs["target_progress_B"],
+                    second_trajectory_progress,
                     second_trajectory_shapes,
-                    inputs["target_progress_B_mask"],
+                    inputs["target_progress_rejected_mask"],
                     "B",
                 )
 
@@ -453,6 +459,7 @@ class RFMTrainer(Trainer):
                     spearman_values.append(spearman_corr_A.item())
                 else:
                     spearman_values.append(spearman_corr_A)
+
                 if isinstance(spearman_corr_B, torch.Tensor):
                     spearman_values.append(spearman_corr_B.item())
                 else:
@@ -467,8 +474,8 @@ class RFMTrainer(Trainer):
                         "progress_loss": progress_loss.item(),
                         "predicted_progress_A": progress_logits["A"],
                         "predicted_progress_B": progress_logits["B"],
-                        "target_progress_A": inputs["target_progress_A"],
-                        "target_progress_B": inputs["target_progress_B"],
+                        "target_progress_A": first_trajectory_progress,
+                        "target_progress_B": second_trajectory_progress,
                         "spearman_corr_avg": avg_spearman,
                     }
                 )

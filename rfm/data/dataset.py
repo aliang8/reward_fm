@@ -17,7 +17,7 @@ from rfm.utils.logging import rank_0_print
 
 def calulate_target_progress(frames: np.ndarray) -> List[float]:
     num_frames = frames.shape[0]
-    return [i / num_frames for i in range(num_frames)]
+    return [i / (num_frames - 1) for i in range(num_frames)]
 
 class InfiniteDataGeneratorDataset:
     """Dataset that generates preference and similarity samples infinitely."""

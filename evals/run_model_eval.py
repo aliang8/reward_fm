@@ -44,10 +44,10 @@ from rfm.data.batch_collator import PreferenceSample, SimilaritySample
 KEY_TO_MEANING = {
     "eval_loss": "Loss",
     "eval_accuracy": "Accuracy of Predicting the Correct Preference",
-    "mse_progress_A": "MSE between progress_pred_A and target_progress_A",
-    "mse_progress_B": "MSE between progress_pred_B and target_progress_B",
-    "spearman_progress_A": "Spearman correlation between progress_pred_A and target_progress_A",
-    "spearman_progress_B": "Spearman correlation between progress_pred_B and target_progress_B",
+    "mse_progress_chosen": "MSE between progress_pred_chosen and target_progress_chosen",
+    "mse_progress_rejected": "MSE between progress_pred_rejected and target_progress_rejected",
+    "spearman_progress_chosen": "Spearman correlation between progress_pred_chosen and target_progress_chosen",
+    "spearman_progress_rejected": "Spearman correlation between progress_pred_rejected and target_progress_rejected",
 }
 
 
@@ -61,19 +61,21 @@ def _compute_metrics_from_response(
     2. Creating granular metrics by subsetting the base metrics for each category
     3. Avoiding redundant calculations for different granular breakdowns
     """
+
     # Extract predictions and progress predictions
     preds = response.get("predictions", [])
-    progress_pred_A = response.get("progress_pred_A", [])
-    progress_pred_B = response.get("progress_pred_B", [])
-    target_progress_A = [s.target_progress_A[::2] for s in samples]
-    target_progress_B = [s.target_progress_B[::2] for s in samples]
+    preference_labels = response.get("preference_labels", [])
+    progress_pred_chosen = response.get("progress_pred_chosen", [])
+    progress_pred_rejected = response.get("progress_pred_rejected", [])
+    target_progress_chosen = [s.target_progress_chosen[::2] if s.target_progress_chosen is not None else None for s in samples]
+    target_progress_rejected = [s.target_progress_rejected[::2] if s.target_progress_rejected is not None else None for s in samples]
 
     # Compute ALL base metrics once for efficiency
     base_metrics = {}
 
     # Preference accuracy
     if any(s.sample_type == "preference" for s in samples):
-        correct_preds = sum(1 for p in preds if p == 1)  # 1 means chosen trajectory is preferred
+        correct_preds = np.sum(np.array(preds) == np.array(preference_labels))
         base_metrics["eval_accuracy"] = correct_preds / len(preds)
 
     # Progress metrics: compute MSE and Spearman for A and B
@@ -106,12 +108,12 @@ def _compute_metrics_from_response(
         avg_spear = float(np.mean(spearmans)) if spearmans else None
         return avg_mse, avg_spear
 
-    mse_A, spear_A = _compute_mse_and_spearman(progress_pred_A, target_progress_A)
-    mse_B, spear_B = _compute_mse_and_spearman(progress_pred_B, target_progress_B)
-    base_metrics["mse_progress_A"] = mse_A
-    base_metrics["mse_progress_B"] = mse_B
-    base_metrics["spearman_progress_A"] = spear_A
-    base_metrics["spearman_progress_B"] = spear_B
+    mse_chosen, spear_chosen = _compute_mse_and_spearman(progress_pred_chosen, target_progress_chosen)
+    mse_rejected, spear_rejected = _compute_mse_and_spearman(progress_pred_rejected, target_progress_rejected)
+    base_metrics["mse_progress_chosen"] = mse_chosen
+    base_metrics["mse_progress_rejected"] = mse_rejected
+    base_metrics["spearman_progress_chosen"] = spear_chosen
+    base_metrics["spearman_progress_rejected"] = spear_rejected
 
     # No global progress alignment computed here; per-sample Spearman handled above for A and B.
 
@@ -128,10 +130,10 @@ def _compute_metrics_from_response(
 
         # Filter predictions for this subset
         subset_preds = [preds[i] for i in indices if i < len(preds)]
-        subset_progress_pred_A = [progress_pred_A[i] for i in indices if i < len(progress_pred_A)]
-        subset_progress_pred_B = [progress_pred_B[i] for i in indices if i < len(progress_pred_B)]
-        subset_target_A = [target_progress_A[i] for i in indices if i < len(target_progress_A)]
-        subset_target_B = [target_progress_B[i] for i in indices if i < len(target_progress_B)]
+        subset_progress_pred_chosen = [progress_pred_chosen[i] for i in indices if i < len(progress_pred_chosen)]
+        subset_progress_pred_rejected = [progress_pred_rejected[i] for i in indices if i < len(progress_pred_rejected)]
+        subset_target_chosen = [target_progress_chosen[i] for i in indices if i < len(target_progress_chosen)]
+        subset_target_rejected = [target_progress_rejected[i] for i in indices if i < len(target_progress_rejected)]
 
         if not subset_preds:
             return {}
@@ -141,12 +143,12 @@ def _compute_metrics_from_response(
         subset_metrics[f"accuracy_{metric_prefix}"] = correct / len(subset_preds)
 
         # Compute progress metrics for subset (A and B)
-        subset_mse_A, subset_spear_A = _compute_mse_and_spearman(subset_progress_pred_A, subset_target_A)
-        subset_mse_B, subset_spear_B = _compute_mse_and_spearman(subset_progress_pred_B, subset_target_B)
-        subset_metrics[f"mse_progress_A_{metric_prefix}"] = subset_mse_A
-        subset_metrics[f"mse_progress_B_{metric_prefix}"] = subset_mse_B
-        subset_metrics[f"spearman_progress_A_{metric_prefix}"] = subset_spear_A
-        subset_metrics[f"spearman_progress_B_{metric_prefix}"] = subset_spear_B
+        subset_mse_chosen, subset_spear_chosen = _compute_mse_and_spearman(subset_progress_pred_chosen, subset_target_chosen)
+        subset_mse_rejected, subset_spear_rejected = _compute_mse_and_spearman(subset_progress_pred_rejected, subset_target_rejected)
+        subset_metrics[f"mse_progress_chosen_{metric_prefix}"] = subset_mse_chosen
+        subset_metrics[f"mse_progress_rejected_{metric_prefix}"] = subset_mse_rejected
+        subset_metrics[f"spearman_progress_chosen_{metric_prefix}"] = subset_spear_chosen
+        subset_metrics[f"spearman_progress_rejected_{metric_prefix}"] = subset_spear_rejected
 
         return subset_metrics
 
@@ -275,10 +277,10 @@ def iter_eval_batches(
         # Extract main metrics for this batch
         keys = [
             "eval_accuracy",
-            "mse_progress_A",
-            "mse_progress_B",
-            "spearman_progress_A",
-            "spearman_progress_B",
+            "mse_progress_chosen",
+            "mse_progress_rejected",
+            "spearman_progress_chosen",
+            "spearman_progress_rejected",
         ]
         batch_main_metrics = {k: batch_result.get(k) for k in keys if k in batch_result}
 
@@ -289,10 +291,10 @@ def iter_eval_batches(
             if k.startswith(
                 (
                     "accuracy_",
-                    "mse_progress_A_",
-                    "mse_progress_B_",
-                    "spearman_progress_A_",
-                    "spearman_progress_B_",
+                    "mse_progress_chosen_",
+                    "mse_progress_rejected_",
+                    "spearman_progress_chosen_",
+                    "spearman_progress_rejected_",
                     "count_",
                 )
             )
@@ -371,10 +373,10 @@ def main():
     # Print an aggregated summary
     keys = [
         "eval_accuracy",
-        "mse_progress_A",
-        "mse_progress_B",
-        "spearman_progress_A",
-        "spearman_progress_B",
+        "mse_progress_chosen",
+        "mse_progress_rejected",
+        "spearman_progress_chosen",
+        "spearman_progress_rejected",
     ]
 
     # Add granular metrics keys
@@ -384,10 +386,10 @@ def main():
             if k.startswith(
                 (
                     "accuracy_",
-                    "mse_progress_A_",
-                    "mse_progress_B_",
-                    "spearman_progress_A_",
-                    "spearman_progress_B_",
+                    "mse_progress_chosen_",
+                    "mse_progress_rejected_",
+                    "spearman_progress_chosen_",
+                    "spearman_progress_rejected_",
                     "count_",
                 )
             ):
@@ -540,7 +542,7 @@ def generate_metrics_summary(metrics: dict, granular_metrics: dict, title: str, 
                 metric_groups["Rewound Frame Analysis"].append(k)
             elif k.startswith("accuracy_rejected_"):
                 metric_groups["Rejected Quality Analysis"].append(k)
-            elif k.startswith(("mse_progress_A_", "mse_progress_B_", "spearman_progress_A_", "spearman_progress_B_")):
+            elif k.startswith(("mse_progress_chosen_", "mse_progress_rejected_", "spearman_progress_chosen_", "spearman_progress_rejected_")):
                 # Add to appropriate group based on the metric type
                 if "rewound_" in k:
                     metric_groups["Rewound Frame Analysis"].append(k)
@@ -577,10 +579,10 @@ def generate_metrics_summary(metrics: dict, granular_metrics: dict, title: str, 
                         # Add description for granular metrics
                         if k.startswith("accuracy_"):
                             description = "Accuracy of Predicting the Correct Preference (granular breakdown)"
-                        elif k.startswith("mse_progress_A_"):
-                            description = "MSE between progress_pred_A and target_progress_A (granular)"
-                        elif k.startswith("mse_progress_B_"):
-                            description = "MSE between progress_pred_B and target_progress_B (granular)"
+                        elif k.startswith("mse_progress_chosen_"):
+                            description = "MSE between progress_pred_chosen and target_progress_chosen (granular)"
+                        elif k.startswith("mse_progress_rejected_"):
+                            description = "MSE between progress_pred_rejected and target_progress_rejected (granular)"
                         elif k.startswith("spearman_progress_A_"):
                             description = "Spearman correlation between progress_pred_A and target_progress_A (granular)"
                         elif k.startswith("spearman_progress_B_"):

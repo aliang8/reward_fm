@@ -60,8 +60,8 @@ class SamplePayload(BaseModel):
     sample_type: str
     chosen_frames_b64: List[str]
     rejected_frames_b64: List[str]
-    target_progress_A: Optional[List[float]] = None
-    target_progress_B: Optional[List[float]] = None
+    target_progress_chosen: Optional[List[float]] = None
+    target_progress_rejected: Optional[List[float]] = None
 
 
 class BatchPayload(BaseModel):
@@ -76,6 +76,9 @@ def build_preference_batch(processor, samples: List[SamplePayload], resized_h: i
     from qwen_vl_utils import process_vision_info
 
     conversations = []
+    
+    # Randomly decide whether chosen trajectory goes first or second (same as BatchCollator)
+    preference_labels = np.random.randint(0, 2, len(samples))
 
     # Attach optional target progress
     def pad_progress(progress_lists: List[Optional[List[float]]]):
@@ -96,18 +99,34 @@ def build_preference_batch(processor, samples: List[SamplePayload], resized_h: i
         chosen_imgs = decode_frames_b64(s.chosen_frames_b64)
         rejected_imgs = decode_frames_b64(s.rejected_frames_b64)
 
-        conv = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": f"Task: {s.task}"},
-                    {"type": "video", "video": chosen_imgs, "resized_height": resized_h, "resized_width": resized_w},
-                    {"type": "text", "text": "<|split_token|>"},
-                    {"type": "video", "video": rejected_imgs, "resized_height": resized_h, "resized_width": resized_w},
-                    {"type": "text", "text": "<|pref_token|>"},
-                ],
-            }
-        ]
+        if preference_labels[i] == 1.0:
+            # Chosen trajectory first: task + video A (chosen) + <|split_token|> + video B (rejected) + <|pref_token|>
+            conv = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": f"Task: {s.task}"},
+                        {"type": "video", "video": chosen_imgs, "resized_height": resized_h, "resized_width": resized_w},
+                        {"type": "text", "text": "<|split_token|>"},
+                        {"type": "video", "video": rejected_imgs, "resized_height": resized_h, "resized_width": resized_w},
+                        {"type": "text", "text": "<|pref_token|>"},
+                    ],
+                }
+            ]
+        else:
+            # Chosen trajectory second: task + video A (rejected) + <|split_token|> + video B (chosen) + <|pref_token|>
+            conv = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": f"Task: {s.task}"},
+                        {"type": "video", "video": rejected_imgs, "resized_height": resized_h, "resized_width": resized_w},
+                        {"type": "text", "text": "<|split_token|>"},
+                        {"type": "video", "video": chosen_imgs, "resized_height": resized_h, "resized_width": resized_w},
+                        {"type": "text", "text": "<|pref_token|>"},
+                    ],
+                }
+            ]
 
         conversations.append(conv)
 
@@ -127,11 +146,12 @@ def build_preference_batch(processor, samples: List[SamplePayload], resized_h: i
         # **video_kwargs,
     )
 
-    batch_inputs["target_progress_A"] = pad_progress([s.target_progress_A for s in samples])
-    batch_inputs["target_progress_B"] = pad_progress([s.target_progress_B for s in samples])
+    # Pad target progress tensors to max length in last dimension
+    batch_inputs["target_progress_chosen"] = pad_progress([s.target_progress_chosen for s in samples])
+    batch_inputs["target_progress_rejected"] = pad_progress([s.target_progress_rejected for s in samples])
 
-    # Labels: 1 means chosen preferred over rejected
-    batch_inputs["preference_labels"] = torch.tensor(np.ones(len(samples)), dtype=torch.float32)
+    # Use the dynamically generated preference labels based on trajectory order
+    batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
     return batch_inputs
 
 
@@ -159,9 +179,6 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: Dict[str, torch.Tensor
             if batch_inputs.get("second_per_grid_ts") is not None
             else None,
             sample_type="preference",
-            target_progress=batch_inputs.get("target_progress_A", None).to(device)
-            if batch_inputs.get("target_progress_A") is not None
-            else None,
         )
 
         logits = outputs.logits.squeeze(-1)  # [B]
@@ -172,27 +189,41 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: Dict[str, torch.Tensor
         predictions = preds.detach().cpu().tolist()
 
         # Extract progress predictions for A and B if available
-        progress_pred_A: List[List[float]] = []
-        progress_pred_B: List[List[float]] = []
+        # Map back to chosen/rejected based on preference labels
+        progress_pred_chosen: List[List[float]] = []
+        progress_pred_rejected: List[List[float]] = []
 
         if isinstance(progress_logits, dict):
-            if progress_logits.get("A") is not None:
-                for seq in progress_logits["A"]:
-                    if seq is None:
-                        progress_pred_A.append([])
-                    else:
-                        progress_pred_A.append(seq.detach().cpu().flatten().tolist())
-            if progress_logits.get("B") is not None:
-                for seq in progress_logits["B"]:
-                    if seq is None:
-                        progress_pred_B.append([])
-                    else:
-                        progress_pred_B.append(seq.detach().cpu().flatten().tolist())
+            # Get preference labels to determine which trajectory (A or B) corresponds to chosen/rejected
+            preference_labels = batch_inputs["preference_labels"].cpu().tolist()
+            
+            for i, (label, seq_A, seq_B) in enumerate(zip(preference_labels, progress_logits.get("A", []), progress_logits.get("B", []))):
+                if label == 1.0:
+                    # First trajectory (A) is chosen, second trajectory (B) is rejected
+                    chosen_seq = seq_A
+                    rejected_seq = seq_B
+                else:
+                    # First trajectory (A) is rejected, second trajectory (B) is chosen
+                    chosen_seq = seq_B
+                    rejected_seq = seq_A
+                
+                # Extract chosen progress
+                if chosen_seq is None:
+                    progress_pred_chosen.append([])
+                else:
+                    progress_pred_chosen.append(chosen_seq.detach().cpu().flatten().tolist())
+                
+                # Extract rejected progress
+                if rejected_seq is None:
+                    progress_pred_rejected.append([])
+                else:
+                    progress_pred_rejected.append(rejected_seq.detach().cpu().flatten().tolist())
 
         return {
             "predictions": predictions,
-            "progress_pred_A": progress_pred_A,
-            "progress_pred_B": progress_pred_B,
+            "progress_pred_chosen": progress_pred_chosen,
+            "progress_pred_rejected": progress_pred_rejected,
+            "preference_labels": preference_labels,
         }
 
 

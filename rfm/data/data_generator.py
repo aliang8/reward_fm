@@ -135,6 +135,7 @@ class DataGenerator:
 
             for subset in dataset_subsets:
                 cache_key = f"{dataset_path}/{subset}"
+                # The preprocessing script creates individual cache directories for each dataset/subset pair
                 individual_cache_dir = os.path.join(cache_dir, cache_key.replace("/", "_").replace(":", "_"))
 
                 if os.path.exists(individual_cache_dir):
@@ -258,13 +259,11 @@ class DataGenerator:
 
     def show_available_datasets(self):
         """Show which datasets are available in the cache."""
-        if self.is_evaluation:
-            cache_dir = f"./processed_datasets/eval_cache"
-            cache_type = "evaluation"
-        else:
-            cache_dir = f"./processed_datasets/train_cache"
-            cache_type = "training"
+        # The preprocessing script now creates individual cache directories for each dataset/subset pair
+        cache_dir = "./processed_datasets"
+        cache_type = "evaluation" if self.is_evaluation else "training"
 
+        rank_0_print(f"="*100)
         rank_0_print(f"\n🔍 Available datasets in {cache_dir} ({cache_type}):")
 
         # List all subdirectories (individual dataset caches)
@@ -281,7 +280,12 @@ class DataGenerator:
                             dataset_path = info.get("dataset_path", "unknown")
                             subset = info.get("subset", "unknown")
                             trajectories = info.get("total_trajectories", 0)
-                            rank_0_print(f"  ✅ {dataset_path}/{subset}: {trajectories} trajectories")
+                            dataset_type = info.get("dataset_type", "unknown")
+                            # Only show datasets of the right type
+                            if dataset_type == cache_type:
+                                rank_0_print(f"  ✅ {dataset_path}/{subset}: {trajectories} trajectories ({dataset_type})")
+                            else:
+                                rank_0_print(f"  📁 {dataset_path}/{subset}: {trajectories} trajectories ({dataset_type})")
                         except:
                             rank_0_print(f"  📁 {subdir}: (info file corrupted)")
                     else:
@@ -290,6 +294,7 @@ class DataGenerator:
                 rank_0_print(f"  ❌ No dataset caches found")
         else:
             rank_0_print(f"  ❌ Cache directory does not exist")
+        rank_0_print(f"="*100)
 
         # Show configured datasets with better formatting for the new format
         rank_0_print(f"\n⚙️  Configured datasets for {cache_type}:")
@@ -310,6 +315,7 @@ class DataGenerator:
         # Show summary
         total_subsets = sum(len(subsets) if isinstance(subsets, list) else 1 for subsets in self.subsets)
         rank_0_print(f"\n📊 Total: {len(self.datasets)} dataset(s), {total_subsets} subset(s)")
+        rank_0_print(f"="*100)
 
     def _load_frames_from_npz(self, npz_filepath: str) -> np.ndarray:
         """Load frames on-demand from npz file.
@@ -648,6 +654,8 @@ class DataGenerator:
             rejected_task=negative_traj["task"],
             rejected_lang_vector=negative_traj["lang_vector"],
             rejected_data_source=negative_traj["data_source"],
+            rejected_quality_label=negative_traj["quality_label"],
+            rejected_is_robot=negative_traj["is_robot"],
             # Progress fields
             target_progress_chosen=target_progress_chosen,
             target_progress_rejected=target_progress_rejected,
@@ -1117,9 +1125,6 @@ def test():
     rfm_model = rfm_model.to(device)
     inputs = processed_batch["preference_inputs"]
 
-    import ipdb
-
-    ipdb.set_trace()
     # Debug video grid dimensions in test
     rank_0_print(
         f"TEST DEBUG: video_grid_thw shape: {inputs.get('video_grid_thw').shape if inputs.get('video_grid_thw') is not None else None}"

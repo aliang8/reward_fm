@@ -363,8 +363,8 @@ class BatchCollator:
         # Add target progress for both trajectories based on conversation order
         target_progress_chosen = [sample.target_progress_chosen for sample in preference_samples]
         target_progress_rejected = [sample.target_progress_rejected for sample in preference_samples]
-        target_progress_chosen_mask = [1.0 if sample.chosen_quality_label == "successful" or sample.data_gen_strategy == "rewound" else 0.0 for sample in preference_samples]
-        target_progress_rejected_mask = [1.0 if sample.rejected_quality_label == "successful" or sample.data_gen_strategy == "rewound" else 0.0 for sample in preference_samples]
+        target_progress_chosen_mask = [1.0 if sample.chosen_quality_label == "successful" or sample.data_gen_strategy == "rewind_same_task" else 0.0 for sample in preference_samples]
+        target_progress_rejected_mask = [1.0 if sample.rejected_quality_label == "successful" or sample.data_gen_strategy == "rewind_same_task" else 0.0 for sample in preference_samples]
 
         # Pad target progress tensors to max length in last dimension
         batch_inputs["target_progress_chosen"] = self._pad_target_progress(target_progress_chosen)

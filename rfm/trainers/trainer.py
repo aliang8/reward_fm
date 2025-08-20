@@ -31,9 +31,9 @@ class RFMTrainer(Trainer):
         
         self.log_keys = [
             "num_rewind_frames_min",
-            "rewind_length_max",
-            "rewind_length_mean",   
-            "rewound_count",
+            "num_rewind_frames_max",
+            "num_rewind_frames_mean",   
+            "num_rewound_trajs",
         ]
         self.global_metadata = {
             "total_samples": 0,

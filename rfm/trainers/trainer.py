@@ -400,6 +400,8 @@ class RFMTrainer(Trainer):
             second_trajectory_shapes = []
             first_trajectory_progress = []
             second_trajectory_progress = []
+            first_trajectory_progress_mask = []
+            second_trajectory_progress_mask = []
 
             for i in range(batch_size):
                 if preference_labels[i] == 1.0:
@@ -408,28 +410,34 @@ class RFMTrainer(Trainer):
                     second_trajectory_shapes.append(rejected_frames_shape[i])
                     first_trajectory_progress.append(inputs["target_progress_chosen"][i])
                     second_trajectory_progress.append(inputs["target_progress_rejected"][i])
+                    first_trajectory_progress_mask.append(inputs["target_progress_chosen_mask"][i])
+                    second_trajectory_progress_mask.append(inputs["target_progress_rejected_mask"][i])
                 else:
                     # Second trajectory is preferred (chosen)
                     first_trajectory_shapes.append(rejected_frames_shape[i])
                     second_trajectory_shapes.append(chosen_frames_shape[i])
                     first_trajectory_progress.append(inputs["target_progress_rejected"][i])
                     second_trajectory_progress.append(inputs["target_progress_chosen"][i])
+                    first_trajectory_progress_mask.append(inputs["target_progress_rejected_mask"][i])
+                    second_trajectory_progress_mask.append(inputs["target_progress_chosen_mask"][i])
 
             # Convert to tensors for the helper function
             first_trajectory_shapes = torch.stack(first_trajectory_shapes)
             second_trajectory_shapes = torch.stack(second_trajectory_shapes)
+            first_trajectory_progress_mask = torch.stack(first_trajectory_progress_mask)
+            second_trajectory_progress_mask = torch.stack(second_trajectory_progress_mask)
 
             # Compute progress loss for both trajectories using the helper function
             # Now we know which shape corresponds to which trajectory based on preference labels
             if self.config.model.train_progress_head:
                 progress_loss_A, spearman_corr_A = self._compute_progress_loss(
-                    progress_logits["A"], first_trajectory_progress, first_trajectory_shapes, inputs["target_progress_chosen_mask"], "A"
+                    progress_logits["A"], first_trajectory_progress, first_trajectory_shapes, first_trajectory_progress_mask, "A"
                 )
                 progress_loss_B, spearman_corr_B = self._compute_progress_loss(
                     progress_logits["B"],
                     second_trajectory_progress,
                     second_trajectory_shapes,
-                    inputs["target_progress_rejected_mask"],
+                    second_trajectory_progress_mask,
                     "B",
                 )
 

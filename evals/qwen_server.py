@@ -208,7 +208,8 @@ def create_app(cfg: ExperimentConfig):
 
     # Load model/processor once
     processor, rfm_model = setup_model_and_processor(cfg)
-    model = setup_peft_model(rfm_model, cfg)
+    model = rfm_model
+    # model = setup_peft_model(rfm_model, cfg)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model.to(device)
 

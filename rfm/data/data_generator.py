@@ -612,9 +612,9 @@ class DataGenerator:
             raise ValueError(f"Invalid negative trajectory format: {type(negative_traj)}")
 
         # Calculate target progress for both trajectories
-        target_progress_A = self._calculate_target_progress(optimal_traj, optimal_frames)
-        target_progress_B = self._calculate_target_progress(negative_traj, negative_frames)
-
+        target_progress_chosen = self._calculate_target_progress(optimal_traj, optimal_frames)
+        target_progress_rejected = self._calculate_target_progress(negative_traj, negative_frames)
+        
         # Get frame shapes
         optimal_frames_shape = optimal_traj.get("frames_shape")
         if isinstance(optimal_frames_shape, list):
@@ -649,8 +649,8 @@ class DataGenerator:
             rejected_lang_vector=negative_traj["lang_vector"],
             rejected_data_source=negative_traj["data_source"],
             # Progress fields
-            target_progress_A=target_progress_A,
-            target_progress_B=target_progress_B,
+            target_progress_chosen=target_progress_chosen,
+            target_progress_rejected=target_progress_rejected,
             data_gen_strategy=strategy_used,
             num_frames_rewound=num_frames_rewound,
         )

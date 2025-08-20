@@ -64,8 +64,8 @@ class PreferenceSample:
     rejected_quality_label: Optional[str] = None
     rejected_is_robot: Optional[bool] = None
 
-    target_progress_A: Optional[List[float]] = None
-    target_progress_B: Optional[List[float]] = None
+    target_progress_chosen: Optional[List[float]] = None
+    target_progress_rejected: Optional[List[float]] = None
     data_gen_strategy: Optional[str] = None
     num_frames_rewound: Optional[int] = None
 
@@ -274,9 +274,6 @@ class BatchCollator:
         # Randomly decide whether chosen trajectory goes first or second
         preference_labels = np.random.randint(0, 2, len(preference_samples))
 
-        target_progress_A_mask = []
-        target_progress_B_mask = []
-
         for i, sample in enumerate(preference_samples):
             # Convert frames to appropriate format using stored shapes
             chosen_frames = self._convert_frames_to_pil_images(sample.chosen_frames, sample.chosen_frames_shape)
@@ -364,50 +361,16 @@ class BatchCollator:
         batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
 
         # Add target progress for both trajectories based on conversation order
-        target_progress_A_list = []
-        target_progress_B_list = []
-
-        for i, sample in enumerate(preference_samples):
-            # Get the preference label to determine which trajectory went first
-            if preference_labels[i] == 1.0:
-                # First trajectory is chosen (chosen_frames), second is rejected (rejected_frames)
-                if sample.target_progress_A is not None:
-                    target_progress_A_list.append(sample.target_progress_A)  # chosen progress
-                if sample.target_progress_B is not None:
-                    target_progress_B_list.append(sample.target_progress_B)  # rejected progress
-
-                if getattr(sample, "chosen_quality_label", None) == "successful":
-                    target_progress_A_mask.append(1.0)
-                else:
-                    target_progress_A_mask.append(0.0)
-
-                if getattr(sample, "rejected_quality_label", None) == "successful" or getattr(sample, "data_gen_strategy", None) == "rewound":
-                    target_progress_B_mask.append(1.0)
-                else:
-                    target_progress_B_mask.append(0.0)
-
-            else:
-                # First trajectory is rejected (rejected_frames), second is chosen (chosen_frames)
-                if sample.target_progress_B is not None:
-                    target_progress_A_list.append(sample.target_progress_B)  # rejected progress (now first)
-                if sample.target_progress_A is not None:
-                    target_progress_B_list.append(sample.target_progress_A)  # chosen progress (now second)
-
-
-                if sample.rejected_quality_label == "successful" or sample.data_gen_strategy == "rewound":
-                    target_progress_A_mask.append(1.0)
-                else:
-                    target_progress_A_mask.append(0.0)
-                if sample.chosen_quality_label == "successful":
-                    target_progress_B_mask.append(1.0)
-                else:
-                    target_progress_B_mask.append(0.0)
+        target_progress_chosen = [sample.target_progress_chosen for sample in preference_samples]
+        target_progress_rejected = [sample.target_progress_rejected for sample in preference_samples]
+        target_progress_chosen_mask = [1.0 if sample.chosen_quality_label == "successful" or sample.data_gen_strategy == "rewound" else 0.0 for sample in preference_samples]
+        target_progress_rejected_mask = [1.0 if sample.rejected_quality_label == "successful" or sample.data_gen_strategy == "rewound" else 0.0 for sample in preference_samples]
 
         # Pad target progress tensors to max length in last dimension
-        batch_inputs["target_progress_A"] = self._pad_target_progress(target_progress_A_list)
-        batch_inputs["target_progress_B"] = self._pad_target_progress(target_progress_B_list)
-        batch_inputs["target_progress_A_mask"] = torch.tensor(target_progress_A_mask, dtype=torch.float32)
-        batch_inputs["target_progress_B_mask"] = torch.tensor(target_progress_B_mask, dtype=torch.float32)
+        batch_inputs["target_progress_chosen"] = self._pad_target_progress(target_progress_chosen)
+        batch_inputs["target_progress_rejected"] = self._pad_target_progress(target_progress_rejected)
+        batch_inputs["target_progress_chosen_mask"] = torch.tensor(target_progress_chosen_mask, dtype=torch.float32)
+        batch_inputs["target_progress_rejected_mask"] = torch.tensor(target_progress_rejected_mask, dtype=torch.float32)
 
         # Also add the frame_shapes
         batch_inputs["chosen_frames_shape"] = torch.tensor(

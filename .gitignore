@@ -23,3 +23,7 @@ core
 rfm_dataset/*
 rfm_visualizer/
 uv.lock
+visualizer/
+*.log
+old/
+*.png

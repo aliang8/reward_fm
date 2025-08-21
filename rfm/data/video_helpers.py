@@ -113,7 +113,7 @@ def load_video_frames(video_input) -> np.ndarray:
         cap = _open_with_best_backend(video_path)
     else:
         # Save bytes to temp file first
-        with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as temp_file:
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_file:
             temp_file.write(video_input)
             temp_input_path = temp_file.name
         temp_files_to_cleanup.append(temp_input_path)
@@ -131,7 +131,9 @@ def load_video_frames(video_input) -> np.ndarray:
     try:
         frames: List[np.ndarray] = []
         if cap is None or not cap.isOpened():
-            raise ValueError("Could not open video file with available backends. If the source is AV1, install AV1 support or enable ffmpeg re-encode.")
+            raise ValueError(
+                "Could not open video file with available backends. If the source is AV1, install AV1 support or enable ffmpeg re-encode."
+            )
 
         while True:
             ret, frame = cap.read()
@@ -166,4 +168,3 @@ def load_video_frames(video_input) -> np.ndarray:
             except Exception:
                 pass
         raise e
-

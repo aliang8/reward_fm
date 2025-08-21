@@ -26,7 +26,7 @@ reward_fm/
 
 This project can be installed as a Python package called `rfm`. We provide multiple installation methods:
 
-### Method 1: Install as a Package (Recommended)
+### Method 1: Install as a Package (DEPRECATED, DON"T use)
 
 Install the RFM package directly:
 
@@ -115,6 +115,28 @@ This project uses `uv` for fast and reliable dependency management. We recommend
     uv run python -c "import torch; print(f'PyTorch version: {torch.__version__}')"
     uv run python -c "import transformers; print(f'Transformers version: {transformers.__version__}')"
     ```
+### Next: Dataset Setup
+We now download the dataset to the local `./rfm_dataset` directory (by default).
+For space reasons, you should symlink `~/.cache/huggingface/datasets` to some other location with ample space first, as that's where the dataset is downloaded to by default before being symlinked to `./rfm_dataset`.
+
+```bash
+# Download the dataset
+./setup.sh
+```
+
+If you're running into issues with HuggingFace's API while downloading the dataset, you can use 
+```bash
+RFM_DOWNLOAD_METHOD=git ./setup.sh
+```
+to download via git-lfs instead. Make sure `git-lfs` is first installed.
+
+Add to your `.bashrc` the following export:
+
+```bash
+export RFM_DATASET_PATH=/path/to/your/rfm_dataset
+```
+
+
 
 ### Troubleshooting
 
@@ -153,12 +175,49 @@ uv run python rfm/data/generate_hf_dataset.py \
 
 ## Training and Evaluation
 ```bash
+
+# Preprocess the dataset
+uv run scripts/preprocess_dataset.py
+
 # Training
 uv run accelerate launch --config_file rfm/configs/fsdp.yaml train.py --config_path=rfm/configs/config.yaml
 
 # Evaluation
 uv run accelerate launch --config_file rfm/configs/fsdp.yaml train.py --mode=evaluate
 ```
+
+### Evaluation via HTTP server
+You can run evaluations through a lightweight HTTP server that hosts the model and returns metrics.
+
+Start the server (optionally override YAML fields with --set):
+```bash
+uv run evals/qwen_server.py \
+  --config_path=rfm/configs/config.yaml \
+  --host=0.0.0.0 --port=8000 \
+  --set 'evaluation.model_path="aliangdw/rfm_v1"'
+```
+
+Run the external client to send video batches and receive metrics:
+```bash
+uv run python evals/run_model_eval.py \
+  --config_path=rfm/configs/config.yaml \
+  --server_url=http://localhost:8000 \
+  --batch_size=15 \
+  --num-batches=-1  
+# -1 downloads full datasets
+```
+
+Optionally, trigger full internal evaluation (same flow as train.py evaluate):
+```bash
+curl -X POST http://localhost:8000/evaluate_internal \
+  -H 'Content-Type: application/json' \
+  -d '{"eval_subset_size": 100}'
+```
+
+Notes:
+- Set `RFM_DATASET_PATH` to the directory holding your downloaded datasets so the server/client can resolve video paths.
+- The external endpoint `/evaluate_batch` accepts pre-batched, base64-encoded videos and returns per-batch metrics.
+- The internal endpoint `/evaluate_internal` reuses the trainer evaluation pipeline to compute a full eval in one call.
 
 ## Development
 

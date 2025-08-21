@@ -4,7 +4,7 @@ from datasets import Dataset
 from transformers import (
     AutoProcessor,
     Qwen2_5_VLModel,
-    TrainingArguments,  
+    TrainingArguments,
 )
 
 from PIL import Image
@@ -13,16 +13,17 @@ import os
 import yaml
 from typing import List, Dict, Optional, Union, Any
 from peft import get_peft_model, LoraConfig, PeftModel
-from rfm.data.data_generator import BatchCollator, InfiniteDataGeneratorDataset, DataGenerator
+from rfm.data.data_generator import BatchCollator, DataGenerator
+from rfm.data.dataset import InfiniteDataGeneratorDataset, RewoundDataset, PairedSuccessFailureDataset
 from rfm.models.rfm import RFMModel
-from trainer import RFMTrainer, compute_metrics
+from rfm.trainers.trainer import RFMTrainer
 from rfm.utils.logging import is_rank_0, rank_0_print
 from tqdm import tqdm
 from dataclasses import dataclass, field
 from pathlib import Path
 from pyrallis import wrap
 from qwen_vl_utils import process_vision_info
-import wandb    
+import wandb
 import numpy as np
 from rich.console import Console
 from rich.table import Table
@@ -31,15 +32,17 @@ from rich import print as rprint
 
 # Import shared configs and utilities
 from rfm.configs.experiment_configs import ExperimentConfig
-from setup_utils import (
+from rfm.utils.setup_utils import (
     setup_model_and_processor,
     setup_peft_model,
     create_training_arguments,
     setup_data_generator,
     setup_batch_collator,
     setup_dataset,
-    setup_eval_dataset
+    setup_eval_dataset,
 )
+
+from rfm.utils.logging import _timer
 
 # Suppress FSDP ShardedTensor deprecation warning
 warnings.filterwarnings("ignore", message="Please use DTensor instead and we are deprecating ShardedTensor")
@@ -52,71 +55,77 @@ def train(cfg: ExperimentConfig):
     if isinstance(cfg, str):
         cfg = ExperimentConfig.from_yaml(cfg)
 
+    timing_raw = {}
     # Create DataGenerator for training using shared utility
-    data_generator = setup_data_generator(cfg)
-    
+    with _timer("time/setup_data_generator", timing_raw=timing_raw):
+        data_generator = setup_data_generator(cfg)
+
+    run_name = f"{cfg.logging.wandb_run_name}"
+    if cfg.debug:
+        run_name += "_debug"
+
     # Initialize wandb if enabled (only on rank 0)
     if cfg.logging.use_wandb and is_rank_0():
         # Convert config to dict for wandb using dataclass asdict
         from dataclasses import asdict
+
         config_dict = asdict(cfg)
-        
+
         wandb.init(
-            project=cfg.logging.wandb_project,
-            entity=cfg.logging.wandb_entity,
-            name=cfg.logging.wandb_run_name,
-            config=config_dict
+            project=cfg.logging.wandb_project, entity=cfg.logging.wandb_entity, name=run_name, config=config_dict
         )
         rank_0_print(f"Wandb initialized: {wandb.run.name}")
     elif cfg.logging.use_wandb:
         rank_0_print("Wandb logging enabled but skipped on non-rank-0 processes")
-    
+
     # Set memory management
     torch.backends.cudnn.benchmark = True
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    
+
     # Use the shared function to set up model and processor
-    processor, rfm_model = setup_model_and_processor(cfg)
+    with _timer("time/setup_model_and_processor", timing_raw=timing_raw):
+        processor, rfm_model = setup_model_and_processor(cfg)
 
     # Apply PEFT if enabled
     peft_rfm_model = setup_peft_model(rfm_model, cfg)
-    
+
     # Create training arguments from config
     if cfg.debug:
-        cfg.training.save_steps = 2 
+        cfg.training.save_steps = 2
         cfg.training.logging_steps = 2
         cfg.training.eval_steps = 2
+        cfg.data.eval_subset_size = 10
 
     training_args = create_training_arguments(cfg, cfg.training.output_dir)
-    
+
     # Use the shared utilities for batch collator and dataset
-    batch_collator = setup_batch_collator(processor, cfg)
-    train_dataset = setup_dataset(data_generator)
-    
+    with _timer("time/setup_data", timing_raw=timing_raw):
+        batch_collator = setup_batch_collator(processor, cfg)
+        train_dataset = setup_dataset(data_generator)
+
     # Set up evaluation dataset if evaluation is enabled
     eval_dataset = None
     if cfg.training.do_eval:
         eval_dataset = setup_eval_dataset(cfg)
         rank_0_print(f"Evaluation dataset created with {cfg.data.eval_subset_size} samples")
-    
+
     trainer = RFMTrainer(
         model=peft_rfm_model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=batch_collator,
-        beta=cfg.training.beta,
-        compute_metrics=compute_metrics,  # Pass the compute_metrics function
+        config=cfg,
     )
-  
+
     if is_rank_0():
-        print("\n" + "="*80)
+        print("\n" + "=" * 80)
         print("--- PRE-TRAINING FSDP DIAGNOSTICS ---")
         # The Trainer creates its own Accelerator instance. Let's check its state.
-        if hasattr(trainer, 'accelerator'):
+        if hasattr(trainer, "accelerator"):
             print(f"Trainer's Accelerator object found.")
-            fsdp_plugin = getattr(trainer.accelerator.state, 'fsdp_plugin', None)
+            fsdp_plugin = getattr(trainer.accelerator.state, "fsdp_plugin", None)
             if fsdp_plugin:
                 print(f"FSDP Plugin found in Accelerator state.")
                 # This is the configuration the accelerator will ACTUALLY use for wrapping.
@@ -125,125 +134,54 @@ def train(cfg: ExperimentConfig):
                 print("ERROR: FSDP Plugin NOT found in the Trainer's accelerator state!")
         else:
             print("ERROR: Trainer has no 'accelerator' attribute yet. This check needs to be later.")
-        print("="*80 + "\n")
-    
+        print("=" * 80 + "\n")
+
+    # log timing_raw to wandb
+    if cfg.logging.use_wandb and is_rank_0():
+        wandb.log(timing_raw)
+
+    rank_0_print(f"Timing raw: {timing_raw}")
     rank_0_print(f"Training from checkpoint: {cfg.training.resume_from_checkpoint}")
     trainer.train(resume_from_checkpoint=cfg.training.resume_from_checkpoint)
     trainer.save_model(cfg.training.output_dir)
     rank_0_print(f"Training complete! Check {cfg.training.output_dir} for checkpoints and final model.")
 
 
-def evaluate(cfg: ExperimentConfig):
-    """Evaluate the trained RFM model using a subset of training data"""
-    rank_0_print("--- Evaluating RFM Model ---")
-    
-    # Use the shared function to set up model and processor
-    processor, rfm_model = setup_model_and_processor(cfg)
-    
-    # Apply PEFT configuration (same as training) to ensure parameter groups match
-    model = setup_peft_model(rfm_model, cfg)
-    
-    # Create DataGenerator for evaluation using shared utility
-    eval_data_generator = setup_data_generator(cfg)
-    
-    rank_0_print(f"Using DataGenerator for evaluation with {cfg.evaluation.eval_subset_size} examples")
-    
-    # Create evaluation dataset using infinite generation
-    eval_dataset = InfiniteDataGeneratorDataset(eval_data_generator, max_samples=cfg.evaluation.eval_subset_size)
-    
-    # Use the shared function to create training arguments for evaluation
-    eval_args = create_training_arguments(cfg, "./eval_output", is_eval=True)
-    
-    # Use the shared utilities for batch collator
-    batch_collator = setup_batch_collator(processor, cfg)
-    
-    # Initialize the Trainer
-    trainer = RFMTrainer(
-        model=model,  # Use the PEFT-configured model
-        args=eval_args,
-        train_dataset=eval_dataset,
-        eval_dataset=eval_dataset,
-        data_collator=batch_collator,
-        beta=cfg.training.beta,
-        compute_metrics=compute_metrics,  # Pass the compute_metrics function
-    )
-    
-    # Load the checkpoint using trainer's resume_from_checkpoint feature
-    # This will automatically load all weights including the base model into RFMModel
-    rank_0_print(f"Loading checkpoint from: {cfg.evaluation.model_path}")
-    
-    # Now that training arguments match, we can use resume_from_checkpoint safely
-    trainer.train(resume_from_checkpoint=cfg.evaluation.model_path)
-    
-    # Run evaluation using trainer's evaluation infrastructure
-    rank_0_print("Running evaluation...")
-    
-    # Use trainer's evaluation method which properly handles FSDP
-    eval_results = trainer.evaluate()
-    
-    # Only the main process should print the results
-    if trainer.is_world_process_zero():
-        rank_0_print(f"Evaluation results: {eval_results}")
-        rank_0_print("\n=== Evaluation Results ===")
-        
-        # Helper function to safely format metrics
-        def safe_format(metric_name, default_value=0.0):
-            value = eval_results.get(metric_name, default_value)
-            if isinstance(value, (int, float)):
-                return f"{value:.6f}"
-            else:
-                return str(value)
-        
-        rank_0_print(f"Evaluation Loss: {safe_format('eval_loss')}")
-        rank_0_print(f"Accuracy (B > C): {safe_format('eval_accuracy')} ({safe_format('eval_accuracy', 0)}%)")
-        rank_0_print(f"Average Reward Difference (B - C): {safe_format('eval_reward_diff')}")
-        rank_0_print(f"Average Reward for B (chosen): {safe_format('eval_avg_reward_chosen')}")
-        rank_0_print(f"Average Reward for C (rejected): {safe_format('eval_avg_reward_rejected')}")
-        
-        # Print interpretation
-        accuracy = eval_results.get('eval_accuracy', 0)
-        if isinstance(accuracy, (int, float)) and accuracy > 0.5:
-            rank_0_print(f"✅ Model correctly prefers B over C in {accuracy*100:.1f}% of cases")
-        else:
-            rank_0_print(f"❌ Model incorrectly prefers C over B in {(1-accuracy)*100:.1f}% of cases")
-    
-    return eval_results
-
-
 def display_config(cfg: ExperimentConfig):
     """Display the configuration in a nice Rich format."""
     if not is_rank_0():
         return  # Only display config on rank 0
-    
+
     console = Console()
-    
+
     # Print a nice header
     console.print(Panel.fit("🤖 RFM (Reward Function Model) Configuration", style="bold cyan"))
-    
+
     # Create a table for the main config
     table = Table(title="Experiment Settings", show_header=True, header_style="bold magenta")
     table.add_column("Section", style="cyan", no_wrap=True)
     table.add_column("Key", style="green")
     table.add_column("Value", style="yellow")
-    
+
     # Mode and debug
     table.add_row("General", "Mode", cfg.mode)
     table.add_row("General", "Debug", str(cfg.debug))
-    
+
     # Model config
     table.add_row("Model", "Base Model", cfg.model.base_model_id)
     table.add_row("Model", "Torch Dtype", cfg.model.torch_dtype)
     table.add_row("Model", "Trust Remote Code", str(cfg.model.trust_remote_code))
-    
+
     # Data config
-    table.add_row("Data", "Dataset Path", cfg.data.dataset_path)
-    table.add_row("Data", "Dataset Subsets", ", ".join(cfg.data.dataset_subsets))
+    table.add_row("Data", "Training Datasets", ", ".join(cfg.data.train_datasets))
+    table.add_row("Data", "Training Subsets", ", ".join(str(subset) for subset in cfg.data.train_subsets))
+    table.add_row("Data", "Eval Datasets", ", ".join(cfg.data.eval_datasets))
+    table.add_row("Data", "Eval Subsets", ", ".join(str(subset) for subset in cfg.data.eval_subsets))
     table.add_row("Data", "Max Frames", str(cfg.data.max_frames))
     table.add_row("Data", "Video Frame Sampling", cfg.data.video_frame_sampling)
     table.add_row("Data", "Resized Height", str(cfg.data.resized_height))
     table.add_row("Data", "Resized Width", str(cfg.data.resized_width))
     table.add_row("Data", "Preference Ratio", str(cfg.data.preference_ratio))
-    table.add_row("Data", "Similarity Ratio", str(cfg.data.similarity_ratio))
     table.add_row("Data", "Dataset Preference Ratio", str(cfg.data.dataset_preference_ratio))
     table.add_row("Data", "Shuffle", str(cfg.data.shuffle))
     table.add_row("Data", "Seed", str(cfg.data.seed))
@@ -251,7 +189,7 @@ def display_config(cfg: ExperimentConfig):
     table.add_row("Data", "Force Reprocess", str(cfg.data.force_reprocess))
     table.add_row("Data", "Dataloader Pin Memory", str(cfg.data.dataloader_pin_memory))
     table.add_row("Data", "Dataloader Num Workers", str(cfg.data.dataloader_num_workers))
-    
+
     # Training config
     table.add_row("Training", "Number of GPUs", str(cfg.training.num_gpus))
     table.add_row("Training", "Output Directory", cfg.training.output_dir)
@@ -266,7 +204,7 @@ def display_config(cfg: ExperimentConfig):
     table.add_row("Training", "Save Steps", str(cfg.training.save_steps))
     table.add_row("Training", "FP16", str(cfg.training.fp16))
     table.add_row("Training", "BF16", str(cfg.training.bf16))
-    
+
     # PEFT config
     table.add_row("PEFT", "Use PEFT", str(cfg.peft.use_peft))
     if cfg.peft.use_peft:
@@ -274,28 +212,25 @@ def display_config(cfg: ExperimentConfig):
         table.add_row("PEFT", "LoRA Alpha", str(cfg.peft.lora_alpha))
         table.add_row("PEFT", "LoRA Dropout", str(cfg.peft.lora_dropout))
         table.add_row("PEFT", "Target Modules", ", ".join(cfg.peft.target_modules))
-        table.add_row("PEFT", "Train Vision Encoder", str(cfg.peft.train_vision_encoder))
-        table.add_row("PEFT", "Train Language Model", str(cfg.peft.train_language_model))
-        table.add_row("PEFT", "Train Value Head", str(cfg.peft.train_value_head))
-        table.add_row("PEFT", "Train Progress Head", str(cfg.peft.train_progress_head))
-        table.add_row("PEFT", "Train Preference Head", str(cfg.peft.train_preference_head))
-        table.add_row("PEFT", "Train Similarity Head", str(cfg.peft.train_similarity_head))
-    
+        table.add_row("PEFT", "Train Vision Encoder", str(cfg.model.train_vision_encoder))
+        table.add_row("PEFT", "Train Language Model", str(cfg.model.train_language_model))
+        table.add_row("PEFT", "Train Value Head", str(cfg.model.train_value_head))
+        table.add_row("PEFT", "Train Progress Head", str(cfg.model.train_progress_head))
+        table.add_row("PEFT", "Train Preference Head", str(cfg.model.train_preference_head))
+        table.add_row("PEFT", "Train Similarity Head", str(cfg.model.train_similarity_head))
+
     # Logging config
     table.add_row("Logging", "Use Wandb", str(cfg.logging.use_wandb))
     if cfg.logging.use_wandb:
         table.add_row("Logging", "Wandb Project", cfg.logging.wandb_project)
         table.add_row("Logging", "Wandb Entity", str(cfg.logging.wandb_entity))
         table.add_row("Logging", "Wandb Run Name", str(cfg.logging.wandb_run_name))
-    
+
     # Evaluation config (if applicable)
     if cfg.mode == "evaluate":
         table.add_row("Evaluation", "Model Path", cfg.evaluation.model_path)
-        table.add_row("Evaluation", "Eval Subset Size", str(cfg.evaluation.eval_subset_size))
-        table.add_row("Evaluation", "Eval Dataset Path", cfg.evaluation.eval_dataset_path)
-        table.add_row("Evaluation", "Eval Base Directory", cfg.evaluation.eval_base_dir)
-        table.add_row("Evaluation", "Eval Dataset Subsets", ", ".join(cfg.evaluation.eval_dataset_subsets))
-    
+        table.add_row("Evaluation", "Eval Subset Size", str(cfg.data.eval_subset_size))
+
     console.print(table)
 
 
@@ -303,17 +238,11 @@ def display_config(cfg: ExperimentConfig):
 def main(cfg: ExperimentConfig):
     # Display the configuration in a nice Rich format
     display_config(cfg)
-    
+
     if cfg.mode == "train":
         if is_rank_0():
             rprint(Panel.fit("🚀 Starting RFM Training", style="bold green"))
         train(cfg)
-        
-    elif cfg.mode == "evaluate":
-        if is_rank_0():
-            rprint(Panel.fit("🔍 Starting RFM Evaluation", style="bold blue"))
-        evaluate(cfg)
-        
     else:
         raise ValueError(f"Unknown mode: {cfg.mode}. Must be 'train' or 'evaluate'")
 

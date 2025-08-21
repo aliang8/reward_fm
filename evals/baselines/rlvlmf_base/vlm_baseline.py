@@ -344,15 +344,19 @@ OR
         
         sample_folder = os.path.join(self.sample_dir, f"sample_{sample_id:03d}")
         
-        # Save original trajectories
-        for traj_type, images in [("original_chosen", orig_chosen), 
-                                  ("original_rejected", orig_rejected)]:
-            folder = os.path.join(sample_folder, traj_type)
-            os.makedirs(folder, exist_ok=True)
-            for i, img in enumerate(images):
-                img.save(os.path.join(folder, f"frame_{i:02d}.jpg"))
+        # Save original trajectories only for every 20th sample (0, 20, 40, ...)
+        if sample_id % 20 == 0:
+            for traj_type, images in [("original_chosen", orig_chosen), 
+                                      ("original_rejected", orig_rejected)]:
+                folder = os.path.join(sample_folder, traj_type)
+                os.makedirs(folder, exist_ok=True)
+                for i, img in enumerate(images):
+                    img.save(os.path.join(folder, f"frame_{i:02d}.jpg"))
+            
+            if self.verbose:
+                print(f"💾 Saved full trajectories for sample {sample_id} (every 20th sample)")
         
-        # Save selected frames
+        # Always save selected frames for all samples
         for traj_type, img in [("selected_chosen", sel_chosen),
                                ("selected_rejected", sel_rejected)]:
             folder = os.path.join(sample_folder, traj_type)

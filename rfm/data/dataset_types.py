@@ -38,19 +38,20 @@ class Trajectory:
             "preference_rank": self.preference_rank,
             "metadata": self.metadata,
         }
-        
+
+
 @dataclass
 class Preference:
     """Preference data structure for trajectory comparisons."""
-    
+
     traj_id: str
     chosen_id: str
     rejected_id: str
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary format."""
         return {
             "traj_id": self.traj_id,
             "chosen_id": self.chosen_id,
             "rejected_id": self.rejected_id,
-        } 
+        }

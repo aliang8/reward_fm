@@ -20,10 +20,10 @@ from rfm.data.video_helpers import load_video_frames
 
 class EgoDexFrameLoader:
     """Pickle-able frame loader for EgoDex videos."""
-    
+
     def __init__(self, mp4_path: str):
         self.mp4_path = mp4_path
-    
+
     def __call__(self) -> np.ndarray:
         """Load frames from the MP4 file when called."""
         return load_video_frames(Path(self.mp4_path))
@@ -37,47 +37,47 @@ def _discover_trajectory_files(dataset_path: Path) -> List[Tuple[Path, Path, str
             continue
         task_name = task_dir.name
         for hdf5_file in task_dir.glob("*.hdf5"):
-            mp4_file = hdf5_file.with_suffix('.mp4')
+            mp4_file = hdf5_file.with_suffix(".mp4")
             if mp4_file.exists():
                 trajectory_files.append((hdf5_file, mp4_file, task_name))
             else:
                 print(f"Warning: Missing MP4 file for {hdf5_file}")
     return trajectory_files
-    
 
-    
+
 def _load_hdf5_data(hdf5_path: Path) -> Tuple[np.ndarray, str]:
     """Load pose data and task description from EgoDex HDF5 file."""
-    with h5py.File(hdf5_path, 'r') as f:
+    with h5py.File(hdf5_path, "r") as f:
         task_description = ""
         try:
-            if 'llm_description' in f.attrs:
-                if 'which_llm_description' in f.attrs:
-                    which_desc = f.attrs['which_llm_description']
-                    if int(which_desc) == 2 and 'llm_description2' in f.attrs:
-                        desc = f.attrs['llm_description2']
+            if "llm_description" in f.attrs:
+                if "which_llm_description" in f.attrs:
+                    which_desc = f.attrs["which_llm_description"]
+                    if int(which_desc) == 2 and "llm_description2" in f.attrs:
+                        desc = f.attrs["llm_description2"]
                     else:
-                        desc = f.attrs['llm_description']
+                        desc = f.attrs["llm_description"]
                 else:
-                    desc = f.attrs['llm_description']
+                    desc = f.attrs["llm_description"]
                 if isinstance(desc, bytes):
-                    task_description = desc.decode('utf-8')
+                    task_description = desc.decode("utf-8")
                 else:
                     task_description = str(desc)
         except Exception as e:
             print(f"Warning: Could not load task description from {hdf5_path}: {e}")
         pose_data = _extract_pose_actions(f)
     return pose_data, task_description
-    
+
+
 def _extract_pose_actions(hdf5_file) -> np.ndarray:
     """Extract pose actions (positions) from EgoDex HDF5."""
     actions: List[np.ndarray] = []
     pose_keys = [
-        'transforms/leftHand',
-        'transforms/rightHand',
-        'transforms/leftIndexFingerTip',
-        'transforms/rightIndexFingerTip',
-        'transforms/camera',
+        "transforms/leftHand",
+        "transforms/rightHand",
+        "transforms/leftIndexFingerTip",
+        "transforms/rightIndexFingerTip",
+        "transforms/camera",
     ]
     for key in pose_keys:
         if key in hdf5_file:
@@ -85,14 +85,15 @@ def _extract_pose_actions(hdf5_file) -> np.ndarray:
             positions = transform_data[:, :3, 3]
             actions.append(positions)
     if not actions:
-        if 'transforms/camera' in hdf5_file:
-            camera_transforms = hdf5_file['transforms/camera'][:]
+        if "transforms/camera" in hdf5_file:
+            camera_transforms = hdf5_file["transforms/camera"][:]
             camera_positions = camera_transforms[:, :3, 3]
             actions.append(camera_positions)
         else:
             print("Warning: No pose data found, creating dummy actions")
             actions.append(np.zeros((100, 3)))
     return np.concatenate(actions, axis=1)
+
 
 def load_egodex_dataset(dataset_path: str, max_trajectories: int = 100) -> Dict[str, List[Dict]]:
     """Load EgoDex dataset and organize by task, without a separate iterator class."""
@@ -119,15 +120,15 @@ def load_egodex_dataset(dataset_path: str, max_trajectories: int = 100) -> Dict[
             frame_loader = EgoDexFrameLoader(str(mp4_path))
 
             trajectory = {
-                'frames': frame_loader,
-                'actions': pose_data,
-                'is_robot': False,
-                'task': task_description or f"EgoDex {task_name}",
-                'quality_label': 'successful',
-                'preference_group_id': None,
-                'preference_rank': None,
-                'task_name': task_name,
-                'id': generate_unique_id(),
+                "frames": frame_loader,
+                "actions": pose_data,
+                "is_robot": False,
+                "task": task_description or f"EgoDex {task_name}",
+                "quality_label": "successful",
+                "preference_group_id": None,
+                "preference_rank": None,
+                "task_name": task_name,
+                "id": generate_unique_id(),
             }
 
             task_data.setdefault(task_name, []).append(trajectory)

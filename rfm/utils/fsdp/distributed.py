@@ -32,7 +32,9 @@ def initialize_global_process_group(timeout_second=36000):
         return local_rank, rank, world_size
 
     # Initialize process group if not already initialized
-    torch.distributed.init_process_group("nccl" if is_cuda_available else "hccl", timeout=timedelta(seconds=timeout_second))
+    torch.distributed.init_process_group(
+        "nccl" if is_cuda_available else "hccl", timeout=timedelta(seconds=timeout_second)
+    )
     local_rank = int(os.environ["LOCAL_RANK"])
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])

@@ -4,7 +4,7 @@
 # =====================================================================================
 # Experiment Mode
 # =====================================================================================
-mode: "train"  # "train" or "evaluate"
+mode: "vqa_train"  # "train" or "evaluate"
 debug: false  # Set to true for debugging (reduces dataset size, enables debug features)
 
 # =====================================================================================
@@ -28,18 +28,18 @@ data:
   # Dataset paths and sources
   train_datasets: 
     - "abraranwar/libero_rfm"
-    - "ykorkmaz/libero_failure_rfm"
+    # - "ykorkmaz/libero_failure_rfm"
   train_subsets:
     - ["libero_90"]
-    - ["libero_90_failure"]
+    # - ["libero_90_failure"]
   
   # Evaluation dataset settings
   eval_datasets :
     - "abraranwar/libero_rfm"
-    - "ykorkmaz/libero_failure_rfm"
+    # - "ykorkmaz/libero_failure_rfm"
   eval_subsets:
     - ["libero_10"]
-    - ["libero_10_failure"]
+    # - ["libero_10_failure"]
   eval_subset_size: 500  # Number of evaluation examples
   
   # Video processing settings
@@ -66,22 +66,22 @@ data:
 # =====================================================================================
 training:  
   # Output and logging
-  output_dir: "./logs/rfm_progress_pref"
+  output_dir: "./logs/rfm_vqa"
   
   # Training parameters
-  per_device_train_batch_size: 16
+  per_device_train_batch_size: 2
   gradient_accumulation_steps: 1
   learning_rate: 2e-5
   num_train_epochs: -1  # Number of epochs to train for
   save_strategy: "steps"
   logging_steps: 1
   save_steps: 200
-  max_steps: 5000  # -1 means no limit, use num_train_epochs instead
+  max_steps: 100  # -1 means no limit, use num_train_epochs instead
   
   # Evaluation settings
   evaluation_strategy: "steps"  # Options: "no", "steps", "epoch"
-  eval_steps: 5  # Evaluate every 50 steps
-  per_device_eval_batch_size: 16  # Evaluation batch size per device
+  eval_steps: 1  # Evaluate every 50 steps
+  per_device_eval_batch_size: 2  # Evaluation batch size per device
   do_eval: true  # Enable evaluation during training
   prediction_loss_only: true # Only compute loss for the prediction head
   
@@ -130,6 +130,6 @@ logging:
   print_trainable_parameters: true
   # Wandb configuration
   use_wandb: false
-  wandb_project: "rfm"
-  wandb_entity: clvr
-  wandb_run_name: "rfm"
+  wandb_project: "rfm_vqa"
+  wandb_entity: ykorkmaz
+  wandb_run_name: "debug"

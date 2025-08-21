@@ -119,6 +119,10 @@ class DataConfig:
     dataloader_pin_memory: bool = field(default=True, metadata={"help": "Whether to pin memory in dataloader"})
     dataloader_num_workers: int = field(default=0, metadata={"help": "Number of worker processes for dataloader"})
 
+    # Video binned dataset specific parameters
+    num_bins: int = field(default=10, metadata={"help": "Number of bins to use for video binned dataset"})
+    fps: int = field(default=10, metadata={"help": "Frames per second to extract from videos"})
+
 
 @dataclass
 class TrainingConfig:

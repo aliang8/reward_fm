@@ -11,13 +11,19 @@ from typing import Tuple, Optional, Union
 
 from rfm.models.rfm import RFMModel
 from rfm.data.data_generator import DataGenerator, BatchCollator
-from rfm.data.dataset import InfiniteDataGeneratorDataset, RewoundDataset, PairedSuccessFailureDataset, VideoBinnedDataset
+from rfm.data.dataset import (
+    InfiniteDataGeneratorDataset,
+    RewoundDataset,
+    PairedSuccessFailureDataset,
+    VideoBinnedDataset,
+)
 from rfm.utils.logging import rank_0_print
 from rfm.configs.experiment_configs import ExperimentConfig, ModelConfig
 
 from rfm.utils.logging import _timer
 
 DatasetType = Union[InfiniteDataGeneratorDataset, RewoundDataset, PairedSuccessFailureDataset, VideoBinnedDataset]
+
 
 def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[AutoProcessor, RFMModel]:
     """Shared function to set up model, processor, and tokenizer for both training and evaluation"""
@@ -29,7 +35,7 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[
 
     if rank == 0:
         rank_0_print(f"Setting up model and processor on rank {rank}...")
-    
+
     # Load processor and tokenizer
     processor = AutoProcessor.from_pretrained(
         cfg.base_model_id,
@@ -296,7 +302,7 @@ def setup_eval_dataset(cfg: ExperimentConfig) -> DatasetType:
     eval_dataset = setup_dataset(
         eval_data_generator,
         dataset_type=cfg.data.dataset_type,
-        dataset_kwargs={"max_samples": cfg.data.eval_subset_size},
+        dataset_kwargs={"max_samples": cfg.data.eval_subset_size, "num_bins": cfg.data.num_bins, "fps": cfg.data.fps},
     )
 
     return eval_dataset

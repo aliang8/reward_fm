@@ -38,9 +38,7 @@ def _evaluate_samples(server_url: str, samples: List[Any]) -> Dict[str, Any]:
     return resp
 
 
-def _save_result_as_json(
-    samples: List[Any], response: Dict[str, Any], batch_idx: int, results_dir: str
-) -> List[Dict[str, Any]]:
+def _save_result_as_json(samples: List[Any], response: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Save detailed results for each sample in the batch."""
 
     # Extract data from response
@@ -71,7 +69,7 @@ def _save_result_as_json(
             "rejected_quality_label": sample.rejected_quality_label,
         }
 
-        # save additional infos for logging metrics 
+        # save additional infos for logging metrics
         if sample.bin_idx_chosen is not None:
             result_entry["bin_idx_chosen"] = sample.bin_idx_chosen
         if sample.bin_idx_rejected is not None:
@@ -126,7 +124,7 @@ def iter_eval_batches(
         batch_result = _evaluate_samples(server_url, batch_samples)
 
         # Process detailed results for this batch
-        batch_results = _save_result_as_json(batch_samples, batch_result, batch_idx, "")
+        batch_results = _save_result_as_json(batch_samples, batch_result)
         all_detailed_results.extend(batch_results)
         print(f"Processed batch {batch_idx + 1}/{actual_num_batches} ({len(batch_results)} samples)")
 
@@ -170,16 +168,16 @@ def main():
     )
 
     # Create results directory structure
-    dataset_name = f"{cfg.data.eval_datasets[0]}_{cfg.data.eval_subsets[0]}"
+    dataset_name = f"{cfg.data.eval_datasets[0].replace('/', '_')}_{cfg.data.eval_subsets[0]}"
     model_name = cfg.model_path.replace("/", "_")
     eval_log_dir = Path(cfg.log_dir) / model_name / dataset_name / cfg.data.dataset_type
     os.makedirs(eval_log_dir, exist_ok=True)
-    
+
     # Save results to JSON
     results_file = eval_log_dir / "results.json"
     with open(results_file, "w") as f:
         json.dump(all_results, f, indent=2)
-    
+
     print(f"\nEvaluation complete!")
     print(f"Results saved to: {results_file}")
     print(f"Total samples processed: {len(all_results)}")

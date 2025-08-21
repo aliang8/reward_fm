@@ -317,7 +317,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config_path", type=str, default="rfm/configs/eval_config.yaml")
     args = parser.parse_args()
-    
+
     # Load evaluation config manually
     print(f"Loading evaluation config from: {args.config_path}")
     with open(args.config_path, "r") as f:

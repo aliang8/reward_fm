@@ -139,29 +139,18 @@ class DataGenerator:
                 individual_cache_dir = os.path.join(cache_dir, cache_key.replace("/", "_").replace(":", "_"))
 
                 if os.path.exists(individual_cache_dir):
-                    # Check if this cache is for the right dataset type (training vs evaluation)
                     info_file = os.path.join(individual_cache_dir, "dataset_info.json")
                     if os.path.exists(info_file):
                         try:
                             with open(info_file, "r") as f:
                                 info = json.load(f)
-                            cache_dataset_type = info.get("dataset_type", "unknown")
 
-                            # Only load if it matches our intended dataset type
-                            if cache_dataset_type == ("training" if is_training else "evaluation"):
-                                available_datasets.append((dataset_path, subset, individual_cache_dir))
-                                rank_0_print(f"      ✅ Found {cache_dataset_type} cache: {individual_cache_dir}")
-                            else:
-                                missing_datasets.append((dataset_path, subset))
-                                rank_0_print(
-                                    f"      ❌ Found {cache_dataset_type} cache but need {'training' if is_training else 'evaluation'}: {individual_cache_dir}"
-                                )
+                            available_datasets.append((dataset_path, subset, individual_cache_dir))
+                            rank_0_print(f"      ✅ Found cache: {individual_cache_dir}")
                         except:
-                            # If we can't read the info file, skip this cache
                             rank_0_print(f"      ⚠️  Cache info file corrupted, skipping: {individual_cache_dir}")
                             continue
                     else:
-                        # No info file, skip this cache
                         rank_0_print(f"      ⚠️  No info file found, skipping: {individual_cache_dir}")
                         continue
                 else:
@@ -177,7 +166,7 @@ class DataGenerator:
 
         if not available_datasets:
             raise RuntimeError(
-                f"No configured dataset/subset pairs are available in the cache for {'training' if is_training else 'evaluation'}. "
+                f"No configured dataset/subset pairs are available in the cache. "
                 f"Please run preprocess_datasets.py to create the cache for: {self.datasets}"
             )
 
@@ -261,10 +250,9 @@ class DataGenerator:
         """Show which datasets are available in the cache."""
         # The preprocessing script now creates individual cache directories for each dataset/subset pair
         cache_dir = "./processed_datasets"
-        cache_type = "evaluation" if self.is_evaluation else "training"
 
         rank_0_print(f"=" * 100)
-        rank_0_print(f"\n🔍 Available datasets in {cache_dir} ({cache_type}):")
+        rank_0_print(f"\n🔍 Available datasets in {cache_dir}:")
 
         # List all subdirectories (individual dataset caches)
         if os.path.exists(cache_dir):
@@ -280,16 +268,7 @@ class DataGenerator:
                             dataset_path = info.get("dataset_path", "unknown")
                             subset = info.get("subset", "unknown")
                             trajectories = info.get("total_trajectories", 0)
-                            dataset_type = info.get("dataset_type", "unknown")
-                            # Only show datasets of the right type
-                            if dataset_type == cache_type:
-                                rank_0_print(
-                                    f"  ✅ {dataset_path}/{subset}: {trajectories} trajectories ({dataset_type})"
-                                )
-                            else:
-                                rank_0_print(
-                                    f"  📁 {dataset_path}/{subset}: {trajectories} trajectories ({dataset_type})"
-                                )
+                            rank_0_print(f"  ✅ {dataset_path}/{subset}: {trajectories} trajectories")
                         except:
                             rank_0_print(f"  📁 {subdir}: (info file corrupted)")
                     else:
@@ -301,7 +280,7 @@ class DataGenerator:
         rank_0_print(f"=" * 100)
 
         # Show configured datasets with better formatting for the new format
-        rank_0_print(f"\n⚙️  Configured datasets for {cache_type}:")
+        rank_0_print(f"\n⚙️  Configured datasets:")
         for i, (dataset_path, dataset_subsets) in enumerate(zip(self.datasets, self.subsets)):
             rank_0_print(f"  📋 Dataset {i + 1}: {dataset_path}")
 
@@ -1042,7 +1021,9 @@ def test():
 
     infinite_dataset = InfiniteDataGeneratorDataset(generator)
 
-    import ipdb; ipdb.set_trace()
+    import ipdb
+
+    ipdb.set_trace()
 
     preference_count = 0
     similarity_count = 0

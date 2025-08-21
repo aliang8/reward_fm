@@ -50,21 +50,21 @@ class DatasetPreprocessor:
             if isinstance(dataset_subsets, str):
                 dataset_subsets = [dataset_subsets]
             for subset in dataset_subsets:
-                all_datasets.append(("training", dataset_path, subset))
+                all_datasets.append((dataset_path, subset))
 
         # Add evaluation datasets
         for dataset_path, dataset_subsets in zip(self.config.data.eval_datasets, self.config.data.eval_subsets):
             if isinstance(dataset_subsets, str):
                 dataset_subsets = [dataset_subsets]
             for subset in dataset_subsets:
-                all_datasets.append(("evaluation", dataset_path, subset))
+                all_datasets.append((dataset_path, subset))
 
         # Show which datasets are already preprocessed
         self._show_preprocessed_datasets(all_datasets)
 
         # Process each dataset and its associated subsets
-        for i, (dataset_type, dataset_path, subset) in enumerate(all_datasets):
-            rank_0_print(f"\n📚 Processing {dataset_type} dataset {i + 1}/{len(all_datasets)}: {dataset_path}/{subset}")
+        for i, (dataset_path, subset) in enumerate(all_datasets):
+            rank_0_print(f"\n📚 Processing dataset {i + 1}/{len(all_datasets)}: {dataset_path}/{subset}")
 
             # Create individual cache key
             cache_key = f"{dataset_path}/{subset}"
@@ -99,7 +99,7 @@ class DatasetPreprocessor:
 
                 # Save individual cache
                 self._save_individual_cache(
-                    individual_cache_dir, processed_dataset, indices, dataset_path, subset, dataset_type
+                    individual_cache_dir, processed_dataset, indices, dataset_path, subset
                 )
 
                 rank_0_print(f"    ✅ Successfully processed and cached {dataset_path}/{subset}")
@@ -365,7 +365,6 @@ class DatasetPreprocessor:
         indices: Dict,
         dataset_path: str,
         subset: str,
-        dataset_type: str,
     ):
         """Save the processed dataset and index mappings for an individual dataset/subset."""
         # Create cache directory
@@ -386,7 +385,6 @@ class DatasetPreprocessor:
         dataset_info = {
             "dataset_path": dataset_path,
             "subset": subset,
-            "dataset_type": dataset_type,
             "total_trajectories": len(processed_dataset),
             "cache_timestamp": str(datetime.datetime.now()),
             "config_hash": self._get_config_hash(),
@@ -498,7 +496,9 @@ class DatasetPreprocessor:
             dataset = dataset.select(range(100))
 
             # Just patch the paths, don't decode videos yet
-            dataset = dataset.map(lambda x: {"frames_video": patch_path(x["frames"]), "frames_path": patch_path(x["frames"])})
+            dataset = dataset.map(
+                lambda x: {"frames_video": patch_path(x["frames"]), "frames_path": patch_path(x["frames"])}
+            )
             return dataset
         else:
             # Load from local disk

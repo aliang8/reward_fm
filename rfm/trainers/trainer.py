@@ -789,14 +789,36 @@ class VQATrainer(Trainer):
         # Extract inputs
         input_ids = inputs['input_ids'].to(self.args.device)
         attention_mask = inputs['attention_mask'].to(self.args.device)
-        pixel_values = inputs['pixel_values'].to(self.args.device)
         labels = inputs['labels'].to(self.args.device)
+        
+        # Handle vision inputs - the processor might return different keys
+        pixel_values = inputs.get('pixel_values')
+        pixel_values_videos = inputs.get('pixel_values_videos')
+        image_grid_thw = inputs.get('image_grid_thw')
+        video_grid_thw = inputs.get('video_grid_thw')
+        second_per_grid_ts = inputs.get('second_per_grid_ts')
+        
+        # Move to device if they exist
+        if pixel_values is not None:
+            pixel_values = pixel_values.to(self.args.device)
+        if pixel_values_videos is not None:
+            pixel_values_videos = pixel_values_videos.to(self.args.device)
+        if image_grid_thw is not None:
+            image_grid_thw = image_grid_thw.to(self.args.device)
+        if video_grid_thw is not None:
+            video_grid_thw = video_grid_thw.to(self.args.device)
+        if second_per_grid_ts is not None:
+            second_per_grid_ts = second_per_grid_ts.to(self.args.device)
 
         # Forward pass
         outputs = model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             pixel_values=pixel_values,
+            pixel_values_videos=pixel_values_videos,
+            image_grid_thw=image_grid_thw,
+            video_grid_thw=video_grid_thw,
+            second_per_grid_ts=second_per_grid_ts,
             labels=labels
         )
 

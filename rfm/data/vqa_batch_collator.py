@@ -66,6 +66,88 @@ class VQABatchCollator:
             padded_list.append(padded_progress)
         return torch.tensor(padded_list, dtype=torch.float32)
 
+    def _create_vqa_inputs_with_labels(self, conversations, answer_texts):
+        """
+        Create VQA inputs with proper labels that only calculate loss on answer tokens.
+        
+        Args:
+            conversations: List of conversation messages
+            answer_texts: List of answer texts for each conversation
+            
+        Returns:
+            Dictionary with input_ids, attention_mask, labels, and vision inputs
+        """
+        # Step 1: Create prompts with generation prompt
+        prompt_texts = [
+            self.processor.apply_chat_template(
+                conv,
+                tokenize=False,
+                add_generation_prompt=True,
+                add_vision_id=True,
+                fps=1,
+            )
+            for conv in conversations
+        ]
+        
+        # Step 2: Create full texts (prompt + answer)
+        full_texts = [
+            prompt + answer
+            for prompt, answer in zip(prompt_texts, answer_texts)
+        ]
+        
+        # Step 3: Process vision info
+        image_inputs, video_inputs, video_kwargs = process_vision_info(conversations, return_video_kwargs=True)
+        
+        # Step 4: Tokenize prompts only (to know where to start answer labels)
+        prompt_inputs = self.processor(
+            text=prompt_texts,
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            truncation=False,
+            max_length=self.max_length,
+            return_tensors="pt",
+        )
+        
+        # Step 5: Tokenize full texts (prompt + answer)
+        full_inputs = self.processor(
+            text=full_texts,
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            truncation=False,
+            max_length=self.max_length,
+            return_tensors="pt",
+        )
+        
+        # Step 6: Create labels - only calculate loss on answer tokens
+        batch_size, seq_len = full_inputs["input_ids"].shape
+        labels = torch.full((batch_size, seq_len), -100, dtype=torch.long)
+        
+        for i in range(batch_size):
+            # Find where the answer starts (after the prompt)
+            prompt_len = (prompt_inputs["input_ids"][i] != self.processor.tokenizer.pad_token_id).sum().item()
+            full_len = (full_inputs["input_ids"][i] != self.processor.tokenizer.pad_token_id).sum().item()
+            
+            # Set labels for answer tokens only
+            if full_len > prompt_len:
+                # Copy the answer part from input_ids to labels
+                labels[i, prompt_len:full_len] = full_inputs["input_ids"][i, prompt_len:full_len]
+        
+        # Step 7: Return the full inputs with proper labels
+        result = {
+            "input_ids": full_inputs["input_ids"],
+            "attention_mask": full_inputs["attention_mask"],
+            "labels": labels,
+        }
+        
+        # Add vision inputs if they exist
+        for key in ["pixel_values", "pixel_values_videos", "image_grid_thw", "video_grid_thw", "second_per_grid_ts"]:
+            if key in full_inputs:
+                result[key] = full_inputs[key]
+                
+        return result
+
     def _convert_frames_to_pil_images(self, frames, frames_shape=None):
         """Convert frames to PIL images if they are numpy arrays or serialized bytes."""
         if frames is None:
@@ -176,8 +258,8 @@ class VQABatchCollator:
 
         # Process similarities
         similarity_inputs = {}
-        if similarity_samples:
-            similarity_inputs = self._process_similarity_batch(similarity_samples)
+        # if similarity_samples:
+        #     similarity_inputs = self._process_similarity_batch(similarity_samples)
 
         # Process progress
         progress_inputs = {}
@@ -258,38 +340,16 @@ class VQABatchCollator:
 
             all_messages.append(conversation)
 
-        # Process all messages in one batch
-        texts = [
-            self.processor.apply_chat_template(
-                msg,
-                tokenize=False,
-                add_generation_prompt=False,
-                add_vision_id=True,
-                fps=1,
-            )
-            for msg in all_messages
-        ]
-
-        image_inputs, video_inputs, video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
-
-        # Process through the processor in one batch
-        batch_inputs = self.processor(
-            text=texts,
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            truncation=False,
-            max_length=self.max_length,
-            return_tensors="pt",
-        )
-
+        # Convert preference labels to text answers
+        preference_labels_text = ["I prefer trajectory A" if label == 0 else "I prefer trajectory B" for label in preference_labels]
+        
+        # Create input with generation prompt and answer for proper label setting
+        batch_inputs = self._create_vqa_inputs_with_labels(all_messages, preference_labels_text)
+        
         # Add metadata
         batch_inputs["sample_type"] = ["preference"] * len(preference_samples)
         # Use the dynamically generated preference labels based on trajectory order
         batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
-        # Convert preference labels to text
-        preference_labels_text = ["I prefer trajectory A" if label == 0 else "I prefer trajectory B" for label in preference_labels]
-        batch_inputs["labels"] = self.processor.tokenizer(preference_labels_text, return_tensors="pt", padding=True, truncation=True).input_ids
 
         # Add target progress for both trajectories based on conversation order
         target_progress_A_list = []
@@ -299,20 +359,20 @@ class VQABatchCollator:
             # Get the preference label to determine which trajectory went first
             if preference_labels[i] == 1.0:
                 # First trajectory is chosen (chosen_frames), second is rejected (rejected_frames)
-                if sample.target_progress_A is not None:
-                    target_progress_A_list.append(sample.target_progress_A)  # chosen progress
-                if sample.target_progress_B is not None:
-                    target_progress_B_list.append(sample.target_progress_B)  # rejected progress
+                if sample.target_progress_chosen is not None:
+                    target_progress_A_list.append(sample.target_progress_chosen)  # chosen progress
+                if sample.target_progress_rejected is not None:
+                    target_progress_B_list.append(sample.target_progress_rejected)  # rejected progress
             else:
                 # First trajectory is rejected (rejected_frames), second is chosen (chosen_frames)
-                if sample.target_progress_B is not None:
-                    target_progress_A_list.append(sample.target_progress_B)  # rejected progress (now first)
-                if sample.target_progress_A is not None:
-                    target_progress_B_list.append(sample.target_progress_A)  # chosen progress (now second)
+                if sample.target_progress_rejected is not None:
+                    target_progress_A_list.append(sample.target_progress_rejected)  # rejected progress (now first)
+                if sample.target_progress_chosen is not None:
+                    target_progress_B_list.append(sample.target_progress_chosen)  # chosen progress (now second)
 
         # Pad target progress tensors to max length in last dimension
-        batch_inputs["target_progress_A"] = self._pad_target_progress(target_progress_A_list)
-        batch_inputs["target_progress_B"] = self._pad_target_progress(target_progress_B_list)
+        batch_inputs["target_progress_chosen"] = self._pad_target_progress(target_progress_A_list)
+        batch_inputs["target_progress_rejected"] = self._pad_target_progress(target_progress_B_list)
 
         # Also add the frame_shapes
         batch_inputs["chosen_frames_shape"] = torch.tensor(
@@ -457,34 +517,6 @@ class VQABatchCollator:
 
             all_messages.append(conversation)
 
-        # Process all messages in one batch
-        texts = [
-            self.processor.apply_chat_template(
-                msg,
-                tokenize=False,
-                add_generation_prompt=False,
-                add_vision_id=True,
-                fps=1,
-            )
-            for msg in all_messages
-        ]
-
-        image_inputs, video_inputs, video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
-
-        # Process through the processor in one batch
-        batch_inputs = self.processor(
-            text=texts,
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            truncation=False,
-            max_length=self.max_length,
-            return_tensors="pt",
-        )
-
-        # Add metadata
-        batch_inputs["sample_type"] = ["progress"] * len(progress_samples)
-
         # Add target progress and quality labels
         target_progress_list = []
         quality_labels = []
@@ -494,11 +526,17 @@ class VQABatchCollator:
                 target_progress_list.append(sample.target_progress)
             quality_labels.append(1.0 if sample.quality_label == 'successful' else 0.0)
 
+        # Convert progress labels to text answers
+        progress_labels_text = [f"The task is {int(progress[0] * 100) if progress else 0}% complete" for progress in target_progress_list]
+        
+        # Create input with generation prompt and answer for proper label setting
+        batch_inputs = self._create_vqa_inputs_with_labels(all_messages, progress_labels_text)
+        
+        # Add metadata
+        batch_inputs["sample_type"] = ["progress"] * len(progress_samples)
+        
         # Pad target progress tensors to max length in last dimension
         batch_inputs["target_progress"] = self._pad_target_progress(target_progress_list)
-        # Convert progress labels to text
-        progress_labels_text = [f"The task is {int(progress * 100)}% complete" for progress in target_progress_list]
-        batch_inputs["labels"] = self.processor.tokenizer(progress_labels_text, return_tensors="pt", padding=True, truncation=True).input_ids
         batch_inputs["quality_labels"] = torch.tensor(quality_labels, dtype=torch.float32)
 
         return batch_inputs

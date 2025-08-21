@@ -107,7 +107,7 @@ def train(cfg: ExperimentConfig):
     with open(config_save_path, "w") as f:
         yaml.dump(config_dict, f, default_flow_style=False, indent=2)
     rank_0_print(f"Saved training config to: {config_save_path}")
-    
+
     # Use the shared utilities for batch collator and dataset
     with _timer("time/setup_data", timing_raw=timing_raw):
         batch_collator = setup_batch_collator(processor, cfg)

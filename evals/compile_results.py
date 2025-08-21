@@ -119,8 +119,158 @@ def compute_metrics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
             rewound_counts[str(rewound)] = rewound_counts.get(str(rewound), 0) + 1
 
     metrics["rewound_counts"] = rewound_counts
+    
+    # Bin delta accuracy analysis
+    delta_accuracy = analyze_bin_delta_accuracy(results)
+    if delta_accuracy:
+        metrics["bin_delta_accuracy"] = delta_accuracy
+        
+        # Add summary statistics
+        total_correct = sum(delta_accuracy[delta]['correct'] for delta in delta_accuracy)
+        total_incorrect = sum(delta_accuracy[delta]['incorrect'] for delta in delta_accuracy)
+        total_abstained = sum(delta_accuracy[delta]['abstained'] for delta in delta_accuracy)
+        total_samples = sum(delta_accuracy[delta]['total'] for delta in delta_accuracy)
+        overall_delta_accuracy = total_correct / total_samples if total_samples > 0 else 0
+        overall_abstention_rate = total_abstained / total_samples if total_samples > 0 else 0
+        
+        metrics["bin_delta_overall_accuracy"] = overall_delta_accuracy
+        metrics["bin_delta_overall_abstention_rate"] = overall_abstention_rate
+        metrics["bin_delta_total_samples"] = total_samples
+        metrics["bin_delta_total_correct"] = total_correct
+        metrics["bin_delta_total_incorrect"] = total_incorrect
+        metrics["bin_delta_total_abstained"] = total_abstained
 
     return metrics
+
+
+def analyze_bin_delta_accuracy(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Analyze preference accuracy based on the frame delta between bins.
+    
+    Args:
+        results: List of evaluation results
+        
+    Returns:
+        Dictionary with delta analysis results including abstentions
+    """
+    # Filter results that have bin indices
+    bin_results = [r for r in results if 'bin_idx_chosen' in r and 'bin_idx_rejected' in r]
+    
+    if not bin_results:
+        print("No results with bin indices found for delta analysis")
+        return {}
+    
+    # Calculate frame delta for each sample
+    delta_accuracy = {}
+    
+    for result in bin_results:
+        bin_chosen = result['bin_idx_chosen']
+        bin_rejected = result['bin_idx_rejected']
+        
+        # Calculate absolute frame delta
+        frame_delta = abs(bin_chosen - bin_rejected)
+        
+        # Initialize delta entry if not exists
+        if frame_delta not in delta_accuracy:
+            delta_accuracy[frame_delta] = {
+                'correct': 0,
+                'incorrect': 0,
+                'abstained': 0,
+                'total': 0,
+                'accuracy': 0.0,
+                'abstention_rate': 0.0
+            }
+        
+        # Get prediction probability
+        pred_prob = result.get('predicted_preference_prob', 0.5)
+        
+        # Determine if model abstained (probability close to 0.5)
+        if abs(pred_prob - 0.5) <= 0.1:
+            delta_accuracy[frame_delta]['abstained'] += 1
+        else:
+            # Count correct vs incorrect predictions
+            if result['predicted_preference'] == result['preference_label']:
+                delta_accuracy[frame_delta]['correct'] += 1
+            else:
+                delta_accuracy[frame_delta]['incorrect'] += 1
+        
+        delta_accuracy[frame_delta]['total'] += 1
+    
+    # Calculate accuracy and abstention rate for each delta
+    for delta in delta_accuracy:
+        data = delta_accuracy[delta]
+        data['accuracy'] = data['correct'] / data['total'] if data['total'] > 0 else 0.0
+        data['abstention_rate'] = data['abstained'] / data['total'] if data['total'] > 0 else 0.0
+    
+    return delta_accuracy
+
+
+def create_bin_delta_plot(delta_accuracy: Dict[str, Any], output_dir: Path):
+    """
+    Create a stacked bar plot showing preference accuracy breakdown by frame delta.
+    
+    Args:
+        delta_accuracy: Dictionary with delta analysis results
+        output_dir: Directory to save the plot
+    """
+    if not delta_accuracy:
+        print("No delta accuracy data to plot")
+        return
+    
+    # Sort deltas for proper x-axis ordering
+    deltas = sorted(delta_accuracy.keys())
+    
+    # Extract data for stacked bars (convert to percentages)
+    correct_pcts = [delta_accuracy[delta]['correct'] / delta_accuracy[delta]['total'] * 100 for delta in deltas]
+    abstained_pcts = [delta_accuracy[delta]['abstained'] / delta_accuracy[delta]['total'] * 100 for delta in deltas]
+    incorrect_pcts = [delta_accuracy[delta]['incorrect'] / delta_accuracy[delta]['total'] * 100 for delta in deltas]
+    total_counts = [delta_accuracy[delta]['total'] for delta in deltas]
+    
+    # Create the plot (single panel now)
+    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+    
+    # Create stacked bar chart showing percentage breakdown
+    x = np.arange(len(deltas))
+    width = 0.8
+    
+    # Create stacked bars with percentages
+    bars1 = ax.bar(x, correct_pcts, width, label='Correct', color='green', alpha=0.7)
+    bars2 = ax.bar(x, abstained_pcts, width, bottom=correct_pcts, label='Abstained', color='blue', alpha=0.7)
+    bars3 = ax.bar(x, incorrect_pcts, width, bottom=np.array(correct_pcts) + np.array(abstained_pcts), 
+                     label='Incorrect', color='red', alpha=0.7)
+    
+    ax.set_xlabel('Frame Delta (|bin_chosen - bin_rejected|)')
+    ax.set_ylabel('Preference Accuracy (%)')
+    ax.set_title('Preference Accuracy by Frame Delta Between Bins (Percentages)', fontsize=14, weight="bold", y=1.1, pad=20)
+    ax.set_xticks(x)
+    ax.set_xticklabels(deltas)
+    ax.set_ylim(0, 100)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    # Add percentage labels on bars
+    for i, (correct_pct, abstained_pct, incorrect_pct) in enumerate(zip(correct_pcts, abstained_pcts, incorrect_pcts)):
+        # Label for correct (bottom)
+        if correct_pct > 0:
+            ax.text(i, correct_pct/2, f'{correct_pct:.1f}%', ha='center', va='center', fontweight='bold', color='white')
+        
+        # Label for abstained (middle)
+        if abstained_pct > 0:
+            ax.text(i, correct_pct + abstained_pct/2, f'{abstained_pct:.1f}%', ha='center', va='center', fontweight='bold', color='white')
+        
+        # Label for incorrect (top)
+        if incorrect_pct > 0:
+            ax.text(i, correct_pct + abstained_pct + incorrect_pct/2, f'{incorrect_pct:.1f}%', ha='center', va='center', fontweight='bold', color='white')
+    
+    # Add sample count annotations above bars
+    for i, count in enumerate(total_counts):
+        ax.text(i, 102, f'n={count}', ha='center', va='bottom', fontsize=10, fontweight='bold')
+    
+    plt.tight_layout()
+    plt.savefig(output_dir / "bin_delta_accuracy.png", dpi=150, bbox_inches="tight")
+    plt.close()
+    
+    print(f"Bin delta accuracy plot saved to: {output_dir / 'bin_delta_accuracy.png'}")
 
 
 def create_visualizations(results: List[Dict[str, Any]], output_dir: Path, max_samples: int = 5):
@@ -137,10 +287,10 @@ def create_visualizations(results: List[Dict[str, Any]], output_dir: Path, max_s
         selected_results = [results[i] for i in selected_indices]
 
     # Create progress plots
-    _create_progress_plots(selected_results, video_dir)
+    _trajectory_progress_plot(selected_results, video_dir)
 
 
-def _create_progress_plots(results: List[Dict[str, Any]], output_dir: Path):
+def _trajectory_progress_plot(results: List[Dict[str, Any]], output_dir: Path):
     """Create progress prediction plots for selected samples."""
     for i, result in enumerate(results):
         # Create figure with two subplots side by side
@@ -261,6 +411,74 @@ def print_metrics_summary(metrics: Dict[str, Any]):
     for rewound, count in metrics.get("rewound_counts", {}).items():
         print(f"  {rewound} frames: {count}")
 
+    # Bin delta accuracy summary
+    if "bin_delta_accuracy" in metrics:
+        print(f"\nBin Delta Analysis:")
+        print(f"  Overall Accuracy: {metrics.get('bin_delta_overall_accuracy', 'N/A'):.4f}")
+        print(f"  Overall Abstention Rate: {metrics.get('bin_delta_overall_abstention_rate', 'N/A'):.4f}")
+        print(f"  Total Samples: {metrics.get('bin_delta_total_samples', 'N/A')}")
+        
+        delta_accuracy = metrics["bin_delta_accuracy"]
+        deltas = sorted(delta_accuracy.keys())
+        print(f"  Delta Range: {min(deltas)} to {max(deltas)} bins")
+        
+        # Calculate overall abstention rate
+        total_abstained = sum(delta_accuracy[delta]['abstained'] for delta in deltas)
+        overall_abstention_rate = total_abstained / metrics.get('bin_delta_total_samples', 1) if metrics.get('bin_delta_total_samples', 0) > 0 else 0
+        print(f"  Overall Abstention Rate: {overall_abstention_rate:.4f}")
+        
+        # Show top 3 most common deltas
+        delta_counts = [(delta, delta_accuracy[delta]['total']) for delta in deltas]
+        delta_counts.sort(key=lambda x: x[1], reverse=True)
+        print(f"  Most Common Deltas:")
+        for i, (delta, count) in enumerate(delta_counts[:3]):
+            accuracy = delta_accuracy[delta]['accuracy']
+            abstention_rate = delta_accuracy[delta]['abstention_rate']
+            print(f"    Delta {delta}: {accuracy:.3f} accuracy, {abstention_rate:.3f} abstention ({count} samples)")
+
+    print("\n" + "=" * 80)
+
+
+def print_bin_delta_summary(delta_accuracy: Dict[str, Any]):
+    """Print a summary of bin delta accuracy analysis."""
+    if not delta_accuracy:
+        print("No bin delta analysis data available")
+        return
+    
+    print("\n" + "=" * 80)
+    print("BIN DELTA ACCURACY ANALYSIS")
+    print("=" * 80)
+    
+    # Sort deltas for consistent display
+    deltas = sorted(delta_accuracy.keys())
+    
+    print(f"\nFrame Delta Analysis (|bin_chosen - bin_rejected|):")
+    print(f"{'Delta':<8} {'Accuracy':<12} {'Abstained':<12} {'Correct':<10} {'Incorrect':<10} {'Total':<8} {'%':<6}")
+    print("-" * 70)
+    
+    for delta in deltas:
+        data = delta_accuracy[delta]
+        accuracy = data['accuracy']
+        abstention_rate = data['abstention_rate']
+        correct = data['correct']
+        incorrect = data['incorrect']
+        abstained = data['abstained']
+        total = data['total']
+        percentage = (correct / total * 100) if total > 0 else 0
+        
+        print(f"{delta:<8} {accuracy:<12.3f} {abstention_rate:<12.3f} {correct:<10} {incorrect:<10} {total:<8} {percentage:<6.1f}%")
+    
+    # Overall statistics
+    total_correct = sum(delta_accuracy[delta]['correct'] for delta in delta_accuracy)
+    total_incorrect = sum(delta_accuracy[delta]['incorrect'] for delta in delta_accuracy)
+    total_abstained = sum(delta_accuracy[delta]['abstained'] for delta in delta_accuracy)
+    total_samples = sum(delta_accuracy[delta]['total'] for delta in delta_accuracy)
+    overall_accuracy = total_correct / total_samples if total_samples > 0 else 0
+    overall_abstention_rate = total_abstained / total_samples if total_samples > 0 else 0
+    
+    print("-" * 70)
+    print(f"{'Overall':<8} {overall_accuracy:<12.3f} {overall_abstention_rate:<12.3f} {total_correct:<10} {total_incorrect:<10} {total_samples:<8} {overall_accuracy*100:<6.1f}%")
+    
     print("\n" + "=" * 80)
 
 
@@ -273,6 +491,9 @@ def main():
     parser = argparse.ArgumentParser(description="Compile evaluation results and create visualizations")
     parser.add_argument(
         "--config", type=str, default="rfm/configs/eval_config.yaml", help="Path to evaluation configuration file"
+    )
+    parser.add_argument(
+        "--results_file", type=str, default=None, help="Path to results.json file"
     )
     parser.add_argument(
         "--max_samples", type=int, default=5, help="Maximum number of samples to visualize"
@@ -288,18 +509,8 @@ def main():
     cfg.data = DataConfig(**config_dict["data"])
     print(f"Evaluation config: {cfg}")
 
-    # Load results - handle the new directory structure
-    model_name = cfg.model_path.replace("/", "_")
-    dataset_name = f"{cfg.data.eval_datasets[0]}_{cfg.data.eval_subsets[0]}"
-    results_file = Path(cfg.log_dir) / model_name / dataset_name / "results.json"
-    
-    if not results_file.exists():
-        print(f"Error: Results file not found at {results_file}")
-        print("Please check the path and ensure the evaluation has been run first.")
-        return
-    
-    results = load_results(str(results_file))
-    print(f"Loaded {len(results)} samples from {results_file}")
+    results = load_results(str(args.results_file))
+    print(f"Loaded {len(results)} samples from {args.results_file}")
 
     # Compute metrics
     print("Computing metrics...")
@@ -308,10 +519,17 @@ def main():
     # Print metrics summary
     print_metrics_summary(metrics)
 
+    # Analyze bin delta accuracy
+    delta_accuracy = analyze_bin_delta_accuracy(results)
+    print_bin_delta_summary(delta_accuracy)
+
     # Create visualizations in the same directory as results.json
-    results_dir = results_file.parent
+    results_dir = Path(args.results_file).parent
     print(f"Creating visualizations in: {results_dir}")
     create_visualizations(results, results_dir, args.max_samples)
+
+    # Create bin delta plot
+    create_bin_delta_plot(delta_accuracy, results_dir)
 
     # Save metrics to file in the same directory as results.json
     metrics_file = results_dir / "metrics.json"

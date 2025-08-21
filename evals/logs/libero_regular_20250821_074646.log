@@ -1,76 +1,0 @@
-Running LIBERO regular dataset evaluations at Thu Aug 21 07:46:46 PDT 2025
-=== Evaluating subset: libero_10 ===
-Start time: Thu Aug 21 07:46:46 PDT 2025
-Applied config override: evaluation.eval_dataset_path = abraranwar/libero_rfm
-Applied config override: evaluation.eval_dataset_subsets = [libero_10]
-Setting up evaluation data generator on rank 0...
-Loading 2 evaluation datasets with corresponding subsets
-  Dataset 1: abraranwar/libero_rfm -> libero_10
-  Dataset 2: ykorkmaz/libero_failure_rfm -> libero_10_failure
-Found preprocessed evaluation cache at ./processed_datasets/eval_cache, loading...
-Loaded 997 trajectory indices from preprocessed evaluation cache
-Successfully loaded preprocessed evaluation cache with 997 trajectory indices
-No preference dataset provided, will use random sampling for preferences
-No similarity dataset provided, will use random sampling for similarities
-DataGenerator initialized with 997 total trajectories
-  Robot trajectories: 997
-  Human trajectories: 0
-  Tasks: 10
-  Quality labels: 2
-  Data sources: 2
-Evaluation data generator initialized on rank 0
-Evaluating (all prefs):   0%|          | 0/42 [00:00<?, ?it/s]Evaluating (all prefs):   2%|▏         | 1/42 [00:13<09:25, 13.79s/it]Evaluating (all prefs):   5%|▍         | 2/42 [00:29<10:05, 15.14s/it]Evaluating (all prefs):   7%|▋         | 3/42 [00:44<09:41, 14.92s/it]Evaluating (all prefs):  10%|▉         | 4/42 [00:58<09:05, 14.35s/it]Evaluating (all prefs):  12%|█▏        | 5/42 [01:12<08:51, 14.35s/it]Evaluating (all prefs):  14%|█▍        | 6/42 [01:26<08:39, 14.44s/it]Evaluating (all prefs):  17%|█▋        | 7/42 [01:42<08:35, 14.74s/it]Evaluating (all prefs):  19%|█▉        | 8/42 [01:56<08:18, 14.65s/it]Evaluating (all prefs):  21%|██▏       | 9/42 [02:11<08:06, 14.75s/it]Evaluating (all prefs):  24%|██▍       | 10/42 [02:26<07:48, 14.66s/it]Evaluating (all prefs):  26%|██▌       | 11/42 [02:40<07:34, 14.67s/it]Evaluating (all prefs):  29%|██▊       | 12/42 [02:55<07:23, 14.78s/it]Evaluating (all prefs):  31%|███       | 13/42 [03:10<07:06, 14.71s/it]Evaluating (all prefs):  33%|███▎      | 14/42 [03:26<07:04, 15.15s/it]Evaluating (all prefs):  36%|███▌      | 15/42 [03:41<06:46, 15.07s/it]Evaluating (all prefs):  38%|███▊      | 16/42 [03:56<06:28, 14.92s/it]Evaluating (all prefs):  40%|████      | 17/42 [04:10<06:11, 14.86s/it]Evaluating (all prefs):  43%|████▎     | 18/42 [04:29<06:25, 16.05s/it]Evaluating (all prefs):  45%|████▌     | 19/42 [04:43<05:55, 15.46s/it]Evaluating (all prefs):  48%|████▊     | 20/42 [04:57<05:30, 15.02s/it]Evaluating (all prefs):  50%|█████     | 21/42 [05:12<05:11, 14.83s/it]Evaluating (all prefs):  52%|█████▏    | 22/42 [05:27<04:59, 14.95s/it]Evaluating (all prefs):  55%|█████▍    | 23/42 [05:42<04:42, 14.87s/it]Evaluating (all prefs):  57%|█████▋    | 24/42 [05:57<04:28, 14.92s/it]Evaluating (all prefs):  60%|█████▉    | 25/42 [06:11<04:12, 14.88s/it]Evaluating (all prefs):  62%|██████▏   | 26/42 [06:27<04:03, 15.21s/it]Evaluating (all prefs):  64%|██████▍   | 27/42 [06:44<03:53, 15.60s/it]Evaluating (all prefs):  67%|██████▋   | 28/42 [06:59<03:36, 15.44s/it]Evaluating (all prefs):  69%|██████▉   | 29/42 [07:14<03:20, 15.39s/it]Evaluating (all prefs):  71%|███████▏  | 30/42 [07:30<03:07, 15.60s/it]Evaluating (all prefs):  74%|███████▍  | 31/42 [07:45<02:47, 15.23s/it]Evaluating (all prefs):  76%|███████▌  | 32/42 [08:00<02:32, 15.25s/it]Evaluating (all prefs):  79%|███████▊  | 33/42 [08:15<02:16, 15.22s/it]Evaluating (all prefs):  81%|████████  | 34/42 [08:31<02:02, 15.31s/it]Evaluating (all prefs):  83%|████████▎ | 35/42 [08:45<01:44, 14.93s/it]Evaluating (all prefs):  86%|████████▌ | 36/42 [09:00<01:29, 14.92s/it]Evaluating (all prefs):  88%|████████▊ | 37/42 [09:15<01:15, 15.08s/it]Evaluating (all prefs):  90%|█████████ | 38/42 [09:31<01:01, 15.31s/it]Evaluating (all prefs):  93%|█████████▎| 39/42 [09:46<00:45, 15.29s/it]Evaluating (all prefs):  95%|█████████▌| 40/42 [10:01<00:30, 15.14s/it]Evaluating (all prefs):  98%|█████████▊| 41/42 [10:17<00:15, 15.46s/it]Evaluating (all prefs): 100%|██████████| 42/42 [10:26<00:00, 13.49s/it]Evaluating (all prefs): 100%|██████████| 42/42 [10:26<00:00, 14.92s/it]
-batch metrics: {'eval_accuracy': 0.5, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.6666666666666666, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.9166666666666666, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.8333333333333334, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.9166666666666666, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 1.0, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.9166666666666666, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 1.0, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.8333333333333334, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.5833333333333334, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.5, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.6666666666666666, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.4166666666666667, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.3333333333333333, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.16666666666666666, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.25, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.16666666666666666, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.3333333333333333, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.3333333333333333, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.16666666666666666, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.4166666666666667, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.9166666666666666, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.75, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.6666666666666666, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.5833333333333334, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.5833333333333334, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.5, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.25, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.5833333333333334, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.5, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.3333333333333333, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.6666666666666666, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.25, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.75, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.5833333333333334, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.5, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.5833333333333334, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.5, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.3333333333333333, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.3333333333333333, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.3333333333333333, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-batch metrics: {'eval_accuracy': 0.14285714285714285, 'eval_reward_diff': None, 'eval_avg_reward_chosen': None, 'eval_avg_reward_rejected': None, 'demo_reward_alignment': None}
-WARNING: eval_reward_diff is always None, removing
-WARNING: eval_avg_reward_chosen is always None, removing
-WARNING: eval_avg_reward_rejected is always None, removing
-WARNING: demo_reward_alignment is always None, removing
-
-Evaluation summary (averaged across batches):
-  eval_accuracy: 0.537132
-explanation:    Accuracy of Predicting the Correct Preference
-End time: Thu Aug 21 07:57:29 PDT 2025
-=== Completed subset: libero_10 ===
-
-Completed all LIBERO regular dataset evaluations at Thu Aug 21 07:57:29 PDT 2025

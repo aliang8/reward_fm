@@ -179,13 +179,6 @@ class LoggingConfig:
 
 
 @dataclass
-class EvaluationConfig:
-    """Config for evaluation settings"""
-
-    model_path: Optional[str] = field(default=None)
-
-
-@dataclass
 class ExperimentConfig:
     """Main experiment configuration"""
 
@@ -196,4 +189,3 @@ class ExperimentConfig:
     data: DataConfig = field(default_factory=DataConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
-    evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)

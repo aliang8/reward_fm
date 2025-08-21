@@ -51,7 +51,7 @@ data:
   # Data generation settings
   preference_ratio: 1.0  # Ratio of preference prediction samples
   dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
-  preference_strategy_ratio: [0.8, 0.1, 0.1]  # [rewind_same_task, suboptimal_same_task, different_task]
+  preference_strategy_ratio: [0.7, 0.1, 0.1, 0.1]  # [rewind_same_task, suboptimal_same_task, different_task]
   shuffle: true
   seed: 42
   num_proc: 1  # Number of processes for dataset processing (1 for safety, increase for speed)
@@ -117,9 +117,6 @@ peft:
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
   lora_dropout: 0.05
   bias: "none"
-
-evaluation:
-  model_path: ""
 
 # =====================================================================================
 # Logging and Output Configuration

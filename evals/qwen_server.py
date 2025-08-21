@@ -30,20 +30,20 @@ e.g.: uv run /home/jessez/reward_fm/evals/server.py --config_path=/home/jessez/r
 """
 
 from __future__ import annotations
-
+from calendar import c
+import yaml
 import base64
 import io
 from typing import Any, Dict, List, Optional
+
 
 import numpy as np
 import torch
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from PIL import Image
-from scipy.stats import spearmanr
+from huggingface_hub import hf_hub_download
 
-from rfm.configs.experiment_configs import ExperimentConfig
 from rfm.utils.setup_utils import (
     setup_model_and_processor,
     setup_peft_model,
@@ -53,6 +53,8 @@ from rfm.utils.setup_utils import (
 )
 from rfm.trainers.trainer import RFMTrainer
 from evals.eval_utils import decode_frames_b64
+from rfm.configs.eval_configs import EvaluationConfig
+from rfm.configs.experiment_configs import DataConfig, ModelConfig
 
 
 class SamplePayload(BaseModel):
@@ -76,7 +78,7 @@ def build_preference_batch(processor, samples: List[SamplePayload], resized_h: i
     from qwen_vl_utils import process_vision_info
 
     conversations = []
-    
+
     # Randomly decide whether chosen trajectory goes first or second (same as BatchCollator)
     preference_labels = np.random.randint(0, 2, len(samples))
 
@@ -106,9 +108,19 @@ def build_preference_batch(processor, samples: List[SamplePayload], resized_h: i
                     "role": "user",
                     "content": [
                         {"type": "text", "text": f"Task: {s.task}"},
-                        {"type": "video", "video": chosen_imgs, "resized_height": resized_h, "resized_width": resized_w},
+                        {
+                            "type": "video",
+                            "video": chosen_imgs,
+                            "resized_height": resized_h,
+                            "resized_width": resized_w,
+                        },
                         {"type": "text", "text": "<|split_token|>"},
-                        {"type": "video", "video": rejected_imgs, "resized_height": resized_h, "resized_width": resized_w},
+                        {
+                            "type": "video",
+                            "video": rejected_imgs,
+                            "resized_height": resized_h,
+                            "resized_width": resized_w,
+                        },
                         {"type": "text", "text": "<|pref_token|>"},
                     ],
                 }
@@ -120,9 +132,19 @@ def build_preference_batch(processor, samples: List[SamplePayload], resized_h: i
                     "role": "user",
                     "content": [
                         {"type": "text", "text": f"Task: {s.task}"},
-                        {"type": "video", "video": rejected_imgs, "resized_height": resized_h, "resized_width": resized_w},
+                        {
+                            "type": "video",
+                            "video": rejected_imgs,
+                            "resized_height": resized_h,
+                            "resized_width": resized_w,
+                        },
                         {"type": "text", "text": "<|split_token|>"},
-                        {"type": "video", "video": chosen_imgs, "resized_height": resized_h, "resized_width": resized_w},
+                        {
+                            "type": "video",
+                            "video": chosen_imgs,
+                            "resized_height": resized_h,
+                            "resized_width": resized_w,
+                        },
                         {"type": "text", "text": "<|pref_token|>"},
                     ],
                 }
@@ -196,8 +218,10 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: Dict[str, torch.Tensor
         if isinstance(progress_logits, dict):
             # Get preference labels to determine which trajectory (A or B) corresponds to chosen/rejected
             preference_labels = batch_inputs["preference_labels"].cpu().tolist()
-            
-            for i, (label, seq_A, seq_B) in enumerate(zip(preference_labels, progress_logits.get("A", []), progress_logits.get("B", []))):
+
+            for i, (label, seq_A, seq_B) in enumerate(
+                zip(preference_labels, progress_logits.get("A", []), progress_logits.get("B", []))
+            ):
                 if label == 1.0:
                     # First trajectory (A) is chosen, second trajectory (B) is rejected
                     chosen_seq = seq_A
@@ -206,13 +230,13 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: Dict[str, torch.Tensor
                     # First trajectory (A) is rejected, second trajectory (B) is chosen
                     chosen_seq = seq_B
                     rejected_seq = seq_A
-                
+
                 # Extract chosen progress
                 if chosen_seq is None:
                     progress_pred_chosen.append([])
                 else:
                     progress_pred_chosen.append(chosen_seq.detach().cpu().flatten().tolist())
-                
+
                 # Extract rejected progress
                 if rejected_seq is None:
                     progress_pred_rejected.append([])
@@ -221,13 +245,14 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: Dict[str, torch.Tensor
 
         return {
             "predictions": predictions,
+            "prediction_probs": probs.detach().cpu().tolist(),
             "progress_pred_chosen": progress_pred_chosen,
             "progress_pred_rejected": progress_pred_rejected,
             "preference_labels": preference_labels,
         }
 
 
-def create_app(cfg: ExperimentConfig):
+def create_app(cfg: EvaluationConfig, model_config: ModelConfig):
     app = FastAPI()
     app.add_middleware(
         CORSMiddleware,
@@ -238,7 +263,7 @@ def create_app(cfg: ExperimentConfig):
     )
 
     # Load model/processor once
-    processor, rfm_model = setup_model_and_processor(cfg)
+    processor, rfm_model = setup_model_and_processor(model_config, cfg.model_path)
     model = rfm_model
     # model = setup_peft_model(rfm_model, cfg)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -248,13 +273,6 @@ def create_app(cfg: ExperimentConfig):
     def evaluate_batch(batch: BatchPayload):
         # For now we only support preference-style evaluation
         pref_samples = [s for s in batch.samples if s.sample_type == "preference"]
-        if not pref_samples:
-            return {
-                "predictions": [],
-                "reward_chosen": [],
-                "reward_rejected": [],
-            }
-
         batch_inputs = build_preference_batch(
             processor, pref_samples, resized_h=cfg.data.resized_height, resized_w=cfg.data.resized_width
         )
@@ -295,39 +313,28 @@ def create_app(cfg: ExperimentConfig):
 def main():
     import argparse
     import uvicorn
-    from evals.eval_utils import load_experiment_config_from_yaml
-    import ast
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config_path", type=str, default="rfm/configs/config.yaml")
-    parser.add_argument("--host", type=str, default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument(
-        "--set",
-        action="append",
-        default=[],
-        help="Override config with dot-path assignments, e.g., --set data.max_frames=8 --set model.base_model_id='Qwen/...'.",
-    )
+    parser.add_argument("--config_path", type=str, default="rfm/configs/eval_config.yaml")
     args = parser.parse_args()
+    
+    # Load evaluation config manually
+    print(f"Loading evaluation config from: {args.config_path}")
+    with open(args.config_path, "r") as f:
+        config_dict = yaml.safe_load(f)
 
-    cfg = load_experiment_config_from_yaml(args.config_path)
+    cfg = EvaluationConfig(**config_dict)
+    cfg.data = DataConfig(**config_dict["data"])
+    print(f"Evaluation config: {cfg}")
 
-    # Apply overrides from --set key=value (dot-path)
-    for assignment in args.set:
-        if "=" not in assignment:
-            continue
-        key, value_str = assignment.split("=", 1)
-        try:
-            value = ast.literal_eval(value_str)
-        except Exception:
-            value = value_str
-        target = cfg
-        parts = key.split(".")
-        for p in parts[:-1]:
-            target = getattr(target, p)
-        setattr(target, parts[-1], value)
-    app = create_app(cfg)
-    uvicorn.run(app, host=args.host, port=args.port)
+    model_config_path = hf_hub_download(repo_id=cfg.model_path, filename="config.yaml")
+    with open(model_config_path, "r") as f:
+        model_config_dict = yaml.safe_load(f)
+    model_config = ModelConfig(**model_config_dict["model"])
+
+    app = create_app(cfg, model_config)
+    print(f"Running server on {cfg.server_url}:{cfg.server_port}")
+    uvicorn.run(app, host=cfg.server_url, port=cfg.server_port)
 
 
 if __name__ == "__main__":

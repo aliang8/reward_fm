@@ -11,14 +11,15 @@ from typing import Tuple, Optional, Union
 
 from rfm.models.rfm import RFMModel
 from rfm.data.data_generator import DataGenerator, BatchCollator
-from rfm.data.dataset import InfiniteDataGeneratorDataset, RewoundDataset, PairedSuccessFailureDataset
+from rfm.data.dataset import InfiniteDataGeneratorDataset, RewoundDataset, PairedSuccessFailureDataset, VideoBinnedDataset
 from rfm.utils.logging import rank_0_print
-from rfm.configs.experiment_configs import ExperimentConfig
+from rfm.configs.experiment_configs import ExperimentConfig, ModelConfig
 
 from rfm.utils.logging import _timer
 
+DatasetType = Union[InfiniteDataGeneratorDataset, RewoundDataset, PairedSuccessFailureDataset, VideoBinnedDataset]
 
-def setup_model_and_processor(cfg: ExperimentConfig) -> Tuple[AutoProcessor, RFMModel]:
+def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[AutoProcessor, RFMModel]:
     """Shared function to set up model, processor, and tokenizer for both training and evaluation"""
 
     # Get current rank for logging
@@ -28,13 +29,11 @@ def setup_model_and_processor(cfg: ExperimentConfig) -> Tuple[AutoProcessor, RFM
 
     if rank == 0:
         rank_0_print(f"Setting up model and processor on rank {rank}...")
-
-    model_id = cfg.model.base_model_id
-
+    
     # Load processor and tokenizer
     processor = AutoProcessor.from_pretrained(
-        cfg.model.base_model_id,
-        trust_remote_code=cfg.model.trust_remote_code,
+        cfg.base_model_id,
+        trust_remote_code=cfg.trust_remote_code,
         # temporal_patch_size=1,
         # fps=1,
         # num_frames=cfg.data.max_frames,
@@ -47,11 +46,8 @@ def setup_model_and_processor(cfg: ExperimentConfig) -> Tuple[AutoProcessor, RFM
     if processor.tokenizer.pad_token is None:
         processor.tokenizer.pad_token = processor.tokenizer.eos_token
 
-    # config = Qwen2_5_VLConfig.from_pretrained(cfg.model.base_model_id)
-    # config.vision_config.temporal_patch_size = 1
-
     # Create a fresh model instance
-    base_model = Qwen2_5_VLModel.from_pretrained(model_id)
+    base_model = Qwen2_5_VLModel.from_pretrained(cfg.base_model_id)
 
     # Add RFM special tokens if they don't exist
     special_tokens = ["<|split_token|>", "<|reward_token|>", "<|pref_token|>"]
@@ -74,14 +70,13 @@ def setup_model_and_processor(cfg: ExperimentConfig) -> Tuple[AutoProcessor, RFM
         rank_0_print(f"Initializing RFM model on rank {rank}...")
     rfm_model = RFMModel(config=base_model.config, processor=processor, base_model=base_model)
 
-    if cfg.evaluation.model_path:
-        model_id = cfg.evaluation.model_path
-        rank_0_print(f"Loading model from {model_id} on rank {rank}")
+    if hf_model_id:
+        rank_0_print(f"Loading model from {hf_model_id} on rank {rank}")
 
         # before = rfm_model.model.visual.blocks[0].mlp.down_proj.weight
         # before = rfm_model.preference_head.weight
         # load the model from the evaluation path
-        rfm_model = RFMModel.from_pretrained(model_id, processor=processor, base_model=base_model)
+        rfm_model = RFMModel.from_pretrained(hf_model_id, processor=processor, base_model=base_model)
 
     # Only print model architecture on rank 0
     if rank == 0:
@@ -265,7 +260,7 @@ def setup_eval_data_generator(cfg: ExperimentConfig) -> DataGenerator:
 
 def setup_dataset(
     data_generator: DataGenerator, dataset_type: str = "default", dataset_kwargs: dict = {}
-) -> Union[InfiniteDataGeneratorDataset, RewoundDataset, PairedSuccessFailureDataset]:
+) -> DatasetType:
     """Shared function to create training or evaluation dataset based on config"""
 
     # Get the dataset type from the data generator config
@@ -279,6 +274,9 @@ def setup_dataset(
     elif config_dataset_type == "success_failure":
         rank_0_print(f"Creating success-failure dataset (generating all possible pairs)")
         dataset = PairedSuccessFailureDataset(data_generator, **dataset_kwargs)
+    elif config_dataset_type == "video_binned":
+        rank_0_print(f"Creating video-binned dataset")
+        dataset = VideoBinnedDataset(data_generator, **dataset_kwargs)
     else:
         # Default to preference/similarity dataset
         rank_0_print("Creating preference/similarity dataset")
@@ -288,7 +286,7 @@ def setup_dataset(
     return dataset
 
 
-def setup_eval_dataset(cfg: ExperimentConfig) -> Union[InfiniteDataGeneratorDataset]:
+def setup_eval_dataset(cfg: ExperimentConfig) -> DatasetType:
     """Create evaluation dataset using eval-specific configuration"""
 
     # Create evaluation data generator

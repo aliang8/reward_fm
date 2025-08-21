@@ -6,6 +6,7 @@ This module contains specialized dataset classes that generate different types o
 - InfiniteDataGeneratorDataset: Generates preference/similarity samples
 - RewoundDataset: Generates preference samples where original is chosen and rewound is rejected
 - PairedSuccessFailureDataset: Generates preference samples by pairing successful/failed trajectories
+- VideoBinnedDataset: Generates preference samples from video files by binning frames and pairing subsequences
 """
 
 import random
@@ -14,10 +15,110 @@ from typing import List, Dict, Tuple, Optional, Iterator, Union
 from tqdm import tqdm
 from rfm.data.batch_collator import BaseSample, PreferenceSample, SimilaritySample
 from rfm.utils.logging import rank_0_print
+import cv2
+import os
+from pathlib import Path
+
 
 def calulate_target_progress(frames: np.ndarray) -> List[float]:
     num_frames = frames.shape[0]
     return [i / (num_frames - 1) for i in range(num_frames)]
+
+
+def extract_frames_from_video(video_path: str, fps: int = 1) -> np.ndarray:
+    """
+    Extract frames from video file at specified FPS.
+    
+    Args:
+        video_path: Path to the .mp4 file
+        fps: Frames per second to extract (default: 1)
+    
+    Returns:
+        numpy array of shape (num_frames, H, W, C) with extracted frames
+    """
+    if not os.path.exists(video_path):
+        raise FileNotFoundError(f"Video file not found: {video_path}")
+    
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise ValueError(f"Could not open video file: {video_path}")
+    
+    # Get video properties
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    video_fps = cap.get(cv2.CAP_PROP_FPS)
+    
+    # Calculate frame interval for target FPS
+    frame_interval = max(1, int(video_fps / fps))
+    
+    frames = []
+    frame_count = 0
+    
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+            
+        if frame_count % frame_interval == 0:
+            # Convert BGR to RGB
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frames.append(frame_rgb)
+            
+        frame_count += 1
+    
+    cap.release()
+    
+    if not frames:
+        raise ValueError(f"No frames extracted from video: {video_path}")
+    
+    return np.array(frames)
+
+
+def create_binned_subsequences(frames: np.ndarray, num_bins: int = 10) -> List[Dict]:
+    """
+    Create binned subsequences from frames.
+    
+    Args:
+        frames: numpy array of shape (num_frames, H, W, C)
+        num_bins: number of bins to create
+    
+    Returns:
+        List of dictionaries with 'start_frame', 'end_frame', 'frames', 'bin_idx', 'progress'
+    """
+    num_frames = frames.shape[0]
+    
+    if num_frames < num_bins:
+        # If fewer frames than bins, create one frame per bin
+        bin_size = 1
+        num_bins = num_frames
+    else:
+        bin_size = num_frames // num_bins
+    
+    binned_subsequences = []
+    
+    for bin_idx in range(num_bins):
+        start_frame = bin_idx * bin_size
+        end_frame = min(start_frame + bin_size, num_frames)
+        
+        # Handle last bin to include remaining frames
+        if bin_idx == num_bins - 1:
+            end_frame = num_frames
+        
+        if start_frame >= end_frame:
+            continue
+            
+        bin_frames = frames[start_frame:end_frame]
+        progress = start_frame / (num_frames - 1) if num_frames > 1 else 0.0
+        
+        binned_subsequences.append({
+            'start_frame': start_frame,
+            'end_frame': end_frame,
+            'frames': bin_frames,
+            'bin_idx': bin_idx,
+            'progress': progress
+        })
+    
+    return binned_subsequences
+
 
 class InfiniteDataGeneratorDataset:
     """Dataset that generates preference and similarity samples infinitely."""
@@ -250,12 +351,11 @@ class PairedSuccessFailureDataset:
             rejected_data_source=failure_traj["data_source"],
             rejected_quality_label=failure_traj["quality_label"],
             rejected_is_robot=failure_traj["is_robot"],
-
             data_gen_strategy="success_failure",
             num_frames_rewound=None,  # Not applicable for success-failure pairs
             target_progress_chosen=target_progress_chosen,
-            target_progress_rejected=None, # not applicable for failure trajectories
-        ) 
+            target_progress_rejected=None,  # not applicable for failure trajectories
+        )
 
         return sample
 
@@ -280,5 +380,188 @@ class PairedSuccessFailureDataset:
     def __len__(self):
         return len(self.sample_indices)
 
+    def __getitem__(self, idx):
+        return self.__next__()
+
+
+class VideoBinnedDataset:
+    """
+    Dataset that generates preference samples from video files by binning frames.
+    
+    For each video, it extracts frames at 1 FPS, bins them, and creates preference pairs
+    where the trajectory further along in the task is always preferred.
+    """
+    
+    def __init__(self, data_generator, num_bins: int = 10, fps: int = 10, **kwargs):
+        self.data_generator = data_generator
+        self.num_bins = num_bins
+        self.fps = fps
+        
+        # Store video data once, reference by indices
+        self.video_data = {}  # video_path -> binned_subsequences
+        self.sample_indices = []
+        
+        # Generate all possible sample indices upfront
+        self._generate_all_sample_indices()
+        self.current_idx = 0
+        
+        # Log detailed statistics
+        total_videos = len(self.video_data)
+        rank_0_print(f"VideoBinnedDataset: {len(self.sample_indices)} preference pairs from {total_videos} videos")
+        rank_0_print(f"  - Bins per video: {self.num_bins}")
+        rank_0_print(f"  - FPS extraction: {self.fps}")
+        rank_0_print(f"  - Average pairs per video: {len(self.sample_indices) / max(1, total_videos):.1f}")
+        rank_0_print(f"  - Total samples: {len(self.sample_indices)}")
+
+    def _generate_all_sample_indices(self) -> None:
+        """Generate all possible video binned sample indices."""
+        for traj_idx in self.data_generator.robot_trajectories:
+            traj = self.data_generator.dataset[traj_idx]
+            
+            # Get the video path from frames_path
+            frames_path = traj.get("frames_path", "")
+            if not frames_path or not frames_path.endswith('.mp4'):
+                continue
+            
+            # Extract frames from video to determine number of bins
+            frames = extract_frames_from_video(frames_path, fps=self.fps)
+            binned_subsequences = create_binned_subsequences(frames, num_bins=self.num_bins)
+            
+            if len(binned_subsequences) < 2:
+                # Need at least 2 bins to create preference pairs
+                continue
+            
+            # Store video data once
+            self.video_data[frames_path] = {
+                'binned_subsequences': binned_subsequences,
+                'traj_info': {
+                    'traj_idx': traj_idx,
+                    'traj_id': traj["id"],
+                    'task': traj["task"],
+                    'data_source': traj["data_source"],
+                    'quality_label': traj["quality_label"],
+                    'is_robot': traj["is_robot"],
+                    'lang_vector': traj["lang_vector"],
+                    'num_frames': len(frames)
+                }
+            }
+            
+            # Generate all possible pairwise combinations
+            for i in range(len(binned_subsequences)):
+                for j in range(i + 1, len(binned_subsequences)):
+                    # Store just the indices and video path reference
+                    self.sample_indices.append({
+                        'frames_path': frames_path,
+                        'bin1_idx': i,
+                        'bin2_idx': j
+                    })
+    
+    def _generate_sample_from_indices(self, sample_idx_info: Dict) -> PreferenceSample:
+        """Generate a single sample from stored indices."""
+        frames_path = sample_idx_info['frames_path']
+        bin1_idx = sample_idx_info['bin1_idx']
+        bin2_idx = sample_idx_info['bin2_idx']
+        entry = self.video_data.get(frames_path)
+        
+        if not entry:
+            rank_0_print(f"Video data not found for path: {frames_path}")
+            return None
+
+
+        # Use the pre-computed binned subsequences (no need to re-extract frames)
+        if len(entry['binned_subsequences']) < 2:
+            return None
+        
+        # Validate bin indices
+        if (bin1_idx >= len(entry['binned_subsequences']) or 
+            bin2_idx >= len(entry['binned_subsequences']) or
+            bin1_idx < 0 or bin2_idx < 0):
+            rank_0_print(f"Invalid bin indices: {bin1_idx}, {bin2_idx} for video with {len(entry['binned_subsequences'])} bins")
+            return None
+        
+        # Use the pre-computed bin pair
+        bin1 = entry['binned_subsequences'][bin1_idx]
+        bin2 = entry['binned_subsequences'][bin2_idx]
+        
+        # Determine which bin is further along (higher progress)
+        if bin1['progress'] > bin2['progress']:
+            chosen_bin = bin1
+            rejected_bin = bin2
+        else:
+            chosen_bin = bin2
+            rejected_bin = bin1
+        
+        # Calculate target progress for each bin
+        chosen_frames = chosen_bin['frames']
+        rejected_frames = rejected_bin['frames']
+        
+        target_progress_chosen = calulate_target_progress(chosen_frames)
+        target_progress_rejected = calulate_target_progress(rejected_frames)
+        
+        # Create preference sample (further along is chosen)
+        sample = PreferenceSample(
+            # chosen metadata (further along)
+            chosen_frames=chosen_frames,
+            chosen_frames_shape=chosen_frames.shape,
+            chosen_id=f"{entry['traj_info']['traj_id']}_bin{chosen_bin['bin_idx']}",
+            chosen_task=entry['traj_info']['task'],
+            chosen_lang_vector=entry['traj_info']['lang_vector'],
+            chosen_data_source=entry['traj_info']['data_source'],
+            chosen_quality_label=entry['traj_info']['quality_label'],
+            chosen_is_robot=entry['traj_info']['is_robot'],
+            
+            # rejected metadata (earlier in task)
+            rejected_frames=rejected_frames,
+            rejected_frames_shape=rejected_frames.shape,
+            rejected_id=f"{entry['traj_info']['traj_id']}_bin{rejected_bin['bin_idx']}",
+            rejected_task=entry['traj_info']['task'],
+            rejected_lang_vector=entry['traj_info']['lang_vector'],
+            rejected_data_source=entry['traj_info']['data_source'],
+            rejected_quality_label=entry['traj_info']['quality_label'],
+            rejected_is_robot=entry['traj_info']['is_robot'],
+            
+            data_gen_strategy="video_binned",
+            num_frames_rewound=None,  # Not applicable for video binning
+            target_progress_chosen=target_progress_chosen,
+            target_progress_rejected=target_progress_rejected,
+            bin_idx_chosen=chosen_bin['bin_idx'],
+            bin_idx_rejected=rejected_bin['bin_idx'],
+        )
+        
+        return sample
+
+    def __iter__(self):
+        self.current_idx = 0
+        return self
+    
+    def __next__(self):
+        """Get the next sample by generating it from stored indices."""
+        if self.current_idx >= len(self.sample_indices):
+            raise StopIteration
+        
+        # Get the sample indices for this sample
+        sample_idx_info = self.sample_indices[self.current_idx]
+        
+        # Generate the actual sample on-demand
+        sample = self._generate_sample_from_indices(sample_idx_info)
+        
+        # Skip invalid samples
+        while sample is None and self.current_idx < len(self.sample_indices):
+            self.current_idx += 1
+            if self.current_idx >= len(self.sample_indices):
+                raise StopIteration
+            
+            sample_idx_info = self.sample_indices[self.current_idx]
+            sample = self._generate_sample_from_indices(sample_idx_info)
+        
+        if sample is None:
+            raise StopIteration
+        
+        self.current_idx += 1
+        return sample
+    
+    def __len__(self):
+        return len(self.sample_indices)
+    
     def __getitem__(self, idx):
         return self.__next__()

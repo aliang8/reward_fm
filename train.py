@@ -29,6 +29,9 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich import print as rprint
+from dataclasses import asdict
+import yaml
+from huggingface_hub import hf_hub_download
 
 # Import shared configs and utilities
 from rfm.configs.experiment_configs import ExperimentConfig
@@ -67,8 +70,6 @@ def train(cfg: ExperimentConfig):
     # Initialize wandb if enabled (only on rank 0)
     if cfg.logging.use_wandb and is_rank_0():
         # Convert config to dict for wandb using dataclass asdict
-        from dataclasses import asdict
-
         config_dict = asdict(cfg)
 
         wandb.init(
@@ -85,7 +86,7 @@ def train(cfg: ExperimentConfig):
 
     # Use the shared function to set up model and processor
     with _timer("time/setup_model_and_processor", timing_raw=timing_raw):
-        processor, rfm_model = setup_model_and_processor(cfg)
+        processor, rfm_model = setup_model_and_processor(cfg.model)
 
     # Apply PEFT if enabled
     peft_rfm_model = setup_peft_model(rfm_model, cfg)
@@ -99,6 +100,14 @@ def train(cfg: ExperimentConfig):
 
     training_args = create_training_arguments(cfg, cfg.training.output_dir)
 
+    # Save config to output directory
+    os.makedirs(cfg.training.output_dir, exist_ok=True)
+    config_save_path = os.path.join(cfg.training.output_dir, "config.yaml")
+    config_dict = asdict(cfg)
+    with open(config_save_path, "w") as f:
+        yaml.dump(config_dict, f, default_flow_style=False, indent=2)
+    rank_0_print(f"Saved training config to: {config_save_path}")
+    
     # Use the shared utilities for batch collator and dataset
     with _timer("time/setup_data", timing_raw=timing_raw):
         batch_collator = setup_batch_collator(processor, cfg)
@@ -225,11 +234,6 @@ def display_config(cfg: ExperimentConfig):
         table.add_row("Logging", "Wandb Project", cfg.logging.wandb_project)
         table.add_row("Logging", "Wandb Entity", str(cfg.logging.wandb_entity))
         table.add_row("Logging", "Wandb Run Name", str(cfg.logging.wandb_run_name))
-
-    # Evaluation config (if applicable)
-    if cfg.mode == "evaluate":
-        table.add_row("Evaluation", "Model Path", cfg.evaluation.model_path)
-        table.add_row("Evaluation", "Eval Subset Size", str(cfg.data.eval_subset_size))
 
     console.print(table)
 

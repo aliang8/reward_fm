@@ -71,6 +71,11 @@ class PreferenceSample:
 
     sample_type = "preference"
 
+    # extra stuff for eval
+    bin_idx_chosen: Optional[int] = None
+    bin_idx_rejected: Optional[int] = None
+
+
 @dataclass
 class SimilaritySample:
     """Sample structure for similarity scoring: traj_sim and traj_diff ranked against o^ref."""
@@ -99,7 +104,7 @@ class SimilaritySample:
     traj_diff_quality_label: Optional[str] = None
     traj_diff_is_robot: Optional[bool] = None
 
-    target_progress_sim: Optional[List[float]] = None   
+    target_progress_sim: Optional[List[float]] = None
     target_progress_diff: Optional[List[float]] = None
     target_progress_ref: Optional[List[float]] = None
     data_gen_strategy: Optional[str] = None
@@ -363,8 +368,18 @@ class BatchCollator:
         # Add target progress for both trajectories based on conversation order
         target_progress_chosen = [sample.target_progress_chosen for sample in preference_samples]
         target_progress_rejected = [sample.target_progress_rejected for sample in preference_samples]
-        target_progress_chosen_mask = [1.0 if sample.chosen_quality_label == "successful" or sample.data_gen_strategy == "rewind_same_task" else 0.0 for sample in preference_samples]
-        target_progress_rejected_mask = [1.0 if sample.rejected_quality_label == "successful" or sample.data_gen_strategy == "rewind_same_task" else 0.0 for sample in preference_samples]
+        target_progress_chosen_mask = [
+            1.0
+            if sample.chosen_quality_label == "successful" or sample.data_gen_strategy == "rewind_same_task"
+            else 0.0
+            for sample in preference_samples
+        ]
+        target_progress_rejected_mask = [
+            1.0
+            if sample.rejected_quality_label == "successful" or sample.data_gen_strategy == "rewind_same_task"
+            else 0.0
+            for sample in preference_samples
+        ]
 
         # Pad target progress tensors to max length in last dimension
         batch_inputs["target_progress_chosen"] = self._pad_target_progress(target_progress_chosen)
@@ -381,7 +396,9 @@ class BatchCollator:
         )
 
         # Add some rewind metrics for logging
-        rewind_lengths = [sample.num_frames_rewound if sample.num_frames_rewound is not None else 0 for sample in preference_samples]
+        rewind_lengths = [
+            sample.num_frames_rewound if sample.num_frames_rewound is not None else 0 for sample in preference_samples
+        ]
         batch_inputs["rewind_lengths"] = torch.tensor(rewind_lengths, dtype=torch.int32)
         return batch_inputs
 

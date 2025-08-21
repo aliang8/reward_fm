@@ -125,8 +125,8 @@ class DatasetPreprocessor:
 
     def _process_individual_dataset(self, dataset: Dataset, cache_dir: str, cache_key: str):
         """Process a single dataset and build its index mappings."""
-        # Cast the frames_path column to Video feature
-        dataset = dataset.cast_column("frames_path", Video(decode=True))
+        # Cast the frames_video column to Video feature
+        dataset = dataset.cast_column("frames_video", Video(decode=True))
 
         # Process videos and build indices
         processed_dataset, indices = self._process_dataset_videos_map(dataset, cache_key)
@@ -256,9 +256,9 @@ class DatasetPreprocessor:
                 rank_0_print(f"Processing example {idx}: {example['id']} - {example['task']}")
 
             # Get the video reader object from the Video feature
-            frames = example.get("frames_path")
+            frames = example.get("frames_video")
             if frames is None:
-                rank_0_print(f"Warning: No frames_path for example {idx}")
+                rank_0_print(f"Warning: No frames_video for example {idx}")
                 return {"frames": None, "frames_processed": False}
 
             # Process video frames using the _preprocess_videos method
@@ -322,14 +322,13 @@ class DatasetPreprocessor:
                 optimal_by_task[task] = []
                 suboptimal_by_task[task] = []
 
+            if "frames_video" in example:
+                del example["frames_video"]
+
             if quality in ["successful", "optimal"]:
                 optimal_by_task[task].append(idx)
             elif quality in ["suboptimal", "failed", "failure"]:
                 suboptimal_by_task[task].append(idx)
-
-            # Remove the frames_path since we don't need it anymore
-            if "frames_path" in example:
-                del example["frames_path"]
 
             return example
 
@@ -496,8 +495,10 @@ class DatasetPreprocessor:
             else:
                 dataset = load_dataset(dataset_path, split="train")
 
+            dataset = dataset.select(range(100))
+
             # Just patch the paths, don't decode videos yet
-            dataset = dataset.map(lambda x: {"frames_path": patch_path(x["frames"])})
+            dataset = dataset.map(lambda x: {"frames_video": patch_path(x["frames"]), "frames_path": patch_path(x["frames"])})
             return dataset
         else:
             # Load from local disk
@@ -624,6 +625,7 @@ def main():
 
     # Preprocess all datasets
     print("\n=== Processing All Datasets ===")
+
     preprocessor.preprocess_datasets()
 
     # Test the caches

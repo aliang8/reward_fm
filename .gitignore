@@ -27,3 +27,4 @@ visualizer/
 *.log
 old/
 *.png
+eval_logs/*

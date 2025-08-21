@@ -263,7 +263,7 @@ class DataGenerator:
         cache_dir = "./processed_datasets"
         cache_type = "evaluation" if self.is_evaluation else "training"
 
-        rank_0_print(f"="*100)
+        rank_0_print(f"=" * 100)
         rank_0_print(f"\n🔍 Available datasets in {cache_dir} ({cache_type}):")
 
         # List all subdirectories (individual dataset caches)
@@ -283,9 +283,13 @@ class DataGenerator:
                             dataset_type = info.get("dataset_type", "unknown")
                             # Only show datasets of the right type
                             if dataset_type == cache_type:
-                                rank_0_print(f"  ✅ {dataset_path}/{subset}: {trajectories} trajectories ({dataset_type})")
+                                rank_0_print(
+                                    f"  ✅ {dataset_path}/{subset}: {trajectories} trajectories ({dataset_type})"
+                                )
                             else:
-                                rank_0_print(f"  📁 {dataset_path}/{subset}: {trajectories} trajectories ({dataset_type})")
+                                rank_0_print(
+                                    f"  📁 {dataset_path}/{subset}: {trajectories} trajectories ({dataset_type})"
+                                )
                         except:
                             rank_0_print(f"  📁 {subdir}: (info file corrupted)")
                     else:
@@ -294,7 +298,7 @@ class DataGenerator:
                 rank_0_print(f"  ❌ No dataset caches found")
         else:
             rank_0_print(f"  ❌ Cache directory does not exist")
-        rank_0_print(f"="*100)
+        rank_0_print(f"=" * 100)
 
         # Show configured datasets with better formatting for the new format
         rank_0_print(f"\n⚙️  Configured datasets for {cache_type}:")
@@ -315,7 +319,7 @@ class DataGenerator:
         # Show summary
         total_subsets = sum(len(subsets) if isinstance(subsets, list) else 1 for subsets in self.subsets)
         rank_0_print(f"\n📊 Total: {len(self.datasets)} dataset(s), {total_subsets} subset(s)")
-        rank_0_print(f"="*100)
+        rank_0_print(f"=" * 100)
 
     def _load_frames_from_npz(self, npz_filepath: str) -> np.ndarray:
         """Load frames on-demand from npz file.
@@ -362,27 +366,6 @@ class DataGenerator:
             raise ValueError(f"No frames path found for trajectory {trajectory_idx}")
 
         return self._load_frames_from_npz(npz_filepath)
-
-    def _get_batch_frames(self, trajectory_indices: List[int]) -> List[np.ndarray]:
-        """Get frames for multiple trajectories efficiently.
-
-        Args:
-            trajectory_indices: List of trajectory indices to load
-
-        Returns:
-            List of numpy arrays with shapes (T, H, W, C) for each trajectory
-        """
-        frames_list = []
-        for idx in trajectory_indices:
-            try:
-                frames = self._get_trajectory_frames(idx)
-                frames_list.append(frames)
-            except Exception as e:
-                rank_0_print(f"Warning: Failed to load frames for trajectory {idx}: {e}")
-                # Return empty frames as fallback
-                frames_list.append(np.array([]))
-
-        return frames_list
 
     def _create_rewind_trajectory(self, original_traj: Dict, rewind_length: Optional[int] = None) -> Dict:
         """Create a suboptimal trajectory by rewinding the original trajectory.
@@ -565,7 +548,9 @@ class DataGenerator:
             # Strategy 2: Use random suboptimal trajectory from same task
             same_task_suboptimal_indices = self.suboptimal_by_task.get(task_name, [])
             same_task_suboptimal = [
-                self.dataset[idx] for idx in same_task_suboptimal_indices if self.dataset[idx]["id"] != optimal_traj["id"]
+                self.dataset[idx]
+                for idx in same_task_suboptimal_indices
+                if self.dataset[idx]["id"] != optimal_traj["id"]
             ]
             if same_task_suboptimal:
                 negative_traj = random.choice(same_task_suboptimal)
@@ -620,7 +605,7 @@ class DataGenerator:
         # Calculate target progress for both trajectories
         target_progress_chosen = self._calculate_target_progress(optimal_traj, optimal_frames)
         target_progress_rejected = self._calculate_target_progress(negative_traj, negative_frames)
-        
+
         # Get frame shapes
         optimal_frames_shape = optimal_traj.get("frames_shape")
         if isinstance(optimal_frames_shape, list):
@@ -1056,6 +1041,8 @@ def test():
     from rfm.data.dataset import InfiniteDataGeneratorDataset
 
     infinite_dataset = InfiniteDataGeneratorDataset(generator)
+
+    import ipdb; ipdb.set_trace()
 
     preference_count = 0
     similarity_count = 0

@@ -493,7 +493,7 @@ class DatasetPreprocessor:
             else:
                 dataset = load_dataset(dataset_path, split="train")
 
-            dataset = dataset.select(range(100))
+            # dataset = dataset.select(range(100))
 
             # Just patch the paths, don't decode videos yet
             dataset = dataset.map(
@@ -518,7 +518,7 @@ class DatasetPreprocessor:
         cached_count = 0
         total_count = len(all_datasets)
 
-        for dataset_type, dataset_path, subset in all_datasets:
+        for dataset_path, subset in all_datasets:
             cache_key = f"{dataset_path}/{subset}"
             individual_cache_dir = os.path.join(self.cache_dir, cache_key.replace("/", "_").replace(":", "_"))
 
@@ -533,16 +533,16 @@ class DatasetPreprocessor:
                         trajectories = info.get("total_trajectories", "unknown")
                         timestamp = info.get("cache_timestamp", "unknown")
                         rank_0_print(
-                            f"  ✅ {dataset_type}: {dataset_path}/{subset}: {trajectories} trajectories (cached at {timestamp})"
+                            f"  ✅ {dataset_path}/{subset}: {trajectories} trajectories (cached at {timestamp})"
                         )
                     except:
                         rank_0_print(
-                            f"  ✅ {dataset_type}: {dataset_path}/{subset}: Cache exists but info file corrupted"
+                            f"  ✅ {dataset_path}/{subset}: Cache exists but info file corrupted"
                         )
                 else:
-                    rank_0_print(f"  ✅ {dataset_type}: {dataset_path}/{subset}: Cache exists (no info file)")
+                    rank_0_print(f"  ✅ {dataset_path}/{subset}: Cache exists (no info file)")
             else:
-                rank_0_print(f"  ❌ {dataset_type}: {dataset_path}/{subset}: No cache found")
+                rank_0_print(f"  ❌ {dataset_path}/{subset}: No cache found")
 
         # Show summary
         rank_0_print(f"\n📊 Cache Status Summary:")
@@ -566,7 +566,7 @@ class DatasetPreprocessor:
         loaded_count = 0
         total_count = len(all_datasets)
 
-        for dataset_type, dataset_path, subset in all_datasets:
+        for dataset_path, subset in all_datasets:
             cache_key = f"{dataset_path}/{subset}"
             individual_cache_dir = os.path.join(self.cache_dir, cache_key.replace("/", "_").replace(":", "_"))
 
@@ -574,15 +574,15 @@ class DatasetPreprocessor:
                 if os.path.exists(individual_cache_dir):
                     loaded_count += 1
                     rank_0_print(
-                        f"  ✅ {dataset_type}: {dataset_path}/{subset}: Loaded from cache ({len(self.datasets[cache_key])} trajectories)"
+                        f"  ✅ {dataset_path}/{subset}: Loaded from cache ({len(self.datasets[cache_key])} trajectories)"
                     )
                 else:
                     processed_count += 1
                     rank_0_print(
-                        f"  🔄 {dataset_type}: {dataset_path}/{subset}: Newly processed ({len(self.datasets[cache_key])} trajectories)"
+                        f"  🔄 {dataset_path}/{subset}: Newly processed ({len(self.datasets[cache_key])} trajectories)"
                     )
             else:
-                rank_0_print(f"  ❌ {dataset_type}: {dataset_path}/{subset}: Failed to load/process")
+                rank_0_print(f"  ❌ {dataset_path}/{subset}: Failed to load/process")
 
         # Show summary counts
         rank_0_print(f"\n📈 Processing Summary:")

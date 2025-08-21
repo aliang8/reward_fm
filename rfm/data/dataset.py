@@ -285,8 +285,8 @@ class PairedSuccessFailureDataset:
 
         for traj_idx in self.data_generator.robot_trajectories:
             traj = self.data_generator.dataset[traj_idx]
-            task = traj.get("task", "unknown")
-            quality_label = traj.get("quality_label", "unknown")
+            task = traj["task"]
+            quality_label = traj["quality_label"]
 
             if task not in task_success_trajs:
                 task_success_trajs[task] = []

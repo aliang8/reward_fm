@@ -15,8 +15,8 @@ log_dir: "./eval_logs"  # Directory to save evaluation results
 # Data settings (reused from experiment_configs.DataConfig)
 data:
   # Evaluation dataset settings
-  eval_datasets: ["abraranwar/libero_rfm"]
-  eval_subsets: ["libero_90"]
+  eval_datasets: ["abraranwar/libero_rfm", "ykorkmaz/libero_failure_rfm"]
+  eval_subsets: ["libero_10", "libero_10_failure"]
   eval_subset_size: 1000  # Number of evaluation examples
   
   # Video processing settings
@@ -37,8 +37,7 @@ data:
   # Data loading settings
   dataloader_pin_memory: false
   dataloader_num_workers: 0
-
-  dataset_type: "video_binned"
+  dataset_type: "success_failure"
 
   # extra settings for eval datasets 
   num_bins: 5

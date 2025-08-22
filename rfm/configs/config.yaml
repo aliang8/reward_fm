@@ -34,7 +34,7 @@ data:
     - ["libero_90_failure"]
   
   # Evaluation dataset settings
-  eval_datasets :
+  eval_datasets:
     - "abraranwar/libero_rfm"
     - "ykorkmaz/libero_failure_rfm"
   eval_subsets:

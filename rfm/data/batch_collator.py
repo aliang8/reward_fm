@@ -74,6 +74,10 @@ class PreferenceSample:
     # extra stuff for eval
     bin_idx_chosen: Optional[int] = None
     bin_idx_rejected: Optional[int] = None
+    video_path: Optional[str] = None    
+    chosen_start_end: Optional[List[int]] = None
+    rejected_start_end: Optional[List[int]] = None
+    fps: Optional[int] = None
 
 
 @dataclass

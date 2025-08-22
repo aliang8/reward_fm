@@ -28,3 +28,4 @@ visualizer/
 old/
 *.png
 eval_logs/*
+*/_MACOSX/*

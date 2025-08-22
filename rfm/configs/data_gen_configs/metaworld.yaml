@@ -1,0 +1,19 @@
+# Self-collected videos dataset configuration for RFM model training
+# This config converts self-collected video data organized by task/quality_label/idx.mp4
+
+dataset:
+  dataset_name: "metaworld"
+  dataset_path: "/home/thecodeboy/vlm_reward_model/rfm/data/metaworld"
+
+output:
+  output_dir: "./metaworld_rfm"
+  use_video: true  # Convert to MP4 videos
+  fps: 10  # Target frame rate for output videos
+  shortest_edge_size: 240  # Resize videos to this shortest edge
+  center_crop: false  # Don't center crop, maintain aspect ratio
+  max_trajectories: -1  # -1 for all trajectories
+  max_frames: -1  # -1 for all frames
+
+hub:
+  push_to_hub: true
+  hub_repo_id: metaworld_rfm

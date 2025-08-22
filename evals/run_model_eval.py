@@ -75,6 +75,12 @@ def _save_result_as_json(samples: List[Any], response: Dict[str, Any]) -> List[D
         if sample.bin_idx_rejected is not None:
             result_entry["bin_idx_rejected"] = sample.bin_idx_rejected
 
+        if sample.data_gen_strategy == "video_binned":
+            result_entry["video_path"] = sample.video_path
+            result_entry["chosen_start_end"] = sample.chosen_start_end
+            result_entry["rejected_start_end"] = sample.rejected_start_end
+            result_entry["fps"] = sample.fps
+
         batch_results.append(result_entry)
 
     return batch_results

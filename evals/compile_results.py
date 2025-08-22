@@ -26,6 +26,7 @@ from PIL import Image
 import io
 import base64
 from pathlib import Path
+from rfm.utils.video_utils import extract_frames_from_video
 
 
 def load_results(results_path: str) -> List[Dict[str, Any]]:
@@ -73,7 +74,7 @@ def compute_metrics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
         if not np.isnan(corr_chosen):
             spearman_progress_chosen.append(corr_chosen)
 
-        if "progress_pred_rejected" in result:
+        if result.get("progress_pred_rejected") is not None and result.get("target_progress_rejected") is not None:
             # Rejected trajectory progress
             pred_rejected = np.array(result["progress_pred_rejected"])
             target_rejected = np.array(result["target_progress_rejected"][::2])
@@ -315,6 +316,9 @@ def create_visualizations(results: List[Dict[str, Any]], output_dir: Path, max_s
 
     # Create progress plots
     _trajectory_progress_plot(selected_results, video_dir)
+    
+    # Create video binned frame visualizations if available
+    _video_binned_frame_plot(selected_results, video_dir)
 
 
 def _trajectory_progress_plot(results: List[Dict[str, Any]], output_dir: Path):
@@ -428,6 +432,90 @@ def _trajectory_progress_plot(results: List[Dict[str, Any]], output_dir: Path):
         plt.tight_layout()
         plt.savefig(output_dir / f"sample_{i + 1}_progress.png", dpi=150, bbox_inches="tight")
         plt.close()
+
+
+def _video_binned_frame_plot(results: List[Dict[str, Any]], output_dir: Path):
+    """Create frame sequence visualizations for video binned samples."""
+    # Filter for video binned samples
+    video_binned_results = [r for r in results if r.get("chosen_start_end") and r.get("rejected_start_end")]
+    
+    if not video_binned_results:
+        print("No video binned samples found for frame visualization")
+        return
+    
+    print(f"Creating frame visualizations for {len(video_binned_results)} video binned samples...")
+    
+    for i, result in enumerate(video_binned_results):
+        if not all(key in result for key in ["video_path", "chosen_start_end", "rejected_start_end", "fps"]):
+            print(f"Skipping sample {i+1}: missing video metadata")
+            continue
+            
+        # Extract frames for chosen and rejected sequences
+        all_frames = extract_frames_from_video(result["video_path"], result["fps"])
+        
+        # Slice frames based on start_end indices
+        start_chosen, end_chosen = result["chosen_start_end"]
+        start_rejected, end_rejected = result["rejected_start_end"]
+        
+        chosen_frames = all_frames[start_chosen:end_chosen + 1]
+        rejected_frames = all_frames[start_rejected:end_rejected + 1]
+        
+        if len(chosen_frames) == 0 or len(rejected_frames) == 0:
+            print(f"Skipping sample {i+1}: could not extract frames")
+            continue
+        
+        # Create visualization
+        max_frames = max(len(chosen_frames), len(rejected_frames))
+        fig, axes = plt.subplots(2, max_frames, figsize=(max_frames * 2, 8))
+        
+        if max_frames == 1:
+            axes = axes.reshape(2, 1)
+        
+        # Plot chosen frames (top row)
+        for j, frame in enumerate(chosen_frames):
+            if j < max_frames:
+                axes[0, j].imshow(frame)
+                axes[0, j].set_title(f"Chosen Frame {j+1}", fontsize=10, color='green', weight='bold')
+                axes[0, j].axis('off')
+        
+        # Fill remaining slots with empty plots
+        for j in range(len(chosen_frames), max_frames):
+            axes[0, j].text(0.5, 0.5, "N/A", ha='center', va='center', transform=axes[0, j].transAxes)
+            axes[0, j].axis('off')
+        
+        # Plot rejected frames (bottom row)
+        for j, frame in enumerate(rejected_frames):
+            if j < max_frames:
+                axes[1, j].imshow(frame)
+                axes[1, j].set_title(f"Rejected Frame {j+1}", fontsize=10, color='red', weight='bold')
+                axes[1, j].axis('off')
+        
+        # Fill remaining slots with empty plots
+        for j in range(len(rejected_frames), max_frames):
+            axes[1, j].text(0.5, 0.5, "N/A", ha='center', va='center', transform=axes[1, j].transAxes)
+            axes[1, j].axis('off')
+        
+        # Add sample info
+        info_text = f"Task: {result.get('chosen_task', 'unknown')}\n"
+        info_text += f"Video: {Path(result['video_path']).name}\n"
+        info_text += f"Chosen: frames {result['chosen_start_end'][0]}-{result['chosen_start_end'][1]} (bin {result.get('bin_idx_chosen', 'N/A')})\n"
+        info_text += f"Rejected: frames {result['rejected_start_end'][0]}-{result['rejected_start_end'][1]} (bin {result.get('bin_idx_rejected', 'N/A')})\n"
+        info_text += f"FPS: {result['fps']}\n"
+        info_text += f"Preference Label: {result.get('preference_label', 'N/A')}\n"
+        info_text += f"Predicted: {result.get('predicted_preference', 'N/A')} (prob: {result.get('predicted_preference_prob', 'N/A'):.3f})"
+        
+        fig.suptitle(f"Video Binned Sample {i+1}: - Chosen vs Rejected Frame Sequences", 
+                    fontsize=14, weight="bold", y=0.95)
+        
+        # Add info text below the plots
+        fig.text(0.02, 0.02, info_text, fontsize=9, 
+                bbox=dict(boxstyle="round", facecolor="lightblue", alpha=0.8))
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / f"video_binned_sample_{i+1}_frames.png", dpi=150, bbox_inches="tight")
+        plt.close()
+        
+        print(f"Created frame visualization for video binned sample {i+1}")
 
 
 def print_metrics_summary(metrics: Dict[str, Any]):

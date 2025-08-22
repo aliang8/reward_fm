@@ -15,62 +15,11 @@ from typing import List, Dict, Tuple, Optional, Iterator, Union
 from tqdm import tqdm
 from rfm.data.batch_collator import BaseSample, PreferenceSample, SimilaritySample
 from rfm.utils.logging import rank_0_print
-import cv2
-import os
-from pathlib import Path
-
+from rfm.utils.video_utils import extract_frames_from_video
 
 def calulate_target_progress(frames: np.ndarray) -> List[float]:
     num_frames = frames.shape[0]
     return [i / (num_frames - 1) for i in range(num_frames)]
-
-
-def extract_frames_from_video(video_path: str, fps: int = 1) -> np.ndarray:
-    """
-    Extract frames from video file at specified FPS.
-
-    Args:
-        video_path: Path to the .mp4 file
-        fps: Frames per second to extract (default: 1)
-
-    Returns:
-        numpy array of shape (num_frames, H, W, C) with extracted frames
-    """
-    if not os.path.exists(video_path):
-        raise FileNotFoundError(f"Video file not found: {video_path}")
-
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        raise ValueError(f"Could not open video file: {video_path}")
-
-    # Get video properties
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    video_fps = cap.get(cv2.CAP_PROP_FPS)
-
-    # Calculate frame interval for target FPS
-    frame_interval = max(1, int(video_fps / fps))
-
-    frames = []
-    frame_count = 0
-
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        if frame_count % frame_interval == 0:
-            # Convert BGR to RGB
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frames.append(frame_rgb)
-
-        frame_count += 1
-
-    cap.release()
-
-    if not frames:
-        raise ValueError(f"No frames extracted from video: {video_path}")
-
-    return np.array(frames)
 
 
 def create_binned_subsequences(frames: np.ndarray, num_bins: int = 10) -> List[Dict]:
@@ -524,8 +473,15 @@ class VideoBinnedDataset:
             num_frames_rewound=None,  # Not applicable for video binning
             target_progress_chosen=target_progress_chosen,
             target_progress_rejected=target_progress_rejected,
+
+
             bin_idx_chosen=chosen_bin["bin_idx"],
             bin_idx_rejected=rejected_bin["bin_idx"],
+            # for visualizations 
+            video_path=frames_path,
+            chosen_start_end=[chosen_bin["start_frame"], chosen_bin["end_frame"]],
+            rejected_start_end=[rejected_bin["start_frame"], rejected_bin["end_frame"]],
+            fps=self.fps,
         )
 
         return sample

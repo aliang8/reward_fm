@@ -521,6 +521,15 @@ def main(cfg: GenerateConfig):
             cfg.output.max_trajectories,
         )
         trajectories = flatten_task_data(task_data)
+    elif "metaworld" in cfg.dataset.dataset_name.lower():
+        from rfm.data.dataset_loaders.mw_collected_loader import load_metaworld_dataset
+
+        # Load the trajectories using the loader with max_trajectories limit
+        print(f"Loading metaworld dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_metaworld_dataset(
+            cfg.dataset.dataset_path,
+        )
+        trajectories = flatten_task_data(task_data)
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")
 

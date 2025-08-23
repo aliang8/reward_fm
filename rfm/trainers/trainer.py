@@ -593,3 +593,37 @@ class RFMTrainer(Trainer):
             }
             return total_loss, outputs_dict
         return total_loss
+
+    def _log_rewind_stats(self, batch_inputs):
+        """Log rewind length statistics during training."""
+        if "rewind_lengths" in batch_inputs:
+            rewind_lengths = batch_inputs["rewind_lengths"]
+            if len(rewind_lengths) > 0:
+                rewind_min = rewind_lengths.min().item()
+                rewind_max = rewind_lengths.max().item()
+                
+                # Log to wandb
+                if self.args.report_to and "wandb" in self.args.report_to:
+                    import wandb
+                    wandb.log({
+                        "train/rewind_length_min": rewind_min,
+                        "train/rewind_length_max": rewind_max,
+                    })
+                
+                # Log to console
+                rank_0_print(f"Rewind lengths - Min: {rewind_min}, Max: {rewind_max}")
+        
+        # Log video-binned statistics
+        if "video_binned_metadata" in batch_inputs:
+            video_binned_metadata = batch_inputs["video_binned_metadata"]
+            video_binned_count = sum(1 for meta in video_binned_metadata if meta is not None)
+            if video_binned_count > 0:
+                # Log to wandb
+                if self.args.report_to and "wandb" in self.args.report_to:
+                    import wandb
+                    wandb.log({
+                        "train/video_binned_samples": video_binned_count,
+                    })
+                
+                # Log to console
+                rank_0_print(f"Video-binned samples in batch: {video_binned_count}")

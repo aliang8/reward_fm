@@ -29,3 +29,5 @@ old/
 *.png
 eval_logs/*
 */_MACOSX/*
+rfm/data/metaworld/*
+*.zip

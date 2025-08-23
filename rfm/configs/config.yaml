@@ -40,6 +40,8 @@ data:
   eval_subsets:
     - ["libero_10"]
     - ["libero_10_failure"]
+  # eval_datasets: ["abraranwar/libero_rfm"]
+  # eval_subsets: ["libero_object"]
   eval_subset_size: 500  # Number of evaluation examples
   
   # Video processing settings
@@ -51,7 +53,8 @@ data:
   # Data generation settings
   preference_ratio: 1.0  # Ratio of preference prediction samples
   dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
-  preference_strategy_ratio: [0.8, 0.1, 0.1]  # [rewind_same_task, suboptimal_same_task, different_task]
+  # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, video_binned]
+  preference_strategy_ratio: [0.7, 0.1, 0.1, 0.1]
   shuffle: true
   seed: 42
   num_proc: 1  # Number of processes for dataset processing (1 for safety, increase for speed)

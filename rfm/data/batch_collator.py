@@ -404,6 +404,24 @@ class BatchCollator:
             sample.num_frames_rewound if sample.num_frames_rewound is not None else 0 for sample in preference_samples
         ]
         batch_inputs["rewind_lengths"] = torch.tensor(rewind_lengths, dtype=torch.int32)
+        
+        # Add video-binned metadata if available
+        video_binned_metadata = []
+        for sample in preference_samples:
+            if hasattr(sample, 'data_gen_strategy') and sample.data_gen_strategy == "video_binned":
+                metadata = {
+                    "chosen_bin_idx": getattr(sample, 'chosen_bin_idx', None),
+                    "rejected_bin_idx": getattr(sample, 'rejected_bin_idx', None),
+                    "chosen_bin_frames": getattr(sample, 'chosen_bin_frames', None),
+                    "rejected_bin_frames": getattr(sample, 'rejected_bin_frames', None),
+                    "num_bins": getattr(sample, 'num_bins', None),
+                    "bin_size": getattr(sample, 'bin_size', None)
+                }
+                video_binned_metadata.append(metadata)
+            else:
+                video_binned_metadata.append(None)
+        
+        batch_inputs["video_binned_metadata"] = video_binned_metadata
         return batch_inputs
 
     def _process_similarity_batch(self, similarity_samples: List[SimilaritySample]) -> Dict[str, torch.Tensor]:

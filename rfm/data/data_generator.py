@@ -54,8 +54,8 @@ class DataGenerator:
         self.similarity_ratio = 1.0 - config.data.preference_ratio
         self.dataset_preference_ratio = getattr(config.data, "dataset_preference_ratio", 0.7)
 
-        # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task]
-        default_strategy_ratio = [0.8, 0.1, 0.1]
+        # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, video_binned]
+        default_strategy_ratio = [0.7, 0.1, 0.1, 0.1]
         self.preference_strategy_ratio: List[float] = getattr(
             config.data, "preference_strategy_ratio", default_strategy_ratio
         )
@@ -65,7 +65,7 @@ class DataGenerator:
             self.preference_strategy_ratio = default_strategy_ratio
         else:
             self.preference_strategy_ratio = [v / total_ratio for v in self.preference_strategy_ratio]
-        if len(self.preference_strategy_ratio) != 3:
+        if len(self.preference_strategy_ratio) != 4:
             self.preference_strategy_ratio = default_strategy_ratio
 
         # Show available datasets for debugging
@@ -428,6 +428,108 @@ class DataGenerator:
         rewind_traj["metadata"]["rewind_length"] = rewind_length
         return rewind_traj
 
+    def _create_video_binned_trajectory(self, original_traj: Dict, num_bins: int = 4) -> Dict:
+        """Create a preference sample by splitting a video into temporal bins and sampling from different bins.
+        
+        This strategy creates preference samples by:
+        1. Splitting the original video into N temporal bins (e.g., 4 bins for a 32-frame video)
+        2. Randomly selecting two different bins from the same video
+        3. Creating a preference sample where one bin represents progress and the other represents regression
+        
+        **Example:**
+        ```
+        Original video: 32 frames
+        Bins: [0-7], [8-15], [16-23], [24-31]
+        
+        Strategy 1: Compare early progress vs late progress
+        - Chosen: frames [16-23] (bin 2, middle progress)
+        - Rejected: frames [0-7] (bin 0, early progress)
+        
+        Strategy 2: Compare progress vs regression
+        - Chosen: frames [24-31] (bin 3, final progress)
+        - Rejected: frames [16-23] (bin 2, middle progress, but shown in reverse)
+        
+        Strategy 3: Compare adjacent bins with different progress
+        - Chosen: frames [8-15] (bin 1, early-mid progress)
+        - Rejected: frames [0-7] (bin 0, early progress)
+        ```
+        
+        **Benefits:**
+        - Teaches the model to recognize temporal progress within the same task
+        - Helps distinguish between early, middle, and late stages of task completion
+        - Creates diverse preference pairs from the same video without external data
+        - Useful for learning fine-grained temporal dynamics and progress indicators
+        
+        Args:
+            original_traj: Original trajectory dictionary containing video frames
+            num_bins: Number of temporal bins to split the video into (default: 4)
+            
+        Returns:
+            Dict: Modified trajectory with frames from a different bin and updated metadata
+            
+        Raises:
+            ValueError: If video is too short to create meaningful bins
+            RuntimeError: If video binning fails for any reason
+        """
+        # Load frames from npz file
+        frames_data = self._load_frames_from_npz(original_traj["frames"])
+        
+        # Get the number of frames
+        if hasattr(frames_data, "shape"):
+            num_frames = frames_data.shape[0]
+        else:
+            num_frames = len(frames_data)
+            
+        if num_frames < num_bins * 2:
+            raise ValueError(f"Video too short ({num_frames} frames) to create {num_bins} meaningful bins")
+            
+        # Calculate bin size and boundaries
+        bin_size = num_frames // num_bins
+        bin_boundaries = []
+        for i in range(num_bins):
+            start = i * bin_size
+            end = start + bin_size if i < num_bins - 1 else num_frames
+            bin_boundaries.append((start, end))
+            
+        # Randomly select two different bins
+        bin_indices = list(range(num_bins))
+        chosen_bin_idx = random.choice(bin_indices)
+        bin_indices.remove(chosen_bin_idx)
+        rejected_bin_idx = random.choice(bin_indices)
+        
+        # Extract frames from the chosen bin (this will be the "chosen" trajectory)
+        chosen_start, chosen_end = bin_boundaries[chosen_bin_idx]
+        chosen_frames = frames_data[chosen_start:chosen_end]
+        
+        # Extract frames from the rejected bin (this will be the "rejected" trajectory)
+        rejected_start, rejected_end = bin_boundaries[rejected_bin_idx]
+        rejected_frames = frames_data[rejected_start:rejected_end]
+        
+        # Calculate progress for both bins
+        # Progress is relative to the bin position within the video
+        chosen_progress = [i / (len(chosen_frames) - 1) for i in range(len(chosen_frames))]
+        rejected_progress = [i / (len(rejected_frames) - 1) for i in range(len(rejected_frames))]
+        
+        # Create the video-binned trajectory
+        video_binned_traj = original_traj.copy()
+        video_binned_traj["frames"] = rejected_frames  # This will be the "rejected" trajectory
+        video_binned_traj["frames_shape"] = rejected_frames.shape
+        video_binned_traj["id"] = f"{original_traj['id']}_bin_{rejected_bin_idx}"
+        video_binned_traj["quality_label"] = "video_binned"
+        video_binned_traj["metadata"] = video_binned_traj.get("metadata", {}).copy()
+        video_binned_traj["metadata"]["video_binned_generated"] = True
+        video_binned_traj["metadata"]["original_traj_id"] = original_traj["id"]
+        video_binned_traj["metadata"]["chosen_bin_idx"] = chosen_bin_idx
+        video_binned_traj["metadata"]["rejected_bin_idx"] = rejected_bin_idx
+        video_binned_traj["metadata"]["chosen_bin_progress"] = chosen_progress
+        video_binned_traj["metadata"]["rejected_bin_progress"] = rejected_progress
+        video_binned_traj["metadata"]["chosen_bin_frames"] = (chosen_start, chosen_end)
+        video_binned_traj["metadata"]["rejected_bin_frames"] = (rejected_start, rejected_end)
+        video_binned_traj["metadata"]["num_bins"] = num_bins
+        video_binned_traj["metadata"]["bin_size"] = bin_size
+        
+        return video_binned_traj
+
     def _create_preference_sample_from_dataset(self) -> PreferenceSample:
         """Create a preference sample from the loaded preference dataset."""
         if not self.preferences:
@@ -496,8 +598,61 @@ class DataGenerator:
     def _create_preference_sample_with_strategies(self) -> PreferenceSample:
         """Create a preference prediction sample using various negative generation strategies.
 
-        Implements three strategies for generating negative trajectories to create diverse
-        preference learning data. Strategy chosen according to self.preference_strategy_ratio.
+        This method implements four different strategies for generating negative trajectories
+        to create diverse and robust preference learning data. The strategy is chosen
+        probabilistically according to self.preference_strategy_ratio.
+
+        **Strategy 1: Rewind Same Task (Default: 70%)**
+        - Creates a suboptimal trajectory by rewinding the optimal trajectory
+        - Same task, different trajectory ID, artificially generated suboptimal behavior
+        - Good for learning task-specific failure modes and temporal dynamics
+        - Example: Forward progress [0→1→2→3] + rewind [3→2→1] = [0→1→2→3→2→1]
+
+        **Strategy 2: Suboptimal/Failure Same Task (Default: 10%)**
+        - Uses existing suboptimal/failure trajectories from the same task
+        - Same task, different trajectory ID, real failure examples
+        - Good for learning from actual failure patterns and task-specific suboptimal behaviors
+        - Example: Compare successful "open door" vs failed "open door" attempts
+
+        **Strategy 3: Different Task (Default: 10%)**
+        - Uses trajectories from completely different tasks
+        - Different task, can be optimal or suboptimal
+        - Good for learning cross-task generalization and what makes trajectories "good"
+          across different contexts
+        - Example: Compare "open door" (successful) vs "press button" (successful)
+
+        **Strategy 4: Video Binned (Default: 10%)**
+        - Splits a single video into temporal bins and compares different bins
+        - Same task, same video, different temporal segments
+        - Good for learning temporal progress within the same task and fine-grained
+          temporal dynamics
+        - Example: Compare early progress [frames 0-7] vs late progress [frames 24-31]
+
+        **Strategy Selection:**
+        The strategy is chosen using cumulative probability based on preference_strategy_ratio:
+        - r < 0.7: Strategy 1 (Rewind Same Task)
+        - 0.7 ≤ r < 0.8: Strategy 2 (Suboptimal Same Task)  
+        - 0.8 ≤ r < 0.9: Strategy 3 (Different Task)
+        - 0.9 ≤ r < 1.0: Strategy 4 (Video Binned)
+
+        **Benefits of Multi-Strategy Approach:**
+        - **Diversity**: Creates varied negative examples from different sources
+        - **Robustness**: Teaches the model to handle different types of suboptimal behaviors
+        - **Generalization**: Helps the model learn both task-specific and cross-task preferences
+        - **Temporal Understanding**: Video binning strategy improves temporal progress recognition
+
+        **Fallback Behavior:**
+        If any strategy fails (e.g., no suboptimal trajectories available, video too short),
+        the system automatically falls back to the rewind strategy to ensure robust
+        data generation.
+
+        Returns:
+            PreferenceSample: A preference sample with chosen (optimal) vs rejected
+            (negative) trajectories and associated metadata
+
+        Raises:
+            ValueError: If no optimal trajectories are available for preference generation
+            RuntimeError: If all strategies fail and fallback rewind also fails
         """
 
         # Use preprocessed optimal trajectories from index maps
@@ -511,13 +666,15 @@ class DataGenerator:
 
         # Choose negative generation strategy using configured ratios
         r = random.random()
-        rewind_ratio, subopt_ratio, diff_ratio = self.preference_strategy_ratio
+        rewind_ratio, subopt_ratio, diff_ratio, video_binned_ratio = self.preference_strategy_ratio
         if r < rewind_ratio:
             strategy_choice = 0
         elif r < rewind_ratio + subopt_ratio:
             strategy_choice = 1
-        else:
+        elif r < rewind_ratio + subopt_ratio + diff_ratio:
             strategy_choice = 2
+        else:
+            strategy_choice = 3
 
         if strategy_choice == 0:
             # Strategy 1: Use rewind-generated suboptimal trajectory from same task
@@ -538,7 +695,7 @@ class DataGenerator:
                 # Fall back to rewind if no same-task suboptimal trajectories
                 negative_traj = self._create_rewind_trajectory(optimal_traj)
                 strategy_used = "rewind_same_task"
-        else:
+        elif strategy_choice == 2:
             # Strategy 3: Use trajectory from different task (can be optimal or suboptimal)
             other_tasks = [task for task in self.optimal_by_task.keys() if task != optimal_traj["task"]]
             if other_tasks:
@@ -562,6 +719,18 @@ class DataGenerator:
                     strategy_used = "rewind_same_task"
             else:
                 # Fall back to rewind if only one task available
+                negative_traj = self._create_rewind_trajectory(optimal_traj)
+                strategy_used = "rewind_same_task"
+        else: # strategy_choice == 3
+            # Strategy 4: Create preference sample from different bins of the same video
+            # This strategy splits a video into temporal bins and creates preference samples
+            # by comparing two different bins from the same video
+            try:
+                negative_traj = self._create_video_binned_trajectory(optimal_traj)
+                strategy_used = "video_binned"
+            except Exception as e:
+                # Fall back to rewind if video binning fails
+                rank_0_print(f"Video binning failed: {e}, falling back to rewind")
                 negative_traj = self._create_rewind_trajectory(optimal_traj)
                 strategy_used = "rewind_same_task"
 

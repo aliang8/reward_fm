@@ -503,7 +503,7 @@ class DatasetPreprocessor:
         else:
             # Load from local disk
             if subset:
-                dataset = load_dataset(dataset_path, subset)
+                dataset = load_dataset(dataset_path, name=subset)
             else:
                 dataset = load_dataset(dataset_path)
             return dataset

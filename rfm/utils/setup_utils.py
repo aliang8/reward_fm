@@ -226,7 +226,7 @@ def setup_data_generator(cfg: ExperimentConfig) -> DataGenerator:
         for i, (dataset, subset) in enumerate(zip(cfg.data.train_datasets, cfg.data.train_subsets)):
             rank_0_print(f"  Dataset {i + 1}: {dataset} -> {subset}")
 
-    data_generator = DataGenerator(config=cfg)
+    data_generator = DataGenerator(config=cfg.data)
 
     if rank == 0:
         rank_0_print(f"Data generator initialized on rank {rank}")
@@ -256,7 +256,7 @@ def setup_eval_data_generator(cfg: ExperimentConfig) -> DataGenerator:
         for i, (dataset, subset) in enumerate(zip(cfg.data.eval_datasets, cfg.data.eval_subsets)):
             rank_0_print(f"  Dataset {i + 1}: {dataset} -> {subset}")
 
-    eval_data_generator = DataGenerator(config=cfg, is_evaluation=True)
+    eval_data_generator = DataGenerator(config=cfg.data, is_evaluation=True)
 
     if rank == 0:
         rank_0_print(f"Evaluation data generator initialized on rank {rank}")
@@ -270,14 +270,14 @@ def setup_dataset(
     """Shared function to create training or evaluation dataset based on config"""
 
     # Get the dataset type from the data generator config
-    config_dataset_type = data_generator.config.data.dataset_type
+    config_dataset_type = data_generator.config.dataset_type
 
     rank_0_print(f"Setting up {dataset_type} dataset with type: {config_dataset_type}")
 
     if config_dataset_type == "rewound":
         rank_0_print(f"Creating rewound dataset")
         dataset = RewoundDataset(data_generator, **dataset_kwargs)
-    elif config_dataset_type == "success_failure":
+    elif config_dataset_type == "success_failure":  
         rank_0_print(f"Creating success-failure dataset (generating all possible pairs)")
         dataset = PairedSuccessFailureDataset(data_generator, **dataset_kwargs)
     elif config_dataset_type == "video_binned":

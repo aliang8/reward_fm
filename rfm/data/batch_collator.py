@@ -78,6 +78,9 @@ class PreferenceSample:
     chosen_start_end: Optional[List[int]] = None
     rejected_start_end: Optional[List[int]] = None
     fps: Optional[int] = None
+    
+    # Consolidated metadata for all additional information
+    metadata: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -409,15 +412,18 @@ class BatchCollator:
         video_binned_metadata = []
         for sample in preference_samples:
             if hasattr(sample, 'data_gen_strategy') and sample.data_gen_strategy == "video_binned":
-                metadata = {
-                    "chosen_bin_idx": getattr(sample, 'chosen_bin_idx', None),
-                    "rejected_bin_idx": getattr(sample, 'rejected_bin_idx', None),
-                    "chosen_bin_frames": getattr(sample, 'chosen_bin_frames', None),
-                    "rejected_bin_frames": getattr(sample, 'rejected_bin_frames', None),
-                    "num_bins": getattr(sample, 'num_bins', None),
-                    "bin_size": getattr(sample, 'bin_size', None)
-                }
-                video_binned_metadata.append(metadata)
+                metadata = sample.metadata or {}
+                video_binned_metadata.append({
+                    "chosen_bin_idx": metadata.get("chosen_bin_idx"),
+                    "rejected_bin_idx": metadata.get("rejected_bin_idx"),
+                    "original_traj_id": metadata.get("original_traj_id"),
+                    "num_bins": metadata.get("num_bins"),
+                    "bin_size": metadata.get("bin_size"),
+                    "chosen_bin_frames": metadata.get("chosen_bin_frames"),
+                    "rejected_bin_frames": metadata.get("rejected_bin_frames"),
+                    "chosen_bin_progress": metadata.get("chosen_bin_progress"),
+                    "rejected_bin_progress": metadata.get("rejected_bin_progress"),
+                })
             else:
                 video_binned_metadata.append(None)
         

@@ -64,6 +64,9 @@ data:
   dataloader_pin_memory: false
   dataloader_num_workers: 0
 
+  # Video binned dataset parameters
+  num_bins: 3
+
 # =====================================================================================
 # Training Configuration
 # =====================================================================================

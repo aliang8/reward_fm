@@ -70,10 +70,10 @@ def _save_result_as_json(samples: List[Any], response: Dict[str, Any]) -> List[D
         }
 
         # save additional infos for logging metrics
-        if sample.bin_idx_chosen is not None:
-            result_entry["bin_idx_chosen"] = sample.bin_idx_chosen
-        if sample.bin_idx_rejected is not None:
-            result_entry["bin_idx_rejected"] = sample.bin_idx_rejected
+        if sample.metadata and sample.metadata.get("chosen_bin_idx") is not None:
+            result_entry["bin_idx_chosen"] = sample.metadata["chosen_bin_idx"]
+        if sample.metadata and sample.metadata.get("rejected_bin_idx") is not None:
+            result_entry["bin_idx_rejected"] = sample.metadata["rejected_bin_idx"]
 
         if sample.data_gen_strategy == "video_binned":
             result_entry["video_path"] = sample.video_path

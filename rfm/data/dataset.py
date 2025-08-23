@@ -74,7 +74,7 @@ def create_binned_subsequences(frames: np.ndarray, num_bins: int = 10) -> List[D
 class InfiniteDataGeneratorDataset:
     """Dataset that generates preference and similarity samples infinitely."""
 
-    def __init__(self, data_generator, max_samples=100):
+    def __init__(self, data_generator, max_samples=100, **kwargs):
         self.data_generator = data_generator
         self.max_samples = max_samples
 

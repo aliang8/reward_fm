@@ -618,12 +618,17 @@ class RFMTrainer(Trainer):
             video_binned_metadata = batch_inputs["video_binned_metadata"]
             video_binned_count = sum(1 for meta in video_binned_metadata if meta is not None)
             if video_binned_count > 0:
+                # Calculate average number of bins used
+                total_bins = sum(meta.get("num_bins", 0) for meta in video_binned_metadata if meta is not None)
+                avg_bins = total_bins / video_binned_count if video_binned_count > 0 else 0
+                
                 # Log to wandb
                 if self.args.report_to and "wandb" in self.args.report_to:
                     import wandb
                     wandb.log({
                         "train/video_binned_samples": video_binned_count,
+                        "train/video_binned_avg_bins": avg_bins,
                     })
                 
                 # Log to console
-                rank_0_print(f"Video-binned samples in batch: {video_binned_count}")
+                rank_0_print(f"Video-binned samples in batch: {video_binned_count} (avg bins: {avg_bins:.1f})")

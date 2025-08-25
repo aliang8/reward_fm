@@ -57,6 +57,9 @@ dependencies = [
     "tf-keras>=2.19.0",
     "scipy>=1.15.3",
     "codetiming>=1.4.0",
+    "robosuite==1.4.0",
+    "libero",
+    "imageio>=2.37.0",
 ]
 
 [project.urls]
@@ -129,3 +132,6 @@ force-single-line = true
 # Tool configuration for 'pytest'
 [tool.pytest.ini_options]
 testpaths = ["tests"] # Assuming your tests are in a 'tests' directory
+
+[tool.uv.sources]
+libero = { path = "deps/libero/LIBERO/", editable = true }

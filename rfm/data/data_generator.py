@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import torch
 from rfm.data.batch_collator import BaseSample, PreferenceSample, SimilaritySample, BatchCollator
+from rfm.data.vqa_batch_collator import ProgressSample, VQABatchCollator
 from datasets import concatenate_datasets, Dataset
 from rfm.utils.logging import rank_0_print
 import json
@@ -1177,6 +1178,116 @@ class DataGenerator:
 
         return sample
 
+
+class VQADataGenerator(DataGenerator):
+    def __init__(self, config, is_evaluation=False):
+        super().__init__(config, is_evaluation)
+
+    def _create_progress_sample(self) -> ProgressSample:
+        """Create a progress sample."""
+        # Get a random task and optimal trajectory from it
+        task_name = random.choice(list(self.optimal_by_task.keys()))
+        optimal_idx = random.choice(self.optimal_by_task[task_name])
+        traj = self.dataset[optimal_idx]
+
+        # Choose negative generation strategy using configured ratios
+        r = random.random()
+        rewind_ratio, subopt_ratio, diff_ratio = 0.2, 0.2, 0.2
+
+        strategy_used = None
+        if r < 0.6:
+            if r < rewind_ratio:
+                strategy_choice = 0
+            elif r < rewind_ratio + subopt_ratio:
+                strategy_choice = 1
+            else:
+                strategy_choice = 2
+
+            if strategy_choice == 0:
+                # Strategy 1: Use rewind-generated suboptimal trajectory from same task
+                traj = self._create_rewind_trajectory(traj)
+                strategy_used = "rewind_same_task"
+            elif strategy_choice == 1:
+                # Strategy 2: Use random suboptimal trajectory from same task
+                same_task_suboptimal_indices = self.suboptimal_by_task.get(task_name, [])
+                same_task_suboptimal = [
+                    self.dataset[idx] for idx in same_task_suboptimal_indices if self.dataset[idx]["id"] != traj["id"]
+                ]
+                if same_task_suboptimal:
+                    traj = random.choice(same_task_suboptimal)
+                    strategy_used = "suboptimal_same_task"
+                else:
+                    # Fall back to rewind if no same-task suboptimal trajectories
+                    traj = self._create_rewind_trajectory(traj)
+                    strategy_used = "rewind_same_task"
+            else:
+                # Strategy 3: Use trajectory from different task (can be optimal or suboptimal)
+                other_tasks = [task for task in self.optimal_by_task.keys() if task != traj["task"]]
+                if other_tasks:
+                    other_task = random.choice(other_tasks)
+                    # Get random index from other task and access dataset directly
+                    other_task_indices = self.optimal_by_task[other_task]
+                    if other_task_indices:
+                        other_idx = random.choice(other_task_indices)
+                        other_traj = self.dataset[other_idx]
+                        # Check if it's not the same trajectory
+                        if other_traj["id"] != traj["id"]:
+                            traj = other_traj
+                            strategy_used = "different_task"
+                        else:
+                            # Fall back to rewind if same trajectory
+                            traj = self._create_rewind_trajectory(traj)
+                            strategy_used = "rewind_same_task"
+                    else:
+                        # Fall back to rewind if no other trajectories available
+                        traj = self._create_rewind_trajectory(traj)
+                        strategy_used = "rewind_same_task"
+                else:
+                    # Fall back to rewind if only one task available
+                    traj = self._create_rewind_trajectory(traj)
+                    strategy_used = "rewind_same_task"
+
+            # Handle negative trajectory frames - could be from dataset (npz) or rewind-generated (numpy)
+            if isinstance(traj, dict) and "frames" in traj:
+                if isinstance(traj["frames"], str) and traj["frames"].endswith(".npz"):
+                    # Regular trajectory with npz path
+                    traj_frames = self._load_frames_from_npz(traj["frames"])
+                elif isinstance(traj["frames"], np.ndarray):
+                    # Rewind trajectory with numpy array
+                    traj_frames = traj["frames"]
+                else:
+                    raise ValueError(f"Unexpected frames format in negative trajectory: {type(traj['frames'])}")
+            else:
+                raise ValueError(f"Invalid negative trajectory format: {type(traj)}")
+
+        else:
+            # Get frames from npz files
+            traj_frames = self._get_trajectory_frames(optimal_idx)
+
+        # Calculate target progress for both trajectories
+        target_progress = self._calculate_target_progress(traj, traj_frames)
+        
+        # Get frame shapes
+        traj_frames_shape = traj.get("frames_shape")
+        if isinstance(traj_frames_shape, list):
+            traj_frames_shape = tuple(traj_frames_shape)
+
+        # Get num_frames_rewound if this is a rewound trajectory
+        num_frames_rewound = None
+        if strategy_used.startswith("rewind"):
+            num_frames_rewound = traj.get("metadata", {}).get("num_frames_rewound")
+        
+        # Create progress sample
+        sample = ProgressSample(
+            frames=traj_frames,
+            frames_shape=traj_frames_shape,
+            task=traj["task"],
+            target_progress=target_progress,
+            quality_label=traj.get("quality_label"),
+            sample_type="progress",
+        )
+
+        return sample
 
 def test():
     """Test the BatchCollator with generated samples."""

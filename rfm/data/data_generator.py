@@ -31,14 +31,14 @@ class DataGenerator:
         self.is_evaluation = is_evaluation
 
         # Choose datasets based on whether this is for evaluation or training
-        if is_evaluation and config.data.eval_datasets:
-            self.datasets = config.data.eval_datasets
-            self.subsets = config.data.eval_subsets
+        if is_evaluation and config.eval_datasets:
+            self.datasets = config.eval_datasets
+            self.subsets = config.eval_subsets
         else:
-            self.datasets = config.data.train_datasets
-            self.subsets = config.data.train_subsets
+            self.datasets = config.train_datasets
+            self.subsets = config.train_subsets
 
-        self.force_reprocess = config.data.force_reprocess
+        self.force_reprocess = config.force_reprocess
 
         # Initialize dataset and index mappings
         self.dataset = None
@@ -50,14 +50,14 @@ class DataGenerator:
         self.task_indices = {}
         self.source_indices = {}
 
-        self.preference_ratio = config.data.preference_ratio
-        self.similarity_ratio = 1.0 - config.data.preference_ratio
-        self.dataset_preference_ratio = getattr(config.data, "dataset_preference_ratio", 0.7)
+        self.preference_ratio = config.preference_ratio
+        self.similarity_ratio = 1.0 - config.preference_ratio
+        self.dataset_preference_ratio = getattr(config, "dataset_preference_ratio", 0.7)
 
-        # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task]
-        default_strategy_ratio = [0.8, 0.1, 0.1]
+        # Tunable strategy ratios for preference rejected generation: [rewind, suboptimal_same_task, different_task, video_binned]
+        default_strategy_ratio = [0.7, 0.1, 0.1, 0.1]
         self.preference_strategy_ratio: List[float] = getattr(
-            config.data, "preference_strategy_ratio", default_strategy_ratio
+            config, "preference_strategy_ratio", default_strategy_ratio
         )
         # Normalize if not summing to 1 and validate
         total_ratio = sum(self.preference_strategy_ratio)
@@ -65,7 +65,7 @@ class DataGenerator:
             self.preference_strategy_ratio = default_strategy_ratio
         else:
             self.preference_strategy_ratio = [v / total_ratio for v in self.preference_strategy_ratio]
-        if len(self.preference_strategy_ratio) != 3:
+        if len(self.preference_strategy_ratio) != 4:
             self.preference_strategy_ratio = default_strategy_ratio
 
         # Show available datasets for debugging
@@ -139,29 +139,18 @@ class DataGenerator:
                 individual_cache_dir = os.path.join(cache_dir, cache_key.replace("/", "_").replace(":", "_"))
 
                 if os.path.exists(individual_cache_dir):
-                    # Check if this cache is for the right dataset type (training vs evaluation)
                     info_file = os.path.join(individual_cache_dir, "dataset_info.json")
                     if os.path.exists(info_file):
                         try:
                             with open(info_file, "r") as f:
                                 info = json.load(f)
-                            cache_dataset_type = info.get("dataset_type", "unknown")
 
-                            # Only load if it matches our intended dataset type
-                            if cache_dataset_type == ("training" if is_training else "evaluation"):
-                                available_datasets.append((dataset_path, subset, individual_cache_dir))
-                                rank_0_print(f"      ✅ Found {cache_dataset_type} cache: {individual_cache_dir}")
-                            else:
-                                missing_datasets.append((dataset_path, subset))
-                                rank_0_print(
-                                    f"      ❌ Found {cache_dataset_type} cache but need {'training' if is_training else 'evaluation'}: {individual_cache_dir}"
-                                )
+                            available_datasets.append((dataset_path, subset, individual_cache_dir))
+                            rank_0_print(f"      ✅ Found cache: {individual_cache_dir}")
                         except:
-                            # If we can't read the info file, skip this cache
                             rank_0_print(f"      ⚠️  Cache info file corrupted, skipping: {individual_cache_dir}")
                             continue
                     else:
-                        # No info file, skip this cache
                         rank_0_print(f"      ⚠️  No info file found, skipping: {individual_cache_dir}")
                         continue
                 else:
@@ -177,7 +166,7 @@ class DataGenerator:
 
         if not available_datasets:
             raise RuntimeError(
-                f"No configured dataset/subset pairs are available in the cache for {'training' if is_training else 'evaluation'}. "
+                f"No configured dataset/subset pairs are available in the cache. "
                 f"Please run preprocess_datasets.py to create the cache for: {self.datasets}"
             )
 
@@ -261,10 +250,9 @@ class DataGenerator:
         """Show which datasets are available in the cache."""
         # The preprocessing script now creates individual cache directories for each dataset/subset pair
         cache_dir = "./processed_datasets"
-        cache_type = "evaluation" if self.is_evaluation else "training"
 
-        rank_0_print(f"="*100)
-        rank_0_print(f"\n🔍 Available datasets in {cache_dir} ({cache_type}):")
+        rank_0_print(f"=" * 100)
+        rank_0_print(f"\n🔍 Available datasets in {cache_dir}:")
 
         # List all subdirectories (individual dataset caches)
         if os.path.exists(cache_dir):
@@ -280,12 +268,7 @@ class DataGenerator:
                             dataset_path = info.get("dataset_path", "unknown")
                             subset = info.get("subset", "unknown")
                             trajectories = info.get("total_trajectories", 0)
-                            dataset_type = info.get("dataset_type", "unknown")
-                            # Only show datasets of the right type
-                            if dataset_type == cache_type:
-                                rank_0_print(f"  ✅ {dataset_path}/{subset}: {trajectories} trajectories ({dataset_type})")
-                            else:
-                                rank_0_print(f"  📁 {dataset_path}/{subset}: {trajectories} trajectories ({dataset_type})")
+                            rank_0_print(f"  ✅ {dataset_path}/{subset}: {trajectories} trajectories")
                         except:
                             rank_0_print(f"  📁 {subdir}: (info file corrupted)")
                     else:
@@ -294,10 +277,10 @@ class DataGenerator:
                 rank_0_print(f"  ❌ No dataset caches found")
         else:
             rank_0_print(f"  ❌ Cache directory does not exist")
-        rank_0_print(f"="*100)
+        rank_0_print(f"=" * 100)
 
         # Show configured datasets with better formatting for the new format
-        rank_0_print(f"\n⚙️  Configured datasets for {cache_type}:")
+        rank_0_print(f"\n⚙️  Configured datasets:")
         for i, (dataset_path, dataset_subsets) in enumerate(zip(self.datasets, self.subsets)):
             rank_0_print(f"  📋 Dataset {i + 1}: {dataset_path}")
 
@@ -315,7 +298,7 @@ class DataGenerator:
         # Show summary
         total_subsets = sum(len(subsets) if isinstance(subsets, list) else 1 for subsets in self.subsets)
         rank_0_print(f"\n📊 Total: {len(self.datasets)} dataset(s), {total_subsets} subset(s)")
-        rank_0_print(f"="*100)
+        rank_0_print(f"=" * 100)
 
     def _load_frames_from_npz(self, npz_filepath: str) -> np.ndarray:
         """Load frames on-demand from npz file.
@@ -362,27 +345,6 @@ class DataGenerator:
             raise ValueError(f"No frames path found for trajectory {trajectory_idx}")
 
         return self._load_frames_from_npz(npz_filepath)
-
-    def _get_batch_frames(self, trajectory_indices: List[int]) -> List[np.ndarray]:
-        """Get frames for multiple trajectories efficiently.
-
-        Args:
-            trajectory_indices: List of trajectory indices to load
-
-        Returns:
-            List of numpy arrays with shapes (T, H, W, C) for each trajectory
-        """
-        frames_list = []
-        for idx in trajectory_indices:
-            try:
-                frames = self._get_trajectory_frames(idx)
-                frames_list.append(frames)
-            except Exception as e:
-                rank_0_print(f"Warning: Failed to load frames for trajectory {idx}: {e}")
-                # Return empty frames as fallback
-                frames_list.append(np.array([]))
-
-        return frames_list
 
     def _create_rewind_trajectory(self, original_traj: Dict, rewind_length: Optional[int] = None) -> Dict:
         """Create a suboptimal trajectory by rewinding the original trajectory.
@@ -466,6 +428,121 @@ class DataGenerator:
         rewind_traj["metadata"]["rewind_length"] = rewind_length
         return rewind_traj
 
+    def _create_video_binned_trajectory(self, original_traj: Dict, num_bins: int = 10) -> Tuple[Dict, Dict]:
+        """Create a preference sample by splitting a video into temporal bins and sampling from different bins.
+        
+        This strategy creates preference samples by:
+        1. Splitting the original video into N temporal bins (e.g., 4 bins for a 32-frame video)
+        2. Randomly selecting two different bins from the same video
+        3. Creating a preference sample where one bin represents progress and the other represents regression
+        
+        **Example:**
+        ```
+        Original video: 32 frames
+        Bins: [0-7], [8-15], [16-23], [24-31]
+        
+        Strategy 1: Compare early progress vs late progress
+        - Chosen: frames [16-23] (bin 2, middle progress)
+        - Rejected: frames [0-7] (bin 0, early progress)
+        
+        Strategy 2: Compare progress vs regression
+        - Chosen: frames [24-31] (bin 3, final progress)
+        - Rejected: frames [16-23] (bin 2, middle progress, but shown in reverse)
+        
+        Strategy 3: Compare adjacent bins with different progress
+        - Chosen: frames [8-15] (bin 1, early-mid progress)
+        - Rejected: frames [0-7] (bin 0, early progress)
+        ```
+        
+        **Benefits:**
+        - Teaches the model to recognize temporal progress within the same task
+        - Helps distinguish between early, middle, and late stages of task completion
+        - Creates diverse preference pairs from the same video without external data
+        - Useful for learning fine-grained temporal dynamics and progress indicators
+        
+        Args:
+            original_traj: Original trajectory dictionary containing video frames
+            num_bins: Number of temporal bins to split the video into (default: 10)
+            
+        Returns:
+            Tuple[Dict, Dict]: (chosen_trajectory, rejected_trajectory) where both are modified
+            trajectories with frames from different bins and updated metadata
+            
+        Raises:
+            ValueError: If video is too short to create meaningful bins
+            RuntimeError: If video binning fails for any reason
+        """
+        # Load frames from npz file
+        frames_data = self._load_frames_from_npz(original_traj["frames"])
+        
+        # Get the number of frames
+        if hasattr(frames_data, "shape"):
+            num_frames = frames_data.shape[0]
+        else:
+            num_frames = len(frames_data)
+            
+        if num_frames < num_bins * 2:
+            raise ValueError(f"Video too short ({num_frames} frames) to create {num_bins} meaningful bins")
+            
+        # Calculate bin size and boundaries
+        bin_size = num_frames // num_bins
+        bin_boundaries = []
+        for i in range(num_bins):
+            start = i * bin_size
+            end = start + bin_size if i < num_bins - 1 else num_frames
+            bin_boundaries.append((start, end))
+            
+        # Randomly select two different bins
+        bin_indices = list(range(num_bins))
+        chosen_bin_idx = random.choice(bin_indices)
+        bin_indices.remove(chosen_bin_idx)
+        rejected_bin_idx = random.choice(bin_indices)
+        
+        # Extract frames from the chosen bin (this will be the "chosen" trajectory)
+        chosen_start, chosen_end = bin_boundaries[chosen_bin_idx]
+        chosen_frames = frames_data[chosen_start:chosen_end]
+        
+        # Extract frames from the rejected bin (this will be the "rejected" trajectory)
+        rejected_start, rejected_end = bin_boundaries[rejected_bin_idx]
+        rejected_frames = frames_data[rejected_start:rejected_end]
+        
+        # Calculate progress for both bins
+        # Progress is relative to the bin position within the video
+        chosen_progress = [i / (len(chosen_frames) - 1) for i in range(len(chosen_frames))]
+        rejected_progress = [i / (len(rejected_frames) - 1) for i in range(len(rejected_frames))]
+        
+        # Create the chosen trajectory (from chosen bin)
+        chosen_traj = original_traj.copy()
+        chosen_traj["frames"] = chosen_frames
+        chosen_traj["frames_shape"] = chosen_frames.shape
+        chosen_traj["id"] = f"{original_traj['id']}_bin_{chosen_bin_idx}_chosen"
+        chosen_traj["quality_label"] = "video_binned_chosen"
+        chosen_traj["metadata"] = chosen_traj.get("metadata", {}).copy()
+        chosen_traj["metadata"]["video_binned_generated"] = True
+        chosen_traj["metadata"]["original_traj_id"] = original_traj["id"]
+        chosen_traj["metadata"]["chosen_bin_idx"] = chosen_bin_idx
+        chosen_traj["metadata"]["bin_progress"] = chosen_progress
+        chosen_traj["metadata"]["bin_frames"] = (chosen_start, chosen_end)
+        chosen_traj["metadata"]["num_bins"] = num_bins
+        chosen_traj["metadata"]["bin_size"] = bin_size
+        
+        # Create the rejected trajectory (from rejected bin)
+        rejected_traj = original_traj.copy()
+        rejected_traj["frames"] = rejected_frames
+        rejected_traj["frames_shape"] = rejected_frames.shape
+        rejected_traj["id"] = f"{original_traj['id']}_bin_{rejected_bin_idx}_rejected"
+        rejected_traj["quality_label"] = "video_binned_rejected"
+        rejected_traj["metadata"] = rejected_traj.get("metadata", {}).copy()
+        rejected_traj["metadata"]["video_binned_generated"] = True
+        rejected_traj["metadata"]["original_traj_id"] = original_traj["id"]
+        rejected_traj["metadata"]["rejected_bin_idx"] = rejected_bin_idx
+        rejected_traj["metadata"]["bin_progress"] = rejected_progress
+        rejected_traj["metadata"]["bin_frames"] = (rejected_start, rejected_end)
+        rejected_traj["metadata"]["num_bins"] = num_bins
+        rejected_traj["metadata"]["bin_size"] = bin_size
+        
+        return chosen_traj, rejected_traj
+
     def _create_preference_sample_from_dataset(self) -> PreferenceSample:
         """Create a preference sample from the loaded preference dataset."""
         if not self.preferences:
@@ -497,11 +574,11 @@ class DataGenerator:
     def _create_preference_sample(self) -> PreferenceSample:
         """Create a preference prediction sample: chosen vs rejected where chosen is preferred.
 
-        This method implements three different strategies for generating negative trajectories
+        This method implements three different strategies for generating rejected trajectories
         to create diverse and robust preference learning data:
 
         **Strategy 1: Rewind Same Task**
-        - Creates a suboptimal trajectory by rewinding the optimal trajectory
+        - Creates a suboptimal trajectory by rewinding the chosen trajectory
         - Same task, different trajectory ID
         - Good for learning task-specific failure modes and temporal dynamics
 
@@ -512,16 +589,16 @@ class DataGenerator:
 
         **Strategy 3: Different Task**
         - Uses trajectories from completely different tasks
-        - Different task, can be optimal or suboptimal
+        - Different task, can be chosen or suboptimal
         - Good for learning cross-task generalization and what makes trajectories "good"
           across different contexts
 
-        The strategy ratios are controlled by config.data.preference_strategy_ratio
+        The strategy ratios are controlled by config.preference_strategy_ratio
         with default [0.8, 0.1, 0.1] for [rewind_same_task, suboptimal_same_task, different_task].
 
         Returns:
-            PreferenceSample: A preference sample with chosen (optimal) vs rejected
-            (negative) trajectories and associated metadata
+            PreferenceSample: A preference sample with chosen (preferred) vs rejected
+            (suboptimal) trajectories and associated metadata
         """
 
         with timer("create_preference_sample", verbose=False):
@@ -532,51 +609,95 @@ class DataGenerator:
                 return self._create_preference_sample_with_strategies()
 
     def _create_preference_sample_with_strategies(self) -> PreferenceSample:
-        """Create a preference prediction sample using various negative generation strategies.
+        """Create a preference prediction sample using various rejected trajectory generation strategies.
 
-        Implements three strategies for generating negative trajectories to create diverse
-        preference learning data. Strategy chosen according to self.preference_strategy_ratio.
+        This method implements four different strategies for generating rejected trajectories
+        to create diverse and robust preference learning data. The strategy is chosen
+        probabilistically according to self.preference_strategy_ratio.
+
+        **Strategy 1: Rewind Same Task (Default: 70%)**
+        - Creates a suboptimal trajectory by rewinding the chosen trajectory
+        - Same task, different trajectory ID, artificially generated suboptimal behavior
+        - Good for learning task-specific failure modes and temporal dynamics
+        - Example: Forward progress [0→1→2→3] + rewind [3→2→1] = [0→1→2→3→2→1]
+
+        **Strategy 2: Suboptimal/Failure Same Task (Default: 10%)**
+        - Uses existing suboptimal/failure trajectories from the same task
+        - Same task, different trajectory ID, real failure examples
+        - Good for learning from actual failure patterns and task-specific suboptimal behaviors
+        - Example: Compare successful "open door" vs failed "open door" attempts
+
+        **Strategy 3: Different Task (Default: 10%)**
+        - Uses trajectories from completely different tasks
+        - Different task, can be chosen or suboptimal
+        - Good for learning cross-task generalization and what makes trajectories "good"
+          across different contexts
+        - Example: Compare "open door" (successful) vs "press button" (successful)
+
+        **Strategy 4: Video Binned (Default: 10%)**
+        - Splits a single video into temporal bins and compares different bins
+        - Same task, same video, different temporal segments
+        - Good for learning temporal progress within the same task and fine-grained
+          temporal dynamics
+        - Example: Compare early progress [frames 0-7] vs late progress [frames 24-31]
+
+        **Fallback Behavior:**
+        If any strategy fails (e.g., no suboptimal trajectories available, video too short),
+        the system automatically falls back to the rewind strategy to ensure robust
+        data generation.
+
+        Returns:
+            PreferenceSample: A preference sample with chosen (preferred) vs rejected
+            (suboptimal) trajectories and associated metadata
+
+        Raises:
+            ValueError: If no chosen trajectories are available for preference generation
+            RuntimeError: If all strategies fail and fallback rewind also fails
         """
 
-        # Use preprocessed optimal trajectories from index maps
+        # Use preprocessed chosen trajectories from index maps
         if not self.optimal_by_task:
-            raise ValueError("No optimal trajectories found for preference generation")
+            raise ValueError("No chosen trajectories found for preference generation")
 
-        # Get a random task and optimal trajectory from it
+        # Get a random task and chosen trajectory from it
         task_name = random.choice(list(self.optimal_by_task.keys()))
-        optimal_idx = random.choice(self.optimal_by_task[task_name])
-        optimal_traj = self.dataset[optimal_idx]
+        chosen_idx = random.choice(self.optimal_by_task[task_name])
+        chosen_traj = self.dataset[chosen_idx]
 
-        # Choose negative generation strategy using configured ratios
+        # Choose rejected generation strategy using configured ratios
         r = random.random()
-        rewind_ratio, subopt_ratio, diff_ratio = self.preference_strategy_ratio
+        rewind_ratio, subopt_ratio, diff_ratio, video_binned_ratio = self.preference_strategy_ratio
         if r < rewind_ratio:
             strategy_choice = 0
         elif r < rewind_ratio + subopt_ratio:
             strategy_choice = 1
-        else:
+        elif r < rewind_ratio + subopt_ratio + diff_ratio:
             strategy_choice = 2
+        else:
+            strategy_choice = 3
 
         if strategy_choice == 0:
             # Strategy 1: Use rewind-generated suboptimal trajectory from same task
-            negative_traj = self._create_rewind_trajectory(optimal_traj)
+            rejected_traj = self._create_rewind_trajectory(chosen_traj)
             strategy_used = "rewind_same_task"
         elif strategy_choice == 1:
             # Strategy 2: Use random suboptimal trajectory from same task
             same_task_suboptimal_indices = self.suboptimal_by_task.get(task_name, [])
             same_task_suboptimal = [
-                self.dataset[idx] for idx in same_task_suboptimal_indices if self.dataset[idx]["id"] != optimal_traj["id"]
+                self.dataset[idx]
+                for idx in same_task_suboptimal_indices
+                if self.dataset[idx]["id"] != chosen_traj["id"]
             ]
             if same_task_suboptimal:
-                negative_traj = random.choice(same_task_suboptimal)
+                rejected_traj = random.choice(same_task_suboptimal)
                 strategy_used = "suboptimal_same_task"
             else:
                 # Fall back to rewind if no same-task suboptimal trajectories
-                negative_traj = self._create_rewind_trajectory(optimal_traj)
+                rejected_traj = self._create_rewind_trajectory(chosen_traj)
                 strategy_used = "rewind_same_task"
-        else:
-            # Strategy 3: Use trajectory from different task (can be optimal or suboptimal)
-            other_tasks = [task for task in self.optimal_by_task.keys() if task != optimal_traj["task"]]
+        elif strategy_choice == 2:
+            # Strategy 3: Use trajectory from different task (can be chosen or suboptimal)
+            other_tasks = [task for task in self.optimal_by_task.keys() if task != chosen_traj["task"]]
             if other_tasks:
                 other_task = random.choice(other_tasks)
                 # Get random index from other task and access dataset directly
@@ -585,82 +706,136 @@ class DataGenerator:
                     other_idx = random.choice(other_task_indices)
                     other_traj = self.dataset[other_idx]
                     # Check if it's not the same trajectory
-                    if other_traj["id"] != optimal_traj["id"]:
-                        negative_traj = other_traj
+                    if other_traj["id"] != chosen_traj["id"]:
+                        rejected_traj = other_traj
                         strategy_used = "different_task"
                     else:
                         # Fall back to rewind if same trajectory
-                        negative_traj = self._create_rewind_trajectory(optimal_traj)
+                        rejected_traj = self._create_rewind_trajectory(chosen_traj)
                         strategy_used = "rewind_same_task"
                 else:
                     # Fall back to rewind if no other trajectories available
-                    negative_traj = self._create_rewind_trajectory(optimal_traj)
+                    rejected_traj = self._create_rewind_trajectory(chosen_traj)
                     strategy_used = "rewind_same_task"
             else:
                 # Fall back to rewind if only one task available
-                negative_traj = self._create_rewind_trajectory(optimal_traj)
+                rejected_traj = self._create_rewind_trajectory(chosen_traj)
+                strategy_used = "rewind_same_task"
+        else: # strategy_choice == 3
+            # Strategy 4: Create preference sample from different bins of the same video
+            # This strategy splits a video into temporal bins and creates preference samples
+            # by comparing two different bins from the same video
+            try:
+                chosen_traj, rejected_traj = self._create_video_binned_trajectory(chosen_traj, num_bins=self.config.num_bins)
+                strategy_used = "video_binned"
+            except Exception as e:
+                # Fall back to rewind if video binning fails
+                rank_0_print(f"Video binning failed: {e}, falling back to rewind")
+                rejected_traj = self._create_rewind_trajectory(chosen_traj)
                 strategy_used = "rewind_same_task"
 
         # Get frames from npz files
-        optimal_frames = self._get_trajectory_frames(optimal_idx)
+        chosen_frames = self._get_trajectory_frames(chosen_idx)
 
-        # Handle negative trajectory frames - could be from dataset (npz) or rewind-generated (numpy)
-        if isinstance(negative_traj, dict) and "frames" in negative_traj:
-            if isinstance(negative_traj["frames"], str) and negative_traj["frames"].endswith(".npz"):
+        # Handle rejected trajectory frames - could be from dataset (npz) or generated (numpy)
+        if isinstance(rejected_traj, dict) and "frames" in rejected_traj:
+            if isinstance(rejected_traj["frames"], str) and rejected_traj["frames"].endswith(".npz"):
                 # Regular trajectory with npz path
-                negative_frames = self._load_frames_from_npz(negative_traj["frames"])
-            elif isinstance(negative_traj["frames"], np.ndarray):
-                # Rewind trajectory with numpy array
-                negative_frames = negative_traj["frames"]
+                rejected_frames = self._load_frames_from_npz(rejected_traj["frames"])
+            elif isinstance(rejected_traj["frames"], np.ndarray):
+                # Generated trajectory (rewind or video-binned) with numpy array
+                rejected_frames = rejected_traj["frames"]
             else:
-                raise ValueError(f"Unexpected frames format in negative trajectory: {type(negative_traj['frames'])}")
+                raise ValueError(f"Unexpected frames format in rejected trajectory: {type(rejected_traj['frames'])}")
         else:
-            raise ValueError(f"Invalid negative trajectory format: {type(negative_traj)}")
+            raise ValueError(f"Invalid rejected trajectory format: {type(rejected_traj)}")
+
+        # For video-binned case, we have both chosen and rejected trajectories from the same video
+        # The chosen trajectory comes from the chosen bin, the rejected trajectory from the rejected bin
+        if strategy_used == "video_binned":
+            # In video-binned case, we have both chosen and rejected trajectories from the same video
+            # The chosen trajectory comes from the chosen bin, the rejected trajectory from the rejected bin
+            chosen_frames = chosen_traj["frames"]  # This is the chosen bin frames
+            rejected_frames = rejected_traj["frames"]  # This is the rejected bin frames
+            
+            # For video-binned, we use the chosen trajectory as chosen and rejected trajectory as rejected
+            # No need to swap - they are already correctly assigned
+        else:
+            # For other strategies, use the original chosen trajectory as chosen
+            chosen_frames = chosen_frames
+            chosen_traj = chosen_traj
 
         # Calculate target progress for both trajectories
-        target_progress_chosen = self._calculate_target_progress(optimal_traj, optimal_frames)
-        target_progress_rejected = self._calculate_target_progress(negative_traj, negative_frames)
-        
-        # Get frame shapes
-        optimal_frames_shape = optimal_traj.get("frames_shape")
-        if isinstance(optimal_frames_shape, list):
-            optimal_frames_shape = tuple(optimal_frames_shape)
+        target_progress_chosen = self._calculate_target_progress(chosen_traj, chosen_frames)
+        target_progress_rejected = self._calculate_target_progress(rejected_traj, rejected_frames)
 
-        negative_frames_shape = negative_traj.get("frames_shape")
-        if isinstance(negative_frames_shape, list):
-            negative_frames_shape = tuple(negative_frames_shape)
+        # Get frame shapes
+        chosen_frames_shape = chosen_traj.get("frames_shape")
+        if isinstance(chosen_frames_shape, list):
+            chosen_frames_shape = tuple(chosen_frames_shape)
+
+        rejected_frames_shape = rejected_traj.get("frames_shape")
+        if isinstance(rejected_frames_shape, list):
+            rejected_frames_shape = tuple(rejected_frames_shape)
 
         # Get num_frames_rewound if this is a rewound trajectory
         num_frames_rewound = None
         if strategy_used.startswith("rewind"):
-            num_frames_rewound = negative_traj.get("metadata", {}).get("num_frames_rewound")
+            num_frames_rewound = rejected_traj.get("metadata", {}).get("num_frames_rewound")
+
+        # Get video-binned metadata if this is a video-binned trajectory
+        metadata = {}
+        if strategy_used == "video_binned":
+            metadata = {
+                "original_traj_id": chosen_traj.get("metadata", {}).get("original_traj_id"),
+                "num_bins": chosen_traj.get("metadata", {}).get("num_bins"),
+                "bin_size": chosen_traj.get("metadata", {}).get("bin_size"),
+                "chosen_bin_idx": chosen_traj.get("metadata", {}).get("chosen_bin_idx"),
+                "rejected_bin_idx": rejected_traj.get("metadata", {}).get("rejected_bin_idx"),
+                "chosen_bin_frames": chosen_traj.get("metadata", {}).get("bin_frames"),
+                "rejected_bin_frames": rejected_traj.get("metadata", {}).get("bin_frames"),
+                "chosen_bin_progress": chosen_traj.get("metadata", {}).get("bin_progress"),
+                "rejected_bin_progress": rejected_traj.get("metadata", {}).get("bin_progress"),
+            }
+        elif strategy_used.startswith("rewind"):
+            # Add rewind-specific metadata
+            metadata = {
+                "rewind_generated": True,
+                "original_traj_id": rejected_traj.get("metadata", {}).get("original_traj_id"),
+                "num_frames_rewound": rejected_traj.get("metadata", {}).get("num_frames_rewound"),
+                "rewind_length": rejected_traj.get("metadata", {}).get("rewind_length"),
+                "forward_start": rejected_traj.get("metadata", {}).get("forward_start"),
+                "forward_end": rejected_traj.get("metadata", {}).get("forward_end"),
+            }
 
         # Create preference sample structure
         sample = PreferenceSample(
             # Preference-specific fields - using chosen/rejected naming
-            chosen_frames=optimal_frames,
-            chosen_frames_shape=optimal_frames_shape,
-            chosen_id=optimal_traj["id"],
-            chosen_task=optimal_traj["task"],
-            chosen_lang_vector=optimal_traj["lang_vector"],
-            chosen_data_source=optimal_traj["data_source"],
-            chosen_quality_label=optimal_traj.get("quality_label"),
-            chosen_is_robot=optimal_traj["is_robot"],
+            chosen_frames=chosen_frames,
+            chosen_frames_shape=chosen_traj.get("frames_shape"),
+            chosen_id=chosen_traj["id"],
+            chosen_task=chosen_traj["task"],
+            chosen_lang_vector=chosen_traj["lang_vector"],
+            chosen_data_source=chosen_traj["data_source"],
+            chosen_quality_label=chosen_traj.get("quality_label"),
+            chosen_is_robot=chosen_traj["is_robot"],
             # rejected metadata
-            rejected_frames=negative_frames,
-            rejected_frames_shape=negative_frames_shape,
-            preferred_trajectory="chosen",  # chosen is the optimal trajectory
-            rejected_id=negative_traj["id"],
-            rejected_task=negative_traj["task"],
-            rejected_lang_vector=negative_traj["lang_vector"],
-            rejected_data_source=negative_traj["data_source"],
-            rejected_quality_label=negative_traj["quality_label"],
-            rejected_is_robot=negative_traj["is_robot"],
+            rejected_frames=rejected_frames,
+            rejected_frames_shape=rejected_traj.get("frames_shape") if strategy_used == "video_binned" else rejected_traj.get("frames_shape"),
+            preferred_trajectory="chosen",  # chosen is the preferred trajectory
+            rejected_id=rejected_traj["id"] if strategy_used == "video_binned" else rejected_traj["id"],
+            rejected_task=rejected_traj["task"] if strategy_used == "video_binned" else rejected_traj["task"],
+            rejected_lang_vector=rejected_traj["lang_vector"] if strategy_used == "video_binned" else rejected_traj["lang_vector"],
+            rejected_data_source=rejected_traj["data_source"] if strategy_used == "video_binned" else rejected_traj["data_source"],
+            rejected_quality_label=rejected_traj["quality_label"] if strategy_used == "video_binned" else rejected_traj["quality_label"],
+            rejected_is_robot=rejected_traj["is_robot"] if strategy_used == "video_binned" else rejected_traj["is_robot"],
             # Progress fields
             target_progress_chosen=target_progress_chosen,
             target_progress_rejected=target_progress_rejected,
             data_gen_strategy=strategy_used,
             num_frames_rewound=num_frames_rewound,
+            # Consolidated metadata
+            metadata=metadata
         )
         return sample
 
@@ -1056,6 +1231,10 @@ def test():
     from rfm.data.dataset import InfiniteDataGeneratorDataset
 
     infinite_dataset = InfiniteDataGeneratorDataset(generator)
+
+    import ipdb
+
+    ipdb.set_trace()
 
     preference_count = 0
     similarity_count = 0

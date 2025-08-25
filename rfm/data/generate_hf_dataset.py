@@ -497,7 +497,7 @@ def main(cfg: GenerateConfig):
                     folder_path=cfg.output.output_dir,
                     repo_id=cfg.hub.hub_repo_id,
                     repo_type="dataset",
-                    num_workers=min(4, cpu_count()), # low number of workers to avoid running into upload limits
+                    num_workers=min(4, cpu_count()),  # low number of workers to avoid running into upload limits
                 )
                 print(
                     f"✅ Successfully pushed video files for {cfg.dataset.dataset_name} to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}"
@@ -519,6 +519,15 @@ def main(cfg: GenerateConfig):
         task_data = load_robofail_dataset(
             cfg.dataset.dataset_path,
             cfg.output.max_trajectories,
+        )
+        trajectories = flatten_task_data(task_data)
+    elif "metaworld" in cfg.dataset.dataset_name.lower():
+        from rfm.data.dataset_loaders.mw_collected_loader import load_metaworld_dataset
+
+        # Load the trajectories using the loader with max_trajectories limit
+        print(f"Loading metaworld dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_metaworld_dataset(
+            cfg.dataset.dataset_path,
         )
         trajectories = flatten_task_data(task_data)
     else:

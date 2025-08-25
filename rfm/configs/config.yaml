@@ -34,12 +34,14 @@ data:
     - ["libero_90_failure"]
   
   # Evaluation dataset settings
-  eval_datasets :
+  eval_datasets:
     - "abraranwar/libero_rfm"
     - "ykorkmaz/libero_failure_rfm"
   eval_subsets:
     - ["libero_10"]
     - ["libero_10_failure"]
+  # eval_datasets: ["abraranwar/libero_rfm"]
+  # eval_subsets: ["libero_object"]
   eval_subset_size: 500  # Number of evaluation examples
   
   # Video processing settings
@@ -51,7 +53,8 @@ data:
   # Data generation settings
   preference_ratio: 1.0  # Ratio of preference prediction samples
   dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
-  preference_strategy_ratio: [0.8, 0.1, 0.1]  # [rewind_same_task, suboptimal_same_task, different_task]
+  # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, video_binned]
+  preference_strategy_ratio: [0.7, 0.1, 0.1, 0.1]
   shuffle: true
   seed: 42
   num_proc: 1  # Number of processes for dataset processing (1 for safety, increase for speed)
@@ -60,6 +63,9 @@ data:
   # Data loading settings
   dataloader_pin_memory: false
   dataloader_num_workers: 0
+
+  # Video binned dataset parameters
+  num_bins: 3
 
 # =====================================================================================
 # Training Configuration
@@ -117,9 +123,6 @@ peft:
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
   lora_dropout: 0.05
   bias: "none"
-
-evaluation:
-  model_path: ""
 
 # =====================================================================================
 # Logging and Output Configuration

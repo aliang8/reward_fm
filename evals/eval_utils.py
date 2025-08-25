@@ -27,7 +27,6 @@ from rfm.configs.experiment_configs import (
     DataConfig,
     TrainingConfig,
     LoggingConfig,
-    EvaluationConfig,
 )
 
 
@@ -133,15 +132,6 @@ def _dict_to_dataclass(cfg_dict: Dict[str, Any]) -> ExperimentConfig:
         )
     )
 
-    evaluation = EvaluationConfig(
-        **subset(
-            cfg_dict.get("evaluation", {}),
-            [
-                "model_path",
-            ],
-        )
-    )
-
     return ExperimentConfig(
         mode=cfg_dict.get("mode", "train"),
         debug=cfg_dict.get("debug", False),
@@ -150,7 +140,6 @@ def _dict_to_dataclass(cfg_dict: Dict[str, Any]) -> ExperimentConfig:
         data=data,
         training=training,
         logging=logging,
-        evaluation=evaluation,
     )
 
 

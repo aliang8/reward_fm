@@ -28,11 +28,11 @@ class RFMTrainer(Trainer):
             "preference_accuracy",
             "spearman_corr_avg",
         ]
-        
+
         self.log_keys = [
             "num_rewind_frames_min",
             "num_rewind_frames_max",
-            "num_rewind_frames_mean",   
+            "num_rewind_frames_mean",
             "num_rewound_trajs",
         ]
         self.global_metadata = {
@@ -63,8 +63,12 @@ class RFMTrainer(Trainer):
 
         # Aggregate custom losses across all processes if using distributed training
         aggregated_metadata = self._aggregate_log_metadata()
-        aggregated_losses = {f"train/{key}": aggregated_metadata[key] for key in self.loss_keys if key in aggregated_metadata}
-        aggregated_log_keys = {f"misc/{key}": aggregated_metadata[key] for key in self.log_keys if key in aggregated_metadata}
+        aggregated_losses = {
+            f"train/{key}": aggregated_metadata[key] for key in self.loss_keys if key in aggregated_metadata
+        }
+        aggregated_log_keys = {
+            f"misc/{key}": aggregated_metadata[key] for key in self.log_keys if key in aggregated_metadata
+        }
 
         # Prepare logging data using aggregated losses
         log_data = {
@@ -254,10 +258,8 @@ class RFMTrainer(Trainer):
                 }
                 log_metadata.update(rewind_stats)
 
-
         # Always store custom losses for logging (even when return_outputs=False)
         self.log_metadata = log_metadata
-
 
         # Update global metadata for training ]
         # Keep sum counts over all processes
@@ -267,11 +269,12 @@ class RFMTrainer(Trainer):
             dist.all_reduce(batch_size, op=dist.ReduceOp.SUM)
             self.global_metadata["total_samples"] += batch_size.item()
 
-            # total rewounded trajectories 
-            total_samples_with_rewound_trajs = torch.tensor(rewind_stats["num_rewound_trajs"], device=self.accelerator.device)
+            # total rewounded trajectories
+            total_samples_with_rewound_trajs = torch.tensor(
+                rewind_stats["num_rewound_trajs"], device=self.accelerator.device
+            )
             dist.all_reduce(total_samples_with_rewound_trajs, op=dist.ReduceOp.SUM)
             self.global_metadata["total_samples_with_rewound_trajs"] += total_samples_with_rewound_trajs.item()
-
 
         if return_outputs:
             # Combine outputs from all loss functions
@@ -342,7 +345,7 @@ class RFMTrainer(Trainer):
                 progress_loss = progress_loss.sum() / target_progress_mask.sum()
             else:
                 progress_loss = progress_loss.mean()
-                
+
             # Average the Spearman correlations
             mean_spearman = torch.stack(spearman_correlations) * target_progress_mask
             if target_progress_mask.sum() > 0:
@@ -431,7 +434,11 @@ class RFMTrainer(Trainer):
             # Now we know which shape corresponds to which trajectory based on preference labels
             if self.config.model.train_progress_head:
                 progress_loss_A, spearman_corr_A = self._compute_progress_loss(
-                    progress_logits["A"], first_trajectory_progress, first_trajectory_shapes, first_trajectory_progress_mask, "A"
+                    progress_logits["A"],
+                    first_trajectory_progress,
+                    first_trajectory_shapes,
+                    first_trajectory_progress_mask,
+                    "A",
                 )
                 progress_loss_B, spearman_corr_B = self._compute_progress_loss(
                     progress_logits["B"],
@@ -586,3 +593,42 @@ class RFMTrainer(Trainer):
             }
             return total_loss, outputs_dict
         return total_loss
+
+    def _log_rewind_stats(self, batch_inputs):
+        """Log rewind length statistics during training."""
+        if "rewind_lengths" in batch_inputs:
+            rewind_lengths = batch_inputs["rewind_lengths"]
+            if len(rewind_lengths) > 0:
+                rewind_min = rewind_lengths.min().item()
+                rewind_max = rewind_lengths.max().item()
+                
+                # Log to wandb
+                if self.args.report_to and "wandb" in self.args.report_to:
+                    import wandb
+                    wandb.log({
+                        "train/rewind_length_min": rewind_min,
+                        "train/rewind_length_max": rewind_max,
+                    })
+                
+                # Log to console
+                rank_0_print(f"Rewind lengths - Min: {rewind_min}, Max: {rewind_max}")
+        
+        # Log video-binned statistics
+        if "video_binned_metadata" in batch_inputs:
+            video_binned_metadata = batch_inputs["video_binned_metadata"]
+            video_binned_count = sum(1 for meta in video_binned_metadata if meta is not None)
+            if video_binned_count > 0:
+                # Calculate average number of bins used
+                total_bins = sum(meta.get("num_bins", 0) for meta in video_binned_metadata if meta is not None)
+                avg_bins = total_bins / video_binned_count if video_binned_count > 0 else 0
+                
+                # Log to wandb
+                if self.args.report_to and "wandb" in self.args.report_to:
+                    import wandb
+                    wandb.log({
+                        "train/video_binned_samples": video_binned_count,
+                        "train/video_binned_avg_bins": avg_bins,
+                    })
+                
+                # Log to console
+                rank_0_print(f"Video-binned samples in batch: {video_binned_count} (avg bins: {avg_bins:.1f})")

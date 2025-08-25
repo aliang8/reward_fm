@@ -71,6 +71,18 @@ class PreferenceSample:
 
     sample_type = "preference"
 
+    # extra stuff for eval
+    bin_idx_chosen: Optional[int] = None
+    bin_idx_rejected: Optional[int] = None
+    video_path: Optional[str] = None    
+    chosen_start_end: Optional[List[int]] = None
+    rejected_start_end: Optional[List[int]] = None
+    fps: Optional[int] = None
+    
+    # Consolidated metadata for all additional information
+    metadata: Optional[Dict[str, Any]] = None
+
+
 @dataclass
 class SimilaritySample:
     """Sample structure for similarity scoring: traj_sim and traj_diff ranked against o^ref."""
@@ -99,7 +111,7 @@ class SimilaritySample:
     traj_diff_quality_label: Optional[str] = None
     traj_diff_is_robot: Optional[bool] = None
 
-    target_progress_sim: Optional[List[float]] = None   
+    target_progress_sim: Optional[List[float]] = None
     target_progress_diff: Optional[List[float]] = None
     target_progress_ref: Optional[List[float]] = None
     data_gen_strategy: Optional[str] = None
@@ -363,8 +375,18 @@ class BatchCollator:
         # Add target progress for both trajectories based on conversation order
         target_progress_chosen = [sample.target_progress_chosen for sample in preference_samples]
         target_progress_rejected = [sample.target_progress_rejected for sample in preference_samples]
-        target_progress_chosen_mask = [1.0 if sample.chosen_quality_label == "successful" or sample.data_gen_strategy == "rewind_same_task" else 0.0 for sample in preference_samples]
-        target_progress_rejected_mask = [1.0 if sample.rejected_quality_label == "successful" or sample.data_gen_strategy == "rewind_same_task" else 0.0 for sample in preference_samples]
+        target_progress_chosen_mask = [
+            1.0
+            if sample.chosen_quality_label == "successful" or sample.data_gen_strategy == "rewind_same_task"
+            else 0.0
+            for sample in preference_samples
+        ]
+        target_progress_rejected_mask = [
+            1.0
+            if sample.rejected_quality_label == "successful" or sample.data_gen_strategy == "rewind_same_task"
+            else 0.0
+            for sample in preference_samples
+        ]
 
         # Pad target progress tensors to max length in last dimension
         batch_inputs["target_progress_chosen"] = self._pad_target_progress(target_progress_chosen)
@@ -381,8 +403,31 @@ class BatchCollator:
         )
 
         # Add some rewind metrics for logging
-        rewind_lengths = [sample.num_frames_rewound if sample.num_frames_rewound is not None else 0 for sample in preference_samples]
+        rewind_lengths = [
+            sample.num_frames_rewound if sample.num_frames_rewound is not None else 0 for sample in preference_samples
+        ]
         batch_inputs["rewind_lengths"] = torch.tensor(rewind_lengths, dtype=torch.int32)
+        
+        # Add video-binned metadata if available
+        video_binned_metadata = []
+        for sample in preference_samples:
+            if hasattr(sample, 'data_gen_strategy') and sample.data_gen_strategy == "video_binned":
+                metadata = sample.metadata or {}
+                video_binned_metadata.append({
+                    "chosen_bin_idx": metadata.get("chosen_bin_idx"),
+                    "rejected_bin_idx": metadata.get("rejected_bin_idx"),
+                    "original_traj_id": metadata.get("original_traj_id"),
+                    "num_bins": metadata.get("num_bins"),
+                    "bin_size": metadata.get("bin_size"),
+                    "chosen_bin_frames": metadata.get("chosen_bin_frames"),
+                    "rejected_bin_frames": metadata.get("rejected_bin_frames"),
+                    "chosen_bin_progress": metadata.get("chosen_bin_progress"),
+                    "rejected_bin_progress": metadata.get("rejected_bin_progress"),
+                })
+            else:
+                video_binned_metadata.append(None)
+        
+        batch_inputs["video_binned_metadata"] = video_binned_metadata
         return batch_inputs
 
     def _process_similarity_batch(self, similarity_samples: List[SimilaritySample]) -> Dict[str, torch.Tensor]:

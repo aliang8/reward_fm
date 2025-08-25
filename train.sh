@@ -11,7 +11,7 @@ uv run accelerate launch \
     --config rfm/configs/config.yaml \
     --data.resized_height 128 \
     --data.resized_width 128 \
-    --logging.use_wandb true \
+    --logging.use_wandb false \
     --debug false \
     --model.train_preference_head true \
     --model.train_progress_head true \

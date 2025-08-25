@@ -295,7 +295,7 @@ class VQABatchCollator:
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": f"Given these two trajectories for the task '{sample.chosen_task}', which one do you prefer? Trajectory A or B?"},
+                            {"type": "text", "text": f"Given these two trajectories for the task '{sample.chosen_task}', which one do you prefer? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags. For example, if you prefer trajectory A, your answer should be <ans>A</ans>."},
                             {
                                 "type": "video",
                                 "video": chosen_frames,
@@ -319,7 +319,7 @@ class VQABatchCollator:
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": f"Given these two trajectories for the task '{sample.chosen_task}', which one do you prefer? Trajectory A or B?"},
+                            {"type": "text", "text": f"Given these two trajectories for the task '{sample.chosen_task}', which one do you prefer? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags. For example, if you prefer trajectory A, your answer should be <ans>A</ans>."},
                             {
                                 "type": "video",
                                 "video": rejected_frames,
@@ -341,7 +341,7 @@ class VQABatchCollator:
             all_messages.append(conversation)
 
         # Convert preference labels to text answers
-        preference_labels_text = ["I prefer trajectory A" if label == 0 else "I prefer trajectory B" for label in preference_labels]
+        preference_labels_text = ["<ans>A</ans>" if label == 0 else "<ans>B</ans>" for label in preference_labels]
         
         # Create input with generation prompt and answer for proper label setting
         batch_inputs = self._create_vqa_inputs_with_labels(all_messages, preference_labels_text)
@@ -404,7 +404,7 @@ class VQABatchCollator:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": f"Given the following reference trajectory for the task '{sample.task_ref}', which one of the two trajectories are more similar to it? Trajectory A or B?"},
+                        {"type": "text", "text": f"Given the following reference trajectory for the task '{sample.task_ref}', which one of the two trajectories are more similar to it? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags. For example, if you think trajectory A is more similar to the reference trajectory, your answer should be <ans>A</ans>."},
                         {
                             "type": "video",
                             "video": reference_frames,
@@ -502,9 +502,9 @@ class VQABatchCollator:
             # Create conversation for progress evaluation
             conversation = [
                 {
-                    "role": "user",
+                    "role": "user", 
                     "content": [
-                        {"type": "text", "text": f"How close is the following trajectory in terms of the task progress for '{sample.task}'? Give a number between 0 and 1 where 0 means no progress and 1 means successful completion of the task."},
+                        {"type": "text", "text": f"For the task '{sample.task}', estimate the progress at each frame in the trajectory. Give a list of numbers between 0 and 1 where 0 means no progress and 1 means successful completion of the task. Format your answer enclosed by <ans> and </ans> tags. For example, if you think the progress at each frame is [0.0, 0.1, 0.2, 0.3, 0.4, 0.5], your answer should be <ans>[0.0, 0.1, 0.2, 0.3, 0.4, 0.5]</ans>."},
                         {
                             "type": "video",
                             "video": frames,
@@ -527,7 +527,12 @@ class VQABatchCollator:
             quality_labels.append(1.0 if sample.quality_label == 'successful' else 0.0)
 
         # Convert progress labels to text answers
-        progress_labels_text = [f"The task is {int(progress[0] * 100) if progress else 0}% complete" for progress in target_progress_list]
+        progress_labels_text = []
+        for progress in target_progress_list:
+            if progress:
+                progress_labels_text.append(f"<ans>{progress}</ans>")
+            else:
+                progress_labels_text.append(f"<ans>{[0] * len(progress)}</ans>")
         
         # Create input with generation prompt and answer for proper label setting
         batch_inputs = self._create_vqa_inputs_with_labels(all_messages, progress_labels_text)

@@ -31,3 +31,7 @@ eval_logs/*
 */_MACOSX/*
 rfm/data/metaworld/*
 *.zip
+processed_datasets/*
+processed_datasets_old/*
+test.py
+*.ipynb

@@ -12,7 +12,7 @@ from typing import Tuple, Optional, Union
 from rfm.models.rfm import RFMModel
 from rfm.models.rfm_vqa import RFMModelVQA
 from rfm.data.generators.generator import DataGenerator
-from rfm.data.batch_collator import BatchCollator, VQABatchCollator
+from rfm.data.batch_collator import BatchCollator
 from rfm.data.dataset import (
     InfiniteDataGeneratorDataset,
     RewoundDataset,
@@ -21,8 +21,7 @@ from rfm.data.dataset import (
 )
 from rfm.utils.logging import rank_0_print
 from rfm.configs.experiment_configs import ExperimentConfig, ModelConfig
-
-from rfm.utils.logging import _timer
+from rfm.data.vqa_batch_collator import VQABatchCollator
 
 DatasetType = Union[InfiniteDataGeneratorDataset, RewoundDataset, PairedSuccessFailureDataset, VideoBinnedDataset]
 

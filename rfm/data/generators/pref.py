@@ -228,7 +228,7 @@ class PreferenceDataGenerator(BaseDataGenerator):
         
         # Apply uniform subsampling to both bins to ensure consistent frame counts
         # Use uniform subsampling for real trajectories (not rewound)
-        num_frames_to_sample = getattr(self.config, 'max_frames', 8)
+        num_frames_to_sample = self.config.max_frames
         chosen_frames, chosen_indices = self._uniformly_subsample_frames(chosen_frames, num_frames_to_sample)
         rejected_frames, rejected_indices = self._uniformly_subsample_frames(rejected_frames, num_frames_to_sample)
         

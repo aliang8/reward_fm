@@ -481,15 +481,20 @@ class VideoBinnedDataset:
             num_frames_rewound=None,  # Not applicable for video binning
             target_progress_chosen=target_progress_chosen,
             target_progress_rejected=target_progress_rejected,
-
-
-            bin_idx_chosen=chosen_bin["bin_idx"],
-            bin_idx_rejected=rejected_bin["bin_idx"],
-            # for visualizations 
-            video_path=frames_path,
-            chosen_start_end=[chosen_bin["start_frame"], chosen_bin["end_frame"]],
-            rejected_start_end=[rejected_bin["start_frame"], rejected_bin["end_frame"]],
-            fps=self.fps,
+            # Consolidated metadata
+            metadata={
+                "original_traj_id": entry["traj_info"]["traj_id"],
+                "num_bins": self.num_bins,
+                "bin_size": len(chosen_frames),  # Use actual bin size
+                "chosen_bin_idx": chosen_bin["bin_idx"],
+                "rejected_bin_idx": rejected_bin["bin_idx"],
+                "chosen_bin_frames": (chosen_bin["start_frame"], chosen_bin["end_frame"]),
+                "rejected_bin_frames": (rejected_bin["start_frame"], rejected_bin["end_frame"]),
+                "chosen_bin_progress": chosen_bin["progress"],
+                "rejected_bin_progress": rejected_bin["progress"],
+                "video_path": frames_path,
+                "fps": self.fps,
+            }
         )
 
         return sample

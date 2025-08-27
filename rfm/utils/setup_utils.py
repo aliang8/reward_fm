@@ -5,12 +5,14 @@ This file contains setup functions that can be reused across different training 
 """
 
 import torch
-from transformers import AutoProcessor, Qwen2_5_VLModel, TrainingArguments, Qwen2_5_VLConfig
+from transformers import AutoProcessor, Qwen2_5_VLModel, TrainingArguments, Qwen2_5_VLConfig, Qwen2_5_VLForConditionalGeneration
 from peft import get_peft_model, LoraConfig
 from typing import Tuple, Optional, Union
 
 from rfm.models.rfm import RFMModel
-from rfm.data.data_generator import DataGenerator, BatchCollator
+from rfm.models.rfm_vqa import RFMModelVQA
+from rfm.data.data_generator import DataGenerator, BatchCollator, VQADataGenerator, VQABatchCollator
+from rfm.data.vqa_batch_collator import VQABatchCollator
 from rfm.data.dataset import (
     InfiniteDataGeneratorDataset,
     RewoundDataset,
@@ -226,7 +228,10 @@ def setup_data_generator(cfg: ExperimentConfig) -> DataGenerator:
         for i, (dataset, subset) in enumerate(zip(cfg.data.train_datasets, cfg.data.train_subsets)):
             rank_0_print(f"  Dataset {i + 1}: {dataset} -> {subset}")
 
-    data_generator = DataGenerator(config=cfg.data)
+    if cfg.data.model_type == "vqa":
+        data_generator = VQADataGenerator(config=cfg.data)
+    else:
+        data_generator = DataGenerator(config=cfg.data)
 
     if rank == 0:
         rank_0_print(f"Data generator initialized on rank {rank}")
@@ -256,7 +261,10 @@ def setup_eval_data_generator(cfg: ExperimentConfig) -> DataGenerator:
         for i, (dataset, subset) in enumerate(zip(cfg.data.eval_datasets, cfg.data.eval_subsets)):
             rank_0_print(f"  Dataset {i + 1}: {dataset} -> {subset}")
 
-    eval_data_generator = DataGenerator(config=cfg.data, is_evaluation=True)
+    if cfg.data.model_type == "vqa":
+        eval_data_generator = VQADataGenerator(config=cfg.data, is_evaluation=True)
+    else:
+        eval_data_generator = DataGenerator(config=cfg.data, is_evaluation=True)
 
     if rank == 0:
         rank_0_print(f"Evaluation data generator initialized on rank {rank}")
@@ -322,3 +330,46 @@ def setup_batch_collator(processor: AutoProcessor, cfg: ExperimentConfig) -> Bat
 
     rank_0_print("Batch collator created successfully")
     return batch_collator
+
+
+def setup_vqa_model_and_processor(cfg: ExperimentConfig):
+    """Setup VQA baseline model and processor from a VQA-specific config."""
+    import torch.distributed as dist
+    rank = dist.get_rank() if dist.is_initialized() else 0
+
+    if rank == 0:
+        rank_0_print(f"Setting up VQA model and processor on rank {rank}...")
+
+    # Load processor
+    processor = AutoProcessor.from_pretrained(
+        cfg.model.base_model_id,
+        trust_remote_code=cfg.model.trust_remote_code,
+        do_sample_frames=False,
+    )
+
+    if processor.tokenizer.pad_token is None:
+        processor.tokenizer.pad_token = processor.tokenizer.eos_token
+
+    # Load base conditional generation model for VQA
+    base_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(cfg.model.base_model_id)
+
+    # Initialize VQA wrapper (handles vocab resize internally)
+    vqa_model = RFMModelVQA(config=base_model.config, processor=processor, base_model=base_model)
+
+    if rank == 0:
+        rank_0_print("VQA model and processor initialized.")
+
+    return processor, vqa_model
+
+
+def setup_vqa_batch_collator(processor: AutoProcessor, cfg: ExperimentConfig) -> VQABatchCollator:
+    """Create VQA batch collator using VQA config."""
+    rank_0_print("Setting up VQA batch collator...")
+    collator = VQABatchCollator(
+        processor=processor,
+        max_length=cfg.training.max_seq_length,
+        resized_height=cfg.data.resized_height,
+        resized_width=cfg.data.resized_width,
+    )
+    rank_0_print("VQA batch collator created successfully")
+    return collator

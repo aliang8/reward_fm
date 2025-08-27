@@ -23,18 +23,6 @@ class RFMModelVQA(PreTrainedModel):
         else:
             self.model = Qwen2_5_VLForConditionalGeneration(config)
         
-        # Ensure vocabulary size alignment between processor and model
-        processor_vocab_size = len(processor.tokenizer)
-        model_vocab_size = self.model.config.vocab_size
-        
-        if processor_vocab_size != model_vocab_size:
-            print(f"⚠️  Vocabulary size mismatch: processor={processor_vocab_size}, model={model_vocab_size}")
-            print(f"Resizing model embeddings to match processor vocabulary size...")
-            self.model.resize_token_embeddings(processor_vocab_size)
-            # Update the model's config to reflect the new vocabulary size
-            self.model.config.vocab_size = processor_vocab_size
-            print(f"✅ Model embeddings and config updated to {processor_vocab_size}")
-        
         self.processor = processor
 
     def gradient_checkpointing_enable(self, **kwargs):

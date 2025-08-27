@@ -15,7 +15,7 @@ import shutil
 import os
 from pathlib import Path
 import torch
-from rfm.data.batch_collator import BaseSample, PreferenceSample, SimilaritySample, BatchCollator
+from rfm.data.batch_collator import PreferenceSample, SimilaritySample, BatchCollator, Trajectory
 from rfm.data.vqa_batch_collator import ProgressSample, VQABatchCollator
 from datasets import concatenate_datasets, Dataset
 from rfm.utils.logging import rank_0_print
@@ -53,21 +53,8 @@ class DataGenerator:
 
         self.preference_ratio = config.preference_ratio
         self.similarity_ratio = 1.0 - config.preference_ratio
-        self.dataset_preference_ratio = getattr(config, "dataset_preference_ratio", 0.7)
-
-        # Tunable strategy ratios for preference rejected generation: [rewind, suboptimal_same_task, different_task, video_binned]
-        default_strategy_ratio = [0.7, 0.1, 0.1, 0.1]
-        self.preference_strategy_ratio: List[float] = getattr(
-            config, "preference_strategy_ratio", default_strategy_ratio
-        )
-        # Normalize if not summing to 1 and validate
-        total_ratio = sum(self.preference_strategy_ratio)
-        if total_ratio <= 0:
-            self.preference_strategy_ratio = default_strategy_ratio
-        else:
-            self.preference_strategy_ratio = [v / total_ratio for v in self.preference_strategy_ratio]
-        if len(self.preference_strategy_ratio) != 4:
-            self.preference_strategy_ratio = default_strategy_ratio
+        self.dataset_preference_ratio = config.dataset_preference_ratio
+        self.preference_strategy_ratio: List[float] = config.preference_strategy_ratio
 
         # Show available datasets for debugging
         self.show_available_datasets()
@@ -432,7 +419,7 @@ class DataGenerator:
             
         Example:
             If we have 64 frames and want 8 frames:
-            - Original progress: [0/63, 1/63, 2/63, ..., 63/63]
+            - Original progress: [1/64, 2/64, 3/64, ..., 64/64]
             - Subsampled indices: [0, 9, 18, 27, 36, 45, 54, 63]
             - Subsampled frames: frames[0], frames[9], frames[18], etc.
         """
@@ -509,7 +496,7 @@ class DataGenerator:
             # Pick rewind point randomly between start+1 and end-1
             # We want at least 1 frame forward and at least 1 frame rewind
             rewind_point = random.randint(start_idx + 1, end_idx - 1)
-            rewind_length = rewind_point - start_idx
+            rewind_length = end_idx - rewind_point
         else:
             # Ensure rewind_length is valid
             max_rewind = end_idx - start_idx - 1
@@ -519,20 +506,24 @@ class DataGenerator:
                 rewind_length = 1
             rewind_point = start_idx + rewind_length
 
-        # Step 3: Extract forward segment (from start to end index, excluding end to avoid repetition)
+        # Step 3: Extract forward segment 
+        # Does not include end index to avoid
         forward_frames = frames_data[start_idx:end_idx]
         forward_indices = list(range(start_idx, end_idx))  # start to end-1
         
         # Step 4: Create rewind segment
+        # NOTE: progress is relative to start index
         # Example: If start=10, rewind_point=25, end=40 (assuming 64 total frames):
         # Forward: [10, 11, 12, ..., 38, 39] (start to end-1, avoiding repetition)
-        # Forward progress: [1/54, 2/54, 3/54, ..., 29/54, 30/54] (position within selected segment)
+        # Forward progress: [1/54, 2/54, 3/54, ..., 29/54, 30/54]
         # Rewind: [38, 37, 36, ..., 26, 25] (end-2 back to rewind_point+1)
         # Rewind progress: [29/54, 28/54, 27/54, ...] (going backwards from where forward left off)
         # Combined: [10, 11, 12, ..., 38, 39, 38, 37, ..., 26, 25]
         # Combined progress: [1/54, 2/54, 3/54, ..., 30/54, 29/54, 28/54, ...]
-        reverse_frames = frames_data[end_idx-2:rewind_point:-1]
-        reverse_indices = list(range(end_idx-2, rewind_point, -1))  # end-2 to rewind_point+1, backwards
+
+        # start from end-2 because we don't want to include the last frame of forward segment
+        # end at rewind_point-1 because we want to include the first frame of rewind segment
+        reverse_frames = frames_data[end_idx-2:rewind_point-1:-1]
 
         # Step 5: Combine forward and reverse segments
         if isinstance(forward_frames, np.ndarray):
@@ -546,17 +537,11 @@ class DataGenerator:
         # Progress should represent position within the selected segment, starting from 1/64
         forward_progress = []
         for i in range(len(forward_indices)):  # 0 to len(forward_indices)-1
-            # Progress starts at 1/64 for first frame, increments by 1/64 for each frame
+            # Progress starts at 1/(num_frames - start_idx) for first frame, increments by 1/(num_frames - start_idx) for each frame
             forward_progress.append((i + 1) / (num_frames - start_idx))  # Progress: 1/64, 2/64, 3/64, ...
         
-        # For rewind segment, calculate progress going backwards from end to rewind_point
-        # During rewind, we're going backwards in time, so progress decreases
-        rewind_progress = []
-        for i in range(len(reverse_indices)):  # 0 to len(reverse_indices)-1
-            # Progress during rewind: we start at the second-to-last forward progress and go backwards
-            # This represents the position within the rewind segment, going backwards from forward end
-            rewind_progress.append((len(forward_indices) - 1 - i) / (num_frames - start_idx))
-        
+        rewind_progress = forward_progress[::-1][1:rewind_length]
+
         # Combine progress values
         combined_progress = forward_progress + rewind_progress
 
@@ -569,28 +554,21 @@ class DataGenerator:
         # The subsampled_indices tell us which frames from the combined trajectory we're using
         subsampled_progress = [combined_progress[idx] for idx in subsampled_indices]
 
+        metadata = {
+            "start_idx": start_idx,
+            "end_idx": end_idx,
+            "rewind_point": rewind_point,
+            "rewind_length": rewind_length,
+            "subsampled_indices": subsampled_indices,
+        }
+
         # Create new trajectory with rewind frames
         rewind_traj = original_traj.copy()
         rewind_traj["frames"] = subsampled_frames
         rewind_traj["frames_shape"] = subsampled_frames.shape
-        rewind_traj["id"] = f"{original_traj['id']}_rewind_{rewind_length}"
-        rewind_traj["quality_label"] = "rewound"  # Mark as rewound
-        rewind_traj["metadata"] = rewind_traj.get("metadata", {}).copy()
-        rewind_traj["metadata"]["rewind_generated"] = True
-        rewind_traj["metadata"]["original_traj_id"] = original_traj["id"]
-        rewind_traj["metadata"]["rewind_progress"] = subsampled_progress
-        rewind_traj["metadata"]["original_progress_mapping"] = [i / (num_frames - 1) for i in range(num_frames)]
-        rewind_traj["metadata"]["num_frames_rewound"] = len(rewind_progress)
-        rewind_traj["metadata"]["start_idx"] = start_idx
-        rewind_traj["metadata"]["end_idx"] = end_idx
-        rewind_traj["metadata"]["rewind_point"] = rewind_point
-        rewind_traj["metadata"]["rewind_length"] = rewind_length
-        rewind_traj["metadata"]["start_progress_in_full"] = start_idx / (num_frames - 1)
-        rewind_traj["metadata"]["num_frames_subsampled"] = num_frames_to_sample
-        rewind_traj["metadata"]["original_num_frames"] = num_frames
-        rewind_traj["metadata"]["forward_indices"] = forward_indices
-        rewind_traj["metadata"]["reverse_indices"] = reverse_indices
-        rewind_traj["metadata"]["combined_indices"] = forward_indices + reverse_indices
+        rewind_traj["target_progress"] = subsampled_progress
+        rewind_traj["metadata"] = metadata
+        rewind_traj["quality_label"] = "rewound"
         return rewind_traj
 
     def _create_video_binned_trajectory(self, original_traj: Dict, num_bins: int = 10) -> Tuple[Dict, Dict]:
@@ -793,6 +771,53 @@ class DataGenerator:
             else:
                 return self._create_preference_sample_with_strategies()
 
+    def _subsample_frames_and_progress(self, frames: np.ndarray, max_frames: int) -> Tuple[np.ndarray, List[float]]:
+        # For chosen trajectory, sample start and end indices to create a segment
+        # This makes the progress calculation consistent with rewind trajectories
+        num_frames_total = len(frames)
+        
+        # Select start and end indices for the chosen trajectory segment
+        # Start index is in the first half of the trajectory
+        start_idx = random.randint(0, num_frames_total // 2 - 1)
+        # End index is in the latter half of the trajectory
+        end_idx = random.randint(num_frames_total // 2, num_frames_total)
+        
+        # Ensure we have enough frames between start and end
+        while end_idx - start_idx < 3:
+            start_idx = random.randint(0, num_frames_total // 2 - 1)
+            end_idx = random.randint(num_frames_total // 2, num_frames_total)
+        
+        # Extract the chosen segment
+        segment_frames = frames[start_idx:end_idx]
+        segment_indices = list(range(start_idx, end_idx))
+        
+        # Calculate progress for the full segment first (like forward indices in rewind)
+        # Progress should represent position within the selected segment, starting from 1/64
+        segment_progress = []
+        for i in range(len(segment_indices)):
+            segment_progress.append((i + 1) / (num_frames_total - start_idx))
+        
+        # Uniformly subsample the chosen trajectory segment to num_frames 
+        frames, indices = self._uniformly_subsample_frames(segment_frames, self.config.max_frames)
+        
+        # Map the subsampled indices to the corresponding progress values from the full segment
+        # The chosen_indices tell us which frames from the segment we're using
+        progress = [segment_progress[idx] for idx in indices]
+
+       
+        # Ensure both trajectories have exactly max_frames by padding if needed
+        # Pad by repeating the first frame and first progress value
+        frames, progress = self._pad_trajectory_to_max_frames(
+            frames, progress, self.config.max_frames
+        )
+
+        metadata = {
+            "start_idx": start_idx,
+            "end_idx": end_idx,
+            "subsampled_indices": indices,
+        }
+        return frames, progress, metadata
+
     def _create_preference_sample_with_strategies(self) -> PreferenceSample:
         """Create a preference prediction sample using various rejected trajectory generation strategies.
 
@@ -804,7 +829,7 @@ class DataGenerator:
         - Creates a suboptimal trajectory by rewinding the chosen trajectory
         - Same task, different trajectory ID, artificially generated suboptimal behavior
         - Good for learning task-specific failure modes and temporal dynamics
-        - Example: Forward progress [0→1→2→3] + rewind [3→2→1] = [0→1→2→3→2→1]
+        - Example: Forward progress [0→1→2→3] + rewind [2→1] = [0→1→2→3→2→1]
 
         **Strategy 2: Suboptimal/Failure Same Task**
         - Uses existing suboptimal/failure trajectories from the same task
@@ -897,293 +922,66 @@ class DataGenerator:
                 strategy_used = "video_binned"
             except Exception as e:
                 rank_0_print(f"Video binning failed: {e}, will fall back to rewind")
-                # Don't set rejected_traj here, let the fallback handle it
         
         # Fallback: If any strategy failed to produce a rejected trajectory, use rewind
         if rejected_traj is None:
             rejected_traj = self._create_rewind_trajectory(chosen_traj)
             strategy_used = "rewind_same_task"
 
-        # Get frames from npz files and uniformly subsample for chosen trajectory
-        chosen_frames_full = self._get_trajectory_frames(chosen_idx)
-        
-        # For chosen trajectory, sample start and end indices to create a segment
-        # This makes the progress calculation consistent with rewind trajectories
-        num_frames_total = len(chosen_frames_full)
-        
-        # Select start and end indices for the chosen trajectory segment
-        # Start index is in the first half of the trajectory
-        chosen_start_idx = random.randint(0, num_frames_total // 2 - 1)
-        # End index is in the latter half of the trajectory
-        chosen_end_idx = random.randint(num_frames_total // 2, num_frames_total)
-        
-        # Ensure we have enough frames between start and end
-        while chosen_end_idx - chosen_start_idx < 3:
-            chosen_start_idx = random.randint(0, num_frames_total // 2 - 1)
-            chosen_end_idx = random.randint(num_frames_total // 2, num_frames_total)
-        
-        # Extract the chosen segment
-        chosen_segment_frames = chosen_frames_full[chosen_start_idx:chosen_end_idx]
-        chosen_segment_indices = list(range(chosen_start_idx, chosen_end_idx))
-        
-        # Calculate progress for the full segment first (like forward indices in rewind)
-        # Progress should represent position within the selected segment, starting from 1/64
-        chosen_segment_progress = []
-        for i in range(len(chosen_segment_indices)):
-            chosen_segment_progress.append((i + 1) / (num_frames_total - chosen_start_idx))
-        
-        # Uniformly subsample the chosen trajectory segment to num_frames (default 8)
-        num_frames_to_sample = getattr(self.config, 'max_frames', 8)
-        chosen_frames, chosen_indices = self._uniformly_subsample_frames(chosen_segment_frames, num_frames_to_sample)
-        
-        # Map the subsampled indices to the corresponding progress values from the full segment
-        # The chosen_indices tell us which frames from the segment we're using
-        chosen_progress = [chosen_segment_progress[idx] for idx in chosen_indices]
-        
-        # Store original frame positions for reference (relative to full trajectory)
-        chosen_original_positions = [chosen_start_idx + idx for idx in chosen_indices]
+        # ===============================================================
+        # Subsample the chosen trajectory to max_frames
+        # ===============================================================
+        if isinstance(chosen_traj["frames"], str):
+            chosen_traj["frames"] = self._load_frames_from_npz(chosen_traj["frames"])
 
-        # Update chosen_traj with subsampled frames and progress
-        chosen_traj = chosen_traj.copy()
-        chosen_traj["frames"] = chosen_frames
-        chosen_traj["frames_shape"] = chosen_frames.shape
-        chosen_traj["metadata"] = chosen_traj.get("metadata", {}).copy()
-        chosen_traj["metadata"]["subsampled_generated"] = True
-        chosen_traj["metadata"]["subsampled_progress"] = chosen_progress
-        chosen_traj["metadata"]["num_frames_subsampled"] = num_frames_to_sample
-        chosen_traj["metadata"]["original_num_frames"] = num_frames_total
-        chosen_traj["metadata"]["original_frame_positions"] = chosen_original_positions
-        chosen_traj["metadata"]["chosen_start_idx"] = chosen_start_idx
-        chosen_traj["metadata"]["chosen_end_idx"] = chosen_end_idx
-        chosen_traj["metadata"]["chosen_segment_indices"] = chosen_segment_indices
+        chosen_frames, chosen_progress, chosen_metadata = self._subsample_frames_and_progress(chosen_traj["frames"], self.config.max_frames)
 
-        # Handle rejected trajectory frames - could be from dataset (npz) or generated (numpy)
-        # Note: Both chosen and rejected trajectories now use segment selection for consistent progress calculation
-        # Rewound trajectories use linspace sampling, other strategies use uniform sampling
-        if isinstance(rejected_traj, dict) and "frames" in rejected_traj:
-            if isinstance(rejected_traj["frames"], str) and rejected_traj["frames"].endswith(".npz"):
-                # Regular trajectory with npz path - need to uniformly subsample
-                rejected_frames_full = self._load_frames_from_npz(rejected_traj["frames"])
-                
-                # Check if this is a successful trajectory (should apply segment selection)
-                # Only apply segment selection to successful trajectories for consistent progress calculation
-                if rejected_traj.get("quality_label") == "successful" or rejected_traj.get("quality_label") == "optimal":
-                    # For successful rejected trajectory, sample start and end indices to create a segment
-                    # This makes the progress calculation consistent with chosen trajectories
-                    rejected_num_frames_total = len(rejected_frames_full)
-                    
-                    # Select start and end indices for the rejected trajectory segment
-                    # Start index is in the first half of the trajectory
-                    rejected_start_idx = random.randint(0, rejected_num_frames_total // 2 - 1)
-                    # End index is in the latter half of the trajectory
-                    rejected_end_idx = random.randint(rejected_num_frames_total // 2, rejected_num_frames_total)
-                    
-                    # Ensure we have enough frames between start and end
-                    while rejected_end_idx - rejected_start_idx < 3:
-                        rejected_start_idx = random.randint(0, rejected_num_frames_total // 2 - 1)
-                        rejected_end_idx = random.randint(rejected_num_frames_total // 2, rejected_num_frames_total)
-                    
-                    # Extract the rejected segment
-                    rejected_segment_frames = rejected_frames_full[rejected_start_idx:rejected_end_idx]
-                    rejected_segment_indices = list(range(rejected_start_idx, rejected_end_idx))
-                    
-                    # Calculate progress for the full segment first (like forward indices in rewind)
-                    # Progress should represent position within the selected segment, starting from 1/64
-                    rejected_segment_progress = []
-                    for i in range(len(rejected_segment_indices)):
-                        # Progress starts at 1/64 for first frame, increments by 1/64 for each frame
-                        # This is relative to the original trajectory length, not the segment length
-                        rejected_segment_progress.append((i + 1) / (rejected_num_frames_total - rejected_start_idx))
-                    
-                    # Uniformly subsample the rejected trajectory segment to num_frames
-                    rejected_frames, rejected_indices = self._uniformly_subsample_frames(rejected_segment_frames, num_frames_to_sample)
-                    
-                    # Map the subsampled indices to the corresponding progress values from the full segment
-                    # The rejected_indices tell us which frames from the segment we're using
-                    rejected_progress = [rejected_segment_progress[idx] for idx in rejected_indices]
-                    
-                    # Update rejected_traj with subsampled frames and progress
-                    rejected_traj = rejected_traj.copy()
-                    rejected_traj["frames"] = rejected_frames
-                    rejected_traj["frames_shape"] = rejected_frames.shape
-                    rejected_traj["metadata"] = rejected_traj.get("metadata", {}).copy()
-                    rejected_traj["metadata"]["subsampled_generated"] = True
-                    rejected_traj["metadata"]["subsampled_progress"] = rejected_progress
-                    rejected_traj["metadata"]["num_frames_subsampled"] = num_frames_to_sample
-                    rejected_traj["metadata"]["original_num_frames"] = rejected_num_frames_total
-                    rejected_traj["metadata"]["rejected_start_idx"] = rejected_start_idx
-                    rejected_traj["metadata"]["rejected_end_idx"] = rejected_end_idx
-                    rejected_traj["metadata"]["rejected_segment_indices"] = rejected_segment_indices
-                    rejected_traj["metadata"]["original_frame_positions"] = [rejected_start_idx + idx for idx in rejected_indices]
-                    
-                else:
-                    # For suboptimal/failure trajectories, use the full trajectory without segment selection
-                    # We want to show the complete failure pattern
-                    rejected_frames, rejected_indices = self._uniformly_subsample_frames(rejected_frames_full, num_frames_to_sample)
-                    
-                    # Calculate progress relative to the full trajectory
-                    rejected_progress = [idx / (len(rejected_frames_full) - 1) for idx in rejected_indices]
-                    
-                    # Update rejected_traj with subsampled frames and progress
-                    rejected_traj = rejected_traj.copy()
-                    rejected_traj["frames"] = rejected_frames
-                    rejected_traj["frames_shape"] = rejected_frames.shape
-                    rejected_traj["metadata"] = rejected_traj.get("metadata", {}).copy()
-                    rejected_traj["metadata"]["subsampled_generated"] = True
-                    rejected_traj["metadata"]["subsampled_progress"] = rejected_progress
-                    rejected_traj["metadata"]["num_frames_subsampled"] = num_frames_to_sample
-                    rejected_traj["metadata"]["original_num_frames"] = len(rejected_frames_full)
-                    rejected_traj["metadata"]["original_frame_positions"] = rejected_indices
-            elif isinstance(rejected_traj["frames"], np.ndarray):
-                # Generated trajectory (rewind or video-binned) with numpy array
-                # Check if it needs subsampling
-                if rejected_traj["frames"].shape[0] > num_frames_to_sample:
-                    rejected_frames, rejected_indices = self._uniformly_subsample_frames(rejected_traj["frames"], num_frames_to_sample)
-                    
-                    # Update rejected_traj with subsampled frames
-                    rejected_traj = rejected_traj.copy()
-                    rejected_traj["frames"] = rejected_frames
-                    rejected_traj["frames_shape"] = rejected_frames.shape
-                    rejected_traj["metadata"] = rejected_traj.get("metadata", {}).copy()
-                    rejected_traj["metadata"]["subsampled_generated"] = True
-                    rejected_traj["metadata"]["num_frames_subsampled"] = num_frames_to_sample
-                else:
-                    rejected_frames = rejected_traj["frames"]
-            else:
-                raise ValueError(f"Unexpected frames format in rejected trajectory: {type(rejected_traj['frames'])}")
+        # ===============================================================
+        # Subsample the rejected trajectory to max_frames
+        # ===============================================================
+
+        if isinstance(rejected_traj["frames"], str):
+            rejected_traj["frames"] = self._load_frames_from_npz(rejected_traj["frames"])
+
+        if "rewind" not in strategy_used:
+            # try subsampling the rejected trajectory 
+            rejected_frames, rejected_progress, rejected_metadata = self._subsample_frames_and_progress(rejected_traj["frames"], self.config.max_frames)
         else:
-            raise ValueError(f"Invalid rejected trajectory format: {type(rejected_traj)}")
-
-        # For video-binned case, we have both chosen and rejected trajectories from the same video
-        # The chosen trajectory comes from the chosen bin, the rejected trajectory from the rejected bin
-        if strategy_used == "video_binned":
-            pass
-        else:
-            # For other strategies, use the original chosen trajectory as chosen
-            chosen_frames = chosen_frames
-            chosen_traj = chosen_traj
-
-        # Calculate target progress for both trajectories
-        # For chosen trajectory, use the subsampled progress
-        target_progress_chosen = chosen_progress
+            rejected_frames = rejected_traj["frames"]
+            rejected_progress = rejected_traj["target_progress"]
+            rejected_metadata = rejected_traj["metadata"]
         
-        # For rejected trajectory, use subsampled progress if available, otherwise calculate from frames
-        if rejected_traj.get("metadata", {}).get("subsampled_generated"):
-            target_progress_rejected = rejected_traj["metadata"]["subsampled_progress"]
-        else:
-            target_progress_rejected = self._calculate_target_progress(rejected_traj, rejected_frames)
-
-        # Ensure both trajectories have exactly max_frames by padding if needed
-        # Pad by repeating the first frame and first progress value
-        chosen_frames_padded, target_progress_chosen_padded = self._pad_trajectory_to_max_frames(
-            chosen_frames, target_progress_chosen, num_frames_to_sample
-        )
-        rejected_frames_padded, target_progress_rejected_padded = self._pad_trajectory_to_max_frames(
-            rejected_frames, target_progress_rejected, num_frames_to_sample
-        )
-        
-        # Update the frame shapes after padding
-        chosen_frames_shape = chosen_frames_padded.shape
-        rejected_frames_shape = rejected_frames_padded.shape
-
-        # Get num_frames_rewound if this is a rewound trajectory
-        num_frames_rewound = None
-        if strategy_used.startswith("rewind"):
-            num_frames_rewound = rejected_traj.get("metadata", {}).get("num_frames_rewound")
-
-        # Get video-binned metadata if this is a video-binned trajectory
-        metadata = {}
-        if strategy_used == "video_binned":
-            metadata = {
-                "original_traj_id": chosen_traj.get("metadata", {}).get("original_traj_id"),
-                "num_bins": chosen_traj.get("metadata", {}).get("num_bins"),
-                "bin_size": chosen_traj.get("metadata", {}).get("bin_size"),
-                "chosen_bin_idx": chosen_traj.get("metadata", {}).get("chosen_bin_idx"),
-                "rejected_bin_idx": rejected_traj.get("metadata", {}).get("rejected_bin_idx"),
-                "chosen_bin_frames": chosen_traj.get("metadata", {}).get("bin_frames"),
-                "rejected_bin_frames": rejected_traj.get("metadata", {}).get("bin_frames"),
-                "chosen_bin_progress": chosen_traj.get("metadata", {}).get("bin_progress"),
-                "rejected_bin_progress": rejected_traj.get("metadata", {}).get("bin_progress"),
-            }
-        elif strategy_used.startswith("rewind"):
-            # Add rewind-specific metadata
-            metadata = {
-                "rewind_generated": True,
-                "original_traj_id": rejected_traj.get("metadata", {}).get("original_traj_id"),
-                "num_frames_rewound": rejected_traj.get("metadata", {}).get("num_frames_rewound"),
-                "rewind_length": rejected_traj.get("metadata", {}).get("rewind_length"),
-                "start_idx": rejected_traj.get("metadata", {}).get("start_idx"),
-                "end_idx": rejected_traj.get("metadata", {}).get("end_idx"),
-                "rewind_point": rejected_traj.get("metadata", {}).get("rewind_point"),
-                "start_progress_in_full": rejected_traj.get("metadata", {}).get("start_progress_in_full"),
-                "num_frames_subsampled": rejected_traj.get("metadata", {}).get("num_frames_subsampled"),
-                "original_num_frames": rejected_traj.get("metadata", {}).get("original_num_frames"),
-            }
-
         # Create preference sample structure
         sample = PreferenceSample(
-            # Preference-specific fields - using chosen/rejected naming
-            chosen_frames=chosen_frames_padded,
-            chosen_frames_shape=chosen_frames_shape,
-            chosen_id=chosen_traj["id"],
-            chosen_task=chosen_traj["task"],
-            chosen_lang_vector=chosen_traj["lang_vector"],
-            chosen_data_source=chosen_traj["data_source"],
-            chosen_quality_label=chosen_traj.get("quality_label"),
-            chosen_is_robot=chosen_traj["is_robot"],
-            # rejected metadata
-            rejected_frames=rejected_frames_padded,
-            rejected_frames_shape=rejected_frames_shape,
-            preferred_trajectory="chosen",  # chosen is the preferred trajectory
-            rejected_id=rejected_traj["id"] if strategy_used == "video_binned" else rejected_traj["id"],
-            rejected_task=rejected_traj["task"] if strategy_used == "video_binned" else rejected_traj["task"],
-            rejected_lang_vector=rejected_traj["lang_vector"] if strategy_used == "video_binned" else rejected_traj["lang_vector"],
-            rejected_data_source=rejected_traj["data_source"] if strategy_used == "video_binned" else rejected_traj["data_source"],
-            rejected_quality_label=rejected_traj["quality_label"] if strategy_used == "video_binned" else rejected_traj["quality_label"],
-            rejected_is_robot=rejected_traj["is_robot"] if strategy_used == "video_binned" else rejected_traj["is_robot"],
-            # Progress fields
-            target_progress_chosen=target_progress_chosen_padded,
-            target_progress_rejected=target_progress_rejected_padded,
-            data_gen_strategy=strategy_used,
-            num_frames_rewound=num_frames_rewound,
-            # Consolidated metadata
-            metadata=metadata
+            # Create Trajectory objects for chosen and rejected
+            chosen_trajectory=Trajectory(
+                frames=chosen_frames,
+                frames_shape=chosen_frames.shape,
+                id=chosen_traj["id"],
+                task=chosen_traj["task"],
+                lang_vector=chosen_traj["lang_vector"],
+                data_source=chosen_traj["data_source"],
+                quality_label=chosen_traj.get("quality_label"),
+                is_robot=chosen_traj["is_robot"],
+                target_progress=chosen_progress,
+                data_gen_strategy="subsample_task",
+                metadata=chosen_metadata
+            ),
+            rejected_trajectory=Trajectory(
+                frames=rejected_frames,
+                frames_shape=rejected_frames.shape,
+                id=rejected_traj["id"],
+                task=rejected_traj["task"],
+                lang_vector=rejected_traj["lang_vector"],
+                data_source=rejected_traj["data_source"],
+                quality_label=rejected_traj["quality_label"],
+                is_robot=rejected_traj["is_robot"],
+                target_progress=rejected_progress,
+                data_gen_strategy=strategy_used,
+                metadata=rejected_metadata
+            ),
         )
         return sample
-
-    def _calculate_target_progress(self, trajectory: Dict, frames: np.ndarray = None) -> List[float]:
-        """Calculate target progress values for a trajectory."""
-
-        # Check if this is a rewind trajectory (has rewind progress in metadata)
-        if (
-            trajectory.get("metadata")
-            and trajectory["metadata"].get("rewind_generated")
-            and trajectory["metadata"].get("rewind_progress")
-        ):
-            # Use the rewind progress that was calculated during rewind generation
-            return trajectory["metadata"]["rewind_progress"]
-
-        # Check if this is a subsampled trajectory (has subsampled progress in metadata)
-        if (
-            trajectory.get("metadata")
-            and trajectory["metadata"].get("subsampled_generated")
-            and trajectory["metadata"].get("subsampled_progress")
-        ):
-            # Use the subsampled progress that was calculated during subsampling
-            return trajectory["metadata"]["subsampled_progress"]
-
-        # If frames not provided, get them from trajectory
-        if frames is None:
-            frames = self._load_frames_from_npz(trajectory["frames"])
-
-        # Calculate number of frames
-        if hasattr(frames, "shape"):
-            num_frames = frames.shape[0]  # Use shape[0] for numpy array
-        else:
-            num_frames = len(frames)
-
-        # For optimal trajectories, use linear progress (0.0 to 1.0)
-        return [i / (num_frames - 1) for i in range(num_frames)]
 
     def _create_similarity_sample(self) -> SimilaritySample:
         """Create a similarity scoring sample: o^1 and o^2 ranked against o^ref.
@@ -1474,45 +1272,44 @@ class DataGenerator:
 
         # Create similarity sample structure
         sample = SimilaritySample(
-            # Core HF dataset fields (from ref_traj)
-            id=ref_traj["id"],
-            task=ref_traj["task"],
-            lang_vector=ref_traj["lang_vector"],
-            data_source=ref_traj["data_source"],
-            frames=ref_frames_padded,  # Use subsampled frames
-            frames_shape=ref_frames_shape,
-            quality_label=ref_traj.get("quality_label", "successful"),
-            is_robot=ref_traj["is_robot"],
-            metadata=ref_traj.get("metadata"),
-            # Similarity-specific fields - using traj_sim/traj_diff naming
-            reference_frames=ref_frames_padded,  # o^ref (subsampled)
-            traj_sim_frames=traj_sim_frames_padded,  # Similar trajectory (subsampled)
-            traj_diff_frames=traj_diff_frames_padded,  # Different trajectory (subsampled)
-            reference_frames_shape=ref_frames_shape,
-            traj_sim_frames_shape=traj_sim_frames_shape,
-            traj_diff_frames_shape=traj_diff_frames_shape,
-            task_ref=ref_traj["task"],
-            task_sim=traj_sim["task"],
-            task_diff=traj_diff["task"],
-            ref_trajectory_id=ref_traj["id"],
-            traj_sim_id=traj_sim["id"],
-            traj_diff_id=traj_diff["id"],
-            # Similar trajectory fields
-            traj_sim_task=traj_sim["task"],
-            traj_sim_lang_vector=traj_sim["lang_vector"],
-            traj_sim_data_source=traj_sim["data_source"],
-            traj_sim_quality_label=traj_sim.get("quality_label"),
-            traj_sim_is_robot=traj_sim["is_robot"],
-            # Different trajectory fields
-            traj_diff_task=traj_diff["task"],
-            traj_diff_lang_vector=traj_diff["lang_vector"],
-            traj_diff_data_source=traj_diff["data_source"],
-            traj_diff_quality_label=traj_diff.get("quality_label"),
-            traj_diff_is_robot=traj_diff["is_robot"],
-            # Progress fields
-            target_progress_A=target_progress_A_padded,
-            target_progress_B=target_progress_B_padded,
-            target_progress_ref=target_progress_ref_padded,
+            # Create Trajectory objects for reference, traj_sim, and traj_diff
+            reference_trajectory=Trajectory(
+                frames=ref_frames_padded,
+                frames_shape=ref_frames_shape,
+                id=ref_traj["id"],
+                task=ref_traj["task"],
+                lang_vector=ref_traj["lang_vector"],
+                data_source=ref_traj["data_source"],
+                quality_label=ref_traj.get("quality_label", "successful"),
+                is_robot=ref_traj["is_robot"],
+                target_progress=target_progress_ref_padded,
+                metadata=ref_traj.get("metadata", {})
+            ),
+            traj_sim_trajectory=Trajectory(
+                frames=traj_sim_frames_padded,
+                frames_shape=traj_sim_frames_shape,
+                id=traj_sim["id"],
+                task=traj_sim["task"],
+                lang_vector=traj_sim["lang_vector"],
+                data_source=traj_sim["data_source"],
+                quality_label=traj_sim.get("quality_label"),
+                is_robot=traj_sim["is_robot"],
+                target_progress=target_progress_A_padded,
+                metadata=traj_sim.get("metadata", {})
+            ),
+            traj_diff_trajectory=Trajectory(
+                frames=traj_diff_frames_padded,
+                frames_shape=traj_diff_frames_shape,
+                id=traj_diff["id"],
+                task=traj_diff["task"],
+                lang_vector=traj_diff["lang_vector"],
+                data_source=traj_diff["data_source"],
+                quality_label=traj_diff.get("quality_label"),
+                is_robot=traj_diff["is_robot"],
+                target_progress=target_progress_B_padded,
+                metadata=traj_diff.get("metadata", {})
+            ),
+            # Data generation info
             data_gen_strategy=strategy_used,
         )
 
@@ -1685,6 +1482,7 @@ def test():
         dataloader_pin_memory: bool = False
         dataloader_num_workers: int = 0
         model_type: str = "default"
+        preference_strategy_ratio: List[float] = None
 
     @dataclass
     class MockConfig:
@@ -1697,6 +1495,7 @@ def test():
         train_subsets=["libero256_90"],
         preference_ratio=1.0,
         similarity_ratio=0.0,
+        preference_strategy_ratio=[0.8, 0.1, 0.1, 0.0],
         shuffle=True,
         seed=42,
         num_proc=4,

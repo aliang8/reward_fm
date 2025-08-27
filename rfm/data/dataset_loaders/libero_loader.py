@@ -134,10 +134,10 @@ def load_libero_dataset(base_path: str) -> Dict[str, List[Dict]]:
                             task_parts = parts[i + 1 :]
                             break
 
-                    # If no scene found, use the first part as scene
+                    # If no scene found, then don't use a scene
                     if scene_part is None:
-                        scene_part = parts[0] if parts else "UNKNOWN_SCENE"
-                        task_parts = parts[1:] if len(parts) > 1 else []
+                        scene_part = "UNKNOWN_SCENE"
+                        task_parts = parts
 
                     # Convert task parts to readable string
                     task_string = " ".join(task_parts).replace("_", " ")

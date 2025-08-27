@@ -2,15 +2,20 @@
 
 # Script to run RFM training with FSDP using accelerate launch
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export RFM_DATASET_PATH=/workspace/vlm_reward_model/rfm_dataset
+export RFM_DATASET_PATH=/home/thecodeboy/reward_fm/rfm_dataset
 
 # Run training with FSDP using accelerate launch
-accelerate launch \
+uv run accelerate launch \
     --config_file rfm/configs/fsdp.yaml \
     train.py \
     --config rfm/configs/config.yaml \
     --data.resized_height 128 \
     --data.resized_width 128 \
-    --data.force_reprocess false \
-    --logging.use_wandb true \
-    --debug false
+    --logging.use_wandb false \
+    --debug false \
+    --model.train_preference_head true \
+    --model.train_progress_head true \
+    --training.output_dir ./logs/rfm_progress_pref
+    
+    # --model.base_model_id Qwen/Qwen2.5-VL-7B-Instruct \
+    # --training.output_dir ./logs/rfm_progress_pref_7B

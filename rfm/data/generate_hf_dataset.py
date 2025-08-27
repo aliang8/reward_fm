@@ -471,6 +471,7 @@ def main(cfg: GenerateConfig):
             max_trajectories=cfg.output.max_trajectories,
             max_frames=cfg.output.max_frames,
             fps=cfg.output.fps,
+            num_workers=cfg.output.num_workers,
         )
 
         # Handle pushing/saving consistently

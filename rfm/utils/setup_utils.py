@@ -11,8 +11,8 @@ from typing import Tuple, Optional, Union
 
 from rfm.models.rfm import RFMModel
 from rfm.models.rfm_vqa import RFMModelVQA
-from rfm.data.data_generator import DataGenerator, BatchCollator, VQADataGenerator, VQABatchCollator
-from rfm.data.vqa_batch_collator import VQABatchCollator
+from rfm.data.generators.generator import DataGenerator
+from rfm.data.batch_collator import BatchCollator, VQABatchCollator
 from rfm.data.dataset import (
     InfiniteDataGeneratorDataset,
     RewoundDataset,

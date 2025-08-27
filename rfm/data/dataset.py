@@ -13,7 +13,7 @@ import random
 import numpy as np
 from typing import List, Dict, Tuple, Optional, Iterator, Union
 from tqdm import tqdm
-from rfm.data.batch_collator import BaseSample, PreferenceSample, SimilaritySample
+from rfm.data.batch_collator import PreferenceSample, SimilaritySample
 from rfm.utils.logging import rank_0_print
 from rfm.utils.video_utils import extract_frames_from_video
 

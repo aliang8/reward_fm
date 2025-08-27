@@ -13,7 +13,7 @@ from qwen_vl_utils import process_vision_info
 import numpy as np
 import random
 
-from rfm.data.batch_collator import BaseSample, PreferenceSample, SimilaritySample
+from rfm.data.batch_collator import PreferenceSample, SimilaritySample
 
 @dataclass
 class ProgressSample:
@@ -212,7 +212,7 @@ class VQABatchCollator:
 
     def __call__(
         self,
-        samples: Union[List[BaseSample], List[PreferenceSample], List[SimilaritySample], List[ProgressSample], List[dict]],
+        samples: Union[List[PreferenceSample], List[SimilaritySample], List[ProgressSample], List[dict]],
     ) -> Dict[str, torch.Tensor]:
         """
         Collate a list of samples into separate batches for preferences, progress, and similarities.
@@ -241,7 +241,7 @@ class VQABatchCollator:
                         f"Unknown sample_type: {sample_type}. Must be 'preference', 'similarity', or 'progress'"
                     )
                 sample_objects.append(sample_obj)
-            elif isinstance(sample, (BaseSample, PreferenceSample, SimilaritySample, ProgressSample)):
+            elif isinstance(sample, (PreferenceSample, SimilaritySample, ProgressSample)):
                 sample_objects.append(sample)
             else:
                 raise ValueError(f"Expected Sample object or dict, got {type(sample)}")
@@ -571,7 +571,7 @@ class VQABatchCollator:
 
         return batch_inputs
 
-    def collate_fn(self, batch: List[Union[BaseSample, PreferenceSample, SimilaritySample, ProgressSample]]) -> Dict[str, torch.Tensor]:
+    def collate_fn(self, batch: List[Union[PreferenceSample, SimilaritySample, ProgressSample]]) -> Dict[str, torch.Tensor]:
         """
         Alternative method name for compatibility with PyTorch DataLoader.
 

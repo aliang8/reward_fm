@@ -98,9 +98,11 @@ download_dataset() {
   fi
 }
 
-download_dataset abraranwar/agibotworld_rfm
+# download_dataset abraranwar/agibotworld_rfm
 download_dataset abraranwar/libero_rfm
-download_dataset abraranwar/egodex_rfm
-download_dataset ykorkmaz/libero_failure_rfm
+# download_dataset abraranwar/egodex_rfm
+# download_dataset ykorkmaz/libero_failure_rfm
+# download_dataset jesbu1/oxe_rfm_eval
+# download_dataset aliangdw/metaworld_rfm
 
 echo "Done. Set RFM_DATASET_PATH=${BASE_DIR} for training/eval."

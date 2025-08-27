@@ -64,13 +64,23 @@ class PreferenceSample:
     rejected_quality_label: Optional[str] = None
     rejected_is_robot: Optional[bool] = None
 
-    target_progress_A: Optional[List[float]] = None  # Progress values for trajectory A
-    target_progress_B: Optional[List[float]] = None  # Progress values for trajectory B
+    target_progress_chosen: Optional[List[float]] = None
+    target_progress_rejected: Optional[List[float]] = None
+    data_gen_strategy: Optional[str] = None
+    num_frames_rewound: Optional[int] = None
 
-    num_frames_rewound: Optional[int] = None  # number of frames rewound (for rewound trajectories)
-    sample_type: Optional[str] = "preference"
+    sample_type = "preference"
 
-    data_gen_strategy: Optional[str] = None  # how this sample was generated (e.g. rewinding, random, etc.)
+    # extra stuff for eval
+    bin_idx_chosen: Optional[int] = None
+    bin_idx_rejected: Optional[int] = None
+    video_path: Optional[str] = None    
+    chosen_start_end: Optional[List[int]] = None
+    rejected_start_end: Optional[List[int]] = None
+    fps: Optional[int] = None
+    
+    # Consolidated metadata for all additional information
+    metadata: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -101,11 +111,13 @@ class SimilaritySample:
     traj_diff_quality_label: Optional[str] = None
     traj_diff_is_robot: Optional[bool] = None
 
-    target_progress_ref: Optional[List[float]] = None
     target_progress_sim: Optional[List[float]] = None
     target_progress_diff: Optional[List[float]] = None
+    target_progress_ref: Optional[List[float]] = None
+    data_gen_strategy: Optional[str] = None
+    num_frames_rewound: Optional[int] = None
 
-    sample_type: Optional[str] = "similarity"
+    sample_type = "similarity"
 
 
 class BatchCollator:
@@ -270,18 +282,16 @@ class BatchCollator:
         """Process a batch of preference samples."""
         # Collect all messages for batch processing
         all_messages = []
-        preference_labels = []
 
-        for sample in preference_samples:
+        # Randomly decide whether chosen trajectory goes first or second
+        preference_labels = np.random.randint(0, 2, len(preference_samples))
+
+        for i, sample in enumerate(preference_samples):
             # Convert frames to appropriate format using stored shapes
             chosen_frames = self._convert_frames_to_pil_images(sample.chosen_frames, sample.chosen_frames_shape)
             rejected_frames = self._convert_frames_to_pil_images(sample.rejected_frames, sample.rejected_frames_shape)
 
-            # Randomly decide whether chosen trajectory goes first or second
-            # This prevents the model from learning position bias
-            chosen_first = random.choice([True, False])
-
-            if chosen_first:
+            if preference_labels[i] == 1.0:
                 # Chosen trajectory first: task + video A (chosen) + <|split_token|> + video B (rejected) + <|pref_token|>
                 conversation = [
                     {
@@ -305,8 +315,6 @@ class BatchCollator:
                         ],
                     }
                 ]
-                # Label: 1.0 means first trajectory (chosen) is preferred
-                preference_labels.append(1.0)
             else:
                 # Chosen trajectory second: task + video A (rejected) + <|split_token|> + video B (chosen) + <|pref_token|>
                 conversation = [
@@ -331,8 +339,6 @@ class BatchCollator:
                         ],
                     }
                 ]
-                # Label: 0.0 means second trajectory (chosen) is preferred
-                preference_labels.append(0.0)
 
             all_messages.append(conversation)
 
@@ -367,27 +373,26 @@ class BatchCollator:
         batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
 
         # Add target progress for both trajectories based on conversation order
-        target_progress_A_list = []
-        target_progress_B_list = []
-
-        for i, sample in enumerate(preference_samples):
-            # Get the preference label to determine which trajectory went first
-            if preference_labels[i] == 1.0:
-                # First trajectory is chosen (chosen_frames), second is rejected (rejected_frames)
-                if sample.target_progress_A is not None:
-                    target_progress_A_list.append(sample.target_progress_A)  # chosen progress
-                if sample.target_progress_B is not None:
-                    target_progress_B_list.append(sample.target_progress_B)  # rejected progress
-            else:
-                # First trajectory is rejected (rejected_frames), second is chosen (chosen_frames)
-                if sample.target_progress_B is not None:
-                    target_progress_A_list.append(sample.target_progress_B)  # rejected progress (now first)
-                if sample.target_progress_A is not None:
-                    target_progress_B_list.append(sample.target_progress_A)  # chosen progress (now second)
+        target_progress_chosen = [sample.target_progress_chosen for sample in preference_samples]
+        target_progress_rejected = [sample.target_progress_rejected for sample in preference_samples]
+        target_progress_chosen_mask = [
+            1.0
+            if sample.chosen_quality_label == "successful" or sample.data_gen_strategy == "rewind_same_task"
+            else 0.0
+            for sample in preference_samples
+        ]
+        target_progress_rejected_mask = [
+            1.0
+            if sample.rejected_quality_label == "successful" or sample.data_gen_strategy == "rewind_same_task"
+            else 0.0
+            for sample in preference_samples
+        ]
 
         # Pad target progress tensors to max length in last dimension
-        batch_inputs["target_progress_A"] = self._pad_target_progress(target_progress_A_list)
-        batch_inputs["target_progress_B"] = self._pad_target_progress(target_progress_B_list)
+        batch_inputs["target_progress_chosen"] = self._pad_target_progress(target_progress_chosen)
+        batch_inputs["target_progress_rejected"] = self._pad_target_progress(target_progress_rejected)
+        batch_inputs["target_progress_chosen_mask"] = torch.tensor(target_progress_chosen_mask, dtype=torch.float32)
+        batch_inputs["target_progress_rejected_mask"] = torch.tensor(target_progress_rejected_mask, dtype=torch.float32)
 
         # Also add the frame_shapes
         batch_inputs["chosen_frames_shape"] = torch.tensor(
@@ -397,6 +402,32 @@ class BatchCollator:
             [sample.rejected_frames_shape for sample in preference_samples], dtype=torch.int32
         )
 
+        # Add some rewind metrics for logging
+        rewind_lengths = [
+            sample.num_frames_rewound if sample.num_frames_rewound is not None else 0 for sample in preference_samples
+        ]
+        batch_inputs["rewind_lengths"] = torch.tensor(rewind_lengths, dtype=torch.int32)
+        
+        # Add video-binned metadata if available
+        video_binned_metadata = []
+        for sample in preference_samples:
+            if hasattr(sample, 'data_gen_strategy') and sample.data_gen_strategy == "video_binned":
+                metadata = sample.metadata or {}
+                video_binned_metadata.append({
+                    "chosen_bin_idx": metadata.get("chosen_bin_idx"),
+                    "rejected_bin_idx": metadata.get("rejected_bin_idx"),
+                    "original_traj_id": metadata.get("original_traj_id"),
+                    "num_bins": metadata.get("num_bins"),
+                    "bin_size": metadata.get("bin_size"),
+                    "chosen_bin_frames": metadata.get("chosen_bin_frames"),
+                    "rejected_bin_frames": metadata.get("rejected_bin_frames"),
+                    "chosen_bin_progress": metadata.get("chosen_bin_progress"),
+                    "rejected_bin_progress": metadata.get("rejected_bin_progress"),
+                })
+            else:
+                video_binned_metadata.append(None)
+        
+        batch_inputs["video_binned_metadata"] = video_binned_metadata
         return batch_inputs
 
     def _process_similarity_batch(self, similarity_samples: List[SimilaritySample]) -> Dict[str, torch.Tensor]:

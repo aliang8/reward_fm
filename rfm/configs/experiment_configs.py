@@ -45,6 +45,9 @@ class PEFTConfig:
 class DataConfig:
     """Configuration for data loading and processing."""
 
+    # Model type for correct data generation
+    model_type: str = field(default="default", metadata={"help": "Model type: 'default', 'vqa'"})
+
     # Dataset paths and subsets
     train_datasets: List[str] = field(
         default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of training dataset names"}
@@ -85,6 +88,7 @@ class DataConfig:
     # Note: Successful trajectories are preferred over failed versions of the same task
 
     # Video processing parameters
+    max_frames_for_preprocessing: int = field(default=64, metadata={"help": "Maximum number of frames to extract from videos for preprocessing"})
     max_frames: int = field(default=8, metadata={"help": "Maximum number of frames to extract from videos"})
     video_frame_sampling: str = field(
         default="uniform", metadata={"help": "Frame sampling strategy: 'uniform', 'random', 'start', 'end'"}
@@ -94,9 +98,12 @@ class DataConfig:
 
     # Data generation parameters
     preference_ratio: float = field(default=0.7, metadata={"help": "Ratio of preference samples to similarity samples"})
+    progress_ratio: float = field(default=0.5, metadata={"help": "Ratio of progress samples for VQA training"})
     dataset_preference_ratio: float = field(
         default=0.8, metadata={"help": "Ratio of dataset preference samples to generated preference samples"}
     )
+    # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, video_binned]
+    preference_strategy_ratio: List[float] = field(default_factory=lambda: [0.7, 0.1, 0.1, 0.1])
 
     # Processing parameters
     shuffle: bool = field(default=True, metadata={"help": "Whether to shuffle the dataset"})
@@ -112,6 +119,10 @@ class DataConfig:
     # Dataloader parameters
     dataloader_pin_memory: bool = field(default=True, metadata={"help": "Whether to pin memory in dataloader"})
     dataloader_num_workers: int = field(default=0, metadata={"help": "Number of worker processes for dataloader"})
+
+    # Video binned dataset specific parameters
+    num_bins: int = field(default=10, metadata={"help": "Number of bins to use for video binned dataset"})
+    fps: int = field(default=10, metadata={"help": "Frames per second to extract from videos"})
 
 
 @dataclass
@@ -173,13 +184,6 @@ class LoggingConfig:
 
 
 @dataclass
-class EvaluationConfig:
-    """Config for evaluation settings"""
-
-    model_path: Optional[str] = field(default=None)
-
-
-@dataclass
 class ExperimentConfig:
     """Main experiment configuration"""
 
@@ -190,4 +194,3 @@ class ExperimentConfig:
     data: DataConfig = field(default_factory=DataConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
-    evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)

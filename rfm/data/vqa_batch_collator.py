@@ -69,83 +69,116 @@ class VQABatchCollator:
     def _create_vqa_inputs_with_labels(self, conversations, answer_texts):
         """
         Create VQA inputs with proper labels that only calculate loss on answer tokens.
-        
+
         Args:
-            conversations: List of conversation messages
-            answer_texts: List of answer texts for each conversation
-            
+            conversations: list of message-lists (each item is the "conversation" you built for a sample)
+            answer_texts:  list[str], e.g., "<ans>A</ans>" or "<ans>[...progress...]</ans>"
+
         Returns:
-            Dictionary with input_ids, attention_mask, labels, and vision inputs
+            Dict with tokenized inputs and labels masked before the assistant answer.
         """
-        # Step 1: Create prompts with generation prompt
+        assert len(conversations) == len(answer_texts), "conversations and answer_texts must align"
+
+        # 1) Build assistant-augmented conversations for the *full* example
+        conversations_full = []
+        for conv, ans in zip(conversations, answer_texts):
+            # Append an assistant turn holding the gold answer as text
+            assistant_turn = [{"role": "assistant", "content": [{"type": "text", "text": ans}]}]
+            # NOTE: `conv` is already a list of {role, content} dicts; keep structure consistent
+            conversations_full.append(conv + assistant_turn)
+
+        # 2) Render text with chat template
+        # Prompt text includes the “assistant header” via add_generation_prompt=True
         prompt_texts = [
             self.processor.apply_chat_template(
                 conv,
                 tokenize=False,
-                add_generation_prompt=True,
+                add_generation_prompt=True,   # include assistant prefix tokens
                 add_vision_id=True,
                 fps=1,
             )
             for conv in conversations
         ]
-        
-        # Step 2: Create full texts (prompt + answer)
+
         full_texts = [
-            prompt + answer
-            for prompt, answer in zip(prompt_texts, answer_texts)
+            self.processor.apply_chat_template(
+                conv_full,
+                tokenize=False,
+                add_generation_prompt=False,  # full already includes assistant turn
+                add_vision_id=True,
+                fps=1,
+            )
+            for conv_full in conversations_full
         ]
-        
-        # Step 3: Process vision info
+
+        # 3) Pack vision once, reuse for both tokenizations to keep token alignment identical
         image_inputs, video_inputs, video_kwargs = process_vision_info(conversations, return_video_kwargs=True)
-        
-        # Step 4: Tokenize prompts only (to know where to start answer labels)
+
+        # 4) Tokenize prompt-only (so we know exactly how many tokens precede the answer)
         prompt_inputs = self.processor(
             text=prompt_texts,
             images=image_inputs,
             videos=video_inputs,
-            padding=True,
-            truncation=False,
+            padding=True,          # pad so we can batch
+            truncation=False,      # keep everything; truncate only at the "full" step if you must
             max_length=self.max_length,
             return_tensors="pt",
         )
-        
-        # Step 5: Tokenize full texts (prompt + answer)
+
+        # 5) Tokenize full (prompt + assistant answer)
         full_inputs = self.processor(
             text=full_texts,
             images=image_inputs,
             videos=video_inputs,
             padding=True,
-            truncation=False,
+            truncation=False,      # prefer no truncation so we don't chop off the answer
             max_length=self.max_length,
             return_tensors="pt",
         )
-        
-        # Step 6: Create labels - only calculate loss on answer tokens
-        batch_size, seq_len = full_inputs["input_ids"].shape
-        labels = torch.full((batch_size, seq_len), -100, dtype=torch.long)
-        
+
+        input_ids = full_inputs["input_ids"]
+        attn_mask = full_inputs["attention_mask"]
+        batch_size, seq_len = input_ids.shape
+
+        # Resolve pad token id (some Qwen tokenizers set it to eos if None)
+        pad_id = getattr(self.processor.tokenizer, "pad_token_id", None)
+        if pad_id is None:
+            pad_id = getattr(self.processor.tokenizer, "eos_token_id", None)
+        if pad_id is None:
+            raise ValueError("Tokenizer must have pad_token_id or eos_token_id defined for masking.")
+
+        # 6) Build labels: -100 for everything up to the prompt length; copy tokens for the answer span
+        labels = torch.full_like(input_ids, fill_value=-100)
+
+        # We'll compute the *non-padded* length of the prompt sequence for each item, then
+        # label tokens in the full sequence strictly after that index.
         for i in range(batch_size):
-            # Find where the answer starts (after the prompt)
-            prompt_len = (prompt_inputs["input_ids"][i] != self.processor.tokenizer.pad_token_id).sum().item()
-            full_len = (full_inputs["input_ids"][i] != self.processor.tokenizer.pad_token_id).sum().item()
-            
-            # Set labels for answer tokens only
+            # length of tokens in prompt example (ignore pads)
+            # Use attention_mask from the prompt encoding for robustness
+            prompt_len = int(prompt_inputs["attention_mask"][i].sum().item())
+
+            # length of tokens in full example (ignore pads)
+            full_len = int(attn_mask[i].sum().item())
+
+            # guard rails
+            prompt_len = min(prompt_len, seq_len)
+            full_len = min(full_len, seq_len)
+
             if full_len > prompt_len:
-                # Copy the answer part from input_ids to labels
-                labels[i, prompt_len:full_len] = full_inputs["input_ids"][i, prompt_len:full_len]
-        
-        # Step 7: Return the full inputs with proper labels
+                labels[i, prompt_len:full_len] = input_ids[i, prompt_len:full_len]
+            # else: entirely masked (e.g., if truncation made the answer vanish)
+
+        # 7) Return final dict with any extra vision fields preserved
         result = {
-            "input_ids": full_inputs["input_ids"],
-            "attention_mask": full_inputs["attention_mask"],
+            "input_ids": input_ids,
+            "attention_mask": attn_mask,
             "labels": labels,
         }
-        
-        # Add vision inputs if they exist
-        for key in ["pixel_values", "pixel_values_videos", "image_grid_thw", "video_grid_thw", "second_per_grid_ts"]:
-            if key in full_inputs:
-                result[key] = full_inputs[key]
-                
+        # Carry over vision tensors if present
+        for k in ["pixel_values", "pixel_values_videos", "image_grid_thw", "video_grid_thw", "second_per_grid_ts"]:
+            if k in full_inputs:
+                result[k] = full_inputs[k]
+
         return result
 
     def _convert_frames_to_pil_images(self, frames, frames_shape=None):

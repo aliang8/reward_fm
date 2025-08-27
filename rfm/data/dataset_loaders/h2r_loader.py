@@ -103,7 +103,7 @@ def _discover_h2r_files(dataset_path: Path) -> List[Tuple[Path, str]]:
     for folder in dataset_path.iterdir():
         if folder.is_dir():
             for file in folder.glob("*.hdf5"):
-                trajectory_files.append((file, _get_task_name_from_folder(folder.name)))
+                trajectory_files.append((file, folder.name))
 
     return trajectory_files
 
@@ -134,7 +134,7 @@ def load_h2r_dataset(base_path: str) -> Dict[str, List[Dict]]:
 
     print(f"Found {len(hdf5_files)} HDF5 files")
 
-    for file_path, task_name in tqdm(hdf5_files, desc=f"Processing H2R dataset, {len(hdf5_files)} files"):
+    for file_path, folder_name in tqdm(hdf5_files, desc=f"Processing H2R dataset, {len(hdf5_files)} files"):
         trajectory_info_human = {"frames": [], "actions": []}
         trajectory_info_robot = {"frames": [], "actions": []}
         human_frames, robot_frames = H2RFrameLoader(file_path)()
@@ -156,17 +156,18 @@ def load_h2r_dataset(base_path: str) -> Dict[str, List[Dict]]:
         trajectory_info_human["preference_rank"] = None
         trajectory_info_robot["preference_rank"] = None
 
+        task_name = _get_task_name_from_folder(folder_name)
         trajectory_info_human["task"] = task_name
         trajectory_info_robot["task"] = task_name
 
         trajectory_info_human["id"] = generate_unique_id()
         trajectory_info_robot["id"] = generate_unique_id()
 
-        if task_name not in task_data:
-            task_data[task_name] = []
+        if folder_name not in task_data:
+            task_data[folder_name] = []
 
-        task_data[task_name].append(trajectory_info_human)
-        task_data[task_name].append(trajectory_info_robot)
+        task_data[folder_name].append(trajectory_info_human)
+        task_data[folder_name].append(trajectory_info_robot)
 
     print(
         f"Loaded {sum(len(trajectories) for trajectories in task_data.values())} trajectories from {len(task_data)} tasks"

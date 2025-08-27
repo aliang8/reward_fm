@@ -341,7 +341,7 @@ class VQABatchCollator:
             all_messages.append(conversation)
 
         # Convert preference labels to text answers
-        preference_labels_text = ["<ans>A</ans>" if label == 0 else "<ans>B</ans>" for label in preference_labels]
+        preference_labels_text = ["<ans>A</ans>" if label == 1 else "<ans>B</ans>" for label in preference_labels]
         
         # Create input with generation prompt and answer for proper label setting
         batch_inputs = self._create_vqa_inputs_with_labels(all_messages, preference_labels_text)
@@ -352,27 +352,26 @@ class VQABatchCollator:
         batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
 
         # Add target progress for both trajectories based on conversation order
-        target_progress_A_list = []
-        target_progress_B_list = []
-
-        for i, sample in enumerate(preference_samples):
-            # Get the preference label to determine which trajectory went first
-            if preference_labels[i] == 1.0:
-                # First trajectory is chosen (chosen_frames), second is rejected (rejected_frames)
-                if sample.target_progress_chosen is not None:
-                    target_progress_A_list.append(sample.target_progress_chosen)  # chosen progress
-                if sample.target_progress_rejected is not None:
-                    target_progress_B_list.append(sample.target_progress_rejected)  # rejected progress
-            else:
-                # First trajectory is rejected (rejected_frames), second is chosen (chosen_frames)
-                if sample.target_progress_rejected is not None:
-                    target_progress_A_list.append(sample.target_progress_rejected)  # rejected progress (now first)
-                if sample.target_progress_chosen is not None:
-                    target_progress_B_list.append(sample.target_progress_chosen)  # chosen progress (now second)
+        target_progress_chosen = [sample.target_progress_chosen for sample in preference_samples]
+        target_progress_rejected = [sample.target_progress_rejected for sample in preference_samples]
+        target_progress_chosen_mask = [
+            1.0
+            if sample.chosen_quality_label == "successful" or sample.data_gen_strategy == "rewind_same_task"
+            else 0.0
+            for sample in preference_samples
+        ]
+        target_progress_rejected_mask = [
+            1.0
+            if sample.rejected_quality_label == "successful" or sample.data_gen_strategy == "rewind_same_task"
+            else 0.0
+            for sample in preference_samples
+        ]
 
         # Pad target progress tensors to max length in last dimension
-        batch_inputs["target_progress_chosen"] = self._pad_target_progress(target_progress_A_list)
-        batch_inputs["target_progress_rejected"] = self._pad_target_progress(target_progress_B_list)
+        batch_inputs["target_progress_chosen"] = self._pad_target_progress(target_progress_chosen)
+        batch_inputs["target_progress_rejected"] = self._pad_target_progress(target_progress_rejected)
+        batch_inputs["target_progress_chosen_mask"] = torch.tensor(target_progress_chosen_mask, dtype=torch.float32)
+        batch_inputs["target_progress_rejected_mask"] = torch.tensor(target_progress_rejected_mask, dtype=torch.float32)
 
         # Also add the frame_shapes
         batch_inputs["chosen_frames_shape"] = torch.tensor(
@@ -382,9 +381,35 @@ class VQABatchCollator:
             [sample.rejected_frames_shape for sample in preference_samples], dtype=torch.int32
         )
 
+        # Add some rewind metrics for logging
+        rewind_lengths = [
+            sample.num_frames_rewound if sample.num_frames_rewound is not None else 0 for sample in preference_samples
+        ]
+        batch_inputs["rewind_lengths"] = torch.tensor(rewind_lengths, dtype=torch.int32)
+        
+        # Add video-binned metadata if available
+        video_binned_metadata = []
+        for sample in preference_samples:
+            if hasattr(sample, 'data_gen_strategy') and sample.data_gen_strategy == "video_binned":
+                metadata = sample.metadata or {}
+                video_binned_metadata.append({
+                    "chosen_bin_idx": metadata.get("chosen_bin_idx"),
+                    "rejected_bin_idx": metadata.get("rejected_bin_idx"),
+                    "original_traj_id": metadata.get("original_traj_id"),
+                    "num_bins": metadata.get("num_bins"),
+                    "bin_size": metadata.get("bin_size"),
+                    "chosen_bin_frames": metadata.get("chosen_bin_frames"),
+                    "rejected_bin_frames": metadata.get("rejected_bin_frames"),
+                    "chosen_bin_progress": metadata.get("chosen_bin_progress"),
+                    "rejected_bin_progress": metadata.get("rejected_bin_progress"),
+                })
+            else:
+                video_binned_metadata.append(None)
+        
+        batch_inputs["video_binned_metadata"] = video_binned_metadata
         return batch_inputs
 
-    def _process_similarity_batch(self, similarity_samples: List[SimilaritySample]) -> Dict[str, torch.Tensor]:
+    def _process_similarity_batch(self, similarity_samples: List[SimilaritySample]) -> Dict[str, torch.Tensor]:  # Redundant for now
         """Process a batch of similarity samples with VQA-style question."""
         # Collect all messages for batch processing
         all_messages = []

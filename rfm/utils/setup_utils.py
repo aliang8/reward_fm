@@ -332,20 +332,28 @@ def setup_batch_collator(processor: AutoProcessor, cfg: ExperimentConfig) -> Bat
     return batch_collator
 
 
-def setup_vqa_model_and_processor(cfg: ExperimentConfig):
+def setup_vqa_model_and_processor(cfg: ModelConfig):
     """Setup VQA baseline model and processor from a VQA-specific config."""
+    # Get current rank for logging
     import torch.distributed as dist
+
     rank = dist.get_rank() if dist.is_initialized() else 0
 
     if rank == 0:
-        rank_0_print(f"Setting up VQA model and processor on rank {rank}...")
+        rank_0_print(f"Setting up model and processor on rank {rank}...")
 
-    # Load processor
+    # Load processor and tokenizer
     processor = AutoProcessor.from_pretrained(
-        cfg.model.base_model_id,
-        trust_remote_code=cfg.model.trust_remote_code,
-        do_sample_frames=False,
+        cfg.base_model_id,
+        trust_remote_code=cfg.trust_remote_code,
+        # temporal_patch_size=1,
+        # fps=1,
+        # num_frames=cfg.data.max_frames,
+        do_sample_frames=False,  # disable frame sampling here since we do this in the data generator
+        # max_frames=cfg.data.max_frames,
     )
+
+    rank_0_print(f"Processor: {processor}")
 
     if processor.tokenizer.pad_token is None:
         processor.tokenizer.pad_token = processor.tokenizer.eos_token
@@ -353,11 +361,22 @@ def setup_vqa_model_and_processor(cfg: ExperimentConfig):
     # Load base conditional generation model for VQA
     base_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(cfg.model.base_model_id)
 
-    # Initialize VQA wrapper (handles vocab resize internally)
+    # Resize token embeddings if new tokens were added
+    if len(processor.tokenizer) != base_model.config.vocab_size:
+        if rank == 0:
+            rank_0_print(f"Resizing token embeddings from {base_model.config.vocab_size} to {len(processor.tokenizer)}")
+        base_model.resize_token_embeddings(len(processor.tokenizer))
+        if rank == 0:
+            rank_0_print(f"Resized token embeddings to {len(processor.tokenizer)}")
+
+    # Initialize RFM model wrapper with the pre-loaded base model
+    if rank == 0:
+        rank_0_print(f"Initializing RFM-VQA model on rank {rank}...")
+    # Initialize VQA wrapper
     vqa_model = RFMModelVQA(config=base_model.config, processor=processor, base_model=base_model)
 
     if rank == 0:
-        rank_0_print("VQA model and processor initialized.")
+        rank_0_print("RFM-VQA model and processor initialized.")
 
     return processor, vqa_model
 

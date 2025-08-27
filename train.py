@@ -174,8 +174,9 @@ def train_vqa(cfg: ExperimentConfig):
 
     # Initialize wandb if enabled (only on rank 0)
     if cfg.logging.use_wandb and is_rank_0():
-        from dataclasses import asdict
+        # Convert config to dict for wandb using dataclass asdict
         config_dict = asdict(cfg)
+
         wandb.init(
             project=cfg.logging.wandb_project, entity=cfg.logging.wandb_entity, name=run_name, config=config_dict
         )
@@ -183,13 +184,17 @@ def train_vqa(cfg: ExperimentConfig):
     elif cfg.logging.use_wandb:
         rank_0_print("Wandb logging enabled but skipped on non-rank-0 processes")
 
+    # Set memory management
     torch.backends.cudnn.benchmark = True
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    # Setup VQA model and processor
+    # Use the shared function to set up model and processor
     with _timer("time/setup_model_and_processor", timing_raw=timing_raw):
-        processor, vqa_model = setup_vqa_model_and_processor(cfg)
+        processor, vqa_model = setup_vqa_model_and_processor(cfg.model)
+
+    # # Apply PEFT if enabled - Disabled for now
+    # peft_vqa_model = setup_peft_model(vqa_model, cfg)
 
     # Create training arguments from config
     if cfg.debug:
@@ -200,11 +205,20 @@ def train_vqa(cfg: ExperimentConfig):
 
     training_args = create_training_arguments(cfg, cfg.training.output_dir)
 
-    # Setup data and collator
+    # Save config to output directory
+    os.makedirs(cfg.training.output_dir, exist_ok=True)
+    config_save_path = os.path.join(cfg.training.output_dir, "config.yaml")
+    config_dict = asdict(cfg)
+    with open(config_save_path, "w") as f:
+        yaml.dump(config_dict, f, default_flow_style=False, indent=2)
+    rank_0_print(f"Saved training config to: {config_save_path}")
+
+    # Use the shared utilities for batch collator and dataset
     with _timer("time/setup_data", timing_raw=timing_raw):
         batch_collator = setup_vqa_batch_collator(processor, cfg)
         train_dataset = setup_dataset(data_generator)
 
+    # Set up evaluation dataset if evaluation is enabled
     eval_dataset = None
     if cfg.training.do_eval:
         eval_dataset = setup_eval_dataset(cfg)
@@ -219,22 +233,24 @@ def train_vqa(cfg: ExperimentConfig):
         config=cfg,
     )
 
-    # Diagnostics
     if is_rank_0():
         print("\n" + "=" * 80)
-        print("--- PRE-TRAINING VQA DIAGNOSTICS ---")
+        print("--- PRE-TRAINING FSDP DIAGNOSTICS ---")
+        # The Trainer creates its own Accelerator instance. Let's check its state.
         if hasattr(trainer, "accelerator"):
             print(f"Trainer's Accelerator object found.")
             fsdp_plugin = getattr(trainer.accelerator.state, "fsdp_plugin", None)
             if fsdp_plugin:
                 print(f"FSDP Plugin found in Accelerator state.")
+                # This is the configuration the accelerator will ACTUALLY use for wrapping.
                 print(f"VERIFY: Actual FSDP plugin config being used: {fsdp_plugin}")
             else:
-                print("INFO: FSDP Plugin not used for VQA training (expected if disabled).")
+                print("ERROR: FSDP Plugin NOT found in the Trainer's accelerator state!")
         else:
-            print("INFO: Trainer has no 'accelerator' attribute yet. This check needs to be later.")
+            print("ERROR: Trainer has no 'accelerator' attribute yet. This check needs to be later.")
         print("=" * 80 + "\n")
 
+    # log timing_raw to wandb
     if cfg.logging.use_wandb and is_rank_0():
         wandb.log(timing_raw)
 
@@ -242,7 +258,7 @@ def train_vqa(cfg: ExperimentConfig):
     rank_0_print(f"Training from checkpoint: {cfg.training.resume_from_checkpoint}")
     trainer.train(resume_from_checkpoint=cfg.training.resume_from_checkpoint)
     trainer.save_model(cfg.training.output_dir)
-    rank_0_print(f"VQA training complete! Check {cfg.training.output_dir} for checkpoints and final model.")
+    rank_0_print(f"Training complete! Check {cfg.training.output_dir} for checkpoints and final model.")
 
 
 def display_config(cfg: ExperimentConfig):

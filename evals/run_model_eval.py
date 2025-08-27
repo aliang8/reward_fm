@@ -76,10 +76,15 @@ def _save_result_as_json(samples: List[Any], response: Dict[str, Any]) -> List[D
             result_entry["bin_idx_rejected"] = sample.metadata["rejected_bin_idx"]
 
         if sample.data_gen_strategy == "video_binned":
-            result_entry["video_path"] = sample.video_path
-            result_entry["chosen_start_end"] = sample.chosen_start_end
-            result_entry["rejected_start_end"] = sample.rejected_start_end
-            result_entry["fps"] = sample.fps
+            metadata = sample.metadata or {}
+            result_entry["video_path"] = metadata.get("video_path")
+            result_entry["chosen_start_end"] = metadata.get("chosen_bin_frames")
+            result_entry["rejected_start_end"] = metadata.get("rejected_bin_frames")
+            result_entry["fps"] = metadata.get("fps")
+
+        # Add consolidated metadata for comprehensive analysis
+        if sample.metadata:
+            result_entry["metadata"] = sample.metadata
 
         batch_results.append(result_entry)
 

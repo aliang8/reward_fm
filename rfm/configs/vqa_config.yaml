@@ -4,7 +4,7 @@
 # =====================================================================================
 # Experiment Mode
 # =====================================================================================
-mode: "vqa_train"  # "train" or "evaluate"
+mode: "train"  # "train" or "evaluate"
 debug: false  # Set to true for debugging (reduces dataset size, enables debug features)
 
 # =====================================================================================
@@ -22,6 +22,7 @@ model:
 # Data Configuration
 # =====================================================================================
 data:
+  model_type: "vqa" # "vqa" or "default"
   # Dataset paths and sources
   train_datasets: 
     - "abraranwar/libero_rfm"
@@ -31,7 +32,7 @@ data:
     # - ["libero_90_failure"]
   
   # Evaluation dataset settings
-  eval_datasets :
+  eval_datasets:
     - "abraranwar/libero_rfm"
     # - "ykorkmaz/libero_failure_rfm"
   eval_subsets:
@@ -46,9 +47,11 @@ data:
   resized_width: 128   # Width to resize images/videos to
   
   # Data generation settings
-  preference_ratio: 1.0  # Ratio of preference prediction samples
+  progress_ratio: 1.0
+  preference_ratio: 0.0  # Ratio of preference prediction samples
   dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
-  preference_strategy_ratio: [0.8, 0.1, 0.1]  # [rewind_same_task, suboptimal_same_task, different_task]
+  # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, video_binned]
+  preference_strategy_ratio: [0.7, 0.1, 0.1, 0.1]
   shuffle: true
   seed: 42
   num_proc: 1  # Number of processes for dataset processing (1 for safety, increase for speed)
@@ -57,6 +60,9 @@ data:
   # Data loading settings
   dataloader_pin_memory: false
   dataloader_num_workers: 0
+
+  # Video binned dataset parameters
+  num_bins: 3
 
 # =====================================================================================
 # Training Configuration
@@ -77,7 +83,7 @@ training:
   
   # Evaluation settings
   evaluation_strategy: "steps"  # Options: "no", "steps", "epoch"
-  eval_steps: 5  # Evaluate every 50 steps
+  eval_steps: 2  # Evaluate every 50 steps
   per_device_eval_batch_size: 2  # Evaluation batch size per device
   do_eval: true  # Enable evaluation during training
   prediction_loss_only: true # Only compute loss for the prediction head
@@ -114,9 +120,6 @@ peft:
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
   lora_dropout: 0.05
   bias: "none"
-
-evaluation:
-  model_path: ""
 
 # =====================================================================================
 # Logging and Output Configuration

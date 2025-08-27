@@ -331,12 +331,13 @@ def display_config(cfg: ExperimentConfig):
 def main(cfg: ExperimentConfig):
     # Display the configuration in a nice Rich format
     display_config(cfg)
+    assert cfg.data.model_type in ["default", "vqa"], "Model type must be either 'default' or 'vqa'"
 
-    if cfg.mode == "train":
+    if cfg.mode == "train" and cfg.data.model_type == "default":
         if is_rank_0():
             rprint(Panel.fit("🚀 Starting RFM Training", style="bold green"))
         train(cfg)
-    elif cfg.mode == "vqa_train":
+    elif cfg.mode == "train" and cfg.data.model_type == "vqa": # VQA training
         if is_rank_0():
             rprint(Panel.fit("🧠 Starting VQA Baseline Training", style="bold cyan"))
         train_vqa(cfg)

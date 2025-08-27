@@ -641,12 +641,23 @@ class VQATrainer(Trainer):
         # Initialize custom loss tracking
         self.log_metadata = {}
         self.loss_keys = [
-            "vqa_loss",
-            "vqa_accuracy",
+            "total_loss",
+            "preference_loss",
+            "similarity_loss",
+            "progress_loss",
+            "preference_accuracy",
+            "spearman_corr_avg",
         ]
-        
+
+        self.log_keys = [
+            "num_rewind_frames_min",
+            "num_rewind_frames_max",
+            "num_rewind_frames_mean",
+            "num_rewound_trajs",
+        ]
         self.global_metadata = {
             "total_samples": 0,
+            "total_samples_with_rewound_trajs": 0,
         }
         self.timing_raw = {}
 
@@ -804,31 +815,93 @@ class VQATrainer(Trainer):
         # Compute VQA loss for each type of input
         if num_preferences > 0 and preference_inputs:
             with _timer("time/compute_vqa_loss", timing_raw=self.timing_raw):
-                vqa_loss, loss_dict = self._compute_vqa_loss(
-                    model, preference_inputs, return_outputs=True
+                preference_loss, loss_dict = self._compute_vqa_loss(
+                    model, preference_inputs, return_outputs=True, mode="preference"
                 )
-            total_loss += vqa_loss
+            total_loss += preference_loss
             log_metadata.update(loss_dict)
 
         if num_similarities > 0 and similarity_inputs:
             with _timer("time/compute_vqa_loss", timing_raw=self.timing_raw):
-                vqa_loss, loss_dict = self._compute_vqa_loss(
-                    model, similarity_inputs, return_outputs=True
+                similarity_loss, loss_dict = self._compute_vqa_loss(
+                    model, similarity_inputs, return_outputs=True, mode="similarity"
                 )
-            total_loss += vqa_loss
+            total_loss += similarity_loss
             log_metadata.update(loss_dict)
 
         if num_progress > 0 and progress_inputs:
             with _timer("time/compute_vqa_loss", timing_raw=self.timing_raw):
-                vqa_loss, loss_dict = self._compute_vqa_loss(
-                    model, progress_inputs, return_outputs=True
+                progress_loss, loss_dict = self._compute_vqa_loss(
+                    model, progress_inputs, return_outputs=True, mode="progress"
                 )
-            total_loss += vqa_loss
+            total_loss += progress_loss
             log_metadata.update(loss_dict)
 
-        return (total_loss, log_metadata) if return_outputs else total_loss
+        # Log rewind length stats if available in preference inputs
+        # rewind_stats = {}
+        # if num_preferences > 0 and preference_inputs:
+        #     rewind_lengths = preference_inputs.get("rewind_lengths", None)
 
-    def _compute_vqa_loss(self, model, inputs, return_outputs=False):
+        #     if rewind_lengths is not None:
+        #         rewind_lengths = rewind_lengths.tolist()
+        #         num_rewind_frames_min = min(rewind_lengths)
+        #         num_rewind_frames_max = max(rewind_lengths)
+        #         num_rewind_frames_mean = np.mean(rewind_lengths)
+        #         num_rewound_trajs = np.array(rewind_lengths).nonzero()[0].size
+        #         rewind_stats = {
+        #             "num_rewind_frames_min": num_rewind_frames_min,
+        #             "num_rewind_frames_max": num_rewind_frames_max,
+        #             "num_rewind_frames_mean": num_rewind_frames_mean,
+        #             "num_rewound_trajs": num_rewound_trajs,
+        #         }
+        #         log_metadata.update(rewind_stats)
+
+        # Always store custom losses for logging (even when return_outputs=False)
+        self.log_metadata = log_metadata
+
+        # Update global metadata for training ]
+        # Keep sum counts over all processes
+        if kwargs.get("training", True) and dist.is_initialized():
+            # add to total batch size and sum across all processes
+            batch_size = torch.tensor(num_preferences + num_similarities + num_progress, device=self.accelerator.device)
+            dist.all_reduce(batch_size, op=dist.ReduceOp.SUM)
+            self.global_metadata["total_samples"] += batch_size.item()
+
+            # # total rewounded trajectories
+            # total_samples_with_rewound_trajs = torch.tensor(
+            #     rewind_stats["num_rewound_trajs"], device=self.accelerator.device
+            # )
+            # dist.all_reduce(total_samples_with_rewound_trajs, op=dist.ReduceOp.SUM)
+            # self.global_metadata["total_samples_with_rewound_trajs"] += total_samples_with_rewound_trajs.item()
+
+        if return_outputs:
+            # Combine outputs from all loss functions
+            extra_info = {
+                **log_metadata,
+                "total_loss": total_loss.item(),
+                "batch_size": num_preferences + num_similarities + num_progress,
+            }
+            return total_loss, extra_info
+
+        return total_loss
+
+    def _extract_answer_from_text(self, text):
+        """
+        Extract content between <ans></ans> tags from text.
+        
+        Args:
+            text (str): Text containing <ans></ans> tags
+            
+        Returns:
+            str: Content between <ans></ans> tags, or empty string if not found
+        """
+        import re
+        match = re.search(r'<ans>(.*?)</ans>', text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        return ""
+
+    def _compute_vqa_loss(self, model, inputs, return_outputs=False, mode=None):
         """
         Compute VQA loss for given inputs.
         """
@@ -872,6 +945,57 @@ class VQATrainer(Trainer):
         loss = outputs.loss
 
         # Prepare loss dictionary for logging
-        loss_dict = {"vqa_loss": loss.item()}
+        loss_dict = {f"{mode}_loss": loss.item()}
+        
+        # # Calculate accuracy for preference and progress modes by comparing <ans></ans> content
+        # if mode in ["preference", "progress"] and return_outputs:
+        #     # Get the processor/tokenizer from the model
+        #     if hasattr(model, 'processor'):
+        #         tokenizer = model.processor.tokenizer
+        #     elif hasattr(model, 'tokenizer'):
+        #         tokenizer = model.tokenizer
+        #     else:
+        #         # Try to get from the trainer's config or data collator
+        #         tokenizer = getattr(self, 'tokenizer', None)
+        #         if tokenizer is None and hasattr(self, 'data_collator') and hasattr(self.data_collator, 'processor'):
+        #             tokenizer = self.data_collator.processor.tokenizer
+            
+        #     if tokenizer is not None:
+        #         # Decode predicted outputs (argmax of logits)
+        #         predicted_ids = outputs.logits.argmax(dim=-1)
+        #         predicted_texts = tokenizer.batch_decode(predicted_ids, skip_special_tokens=True)
+                
+        #         # Decode target labels (replace -100 with pad token for decoding)
+        #         labels_for_decode = labels.clone()
+        #         labels_for_decode[labels_for_decode == -100] = tokenizer.pad_token_id
+        #         target_texts = tokenizer.batch_decode(labels_for_decode, skip_special_tokens=True)
+                
+        #         # Extract answers from both predictions and targets
+        #         correct_count = 0
+        #         total_count = len(predicted_texts)
+        #         spearman_correlations = []
+                
+        #         for pred_text, target_text in zip(predicted_texts, target_texts):
+        #             pred_answer = self._extract_answer_from_text(pred_text)
+        #             target_answer = self._extract_answer_from_text(target_text)
+                    
+        #             if mode == "preference":
+        #                 import pdb; pdb.set_trace()
+        #                 # Compare extracted answers (case-insensitive)
+        #                 if pred_answer.lower() == target_answer.lower():
+        #                     correct_count += 1
+        #             elif mode == "progress":
+        #                 pred_answer_array = torch.tensor(eval(pred_answer))
+        #                 target_answer_array = torch.tensor(eval(target_answer))
+        #                 spearman_correlations.append(compute_spearman_correlation(pred_answer_array, target_answer_array))
+
+        #         if mode == "preference":
+        #             # Calculate accuracy
+        #             accuracy = correct_count / total_count if total_count > 0 else 0.0
+        #             loss_dict["preference_accuracy"] = accuracy
+        #         elif mode == "progress":
+        #             loss_dict["spearman_corr_avg"] = torch.tensor(spearman_correlations).mean().item() if spearman_correlations else 0.0
+        #     else:
+        #         raise ValueError(f"Tokenizer not found for mode {mode}")
 
         return (loss, loss_dict) if return_outputs else loss

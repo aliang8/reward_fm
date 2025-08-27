@@ -25,6 +25,7 @@ model:
 # Data Configuration
 # =====================================================================================
 data:
+  model_type: "default" # "default" or "vqa"
   # Dataset paths and sources
   train_datasets: 
     - "abraranwar/libero_rfm"

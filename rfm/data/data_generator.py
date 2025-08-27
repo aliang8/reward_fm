@@ -1181,6 +1181,7 @@ class DataGenerator:
 
 class VQADataGenerator(DataGenerator):
     def __init__(self, config, is_evaluation=False):
+        self.progress_ratio = config.progress_ratio
         super().__init__(config, is_evaluation)
 
     def _create_progress_sample(self) -> ProgressSample:
@@ -1274,7 +1275,7 @@ class VQADataGenerator(DataGenerator):
 
         # Get num_frames_rewound if this is a rewound trajectory
         num_frames_rewound = None
-        if strategy_used.startswith("rewind"):
+        if strategy_used is not None and strategy_used.startswith("rewind"):
             num_frames_rewound = traj.get("metadata", {}).get("num_frames_rewound")
         
         # Create progress sample

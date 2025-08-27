@@ -11,7 +11,7 @@ from typing import Tuple, Optional, Union
 
 from rfm.models.rfm import RFMModel
 from rfm.models.rfm_vqa import RFMModelVQA
-from rfm.data.data_generator import DataGenerator, BatchCollator
+from rfm.data.data_generator import DataGenerator, BatchCollator, VQADataGenerator, VQABatchCollator
 from rfm.data.vqa_batch_collator import VQABatchCollator
 from rfm.data.dataset import (
     InfiniteDataGeneratorDataset,
@@ -228,7 +228,10 @@ def setup_data_generator(cfg: ExperimentConfig) -> DataGenerator:
         for i, (dataset, subset) in enumerate(zip(cfg.data.train_datasets, cfg.data.train_subsets)):
             rank_0_print(f"  Dataset {i + 1}: {dataset} -> {subset}")
 
-    data_generator = DataGenerator(config=cfg.data)
+    if cfg.data.model_type == "vqa":
+        data_generator = VQADataGenerator(config=cfg.data)
+    else:
+        data_generator = DataGenerator(config=cfg.data)
 
     if rank == 0:
         rank_0_print(f"Data generator initialized on rank {rank}")
@@ -258,7 +261,10 @@ def setup_eval_data_generator(cfg: ExperimentConfig) -> DataGenerator:
         for i, (dataset, subset) in enumerate(zip(cfg.data.eval_datasets, cfg.data.eval_subsets)):
             rank_0_print(f"  Dataset {i + 1}: {dataset} -> {subset}")
 
-    eval_data_generator = DataGenerator(config=cfg.data, is_evaluation=True)
+    if cfg.data.model_type == "vqa":
+        eval_data_generator = VQADataGenerator(config=cfg.data, is_evaluation=True)
+    else:
+        eval_data_generator = DataGenerator(config=cfg.data, is_evaluation=True)
 
     if rank == 0:
         rank_0_print(f"Evaluation data generator initialized on rank {rank}")

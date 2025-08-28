@@ -53,10 +53,6 @@ class PreferenceDataGenerator(BaseDataGenerator):
         else:
             num_frames = len(frames_data)
 
-        if num_frames < 4:
-            # If trajectory is too short, just return the original
-            return original_traj
-
         # Step 1: Select start and end indices
         # Start index is in the first half of the trajectory
         start_idx = random.randint(0, num_frames // 2 - 1)
@@ -64,7 +60,7 @@ class PreferenceDataGenerator(BaseDataGenerator):
         end_idx = random.randint(num_frames // 2, num_frames)
         
         # Ensure we have enough frames between start and end
-        while end_idx - start_idx < 3:
+        while end_idx - start_idx < 5:
             start_idx = random.randint(0, num_frames // 2 - 1)
             end_idx = random.randint(num_frames // 2, num_frames)
 
@@ -124,7 +120,7 @@ class PreferenceDataGenerator(BaseDataGenerator):
 
         # Step 7: Apply linspace subsampling to get final num_frames
         # Use linspace for rewound trajectories to get predictable, evenly spaced frames
-        num_frames_to_sample = getattr(self.config, 'max_frames', 8)
+        num_frames_to_sample = self.config.max_frames
         subsampled_frames, subsampled_indices = self._linspace_subsample_frames(combined_frames, num_frames_to_sample)
 
         # Step 8: Map the subsampled indices to the corresponding progress values
@@ -291,7 +287,6 @@ class PreferenceDataGenerator(BaseDataGenerator):
         rank_0_print("No preference dataset provided, will use random sampling for preferences")
         return
 
-
     def _create_preference_sample(self) -> PreferenceSample:
         """Create a preference prediction sample: chosen vs rejected where chosen is preferred.
 
@@ -330,7 +325,7 @@ class PreferenceDataGenerator(BaseDataGenerator):
                 return self._create_preference_sample_with_strategies()
 
     def _subsample_frames_and_progress(self, frames: np.ndarray, max_frames: int) -> Tuple[np.ndarray, List[float]]:
-        # For chosen trajectory, sample start and end indices to create a segment
+        # For trajectory, sample start and end indices to create a segment
         # This makes the progress calculation consistent with rewind trajectories
         num_frames_total = len(frames)
         
@@ -341,7 +336,7 @@ class PreferenceDataGenerator(BaseDataGenerator):
         end_idx = random.randint(num_frames_total // 2, num_frames_total)
         
         # Ensure we have enough frames between start and end
-        while end_idx - start_idx < 3:
+        while end_idx - start_idx < 5:
             start_idx = random.randint(0, num_frames_total // 2 - 1)
             end_idx = random.randint(num_frames_total // 2, num_frames_total)
         
@@ -349,19 +344,17 @@ class PreferenceDataGenerator(BaseDataGenerator):
         segment_frames = frames[start_idx:end_idx]
         segment_indices = list(range(start_idx, end_idx))
         
-        # Calculate progress for the full segment first (like forward indices in rewind)
-        # Progress should represent position within the selected segment, starting from 1/64
+        # Calculate progress for the full segment first 
         segment_progress = []
         for i in range(len(segment_indices)):
             segment_progress.append((i + 1) / (num_frames_total - start_idx))
         
-        # Uniformly subsample the chosen trajectory segment to num_frames 
-        frames, indices = self._uniformly_subsample_frames(segment_frames, self.config.max_frames)
+        # Randomly subsample the chosen trajectory segment to num_frames 
+        frames, indices = self._randomly_subsample_frames(segment_frames, self.config.max_frames)
         
         # Map the subsampled indices to the corresponding progress values from the full segment
         # The chosen_indices tell us which frames from the segment we're using
         progress = [segment_progress[idx] for idx in indices]
-
        
         # Ensure both trajectories have exactly max_frames by padding if needed
         # Pad by repeating the first frame and first progress value
@@ -449,29 +442,15 @@ class PreferenceDataGenerator(BaseDataGenerator):
             
         elif random.random() < self.preference_strategy_ratio[0] + self.preference_strategy_ratio[1]:
             # Strategy 2: Use random suboptimal trajectory from same task
-            same_task_suboptimal_indices = self.suboptimal_by_task.get(task_name, [])
-            same_task_suboptimal = [
-                self.dataset[idx]
-                for idx in same_task_suboptimal_indices
-                if self.dataset[idx]["id"] != chosen_traj["id"]
-            ]
-            if same_task_suboptimal:
-                rejected_traj = random.choice(same_task_suboptimal)
+            rejected_traj = self._create_same_task_suboptimal_trajectory(chosen_traj)
+            if rejected_traj is not None:
                 strategy_used = "suboptimal_same_task"
                 
         elif random.random() < self.preference_strategy_ratio[0] + self.preference_strategy_ratio[1] + self.preference_strategy_ratio[2]:
             # Strategy 3: Use trajectory from different task (can be chosen or suboptimal)
-            other_tasks = [task for task in self.optimal_by_task.keys() if task != chosen_traj["task"]]
-            if other_tasks:
-                other_task = random.choice(other_tasks)
-                other_task_indices = self.optimal_by_task[other_task]
-                if other_task_indices:
-                    other_idx = random.choice(other_task_indices)
-                    other_traj = self.dataset[other_idx]
-                    # Check if it's not the same trajectory
-                    if other_traj["id"] != chosen_traj["id"]:
-                        rejected_traj = other_traj
-                        strategy_used = "different_task"
+            rejected_traj = self._create_different_task_trajectory(chosen_traj)
+            if rejected_traj is not None:
+                strategy_used = "different_task"
                         
         else:
             # Strategy 4: Create preference sample from different bins of the same video
@@ -547,6 +526,66 @@ class PreferenceDataGenerator(BaseDataGenerator):
         return sample
 
 
+    def _create_same_task_suboptimal_trajectory(self, chosen_traj: Dict) -> Optional[Dict]:
+        """Create a suboptimal trajectory from the same task as the chosen trajectory.
+        
+        This function tries to find an existing suboptimal/failure trajectory from the same task.
+        Returns None if no suboptimal trajectories are available.
+        
+        Args:
+            chosen_traj: The chosen (optimal) trajectory dictionary
+            
+        Returns:
+            Optional[Dict]: The rejected trajectory, or None if none available
+        """
+        task_name = chosen_traj["task"]
+        
+        # Try to find suboptimal trajectories from the same task
+        same_task_suboptimal_indices = self.suboptimal_by_task.get(task_name, [])
+        same_task_suboptimal = [
+            self.dataset[idx]
+            for idx in same_task_suboptimal_indices
+            if self.dataset[idx]["id"] != chosen_traj["id"]
+        ]
+        
+        if same_task_suboptimal:
+            return random.choice(same_task_suboptimal)
+        else:
+            return None
+
+    def _create_different_task_trajectory(self, chosen_traj: Dict) -> Optional[Dict]:
+        """Create a trajectory from a different task than the chosen trajectory.
+        
+        This function tries to find trajectories from different tasks.
+        Returns None if no other tasks are available.
+        
+        Args:
+            chosen_traj: The chosen trajectory dictionary
+            
+        Returns:
+            Optional[Dict]: The rejected trajectory, or None if none available
+        """
+        # Find other tasks
+        other_tasks = [task for task in self.optimal_by_task.keys() if task != chosen_traj["task"]]
+        
+        if other_tasks:
+            other_task = random.choice(other_tasks)
+            other_task_indices = self.optimal_by_task[other_task]
+            
+            if other_task_indices:
+                other_idx = random.choice(other_task_indices)
+                other_traj = self.dataset[other_idx]
+                
+                # Check if it's not the same trajectory
+                if other_traj["id"] != chosen_traj["id"]:
+                    return other_traj
+        else:
+            # Only one task available
+            return None
+            
+        return None
+
+
 class VQADataGenerator(PreferenceDataGenerator):
     def __init__(self, config, is_evaluation=False):
         self.progress_ratio = config.progress_ratio
@@ -578,12 +617,8 @@ class VQADataGenerator(PreferenceDataGenerator):
                 strategy_used = "rewind_same_task"
             elif strategy_choice == 1:
                 # Strategy 2: Use random suboptimal trajectory from same task
-                same_task_suboptimal_indices = self.suboptimal_by_task.get(task_name, [])
-                same_task_suboptimal = [
-                    self.dataset[idx] for idx in same_task_suboptimal_indices if self.dataset[idx]["id"] != traj["id"]
-                ]
-                if same_task_suboptimal:
-                    traj = random.choice(same_task_suboptimal)
+                traj = self._create_same_task_suboptimal_trajectory(traj)
+                if traj is not None:
                     strategy_used = "suboptimal_same_task"
                 else:
                     # Fall back to rewind if no same-task suboptimal trajectories
@@ -591,28 +626,11 @@ class VQADataGenerator(PreferenceDataGenerator):
                     strategy_used = "rewind_same_task"
             else:
                 # Strategy 3: Use trajectory from different task (can be optimal or suboptimal)
-                other_tasks = [task for task in self.optimal_by_task.keys() if task != traj["task"]]
-                if other_tasks:
-                    other_task = random.choice(other_tasks)
-                    # Get random index from other task and access dataset directly
-                    other_task_indices = self.optimal_by_task[other_task]
-                    if other_task_indices:
-                        other_idx = random.choice(other_task_indices)
-                        other_traj = self.dataset[other_idx]
-                        # Check if it's not the same trajectory
-                        if other_traj["id"] != traj["id"]:
-                            traj = other_traj
-                            strategy_used = "different_task"
-                        else:
-                            # Fall back to rewind if same trajectory
-                            traj = self._create_rewind_trajectory(traj)
-                            strategy_used = "rewind_same_task"
-                    else:
-                        # Fall back to rewind if no other trajectories available
-                        traj = self._create_rewind_trajectory(traj)
-                        strategy_used = "rewind_same_task"
+                traj = self._create_different_task_trajectory(traj)
+                if traj is not None:
+                    strategy_used = "different_task"
                 else:
-                    # Fall back to rewind if only one task available
+                    # Fall back to rewind if no other tasks available
                     traj = self._create_rewind_trajectory(traj)
                     strategy_used = "rewind_same_task"
 

@@ -428,3 +428,46 @@ class BaseDataGenerator:
         subsampled_frames = frames[indices]
         
         return subsampled_frames, indices
+
+    def _randomly_subsample_frames(self, frames: np.ndarray, num_frames: int = 8, seed: Optional[int] = None) -> Tuple[np.ndarray, List[int]]:
+        """Randomly subsample frames from a trajectory and return the indices.
+        
+        This method takes the full trajectory and randomly selects num_frames from it.
+        This is useful for creating diverse trajectory samples and avoiding bias
+        towards specific frame patterns.
+        
+        Args:
+            frames: Full trajectory frames
+            num_frames: Number of frames to subsample (default: 8)
+            seed: Random seed for reproducible sampling (default: None)
+            
+        Returns:
+            Tuple[np.ndarray, List[int]: (subsampled_frames, subsampled_indices)
+            
+        Example:
+            If we have 64 frames and want 8 frames:
+            - Random indices: [7, 23, 41, 12, 58, 3, 35, 49] (example)
+            - Subsampled frames: frames[7], frames[23], frames[41], etc.
+        """
+        if hasattr(frames, "shape"):
+            total_frames = frames.shape[0]
+        else:
+            total_frames = len(frames)
+            
+        if total_frames < num_frames:
+            # If we have fewer frames than requested, return all frames
+            indices = list(range(total_frames))
+            return frames, indices
+        
+        # Set random seed if provided
+        if seed is not None:
+            random.seed(seed)
+            np.random.seed(seed)
+        
+        # Randomly sample indices without replacement
+        indices = sorted(random.sample(range(total_frames), num_frames))
+        
+        # Subsample frames
+        subsampled_frames = frames[indices]
+        
+        return subsampled_frames, indices

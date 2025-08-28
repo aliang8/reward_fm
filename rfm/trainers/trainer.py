@@ -261,7 +261,7 @@ class RFMTrainer(Trainer):
         # Always store custom losses for logging (even when return_outputs=False)
         self.log_metadata = log_metadata
 
-        # Update global metadata for training ]
+        # Update global metadata for training 
         # Keep sum counts over all processes
         if kwargs.get("training", True) and dist.is_initialized():
             # add to total batch size and sum across all processes
@@ -270,11 +270,12 @@ class RFMTrainer(Trainer):
             self.global_metadata["total_samples"] += batch_size.item()
 
             # total rewounded trajectories
-            total_samples_with_rewound_trajs = torch.tensor(
-                rewind_stats["num_rewound_trajs"], device=self.accelerator.device
-            )
-            dist.all_reduce(total_samples_with_rewound_trajs, op=dist.ReduceOp.SUM)
-            self.global_metadata["total_samples_with_rewound_trajs"] += total_samples_with_rewound_trajs.item()
+            if "num_rewound_trajs" in rewind_stats:
+                total_samples_with_rewound_trajs = torch.tensor(
+                    rewind_stats["num_rewound_trajs"], device=self.accelerator.device
+                )
+                dist.all_reduce(total_samples_with_rewound_trajs, op=dist.ReduceOp.SUM)
+                self.global_metadata["total_samples_with_rewound_trajs"] += total_samples_with_rewound_trajs.item()
 
         if return_outputs:
             # Combine outputs from all loss functions

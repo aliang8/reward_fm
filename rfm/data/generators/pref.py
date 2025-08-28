@@ -221,10 +221,18 @@ class PreferenceDataGenerator(BaseDataGenerator):
         # Extract frames from the chosen bin (this will be the "chosen" trajectory)
         chosen_start, chosen_end = bin_boundaries[chosen_bin_idx]
         chosen_frames = frames_data[chosen_start:chosen_end]
+
+        chosen_progress = []
+        for i in range(len(chosen_frames)):
+            chosen_progress.append((i + 1) / (len(frames_data) - chosen_start))
         
         # Extract frames from the rejected bin (this will be the "rejected" trajectory)
         rejected_start, rejected_end = bin_boundaries[rejected_bin_idx]
         rejected_frames = frames_data[rejected_start:rejected_end]
+
+        rejected_progress = []
+        for i in range(len(rejected_frames)):
+            rejected_progress.append((i + 1) / (len(frames_data) - rejected_start))
         
         # Apply uniform subsampling to both bins to ensure consistent frame counts
         # Use uniform subsampling for real trajectories (not rewound)
@@ -233,54 +241,33 @@ class PreferenceDataGenerator(BaseDataGenerator):
         rejected_frames, rejected_indices = self._uniformly_subsample_frames(rejected_frames, num_frames_to_sample)
         
         # Calculate progress for each bin relative to the original trajectory
-        chosen_progress = [chosen_start + idx for idx in chosen_indices]
-        chosen_progress = [p / (len(frames_data) - 1) for p in chosen_progress]
+        chosen_progress = [chosen_progress[idx] for idx in chosen_indices]
+        rejected_progress = [rejected_progress[idx] for idx in rejected_indices]
         
-        rejected_progress = [rejected_start + idx for idx in rejected_indices]
-        rejected_progress = [p / (len(frames_data) - 1) for p in rejected_progress]
-        
-        # Store original frame positions for reference
-        chosen_original_positions = [chosen_start + idx for idx in chosen_indices]
-        rejected_original_positions = [rejected_start + idx for idx in rejected_indices]
-        
+
         # Create the chosen trajectory (from chosen bin)
         chosen_traj = original_traj.copy()
         chosen_traj["frames"] = chosen_frames
         chosen_traj["frames_shape"] = chosen_frames.shape
-        chosen_traj["id"] = f"{original_traj['id']}_bin_{chosen_bin_idx}_chosen"
-        chosen_traj["quality_label"] = "video_binned_chosen"
-        chosen_traj["metadata"] = chosen_traj.get("metadata", {}).copy()
-        chosen_traj["metadata"]["video_binned_generated"] = True
-        chosen_traj["metadata"]["original_traj_id"] = original_traj["id"]
-        chosen_traj["metadata"]["chosen_bin_idx"] = chosen_bin_idx
-        chosen_traj["metadata"]["bin_progress"] = chosen_progress
-        chosen_traj["metadata"]["bin_frames"] = (chosen_start, chosen_end)
-        chosen_traj["metadata"]["num_bins"] = num_bins
-        chosen_traj["metadata"]["bin_size"] = bin_size
-        chosen_traj["metadata"]["subsampled_generated"] = True
-        chosen_traj["metadata"]["subsampled_progress"] = chosen_progress
-        chosen_traj["metadata"]["num_frames_subsampled"] = num_frames_to_sample
-        chosen_traj["metadata"]["original_frame_positions"] = chosen_original_positions
-        
-        # Create the rejected trajectory (from rejected bin)
+        chosen_traj["target_progress"] = chosen_progress
+        chosen_traj["metadata"] = {
+            "start_idx": chosen_start,
+            "end_idx": chosen_end,
+            "chosen_bin_idx": chosen_bin_idx,
+            "rejected_bin_idx": rejected_bin_idx,
+        }
+
         rejected_traj = original_traj.copy()
         rejected_traj["frames"] = rejected_frames
         rejected_traj["frames_shape"] = rejected_frames.shape
-        rejected_traj["id"] = f"{original_traj['id']}_bin_{rejected_bin_idx}_rejected"
-        rejected_traj["quality_label"] = "video_binned_rejected"
-        rejected_traj["metadata"] = rejected_traj.get("metadata", {}).copy()
-        rejected_traj["metadata"]["video_binned_generated"] = True
-        rejected_traj["metadata"]["original_traj_id"] = original_traj["id"]
-        rejected_traj["metadata"]["rejected_bin_idx"] = rejected_bin_idx
-        rejected_traj["metadata"]["bin_progress"] = rejected_progress
-        rejected_traj["metadata"]["bin_frames"] = (rejected_start, rejected_end)
-        rejected_traj["metadata"]["num_bins"] = num_bins
-        rejected_traj["metadata"]["bin_size"] = bin_size
-        rejected_traj["metadata"]["subsampled_generated"] = True
-        rejected_traj["metadata"]["subsampled_progress"] = rejected_progress
-        rejected_traj["metadata"]["num_frames_subsampled"] = num_frames_to_sample
-        rejected_traj["metadata"]["original_frame_positions"] = rejected_original_positions
-        
+        rejected_traj["target_progress"] = rejected_progress
+        rejected_traj["metadata"] = {
+            "start_idx": rejected_start,
+            "end_idx": rejected_end,
+            "chosen_bin_idx": chosen_bin_idx,
+            "rejected_bin_idx": rejected_bin_idx,
+        }
+       
         return chosen_traj, rejected_traj
 
     def _create_preference_sample_from_dataset(self) -> PreferenceSample:
@@ -506,6 +493,8 @@ class PreferenceDataGenerator(BaseDataGenerator):
             chosen_traj["frames"] = self._load_frames_from_npz(chosen_traj["frames"])
 
         chosen_frames, chosen_progress, chosen_metadata = self._subsample_frames_and_progress(chosen_traj["frames"], self.config.max_frames)
+        if "metadata" in chosen_traj:
+            chosen_metadata.update(chosen_traj["metadata"])
 
         # ===============================================================
         # Subsample the rejected trajectory to max_frames
@@ -517,11 +506,14 @@ class PreferenceDataGenerator(BaseDataGenerator):
         if "rewind" not in strategy_used:
             # try subsampling the rejected trajectory 
             rejected_frames, rejected_progress, rejected_metadata = self._subsample_frames_and_progress(rejected_traj["frames"], self.config.max_frames)
+            if "metadata" in rejected_traj:
+                rejected_metadata.update(rejected_traj["metadata"])
+        
         else:
             rejected_frames = rejected_traj["frames"]
             rejected_progress = rejected_traj["target_progress"]
             rejected_metadata = rejected_traj["metadata"]
-        
+
         # Create preference sample structure
         sample = PreferenceSample(
             # Create Trajectory objects for chosen and rejected

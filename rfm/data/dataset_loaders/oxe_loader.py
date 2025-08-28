@@ -284,8 +284,7 @@ def convert_oxe_dataset_to_hf(
             produced += len(episode_entries)
     else:
         # Parallel processing
-        from multiprocessing import Pool, cpu_count
-        from functools import partial
+        from multiprocessing import Pool
         
         # Prepare arguments for workers
         worker_args = list(zip(all_episodes, [info[0] for info in episode_info], [info[1] for info in episode_info], [info[2] for info in episode_info]))

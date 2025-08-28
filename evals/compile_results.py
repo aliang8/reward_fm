@@ -190,7 +190,7 @@ def compute_metrics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     for result in results:
         # Chosen trajectory progress
         pred_chosen = np.array(result["progress_pred_chosen"])
-        target_chosen = np.array(result["target_progress_chosen"][::2])
+        target_chosen = np.array(result["chosen_meta"]["target_progress"][::2])
 
         # Compute MSE
         mse_chosen = np.mean((pred_chosen - target_chosen) ** 2)
@@ -201,10 +201,10 @@ def compute_metrics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
         if not np.isnan(corr_chosen):
             spearman_progress_chosen.append(corr_chosen)
 
-        if result.get("progress_pred_rejected") is not None and result.get("target_progress_rejected") is not None:
+        if result.get("progress_pred_rejected") is not None and result.get("rejected_meta", {}).get("target_progress") is not None:
             # Rejected trajectory progress
             pred_rejected = np.array(result["progress_pred_rejected"])
-            target_rejected = np.array(result["target_progress_rejected"][::2])
+            target_rejected = np.array(result["rejected_meta"]["target_progress"][::2])
 
             # Compute MSE
             mse_rejected = np.mean((pred_rejected - target_rejected) ** 2)
@@ -234,7 +234,7 @@ def compute_metrics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     # Sample counts by data generation strategy
     strategy_counts = {}
     for result in results:
-        strategy = result["data_gen_strategy"]
+        strategy = result["rejected_meta"]["data_gen_strategy"]
         strategy_counts[strategy] = strategy_counts.get(strategy, 0) + 1
 
     metrics["strategy_counts"] = strategy_counts
@@ -242,9 +242,8 @@ def compute_metrics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     # Rewound frame analysis
     rewound_counts = {}
     for result in results:
-        rewound = result["num_frames_rewound"]
-        if rewound is not None:
-            rewound_counts[str(rewound)] = rewound_counts.get(str(rewound), 0) + 1
+        if "num_frames_rewound" in result["rejected_meta"]:
+            rewound_counts[str(result["rejected_meta"]["num_frames_rewound"])] = rewound_counts.get(str(result["rejected_meta"]["num_frames_rewound"]), 0) + 1
 
     metrics["rewound_counts"] = rewound_counts
 

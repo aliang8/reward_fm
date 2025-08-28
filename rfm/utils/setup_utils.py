@@ -16,14 +16,14 @@ from rfm.data.batch_collator import BatchCollator
 from rfm.data.dataset import (
     InfiniteDataGeneratorDataset,
     RewoundDataset,
-    PairedSuccessFailureDataset,
     VideoBinnedDataset,
 )
+from rfm.data.generators.success_failure import PairedSuccessFailureGenerator
 from rfm.utils.logging import rank_0_print
 from rfm.configs.experiment_configs import ExperimentConfig, ModelConfig
 from rfm.data.vqa_batch_collator import VQABatchCollator
 
-DatasetType = Union[InfiniteDataGeneratorDataset, RewoundDataset, PairedSuccessFailureDataset, VideoBinnedDataset]
+DatasetType = Union[InfiniteDataGeneratorDataset, RewoundDataset, VideoBinnedDataset]
 
 
 def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[AutoProcessor, RFMModel]:
@@ -263,7 +263,10 @@ def setup_eval_data_generator(cfg: ExperimentConfig) -> DataGenerator:
     if cfg.data.model_type == "vqa":
         eval_data_generator = VQADataGenerator(config=cfg.data, is_evaluation=True)
     else:
-        eval_data_generator = DataGenerator(config=cfg.data, is_evaluation=True)
+        if cfg.data.dataset_type == "success_failure":
+            eval_data_generator = PairedSuccessFailureGenerator(config=cfg.data, is_evaluation=True)
+        else:
+            eval_data_generator = DataGenerator(config=cfg.data, is_evaluation=True)
 
     if rank == 0:
         rank_0_print(f"Evaluation data generator initialized on rank {rank}")
@@ -284,9 +287,6 @@ def setup_dataset(
     if config_dataset_type == "rewound":
         rank_0_print(f"Creating rewound dataset")
         dataset = RewoundDataset(data_generator, **dataset_kwargs)
-    elif config_dataset_type == "success_failure":  
-        rank_0_print(f"Creating success-failure dataset (generating all possible pairs)")
-        dataset = PairedSuccessFailureDataset(data_generator, **dataset_kwargs)
     elif config_dataset_type == "video_binned":
         rank_0_print(f"Creating video-binned dataset")
         dataset = VideoBinnedDataset(data_generator, **dataset_kwargs)

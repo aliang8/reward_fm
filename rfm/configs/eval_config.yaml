@@ -25,7 +25,7 @@ data:
   max_frames_for_preprocessing: 64
 
   # Video processing settings
-  max_frames: 64  
+  max_frames: 16
   video_frame_sampling: "uniform"  # "uniform", "random", "first", "middle"
   resized_height: 128  # Height to resize images/videos to
   resized_width: 128  # Width to resize images/videos to

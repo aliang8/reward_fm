@@ -28,19 +28,22 @@ data:
   model_type: "default" # "default" or "vqa"
   # Dataset paths and sources
   train_datasets: 
-    - "abraranwar/libero_rfm"
-    - "ykorkmaz/libero_failure_rfm"
+    # - "abraranwar/libero_rfm"
+    # - "ykorkmaz/libero_failure_rfm"
+    - "HenryZhang/metaworld_rewind_rfm_train"
   train_subsets:
-    - ["libero256_90"]
-    - ["libero_90_failure"]
-  
+    # - ["libero256_90"]
+    # - ["libero_90_failure"]
+    - ["metaworld_rewind_train"]
   # Evaluation dataset settings
   eval_datasets:
-    - "abraranwar/libero_rfm"
-    - "ykorkmaz/libero_failure_rfm"
+    # - "abraranwar/libero_rfm"
+    # - "ykorkmaz/libero_failure_rfm"
+    - "HenryZhang/metaworld_rewind_rfm_eval"
   eval_subsets:
-    - ["libero256_10"]
-    - ["libero_10_failure"]
+    # - ["libero256_10"]
+    # - ["libero_10_failure"]
+    - ["metaworld_rewind_eval"]
   # eval_datasets: ["abraranwar/libero_rfm"]
   # eval_subsets: ["libero_object"]
   eval_subset_size: 500  # Number of evaluation examples
@@ -58,7 +61,7 @@ data:
   preference_ratio: 1.0  # Ratio of preference prediction samples
   dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
   # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, video_binned]
-  preference_strategy_ratio: [0.8, 0.1, 0.1, 0.0]
+  preference_strategy_ratio: [0.2, 0.2, 0.2, 0.4]
   shuffle: true
   seed: 42
   num_proc: 1  # Number of processes for dataset processing (1 for safety, increase for speed)
@@ -69,7 +72,7 @@ data:
   dataloader_num_workers: 0
 
   # Video binned dataset parameters
-  num_bins: 3
+  num_bins: 10
 
 # =====================================================================================
 # Training Configuration

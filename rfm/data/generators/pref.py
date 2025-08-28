@@ -15,12 +15,12 @@ from rfm.utils.logging import rank_0_print, timer
 class PreferenceDataGenerator(BaseDataGenerator):
     """Data generator for producing batches of preference prediction data."""
 
-    def __init__(self, config, is_evaluation=False):
+    def __init__(self, config, is_evaluation=False, verbose=True):
         """Initialize PreferenceDataGenerator with configuration."""
         self.dataset_preference_ratio = config.dataset_preference_ratio
         self.preference_strategy_ratio: List[float] = config.preference_strategy_ratio
 
-        super().__init__(config, is_evaluation)
+        super().__init__(config, is_evaluation, verbose=verbose)
         
         # Initialize preference dataset
         self._load_preference_dataset()
@@ -323,51 +323,6 @@ class PreferenceDataGenerator(BaseDataGenerator):
                 return self._create_preference_sample_from_dataset()
             else:
                 return self._create_preference_sample_with_strategies()
-
-    def _subsample_frames_and_progress(self, frames: np.ndarray, max_frames: int) -> Tuple[np.ndarray, List[float]]:
-        # For trajectory, sample start and end indices to create a segment
-        # This makes the progress calculation consistent with rewind trajectories
-        num_frames_total = len(frames)
-        
-        # Select start and end indices for the chosen trajectory segment
-        # Start index is in the first half of the trajectory
-        start_idx = random.randint(0, num_frames_total // 2 - 1)
-        # End index is in the latter half of the trajectory
-        end_idx = random.randint(num_frames_total // 2, num_frames_total)
-        
-        # Ensure we have enough frames between start and end
-        while end_idx - start_idx < 5:
-            start_idx = random.randint(0, num_frames_total // 2 - 1)
-            end_idx = random.randint(num_frames_total // 2, num_frames_total)
-        
-        # Extract the chosen segment
-        segment_frames = frames[start_idx:end_idx]
-        segment_indices = list(range(start_idx, end_idx))
-        
-        # Calculate progress for the full segment first 
-        segment_progress = []
-        for i in range(len(segment_indices)):
-            segment_progress.append((i + 1) / (num_frames_total - start_idx))
-        
-        # Randomly subsample the chosen trajectory segment to num_frames 
-        frames, indices = self._randomly_subsample_frames(segment_frames, self.config.max_frames)
-        
-        # Map the subsampled indices to the corresponding progress values from the full segment
-        # The chosen_indices tell us which frames from the segment we're using
-        progress = [segment_progress[idx] for idx in indices]
-       
-        # Ensure both trajectories have exactly max_frames by padding if needed
-        # Pad by repeating the first frame and first progress value
-        frames, progress = self._pad_trajectory_to_max_frames(
-            frames, progress, self.config.max_frames
-        )
-
-        metadata = {
-            "start_idx": start_idx,
-            "end_idx": end_idx,
-            "subsampled_indices": indices,
-        }
-        return frames, progress, metadata
 
     def _create_preference_sample_with_strategies(self) -> PreferenceSample:
         """Create a preference prediction sample using various rejected trajectory generation strategies.

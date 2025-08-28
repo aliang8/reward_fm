@@ -4,6 +4,7 @@ Batch collator for processing Sample objects through the processor and returning
 This collator handles the conversion from PreferenceSample and SimilaritySample objects to processed tensors.
 """
 
+import base64
 import torch
 from typing import List, Dict, Optional, Union, Any
 from dataclasses import dataclass, field
@@ -11,9 +12,10 @@ from transformers import AutoProcessor
 from qwen_vl_utils import process_vision_info
 import numpy as np
 import random
+from pydantic import BaseModel, field_serializer
+from rfm.utils.video_utils import decode_frames_b64, frames_to_base64_images
 
-@dataclass
-class Trajectory:
+class Trajectory(BaseModel):
     """Trajectory structure containing frames, metadata, and progress information."""
     
     # Core trajectory fields
@@ -21,7 +23,7 @@ class Trajectory:
     frames_shape: Optional[tuple] = None
     id: Optional[str] = None
     task: Optional[str] = None
-    lang_vector: Optional[np.ndarray] = None
+    lang_vector: Optional[Union[np.ndarray, List[float]]] = None
     data_source: Optional[str] = None
     quality_label: Optional[str] = None
     is_robot: Optional[bool] = None
@@ -32,19 +34,33 @@ class Trajectory:
     target_progress: Optional[List[float]] = None
     metadata: Optional[Dict[str, Any]] = None
 
+    class Config:
+        arbitrary_types_allowed = True
 
-@dataclass
-class PreferenceSample:
+    @field_serializer("frames")
+    def serialize_frames(self, v: np.ndarray) -> list:
+        if isinstance(v, np.ndarray):
+            return frames_to_base64_images(v)
+        return v
+    
+    # You might also want a serializer for lang_vector if it needs special handling
+    @field_serializer("lang_vector")
+    def serialize_lang_vector(self, v: np.ndarray) -> list:
+        if isinstance(v, np.ndarray):
+            return v.tolist()
+        return v
+
+
+class PreferenceSample(BaseModel):
     """Sample structure for preference prediction: chosen vs rejected where chosen is preferred."""
 
     # Trajectories
     chosen_trajectory: Trajectory
     rejected_trajectory: Trajectory
     
-    sample_type = "preference"
+    sample_type: str = "preference"
 
-@dataclass
-class SimilaritySample:
+class SimilaritySample(BaseModel):
     """Sample structure for similarity scoring: traj_sim and traj_diff ranked against o^ref."""
 
     # Trajectories
@@ -52,7 +68,7 @@ class SimilaritySample:
     traj_sim_trajectory: Trajectory  # Similar trajectory
     traj_diff_trajectory: Trajectory  # Different trajectory
 
-    sample_type = "similarity"
+    sample_type: str = "similarity"
 
 
 class BatchCollator:
@@ -154,6 +170,10 @@ class BatchCollator:
         """Convert frames to PIL images if they are numpy arrays or serialized bytes."""
         if frames is None:
             return None
+
+        # if frames are encoded as base64, decode them, this is during eval for the Qwen server
+        if isinstance(frames, list) and not frames[0].endswith(".mp4"):
+            return decode_frames_b64(frames)
 
         # If frames are already paths (strings), return as is
         if isinstance(frames, str) or (isinstance(frames, list) and all(isinstance(f, str) for f in frames)):

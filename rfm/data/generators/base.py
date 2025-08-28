@@ -12,10 +12,7 @@ import json
 
 
 class BaseDataGenerator:
-    """Base data generator with common dataset loading and management functionality."""
-
-    def __init__(self, config, is_evaluation=False):
-        """Initialize DataGenerator with configuration."""
+    def __init__(self, config, is_evaluation=False, verbose=True):
         self.config = config
         self.is_evaluation = is_evaluation
 
@@ -40,17 +37,19 @@ class BaseDataGenerator:
         self.source_indices = {}
 
         # Show available datasets for debugging
-        self.show_available_datasets()
+        if verbose:
+            self.show_available_datasets()
 
         # Load trajectory dataset
         self._load_trajectory_dataset()
 
-        rank_0_print(f"DataGenerator initialized with {len(self.dataset)} total trajectories")
-        rank_0_print(f"  Robot trajectories: {len(self.robot_trajectories)}")
-        rank_0_print(f"  Human trajectories: {len(self.human_trajectories)}")
-        rank_0_print(f"  Tasks: {len(self.task_indices)}")
-        rank_0_print(f"  Quality labels: {len(self.quality_indices)}")
-        rank_0_print(f"  Data sources: {len(self.source_indices)}")
+        if verbose:
+            rank_0_print(f"DataGenerator initialized with {len(self.dataset)} total trajectories")
+            rank_0_print(f"  Robot trajectories: {len(self.robot_trajectories)}")
+            rank_0_print(f"  Human trajectories: {len(self.human_trajectories)}")
+            rank_0_print(f"  Tasks: {len(self.task_indices)}")
+            rank_0_print(f"  Quality labels: {len(self.quality_indices)}")
+            rank_0_print(f"  Data sources: {len(self.source_indices)}")
 
     def _load_trajectory_dataset(self):
         """Load trajectory dataset using preprocessed index-based cache."""
@@ -471,3 +470,51 @@ class BaseDataGenerator:
         subsampled_frames = frames[indices]
         
         return subsampled_frames, indices
+
+    def _subsample_frames_and_progress(self, frames: np.ndarray) -> Tuple[np.ndarray, List[float]]:
+        # For trajectory, sample start and end indices to create a segment
+        # This makes the progress calculation consistent with rewind trajectories
+        num_frames_total = len(frames)
+        
+        # Select start and end indices for the chosen trajectory segment
+        # Start index is in the first half of the trajectory
+        start_idx = random.randint(0, num_frames_total // 2 - 1)
+        # End index is in the latter half of the trajectory
+        end_idx = random.randint(num_frames_total // 2, num_frames_total)
+        
+        # Ensure we have enough frames between start and end
+        while end_idx - start_idx < 5:
+            start_idx = random.randint(0, num_frames_total // 2 - 1)
+            end_idx = random.randint(num_frames_total // 2, num_frames_total)
+        
+        # Extract the chosen segment
+        segment_frames = frames[start_idx:end_idx]
+        segment_indices = list(range(start_idx, end_idx))
+        
+        # Calculate progress for the full segment first 
+        segment_progress = []
+        for i in range(len(segment_indices)):
+            segment_progress.append((i + 1) / (num_frames_total - start_idx))
+        
+        # Randomly subsample the chosen trajectory segment to num_frames 
+        frames, indices = self._randomly_subsample_frames(segment_frames, self.config.max_frames)
+        
+        # Map the subsampled indices to the corresponding progress values from the full segment
+        # The chosen_indices tell us which frames from the segment we're using
+        progress = [segment_progress[idx] for idx in indices]
+       
+        # Ensure both trajectories have exactly max_frames by padding if needed
+        # Pad by repeating the first frame and first progress value
+        frames, progress = self._pad_trajectory_to_max_frames(
+            frames, progress, self.config.max_frames
+        )
+
+        metadata = {
+            "start_idx": start_idx,
+            "end_idx": end_idx,
+            "subsampled_indices": indices,
+        }
+        return frames, progress, metadata
+
+    def __next__(self):
+        return self._create_sample()

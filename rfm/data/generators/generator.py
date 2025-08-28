@@ -2,18 +2,18 @@ import random
 from rfm.data.generators.pref import PreferenceDataGenerator
 from rfm.data.generators.sim import SimilarityDataGenerator
 from rfm.utils.logging import rank_0_print
+from rfm.data.generators.base import BaseDataGenerator
 
-class DataGenerator:
+class DataGenerator(BaseDataGenerator):
     """Data generator that combines preference and similarity generation."""
 
-    def __init__(self, config, is_evaluation=False):
+    def __init__(self, config, is_evaluation=False, **kwargs):
         """Initialize DataGenerator with configuration."""
-        self.config = config
-        self.is_evaluation = is_evaluation
+        super().__init__(config, is_evaluation, **kwargs)
         
         # Initialize the individual generators
-        self.preference_generator = PreferenceDataGenerator(config, is_evaluation)
-        self.similarity_generator = SimilarityDataGenerator(config, is_evaluation)
+        self.preference_generator = PreferenceDataGenerator(config, is_evaluation, verbose=False)
+        self.similarity_generator = SimilarityDataGenerator(config, is_evaluation, verbose=False)
         
         # Set the ratio for sampling between preference and similarity
         self.preference_ratio = config.preference_ratio

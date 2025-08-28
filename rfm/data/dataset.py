@@ -13,14 +13,9 @@ import random
 import numpy as np
 from typing import List, Dict, Tuple, Optional, Iterator, Union
 from tqdm import tqdm
-from rfm.data.batch_collator import PreferenceSample, SimilaritySample
+from rfm.data.batch_collator import PreferenceSample, SimilaritySample, Trajectory
 from rfm.utils.logging import rank_0_print
 from rfm.utils.video_utils import extract_frames_from_video
-
-def calulate_target_progress(frames: np.ndarray) -> List[float]:
-    num_frames = frames.shape[0]
-    return [i / (num_frames - 1) for i in range(num_frames)]
-
 
 def create_binned_subsequences(frames: np.ndarray, num_bins: int = 10) -> List[Dict]:
     """
@@ -82,11 +77,14 @@ class InfiniteDataGeneratorDataset:
         return self
 
     def __len__(self):
-        return self.max_samples
+        if hasattr(self.data_generator, "__len__"):
+            return self.data_generator.__len__()
+        else:
+            return self.max_samples
 
     def __next__(self):
         """Generate the next sample."""
-        sample = self.data_generator._create_sample()
+        sample = self.data_generator.__next__()
         return sample
 
     def __getitem__(self, idx):
@@ -152,155 +150,39 @@ class RewoundDataset:
         target_progress_chosen = calulate_target_progress(original_frames)
         target_progress_rejected = rewound_traj["metadata"]["rewind_progress"]
 
-        # Create preference sample (original is chosen, rewound is rejected)
-        sample = PreferenceSample(
-            # chosen metadata
-            chosen_frames=original_frames,
-            chosen_frames_shape=original_traj["frames_shape"],
-            chosen_id=original_traj["id"],
-            chosen_task=original_traj["task"],
-            chosen_lang_vector=original_traj["lang_vector"],
-            chosen_data_source=original_traj["data_source"],
-            chosen_quality_label=original_traj["quality_label"],
-            chosen_is_robot=original_traj["is_robot"],
-            # rejected metadata
-            rejected_frames=rewound_frames,
-            rejected_frames_shape=rewound_traj["frames_shape"],
-            rejected_id=rewound_traj["id"],
-            rejected_task=rewound_traj["task"],
-            rejected_lang_vector=rewound_traj["lang_vector"],
-            rejected_data_source=rewound_traj["data_source"],
-            rejected_quality_label=rewound_traj["quality_label"],
-            rejected_is_robot=rewound_traj["is_robot"],
-            num_frames_rewound=rewound_traj.get("num_frames_rewound", rewind_length),
-            data_gen_strategy="rewound",
-            target_progress_chosen=target_progress_chosen,
-            target_progress_rejected=target_progress_rejected,
+        # Create Trajectory objects
+        chosen_trajectory = Trajectory(
+            frames=original_frames,
+            frames_shape=original_traj["frames_shape"],
+            id=original_traj["id"],
+            task=original_traj["task"],
+            lang_vector=original_traj["lang_vector"],
+            data_source=original_traj["data_source"],
+            quality_label=original_traj["quality_label"],
+            is_robot=original_traj["is_robot"],
+            target_progress=target_progress_chosen,
+            metadata={}
         )
 
-        return sample
+        rejected_trajectory = Trajectory(
+            frames=rewound_frames,
+            frames_shape=rewound_traj["frames_shape"],
+            id=rewound_traj["id"],
+            task=rewound_traj["task"],
+            lang_vector=rewound_traj["lang_vector"],
+            data_source=rewound_traj["data_source"],
+            quality_label=rewound_traj["quality_label"],
+            is_robot=rewound_traj["is_robot"],
+            target_progress=target_progress_rejected,
+            metadata=rewound_traj.get("metadata", {})
+        )
 
-    def __iter__(self):
-        self.current_idx = 0
-        return self
-
-    def __next__(self):
-        """Get the next sample by generating it from stored indices."""
-        if self.current_idx >= len(self.sample_indices):
-            raise StopIteration
-
-        # Get the sample indices for this sample
-        sample_idx_info = self.sample_indices[self.current_idx]
-
-        # Generate the actual sample on-demand
-        sample = self._generate_sample_from_indices(sample_idx_info)
-
-        self.current_idx += 1
-        return sample
-
-    def __len__(self):
-        return len(self.sample_indices)
-
-    def __getitem__(self, idx):
-        return self.__next__()
-
-
-class PairedSuccessFailureDataset:
-    """Dataset that generates preference samples by pairing successful and failed trajectories for the same task."""
-
-    def __init__(self, data_generator, **kwargs):
-        self.data_generator = data_generator
-
-        # Generate all possible sample indices upfront (not the actual samples)
-        self.sample_indices = self._generate_all_sample_indices()
-        self.current_idx = 0
-
-        rank_0_print(f"Generated {len(self.sample_indices)} success-failure sample indices")
-
-    def _generate_all_sample_indices(self) -> List[Dict]:
-        """Generate all possible success-failure sample indices (not the actual samples)."""
-        sample_indices = []
-
-        # Group trajectories by task and success status
-        task_success_trajs = {}
-        task_failure_trajs = {}
-
-        print(f"Generating success-failure samples for {len(self.data_generator.robot_trajectories)} trajectories")
-
-        for traj_idx in self.data_generator.robot_trajectories:
-            traj = self.data_generator.dataset[traj_idx]
-            task = traj["task"]
-            quality_label = traj["quality_label"]
-
-            if task not in task_success_trajs:
-                task_success_trajs[task] = []
-                task_failure_trajs[task] = []
-
-            if quality_label == "successful":
-                task_success_trajs[task].append(traj_idx)
-            elif quality_label == "failure":
-                task_failure_trajs[task].append(traj_idx)
-
-        print(f"Generated {len(task_success_trajs)} success tasks and {len(task_failure_trajs)} failure tasks")
-
-        # Generate all possible pairs
-        for task in tqdm(task_success_trajs, desc="Generating success-failure samples"):
-            success_indices = task_success_trajs[task]
-            failure_indices = task_failure_trajs[task]
-
-            if not success_indices or not failure_indices:
-                continue
-
-            # Create all possible pairs (successful is chosen, failed is rejected)
-            for success_idx in success_indices:
-                for failure_idx in failure_indices:
-                    # Store just the indices needed to generate the sample later
-                    sample_indices.append(
-                        {"success_traj_idx": success_idx, "failure_traj_idx": failure_idx, "task": task}
-                    )
-
-        return sample_indices
-
-    def _generate_sample_from_indices(self, sample_idx_info: Dict) -> PreferenceSample:
-        """Generate a single sample from stored indices."""
-        success_idx = sample_idx_info["success_traj_idx"]
-        failure_idx = sample_idx_info["failure_traj_idx"]
-
-        # Get the trajectories
-        success_traj = self.data_generator.dataset[success_idx]
-        failure_traj = self.data_generator.dataset[failure_idx]
-
-        # Get frames
-        success_frames = self.data_generator._get_trajectory_frames(success_idx)
-        failure_frames = self.data_generator._get_trajectory_frames(failure_idx)
-
-        target_progress_chosen = calulate_target_progress(success_frames)
-        target_progress_rejected = None
-
-        # Create preference sample (successful is chosen, failed is rejected)
+        # Create preference sample (original is chosen, rewound is rejected)
         sample = PreferenceSample(
-            # chosen metadata
-            chosen_frames=success_frames,
-            chosen_frames_shape=success_traj["frames_shape"],
-            chosen_id=success_traj["id"],
-            chosen_task=success_traj["task"],
-            chosen_lang_vector=success_traj["lang_vector"],
-            chosen_data_source=success_traj["data_source"],
-            chosen_quality_label=success_traj["quality_label"],
-            chosen_is_robot=success_traj["is_robot"],
-            # rejected metadata
-            rejected_frames=failure_frames,
-            rejected_frames_shape=failure_traj["frames_shape"],
-            rejected_id=failure_traj["id"],
-            rejected_task=failure_traj["task"],
-            rejected_lang_vector=failure_traj["lang_vector"],
-            rejected_data_source=failure_traj["data_source"],
-            rejected_quality_label=failure_traj["quality_label"],
-            rejected_is_robot=failure_traj["is_robot"],
-            data_gen_strategy="success_failure",
-            num_frames_rewound=None,  # Not applicable for success-failure pairs
-            target_progress_chosen=target_progress_chosen,
-            target_progress_rejected=None,  # not applicable for failure trajectories
+            chosen_trajectory=chosen_trajectory,
+            rejected_trajectory=rejected_trajectory,
+            num_frames_rewound=rewound_traj.get("num_frames_rewound", rewind_length),
+            data_gen_strategy="rewound"
         )
 
         return sample
@@ -444,44 +326,61 @@ class VideoBinnedDataset:
         target_progress_chosen = calulate_target_progress(chosen_frames)
         target_progress_rejected = calulate_target_progress(rejected_frames)
 
+        # Create metadata for video binned trajectories
+        chosen_metadata = {
+            "original_traj_id": entry["traj_info"]["traj_id"],
+            "num_bins": self.num_bins,
+            "bin_size": len(chosen_frames),
+            "bin_idx": chosen_bin["bin_idx"],
+            "bin_frames": (chosen_bin["start_frame"], chosen_bin["end_frame"]),
+            "bin_progress": chosen_bin["progress"],
+            "video_path": frames_path,
+            "fps": self.fps,
+        }
+
+        rejected_metadata = {
+            "original_traj_id": entry["traj_info"]["traj_id"],
+            "num_bins": self.num_bins,
+            "bin_size": len(rejected_frames),
+            "bin_idx": rejected_bin["bin_idx"],
+            "bin_frames": (rejected_bin["start_frame"], rejected_bin["end_frame"]),
+            "bin_progress": rejected_bin["progress"],
+            "video_path": frames_path,
+            "fps": self.fps,
+        }
+
+        # Create Trajectory objects
+        chosen_trajectory = Trajectory(
+            frames=chosen_frames,
+            frames_shape=chosen_frames.shape,
+            id=f"{entry['traj_info']['traj_id']}_bin{chosen_bin['bin_idx']}",
+            task=entry["traj_info"]["task"],
+            lang_vector=entry["traj_info"]["lang_vector"],
+            data_source=entry["traj_info"]["data_source"],
+            quality_label=entry["traj_info"]["quality_label"],
+            is_robot=entry["traj_info"]["is_robot"],
+            target_progress=target_progress_chosen,
+            metadata=chosen_metadata
+        )
+
+        rejected_trajectory = Trajectory(
+            frames=rejected_frames,
+            frames_shape=rejected_frames.shape,
+            id=f"{entry['traj_info']['traj_id']}_bin{rejected_bin['bin_idx']}",
+            task=entry["traj_info"]["task"],
+            lang_vector=entry["traj_info"]["lang_vector"],
+            data_source=entry["traj_info"]["data_source"],
+            quality_label=entry["traj_info"]["quality_label"],
+            is_robot=entry["traj_info"]["is_robot"],
+            target_progress=target_progress_rejected,
+            metadata=rejected_metadata
+        )
+
         # Create preference sample (further along is chosen)
         sample = PreferenceSample(
-            # chosen metadata (further along)
-            chosen_frames=chosen_frames,
-            chosen_frames_shape=chosen_frames.shape,
-            chosen_id=f"{entry['traj_info']['traj_id']}_bin{chosen_bin['bin_idx']}",
-            chosen_task=entry["traj_info"]["task"],
-            chosen_lang_vector=entry["traj_info"]["lang_vector"],
-            chosen_data_source=entry["traj_info"]["data_source"],
-            chosen_quality_label=entry["traj_info"]["quality_label"],
-            chosen_is_robot=entry["traj_info"]["is_robot"],
-            # rejected metadata (earlier in task)
-            rejected_frames=rejected_frames,
-            rejected_frames_shape=rejected_frames.shape,
-            rejected_id=f"{entry['traj_info']['traj_id']}_bin{rejected_bin['bin_idx']}",
-            rejected_task=entry["traj_info"]["task"],
-            rejected_lang_vector=entry["traj_info"]["lang_vector"],
-            rejected_data_source=entry["traj_info"]["data_source"],
-            rejected_quality_label=entry["traj_info"]["quality_label"],
-            rejected_is_robot=entry["traj_info"]["is_robot"],
-            data_gen_strategy="video_binned",
-            num_frames_rewound=None,  # Not applicable for video binning
-            target_progress_chosen=target_progress_chosen,
-            target_progress_rejected=target_progress_rejected,
-            # Consolidated metadata
-            metadata={
-                "original_traj_id": entry["traj_info"]["traj_id"],
-                "num_bins": self.num_bins,
-                "bin_size": len(chosen_frames),  # Use actual bin size
-                "chosen_bin_idx": chosen_bin["bin_idx"],
-                "rejected_bin_idx": rejected_bin["bin_idx"],
-                "chosen_bin_frames": (chosen_bin["start_frame"], chosen_bin["end_frame"]),
-                "rejected_bin_frames": (rejected_bin["start_frame"], rejected_bin["end_frame"]),
-                "chosen_bin_progress": chosen_bin["progress"],
-                "rejected_bin_progress": rejected_bin["progress"],
-                "video_path": frames_path,
-                "fps": self.fps,
-            }
+            chosen_trajectory=chosen_trajectory,
+            rejected_trajectory=rejected_trajectory,
+            data_gen_strategy="video_binned"
         )
 
         return sample

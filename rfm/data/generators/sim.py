@@ -14,10 +14,10 @@ from rfm.utils.logging import rank_0_print
 class SimilarityDataGenerator(BaseDataGenerator):
     """Data generator for producing batches of similarity scoring data."""
 
-    def __init__(self, config, is_evaluation=False):
+    def __init__(self, config, is_evaluation=False, verbose=True):
         """Initialize SimilarityDataGenerator with configuration."""
         # Call parent constructor to load datasets
-        super().__init__(config, is_evaluation)
+        super().__init__(config, is_evaluation, verbose=verbose)
         
         rank_0_print(f"SimilarityDataGenerator initialized with {len(self.dataset)} total trajectories")
 

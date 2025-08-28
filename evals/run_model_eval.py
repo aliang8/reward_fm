@@ -20,7 +20,7 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List
 import json
 import os
 from datetime import datetime
@@ -28,17 +28,10 @@ from pathlib import Path
 
 from rfm.configs.eval_configs import EvaluationConfig
 from rfm.utils.setup_utils import setup_eval_dataset
-from evals.eval_utils import build_batch_payload, post_batch
+from evals.eval_utils import BatchPayload, post_batch
+from rfm.data.batch_collator import PreferenceSample, SimilaritySample
 
-
-def _evaluate_samples(server_url: str, samples: List[Any]) -> Dict[str, Any]:
-    """Send samples to evaluation server and return raw response."""
-    payload = build_batch_payload(samples)
-    resp = post_batch(server_url, payload)
-    return resp
-
-
-def _save_result_as_json(samples: List[Any], response: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _save_result_as_json(samples: List[PreferenceSample, SimilaritySample], response: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Save detailed results for each sample in the batch."""
 
     # Extract data from response
@@ -51,41 +44,35 @@ def _save_result_as_json(samples: List[Any], response: Dict[str, Any]) -> List[D
     batch_results = []
 
     for i, sample in enumerate(samples):
+        entry = {}
+
+        chosen_meta = {
+            "id": sample.chosen_trajectory.id,
+            "data_source": sample.chosen_trajectory.data_source,
+            "data_gen_strategy": sample.chosen_trajectory.data_gen_strategy,
+            "target_progress": sample.chosen_trajectory.target_progress,
+            "metadata": sample.chosen_trajectory.metadata,
+        }
+        rejected_meta = {
+            "id": sample.rejected_trajectory.id,
+            "data_source": sample.rejected_trajectory.data_source,
+            "data_gen_strategy": sample.rejected_trajectory.data_gen_strategy,
+            "target_progress": sample.rejected_trajectory.target_progress,
+            "metadata": sample.rejected_trajectory.metadata,
+        }
+
+        entry["chosen_meta"] = chosen_meta
+        entry["rejected_meta"] = rejected_meta
+        
         result_entry = {
-            "chosen_id": sample.chosen_id,
-            "rejected_id": sample.rejected_id,
-            "chosen_task": sample.chosen_task,
-            "rejected_task": sample.rejected_task,
-            "data_gen_strategy": sample.data_gen_strategy,
-            "num_frames_rewound": sample.num_frames_rewound,
             "preference_label": int(preference_labels[i]),
             "predicted_preference": int(predictions[i]),
             "predicted_preference_prob": prediction_probs[i],
             "progress_pred_chosen": progress_pred_chosen[i],
             "progress_pred_rejected": progress_pred_rejected[i],
-            "target_progress_chosen": sample.target_progress_chosen,
-            "target_progress_rejected": sample.target_progress_rejected,
-            "chosen_quality_label": sample.chosen_quality_label,
-            "rejected_quality_label": sample.rejected_quality_label,
+            "chosen_meta": chosen_meta,
+            "rejected_meta": rejected_meta,
         }
-
-        # save additional infos for logging metrics
-        if sample.metadata and sample.metadata.get("chosen_bin_idx") is not None:
-            result_entry["bin_idx_chosen"] = sample.metadata["chosen_bin_idx"]
-        if sample.metadata and sample.metadata.get("rejected_bin_idx") is not None:
-            result_entry["bin_idx_rejected"] = sample.metadata["rejected_bin_idx"]
-
-        if sample.data_gen_strategy == "video_binned":
-            metadata = sample.metadata or {}
-            result_entry["video_path"] = metadata.get("video_path")
-            result_entry["chosen_start_end"] = metadata.get("chosen_bin_frames")
-            result_entry["rejected_start_end"] = metadata.get("rejected_bin_frames")
-            result_entry["fps"] = metadata.get("fps")
-
-        # Add consolidated metadata for comprehensive analysis
-        if sample.metadata:
-            result_entry["metadata"] = sample.metadata
-
         batch_results.append(result_entry)
 
     return batch_results
@@ -132,7 +119,9 @@ def iter_eval_batches(
             break  # No more samples
 
         # Evaluate this batch
-        batch_result = _evaluate_samples(server_url, batch_samples)
+        # model dump to convert to dict, serializable for json
+        payload = BatchPayload(samples=batch_samples).model_dump()
+        batch_result = post_batch(server_url, payload)
 
         # Process detailed results for this batch
         batch_results = _save_result_as_json(batch_samples, batch_result)

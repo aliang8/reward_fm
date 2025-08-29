@@ -19,6 +19,10 @@ class EvaluationConfig:
         metadata={"help": "Path to the trained model checkpoint (will load training_config.yaml from here)"},
     )
 
+    # GPU Pool settings
+    num_gpus: int = field(default=1, metadata={"help": "Number of GPUs to use (None for all available)"})
+    max_workers: int = field(default=None, metadata={"help": "Max worker threads (None for auto, typically same as num_gpus)"})
+
     # Evaluation parameters
     eval_subset_size: int = field(default=1000, metadata={"help": "Number of samples to evaluate"})
     batch_size: int = field(default=4, metadata={"help": "Batch size for evaluation"})

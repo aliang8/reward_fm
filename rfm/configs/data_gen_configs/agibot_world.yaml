@@ -5,10 +5,11 @@ dataset:
 
 output:
   output_dir: datasets/agibotworld_dataset
-  max_trajectories: 100  # Limit for testing, increase for full dataset
+  max_trajectories: null
   max_frames: 64
   use_video: true
   fps: 30
+  num_workers: 16
 
 hub:
   push_to_hub: true  # Set to true when ready to upload

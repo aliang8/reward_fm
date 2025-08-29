@@ -8,26 +8,22 @@ import os
 import json
 import h5py
 import numpy as np
-import cv2
-import tempfile
-from typing import List, Dict, Tuple, Optional, Callable, Any, Iterable
+from typing import List, Dict, Tuple, Optional, Any
 from pathlib import Path
-from datasets import load_dataset, Dataset
-import datasets as hfds
+from datasets import load_dataset, Dataset, concatenate_datasets
 import datasets as hfds
 from tqdm import tqdm
 from helpers import (
-    downsample_frames,
     create_trajectory_video_optimized,
     load_sentence_transformer_model,
     create_hf_trajectory,
 )
-import subprocess
-import shutil
 from multiprocessing import Pool, cpu_count
 from functools import partial
 from rfm.data.helpers import generate_unique_id
 from rfm.data.video_helpers import load_video_frames
+import math
+import time
 
 # Episode/task helpers built earlier
 try:
@@ -257,6 +253,40 @@ def _process_single_stream_sample(
     return result_entries
 
 
+def _convert_agibotworld_shard_worker(args) -> Dataset:
+    """Worker wrapper to process a single dataset shard.
+
+    Args tuple: (
+        dataset_name, output_dir, dataset_label, max_trajectories,
+        max_frames, fps, num_workers, dataset_num_shards, shard_index
+    )
+    """
+    (
+        dataset_name,
+        output_dir,
+        dataset_label,
+        max_trajectories,
+        max_frames,
+        fps,
+        num_workers,
+        dataset_num_shards,
+        shard_index,
+    ) = args
+
+    return convert_agibotworld_streaming_to_hf(
+        dataset_name=dataset_name,
+        output_dir=output_dir,
+        dataset_label=dataset_label,
+        max_trajectories=max_trajectories,
+        max_frames=max_frames,
+        fps=fps,
+        num_workers=num_workers,
+        dataset_num_shards=dataset_num_shards,
+        shard_index=shard_index,
+        parallelize_shards=False,
+    )
+
+
 def convert_agibotworld_streaming_to_hf(
     dataset_name: str,
     output_dir: str,
@@ -265,15 +295,94 @@ def convert_agibotworld_streaming_to_hf(
     max_frames: int = 64,
     fps: int = 10,
     num_workers: int = -1,
+    dataset_num_shards: int = 2500,
+    shard_index: Optional[int] = None,
+    parallelize_shards: bool = True,
 ) -> Dataset:
     """Stream AgiBotWorld, extract camera videos, and write HF entries.
 
     Returns a datasets.Dataset built from the collected entries. All videos are
     saved to disk under output_dir.
+
+    Sharding:
+      - Provide dataset_num_shards > 1 to split HF stream into N shards.
+      - If shard_index is provided (0-based), only that shard is processed.
+      - If shard_index is None and parallelize_shards is True, shards are
+        processed in parallel and then concatenated.
     """
 
-    # Load streaming dataset
+    # Top-level shard parallelization orchestration
+    print(f"dataset_num_shards: {dataset_num_shards}, shard_index: {shard_index}, parallelize_shards: {parallelize_shards}")
+    if dataset_num_shards > 1 and shard_index is None and parallelize_shards:
+        per_shard_max = None
+        if max_trajectories is not None:
+            per_shard_max = max(1, math.ceil(max_trajectories / dataset_num_shards))
+
+        shard_indices = list(range(dataset_num_shards))
+        print(
+            f"Launching {dataset_num_shards} shard workers; per_shard_max={per_shard_max}"
+        )
+        max_procs = max(1, min(cpu_count(), 8))
+        shard_pool_procs = min(dataset_num_shards, max_procs)
+        per_shard_workers = max(1, max_procs // dataset_num_shards)
+        with Pool(processes=shard_pool_procs) as pool:
+            args_list = [
+                (
+                    dataset_name,
+                    output_dir,
+                    dataset_label,
+                    per_shard_max,
+                    max_frames,
+                    fps,
+                    per_shard_workers,
+                    dataset_num_shards,
+                    si,
+                )
+                for si in shard_indices
+            ]
+            shard_datasets = list(
+                tqdm(
+                    pool.imap_unordered(_convert_agibotworld_shard_worker, args_list),
+                    total=len(args_list),
+                    desc=f"Shards (N={dataset_num_shards})",
+                    leave=False,
+                )
+            )
+
+        # Filter empties and combine
+        non_empty = [d for d in shard_datasets if d is not None and len(d) > 0]
+        if not non_empty:
+            return Dataset.from_dict(
+                {
+                    "id": [],
+                    "task": [],
+                    "lang_vector": [],
+                    "data_source": [],
+                    "frames": [],
+                    "is_robot": [],
+                    "quality_label": [],
+                    "preference_group_id": [],
+                    "preference_rank": [],
+                }
+            )
+        combined = concatenate_datasets(non_empty)
+        if max_trajectories is not None and len(combined) > max_trajectories:
+            combined = combined.select(range(max_trajectories))
+        return combined
+
+    # Load streaming dataset (single shard or pre-selected shard)
     ds = load_dataset(dataset_name, streaming=True, split="train")
+    if dataset_num_shards > 1:
+        # If shard_index is not provided and we didn't parallelize above, default to first shard
+        effective_shard_index = shard_index if shard_index is not None else 0
+        print(
+            f"Processing dataset shard {effective_shard_index + 1}/{dataset_num_shards}"
+        )
+        try:
+            ds = ds.shard(dataset_num_shards, effective_shard_index)
+        except Exception as e:
+            print(f"Warning: failed to apply dataset.shard(...): {e}")
+
     # Some shards expose PNG frames instead of MP4. Widen features so casting
     # does not fail during iteration; we'll simply skip non-MP4 samples.
     widened = hfds.Features(
@@ -358,8 +467,36 @@ def convert_agibotworld_streaming_to_hf(
     print(f"Streaming {dataset_name}; workers={num_workers}, batch_size={batch_size}")
     stream_pbar = tqdm(desc="Streaming samples", unit="sample", dynamic_ncols=True)
 
-    for sample in ds:
+    ds_iter = iter(ds)
+    max_next_retries = 5
+    base_sleep_s = 1.0
+    while True:
         if max_trajectories is not None and processed >= max_trajectories:
+            break
+
+        # Pull next sample with transient-error retries
+        attempt = 0
+        sample = None
+        while True:
+            try:
+                sample = next(ds_iter)
+                break
+            except StopIteration:
+                sample = None
+                break
+            except Exception as e:
+                if attempt >= max_next_retries:
+                    print(f"Giving up after {max_next_retries} next() retries due to: {e}")
+                    sample = None
+                    break
+                sleep_s = base_sleep_s * (2 ** attempt)
+                print(f"next() error: {e}; retrying in {sleep_s:.1f}s (attempt {attempt+1}/{max_next_retries})")
+                time.sleep(sleep_s)
+                attempt += 1
+
+        if sample is None:
+            # Either exhausted or persistent failure; flush and stop
+            flush_batch()
             break
 
         key = sample.get("__key__", "")

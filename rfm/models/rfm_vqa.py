@@ -99,3 +99,6 @@ class RFMModelVQA(PreTrainedModel):
         # The base VLM's language modeling head will handle VQA generation
         return outputs
     
+    def generate(self, *args, **kwargs):
+        """Generate VQA answers using the base VLM's language modeling head."""
+        return self.model.generate(*args, **kwargs)

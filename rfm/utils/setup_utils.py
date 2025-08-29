@@ -12,6 +12,7 @@ from typing import Tuple, Optional, Union
 from rfm.models.rfm import RFMModel
 from rfm.models.rfm_vqa import RFMModelVQA
 from rfm.data.generators.generator import DataGenerator
+from rfm.data.generators.vqa_generator import VQADataGenerator
 from rfm.data.batch_collator import BatchCollator
 from rfm.data.dataset import (
     InfiniteDataGeneratorDataset,
@@ -358,13 +359,14 @@ def setup_vqa_model_and_processor(cfg: ModelConfig):
         processor.tokenizer.pad_token = processor.tokenizer.eos_token
 
     # Load base conditional generation model for VQA
-    base_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(cfg.model.base_model_id)
+    base_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(cfg.base_model_id)
 
     # Resize token embeddings if new tokens were added
     if len(processor.tokenizer) != base_model.config.vocab_size:
         if rank == 0:
             rank_0_print(f"Resizing token embeddings from {base_model.config.vocab_size} to {len(processor.tokenizer)}")
         base_model.resize_token_embeddings(len(processor.tokenizer))
+        base_model.config.vocab_size = len(processor.tokenizer)
         if rank == 0:
             rank_0_print(f"Resized token embeddings to {len(processor.tokenizer)}")
 

@@ -47,8 +47,8 @@ data:
   resized_width: 128   # Width to resize images/videos to
   
   # Data generation settings
-  progress_ratio: 1.0
-  preference_ratio: 0.0  # Ratio of preference prediction samples
+  progress_ratio: 0.0
+  preference_ratio: 1.0  # Ratio of preference prediction samples
   dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
   # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, video_binned]
   preference_strategy_ratio: [0.7, 0.1, 0.1, 0.1]

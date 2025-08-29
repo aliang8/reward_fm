@@ -13,16 +13,12 @@ from qwen_vl_utils import process_vision_info
 import numpy as np
 import random
 
-from rfm.data.batch_collator import PreferenceSample, SimilaritySample
+from rfm.data.batch_collator import PreferenceSample, SimilaritySample, Trajectory
 
 @dataclass
 class ProgressSample:
     """Sample structure for progress evaluation."""
-    frames: Optional[Union[List[str], np.ndarray]] = None
-    frames_shape: Optional[tuple] = None
-    task: Optional[str] = None
-    target_progress: Optional[List[float]] = None
-    quality_label: Optional[str] = None
+    trajectory: Trajectory
     sample_type: str = "progress"
 
 
@@ -291,8 +287,8 @@ class VQABatchCollator:
 
         # Process similarities
         similarity_inputs = {}
-        # if similarity_samples:
-        #     similarity_inputs = self._process_similarity_batch(similarity_samples)
+        if similarity_samples:
+            similarity_inputs = self._process_similarity_batch(similarity_samples)
 
         # Process progress
         progress_inputs = {}
@@ -319,8 +315,8 @@ class VQABatchCollator:
 
         for i, sample in enumerate(preference_samples):
             # Convert frames to appropriate format using stored shapes
-            chosen_frames = self._convert_frames_to_pil_images(sample.chosen_frames, sample.chosen_frames_shape)
-            rejected_frames = self._convert_frames_to_pil_images(sample.rejected_frames, sample.rejected_frames_shape)
+            chosen_frames = self._convert_frames_to_pil_images(sample.chosen_trajectory.frames, sample.chosen_trajectory.frames_shape)
+            rejected_frames = self._convert_frames_to_pil_images(sample.rejected_trajectory.frames, sample.rejected_trajectory.frames_shape)
 
             if preference_labels[i] == 1.0:
                 # Chosen trajectory first: Trajectory A (chosen) + Trajectory B (rejected)
@@ -328,7 +324,7 @@ class VQABatchCollator:
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": f"Given these two trajectories for the task '{sample.chosen_task}', which one do you prefer? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags. For example, if you prefer trajectory A, your answer should be <ans>A</ans>."},
+                            {"type": "text", "text": f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', which one do you prefer? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags. For example, if you prefer trajectory A, your answer should be <ans>A</ans>."},
                             {
                                 "type": "video",
                                 "video": chosen_frames,
@@ -352,7 +348,7 @@ class VQABatchCollator:
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": f"Given these two trajectories for the task '{sample.chosen_task}', which one do you prefer? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags. For example, if you prefer trajectory A, your answer should be <ans>A</ans>."},
+                            {"type": "text", "text": f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', which one do you prefer? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags. For example, if you prefer trajectory A, your answer should be <ans>A</ans>."},
                             {
                                 "type": "video",
                                 "video": rejected_frames,
@@ -385,17 +381,17 @@ class VQABatchCollator:
         batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
 
         # Add target progress for both trajectories based on conversation order
-        target_progress_chosen = [sample.target_progress_chosen for sample in preference_samples]
-        target_progress_rejected = [sample.target_progress_rejected for sample in preference_samples]
+        target_progress_chosen = [sample.chosen_trajectory.target_progress for sample in preference_samples]
+        target_progress_rejected = [sample.rejected_trajectory.target_progress for sample in preference_samples]
         target_progress_chosen_mask = [
             1.0
-            if sample.chosen_quality_label == "successful" or sample.data_gen_strategy == "rewind_same_task"
+            if sample.chosen_trajectory.quality_label == "successful" or sample.chosen_trajectory.data_gen_strategy == "rewind_same_task"
             else 0.0
             for sample in preference_samples
         ]
         target_progress_rejected_mask = [
             1.0
-            if sample.rejected_quality_label == "successful" or sample.data_gen_strategy == "rewind_same_task"
+            if sample.rejected_trajectory.quality_label == "successful" or sample.rejected_trajectory.data_gen_strategy == "rewind_same_task"
             else 0.0
             for sample in preference_samples
         ]
@@ -408,53 +404,26 @@ class VQABatchCollator:
 
         # Also add the frame_shapes
         batch_inputs["chosen_frames_shape"] = torch.tensor(
-            [sample.chosen_frames_shape for sample in preference_samples], dtype=torch.int32
+            [sample.chosen_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
         )
         batch_inputs["rejected_frames_shape"] = torch.tensor(
-            [sample.rejected_frames_shape for sample in preference_samples], dtype=torch.int32
+            [sample.rejected_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
         )
-
-        # Add some rewind metrics for logging
-        rewind_lengths = [
-            sample.num_frames_rewound if sample.num_frames_rewound is not None else 0 for sample in preference_samples
-        ]
-        batch_inputs["rewind_lengths"] = torch.tensor(rewind_lengths, dtype=torch.int32)
-        
-        # Add video-binned metadata if available
-        video_binned_metadata = []
-        for sample in preference_samples:
-            if hasattr(sample, 'data_gen_strategy') and sample.data_gen_strategy == "video_binned":
-                metadata = sample.metadata or {}
-                video_binned_metadata.append({
-                    "chosen_bin_idx": metadata.get("chosen_bin_idx"),
-                    "rejected_bin_idx": metadata.get("rejected_bin_idx"),
-                    "original_traj_id": metadata.get("original_traj_id"),
-                    "num_bins": metadata.get("num_bins"),
-                    "bin_size": metadata.get("bin_size"),
-                    "chosen_bin_frames": metadata.get("chosen_bin_frames"),
-                    "rejected_bin_frames": metadata.get("rejected_bin_frames"),
-                    "chosen_bin_progress": metadata.get("chosen_bin_progress"),
-                    "rejected_bin_progress": metadata.get("rejected_bin_progress"),
-                })
-            else:
-                video_binned_metadata.append(None)
-        
-        batch_inputs["video_binned_metadata"] = video_binned_metadata
         return batch_inputs
 
     def _process_similarity_batch(self, similarity_samples: List[SimilaritySample]) -> Dict[str, torch.Tensor]:  # Redundant for now
         """Process a batch of similarity samples with VQA-style question."""
-        # Collect all messages for batch processing
+        # Collect all messages for batch processing (ref and traj_sim for each sample)
         all_messages = []
 
         for sample in similarity_samples:
             # Convert frames to appropriate format using stored shapes
             reference_frames = self._convert_frames_to_pil_images(
-                sample.reference_frames, sample.reference_frames_shape
+                sample.reference_trajectory.frames, sample.reference_trajectory.frames_shape
             )
-            traj_sim_frames = self._convert_frames_to_pil_images(sample.traj_sim_frames, sample.traj_sim_frames_shape)
+            traj_sim_frames = self._convert_frames_to_pil_images(sample.traj_sim_trajectory.frames, sample.traj_sim_trajectory.frames_shape)
             traj_diff_frames = self._convert_frames_to_pil_images(
-                sample.traj_diff_frames, sample.traj_diff_frames_shape
+                sample.traj_diff_trajectory.frames, sample.traj_diff_trajectory.frames_shape
             )
 
             # Create conversation for similarity comparison
@@ -462,7 +431,7 @@ class VQABatchCollator:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": f"Given the following reference trajectory for the task '{sample.task_ref}', which one of the two trajectories are more similar to it? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags. For example, if you think trajectory A is more similar to the reference trajectory, your answer should be <ans>A</ans>."},
+                        {"type": "text", "text": f"Given the following reference trajectory for the task '{sample.reference_trajectory.task}', which one of the two trajectories are more similar to it? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags. For example, if you think trajectory A is more similar to the reference trajectory, your answer should be <ans>A</ans>."},
                         {
                             "type": "video",
                             "video": reference_frames,
@@ -524,12 +493,14 @@ class VQABatchCollator:
         target_progress_diff_list = []
 
         for sample in similarity_samples:
-            if sample.target_progress_ref is not None:
-                target_progress_ref_list.append(sample.target_progress_ref)
-            if sample.target_progress_sim is not None:
-                target_progress_sim_list.append(sample.target_progress_sim)
-            if sample.target_progress_diff is not None:
-                target_progress_diff_list.append(sample.target_progress_diff)
+            if sample.traj_sim_trajectory.target_progress is not None:
+                target_progress_sim_list.append(sample.traj_sim_trajectory.target_progress)
+
+            if sample.traj_diff_trajectory.target_progress is not None:
+                target_progress_diff_list.append(sample.traj_diff_trajectory.target_progress)
+
+            if sample.reference_trajectory.target_progress is not None:
+                target_progress_ref_list.append(sample.reference_trajectory.target_progress)
 
         # Pad target progress tensors to max length in last dimension
         batch_inputs["target_progress_ref"] = self._pad_target_progress(target_progress_ref_list)
@@ -538,13 +509,13 @@ class VQABatchCollator:
 
         # Also add the frame_shapes
         batch_inputs["ref_frames_shape"] = torch.tensor(
-            [sample.reference_frames_shape for sample in similarity_samples], dtype=torch.int32
+            [sample.reference_trajectory.frames_shape for sample in similarity_samples], dtype=torch.int32
         )
         batch_inputs["traj_sim_frames_shape"] = torch.tensor(
-            [sample.traj_sim_frames_shape for sample in similarity_samples], dtype=torch.int32
+            [sample.traj_sim_trajectory.frames_shape for sample in similarity_samples], dtype=torch.int32
         )
         batch_inputs["traj_diff_frames_shape"] = torch.tensor(
-            [sample.traj_diff_frames_shape for sample in similarity_samples], dtype=torch.int32
+            [sample.traj_diff_trajectory.frames_shape for sample in similarity_samples], dtype=torch.int32
         )
         return batch_inputs
 
@@ -555,14 +526,14 @@ class VQABatchCollator:
 
         for sample in progress_samples:
             # Convert frames to appropriate format using stored shapes
-            frames = self._convert_frames_to_pil_images(sample.frames, sample.frames_shape)
+            frames = self._convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
 
             # Create conversation for progress evaluation
             conversation = [
                 {
                     "role": "user", 
                     "content": [
-                        {"type": "text", "text": f"For the task '{sample.task}', estimate the progress at each frame in the trajectory. Give a list of numbers between 0 and 1 where 0 means no progress and 1 means successful completion of the task. Format your answer enclosed by <ans> and </ans> tags. For example, if you think the progress at each frame is [0.0, 0.1, 0.2, 0.3, 0.4, 0.5], your answer should be <ans>[0.0, 0.1, 0.2, 0.3, 0.4, 0.5]</ans>."},
+                        {"type": "text", "text": f"For the task '{sample.trajectory.task}', estimate the progress at each frame in the trajectory. Give a list of numbers between 0 and 1 where 0 means no progress and 1 means successful completion of the task. Format your answer enclosed by <ans> and </ans> tags. For example, if you think the progress at each frame is [0.0, 0.1, 0.2, 0.3, 0.4, 0.5], your answer should be <ans>[0.0, 0.1, 0.2, 0.3, 0.4, 0.5]</ans>."},
                         {
                             "type": "video",
                             "video": frames,
@@ -580,9 +551,9 @@ class VQABatchCollator:
         quality_labels = []
 
         for sample in progress_samples:
-            if sample.target_progress is not None:
-                target_progress_list.append(sample.target_progress)
-            quality_labels.append(1.0 if sample.quality_label == 'successful' else 0.0)
+            if sample.trajectory.target_progress is not None:
+                target_progress_list.append(sample.trajectory.target_progress)
+            quality_labels.append(1.0 if sample.trajectory.quality_label == 'successful' else 0.0)
 
         # Convert progress labels to text answers
         progress_labels_text = []

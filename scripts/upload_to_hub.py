@@ -204,7 +204,7 @@ def upload_model_to_hub(
     logger.info(f"Uploading config.yaml to: {hub_model_id}")
     logger.info(f"Model directory: {model_path.parent}")
     api.upload_file(
-        file_path=str(model_path.parent / "config.yaml"), repo_id=hub_model_id, commit_message=commit_message, repo_type="model"
+        path_or_fileobj=str(model_path.parent / "config.yaml"), path_in_repo="config.yaml", repo_id=hub_model_id, commit_message=commit_message, repo_type="model"
     )
 
     return f"https://huggingface.co/{hub_model_id}"

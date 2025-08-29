@@ -11,6 +11,9 @@ git checkout anthony
 
 export RFM_DATASET_PATH=./rfm_dataset
 
+# install ffmpeg if not already have
+sudo apt-get install ffmpeg
+
 # preprocess dataset 
 uv run python3 scripts/preprocess_datasets.py
 

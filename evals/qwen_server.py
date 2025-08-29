@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FastAPI server to evaluate RFM model batches.
+FastAPI server to evaluate RFM model batches with async multi-GPU support.
 
 Endpoint:
   POST /evaluate_batch
@@ -17,28 +17,186 @@ e.g.: uv run /home/jessez/reward_fm/evals/server.py --config_path=/home/jessez/r
 """
 
 from __future__ import annotations
-from calendar import c
 import yaml
 import base64
 import io
 from typing import Any, Dict, List, Optional, Union
-
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import queue
+import threading
+import time
 
 import numpy as np
 import torch
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_serializer
 from huggingface_hub import hf_hub_download
+import json
 
 from rfm.utils.setup_utils import setup_model_and_processor
 from rfm.configs.eval_configs import EvaluationConfig
 from rfm.configs.experiment_configs import DataConfig, ModelConfig
 from rfm.data.batch_collator import BatchCollator, PreferenceSample
-from evals.eval_utils import BatchPayload
+
+
+class AsyncGPUPool:
+    """Async GPU pool for handling multiple requests efficiently across multiple GPUs."""
+    
+    def __init__(self, model_config: ModelConfig, model_path: str, num_gpus: int = None, 
+                 max_workers: int = None):
+        self.model_config = model_config
+        self.model_path = model_path
+        self.num_gpus = num_gpus or torch.cuda.device_count()
+        self.max_workers = max_workers or self.num_gpus
+        
+        if self.num_gpus == 0:
+            raise RuntimeError("No CUDA devices available")
+        
+        print(f"Initializing async GPU pool with {self.num_gpus} GPUs and {self.max_workers} workers")
+        
+        # Initialize GPU pool
+        self.gpu_pool = queue.Queue(maxsize=self.num_gpus)
+        self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
+        self.gpu_stats = {}
+        
+        # Initialize GPUs
+        self._initialize_gpus()
+        
+        print(f"GPU pool initialized successfully")
+    
+    def _initialize_gpus(self):
+        """Initialize models on all GPUs."""
+        for gpu_id in range(self.num_gpus):
+            device = f"cuda:{gpu_id}"
+            print(f"Loading model on GPU {gpu_id} ({device})")
+            
+            # Load model on specific GPU
+            processor, model = setup_model_and_processor(self.model_config, self.model_path)
+            model = model.to(device)
+            model.eval()
+            
+            # Initialize GPU stats
+            self.gpu_stats[gpu_id] = {
+                "total_requests": 0,
+                "total_processing_time": 0.0,
+                "last_used": time.time(),
+                "status": "ready"
+            }
+            
+            # Add to pool
+            self.gpu_pool.put({
+                "model": model,
+                "processor": processor,
+                "device": device,
+                "gpu_id": gpu_id,
+                "created_at": time.time()
+            })
+            
+            print(f"Successfully loaded model on GPU {gpu_id}")
+    
+    async def process_batch(self, batch_data: Union[Dict[str, Any], List[Dict[str, Any]]]):
+        """Process a batch using an available GPU asynchronously."""
+        loop = asyncio.get_event_loop()
+        
+        # Get GPU from pool (this will block until one is available)
+        gpu_info = await loop.run_in_executor(self.executor, self.gpu_pool.get)
+        
+        start_time = time.time()
+        
+        # Update GPU stats
+        self.gpu_stats[gpu_info["gpu_id"]]["status"] = "processing"
+        self.gpu_stats[gpu_info["gpu_id"]]["last_used"] = start_time
+        
+        try:
+            # Process batch in thread pool
+            result = await loop.run_in_executor(
+                self.executor, 
+                self._process_batch_sync, 
+                gpu_info, 
+                batch_data
+            )
+            
+            # Update stats
+            processing_time = time.time() - start_time
+            self.gpu_stats[gpu_info["gpu_id"]]["total_requests"] += 1
+            self.gpu_stats[gpu_info["gpu_id"]]["total_processing_time"] += processing_time
+            
+            return result
+            
+        finally:
+            # Always return GPU to pool and update stats
+            processing_time = time.time() - start_time
+            self.gpu_stats[gpu_info["gpu_id"]]["total_requests"] += 1
+            self.gpu_stats[gpu_info["gpu_id"]]["total_processing_time"] += processing_time
+            self.gpu_stats[gpu_info["gpu_id"]]["status"] = "ready"
+            self.gpu_pool.put(gpu_info)
+    
+    def _process_batch_sync(self, gpu_info: Dict, batch_data: Union[Dict[str, Any], List[Dict[str, Any]]]):
+        """Synchronous batch processing on specific GPU."""
+        
+        # Handle both dict and list inputs
+        if isinstance(batch_data, dict):
+            # Legacy format - extract samples from dict
+            samples = batch_data.get("samples", [])
+        else:
+            # New format - batch_data is already a list of samples
+            samples = batch_data
+        
+        if not samples:
+            raise ValueError("No samples found in batch data")
+        
+        print(f"Processing {len(samples)} samples on GPU {gpu_info['gpu_id']}")
+        
+        # Create batch collator with processor from this GPU
+        if "qwen" in self.model_config.base_model_id.lower():
+            batch_collator = BatchCollator(
+                processor=gpu_info["processor"],
+                resized_height=128,  # You might want to make this configurable
+                resized_width=128
+            )
+
+            # Convert to PreferenceSample
+            pref_samples = [PreferenceSample(**s) for s in samples]
+            batch_inputs = batch_collator(pref_samples)["preference_inputs"]
+        
+            # Move inputs to the correct GPU
+            device = gpu_info["device"]
+            for key, value in batch_inputs.items():
+                if isinstance(value, torch.Tensor):
+                    batch_inputs[key] = value.to(device)            
+        else:
+            raise ValueError(f"Model type {self.model_config.base_model_id} not supported")
+        
+        # Run inference
+        outputs = compute_batch_outputs(
+            gpu_info["model"], 
+            gpu_info["processor"].tokenizer, 
+            batch_inputs
+        )
+        
+        return outputs
+                
+    def get_pool_status(self):
+        """Get status of the GPU pool."""
+        return {
+            "total_gpus": self.num_gpus,
+            "available_gpus": self.gpu_pool.qsize(),
+            "max_workers": self.max_workers,
+            "gpu_stats": self.gpu_stats,
+            "pool_size": self.gpu_pool.maxsize
+        }
+    
+    def shutdown(self):
+        """Shutdown the GPU pool and executor."""
+        print("Shutting down GPU pool...")
+        self.executor.shutdown(wait=True)
+        print("GPU pool shutdown complete")
 
 
 def compute_batch_outputs(model, tokenizer, batch_inputs: Dict[str, torch.Tensor]) -> Dict[str, Any]:
+    """Compute batch outputs for preference prediction."""
     model.eval()
     device = next(model.parameters()).device
 
@@ -114,7 +272,8 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: Dict[str, torch.Tensor
 
 
 def create_app(cfg: EvaluationConfig, model_config: ModelConfig):
-    app = FastAPI()
+    app = FastAPI(title="RFM Multi-GPU Evaluation Server")
+    
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -123,24 +282,116 @@ def create_app(cfg: EvaluationConfig, model_config: ModelConfig):
         allow_headers=["*"],
     )
 
-    # Load model/processor once
-    processor, model = setup_model_and_processor(model_config, cfg.model_path)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = model.to(device)
-
-    batch_collator = BatchCollator(
-        processor, resized_height=cfg.data.resized_height, resized_width=cfg.data.resized_width
-    )
+    # Initialize async GPU pool
+    num_gpus = getattr(cfg, 'num_gpus', None)
+    max_workers = getattr(cfg, 'max_workers', None)
+    
+    gpu_pool = AsyncGPUPool(model_config, cfg.model_path, num_gpus, max_workers)
+    print(f"GPU pool initialized with {gpu_pool.num_gpus} GPUs")
 
     @app.post("/evaluate_batch")
-    def evaluate_batch(batch: Dict[str, Any]):
-        # For now we only support preference-style evaluation
-        pref_samples = [s for s in batch["samples"] if s["sample_type"] == "preference"]
-        # convert to PreferenceSample
-        pref_samples = [PreferenceSample(**s) for s in pref_samples]
-        batch_inputs = batch_collator(pref_samples)["preference_inputs"]
-        outputs = compute_batch_outputs(model, processor.tokenizer, batch_inputs)
-        return outputs
+    async def evaluate_batch(batch: Dict[str, Any]):
+        """Evaluate a batch of preference samples using async GPU pool."""
+        return await gpu_pool.process_batch(batch)
+
+    @app.post("/evaluate_batch_npy")
+    async def evaluate_batch_npy(request: Request):
+        """Evaluate a batch with .npy file support for numpy arrays.
+        
+        This endpoint handles multipart form data where:
+        - numpy arrays are sent as .npy files
+        - other data is sent as form fields
+        """
+        # Parse form data
+        form_data = await request.form()
+        
+        # Extract numpy arrays from files
+        numpy_arrays = {}
+        other_data = {}
+        
+        for key, value in form_data.items():
+            # Check if this is a file upload (UploadFile object)
+            if hasattr(value, 'filename') and value.filename:
+                # This is a file upload
+                if value.filename.endswith('.npy'):
+                    # Load .npy file
+                    content = await value.read()
+                    buf = io.BytesIO(content)
+                    array = np.load(buf)
+                    numpy_arrays[key] = array
+                else:
+                    # Non-.npy file, skip for now
+                    continue
+            else:
+                # This is a string value (form field)
+                try:
+                    # Try to parse as JSON
+                    other_data[key] = json.loads(value)
+                except (json.JSONDecodeError, TypeError):
+                    # Keep as string if not JSON
+                    other_data[key] = value
+        
+        # Reconstruct the original payload structure
+        batch_data = reconstruct_payload_from_npy(numpy_arrays, other_data)
+        
+        # Process the batch
+        return await gpu_pool.process_batch(batch_data)
+  
+    def reconstruct_payload_from_npy(numpy_arrays: Dict[str, np.ndarray], other_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Reconstruct the original payload structure from .npy files and form data.
+        
+        The client sends data in this format:
+        - Files: sample_0_chosen_trajectory_frames.npy, sample_0_chosen_trajectory_lang_vector.npy, etc.
+        - Data: sample_0, sample_1, etc. (each containing the full sample JSON with numpy file references)
+        
+        We need to reconstruct the original list of sample dictionaries.
+        """
+        samples = []
+        
+        # Process each sample
+        for i in range(len(other_data)):
+            sample_key = f"sample_{i}"
+            if sample_key in other_data:
+                # Get the sample data - might already be parsed or might be a string
+                sample_data = other_data[sample_key]
+                if isinstance(sample_data, str):
+                    # Parse the sample JSON if it's a string
+                    sample_data = json.loads(sample_data)
+                
+                # Replace numpy file references with actual arrays
+                for key, value in sample_data.items():
+                    if key in ['chosen_trajectory', 'rejected_trajectory', 'reference_trajectory', 'traj_sim_trajectory', 'traj_diff_trajectory']:
+                        if isinstance(value, dict):
+                            for traj_key, traj_value in value.items():
+                                if isinstance(traj_value, dict) and traj_value.get("__numpy_file__"):
+                                    # Replace with actual numpy array
+                                    file_key = traj_value["__numpy_file__"]
+                                    if file_key in numpy_arrays:
+                                        value[traj_key] = numpy_arrays[file_key]
+                
+                samples.append(sample_data)
+        
+        return samples
+
+    @app.get("/gpu_status")
+    def get_gpu_status():
+        """Get status of all GPUs and pool."""
+        return gpu_pool.get_pool_status()
+
+    @app.get("/health")
+    def health_check():
+        """Health check endpoint."""
+        status = gpu_pool.get_pool_status()
+        return {
+            "status": "healthy",
+            "available_gpus": status["available_gpus"],
+            "total_gpus": status["total_gpus"]
+        }
+
+    @app.on_event("shutdown")
+    async def shutdown_event():
+        """Cleanup on shutdown."""
+        gpu_pool.shutdown()
 
     return app
 
@@ -151,6 +402,10 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--config_path", type=str, default="rfm/configs/eval_config.yaml")
+    parser.add_argument("--host", type=str, default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--num_gpus", type=int, default=None, help="Number of GPUs to use (None for all available)")
+    parser.add_argument("--max_workers", type=int, default=None, help="Max worker threads (None for auto)")
     args = parser.parse_args()
 
     # Load evaluation config manually
@@ -160,6 +415,13 @@ def main():
 
     cfg = EvaluationConfig(**config_dict)
     cfg.data = DataConfig(**config_dict["data"])
+    
+    # Override config with command line args
+    if args.num_gpus is not None:
+        cfg.num_gpus = args.num_gpus
+    if args.max_workers is not None:
+        cfg.max_workers = args.max_workers
+    
     print(f"Evaluation config: {cfg}")
 
     # Download model config from Hugging Face
@@ -170,8 +432,9 @@ def main():
     model_config = ModelConfig(**model_config_dict["model"])
 
     app = create_app(cfg, model_config)
-    print(f"Running server on {cfg.server_url}:{cfg.server_port}")
-    uvicorn.run(app, host=cfg.server_url, port=cfg.server_port)
+    print(f"Running async multi-GPU server on {args.host}:{args.port}")
+    print(f"Using {cfg.num_gpus or torch.cuda.device_count()} GPUs")
+    uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

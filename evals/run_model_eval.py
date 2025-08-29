@@ -23,13 +23,22 @@ from __future__ import annotations
 from typing import Any, Dict, List
 import json
 import os
+import asyncio
+import aiohttp
 from datetime import datetime
 from pathlib import Path
+import time
 
 from rfm.configs.eval_configs import EvaluationConfig
 from rfm.utils.setup_utils import setup_eval_dataset
-from evals.eval_utils import BatchPayload, post_batch
+from evals.eval_utils import (
+    post_batch, 
+    post_batch_npy, 
+    post_batch_npy_async,
+    build_payload
+)
 from rfm.data.batch_collator import PreferenceSample, SimilaritySample
+from rfm.utils.logging import _timer, timer
 
 
 def _save_result_as_json(
@@ -81,13 +90,96 @@ def _save_result_as_json(
     return batch_results
 
 
-def iter_eval_batches(
+async def iter_eval_batches_async(
     eval_cfg: EvaluationConfig,
     server_url: str,
     num_batches: int = 10,
     batch_size: int = 4,
+    max_concurrent_requests: int = 4,
 ) -> List[Dict[str, Any]]:
-    """Run evaluation batches and return detailed results."""
+    """Run evaluation batches asynchronously with concurrent requests."""
+    # Create eval data generator and dataset-like iterator
+    dataset = setup_eval_dataset(eval_cfg)
+
+    # Determine actual number of batches
+    dataset_size = len(dataset)
+    if num_batches == -1:
+        # Go through the full dataset
+        actual_num_batches = (dataset_size + batch_size - 1) // batch_size  # Ceiling division
+        print(f"\nProcessing FULL DATASET: {dataset_size} samples in {actual_num_batches} batches of size {batch_size}")
+    else:
+        actual_num_batches = num_batches
+        print(f"\nProcessing {actual_num_batches} batches of size {batch_size} (dataset size: {dataset_size})")
+
+    all_detailed_results: List[Dict[str, Any]] = []
+    idx = 0
+
+    # Use aiohttp session for concurrent requests
+    async with aiohttp.ClientSession() as session:
+        while idx < dataset_size and len(all_detailed_results) < actual_num_batches * batch_size:
+            # Create up to max_concurrent_requests batches
+            batch_tasks = []
+            batch_samples_list = []
+            
+            for _ in range(max_concurrent_requests):
+                if idx >= dataset_size:
+                    break
+                
+                # Assemble a batch of Sample objects
+                batch_samples = []
+                for j in range(batch_size):
+                    if idx + j < dataset_size:
+                        batch_samples.append(dataset[idx + j])
+                    else:
+                        break
+                
+                if not batch_samples:
+                    break
+                
+                # Build payload and create async task
+                files, sample_data = build_payload(batch_samples)
+                with timer("time/evaluate_batch", verbose=True):
+                    # Create the coroutine (don't await it yet)
+                    task = post_batch_npy_async(session, server_url, files, sample_data)
+
+                batch_tasks.append(task)
+                batch_samples_list.append(batch_samples)
+                idx += len(batch_samples)
+
+            if not batch_tasks:
+                break
+
+            # Execute all batches concurrently
+            start_time = time.time()
+            batch_results_list = await asyncio.gather(*batch_tasks, return_exceptions=True)
+            round_time = time.time() - start_time
+
+            # Process results and handle any errors
+            for i, (batch_result, batch_samples) in enumerate(zip(batch_results_list, batch_samples_list)):
+                if isinstance(batch_result, Exception):
+                    print(f"Error in batch {i + 1}: {batch_result}")
+                    continue
+
+                # Process detailed results for this batch
+                batch_results = _save_result_as_json(batch_samples, batch_result)
+                all_detailed_results.extend(batch_results)
+
+            # Print progress
+            print(f"Completed {len(batch_tasks)} batches in {round_time:.2f}s")
+            print(f"Progress: {min(idx, dataset_size)}/{dataset_size} samples ({min(idx, dataset_size) / dataset_size * 100:.1f}%)")
+
+    print(f"\nTotal samples processed: {len(all_detailed_results)}")
+    return all_detailed_results
+
+
+def iter_eval_batches_sync(
+    eval_cfg: EvaluationConfig,
+    server_url: str,
+    num_batches: int = 10,
+    batch_size: int = 4,
+    post_function: callable = post_batch,
+) -> List[Dict[str, Any]]:
+    """Run evaluation batches synchronously (original implementation)."""
     # Create eval data generator and dataset-like iterator
     dataset = setup_eval_dataset(eval_cfg)
 
@@ -122,9 +214,8 @@ def iter_eval_batches(
             break  # No more samples
 
         # Evaluate this batch
-        # model dump to convert to dict, serializable for json
-        payload = BatchPayload(samples=batch_samples).model_dump()
-        batch_result = post_batch(server_url, payload)
+        files, sample_data = build_payload(batch_samples)
+        batch_result = post_batch_npy(server_url, files, sample_data)
 
         # Process detailed results for this batch
         batch_results = _save_result_as_json(batch_samples, batch_result)
@@ -151,6 +242,12 @@ def main():
     parser.add_argument(
         "--config", type=str, default="rfm/configs/eval_config.yaml", help="Path to evaluation configuration file"
     )
+    parser.add_argument(
+        "--use-async", action="store_true", help="Use async concurrent evaluation (recommended for multi-GPU server)"
+    )
+    parser.add_argument(
+        "--max_concurrent", type=int, default=4, help="Maximum concurrent requests (default: 4)"
+    )
     args = parser.parse_args()
 
     # Load evaluation config manually
@@ -163,12 +260,23 @@ def main():
     print(f"Evaluation config: {cfg}")
 
     # Run evaluation and get results
-    all_results = iter_eval_batches(
-        eval_cfg=cfg,
-        server_url=f"http://localhost:{cfg.server_port}",
-        num_batches=cfg.num_batches,
-        batch_size=cfg.batch_size,
-    )
+    if args.use_async:
+        print(f"Using ASYNC evaluation with max {args.max_concurrent} concurrent requests")
+        all_results = asyncio.run(iter_eval_batches_async(
+            eval_cfg=cfg,
+            server_url=f"http://localhost:{cfg.server_port}",
+            num_batches=cfg.num_batches,
+            batch_size=cfg.batch_size,
+            max_concurrent_requests=args.max_concurrent,
+        ))
+    else:
+        print("Using SYNC evaluation (single request at a time)")
+        all_results = iter_eval_batches_sync(
+            eval_cfg=cfg,
+            server_url=f"http://localhost:{cfg.server_port}",
+            num_batches=cfg.num_batches,
+            batch_size=cfg.batch_size,
+        )
 
     # Create results directory structure
     dataset_name = f"{cfg.data.eval_datasets[0].replace('/', '_')}_{cfg.data.eval_subsets[0]}"

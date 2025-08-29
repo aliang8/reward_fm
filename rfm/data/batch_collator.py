@@ -38,18 +38,17 @@ class Trajectory(BaseModel):
     class Config:
         arbitrary_types_allowed = True
 
-    @field_serializer("frames")
-    def serialize_frames(self, v: np.ndarray) -> list:
-        if isinstance(v, np.ndarray):
-            return frames_to_base64_images(v)
-        return v
+    # @field_serializer("frames")
+    # def serialize_frames(self, v: np.ndarray) -> list:
+    #     if isinstance(v, np.ndarray):
+    #         return frames_to_base64_images(v)
+    #     return v
 
-    # You might also want a serializer for lang_vector if it needs special handling
-    @field_serializer("lang_vector")
-    def serialize_lang_vector(self, v: np.ndarray) -> list:
-        if isinstance(v, np.ndarray):
-            return v.tolist()
-        return v
+    # @field_serializer("lang_vector")
+    # def serialize_lang_vector(self, v: np.ndarray) -> list:
+    #     if isinstance(v, np.ndarray):
+    #         return v.tolist()
+    #     return v
 
 
 class PreferenceSample(BaseModel):

@@ -35,6 +35,62 @@ def load_results(results_path: str) -> List[Dict[str, Any]]:
         return json.load(f)
 
 
+def compute_pearson(y_true: List[float], y_pred: List[float]) -> float:
+    """Compute Pearson correlation, robust to constant inputs; returns np.nan if undefined."""
+    import numpy as _np
+    from scipy.stats import pearsonr as _pearsonr
+
+    a = _np.asarray(y_true, dtype=float)
+    b = _np.asarray(y_pred, dtype=float)
+    if a.size == 0 or b.size == 0 or a.size != b.size:
+        return _np.nan
+    # If either vector is constant, pearsonr returns nan; keep that behavior
+    try:
+        corr, _ = _pearsonr(a, b)
+    except Exception:
+        corr = _np.nan
+    return corr
+
+
+def compute_spearman(y_true: List[float], y_pred: List[float]) -> float:
+    """Compute Spearman correlation, robust to constant inputs; returns np.nan if undefined."""
+    a = np.asarray(y_true, dtype=float)
+    b = np.asarray(y_pred, dtype=float)
+    if a.size == 0 or b.size == 0 or a.size != b.size:
+        return np.nan
+    try:
+        corr, _ = spearmanr(a, b)
+    except Exception:
+        corr = np.nan
+    return corr
+
+
+def compute_preference_accuracy(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Compute preference accuracy over a list of result dicts.
+    Expects keys 'predicted_preference' and 'preference_label' per sample.
+    Returns dict with accuracy, correct, total, and skipped counts.
+    """
+    correct = 0
+    total = 0
+    skipped = 0
+    for r in results:
+        pred = r.get("predicted_preference")
+        label = r.get("preference_label")
+        if pred is None or label is None:
+            skipped += 1
+            continue
+        if pred == label:
+            correct += 1
+        total += 1
+    acc = (correct / total) if total > 0 else None
+    return {
+        "preference_accuracy": acc,
+        "num_correct": correct,
+        "num_total": total,
+        "num_skipped": skipped,
+    }
+
+
 def compute_strategy_specific_metrics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Compute metrics separately for each data generation strategy.
@@ -864,7 +920,7 @@ def main():
     parser.add_argument(
         "--config", type=str, default="rfm/configs/eval_config.yaml", help="Path to evaluation configuration file"
     )
-    parser.add_argument("--results_file", type=str, default=None, help="Path to results.json file")
+    parser.add_argument("--results_dir", type=str, default=None, help="Directory containing multiple results JSONs")
     parser.add_argument("--max_samples", type=int, default=5, help="Maximum number of samples to visualize")
     args = parser.parse_args()
 
@@ -877,36 +933,77 @@ def main():
     cfg.data = DataConfig(**config_dict["data"])
     print(f"Evaluation config: {cfg}")
 
-    results = load_results(str(args.results_file))
-    print(f"Loaded {len(results)} samples from {args.results_file}")
+    # Directory mode: process known files with tailored analyses
+    if args.results_dir is not None:
+        dir_path = Path(args.results_dir)
+        if not dir_path.exists() or not dir_path.is_dir():
+            raise FileNotFoundError(f"results_dir not found or not a directory: {dir_path}")
 
-    # Compute metrics
-    print("Computing metrics...")
-    metrics = compute_metrics(results)
+        print(f"Scanning results directory: {dir_path}")
+        available = {p.name: p for p in dir_path.glob("*.json")}
+        print(f"Found JSON files: {sorted(list(available.keys()))}")
 
-    # Print metrics summary
-    print_metrics_summary(metrics)
+        # Helper to safely load a file
+        def _load_if_exists(name: str) -> List[Dict[str, Any]]:
+            if name in available:
+                print(f"Loading {name}...")
+                return load_results(str(available[name]))
+            print(f"Skipping {name}: file not found")
+            return []
 
-    # Analyze bin delta accuracy
-    delta_accuracy = analyze_bin_delta_accuracy(results)
-    print_bin_delta_summary(delta_accuracy)
+        # success_failure.json: compute Pearson/Spearman for success trajectory + preference accuracy
+        sf_results = _load_if_exists("success_failure.json")
+        if sf_results:
+            print("Running analyses for success_failure.json:")
+            def _extract_series(results: List[Dict[str, Any]]):
+                y_true_all = []
+                y_pred_all = []
+                for r in results:
+                    pred = r.get("progress_pred_chosen")
+                    meta = r.get("chosen_metadata", {}) or {}
+                    tgt = meta.get("target_progress")
+                    if pred is not None and tgt is not None:
+                        y_pred_all.extend(list(pred))
+                        y_true_all.extend(list(tgt))
+                return y_true_all, y_pred_all
+            y_true_sf, y_pred_sf = _extract_series(sf_results)
+            pearson_sf = compute_pearson(y_true_sf, y_pred_sf)
+            spearman_sf = compute_spearman(y_true_sf, y_pred_sf)
+            pref_acc_sf = compute_preference_accuracy(sf_results)
+            print(f"  - Success trajectory Pearson: {pearson_sf if not np.isnan(pearson_sf) else 'nan'}")
+            print(f"  - Success trajectory Spearman: {spearman_sf if not np.isnan(spearman_sf) else 'nan'}")
+            print(
+                f"  - Preference accuracy: {pref_acc_sf['preference_accuracy'] if pref_acc_sf['preference_accuracy'] is not None else 'N/A'}"
+                f" (correct={pref_acc_sf['num_correct']}, total={pref_acc_sf['num_total']}, skipped={pref_acc_sf['num_skipped']})"
+            )
 
-    # Create visualizations in the same directory as results.json
-    results_dir = Path(args.results_file).parent
-    print(f"Creating visualizations in: {results_dir}")
-    create_visualizations(results, results_dir, args.max_samples)
+        # reward_alignment.json: reuse compute_metrics and summaries
+        ra_results = _load_if_exists("reward_alignment.json")
+        if ra_results:
+            print("Running analyses for reward_alignment.json:")
 
-    # Create bin delta plot
-    create_bin_delta_plot(delta_accuracy, results_dir)
+            last_preds = []
+            last_targets = []
+            for r in ra_results:
+                pred = r.get("progress_pred_chosen")
+                meta = r.get("chosen_metadata", {}) or r.get("chosen_meta", {}) or {}
+                tgt = meta.get("target_progress")
+                if pred and len(pred) > 0 and tgt and len(tgt) > 0:
+                    last_preds.append(float(pred[-1]))
+                    last_targets.append(float(tgt[-1]))
+                
+            mse = np.mean((np.array(last_targets) - np.array(last_preds)) ** 2)
+            pearson_last = compute_pearson(last_targets, last_preds)
+            spearman_last = compute_spearman(last_targets, last_preds)
+            print("  - MSE:", mse)
+            print("  - Pearson:", pearson_last if not np.isnan(pearson_last) else "nan")
+            print("  - Spearman:", spearman_last if not np.isnan(spearman_last) else "nan")
+        else:
+            print("No analyses run for reward_alignment.json")
 
-    # Save metrics to file in the same directory as results.json
-    metrics_file = results_dir / "metrics.json"
-    with open(metrics_file, "w") as f:
-        json.dump(metrics, f, indent=2)
-    print(f"Saved metrics to: {metrics_file}")
-
-    print("Done!")
-
+        print("Directory processing complete.")
+        print("Done!")
+        return
 
 if __name__ == "__main__":
     main()

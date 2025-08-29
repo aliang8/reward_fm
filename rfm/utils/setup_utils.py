@@ -272,6 +272,8 @@ def setup_eval_data_generator(cfg: ExperimentConfig) -> DataGenerator:
     else:
         if cfg.data.dataset_type == "success_failure":
             eval_data_generator = PairedSuccessFailureGenerator(config=cfg.data, is_evaluation=True)
+        elif cfg.data.dataset_type == "reward_alignment":
+            eval_data_generator = RewardAlignmentGenerator(config=cfg.data, is_evaluation=True)
         else:
             eval_data_generator = DataGenerator(config=cfg.data, is_evaluation=True)
 

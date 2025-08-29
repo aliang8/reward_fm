@@ -337,10 +337,10 @@ class BaseDataGenerator:
         frames_to_pad = max_frames - current_frames
         
         # Pad frames by repeating the first frame
-        padded_frames = np.concatenate([frames, np.repeat(first_frame, frames_to_pad, axis=0)], axis=0)
+        padded_frames = np.concatenate([np.repeat(first_frame, frames_to_pad, axis=0), frames], axis=0)
         
         # Pad progress by repeating the first progress value
-        padded_progress = progress + [first_progress] * frames_to_pad
+        padded_progress = [first_progress] * frames_to_pad + progress
         
         return padded_frames, padded_progress
 

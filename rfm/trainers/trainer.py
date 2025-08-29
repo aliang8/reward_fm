@@ -779,6 +779,7 @@ class VQATrainer(Trainer):
         """
         self.model = self.accelerator.prepare_model(self.model, evaluation_mode=True)
         self.model.eval()
+        self.model = self.model.to(self.accelerator.device)
         # Get the evaluation dataset
         eval_dataloader = self.get_eval_dataloader(eval_dataset)
 
@@ -815,7 +816,6 @@ class VQATrainer(Trainer):
                 ):
                     # move to device
                     batch = self._prepare_inputs(batch)
-                    self.model.to(self.accelerator.device)
                     
                     # Process different types of samples
                     preference_inputs = batch.get("preference_inputs", {})

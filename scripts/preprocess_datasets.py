@@ -15,9 +15,9 @@ import torch
 from datasets import Dataset, DatasetDict, load_dataset, Video
 import numpy as np
 from tqdm import tqdm
-
+from omegaconf import OmegaConf
 from rfm.utils.logging import rank_0_print
-from evals.eval_utils import load_experiment_config_from_yaml
+from rfm.configs.experiment_configs import ExperimentConfig
 
 
 class DatasetPreprocessor:
@@ -598,7 +598,8 @@ def main():
     """Main preprocessing function."""
     # Load config
     config_path = "rfm/configs/config.yaml"  # Adjust path as needed
-    config = load_experiment_config_from_yaml(config_path)
+    config = OmegaConf.load(config_path)
+    config = ExperimentConfig(**config)
 
     # Show dataset structure info
     print("\n🏗️  Dataset Configuration Structure:")

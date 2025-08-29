@@ -20,6 +20,7 @@ from rfm.data.dataset import (
     VideoBinnedDataset,
 )
 from rfm.data.generators.success_failure import PairedSuccessFailureGenerator
+from rfm.data.generators.reward_alignment import RewardAlignmentGenerator
 from rfm.utils.logging import rank_0_print
 from rfm.configs.experiment_configs import ExperimentConfig, ModelConfig
 from rfm.data.vqa_batch_collator import VQABatchCollator
@@ -231,7 +232,12 @@ def setup_data_generator(cfg: ExperimentConfig) -> DataGenerator:
     if cfg.data.model_type == "vqa":
         data_generator = VQADataGenerator(config=cfg.data)
     else:
-        data_generator = DataGenerator(config=cfg.data)
+        if cfg.data.dataset_type == "reward_alignment":
+            data_generator = RewardAlignmentGenerator(config=cfg.data)
+        elif cfg.data.dataset_type == "success_failure":
+            data_generator = PairedSuccessFailureGenerator(config=cfg.data)
+        else:
+            data_generator = DataGenerator(config=cfg.data)
 
     if rank == 0:
         rank_0_print(f"Data generator initialized on rank {rank}")

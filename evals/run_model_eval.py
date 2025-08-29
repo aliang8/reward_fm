@@ -170,11 +170,11 @@ def main():
     # Create results directory structure
     dataset_name = f"{cfg.data.eval_datasets[0].replace('/', '_')}_{cfg.data.eval_subsets[0]}"
     model_name = cfg.model_path.replace("/", "_")
-    eval_log_dir = Path(cfg.log_dir) / model_name / dataset_name / cfg.data.dataset_type
+    eval_log_dir = Path(cfg.log_dir) / model_name / dataset_name
     os.makedirs(eval_log_dir, exist_ok=True)
 
     # Save results to JSON
-    results_file = eval_log_dir / "results.json"
+    results_file = eval_log_dir / f"{cfg.data.dataset_type}.json"
     with open(results_file, "w") as f:
         json.dump(all_results, f, indent=2)
 

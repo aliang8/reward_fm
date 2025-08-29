@@ -59,7 +59,7 @@ class RFMModel(PreTrainedModel):
         pixel_values_videos=None,
         image_grid_thw=None,
         video_grid_thw=None,
-        sample_type=None,  # "preference", "similarity", or "paired_video"
+        sample_type=None,  # "preference", "similarity"
         second_per_grid_ts=None,
         timing_raw=None,
         **kwargs,
@@ -93,7 +93,6 @@ class RFMModel(PreTrainedModel):
                 Type of sample to process:
                 - "preference": Uses preference head with <|pref_token|> for binary trajectory comparison
                 - "similarity": Uses similarity head with <|reward_token|> for trajectory-reference scoring
-                - "paired_video": Uses similarity head with <|reward_token|> for paired video comparison
                 - None: No specific prediction, returns zero logits
 
             target_progress (torch.FloatTensor, optional):

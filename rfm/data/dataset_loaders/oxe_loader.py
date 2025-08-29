@@ -4,6 +4,7 @@ from tqdm import tqdm
 from typing import Dict, List, Tuple, Optional, Any
 from pathlib import Path
 import numpy as np
+from multiprocessing import cpu_count
 from rfm.data.dataset_helpers.oxe_helper import OXE_DATASET_CONFIGS
 from datasets import Dataset
 from rfm.data.helpers import (
@@ -83,6 +84,7 @@ def convert_oxe_dataset_to_hf(
     max_trajectories: Optional[int] = None,
     max_frames: int = 64,
     fps: int = 10,
+    num_workers: int = -1,
 ) -> Dataset:
     """Convert a single OXE TFDS dataset to HF format by writing videos directly.
 
@@ -158,6 +160,12 @@ def convert_oxe_dataset_to_hf(
     img_key_to_name = {k: v for k, v in img_key_to_name.items() if k != "wrist"}
     valid_img_keys = list(img_key_to_name.values())
 
+    # Determine number of workers
+    if num_workers == -1:
+        num_workers = max(1, min(cpu_count(), 8))
+    elif num_workers == 0:
+        num_workers = 1
+
     # Language model and cache
     lang_model = load_sentence_transformer_model()
     lang_cache: Dict[str, Any] = {}
@@ -169,10 +177,15 @@ def convert_oxe_dataset_to_hf(
     if "language_table" in base_ds_name:
         max_limit = MAX_LANGTABLE_EPISODES
 
-    for ep_idx, episode in enumerate(tqdm(dataset, desc=f"Converting {base_ds_name} episodes")):
-        if produced >= max_limit:
+    # Collect all episodes first for parallel processing
+    all_episodes = []
+    episode_info = []
+    
+    print(f"Collecting episodes for {base_ds_name}...")
+    for ep_idx, episode in enumerate(tqdm(dataset, desc=f"Collecting episodes")):
+        if ep_idx >= max_limit:
             break
-
+            
         # Materialize first step for language and sanity checks
         try:
             first_step = next(iter(tfds.as_numpy(episode["steps"])))
@@ -200,10 +213,25 @@ def convert_oxe_dataset_to_hf(
             lang_cache[task] = lang_model.encode(task)
         lang_vec = lang_cache[task]
 
-        # Build image sequences for each view
-        # Iterate all steps once to avoid re-materializing for each view
-        steps_np = list(tfds.as_numpy(episode["steps"]))
+        # Store episode and metadata for parallel processing
+        all_episodes.append(episode)
+        episode_info.append((ep_idx, task, lang_vec))
 
+        # For language_table, cap the number of episodes considered
+        if base_ds_name == "language_table" and ep_idx + 1 >= MAX_LANGTABLE_EPISODES:
+            break
+
+    print(f"Processing {len(all_episodes)} episodes with {num_workers} workers...")
+
+    def process_single_episode(args):
+        """Worker function to process a single episode."""
+        episode, ep_idx, task, lang_vec = args
+        
+        episode_entries = []
+        
+        # Build image sequences for each view
+        steps_np = list(tfds.as_numpy(episode["steps"]))
+        
         for img_key in valid_img_keys:
             # Check first frame for all-black to prune
             if img_key not in steps_np[0]["observation"]:
@@ -243,14 +271,35 @@ def convert_oxe_dataset_to_hf(
             )
             if entry:
                 entry["frames"] = rel_path
-                entries.append(entry)
-                produced += 1
-                if produced >= max_limit:
-                    break
+                episode_entries.append(entry)
+        
+        return episode_entries
 
-        # For language_table, cap the number of episodes considered
-        if base_ds_name == "language_table" and ep_idx + 1 >= MAX_LANGTABLE_EPISODES:
-            break
+    # Process episodes in parallel or sequentially
+    if num_workers == 1:
+        # Sequential processing
+        for args in tqdm(zip(all_episodes, [info[0] for info in episode_info], [info[1] for info in episode_info], [info[2] for info in episode_info]), desc="Processing episodes"):
+            episode_entries = process_single_episode(args)
+            entries.extend(episode_entries)
+            produced += len(episode_entries)
+    else:
+        # Parallel processing
+        from multiprocessing import Pool
+        
+        # Prepare arguments for workers
+        worker_args = list(zip(all_episodes, [info[0] for info in episode_info], [info[1] for info in episode_info], [info[2] for info in episode_info]))
+        
+        with Pool(processes=num_workers) as pool:
+            results = list(tqdm(
+                pool.imap_unordered(process_single_episode, worker_args),
+                total=len(worker_args),
+                desc=f"Processing episodes (workers={num_workers})"
+            ))
+        
+        # Collect all results
+        for episode_entries in results:
+            entries.extend(episode_entries)
+            produced += len(episode_entries)
 
     if not entries:
         return Dataset.from_dict(

@@ -4,6 +4,7 @@ Batch collator for processing Sample objects through the processor and returning
 This collator handles the conversion from PreferenceSample and SimilaritySample objects to processed tensors.
 """
 
+import base64
 import torch
 from typing import List, Dict, Optional, Union, Any
 from dataclasses import dataclass, field
@@ -11,113 +12,63 @@ from transformers import AutoProcessor
 from qwen_vl_utils import process_vision_info
 import numpy as np
 import random
+from pydantic import BaseModel, field_serializer
+from rfm.utils.video_utils import decode_frames_b64, frames_to_base64_images
 
-
-@dataclass
-class BaseSample:
-    """Base sample structure with common fields for all prediction types."""
-
-    # Core HF dataset fields
-    id: str
-    task: str
-    lang_vector: np.ndarray
-    data_source: str
-    quality_label: str
-    is_robot: bool
-
-    # Frame shape information for deserialization
-    frames_shape: Optional[tuple] = None  # Shape of frames (T, H, W, C)
-
-    # Progress fields
-    target_progress_A: Optional[List[float]] = None  # Progress values for trajectory A
-    target_progress_B: Optional[List[float]] = None  # Progress values for trajectory B
-    sample_type: Optional[str] = None  # how this sample was generated
-    num_frames_rewound: Optional[int] = None  # number of frames rewound (for rewound trajectories)
-
-    data_gen_strategy: Optional[str] = None  # how this sample was generated (e.g. rewinding, random, etc.)
-
-
-@dataclass
-class PreferenceSample:
-    """Sample structure for preference prediction: chosen vs rejected where chosen is preferred."""
-
-    # Preference-specific fields using chosen/rejected naming
-
-    # chosen metadata
-    chosen_frames: Optional[Union[List[str], np.ndarray]] = None
-    chosen_frames_shape: Optional[tuple] = None
-    chosen_id: Optional[str] = None
-    chosen_task: Optional[str] = None
-    chosen_lang_vector: Optional[np.ndarray] = None
-    chosen_data_source: Optional[str] = None
-    chosen_quality_label: Optional[str] = None
-    chosen_is_robot: Optional[bool] = None
-
-    # rejected metadata
-    rejected_frames: Optional[Union[List[str], np.ndarray]] = None
-    rejected_frames_shape: Optional[tuple] = None  # Shape of rejected trajectory frames
-    preferred_trajectory: Optional[str] = None  # "chosen" or "rejected" (should always be "chosen")
-    rejected_id: Optional[str] = None
-    rejected_task: Optional[str] = None
-    rejected_lang_vector: Optional[np.ndarray] = None
-    rejected_data_source: Optional[str] = None
-    rejected_quality_label: Optional[str] = None
-    rejected_is_robot: Optional[bool] = None
-
-    target_progress_chosen: Optional[List[float]] = None
-    target_progress_rejected: Optional[List[float]] = None
-    data_gen_strategy: Optional[str] = None
-    num_frames_rewound: Optional[int] = None
-
-    sample_type = "preference"
-
-    # extra stuff for eval
-    bin_idx_chosen: Optional[int] = None
-    bin_idx_rejected: Optional[int] = None
-    video_path: Optional[str] = None    
-    chosen_start_end: Optional[List[int]] = None
-    rejected_start_end: Optional[List[int]] = None
-    fps: Optional[int] = None
+class Trajectory(BaseModel):
+    """Trajectory structure containing frames, metadata, and progress information."""
     
-    # Consolidated metadata for all additional information
+    # Core trajectory fields
+    frames: Optional[Union[List[str], np.ndarray]] = None
+    frames_shape: Optional[tuple] = None
+    id: Optional[str] = None
+    task: Optional[str] = None
+    lang_vector: Optional[Union[np.ndarray, List[float]]] = None
+    data_source: Optional[str] = None
+    quality_label: Optional[str] = None
+    is_robot: Optional[bool] = None
+
+    data_gen_strategy: Optional[str] = None
+    
+    # Progress and metadata
+    target_progress: Optional[List[float]] = None
     metadata: Optional[Dict[str, Any]] = None
 
+    class Config:
+        arbitrary_types_allowed = True
 
-@dataclass
-class SimilaritySample:
+    @field_serializer("frames")
+    def serialize_frames(self, v: np.ndarray) -> list:
+        if isinstance(v, np.ndarray):
+            return frames_to_base64_images(v)
+        return v
+    
+    # You might also want a serializer for lang_vector if it needs special handling
+    @field_serializer("lang_vector")
+    def serialize_lang_vector(self, v: np.ndarray) -> list:
+        if isinstance(v, np.ndarray):
+            return v.tolist()
+        return v
+
+
+class PreferenceSample(BaseModel):
+    """Sample structure for preference prediction: chosen vs rejected where chosen is preferred."""
+
+    # Trajectories
+    chosen_trajectory: Trajectory
+    rejected_trajectory: Trajectory
+    
+    sample_type: str = "preference"
+
+class SimilaritySample(BaseModel):
     """Sample structure for similarity scoring: traj_sim and traj_diff ranked against o^ref."""
 
-    # Similarity-specific fields using traj_sim/traj_diff naming
-    reference_frames: Optional[Union[List[str], np.ndarray]] = None  # o^ref
-    traj_sim_frames: Optional[Union[List[str], np.ndarray]] = None  # Similar trajectory
-    traj_diff_frames: Optional[Union[List[str], np.ndarray]] = None  # Different trajectory
-    reference_frames_shape: Optional[tuple] = None  # Shape of reference frames
-    traj_sim_frames_shape: Optional[tuple] = None  # Shape of similar trajectory frames
-    traj_diff_frames_shape: Optional[tuple] = None  # Shape of different trajectory frames
-    task_ref: Optional[str] = None
-    task_sim: Optional[str] = None
-    task_diff: Optional[str] = None
-    ref_trajectory_id: Optional[str] = None
-    traj_sim_id: Optional[str] = None
-    traj_diff_id: Optional[str] = None
-    traj_sim_task: Optional[str] = None
-    traj_sim_lang_vector: Optional[np.ndarray] = None
-    traj_sim_data_source: Optional[str] = None
-    traj_sim_quality_label: Optional[str] = None
-    traj_sim_is_robot: Optional[bool] = None
-    traj_diff_task: Optional[str] = None
-    traj_diff_lang_vector: Optional[np.ndarray] = None
-    traj_diff_data_source: Optional[str] = None
-    traj_diff_quality_label: Optional[str] = None
-    traj_diff_is_robot: Optional[bool] = None
+    # Trajectories
+    reference_trajectory: Trajectory  # o^ref
+    traj_sim_trajectory: Trajectory  # Similar trajectory
+    traj_diff_trajectory: Trajectory  # Different trajectory
 
-    target_progress_sim: Optional[List[float]] = None
-    target_progress_diff: Optional[List[float]] = None
-    target_progress_ref: Optional[List[float]] = None
-    data_gen_strategy: Optional[str] = None
-    num_frames_rewound: Optional[int] = None
-
-    sample_type = "similarity"
+    sample_type: str = "similarity"
 
 
 class BatchCollator:
@@ -162,7 +113,7 @@ class BatchCollator:
 
     def __call__(
         self,
-        samples: Union[List[BaseSample], List[PreferenceSample], List[SimilaritySample], List[dict]],
+        samples: Union[List[PreferenceSample], List[SimilaritySample], List[dict]],
     ) -> Dict[str, torch.Tensor]:
         """
         Collate a list of samples into separate batches for preferences and similarities.
@@ -185,10 +136,10 @@ class BatchCollator:
                     sample_obj = SimilaritySample(**sample)
                 else:
                     raise ValueError(
-                        f"Unknown sample_type: {sample_type}. Must be 'preference', 'similarity', or 'paired_video'"
+                        f"Unknown sample_type: {sample_type}. Must be 'preference' or 'similarity'"
                     )
                 sample_objects.append(sample_obj)
-            elif isinstance(sample, (BaseSample, PreferenceSample, SimilaritySample)):
+            elif isinstance(sample, (PreferenceSample, SimilaritySample)):
                 sample_objects.append(sample)
             else:
                 raise ValueError(f"Expected Sample object or dict, got {type(sample)}")
@@ -196,7 +147,6 @@ class BatchCollator:
         # Separate samples by sample type
         preference_samples = [s for s in sample_objects if s.sample_type == "preference"]
         similarity_samples = [s for s in sample_objects if s.sample_type == "similarity"]
-        paired_video_samples = [s for s in sample_objects if s.sample_type == "paired_video"]
 
         # Process preferences
         preference_inputs = {}
@@ -220,6 +170,10 @@ class BatchCollator:
         """Convert frames to PIL images if they are numpy arrays or serialized bytes."""
         if frames is None:
             return None
+
+        # if frames are encoded as base64, decode them, this is during eval for the Qwen server
+        if isinstance(frames, list) and not frames[0].endswith(".mp4"):
+            return decode_frames_b64(frames)
 
         # If frames are already paths (strings), return as is
         if isinstance(frames, str) or (isinstance(frames, list) and all(isinstance(f, str) for f in frames)):
@@ -288,8 +242,8 @@ class BatchCollator:
 
         for i, sample in enumerate(preference_samples):
             # Convert frames to appropriate format using stored shapes
-            chosen_frames = self._convert_frames_to_pil_images(sample.chosen_frames, sample.chosen_frames_shape)
-            rejected_frames = self._convert_frames_to_pil_images(sample.rejected_frames, sample.rejected_frames_shape)
+            chosen_frames = self._convert_frames_to_pil_images(sample.chosen_trajectory.frames, sample.chosen_trajectory.frames_shape)
+            rejected_frames = self._convert_frames_to_pil_images(sample.rejected_trajectory.frames, sample.rejected_trajectory.frames_shape)
 
             if preference_labels[i] == 1.0:
                 # Chosen trajectory first: task + video A (chosen) + <|split_token|> + video B (rejected) + <|pref_token|>
@@ -297,7 +251,7 @@ class BatchCollator:
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": f"Task: {sample.chosen_task}"},
+                            {"type": "text", "text": f"Task: {sample.chosen_trajectory.task}"},
                             {
                                 "type": "video",
                                 "video": chosen_frames,
@@ -321,7 +275,7 @@ class BatchCollator:
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": f"Task: {sample.chosen_task}"},
+                            {"type": "text", "text": f"Task: {sample.chosen_trajectory.task}"},
                             {
                                 "type": "video",
                                 "video": rejected_frames,
@@ -373,17 +327,17 @@ class BatchCollator:
         batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
 
         # Add target progress for both trajectories based on conversation order
-        target_progress_chosen = [sample.target_progress_chosen for sample in preference_samples]
-        target_progress_rejected = [sample.target_progress_rejected for sample in preference_samples]
+        target_progress_chosen = [sample.chosen_trajectory.target_progress for sample in preference_samples]
+        target_progress_rejected = [sample.rejected_trajectory.target_progress for sample in preference_samples]
         target_progress_chosen_mask = [
             1.0
-            if sample.chosen_quality_label == "successful" or sample.data_gen_strategy == "rewind_same_task"
+            if sample.chosen_trajectory.quality_label == "successful" or sample.chosen_trajectory.data_gen_strategy == "rewind_same_task"
             else 0.0
             for sample in preference_samples
         ]
         target_progress_rejected_mask = [
             1.0
-            if sample.rejected_quality_label == "successful" or sample.data_gen_strategy == "rewind_same_task"
+            if sample.rejected_trajectory.quality_label == "successful" or sample.rejected_trajectory.data_gen_strategy == "rewind_same_task"
             else 0.0
             for sample in preference_samples
         ]
@@ -396,38 +350,11 @@ class BatchCollator:
 
         # Also add the frame_shapes
         batch_inputs["chosen_frames_shape"] = torch.tensor(
-            [sample.chosen_frames_shape for sample in preference_samples], dtype=torch.int32
+            [sample.chosen_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
         )
         batch_inputs["rejected_frames_shape"] = torch.tensor(
-            [sample.rejected_frames_shape for sample in preference_samples], dtype=torch.int32
+            [sample.rejected_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
         )
-
-        # Add some rewind metrics for logging
-        rewind_lengths = [
-            sample.num_frames_rewound if sample.num_frames_rewound is not None else 0 for sample in preference_samples
-        ]
-        batch_inputs["rewind_lengths"] = torch.tensor(rewind_lengths, dtype=torch.int32)
-        
-        # Add video-binned metadata if available
-        video_binned_metadata = []
-        for sample in preference_samples:
-            if hasattr(sample, 'data_gen_strategy') and sample.data_gen_strategy == "video_binned":
-                metadata = sample.metadata or {}
-                video_binned_metadata.append({
-                    "chosen_bin_idx": metadata.get("chosen_bin_idx"),
-                    "rejected_bin_idx": metadata.get("rejected_bin_idx"),
-                    "original_traj_id": metadata.get("original_traj_id"),
-                    "num_bins": metadata.get("num_bins"),
-                    "bin_size": metadata.get("bin_size"),
-                    "chosen_bin_frames": metadata.get("chosen_bin_frames"),
-                    "rejected_bin_frames": metadata.get("rejected_bin_frames"),
-                    "chosen_bin_progress": metadata.get("chosen_bin_progress"),
-                    "rejected_bin_progress": metadata.get("rejected_bin_progress"),
-                })
-            else:
-                video_binned_metadata.append(None)
-        
-        batch_inputs["video_binned_metadata"] = video_binned_metadata
         return batch_inputs
 
     def _process_similarity_batch(self, similarity_samples: List[SimilaritySample]) -> Dict[str, torch.Tensor]:
@@ -438,11 +365,11 @@ class BatchCollator:
         for sample in similarity_samples:
             # Convert frames to appropriate format using stored shapes
             reference_frames = self._convert_frames_to_pil_images(
-                sample.reference_frames, sample.reference_frames_shape
+                sample.reference_trajectory.frames, sample.reference_trajectory.frames_shape
             )
-            traj_sim_frames = self._convert_frames_to_pil_images(sample.traj_sim_frames, sample.traj_sim_frames_shape)
+            traj_sim_frames = self._convert_frames_to_pil_images(sample.traj_sim_trajectory.frames, sample.traj_sim_trajectory.frames_shape)
             traj_diff_frames = self._convert_frames_to_pil_images(
-                sample.traj_diff_frames, sample.traj_diff_frames_shape
+                sample.traj_diff_trajectory.frames, sample.traj_diff_trajectory.frames_shape
             )
 
             # Process reference vs trajectory sim
@@ -450,7 +377,7 @@ class BatchCollator:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": f"Reference task: {sample.task_ref}"},
+                        {"type": "text", "text": f"Reference task: {sample.reference_trajectory.task}"},
                         {
                             "type": "video",
                             "video": reference_frames,
@@ -474,7 +401,7 @@ class BatchCollator:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": f"Reference task: {sample.task_ref}"},
+                        {"type": "text", "text": f"Reference task: {sample.reference_trajectory.task}"},
                         {
                             "type": "video",
                             "video": reference_frames,
@@ -552,33 +479,33 @@ class BatchCollator:
         target_progress_ref_list = []
 
         for sample in similarity_samples:
-            if sample.target_progress_A is not None:
-                target_progress_sim_list.append(sample.target_progress_A)
+            if sample.traj_sim_trajectory.target_progress is not None:
+                target_progress_sim_list.append(sample.traj_sim_trajectory.target_progress)
 
-            if sample.target_progress_B is not None:
-                target_progress_diff_list.append(sample.target_progress_B)
+            if sample.traj_diff_trajectory.target_progress is not None:
+                target_progress_diff_list.append(sample.traj_diff_trajectory.target_progress)
 
-            if sample.target_progress_ref is not None:
-                target_progress_ref_list.append(sample.target_progress_ref)
+            if sample.reference_trajectory.target_progress is not None:
+                target_progress_ref_list.append(sample.reference_trajectory.target_progress)
 
         # Pad target progress tensors to max length in last dimension
-        combined_inputs["target_progress_A"] = self._pad_target_progress(target_progress_sim_list)
-        combined_inputs["target_progress_B"] = self._pad_target_progress(target_progress_diff_list)
+        combined_inputs["target_progress_sim"] = self._pad_target_progress(target_progress_sim_list)
+        combined_inputs["target_progress_diff"] = self._pad_target_progress(target_progress_diff_list)
         combined_inputs["target_progress_ref"] = self._pad_target_progress(target_progress_ref_list)
 
         # Also add the frame_shapes
         combined_inputs["ref_frames_shape"] = torch.tensor(
-            [sample.reference_frames_shape for sample in similarity_samples], dtype=torch.int32
+            [sample.reference_trajectory.frames_shape for sample in similarity_samples], dtype=torch.int32
         )
         combined_inputs["traj_sim_frames_shape"] = torch.tensor(
-            [sample.traj_sim_frames_shape for sample in similarity_samples], dtype=torch.int32
+            [sample.traj_sim_trajectory.frames_shape for sample in similarity_samples], dtype=torch.int32
         )
         combined_inputs["traj_diff_frames_shape"] = torch.tensor(
-            [sample.traj_diff_frames_shape for sample in similarity_samples], dtype=torch.int32
+            [sample.traj_diff_trajectory.frames_shape for sample in similarity_samples], dtype=torch.int32
         )
         return combined_inputs
 
-    def collate_fn(self, batch: List[Union[BaseSample, PreferenceSample, SimilaritySample]]) -> Dict[str, torch.Tensor]:
+    def collate_fn(self, batch: List[Union[PreferenceSample, SimilaritySample]]) -> Dict[str, torch.Tensor]:
         """
         Alternative method name for compatibility with PyTorch DataLoader.
 

@@ -15,9 +15,9 @@ import torch
 from datasets import Dataset, DatasetDict, load_dataset, Video
 import numpy as np
 from tqdm import tqdm
-
+from omegaconf import OmegaConf
 from rfm.utils.logging import rank_0_print
-from evals.eval_utils import load_experiment_config_from_yaml
+from rfm.configs.experiment_configs import ExperimentConfig
 
 
 class DatasetPreprocessor:
@@ -145,7 +145,7 @@ class DatasetPreprocessor:
             frames as numpy arrays with shape (max_frames, H, W, C) where T is time dimension
         """
         if num_frames is None:
-            num_frames = self.max_frames
+            num_frames = self.max_frames_for_preprocessing
 
         if frames is None:
             return np.array([])
@@ -153,6 +153,8 @@ class DatasetPreprocessor:
         try:
             # Convert VideoReader to list of frames
             all_frames = list(frames)
+            print(f"Total frames: {len(all_frames)}, num_frames: {num_frames}")
+
             total_frames = len(all_frames)
 
             if total_frames == 0:
@@ -262,7 +264,7 @@ class DatasetPreprocessor:
                 return {"frames": None, "frames_processed": False}
 
             # Process video frames using the _preprocess_videos method
-            frames_array = self._preprocess_videos(frames, self.config.data.max_frames)
+            frames_array = self._preprocess_videos(frames, self.config.data.max_frames_for_preprocessing)
 
             if frames_array.size == 0:
                 rank_0_print(f"Warning: No frames processed for example {idx}")
@@ -596,7 +598,8 @@ def main():
     """Main preprocessing function."""
     # Load config
     config_path = "rfm/configs/config.yaml"  # Adjust path as needed
-    config = load_experiment_config_from_yaml(config_path)
+    config = OmegaConf.load(config_path)
+    config = ExperimentConfig(**config)
 
     # Show dataset structure info
     print("\n🏗️  Dataset Configuration Structure:")

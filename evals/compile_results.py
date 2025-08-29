@@ -35,6 +35,189 @@ def load_results(results_path: str) -> List[Dict[str, Any]]:
         return json.load(f)
 
 
+def compute_pearson(y_true: List[float], y_pred: List[float]) -> float:
+    """Compute Pearson correlation, robust to constant inputs; returns np.nan if undefined."""
+    import numpy as _np
+    from scipy.stats import pearsonr as _pearsonr
+
+    a = _np.asarray(y_true, dtype=float)
+    b = _np.asarray(y_pred, dtype=float)
+    if a.size == 0 or b.size == 0 or a.size != b.size:
+        return _np.nan
+    # If either vector is constant, pearsonr returns nan; keep that behavior
+    try:
+        corr, _ = _pearsonr(a, b)
+    except Exception:
+        corr = _np.nan
+    return corr
+
+
+def compute_spearman(y_true: List[float], y_pred: List[float]) -> float:
+    """Compute Spearman correlation, robust to constant inputs; returns np.nan if undefined."""
+    a = np.asarray(y_true, dtype=float)
+    b = np.asarray(y_pred, dtype=float)
+    if a.size == 0 or b.size == 0 or a.size != b.size:
+        return np.nan
+    try:
+        corr, _ = spearmanr(a, b)
+    except Exception:
+        corr = np.nan
+    return corr
+
+
+def compute_preference_accuracy(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Compute preference accuracy over a list of result dicts.
+    Expects keys 'predicted_preference' and 'preference_label' per sample.
+    Returns dict with accuracy, correct, total, and skipped counts.
+    """
+    correct = 0
+    total = 0
+    skipped = 0
+    for r in results:
+        pred = r.get("predicted_preference")
+        label = r.get("preference_label")
+        if pred is None or label is None:
+            skipped += 1
+            continue
+        if pred == label:
+            correct += 1
+        total += 1
+    acc = (correct / total) if total > 0 else None
+    return {
+        "preference_accuracy": acc,
+        "num_correct": correct,
+        "num_total": total,
+        "num_skipped": skipped,
+    }
+
+
+def compute_strategy_specific_metrics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Compute metrics separately for each data generation strategy.
+    
+    Args:
+        results: List of evaluation results
+        
+    Returns:
+        Dictionary with metrics for each strategy
+    """
+    strategy_metrics = {}
+    
+    # Group results by strategy
+    strategy_groups = {}
+    for result in results:
+        strategy = result.get("data_gen_strategy", "unknown")
+        if strategy not in strategy_groups:
+            strategy_groups[strategy] = []
+        strategy_groups[strategy].append(result)
+    
+    # Compute metrics for each strategy
+    for strategy, strategy_results in strategy_groups.items():
+        if len(strategy_results) == 0:
+            continue
+            
+        strategy_metrics[strategy] = {}
+        
+        # Preference accuracy for this strategy
+        correct_predictions = 0
+        total_predictions = 0
+        
+        for result in strategy_results:
+            if result.get("predicted_preference") is not None and result.get("preference_label") is not None:
+                if result["predicted_preference"] == result["preference_label"]:
+                    correct_predictions += 1
+                total_predictions += 1
+        
+        if total_predictions > 0:
+            strategy_metrics[strategy]["preference_accuracy"] = correct_predictions / total_predictions
+            strategy_metrics[strategy]["total_samples"] = total_predictions
+        else:
+            strategy_metrics[strategy]["preference_accuracy"] = None
+            strategy_metrics[strategy]["total_samples"] = 0
+        
+        # Progress metrics for this strategy (if available)
+        mse_progress_chosen = []
+        mse_progress_rejected = []
+        spearman_progress_chosen = []
+        spearman_progress_rejected = []
+        
+        for result in strategy_results:
+            # Chosen trajectory progress
+            if result.get("progress_pred_chosen") and result.get("target_progress_chosen"):
+                pred_chosen = np.array(result["progress_pred_chosen"])
+                target_chosen = np.array(result["target_progress_chosen"][::2])
+                
+                # Compute MSE
+                mse_chosen = np.mean((pred_chosen - target_chosen) ** 2)
+                mse_progress_chosen.append(mse_chosen)
+                
+                # Compute Spearman correlation
+                corr_chosen, _ = spearmanr(pred_chosen, target_chosen)
+                if not np.isnan(corr_chosen):
+                    spearman_progress_chosen.append(corr_chosen)
+            
+            # Rejected trajectory progress
+            if result.get("progress_pred_rejected") and result.get("target_progress_rejected"):
+                pred_rejected = np.array(result["progress_pred_rejected"])
+                target_rejected = np.array(result["target_progress_rejected"][::2])
+                
+                # Compute MSE
+                mse_rejected = np.mean((pred_rejected - target_rejected) ** 2)
+                mse_progress_rejected.append(mse_rejected)
+                
+                # Compute Spearman correlation
+                corr_rejected, _ = spearmanr(pred_rejected, target_rejected)
+                if not np.isnan(corr_rejected):
+                    spearman_progress_rejected.append(corr_rejected)
+        
+        # Aggregate progress metrics for this strategy
+        if mse_progress_chosen:
+            strategy_metrics[strategy]["mse_progress_chosen"] = np.mean(mse_progress_chosen)
+            strategy_metrics[strategy]["mse_progress_chosen_std"] = np.std(mse_progress_chosen)
+            strategy_metrics[strategy]["mse_progress_chosen_samples"] = len(mse_progress_chosen)
+        
+        if mse_progress_rejected:
+            strategy_metrics[strategy]["mse_progress_rejected"] = np.mean(mse_progress_rejected)
+            strategy_metrics[strategy]["mse_progress_rejected_std"] = np.std(mse_progress_rejected)
+            strategy_metrics[strategy]["mse_progress_rejected_samples"] = len(mse_progress_rejected)
+        
+        if spearman_progress_chosen:
+            strategy_metrics[strategy]["spearman_progress_chosen"] = np.mean(spearman_progress_chosen)
+            strategy_metrics[strategy]["spearman_progress_chosen_std"] = np.std(spearman_progress_chosen)
+        
+        if spearman_progress_rejected:
+            strategy_metrics[strategy]["spearman_progress_rejected"] = np.mean(spearman_progress_rejected)
+            strategy_metrics[strategy]["spearman_progress_rejected_std"] = np.std(spearman_progress_rejected)
+        
+        # Strategy-specific analysis
+        if strategy == "video_binned":
+            # Add bin delta analysis for video binned strategy
+            delta_accuracy = analyze_bin_delta_accuracy(strategy_results)
+            if delta_accuracy:
+                strategy_metrics[strategy]["bin_delta_accuracy"] = delta_accuracy
+                
+                # Summary statistics
+                total_correct = sum(delta_accuracy[delta]["correct"] for delta in delta_accuracy)
+                total_incorrect = sum(delta_accuracy[delta]["incorrect"] for delta in delta_accuracy)
+                total_abstained = sum(delta_accuracy[delta]["abstained"] for delta in delta_accuracy)
+                total_samples = sum(delta_accuracy[delta]["total"] for delta in delta_accuracy)
+                
+                strategy_metrics[strategy]["bin_delta_overall_accuracy"] = total_correct / total_samples if total_samples > 0 else 0
+                strategy_metrics[strategy]["bin_delta_overall_abstention_rate"] = total_abstained / total_samples if total_samples > 0 else 0
+                strategy_metrics[strategy]["bin_delta_total_samples"] = total_samples
+        
+        elif strategy.startswith("rewind"):
+            # Add rewind-specific analysis
+            rewound_lengths = [r.get("num_frames_rewound", 0) for r in strategy_results if r.get("num_frames_rewound") is not None]
+            if rewound_lengths:
+                strategy_metrics[strategy]["avg_frames_rewound"] = np.mean(rewound_lengths)
+                strategy_metrics[strategy]["rewound_length_distribution"] = {
+                    str(length): rewound_lengths.count(length) for length in set(rewound_lengths)
+                }
+    
+    return strategy_metrics
+
+
 def compute_metrics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Compute comprehensive metrics from results."""
     metrics = {}
@@ -63,7 +246,7 @@ def compute_metrics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     for result in results:
         # Chosen trajectory progress
         pred_chosen = np.array(result["progress_pred_chosen"])
-        target_chosen = np.array(result["target_progress_chosen"][::2])
+        target_chosen = np.array(result["chosen_meta"]["target_progress"][::2])
 
         # Compute MSE
         mse_chosen = np.mean((pred_chosen - target_chosen) ** 2)
@@ -74,10 +257,10 @@ def compute_metrics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
         if not np.isnan(corr_chosen):
             spearman_progress_chosen.append(corr_chosen)
 
-        if result.get("progress_pred_rejected") is not None and result.get("target_progress_rejected") is not None:
+        if result.get("progress_pred_rejected") is not None and result.get("rejected_meta", {}).get("target_progress") is not None:
             # Rejected trajectory progress
             pred_rejected = np.array(result["progress_pred_rejected"])
-            target_rejected = np.array(result["target_progress_rejected"][::2])
+            target_rejected = np.array(result["rejected_meta"]["target_progress"][::2])
 
             # Compute MSE
             mse_rejected = np.mean((pred_rejected - target_rejected) ** 2)
@@ -107,7 +290,7 @@ def compute_metrics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     # Sample counts by data generation strategy
     strategy_counts = {}
     for result in results:
-        strategy = result["data_gen_strategy"]
+        strategy = result["rejected_meta"]["data_gen_strategy"]
         strategy_counts[strategy] = strategy_counts.get(strategy, 0) + 1
 
     metrics["strategy_counts"] = strategy_counts
@@ -115,13 +298,16 @@ def compute_metrics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     # Rewound frame analysis
     rewound_counts = {}
     for result in results:
-        rewound = result["num_frames_rewound"]
-        if rewound is not None:
-            rewound_counts[str(rewound)] = rewound_counts.get(str(rewound), 0) + 1
+        if "num_frames_rewound" in result["rejected_meta"]:
+            rewound_counts[str(result["rejected_meta"]["num_frames_rewound"])] = rewound_counts.get(str(result["rejected_meta"]["num_frames_rewound"]), 0) + 1
 
     metrics["rewound_counts"] = rewound_counts
 
-    # Bin delta accuracy analysis
+    # Strategy-specific metrics
+    strategy_metrics = compute_strategy_specific_metrics(results)
+    metrics["strategy_metrics"] = strategy_metrics
+
+    # Bin delta accuracy analysis (overall)
     delta_accuracy = analyze_bin_delta_accuracy(results)
     if delta_accuracy:
         metrics["bin_delta_accuracy"] = delta_accuracy
@@ -154,8 +340,8 @@ def analyze_bin_delta_accuracy(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     Returns:
         Dictionary with delta analysis results including abstentions
     """
-    # Filter results that have bin indices
-    bin_results = [r for r in results if "bin_idx_chosen" in r and "bin_idx_rejected" in r]
+    # Filter results that have bin indices in metadata
+    bin_results = [r for r in results if r.get("metadata", {}).get("chosen_bin_idx") is not None and r.get("metadata", {}).get("rejected_bin_idx") is not None]
 
     if not bin_results:
         print("No results with bin indices found for delta analysis")
@@ -165,8 +351,9 @@ def analyze_bin_delta_accuracy(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     delta_accuracy = {}
 
     for result in bin_results:
-        bin_chosen = result["bin_idx_chosen"]
-        bin_rejected = result["bin_idx_rejected"]
+        metadata = result.get("metadata", {})
+        bin_chosen = metadata["chosen_bin_idx"]
+        bin_rejected = metadata["rejected_bin_idx"]
 
         # Calculate absolute frame delta
         frame_delta = abs(bin_chosen - bin_rejected)
@@ -183,10 +370,10 @@ def analyze_bin_delta_accuracy(results: List[Dict[str, Any]]) -> Dict[str, Any]:
             }
 
         # Get prediction probability
-        pred_prob = result.get("predicted_preference_prob", 0.5)
+        pred_prob = result["predicted_preference_prob"]
 
         # Determine if model abstained (probability close to 0.5)
-        if abs(pred_prob - 0.5) <= 0.1:
+        if abs(pred_prob - 0.5) <= 0.05:
             delta_accuracy[frame_delta]["abstained"] += 1
         else:
             # Count correct vs incorrect predictions
@@ -206,7 +393,7 @@ def analyze_bin_delta_accuracy(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     return delta_accuracy
 
 
-def create_bin_delta_plot(delta_accuracy: Dict[str, Any], output_dir: Path):
+def create_bin_delta_plot(delta_accuracy: Dict[str, Any], output_dir: Path, title_suffix: str = ""):
     """
     Create a stacked bar plot showing preference accuracy breakdown by frame delta.
 
@@ -250,7 +437,7 @@ def create_bin_delta_plot(delta_accuracy: Dict[str, Any], output_dir: Path):
     ax.set_xlabel("Frame Delta (|bin_chosen - bin_rejected|)")
     ax.set_ylabel("Preference Accuracy (%)")
     ax.set_title(
-        "Preference Accuracy by Frame Delta Between Bins (Percentages)", fontsize=14, weight="bold", y=1.1, pad=20
+        "Preference Accuracy by Frame Delta Between Bins (Percentages)" + title_suffix, fontsize=14, weight="bold", y=1.1, pad=20
     )
     ax.set_xticks(x)
     ax.set_xticklabels(deltas)
@@ -295,10 +482,10 @@ def create_bin_delta_plot(delta_accuracy: Dict[str, Any], output_dir: Path):
         ax.text(i, 102, f"n={count}", ha="center", va="bottom", fontsize=10, fontweight="bold")
 
     plt.tight_layout()
-    plt.savefig(output_dir / "bin_delta_accuracy.png", dpi=150, bbox_inches="tight")
+    plt.savefig(output_dir / f"bin_delta_accuracy{title_suffix}.png", dpi=150, bbox_inches="tight")
     plt.close()
 
-    print(f"Bin delta accuracy plot saved to: {output_dir / 'bin_delta_accuracy.png'}")
+    print(f"Bin delta accuracy plot saved to: {output_dir / f'bin_delta_accuracy{title_suffix}.png'}")
 
 
 def create_visualizations(results: List[Dict[str, Any]], output_dir: Path, max_samples: int = 5):
@@ -319,6 +506,10 @@ def create_visualizations(results: List[Dict[str, Any]], output_dir: Path, max_s
     
     # Create video binned frame visualizations if available
     _video_binned_frame_plot(selected_results, video_dir)
+    
+    # Create strategy-specific visualizations
+    strategy_metrics = compute_strategy_specific_metrics(results)
+    create_strategy_specific_plots(strategy_metrics, output_dir)
 
 
 def _trajectory_progress_plot(results: List[Dict[str, Any]], output_dir: Path):
@@ -437,7 +628,7 @@ def _trajectory_progress_plot(results: List[Dict[str, Any]], output_dir: Path):
 def _video_binned_frame_plot(results: List[Dict[str, Any]], output_dir: Path):
     """Create frame sequence visualizations for video binned samples."""
     # Filter for video binned samples
-    video_binned_results = [r for r in results if r.get("chosen_start_end") and r.get("rejected_start_end")]
+    video_binned_results = [r for r in results if r.get("metadata", {}).get("video_path")]
     
     if not video_binned_results:
         print("No video binned samples found for frame visualization")
@@ -446,16 +637,17 @@ def _video_binned_frame_plot(results: List[Dict[str, Any]], output_dir: Path):
     print(f"Creating frame visualizations for {len(video_binned_results)} video binned samples...")
     
     for i, result in enumerate(video_binned_results):
-        if not all(key in result for key in ["video_path", "chosen_start_end", "rejected_start_end", "fps"]):
+        metadata = result.get("metadata", {})
+        if not all(key in metadata for key in ["video_path", "chosen_bin_frames", "rejected_bin_frames", "fps"]):
             print(f"Skipping sample {i+1}: missing video metadata")
             continue
             
         # Extract frames for chosen and rejected sequences
-        all_frames = extract_frames_from_video(result["video_path"], result["fps"])
+        all_frames = extract_frames_from_video(metadata["video_path"], metadata["fps"])
         
-        # Slice frames based on start_end indices
-        start_chosen, end_chosen = result["chosen_start_end"]
-        start_rejected, end_rejected = result["rejected_start_end"]
+        # Slice frames based on start_end indices from metadata
+        start_chosen, end_chosen = metadata["chosen_bin_frames"]
+        start_rejected, end_rejected = metadata["rejected_bin_frames"]
         
         chosen_frames = all_frames[start_chosen:end_chosen + 1]
         rejected_frames = all_frames[start_rejected:end_rejected + 1]
@@ -497,10 +689,10 @@ def _video_binned_frame_plot(results: List[Dict[str, Any]], output_dir: Path):
         
         # Add sample info
         info_text = f"Task: {result.get('chosen_task', 'unknown')}\n"
-        info_text += f"Video: {Path(result['video_path']).name}\n"
-        info_text += f"Chosen: frames {result['chosen_start_end'][0]}-{result['chosen_start_end'][1]} (bin {result.get('bin_idx_chosen', 'N/A')})\n"
-        info_text += f"Rejected: frames {result['rejected_start_end'][0]}-{result['rejected_start_end'][1]} (bin {result.get('bin_idx_rejected', 'N/A')})\n"
-        info_text += f"FPS: {result['fps']}\n"
+        info_text += f"Video: {Path(metadata['video_path']).name}\n"
+        info_text += f"Chosen: frames {metadata['chosen_bin_frames'][0]}-{metadata['chosen_bin_frames'][1]} (bin {metadata.get('chosen_bin_idx', 'N/A')})\n"
+        info_text += f"Rejected: frames {metadata['rejected_bin_frames'][0]}-{metadata['rejected_bin_frames'][1]} (bin {metadata.get('rejected_bin_idx', 'N/A')})\n"
+        info_text += f"FPS: {metadata['fps']}\n"
         info_text += f"Preference Label: {result.get('preference_label', 'N/A')}\n"
         info_text += f"Predicted: {result.get('predicted_preference', 'N/A')} (prob: {result.get('predicted_preference_prob', 'N/A'):.3f})"
         
@@ -516,6 +708,43 @@ def _video_binned_frame_plot(results: List[Dict[str, Any]], output_dir: Path):
         plt.close()
         
         print(f"Created frame visualization for video binned sample {i+1}")
+
+
+def print_strategy_metrics_summary(strategy_metrics: Dict[str, Any]):
+    """Print a nicely formatted summary of strategy-specific metrics."""
+    if not strategy_metrics:
+        return
+        
+    print(f"\n" + "=" * 80)
+    print("STRATEGY-SPECIFIC METRICS")
+    print("=" * 80)
+    
+    for strategy, metrics in strategy_metrics.items():
+        print(f"\n📊 {strategy.upper()} STRATEGY:")
+        print(f"  Total Samples: {metrics.get('total_samples', 'N/A')}")
+        print(f"  Preference Accuracy: {metrics.get('preference_accuracy', 'N/A'):.4f}")
+        
+        # Progress metrics for chosen trajectory
+        if 'mse_progress_chosen' in metrics:
+            print(f"  Progress MSE (Chosen): {metrics['mse_progress_chosen']:.6f} ± {metrics.get('mse_progress_chosen_std', 'N/A'):.6f}")
+            print(f"  Progress Spearman (Chosen): {metrics.get('spearman_progress_chosen', 'N/A'):.4f} ± {metrics.get('spearman_progress_chosen_std', 'N/A'):.4f}")
+            print(f"  Progress Samples (Chosen): {metrics.get('mse_progress_chosen_samples', 'N/A')}")
+        
+        # Progress metrics for rejected trajectory
+        if 'mse_progress_rejected' in metrics:
+            print(f"  Progress MSE (Rejected): {metrics['mse_progress_rejected']:.6f} ± {metrics.get('mse_progress_rejected_std', 'N/A'):.6f}")
+            print(f"  Progress Spearman (Rejected): {metrics.get('spearman_progress_rejected', 'N/A'):.4f} ± {metrics.get('spearman_progress_rejected_std', 'N/A'):.4f}")
+            print(f"  Progress Samples (Rejected): {metrics.get('mse_progress_rejected_samples', 'N/A')}")
+        
+        # Strategy-specific analysis
+        if strategy == "video_binned" and "bin_delta_accuracy" in metrics:
+            print(f"  Bin Delta Overall Accuracy: {metrics.get('bin_delta_overall_accuracy', 'N/A'):.4f}")
+            print(f"  Bin Delta Abstention Rate: {metrics.get('bin_delta_overall_abstention_rate', 'N/A'):.4f}")
+            print(f"  Bin Delta Total Samples: {metrics.get('bin_delta_total_samples', 'N/A')}")
+        
+        elif strategy.startswith("rewind") and "avg_frames_rewound" in metrics:
+            print(f"  Average Frames Rewound: {metrics['avg_frames_rewound']:.2f}")
+            print(f"  Rewound Length Distribution: {metrics.get('rewound_length_distribution', 'N/A')}")
 
 
 def print_metrics_summary(metrics: Dict[str, Any]):
@@ -550,9 +779,13 @@ def print_metrics_summary(metrics: Dict[str, Any]):
     for rewound, count in metrics.get("rewound_counts", {}).items():
         print(f"  {rewound} frames: {count}")
 
-    # Bin delta accuracy summary
+    # Strategy-specific metrics summary
+    if "strategy_metrics" in metrics:
+        print_strategy_metrics_summary(metrics["strategy_metrics"])
+
+    # Bin delta accuracy summary (overall)
     if "bin_delta_accuracy" in metrics:
-        print(f"\nBin Delta Analysis:")
+        print(f"\nBin Delta Analysis (Overall):")
         print(f"  Overall Accuracy: {metrics.get('bin_delta_overall_accuracy', 'N/A'):.4f}")
         print(f"  Overall Abstention Rate: {metrics.get('bin_delta_overall_abstention_rate', 'N/A'):.4f}")
         print(f"  Total Samples: {metrics.get('bin_delta_total_samples', 'N/A')}")
@@ -560,15 +793,6 @@ def print_metrics_summary(metrics: Dict[str, Any]):
         delta_accuracy = metrics["bin_delta_accuracy"]
         deltas = sorted(delta_accuracy.keys())
         print(f"  Delta Range: {min(deltas)} to {max(deltas)} bins")
-
-        # Calculate overall abstention rate
-        total_abstained = sum(delta_accuracy[delta]["abstained"] for delta in deltas)
-        overall_abstention_rate = (
-            total_abstained / metrics.get("bin_delta_total_samples", 1)
-            if metrics.get("bin_delta_total_samples", 0) > 0
-            else 0
-        )
-        print(f"  Overall Abstention Rate: {overall_abstention_rate:.4f}")
 
         # Show top 3 most common deltas
         delta_counts = [(delta, delta_accuracy[delta]["total"]) for delta in deltas]
@@ -629,6 +853,63 @@ def print_bin_delta_summary(delta_accuracy: Dict[str, Any]):
     print("\n" + "=" * 80)
 
 
+def create_strategy_specific_plots(strategy_metrics: Dict[str, Any], output_dir: Path):
+    """Create strategy-specific visualization plots."""
+    if not strategy_metrics:
+        return
+        
+    for strategy, metrics in strategy_metrics.items():
+        if strategy == "video_binned" and "bin_delta_accuracy" in metrics:
+            # Create bin delta plot for video binned strategy
+            create_bin_delta_plot(metrics["bin_delta_accuracy"], output_dir, 
+                                title_suffix=f" - {strategy.upper()} Strategy")
+        
+        elif strategy.startswith("rewind") and "rewound_length_distribution" in metrics:
+            # Create rewind length distribution plot
+            _create_rewind_distribution_plot(metrics, output_dir, strategy)
+
+
+def _create_rewind_distribution_plot(metrics: Dict[str, Any], output_dir: Path, strategy: str):
+    """Create a plot showing the distribution of rewound frame lengths."""
+    rewound_dist = metrics.get("rewound_length_distribution", {})
+    if not rewound_dist:
+        return
+        
+    # Sort by rewound length
+    lengths = sorted([int(k) for k in rewound_dist.keys()])
+    counts = [rewound_dist[str(length)] for length in lengths]
+    
+    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+    
+    bars = ax.bar(lengths, counts, color='skyblue', alpha=0.7, edgecolor='navy')
+    
+    # Add value labels on bars
+    for bar, count in zip(bars, counts):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                f'{count}', ha='center', va='bottom', fontweight='bold')
+    
+    ax.set_xlabel("Number of Frames Rewound")
+    ax.set_ylabel("Number of Samples")
+    ax.set_title(f"Rewound Frame Length Distribution - {strategy.upper()} Strategy", 
+                fontsize=14, weight="bold")
+    ax.grid(True, alpha=0.3)
+    
+    # Add summary statistics
+    avg_rewound = metrics.get("avg_frames_rewound", 0)
+    total_samples = metrics.get("total_samples", 0)
+    info_text = f"Average Frames Rewound: {avg_rewound:.2f}\nTotal Samples: {total_samples}"
+    
+    ax.text(0.02, 0.98, info_text, transform=ax.transAxes, fontsize=10,
+            verticalalignment='top', bbox=dict(boxstyle="round", facecolor="lightyellow", alpha=0.8))
+    
+    plt.tight_layout()
+    plt.savefig(output_dir / f"{strategy}_rewound_distribution.png", dpi=150, bbox_inches="tight")
+    plt.close()
+    
+    print(f"Rewound distribution plot saved to: {output_dir / f'{strategy}_rewound_distribution.png'}")
+
+
 def main():
     import yaml
     from rfm.configs.experiment_configs import DataConfig
@@ -639,7 +920,7 @@ def main():
     parser.add_argument(
         "--config", type=str, default="rfm/configs/eval_config.yaml", help="Path to evaluation configuration file"
     )
-    parser.add_argument("--results_file", type=str, default=None, help="Path to results.json file")
+    parser.add_argument("--results_dir", type=str, default=None, help="Directory containing multiple results JSONs")
     parser.add_argument("--max_samples", type=int, default=5, help="Maximum number of samples to visualize")
     args = parser.parse_args()
 
@@ -652,36 +933,77 @@ def main():
     cfg.data = DataConfig(**config_dict["data"])
     print(f"Evaluation config: {cfg}")
 
-    results = load_results(str(args.results_file))
-    print(f"Loaded {len(results)} samples from {args.results_file}")
+    # Directory mode: process known files with tailored analyses
+    if args.results_dir is not None:
+        dir_path = Path(args.results_dir)
+        if not dir_path.exists() or not dir_path.is_dir():
+            raise FileNotFoundError(f"results_dir not found or not a directory: {dir_path}")
 
-    # Compute metrics
-    print("Computing metrics...")
-    metrics = compute_metrics(results)
+        print(f"Scanning results directory: {dir_path}")
+        available = {p.name: p for p in dir_path.glob("*.json")}
+        print(f"Found JSON files: {sorted(list(available.keys()))}")
 
-    # Print metrics summary
-    print_metrics_summary(metrics)
+        # Helper to safely load a file
+        def _load_if_exists(name: str) -> List[Dict[str, Any]]:
+            if name in available:
+                print(f"Loading {name}...")
+                return load_results(str(available[name]))
+            print(f"Skipping {name}: file not found")
+            return []
 
-    # Analyze bin delta accuracy
-    delta_accuracy = analyze_bin_delta_accuracy(results)
-    print_bin_delta_summary(delta_accuracy)
+        # success_failure.json: compute Pearson/Spearman for success trajectory + preference accuracy
+        sf_results = _load_if_exists("success_failure.json")
+        if sf_results:
+            print("Running analyses for success_failure.json:")
+            def _extract_series(results: List[Dict[str, Any]]):
+                y_true_all = []
+                y_pred_all = []
+                for r in results:
+                    pred = r.get("progress_pred_chosen")
+                    meta = r.get("chosen_metadata", {}) or {}
+                    tgt = meta.get("target_progress")
+                    if pred is not None and tgt is not None:
+                        y_pred_all.extend(list(pred))
+                        y_true_all.extend(list(tgt))
+                return y_true_all, y_pred_all
+            y_true_sf, y_pred_sf = _extract_series(sf_results)
+            pearson_sf = compute_pearson(y_true_sf, y_pred_sf)
+            spearman_sf = compute_spearman(y_true_sf, y_pred_sf)
+            pref_acc_sf = compute_preference_accuracy(sf_results)
+            print(f"  - Success trajectory Pearson: {pearson_sf if not np.isnan(pearson_sf) else 'nan'}")
+            print(f"  - Success trajectory Spearman: {spearman_sf if not np.isnan(spearman_sf) else 'nan'}")
+            print(
+                f"  - Preference accuracy: {pref_acc_sf['preference_accuracy'] if pref_acc_sf['preference_accuracy'] is not None else 'N/A'}"
+                f" (correct={pref_acc_sf['num_correct']}, total={pref_acc_sf['num_total']}, skipped={pref_acc_sf['num_skipped']})"
+            )
 
-    # Create visualizations in the same directory as results.json
-    results_dir = Path(args.results_file).parent
-    print(f"Creating visualizations in: {results_dir}")
-    create_visualizations(results, results_dir, args.max_samples)
+        # reward_alignment.json: reuse compute_metrics and summaries
+        ra_results = _load_if_exists("reward_alignment.json")
+        if ra_results:
+            print("Running analyses for reward_alignment.json:")
 
-    # Create bin delta plot
-    create_bin_delta_plot(delta_accuracy, results_dir)
+            last_preds = []
+            last_targets = []
+            for r in ra_results:
+                pred = r.get("progress_pred_chosen")
+                meta = r.get("chosen_metadata", {}) or r.get("chosen_meta", {}) or {}
+                tgt = meta.get("target_progress")
+                if pred and len(pred) > 0 and tgt and len(tgt) > 0:
+                    last_preds.append(float(pred[-1]))
+                    last_targets.append(float(tgt[-1]))
+                
+            mse = np.mean((np.array(last_targets) - np.array(last_preds)) ** 2)
+            pearson_last = compute_pearson(last_targets, last_preds)
+            spearman_last = compute_spearman(last_targets, last_preds)
+            print("  - MSE:", mse)
+            print("  - Pearson:", pearson_last if not np.isnan(pearson_last) else "nan")
+            print("  - Spearman:", spearman_last if not np.isnan(spearman_last) else "nan")
+        else:
+            print("No analyses run for reward_alignment.json")
 
-    # Save metrics to file in the same directory as results.json
-    metrics_file = results_dir / "metrics.json"
-    with open(metrics_file, "w") as f:
-        json.dump(metrics, f, indent=2)
-    print(f"Saved metrics to: {metrics_file}")
-
-    print("Done!")
-
+        print("Directory processing complete.")
+        print("Done!")
+        return
 
 if __name__ == "__main__":
     main()

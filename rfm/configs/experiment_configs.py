@@ -45,6 +45,9 @@ class PEFTConfig:
 class DataConfig:
     """Configuration for data loading and processing."""
 
+    # Model type for correct data generation
+    model_type: str = field(default="default", metadata={"help": "Model type: 'default', 'vqa'"})
+
     # Dataset paths and subsets
     train_datasets: List[str] = field(
         default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of training dataset names"}
@@ -85,6 +88,7 @@ class DataConfig:
     # Note: Successful trajectories are preferred over failed versions of the same task
 
     # Video processing parameters
+    max_frames_for_preprocessing: int = field(default=64, metadata={"help": "Maximum number of frames to extract from videos for preprocessing"})
     max_frames: int = field(default=8, metadata={"help": "Maximum number of frames to extract from videos"})
     video_frame_sampling: str = field(
         default="uniform", metadata={"help": "Frame sampling strategy: 'uniform', 'random', 'start', 'end'"}
@@ -94,6 +98,7 @@ class DataConfig:
 
     # Data generation parameters
     preference_ratio: float = field(default=0.7, metadata={"help": "Ratio of preference samples to similarity samples"})
+    progress_ratio: float = field(default=0.5, metadata={"help": "Ratio of progress samples for VQA training"})
     dataset_preference_ratio: float = field(
         default=0.8, metadata={"help": "Ratio of dataset preference samples to generated preference samples"}
     )

@@ -262,7 +262,7 @@ class RFMHeadsTrainer(Trainer):
         # Always store custom losses for logging (even when return_outputs=False)
         self.log_metadata = log_metadata
 
-        # Update global metadata for training 
+        # Update global metadata for training
         # Keep sum counts over all processes
         if kwargs.get("training", True) and dist.is_initialized():
             # add to total batch size and sum across all processes
@@ -603,18 +603,21 @@ class RFMHeadsTrainer(Trainer):
             if len(rewind_lengths) > 0:
                 rewind_min = rewind_lengths.min().item()
                 rewind_max = rewind_lengths.max().item()
-                
+
                 # Log to wandb
                 if self.args.report_to and "wandb" in self.args.report_to:
                     import wandb
-                    wandb.log({
-                        "train/rewind_length_min": rewind_min,
-                        "train/rewind_length_max": rewind_max,
-                    })
-                
+
+                    wandb.log(
+                        {
+                            "train/rewind_length_min": rewind_min,
+                            "train/rewind_length_max": rewind_max,
+                        }
+                    )
+
                 # Log to console
                 rank_0_print(f"Rewind lengths - Min: {rewind_min}, Max: {rewind_max}")
-        
+
         # Log video-binned statistics
         if "video_binned_metadata" in batch_inputs:
             video_binned_metadata = batch_inputs["video_binned_metadata"]
@@ -623,14 +626,17 @@ class RFMHeadsTrainer(Trainer):
                 # Calculate average number of bins used
                 total_bins = sum(meta.get("num_bins", 0) for meta in video_binned_metadata if meta is not None)
                 avg_bins = total_bins / video_binned_count if video_binned_count > 0 else 0
-                
+
                 # Log to wandb
                 if self.args.report_to and "wandb" in self.args.report_to:
                     import wandb
-                    wandb.log({
-                        "train/video_binned_samples": video_binned_count,
-                        "train/video_binned_avg_bins": avg_bins,
-                    })
-                
+
+                    wandb.log(
+                        {
+                            "train/video_binned_samples": video_binned_count,
+                            "train/video_binned_avg_bins": avg_bins,
+                        }
+                    )
+
                 # Log to console
                 rank_0_print(f"Video-binned samples in batch: {video_binned_count} (avg bins: {avg_bins:.1f})")

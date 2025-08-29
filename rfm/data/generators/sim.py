@@ -18,7 +18,7 @@ class SimilarityDataGenerator(BaseDataGenerator):
         """Initialize SimilarityDataGenerator with configuration."""
         # Call parent constructor to load datasets
         super().__init__(config, is_evaluation, verbose=verbose)
-        
+
         rank_0_print(f"SimilarityDataGenerator initialized with {len(self.dataset)} total trajectories")
 
     def _create_similarity_sample(self) -> SimilaritySample:
@@ -99,10 +99,10 @@ class SimilarityDataGenerator(BaseDataGenerator):
             traj_diff_frames = traj_diff["frames"]
 
         # Apply uniform subsampling to get consistent frame counts
-        num_frames_to_sample = getattr(self.config, 'max_frames', 8)
-        
+        num_frames_to_sample = getattr(self.config, "max_frames", 8)
+
         # For reference trajectory, use uniform subsampling
-        ref_frames, ref_indices = self._uniformly_subsample_frames(ref_frames, num_frames_to_sample)
+        ref_frames, ref_indices = self._linspace_subsample_frames(ref_frames, num_frames_to_sample)
         ref_progress = [idx / (len(ref_frames) - 1) for idx in ref_indices]
 
         # For traj_sim (rewound), it's already subsampled
@@ -112,13 +112,17 @@ class SimilarityDataGenerator(BaseDataGenerator):
             traj_sim_progress = [i / (len(traj_sim_frames) - 1) for i in range(len(traj_sim_frames))]
 
         # For traj_diff, use uniform subsampling
-        traj_diff_frames, traj_diff_indices = self._uniformly_subsample_frames(traj_diff_frames, num_frames_to_sample)
+        traj_diff_frames, traj_diff_indices = self._linspace_subsample_frames(traj_diff_frames, num_frames_to_sample)
         traj_diff_progress = [idx / (len(traj_diff_frames) - 1) for idx in traj_diff_indices]
 
         # Pad all trajectories to max_frames if needed
         ref_frames, ref_progress = self._pad_trajectory_to_max_frames(ref_frames, ref_progress, num_frames_to_sample)
-        traj_sim_frames, traj_sim_progress = self._pad_trajectory_to_max_frames(traj_sim_frames, traj_sim_progress, num_frames_to_sample)
-        traj_diff_frames, traj_diff_progress = self._pad_trajectory_to_max_frames(traj_diff_frames, traj_diff_progress, num_frames_to_sample)
+        traj_sim_frames, traj_sim_progress = self._pad_trajectory_to_max_frames(
+            traj_sim_frames, traj_sim_progress, num_frames_to_sample
+        )
+        traj_diff_frames, traj_diff_progress = self._pad_trajectory_to_max_frames(
+            traj_diff_frames, traj_diff_progress, num_frames_to_sample
+        )
 
         # Create SimilaritySample
         sample = SimilaritySample(
@@ -132,7 +136,7 @@ class SimilarityDataGenerator(BaseDataGenerator):
                 quality_label=ref_traj.get("quality_label"),
                 is_robot=ref_traj["is_robot"],
                 target_progress=ref_progress,
-                metadata={"data_gen_strategy": "rewind_similarity"}
+                metadata={"data_gen_strategy": "rewind_similarity"},
             ),
             traj_sim_trajectory=Trajectory(
                 frames=traj_sim_frames,
@@ -144,7 +148,7 @@ class SimilarityDataGenerator(BaseDataGenerator):
                 quality_label=traj_sim["quality_label"],
                 is_robot=traj_sim["is_robot"],
                 target_progress=traj_sim_progress,
-                metadata=traj_sim.get("metadata", {})
+                metadata=traj_sim.get("metadata", {}),
             ),
             traj_diff_trajectory=Trajectory(
                 frames=traj_diff_frames,
@@ -156,9 +160,9 @@ class SimilarityDataGenerator(BaseDataGenerator):
                 quality_label=traj_diff["quality_label"],
                 is_robot=traj_diff["is_robot"],
                 target_progress=traj_diff_progress,
-                metadata={"data_gen_strategy": "rewind_similarity"}
+                metadata={"data_gen_strategy": "rewind_similarity"},
             ),
-            data_gen_strategy="rewind_similarity"
+            data_gen_strategy="rewind_similarity",
         )
 
         return sample
@@ -212,22 +216,26 @@ class SimilarityDataGenerator(BaseDataGenerator):
             traj_diff_frames = traj_diff["frames"]
 
         # Apply uniform subsampling to get consistent frame counts
-        num_frames_to_sample = getattr(self.config, 'max_frames', 8)
-        
+        num_frames_to_sample = getattr(self.config, "max_frames", 8)
+
         # For all trajectories, use uniform subsampling
-        ref_frames, ref_indices = self._uniformly_subsample_frames(ref_frames, num_frames_to_sample)
+        ref_frames, ref_indices = self._linspace_subsample_frames(ref_frames, num_frames_to_sample)
         ref_progress = [idx / (len(ref_frames) - 1) for idx in ref_indices]
 
-        traj_sim_frames, traj_sim_indices = self._uniformly_subsample_frames(traj_sim_frames, num_frames_to_sample)
+        traj_sim_frames, traj_sim_indices = self._linspace_subsample_frames(traj_sim_frames, num_frames_to_sample)
         traj_sim_progress = [idx / (len(traj_sim_frames) - 1) for idx in traj_sim_indices]
 
-        traj_diff_frames, traj_diff_indices = self._uniformly_subsample_frames(traj_diff_frames, num_frames_to_sample)
+        traj_diff_frames, traj_diff_indices = self._linspace_subsample_frames(traj_diff_frames, num_frames_to_sample)
         traj_diff_progress = [idx / (len(traj_diff_frames) - 1) for idx in traj_diff_indices]
 
         # Pad all trajectories to max_frames if needed
         ref_frames, ref_progress = self._pad_trajectory_to_max_frames(ref_frames, ref_progress, num_frames_to_sample)
-        traj_sim_frames, traj_sim_progress = self._pad_trajectory_to_max_frames(traj_sim_frames, traj_sim_progress, num_frames_to_sample)
-        traj_diff_frames, traj_diff_progress = self._pad_trajectory_to_max_frames(traj_diff_frames, traj_diff_progress, num_frames_to_sample)
+        traj_sim_frames, traj_sim_progress = self._pad_trajectory_to_max_frames(
+            traj_sim_frames, traj_sim_progress, num_frames_to_sample
+        )
+        traj_diff_frames, traj_diff_progress = self._pad_trajectory_to_max_frames(
+            traj_diff_frames, traj_diff_progress, num_frames_to_sample
+        )
 
         # Create SimilaritySample
         sample = SimilaritySample(
@@ -241,7 +249,7 @@ class SimilarityDataGenerator(BaseDataGenerator):
                 quality_label=ref_traj.get("quality_label"),
                 is_robot=ref_traj["is_robot"],
                 target_progress=ref_progress,
-                metadata={"data_gen_strategy": "optimal_similarity"}
+                metadata={"data_gen_strategy": "optimal_similarity"},
             ),
             traj_sim_trajectory=Trajectory(
                 frames=traj_sim_frames,
@@ -253,7 +261,7 @@ class SimilarityDataGenerator(BaseDataGenerator):
                 quality_label=traj_sim["quality_label"],
                 is_robot=traj_sim["is_robot"],
                 target_progress=traj_sim_progress,
-                metadata={"data_gen_strategy": "optimal_similarity"}
+                metadata={"data_gen_strategy": "optimal_similarity"},
             ),
             traj_diff_trajectory=Trajectory(
                 frames=traj_diff_frames,
@@ -265,9 +273,9 @@ class SimilarityDataGenerator(BaseDataGenerator):
                 quality_label=traj_diff["quality_label"],
                 is_robot=traj_diff["is_robot"],
                 target_progress=traj_diff_progress,
-                metadata={"data_gen_strategy": "optimal_similarity"}
+                metadata={"data_gen_strategy": "optimal_similarity"},
             ),
-            data_gen_strategy="optimal_similarity"
+            data_gen_strategy="optimal_similarity",
         )
 
         return sample

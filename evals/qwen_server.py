@@ -128,7 +128,9 @@ def create_app(cfg: EvaluationConfig, model_config: ModelConfig):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device)
 
-    batch_collator = BatchCollator(processor, resized_height=cfg.data.resized_height, resized_width=cfg.data.resized_width)
+    batch_collator = BatchCollator(
+        processor, resized_height=cfg.data.resized_height, resized_width=cfg.data.resized_width
+    )
 
     @app.post("/evaluate_batch")
     def evaluate_batch(batch: Dict[str, Any]):

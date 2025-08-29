@@ -10,6 +10,7 @@ from typing import Dict
 
 from rfm.trainers.trainer import RFMTrainer
 
+
 class VQATrainer(Trainer):
     def __init__(self, config, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -160,16 +161,16 @@ class VQATrainer(Trainer):
         # tokenizer for decoding
         tokenizer = None
         # Get the processor/tokenizer from the model
-        if hasattr(self.model, 'processor'):
+        if hasattr(self.model, "processor"):
             tokenizer = self.model.processor.tokenizer
             print(f"Tokenizer found in model.")
-        elif hasattr(self.model, 'tokenizer'):
+        elif hasattr(self.model, "tokenizer"):
             tokenizer = self.model.tokenizer
             print(f"Tokenizer found in model.")
         else:
             # Try to get from the trainer's config or data collator
-            tokenizer = getattr(self, 'tokenizer', None)
-            if tokenizer is None and hasattr(self, 'data_collator') and hasattr(self.data_collator, 'processor'):
+            tokenizer = getattr(self, "tokenizer", None)
+            if tokenizer is None and hasattr(self, "data_collator") and hasattr(self.data_collator, "processor"):
                 tokenizer = self.data_collator.processor.tokenizer
                 print(f"Tokenizer found in data collator.")
         if tokenizer is None:
@@ -178,9 +179,9 @@ class VQATrainer(Trainer):
         outputs = []
         # local tallies (reduced after loop if DDP)
         pref_correct_local = 0
-        pref_total_local   = 0
+        pref_total_local = 0
         prog_sum_rho_local = 0.0
-        prog_count_local   = 0
+        prog_count_local = 0
         with _timer("time/evaluate", timing_raw=self.timing_raw):
             with torch.no_grad():
                 for step, batch in tqdm(
@@ -190,7 +191,7 @@ class VQATrainer(Trainer):
                 ):
                     # move to device
                     batch = self._prepare_inputs(batch)
-                    
+
                     # Process different types of samples
                     preference_inputs = batch.get("preference_inputs", {})
                     similarity_inputs = batch.get("similarity_inputs", {})
@@ -198,19 +199,24 @@ class VQATrainer(Trainer):
                     num_preferences = batch.get("num_preferences", 0)
                     num_similarities = batch.get("num_similarities", 0)
                     num_progress = batch.get("num_progress", 0)
-                    
+
                     # ---- Handle preference samples ----
                     if num_preferences > 0 and preference_inputs:
                         # Extract ground truth preference labels
                         preference_labels = preference_inputs.get("preference_labels")  # tensor of 0s and 1s
-                        
+
                         # Create generation inputs (keep only model input fields)
                         valid_model_keys = [
-                            "input_ids", "attention_mask", "pixel_values", "pixel_values_videos",
-                            "image_grid_thw", "video_grid_thw", "second_per_grid_ts"
+                            "input_ids",
+                            "attention_mask",
+                            "pixel_values",
+                            "pixel_values_videos",
+                            "image_grid_thw",
+                            "video_grid_thw",
+                            "second_per_grid_ts",
                         ]
                         gen_inputs = {k: v for k, v in preference_inputs.items() if k in valid_model_keys}
-                        
+
                         # Use accelerator's autocast for consistent dtype handling
                         with self.accelerator.autocast():
                             generation_outputs = self.model.generate(
@@ -218,43 +224,50 @@ class VQATrainer(Trainer):
                                 max_new_tokens=10,  # Short answers like "A" or "B"
                                 do_sample=False,
                                 temperature=1.0,
-                                pad_token_id=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id,
+                                pad_token_id=tokenizer.pad_token_id
+                                if tokenizer.pad_token_id is not None
+                                else tokenizer.eos_token_id,
                             )
-                        
+
                         # Decode generated texts
                         input_length = gen_inputs["input_ids"].shape[1]
                         generated_tokens = generation_outputs[:, input_length:]
                         generated_texts = tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
-                        
+
                         # Extract answers and compare with ground truth
                         for i, (generated_text, true_label) in enumerate(zip(generated_texts, preference_labels)):
                             predicted_answer = self._extract_answer_from_text(generated_text)
-                            
+
                             # Convert prediction to label (A=1, B=0)
                             predicted_label = None
                             if predicted_answer.strip().upper() == "A":
                                 predicted_label = 1.0
                             elif predicted_answer.strip().upper() == "B":
                                 predicted_label = 0.0
-                            
+
                             if predicted_label is not None:
                                 pref_total_local += 1
                                 if abs(predicted_label - true_label.item()) < 0.5:  # Allow for floating point errors
                                     pref_correct_local += 1
-                    
+
                     # ---- Handle progress samples ----
                     if num_progress > 0 and progress_inputs:
                         # Extract ground truth progress
                         target_progress = progress_inputs.get("target_progress")  # tensor of progress lists
-                        quality_labels = progress_inputs.get("quality_labels")   # tensor of quality flags
-                        
+                        quality_labels = progress_inputs.get("quality_labels")  # tensor of quality flags
+
                         # Create generation inputs (keep only model input fields)
                         valid_model_keys = [
-                            "input_ids", "attention_mask", "pixel_values", "pixel_values_videos",
-                            "image_grid_thw", "video_grid_thw", "second_per_grid_ts"
+                            "input_ids",
+                            "attention_mask",
+                            "pixel_values",
+                            "pixel_values_videos",
+                            "image_grid_thw",
+                            "video_grid_thw",
+                            "second_per_grid_ts",
                         ]
                         gen_inputs = {k: v for k, v in progress_inputs.items() if k in valid_model_keys}
-                        
+
                         # Use accelerator's autocast for consistent dtype handling
                         with self.accelerator.autocast():
                             generation_outputs = self.model.generate(
@@ -262,20 +275,24 @@ class VQATrainer(Trainer):
                                 max_new_tokens=100,  # Longer answers for progress lists
                                 do_sample=False,
                                 temperature=1.0,
-                                pad_token_id=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id,
+                                pad_token_id=tokenizer.pad_token_id
+                                if tokenizer.pad_token_id is not None
+                                else tokenizer.eos_token_id,
                             )
-                        
+
                         # Decode generated texts
                         input_length = gen_inputs["input_ids"].shape[1]
                         generated_tokens = generation_outputs[:, input_length:]
                         generated_texts = tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
-                        
+
                         # Extract progress arrays and compute Spearman correlation
-                        for i, (generated_text, true_progress, quality) in enumerate(zip(generated_texts, target_progress, quality_labels)):
+                        for i, (generated_text, true_progress, quality) in enumerate(
+                            zip(generated_texts, target_progress, quality_labels)
+                        ):
                             if quality.item() > 0.5:  # Only evaluate successful trajectories
                                 predicted_answer = self._extract_answer_from_text(generated_text)
                                 predicted_progress = self._safe_parse_array(predicted_answer)
-                                
+
                                 if predicted_progress is not None and true_progress is not None:
                                     # Ensure we only compare non-zero elements of true progress
                                     true_progress_clean = true_progress[true_progress > 0]
@@ -284,7 +301,7 @@ class VQATrainer(Trainer):
                                         min_len = min(len(true_progress_clean), len(predicted_progress))
                                         true_slice = true_progress_clean[:min_len]
                                         pred_slice = predicted_progress[:min_len]
-                                        
+
                                         if min_len > 1:  # Need at least 2 points for correlation
                                             spearman_corr = compute_spearman_correlation(pred_slice, true_slice)
                                             if not torch.isnan(spearman_corr):
@@ -399,7 +416,7 @@ class VQATrainer(Trainer):
         # Always store custom losses for logging (even when return_outputs=False)
         self.log_metadata = log_metadata
 
-        # Update global metadata for training 
+        # Update global metadata for training
         # Keep sum counts over all processes
         if kwargs.get("training", True) and dist.is_initialized():
             # add to total batch size and sum across all processes
@@ -429,15 +446,16 @@ class VQATrainer(Trainer):
     def _extract_answer_from_text(self, text):
         """
         Extract content between <ans></ans> tags from text.
-        
+
         Args:
             text (str): Text containing <ans></ans> tags
-            
+
         Returns:
             str: Content between <ans></ans> tags, or empty string if not found
         """
         import re
-        match = re.search(r'<ans>(.*?)</ans>', text, re.DOTALL)
+
+        match = re.search(r"<ans>(.*?)</ans>", text, re.DOTALL)
         if match:
             return match.group(1).strip()
         return ""
@@ -447,17 +465,17 @@ class VQATrainer(Trainer):
         Compute VQA loss for given inputs.
         """
         # Extract inputs
-        input_ids = inputs['input_ids']
-        attention_mask = inputs['attention_mask']
-        labels = inputs['labels']
-        
+        input_ids = inputs["input_ids"]
+        attention_mask = inputs["attention_mask"]
+        labels = inputs["labels"]
+
         # Handle vision inputs - the processor might return different keys
-        pixel_values = inputs.get('pixel_values')
-        pixel_values_videos = inputs.get('pixel_values_videos')
-        image_grid_thw = inputs.get('image_grid_thw')
-        video_grid_thw = inputs.get('video_grid_thw')
-        second_per_grid_ts = inputs.get('second_per_grid_ts')
-        
+        pixel_values = inputs.get("pixel_values")
+        pixel_values_videos = inputs.get("pixel_values_videos")
+        image_grid_thw = inputs.get("image_grid_thw")
+        video_grid_thw = inputs.get("video_grid_thw")
+        second_per_grid_ts = inputs.get("second_per_grid_ts")
+
         # Move to device if they exist
         if pixel_values is not None:
             pixel_values = pixel_values
@@ -479,7 +497,7 @@ class VQATrainer(Trainer):
             image_grid_thw=image_grid_thw,
             video_grid_thw=video_grid_thw,
             second_per_grid_ts=second_per_grid_ts,
-            labels=labels
+            labels=labels,
         )
 
         # The model's forward method should return a loss

@@ -98,9 +98,7 @@ class DatasetPreprocessor:
                 self.dataset_indices[cache_key] = indices
 
                 # Save individual cache
-                self._save_individual_cache(
-                    individual_cache_dir, processed_dataset, indices, dataset_path, subset
-                )
+                self._save_individual_cache(individual_cache_dir, processed_dataset, indices, dataset_path, subset)
 
                 rank_0_print(f"    ✅ Successfully processed and cached {dataset_path}/{subset}")
 
@@ -538,9 +536,7 @@ class DatasetPreprocessor:
                             f"  ✅ {dataset_path}/{subset}: {trajectories} trajectories (cached at {timestamp})"
                         )
                     except:
-                        rank_0_print(
-                            f"  ✅ {dataset_path}/{subset}: Cache exists but info file corrupted"
-                        )
+                        rank_0_print(f"  ✅ {dataset_path}/{subset}: Cache exists but info file corrupted")
                 else:
                     rank_0_print(f"  ✅ {dataset_path}/{subset}: Cache exists (no info file)")
             else:

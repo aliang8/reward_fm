@@ -17,6 +17,7 @@ from rfm.data.batch_collator import PreferenceSample, SimilaritySample
 class BatchPayload(BaseModel):
     samples: List[Union[PreferenceSample, SimilaritySample]]
 
+
 def post_batch(url: str, payload: Dict[str, Any], timeout_s: float = 120.0) -> Dict[str, Any]:
     """POST a batch payload to the evaluation server and return parsed JSON."""
     resp = requests.post(url.rstrip("/") + "/evaluate_batch", json=payload, timeout=timeout_s)

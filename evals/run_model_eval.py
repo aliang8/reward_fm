@@ -31,7 +31,10 @@ from rfm.utils.setup_utils import setup_eval_dataset
 from evals.eval_utils import BatchPayload, post_batch
 from rfm.data.batch_collator import PreferenceSample, SimilaritySample
 
-def _save_result_as_json(samples: List[PreferenceSample, SimilaritySample], response: Dict[str, Any]) -> List[Dict[str, Any]]:
+
+def _save_result_as_json(
+    samples: List[PreferenceSample, SimilaritySample], response: Dict[str, Any]
+) -> List[Dict[str, Any]]:
     """Save detailed results for each sample in the batch."""
 
     # Extract data from response
@@ -63,7 +66,7 @@ def _save_result_as_json(samples: List[PreferenceSample, SimilaritySample], resp
 
         entry["chosen_meta"] = chosen_meta
         entry["rejected_meta"] = rejected_meta
-        
+
         result_entry = {
             "preference_label": int(preference_labels[i]),
             "predicted_preference": int(predictions[i]),

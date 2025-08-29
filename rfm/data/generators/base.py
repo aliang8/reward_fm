@@ -312,86 +312,51 @@ class BaseDataGenerator:
 
         return self._load_frames_from_npz(npz_filepath)
 
-    def _pad_trajectory_to_max_frames(self, frames: np.ndarray, progress: List[float], max_frames: int) -> Tuple[np.ndarray, List[float]]:
+    def _pad_trajectory_to_max_frames(
+        self, frames: np.ndarray, progress: List[float], max_frames: int
+    ) -> Tuple[np.ndarray, List[float]]:
         """Pad trajectory frames and progress to max_frames by repeating the first frame/progress if needed.
-        
+
         Args:
             frames: Trajectory frames (numpy array)
             progress: Progress values (list of floats)
             max_frames: Target number of frames
-            
+
         Returns:
             Tuple[np.ndarray, List[float]: (padded_frames, padded_progress)
         """
         current_frames = frames.shape[0]
-        
+
         if current_frames >= max_frames:
             # No padding needed
             return frames, progress
-        
+
         # Need to pad - repeat the first frame and first progress
         first_frame = frames[0:1]  # Keep the batch dimension
         first_progress = progress[0]
-        
+
         # Calculate how many frames to pad
         frames_to_pad = max_frames - current_frames
-        
+
         # Pad frames by repeating the first frame
         padded_frames = np.concatenate([np.repeat(first_frame, frames_to_pad, axis=0), frames], axis=0)
-        
+
         # Pad progress by repeating the first progress value
         padded_progress = [first_progress] * frames_to_pad + progress
-        
+
         return padded_frames, padded_progress
 
     def _linspace_subsample_frames(self, frames: np.ndarray, num_frames: int = 8) -> Tuple[np.ndarray, List[int]]:
-        """Linspace subsample frames from a trajectory and return the indices.
-        
-        This method takes the full trajectory and uses numpy linspace to get evenly
-        distributed frame indices. This is useful for rewound trajectories where we
-        want predictable, evenly spaced frames.
-        
-        Args:
-            frames: Full trajectory frames
-            num_frames: Number of frames to subsample (default: 8)
-            
-        Returns:
-            Tuple[np.ndarray, List[int]: (subsampled_frames, subsampled_indices)
-            
-        Example:
-            If we have 64 frames and want 8 frames:
-            - Linspace indices: [0, 9, 18, 27, 36, 45, 54, 63]
-            - Subsampled frames: frames[0], frames[9], frames[18], etc.
-        """
-        if hasattr(frames, "shape"):
-            total_frames = frames.shape[0]
-        else:
-            total_frames = len(frames)
-            
-        if total_frames < num_frames:
-            # If we have fewer frames than requested, return all frames
-            indices = list(range(total_frames))
-            return frames, indices
-            
-        # Use numpy linspace to get evenly distributed indices
-        indices = np.linspace(0, total_frames - 1, num_frames, dtype=int)
-        
-        # Subsample frames
-        subsampled_frames = frames[indices]
-        
-        return subsampled_frames, indices.tolist()
-
-    def _uniformly_subsample_frames(self, frames: np.ndarray, num_frames: int = 8) -> Tuple[np.ndarray, List[int]]:
         """Uniformly subsample frames from a trajectory and return the indices.
-        
+
         This method takes the full trajectory (e.g., 64 frames) and uniformly subsamples
         num_frames from it. The first and last frames are always included.
         The indices are returned so progress can be calculated correctly for rewind trajectories.
-        
+
         Args:
             frames: Full trajectory frames (N frames)
             num_frames: Number of frames to subsample (default: 8)
-            
+
         Returns:
             Tuple[np.ndarray, List[int]: (subsampled_frames, subsampled_indices)
         """
@@ -399,50 +364,52 @@ class BaseDataGenerator:
             total_frames = frames.shape[0]
         else:
             total_frames = len(frames)
-        
+
         if total_frames <= 0:
             return frames, []
-        
+
         if total_frames <= num_frames:
             # If we have fewer (or equal) frames than requested, return all frames
             indices = list(range(total_frames))
             return frames, indices
-        
+
         # Evenly spaced indices from 0 to total_frames-1, inclusive
         indices_np = np.linspace(0, total_frames - 1, num_frames)
         indices = np.rint(indices_np).astype(int).tolist()
-        
+
         # Enforce first and last explicitly
         indices[0] = 0
         indices[-1] = total_frames - 1
-        
+
         # Ensure indices are strictly non-decreasing and within bounds
         for k in range(1, len(indices)):
             if indices[k] < indices[k - 1]:
                 indices[k] = indices[k - 1]
             if indices[k] >= total_frames:
                 indices[k] = total_frames - 1
-        
+
         # Subsample frames
         subsampled_frames = frames[indices]
-        
+
         return subsampled_frames, indices
 
-    def _randomly_subsample_frames(self, frames: np.ndarray, num_frames: int = 8, seed: Optional[int] = None) -> Tuple[np.ndarray, List[int]]:
+    def _randomly_subsample_frames(
+        self, frames: np.ndarray, num_frames: int = 8, seed: Optional[int] = None
+    ) -> Tuple[np.ndarray, List[int]]:
         """Randomly subsample frames from a trajectory and return the indices.
-        
+
         This method takes the full trajectory and randomly selects num_frames from it.
         This is useful for creating diverse trajectory samples and avoiding bias
         towards specific frame patterns.
-        
+
         Args:
             frames: Full trajectory frames
             num_frames: Number of frames to subsample (default: 8)
             seed: Random seed for reproducible sampling (default: None)
-            
+
         Returns:
             Tuple[np.ndarray, List[int]: (subsampled_frames, subsampled_indices)
-            
+
         Example:
             If we have 64 frames and want 8 frames:
             - Random indices: [7, 23, 41, 12, 58, 3, 35, 49] (example)
@@ -452,62 +419,60 @@ class BaseDataGenerator:
             total_frames = frames.shape[0]
         else:
             total_frames = len(frames)
-            
+
         if total_frames < num_frames:
             # If we have fewer frames than requested, return all frames
             indices = list(range(total_frames))
             return frames, indices
-        
+
         # Set random seed if provided
         if seed is not None:
             random.seed(seed)
             np.random.seed(seed)
-        
+
         # Randomly sample indices without replacement
         indices = sorted(random.sample(range(total_frames), num_frames))
-        
+
         # Subsample frames
         subsampled_frames = frames[indices]
-        
+
         return subsampled_frames, indices
 
     def _subsample_frames_and_progress(self, frames: np.ndarray) -> Tuple[np.ndarray, List[float]]:
         # For trajectory, sample start and end indices to create a segment
         # This makes the progress calculation consistent with rewind trajectories
         num_frames_total = len(frames)
-        
+
         # Select start and end indices for the chosen trajectory segment
         # Start index is in the first half of the trajectory
         start_idx = random.randint(0, num_frames_total // 2 - 1)
         # End index is in the latter half of the trajectory
         end_idx = random.randint(num_frames_total // 2, num_frames_total)
-        
+
         # Ensure we have enough frames between start and end
         while end_idx - start_idx < 5:
             start_idx = random.randint(0, num_frames_total // 2 - 1)
             end_idx = random.randint(num_frames_total // 2, num_frames_total)
-        
+
         # Extract the chosen segment
         segment_frames = frames[start_idx:end_idx]
         segment_indices = list(range(start_idx, end_idx))
-        
-        # Calculate progress for the full segment first 
+
+        # Calculate progress for the full segment first
         segment_progress = []
         for i in range(len(segment_indices)):
             segment_progress.append((i + 1) / (num_frames_total - start_idx))
-        
-        # Randomly subsample the chosen trajectory segment to num_frames 
+
+        # Randomly subsample the chosen trajectory segment to num_frames
         frames, indices = self._randomly_subsample_frames(segment_frames, self.config.max_frames)
-        
+
         # Map the subsampled indices to the corresponding progress values from the full segment
         # The chosen_indices tell us which frames from the segment we're using
         progress = [segment_progress[idx] for idx in indices]
-       
+
         # Ensure both trajectories have exactly max_frames by padding if needed
         # Pad by repeating the first frame and first progress value
-        frames, progress = self._pad_trajectory_to_max_frames(
-            frames, progress, self.config.max_frames
-        )
+        frames, progress = self._pad_trajectory_to_max_frames(frames, progress, self.config.max_frames)
 
         metadata = {
             "start_idx": start_idx,

@@ -17,6 +17,7 @@ from rfm.data.batch_collator import PreferenceSample, SimilaritySample, Trajecto
 from rfm.utils.logging import rank_0_print
 from rfm.utils.video_utils import extract_frames_from_video
 
+
 def create_binned_subsequences(frames: np.ndarray, num_bins: int = 10) -> List[Dict]:
     """
     Create binned subsequences from frames.
@@ -161,7 +162,7 @@ class RewoundDataset:
             quality_label=original_traj["quality_label"],
             is_robot=original_traj["is_robot"],
             target_progress=target_progress_chosen,
-            metadata={}
+            metadata={},
         )
 
         rejected_trajectory = Trajectory(
@@ -174,7 +175,7 @@ class RewoundDataset:
             quality_label=rewound_traj["quality_label"],
             is_robot=rewound_traj["is_robot"],
             target_progress=target_progress_rejected,
-            metadata=rewound_traj.get("metadata", {})
+            metadata=rewound_traj.get("metadata", {}),
         )
 
         # Create preference sample (original is chosen, rewound is rejected)
@@ -182,7 +183,7 @@ class RewoundDataset:
             chosen_trajectory=chosen_trajectory,
             rejected_trajectory=rejected_trajectory,
             num_frames_rewound=rewound_traj.get("num_frames_rewound", rewind_length),
-            data_gen_strategy="rewound"
+            data_gen_strategy="rewound",
         )
 
         return sample
@@ -360,7 +361,7 @@ class VideoBinnedDataset:
             quality_label=entry["traj_info"]["quality_label"],
             is_robot=entry["traj_info"]["is_robot"],
             target_progress=target_progress_chosen,
-            metadata=chosen_metadata
+            metadata=chosen_metadata,
         )
 
         rejected_trajectory = Trajectory(
@@ -373,14 +374,14 @@ class VideoBinnedDataset:
             quality_label=entry["traj_info"]["quality_label"],
             is_robot=entry["traj_info"]["is_robot"],
             target_progress=target_progress_rejected,
-            metadata=rejected_metadata
+            metadata=rejected_metadata,
         )
 
         # Create preference sample (further along is chosen)
         sample = PreferenceSample(
             chosen_trajectory=chosen_trajectory,
             rejected_trajectory=rejected_trajectory,
-            data_gen_strategy="video_binned"
+            data_gen_strategy="video_binned",
         )
 
         return sample

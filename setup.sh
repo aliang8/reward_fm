@@ -13,6 +13,13 @@ set -euo pipefail
 #   ./setup.sh --method git --dir /data/rfm   # explicit method and base dir
 #   ./setup.sh /data/rfm                      # positional base dir
 
+# get uv 
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env
+
+# install dependencies
+uv pip install huggingface_hub
+
 METHOD=${RFM_DOWNLOAD_METHOD:-hf}  # hf | git
 BASE_DIR_DEFAULT=${RFM_DATASET_PATH:-./rfm_dataset}
 BASE_DIR="$BASE_DIR_DEFAULT"

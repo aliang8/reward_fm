@@ -9,14 +9,17 @@ git checkout anthony
 # might have to run this multiple times if it crashes
 ./setup.sh
 
+export RFM_DATASET_PATH=./rfm_dataset
+
 # preprocess dataset 
-uv run python3 scripts/preprocess_dataset.py
+uv run python3 scripts/preprocess_datasets.py
 
 # train
 # look at rfm/configs/config.yaml for parameters
 ./train.sh 
 
 # upload your trained model to huggingface 
+# this should take a couple minutes
 uv run python3 scripts/upload_to_hub.py --model_dir=logs/rfm_v3/checkpoint-900/ --hub_model_id=aliangdw/rfm_v3
 
 # start eval server in one terminal

@@ -426,7 +426,7 @@ class PreferenceDataGenerator(BaseDataGenerator):
         if isinstance(chosen_traj["frames"], str):
             chosen_traj["frames"] = self._load_frames_from_npz(chosen_traj["frames"])
 
-        chosen_frames, chosen_progress, chosen_metadata = self._subsample_frames_and_progress(chosen_traj["frames"], self.config.max_frames)
+        chosen_frames, chosen_progress, chosen_metadata = self._subsample_frames_and_progress(chosen_traj["frames"])
         if "metadata" in chosen_traj:
             chosen_metadata.update(chosen_traj["metadata"])
 
@@ -439,7 +439,7 @@ class PreferenceDataGenerator(BaseDataGenerator):
 
         if "rewind" not in strategy_used:
             # try subsampling the rejected trajectory 
-            rejected_frames, rejected_progress, rejected_metadata = self._subsample_frames_and_progress(rejected_traj["frames"], self.config.max_frames)
+            rejected_frames, rejected_progress, rejected_metadata = self._subsample_frames_and_progress(rejected_traj["frames"])
             if "metadata" in rejected_traj:
                 rejected_metadata.update(rejected_traj["metadata"])
         

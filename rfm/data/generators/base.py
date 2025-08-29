@@ -384,44 +384,44 @@ class BaseDataGenerator:
     def _uniformly_subsample_frames(self, frames: np.ndarray, num_frames: int = 8) -> Tuple[np.ndarray, List[int]]:
         """Uniformly subsample frames from a trajectory and return the indices.
         
-        This method takes the full trajectory (64 frames) and uniformly subsamples
-        num_frames from it. The indices are returned so progress can be calculated
-        correctly for rewind trajectories.
+        This method takes the full trajectory (e.g., 64 frames) and uniformly subsamples
+        num_frames from it. The first and last frames are always included.
+        The indices are returned so progress can be calculated correctly for rewind trajectories.
         
         Args:
-            frames: Full trajectory frames (64 frames)
+            frames: Full trajectory frames (N frames)
             num_frames: Number of frames to subsample (default: 8)
             
         Returns:
             Tuple[np.ndarray, List[int]: (subsampled_frames, subsampled_indices)
-            
-        Example:
-            If we have 64 frames and want 8 frames:
-            - Original progress: [1/64, 2/64, 3/64, ..., 64/64]
-            - Subsampled indices: [0, 9, 18, 27, 36, 45, 54, 63]
-            - Subsampled frames: frames[0], frames[9], frames[18], etc.
         """
         if hasattr(frames, "shape"):
             total_frames = frames.shape[0]
         else:
             total_frames = len(frames)
-            
-        if total_frames < num_frames:
-            # If we have fewer frames than requested, return all frames
+        
+        if total_frames <= 0:
+            return frames, []
+        
+        if total_frames <= num_frames:
+            # If we have fewer (or equal) frames than requested, return all frames
             indices = list(range(total_frames))
             return frames, indices
-            
-        # Calculate step size for uniform sampling
-        step_size = (total_frames - 1) / (num_frames - 1)
         
-        # Generate indices for uniform sampling
-        indices = []
-        for i in range(num_frames):
-            if i == num_frames - 1:
-                # Ensure we include the last frame
-                indices.append(total_frames - 1)
-            else:
-                indices.append(int(round(i * step_size)))
+        # Evenly spaced indices from 0 to total_frames-1, inclusive
+        indices_np = np.linspace(0, total_frames - 1, num_frames)
+        indices = np.rint(indices_np).astype(int).tolist()
+        
+        # Enforce first and last explicitly
+        indices[0] = 0
+        indices[-1] = total_frames - 1
+        
+        # Ensure indices are strictly non-decreasing and within bounds
+        for k in range(1, len(indices)):
+            if indices[k] < indices[k - 1]:
+                indices[k] = indices[k - 1]
+            if indices[k] >= total_frames:
+                indices[k] = total_frames - 1
         
         # Subsample frames
         subsampled_frames = frames[indices]

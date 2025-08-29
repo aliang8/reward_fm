@@ -15,9 +15,11 @@ import random
 
 from rfm.data.batch_collator import PreferenceSample, SimilaritySample, Trajectory
 
+
 @dataclass
 class ProgressSample:
     """Sample structure for progress evaluation."""
+
     trajectory: Trajectory
     sample_type: str = "progress"
 
@@ -89,7 +91,7 @@ class VQABatchCollator:
             self.processor.apply_chat_template(
                 conv,
                 tokenize=False,
-                add_generation_prompt=True,   # include assistant prefix tokens
+                add_generation_prompt=True,  # include assistant prefix tokens
                 add_vision_id=True,
                 fps=1,
             )
@@ -115,8 +117,8 @@ class VQABatchCollator:
             text=prompt_texts,
             images=image_inputs,
             videos=video_inputs,
-            padding=True,          # pad so we can batch
-            truncation=False,      # keep everything; truncate only at the "full" step if you must
+            padding=True,  # pad so we can batch
+            truncation=False,  # keep everything; truncate only at the "full" step if you must
             max_length=self.max_length,
             return_tensors="pt",
         )
@@ -127,7 +129,7 @@ class VQABatchCollator:
             images=image_inputs,
             videos=video_inputs,
             padding=True,
-            truncation=False,      # prefer no truncation so we don't chop off the answer
+            truncation=False,  # prefer no truncation so we don't chop off the answer
             max_length=self.max_length,
             return_tensors="pt",
         )
@@ -315,8 +317,12 @@ class VQABatchCollator:
 
         for i, sample in enumerate(preference_samples):
             # Convert frames to appropriate format using stored shapes
-            chosen_frames = self._convert_frames_to_pil_images(sample.chosen_trajectory.frames, sample.chosen_trajectory.frames_shape)
-            rejected_frames = self._convert_frames_to_pil_images(sample.rejected_trajectory.frames, sample.rejected_trajectory.frames_shape)
+            chosen_frames = self._convert_frames_to_pil_images(
+                sample.chosen_trajectory.frames, sample.chosen_trajectory.frames_shape
+            )
+            rejected_frames = self._convert_frames_to_pil_images(
+                sample.rejected_trajectory.frames, sample.rejected_trajectory.frames_shape
+            )
 
             if preference_labels[i] == 1.0:
                 # Chosen trajectory first: Trajectory A (chosen) + Trajectory B (rejected)
@@ -324,7 +330,10 @@ class VQABatchCollator:
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', which one do you prefer? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags. For example, if you prefer trajectory A, your answer should be <ans>A</ans>."},
+                            {
+                                "type": "text",
+                                "text": f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', which one do you prefer? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags. For example, if you prefer trajectory A, your answer should be <ans>A</ans>.",
+                            },
                             {
                                 "type": "video",
                                 "video": chosen_frames,
@@ -348,7 +357,10 @@ class VQABatchCollator:
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', which one do you prefer? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags. For example, if you prefer trajectory A, your answer should be <ans>A</ans>."},
+                            {
+                                "type": "text",
+                                "text": f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', which one do you prefer? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags. For example, if you prefer trajectory A, your answer should be <ans>A</ans>.",
+                            },
                             {
                                 "type": "video",
                                 "video": rejected_frames,
@@ -371,10 +383,10 @@ class VQABatchCollator:
 
         # Convert preference labels to text answers
         preference_labels_text = ["<ans>A</ans>" if label == 1 else "<ans>B</ans>" for label in preference_labels]
-        
+
         # Create input with generation prompt and answer for proper label setting
         batch_inputs = self._create_vqa_inputs_with_labels(all_messages, preference_labels_text)
-        
+
         # Add metadata
         batch_inputs["sample_type"] = ["preference"] * len(preference_samples)
         # Use the dynamically generated preference labels based on trajectory order
@@ -385,13 +397,15 @@ class VQABatchCollator:
         target_progress_rejected = [sample.rejected_trajectory.target_progress for sample in preference_samples]
         target_progress_chosen_mask = [
             1.0
-            if sample.chosen_trajectory.quality_label == "successful" or sample.chosen_trajectory.data_gen_strategy == "rewind_same_task"
+            if sample.chosen_trajectory.quality_label == "successful"
+            or sample.chosen_trajectory.data_gen_strategy == "rewind_same_task"
             else 0.0
             for sample in preference_samples
         ]
         target_progress_rejected_mask = [
             1.0
-            if sample.rejected_trajectory.quality_label == "successful" or sample.rejected_trajectory.data_gen_strategy == "rewind_same_task"
+            if sample.rejected_trajectory.quality_label == "successful"
+            or sample.rejected_trajectory.data_gen_strategy == "rewind_same_task"
             else 0.0
             for sample in preference_samples
         ]
@@ -411,7 +425,9 @@ class VQABatchCollator:
         )
         return batch_inputs
 
-    def _process_similarity_batch(self, similarity_samples: List[SimilaritySample]) -> Dict[str, torch.Tensor]:  # Redundant for now
+    def _process_similarity_batch(
+        self, similarity_samples: List[SimilaritySample]
+    ) -> Dict[str, torch.Tensor]:  # Redundant for now
         """Process a batch of similarity samples with VQA-style question."""
         # Collect all messages for batch processing (ref and traj_sim for each sample)
         all_messages = []
@@ -421,7 +437,9 @@ class VQABatchCollator:
             reference_frames = self._convert_frames_to_pil_images(
                 sample.reference_trajectory.frames, sample.reference_trajectory.frames_shape
             )
-            traj_sim_frames = self._convert_frames_to_pil_images(sample.traj_sim_trajectory.frames, sample.traj_sim_trajectory.frames_shape)
+            traj_sim_frames = self._convert_frames_to_pil_images(
+                sample.traj_sim_trajectory.frames, sample.traj_sim_trajectory.frames_shape
+            )
             traj_diff_frames = self._convert_frames_to_pil_images(
                 sample.traj_diff_trajectory.frames, sample.traj_diff_trajectory.frames_shape
             )
@@ -431,7 +449,10 @@ class VQABatchCollator:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": f"Given the following reference trajectory for the task '{sample.reference_trajectory.task}', which one of the two trajectories are more similar to it? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags. For example, if you think trajectory A is more similar to the reference trajectory, your answer should be <ans>A</ans>."},
+                        {
+                            "type": "text",
+                            "text": f"Given the following reference trajectory for the task '{sample.reference_trajectory.task}', which one of the two trajectories are more similar to it? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags. For example, if you think trajectory A is more similar to the reference trajectory, your answer should be <ans>A</ans>.",
+                        },
                         {
                             "type": "video",
                             "video": reference_frames,
@@ -531,9 +552,12 @@ class VQABatchCollator:
             # Create conversation for progress evaluation
             conversation = [
                 {
-                    "role": "user", 
+                    "role": "user",
                     "content": [
-                        {"type": "text", "text": f"For the task '{sample.trajectory.task}', estimate the progress at each frame in the trajectory. Give a list of numbers between 0 and 1 where 0 means no progress and 1 means successful completion of the task. Format your answer enclosed by <ans> and </ans> tags. For example, if you think the progress at each frame is [0.0, 0.1, 0.2, 0.3, 0.4, 0.5], your answer should be <ans>[0.0, 0.1, 0.2, 0.3, 0.4, 0.5]</ans>."},
+                        {
+                            "type": "text",
+                            "text": f"For the task '{sample.trajectory.task}', estimate the progress at each frame in the trajectory. Give a list of numbers between 0 and 1 where 0 means no progress and 1 means successful completion of the task. Format your answer enclosed by <ans> and </ans> tags. For example, if you think the progress at each frame is [0.0, 0.1, 0.2, 0.3, 0.4, 0.5], your answer should be <ans>[0.0, 0.1, 0.2, 0.3, 0.4, 0.5]</ans>.",
+                        },
                         {
                             "type": "video",
                             "video": frames,
@@ -553,7 +577,7 @@ class VQABatchCollator:
         for sample in progress_samples:
             if sample.trajectory.target_progress is not None:
                 target_progress_list.append(sample.trajectory.target_progress)
-            quality_labels.append(1.0 if sample.trajectory.quality_label == 'successful' else 0.0)
+            quality_labels.append(1.0 if sample.trajectory.quality_label == "successful" else 0.0)
 
         # Convert progress labels to text answers
         progress_labels_text = []
@@ -562,20 +586,22 @@ class VQABatchCollator:
                 progress_labels_text.append(f"<ans>{progress}</ans>")
             else:
                 progress_labels_text.append(f"<ans>{[0] * len(progress)}</ans>")
-        
+
         # Create input with generation prompt and answer for proper label setting
         batch_inputs = self._create_vqa_inputs_with_labels(all_messages, progress_labels_text)
-        
+
         # Add metadata
         batch_inputs["sample_type"] = ["progress"] * len(progress_samples)
-        
+
         # Pad target progress tensors to max length in last dimension
         batch_inputs["target_progress"] = self._pad_target_progress(target_progress_list)
         batch_inputs["quality_labels"] = torch.tensor(quality_labels, dtype=torch.float32)
 
         return batch_inputs
 
-    def collate_fn(self, batch: List[Union[PreferenceSample, SimilaritySample, ProgressSample]]) -> Dict[str, torch.Tensor]:
+    def collate_fn(
+        self, batch: List[Union[PreferenceSample, SimilaritySample, ProgressSample]]
+    ) -> Dict[str, torch.Tensor]:
         """
         Alternative method name for compatibility with PyTorch DataLoader.
 

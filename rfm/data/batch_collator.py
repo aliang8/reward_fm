@@ -15,9 +15,10 @@ import random
 from pydantic import BaseModel, field_serializer
 from rfm.utils.video_utils import decode_frames_b64, frames_to_base64_images
 
+
 class Trajectory(BaseModel):
     """Trajectory structure containing frames, metadata, and progress information."""
-    
+
     # Core trajectory fields
     frames: Optional[Union[List[str], np.ndarray]] = None
     frames_shape: Optional[tuple] = None
@@ -29,7 +30,7 @@ class Trajectory(BaseModel):
     is_robot: Optional[bool] = None
 
     data_gen_strategy: Optional[str] = None
-    
+
     # Progress and metadata
     target_progress: Optional[List[float]] = None
     metadata: Optional[Dict[str, Any]] = None
@@ -42,7 +43,7 @@ class Trajectory(BaseModel):
         if isinstance(v, np.ndarray):
             return frames_to_base64_images(v)
         return v
-    
+
     # You might also want a serializer for lang_vector if it needs special handling
     @field_serializer("lang_vector")
     def serialize_lang_vector(self, v: np.ndarray) -> list:
@@ -57,8 +58,9 @@ class PreferenceSample(BaseModel):
     # Trajectories
     chosen_trajectory: Trajectory
     rejected_trajectory: Trajectory
-    
+
     sample_type: str = "preference"
+
 
 class SimilaritySample(BaseModel):
     """Sample structure for similarity scoring: traj_sim and traj_diff ranked against o^ref."""
@@ -135,9 +137,7 @@ class BatchCollator:
                 elif sample_type == "similarity":
                     sample_obj = SimilaritySample(**sample)
                 else:
-                    raise ValueError(
-                        f"Unknown sample_type: {sample_type}. Must be 'preference' or 'similarity'"
-                    )
+                    raise ValueError(f"Unknown sample_type: {sample_type}. Must be 'preference' or 'similarity'")
                 sample_objects.append(sample_obj)
             elif isinstance(sample, (PreferenceSample, SimilaritySample)):
                 sample_objects.append(sample)
@@ -242,8 +242,12 @@ class BatchCollator:
 
         for i, sample in enumerate(preference_samples):
             # Convert frames to appropriate format using stored shapes
-            chosen_frames = self._convert_frames_to_pil_images(sample.chosen_trajectory.frames, sample.chosen_trajectory.frames_shape)
-            rejected_frames = self._convert_frames_to_pil_images(sample.rejected_trajectory.frames, sample.rejected_trajectory.frames_shape)
+            chosen_frames = self._convert_frames_to_pil_images(
+                sample.chosen_trajectory.frames, sample.chosen_trajectory.frames_shape
+            )
+            rejected_frames = self._convert_frames_to_pil_images(
+                sample.rejected_trajectory.frames, sample.rejected_trajectory.frames_shape
+            )
 
             if preference_labels[i] == 1.0:
                 # Chosen trajectory first: task + video A (chosen) + <|split_token|> + video B (rejected) + <|pref_token|>
@@ -331,13 +335,15 @@ class BatchCollator:
         target_progress_rejected = [sample.rejected_trajectory.target_progress for sample in preference_samples]
         target_progress_chosen_mask = [
             1.0
-            if sample.chosen_trajectory.quality_label == "successful" or sample.chosen_trajectory.data_gen_strategy == "rewind_same_task"
+            if sample.chosen_trajectory.quality_label == "successful"
+            or sample.chosen_trajectory.data_gen_strategy == "rewind_same_task"
             else 0.0
             for sample in preference_samples
         ]
         target_progress_rejected_mask = [
             1.0
-            if sample.rejected_trajectory.quality_label == "successful" or sample.rejected_trajectory.data_gen_strategy == "rewind_same_task"
+            if sample.rejected_trajectory.quality_label == "successful"
+            or sample.rejected_trajectory.data_gen_strategy == "rewind_same_task"
             else 0.0
             for sample in preference_samples
         ]
@@ -367,7 +373,9 @@ class BatchCollator:
             reference_frames = self._convert_frames_to_pil_images(
                 sample.reference_trajectory.frames, sample.reference_trajectory.frames_shape
             )
-            traj_sim_frames = self._convert_frames_to_pil_images(sample.traj_sim_trajectory.frames, sample.traj_sim_trajectory.frames_shape)
+            traj_sim_frames = self._convert_frames_to_pil_images(
+                sample.traj_sim_trajectory.frames, sample.traj_sim_trajectory.frames_shape
+            )
             traj_diff_frames = self._convert_frames_to_pil_images(
                 sample.traj_diff_trajectory.frames, sample.traj_diff_trajectory.frames_shape
             )

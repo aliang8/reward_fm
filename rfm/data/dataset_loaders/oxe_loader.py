@@ -180,12 +180,12 @@ def convert_oxe_dataset_to_hf(
     # Collect all episodes first for parallel processing
     all_episodes = []
     episode_info = []
-    
+
     print(f"Collecting episodes for {base_ds_name}...")
     for ep_idx, episode in enumerate(tqdm(dataset, desc=f"Collecting episodes")):
         if ep_idx >= max_limit:
             break
-            
+
         # Materialize first step for language and sanity checks
         try:
             first_step = next(iter(tfds.as_numpy(episode["steps"])))
@@ -226,12 +226,12 @@ def convert_oxe_dataset_to_hf(
     def process_single_episode(args):
         """Worker function to process a single episode."""
         episode, ep_idx, task, lang_vec = args
-        
+
         episode_entries = []
-        
+
         # Build image sequences for each view
         steps_np = list(tfds.as_numpy(episode["steps"]))
-        
+
         for img_key in valid_img_keys:
             # Check first frame for all-black to prune
             if img_key not in steps_np[0]["observation"]:
@@ -272,30 +272,47 @@ def convert_oxe_dataset_to_hf(
             if entry:
                 entry["frames"] = rel_path
                 episode_entries.append(entry)
-        
+
         return episode_entries
 
     # Process episodes in parallel or sequentially
     if num_workers == 1:
         # Sequential processing
-        for args in tqdm(zip(all_episodes, [info[0] for info in episode_info], [info[1] for info in episode_info], [info[2] for info in episode_info]), desc="Processing episodes"):
+        for args in tqdm(
+            zip(
+                all_episodes,
+                [info[0] for info in episode_info],
+                [info[1] for info in episode_info],
+                [info[2] for info in episode_info],
+            ),
+            desc="Processing episodes",
+        ):
             episode_entries = process_single_episode(args)
             entries.extend(episode_entries)
             produced += len(episode_entries)
     else:
         # Parallel processing
         from multiprocessing import Pool
-        
+
         # Prepare arguments for workers
-        worker_args = list(zip(all_episodes, [info[0] for info in episode_info], [info[1] for info in episode_info], [info[2] for info in episode_info]))
-        
+        worker_args = list(
+            zip(
+                all_episodes,
+                [info[0] for info in episode_info],
+                [info[1] for info in episode_info],
+                [info[2] for info in episode_info],
+            )
+        )
+
         with Pool(processes=num_workers) as pool:
-            results = list(tqdm(
-                pool.imap_unordered(process_single_episode, worker_args),
-                total=len(worker_args),
-                desc=f"Processing episodes (workers={num_workers})"
-            ))
-        
+            results = list(
+                tqdm(
+                    pool.imap_unordered(process_single_episode, worker_args),
+                    total=len(worker_args),
+                    desc=f"Processing episodes (workers={num_workers})",
+                )
+            )
+
         # Collect all results
         for episode_entries in results:
             entries.extend(episode_entries)

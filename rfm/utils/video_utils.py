@@ -6,6 +6,7 @@ import io
 import base64
 from PIL import Image
 
+
 def extract_frames_from_video(video_path: str, fps: int = 1) -> np.ndarray:
     """
     Extract frames from video file at specified FPS.
@@ -53,6 +54,7 @@ def extract_frames_from_video(video_path: str, fps: int = 1) -> np.ndarray:
 
     return np.array(frames)
 
+
 def _ensure_numpy_frames(frames: Any, frames_shape: Optional[Tuple[int, int, int, int]] = None) -> np.ndarray:
     """Ensure frames are a numpy array of shape (T, H, W, C).
 
@@ -84,7 +86,8 @@ def _ensure_numpy_frames(frames: Any, frames_shape: Optional[Tuple[int, int, int
 
     # Unsupported (e.g., file paths) – return as empty; upstream should handle
     return np.empty((0,))
-    
+
+
 def decode_frames_b64(frames_b64: List[str]) -> List[Image.Image]:
     images: List[Image.Image] = []
     for s in frames_b64:

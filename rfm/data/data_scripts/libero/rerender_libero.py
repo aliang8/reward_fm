@@ -24,6 +24,7 @@ Usage:
 
 # Add libero to the python path
 import sys
+
 sys.path.append("deps/libero/LIBERO")
 
 import argparse
@@ -43,7 +44,6 @@ import os
 
 import imageio
 import numpy as np
-
 
 
 from libero.libero import get_libero_path
@@ -70,23 +70,23 @@ def get_libero_dummy_action(model_family: str):
 
 def save_failure_video(rollout_images, task_id, demo_id, task_description):
     """Saves an MP4 replay of a failure episode."""
-    
+
     # Create timestamp for unique filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
+
     # Process task description for filename
     processed_task_description = task_description.lower().replace(" ", "_").replace("\n", "_").replace(".", "_")[:50]
-    
+
     # Create filename
     mp4_path = f"failure_task{task_id}_demo{demo_id}_{timestamp}_{processed_task_description}.mp4"
-    
+
     # Create video writer
     video_writer = imageio.get_writer(mp4_path, fps=30)
-    
+
     # Write frames
     for img in rollout_images:
         video_writer.append_data(img)
-    
+
     video_writer.close()
     print(f"Saved failure video at: {mp4_path}")
     return mp4_path
@@ -119,14 +119,16 @@ def is_noop(action, prev_action=None, threshold=1e-4):
 
 def main(args):
     print(f"Generating {args.libero_task_suite} failure dataset!")
-    
+
     if args.debug_mode:
         print("Debug mode: Will save failure trajectory as MP4 video")
 
     # Create target directory
     if os.path.isdir(args.libero_target_dir):
-        user_input = input(f"Target directory already exists at path: {args.libero_target_dir}\nEnter 'y' to overwrite the directory, or anything else to exit: ")
-        if user_input != 'y':
+        user_input = input(
+            f"Target directory already exists at path: {args.libero_target_dir}\nEnter 'y' to overwrite the directory, or anything else to exit: "
+        )
+        if user_input != "y":
             exit()
     os.makedirs(args.libero_target_dir, exist_ok=True)
 
@@ -184,7 +186,7 @@ def main(args):
             robot_states = []
             agentview_images = []
             eye_in_hand_images = []
-            
+
             # For video saving (if enabled)
             if args.debug_mode:
                 rollout_images = []
@@ -227,7 +229,7 @@ def main(args):
                 )
                 agentview_images.append(obs["agentview_image"])
                 eye_in_hand_images.append(obs["robot0_eye_in_hand_image"])
-                
+
                 # Save image for video (if enabled)
                 if args.debug_mode:
                     rollout_images.append(obs["agentview_image"])
@@ -304,14 +306,28 @@ def main(args):
 if __name__ == "__main__":
     # Parse command-line arguments
     parser = argparse.ArgumentParser()
-    parser.add_argument("--libero_task_suite", type=str, choices=["libero_spatial", "libero_object", "libero_goal", "libero_10", "libero_90"],
-                        help="LIBERO task suite. Example: libero_spatial", required=True)
-    parser.add_argument("--libero_raw_data_dir", type=str,
-                        help="Path to directory containing raw HDF5 dataset. Example: ./LIBERO/libero/datasets/libero_spatial", required=True)
-    parser.add_argument("--libero_target_dir", type=str,
-                        help="Path to failure dataset directory. Example: ./LIBERO/libero/datasets/libero_spatial_failure", required=True)
-    parser.add_argument("--debug_mode", action="store_true",
-                        help="Save failure trajectories as MP4 videos for debugging")
+    parser.add_argument(
+        "--libero_task_suite",
+        type=str,
+        choices=["libero_spatial", "libero_object", "libero_goal", "libero_10", "libero_90"],
+        help="LIBERO task suite. Example: libero_spatial",
+        required=True,
+    )
+    parser.add_argument(
+        "--libero_raw_data_dir",
+        type=str,
+        help="Path to directory containing raw HDF5 dataset. Example: ./LIBERO/libero/datasets/libero_spatial",
+        required=True,
+    )
+    parser.add_argument(
+        "--libero_target_dir",
+        type=str,
+        help="Path to failure dataset directory. Example: ./LIBERO/libero/datasets/libero_spatial_failure",
+        required=True,
+    )
+    parser.add_argument(
+        "--debug_mode", action="store_true", help="Save failure trajectories as MP4 videos for debugging"
+    )
     args = parser.parse_args()
 
     # Start failure dataset generation

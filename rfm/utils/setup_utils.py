@@ -5,7 +5,13 @@ This file contains setup functions that can be reused across different training 
 """
 
 import torch
-from transformers import AutoProcessor, Qwen2_5_VLModel, TrainingArguments, Qwen2_5_VLConfig, Qwen2_5_VLForConditionalGeneration
+from transformers import (
+    AutoProcessor,
+    Qwen2_5_VLModel,
+    TrainingArguments,
+    Qwen2_5_VLConfig,
+    Qwen2_5_VLForConditionalGeneration,
+)
 from peft import get_peft_model, LoraConfig
 from typing import Tuple, Optional, Union
 
@@ -207,7 +213,7 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
     return TrainingArguments(**base_args)
 
 
-def setup_data_generator(cfg: ExperimentConfig) -> DataGenerator:
+def setup_data_generator(cfg: ExperimentConfig, is_eval: bool = False) -> DataGenerator:
     """Shared function to create DataGenerator for training or evaluation"""
 
     # Get current rank for logging
@@ -216,71 +222,40 @@ def setup_data_generator(cfg: ExperimentConfig) -> DataGenerator:
     rank = dist.get_rank() if dist.is_initialized() else 0
 
     if rank == 0:
-        rank_0_print(f"Setting up data generator on rank {rank}...")
+        rank_0_print(f"Setting up data generator on rank {rank} for {'evaluation' if is_eval else 'training'}...")
+
+    if is_eval:
+        datasets = cfg.data.eval_datasets
+        subsets = cfg.data.eval_subsets
+    else:
+        datasets = cfg.data.train_datasets
+        subsets = cfg.data.train_subsets
 
     # Validate that train_datasets and train_subsets have the same length
-    if len(cfg.data.train_datasets) != len(cfg.data.train_subsets):
+    if len(datasets) != len(subsets):
         raise ValueError(
-            f"train_datasets and train_subsets must have the same length. Got {len(cfg.data.train_datasets)} datasets and {len(cfg.data.train_subsets)} subsets"
+            f"datasets and subsets must have the same length. Got {len(datasets)} datasets and {len(subsets)} subsets"
         )
 
     if rank == 0:
-        rank_0_print(f"Loading {len(cfg.data.train_datasets)} training datasets with corresponding subsets")
-        for i, (dataset, subset) in enumerate(zip(cfg.data.train_datasets, cfg.data.train_subsets)):
+        rank_0_print(f"Loading {len(datasets)} datasets with corresponding subsets")
+        for i, (dataset, subset) in enumerate(zip(datasets, subsets)):
             rank_0_print(f"  Dataset {i + 1}: {dataset} -> {subset}")
 
     if cfg.data.model_type == "vqa":
-        data_generator = VQADataGenerator(config=cfg.data)
+        data_generator = VQADataGenerator(config=cfg.data, is_evaluation=is_eval)
     else:
         if cfg.data.dataset_type == "reward_alignment":
-            data_generator = RewardAlignmentGenerator(config=cfg.data)
+            data_generator = RewardAlignmentGenerator(config=cfg.data, is_evaluation=is_eval)
         elif cfg.data.dataset_type == "success_failure":
-            data_generator = PairedSuccessFailureGenerator(config=cfg.data)
+            data_generator = PairedSuccessFailureGenerator(config=cfg.data, is_evaluation=is_eval)
         else:
-            data_generator = DataGenerator(config=cfg.data)
+            data_generator = DataGenerator(config=cfg.data, is_evaluation=is_eval)
 
     if rank == 0:
         rank_0_print(f"Data generator initialized on rank {rank}")
 
     return data_generator
-
-
-def setup_eval_data_generator(cfg: ExperimentConfig) -> DataGenerator:
-    """Shared function to create DataGenerator for evaluation"""
-
-    # Get current rank for logging
-    import torch.distributed as dist
-
-    rank = dist.get_rank() if dist.is_initialized() else 0
-
-    if rank == 0:
-        rank_0_print(f"Setting up evaluation data generator on rank {rank}...")
-
-    # Validate that eval_datasets and eval_subsets have the same length
-    if len(cfg.data.eval_datasets) != len(cfg.data.eval_subsets):
-        raise ValueError(
-            f"eval_datasets and eval_subsets must have the same length. Got {len(cfg.data.eval_datasets)} datasets and {len(cfg.data.eval_subsets)} subsets"
-        )
-
-    if rank == 0:
-        rank_0_print(f"Loading {len(cfg.data.eval_datasets)} evaluation datasets with corresponding subsets")
-        for i, (dataset, subset) in enumerate(zip(cfg.data.eval_datasets, cfg.data.eval_subsets)):
-            rank_0_print(f"  Dataset {i + 1}: {dataset} -> {subset}")
-
-    if cfg.data.model_type == "vqa":
-        eval_data_generator = VQADataGenerator(config=cfg.data, is_evaluation=True)
-    else:
-        if cfg.data.dataset_type == "success_failure":
-            eval_data_generator = PairedSuccessFailureGenerator(config=cfg.data, is_evaluation=True)
-        elif cfg.data.dataset_type == "reward_alignment":
-            eval_data_generator = RewardAlignmentGenerator(config=cfg.data, is_evaluation=True)
-        else:
-            eval_data_generator = DataGenerator(config=cfg.data, is_evaluation=True)
-
-    if rank == 0:
-        rank_0_print(f"Evaluation data generator initialized on rank {rank}")
-
-    return eval_data_generator
 
 
 def setup_dataset(
@@ -312,7 +287,7 @@ def setup_eval_dataset(cfg: ExperimentConfig) -> DatasetType:
     """Create evaluation dataset using eval-specific configuration"""
 
     # Create evaluation data generator
-    eval_data_generator = setup_eval_data_generator(cfg)
+    eval_data_generator = setup_data_generator(cfg, is_eval=True)
 
     # Create evaluation dataset
     eval_dataset = setup_dataset(

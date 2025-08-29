@@ -5,6 +5,7 @@ from rfm.data.generators.base import BaseDataGenerator
 from tqdm import tqdm
 import numpy as np
 
+
 class PairedSuccessFailureGenerator(BaseDataGenerator):
     """Dataset that generates preference samples by pairing successful and failed trajectories for the same task."""
 
@@ -74,7 +75,7 @@ class PairedSuccessFailureGenerator(BaseDataGenerator):
         success_frames = self._get_trajectory_frames(success_idx)
         failure_frames = self._get_trajectory_frames(failure_idx)
 
-        # Subsample frames 
+        # Subsample frames
         success_frames, success_progress, success_metadata = self._subsample_frames_and_progress(success_frames)
         failure_frames, failure_progress, failure_metadata = self._subsample_frames_and_progress(failure_frames)
 
@@ -88,7 +89,7 @@ class PairedSuccessFailureGenerator(BaseDataGenerator):
             quality_label=success_traj["quality_label"],
             is_robot=success_traj["is_robot"],
             target_progress=success_progress,
-            metadata=success_metadata
+            metadata=success_metadata,
         )
 
         rejected_trajectory = Trajectory(
@@ -101,14 +102,14 @@ class PairedSuccessFailureGenerator(BaseDataGenerator):
             quality_label=failure_traj["quality_label"],
             is_robot=failure_traj["is_robot"],
             target_progress=failure_progress,
-            metadata=failure_metadata
+            metadata=failure_metadata,
         )
 
         # Create preference sample (successful is chosen, failed is rejected)
         sample = PreferenceSample(
             chosen_trajectory=chosen_trajectory,
             rejected_trajectory=rejected_trajectory,
-            data_gen_strategy="success_failure"
+            data_gen_strategy="success_failure",
         )
 
         return sample

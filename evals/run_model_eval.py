@@ -156,10 +156,6 @@ async def iter_eval_batches_async(
 
             # Process results and handle any errors
             for i, (batch_result, batch_samples) in enumerate(zip(batch_results_list, batch_samples_list)):
-                if isinstance(batch_result, Exception):
-                    print(f"Error in batch {i + 1}: {batch_result}")
-                    continue
-
                 # Process detailed results for this batch
                 batch_results = _save_result_as_json(batch_samples, batch_result)
                 all_detailed_results.extend(batch_results)
@@ -246,7 +242,7 @@ def main():
         "--use-async", action="store_true", help="Use async concurrent evaluation (recommended for multi-GPU server)"
     )
     parser.add_argument(
-        "--max_concurrent", type=int, default=4, help="Maximum concurrent requests (default: 4)"
+        "--max_concurrent", type=int, default=8, help="Maximum concurrent requests (default: 4)"
     )
     args = parser.parse_args()
 

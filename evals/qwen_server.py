@@ -202,6 +202,7 @@ class AsyncGPUPool:
                     if isinstance(value, torch.Tensor):
                         batch_inputs["progress_inputs"][key] = value.to(device)
         else:
+            print(f"Model type {self.model_config.base_model_id} not supported")
             raise ValueError(f"Model type {self.model_config.base_model_id} not supported")
         
         # Run inference

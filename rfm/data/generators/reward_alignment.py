@@ -30,14 +30,14 @@ class RewardAlignmentGenerator(BaseDataGenerator):
     ):
         super().__init__(config, is_evaluation, verbose=verbose)
 
-        self.max_trajectories = max_trajectories
+        self.max_trajectories = config.max_trajectories
         self.frame_step = frame_step
         self.progress_sample_ratio = progress_sample_ratio
         self.sample_indices = self._generate_all_sample_indices()
         self.current_idx = 0
 
         rank_0_print(
-            f"Generated {len(self.sample_indices)} reward alignment sample indices from {min(len(self.robot_trajectories), max_trajectories) if max_trajectories else len(self.robot_trajectories)} trajectories"
+            f"Generated {len(self.sample_indices)} reward alignment sample indices from {min(len(self.robot_trajectories), self.max_trajectories) if self.max_trajectories else len(self.robot_trajectories)} trajectories"
         )
 
     def _generate_all_sample_indices(self) -> List[Dict]:

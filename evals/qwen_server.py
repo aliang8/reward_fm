@@ -35,21 +35,23 @@ from pydantic import BaseModel, field_serializer
 from huggingface_hub import hf_hub_download
 import json
 
-from rfm.utils.setup_utils import setup_model_and_processor
+from rfm.utils.setup_utils import setup_model_and_processor, setup_vqa_model_and_processor
 from rfm.configs.eval_configs import EvaluationConfig
 from rfm.configs.experiment_configs import DataConfig, ModelConfig
 from rfm.data.batch_collator import BatchCollator, PreferenceSample
+from rfm.data.vqa_batch_collator import VQABatchCollator, ProgressSample
 
 
 class AsyncGPUPool:
     """Async GPU pool for handling multiple requests efficiently across multiple GPUs."""
     
     def __init__(self, model_config: ModelConfig, model_path: str, num_gpus: int = None, 
-                 max_workers: int = None):
+                 max_workers: int = None, model_type: str = "default"):
         self.model_config = model_config
         self.model_path = model_path
         self.num_gpus = num_gpus or torch.cuda.device_count()
         self.max_workers = max_workers or self.num_gpus
+        self.model_type = model_type
         
         if self.num_gpus == 0:
             raise RuntimeError("No CUDA devices available")
@@ -73,7 +75,13 @@ class AsyncGPUPool:
             print(f"Loading model on GPU {gpu_id} ({device})")
             
             # Load model on specific GPU
-            processor, model = setup_model_and_processor(self.model_config, self.model_path)
+            if self.model_type == "default":
+                processor, model = setup_model_and_processor(self.model_config, self.model_path)
+            elif self.model_type == "vqa":
+                processor, model = setup_vqa_model_and_processor(self.model_config, self.model_path)
+            else:
+                raise ValueError(f"Model type {self.model_type} not supported")
+            
             model = model.to(device)
             model.eval()
             
@@ -151,32 +159,73 @@ class AsyncGPUPool:
         
         # Create batch collator with processor from this GPU
         if "qwen" in self.model_config.base_model_id.lower():
-            batch_collator = BatchCollator(
-                processor=gpu_info["processor"],
-                resized_height=128,  # You might want to make this configurable
-                resized_width=128
-            )
+            if self.model_type == "default":
+                batch_collator = BatchCollator(
+                    processor=gpu_info["processor"],
+                    resized_height=128,  # You might want to make this configurable
+                    resized_width=128
+                )
+            elif self.model_type == "vqa":
+                batch_collator = VQABatchCollator(
+                    processor=gpu_info["processor"],
+                    resized_height=128,  # You might want to make this configurable
+                    resized_width=128
+                )
+            else:
+                raise ValueError(f"Model type {self.model_type} not supported")
 
-            # Convert to PreferenceSample
-            pref_samples = [PreferenceSample(**s) for s in samples]
-            batch_inputs = batch_collator(pref_samples)["preference_inputs"]
-        
+            if self.model_type == "default":
+                # Convert to PreferenceSample
+                pref_samples = [PreferenceSample(**s) for s in samples]
+                batch_inputs = batch_collator(pref_samples)["preference_inputs"]
+            elif self.model_type == "vqa":
+                input_samples = []
+                for sample in samples:
+                    if sample["sample_type"] == "preference":
+                        input_samples.append(PreferenceSample(**sample))
+                    elif sample["sample_type"] == "progress":
+                        input_samples.append(ProgressSample(**sample))
+                # This time batch_inputs will be a dictionary with preference_inputs, similarity_inputs, and progress_inputs
+                batch_inputs = batch_collator(input_samples)
+
             # Move inputs to the correct GPU
             device = gpu_info["device"]
-            for key, value in batch_inputs.items():
-                if isinstance(value, torch.Tensor):
-                    batch_inputs[key] = value.to(device)            
+            if self.model_type == "default":
+                for key, value in batch_inputs.items():
+                    if isinstance(value, torch.Tensor):
+                        batch_inputs[key] = value.to(device)            
+            elif self.model_type == "vqa":
+                for key, value in batch_inputs["preference_inputs"].items():
+                    if isinstance(value, torch.Tensor):
+                        batch_inputs["preference_inputs"][key] = value.to(device)
+                for key, value in batch_inputs["progress_inputs"].items():
+                    if isinstance(value, torch.Tensor):
+                        batch_inputs["progress_inputs"][key] = value.to(device)
         else:
             print(f"Model type {self.model_config.base_model_id} not supported")
             raise ValueError(f"Model type {self.model_config.base_model_id} not supported")
         
         # Run inference
-        outputs = compute_batch_outputs(
-            gpu_info["model"], 
-            gpu_info["processor"].tokenizer, 
-            batch_inputs
-        )
-        
+        if self.model_type == "default":
+            outputs = compute_batch_outputs(
+                gpu_info["model"], 
+                gpu_info["processor"].tokenizer, 
+                batch_inputs
+            )
+        elif self.model_type == "vqa":
+            outputs_preference = compute_batch_outputs_vqa(
+                gpu_info["model"], 
+                gpu_info["processor"].tokenizer, 
+                batch_inputs["preference_inputs"]
+            )
+            outputs_progress = compute_batch_outputs_vqa(
+                gpu_info["model"], 
+                gpu_info["processor"].tokenizer, 
+                batch_inputs["progress_inputs"]
+            )
+            import pdb; pdb.set_trace()
+        else:
+            raise ValueError(f"Model type {self.model_config.base_model_id} not supported")
         return outputs
                 
     def get_pool_status(self):
@@ -271,8 +320,42 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: Dict[str, torch.Tensor
             "preference_labels": preference_labels,
         }
 
+def compute_batch_outputs_vqa(model, tokenizer, batch_inputs: Dict[str, torch.Tensor]) -> Dict[str, Any]:
+    """Compute batch outputs for VQA."""
+    model.eval()
+    device = next(model.parameters()).device
 
-def create_app(cfg: EvaluationConfig, model_config: ModelConfig):
+    input_ids = batch_inputs["input_ids"].to(device)
+    attention_mask = batch_inputs["attention_mask"].to(device)
+    pixel_values = batch_inputs.get("pixel_values", None).to(device) if batch_inputs.get("pixel_values") is not None else None
+    pixel_values_videos = batch_inputs.get("pixel_values_videos", None).to(device) if batch_inputs.get("pixel_values_videos") is not None else None
+    image_grid_thw = batch_inputs.get("image_grid_thw", None).to(device) if batch_inputs.get("image_grid_thw") is not None else None
+    video_grid_thw = batch_inputs.get("video_grid_thw", None).to(device) if batch_inputs.get("video_grid_thw") is not None else None
+    labels = batch_inputs.get("labels").to(device)
+    input_to_model = {
+        "input_ids": input_ids,
+        "attention_mask": attention_mask,
+        "pixel_values": pixel_values,
+        "pixel_values_videos": pixel_values_videos,
+        "image_grid_thw": image_grid_thw,
+        "video_grid_thw": video_grid_thw,
+        "labels": labels
+    }
+
+    with torch.no_grad():
+        output_ids = model.generate(**input_to_model, max_new_tokens=1024)
+        generated_ids = [
+            output_ids[len(input_ids):]
+            for input_ids, output_ids in zip(input_ids, output_ids)]
+        generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+    print(f"generated texts: {generated_texts}")
+    import pdb; pdb.set_trace()
+    return {
+        "predictions": generated_texts,
+        "preference_labels": labels.detach().cpu().tolist()
+    }
+
+def create_app(cfg: EvaluationConfig, model_config: ModelConfig, model_type: str="default"):
     app = FastAPI(title="RFM Multi-GPU Evaluation Server")
     
     app.add_middleware(
@@ -287,7 +370,7 @@ def create_app(cfg: EvaluationConfig, model_config: ModelConfig):
     num_gpus = getattr(cfg, 'num_gpus', None)
     max_workers = getattr(cfg, 'max_workers', None)
     
-    gpu_pool = AsyncGPUPool(model_config, cfg.model_path, num_gpus, max_workers)
+    gpu_pool = AsyncGPUPool(model_config, cfg.model_path, num_gpus, max_workers, model_type)
     print(f"GPU pool initialized with {gpu_pool.num_gpus} GPUs")
 
     @app.post("/evaluate_batch")
@@ -361,7 +444,7 @@ def create_app(cfg: EvaluationConfig, model_config: ModelConfig):
                 
                 # Replace numpy file references with actual arrays
                 for key, value in sample_data.items():
-                    if key in ['chosen_trajectory', 'rejected_trajectory', 'reference_trajectory', 'traj_sim_trajectory', 'traj_diff_trajectory']:
+                    if key in ['chosen_trajectory', 'rejected_trajectory', 'reference_trajectory', 'traj_sim_trajectory', 'traj_diff_trajectory', 'trajectory']:
                         if isinstance(value, dict):
                             for traj_key, traj_value in value.items():
                                 if isinstance(traj_value, dict) and traj_value.get("__numpy_file__"):
@@ -403,8 +486,9 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--config_path", type=str, default="rfm/configs/eval_config.yaml")
+    parser.add_argument("--model_config_path", type=str, default="", help="Path to the model config file (Only used if model_path is not set in eval config)")
     parser.add_argument("--host", type=str, default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--port", type=int, default=8010)
     parser.add_argument("--num_gpus", type=int, default=None, help="Number of GPUs to use (None for all available)")
     parser.add_argument("--max_workers", type=int, default=None, help="Max worker threads (None for auto)")
     args = parser.parse_args()
@@ -425,14 +509,24 @@ def main():
     
     print(f"Evaluation config: {cfg}")
 
-    # Download model config from Hugging Face
-    model_config_path = hf_hub_download(repo_id=cfg.model_path, filename="config.yaml")
-    with open(model_config_path, "r") as f:
-        model_config_dict = yaml.safe_load(f)
+    if cfg.model_path != "":
+        # Download model config from Hugging Face
+        model_config_path = hf_hub_download(repo_id=cfg.model_path, filename="config.yaml")
+        with open(model_config_path, "r") as f:
+            model_config_dict = yaml.safe_load(f)
 
-    model_config = ModelConfig(**model_config_dict["model"])
-
-    app = create_app(cfg, model_config)
+        model_config = ModelConfig(**model_config_dict["model"])
+        model_type = model_config_dict["data"]["model_type"]
+    else:
+        print(f"Saved checkpoint is not found, loading model config from local path")
+        print(f"Loading model config from local path: {args.model_config_path}")
+        # load model config from local path
+        assert args.model_config_path != "", "Model config path is required if model path is not set in eval config"
+        with open(args.model_config_path, "r") as f:
+            model_config_dict = yaml.safe_load(f)
+        model_type = model_config_dict["data"]["model_type"]
+        model_config = ModelConfig(**model_config_dict["model"])
+    app = create_app(cfg, model_config, model_type)
     print(f"Running async multi-GPU server on {args.host}:{args.port}")
     print(f"Using {cfg.num_gpus or torch.cuda.device_count()} GPUs")
     uvicorn.run(app, host=args.host, port=args.port)

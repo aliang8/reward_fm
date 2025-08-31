@@ -37,7 +37,7 @@ def build_payload(samples: List[Union[PreferenceSample, SimilaritySample]]) -> T
         processed_sample = sample.model_dump().copy()
         
         # Handle trajectory objects with numpy arrays
-        for key in ['chosen_trajectory', 'rejected_trajectory', 'reference_trajectory', 'traj_sim_trajectory', 'traj_diff_trajectory']:
+        for key in ['chosen_trajectory', 'rejected_trajectory', 'reference_trajectory', 'traj_sim_trajectory', 'traj_diff_trajectory', 'trajectory']:
             if key in processed_sample and isinstance(processed_sample[key], dict):
                 trajectory = processed_sample[key]
                 if 'frames' in trajectory and isinstance(trajectory['frames'], np.ndarray):

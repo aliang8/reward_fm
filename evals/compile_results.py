@@ -79,6 +79,7 @@ def compute_preference_accuracy(results: List[Dict[str, Any]]) -> Dict[str, Any]
         "num_skipped": skipped,
     }
 
+
 def main():
     import yaml
     from rfm.configs.experiment_configs import DataConfig

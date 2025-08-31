@@ -8,7 +8,7 @@ For each task-trajectory pair, it creates a sample with the trajectory frames
 and the task language instruction.
 """
 
-from rfm.data.batch_collator import PreferenceSample, Trajectory
+from rfm.data.dataset_types import PreferenceSample, Trajectory
 from rfm.utils.logging import rank_0_print
 from typing import Dict, List, Optional, Union
 from rfm.data.generators.base import BaseDataGenerator
@@ -25,9 +25,7 @@ class ConfusionMatrixGenerator(BaseDataGenerator):
     how well the model can distinguish between different tasks.
     """
 
-    def __init__(
-        self, config, is_evaluation=False, verbose=True, max_trajectories: Optional[int] = None
-    ):
+    def __init__(self, config, is_evaluation=False, verbose=True, max_trajectories: Optional[int] = None):
         super().__init__(config, is_evaluation, verbose=verbose)
 
         self.max_trajectories = max_trajectories
@@ -49,7 +47,7 @@ class ConfusionMatrixGenerator(BaseDataGenerator):
         # Limit number of trajectories if specified
         trajectories_to_process = self.robot_trajectories
         if self.max_trajectories is not None:
-            trajectories_to_process = self.robot_trajectories[:self.max_trajectories]
+            trajectories_to_process = self.robot_trajectories[: self.max_trajectories]
 
         rank_0_print(f"Processing {len(trajectories_to_process)} trajectories for confusion matrix analysis")
 
@@ -57,18 +55,20 @@ class ConfusionMatrixGenerator(BaseDataGenerator):
         for task in tqdm(unique_tasks, desc="Generating task-trajectory pairs"):
             for traj_idx in trajectories_to_process:
                 traj = self.dataset[traj_idx]
-                
+
                 # Get trajectory length from frames
                 frames_path = traj.get("frames")
                 if not frames_path:
                     continue
 
                 # Store the pairing information
-                sample_indices.append({
-                    "traj_idx": traj_idx,
-                    "task": task,
-                    "trajectory_task": traj.get("task", "unknown")  # Original task of trajectory
-                })
+                sample_indices.append(
+                    {
+                        "traj_idx": traj_idx,
+                        "task": task,
+                        "trajectory_task": traj.get("task", "unknown"),  # Original task of trajectory
+                    }
+                )
 
         rank_0_print(f"Generated {len(sample_indices)} task-trajectory pairs")
         return sample_indices
@@ -139,9 +139,7 @@ class ConfusionMatrixGenerator(BaseDataGenerator):
 
         # Create preference sample (chosen and rejected are the same for confusion matrix)
         sample = PreferenceSample(
-            chosen_trajectory=sample_trajectory,
-            rejected_trajectory=rejected_trajectory,
-            sample_type="preference"
+            chosen_trajectory=sample_trajectory, rejected_trajectory=rejected_trajectory, sample_type="preference"
         )
 
         return sample

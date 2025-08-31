@@ -1,9 +1,9 @@
 import random
 import numpy as np
-from rfm.data.batch_collator import Trajectory
 from rfm.data.vqa_batch_collator import ProgressSample
 from rfm.data.generators.pref import PreferenceDataGenerator
 from rfm.data.generators.sim import SimilarityDataGenerator
+from rfm.data.dataset_types import SimilaritySample, ProgressSample, Trajectory
 from rfm.data.generators.generator import DataGenerator
 from rfm.data.generators.base import BaseDataGenerator
 from rfm.utils.logging import rank_0_print

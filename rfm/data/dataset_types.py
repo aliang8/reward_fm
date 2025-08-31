@@ -4,54 +4,60 @@ Dataclasses for RFM model dataset trajectory structures.
 Defines the standard format for HuggingFace dataset trajectories.
 """
 
-from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Any
+from pydantic import BaseModel
+from typing import Optional, Union, List, Dict, Any
 import numpy as np
 
 
-@dataclass
-class Trajectory:
-    """Standard trajectory structure for HuggingFace format."""
+class Trajectory(BaseModel):
+    """Trajectory structure containing frames, metadata, and progress information."""
 
-    id: str
-    task: str
-    lang_vector: np.ndarray
-    data_source: str
-    frames: str
-    is_robot: bool
-    quality_label: str
-    preference_group_id: Optional[str] = None
-    preference_rank: Optional[int] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    # Core trajectory fields
+    frames: Optional[Union[List[str], np.ndarray]] = None
+    frames_shape: Optional[tuple] = None
+    id: Optional[str] = None
+    task: Optional[str] = None
+    lang_vector: Optional[Union[np.ndarray, List[float]]] = None
+    data_source: Optional[str] = None
+    quality_label: Optional[str] = None
+    is_robot: Optional[bool] = None
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary format for HuggingFace dataset trajectory."""
-        return {
-            "id": self.id,
-            "task": self.task,
-            "lang_vector": self.lang_vector,
-            "data_source": self.data_source,
-            "frames": self.frames,
-            "is_robot": self.is_robot,
-            "quality_label": self.quality_label,
-            "preference_group_id": self.preference_group_id,
-            "preference_rank": self.preference_rank,
-            "metadata": self.metadata,
-        }
+    data_gen_strategy: Optional[str] = None
+
+    # Progress and metadata
+    target_progress: Optional[List[float]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+    class Config:
+        arbitrary_types_allowed = True
 
 
-@dataclass
-class Preference:
-    """Preference data structure for trajectory comparisons."""
+class ProgressSample(BaseModel):
+    """Sample structure for progress evaluation."""
 
-    traj_id: str
-    chosen_id: str
-    rejected_id: str
+    trajectory: Trajectory
+    sample_type: str = "progress"
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary format."""
-        return {
-            "traj_id": self.traj_id,
-            "chosen_id": self.chosen_id,
-            "rejected_id": self.rejected_id,
-        }
+
+class PreferenceSample(BaseModel):
+    """Sample structure for preference prediction: chosen vs rejected where chosen is preferred."""
+
+    # Trajectories
+    chosen_trajectory: Trajectory
+    rejected_trajectory: Trajectory
+
+    sample_type: str = "preference"
+
+
+class SimilaritySample(BaseModel):
+    """Sample structure for similarity scoring: traj_sim and traj_diff ranked against o^ref."""
+
+    # Trajectories
+    reference_trajectory: Trajectory  # o^ref
+    traj_sim_trajectory: Trajectory  # Similar trajectory
+    traj_diff_trajectory: Trajectory  # Different trajectory
+
+    sample_type: str = "similarity"
+
+
+SampleType = Union[PreferenceSample, SimilaritySample, ProgressSample]

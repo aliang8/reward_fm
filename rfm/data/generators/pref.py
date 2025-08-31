@@ -6,8 +6,7 @@ PreferenceDataGenerator class for producing batches of preference prediction dat
 import random
 import numpy as np
 from typing import List, Dict, Tuple, Optional, Iterator, Union
-from rfm.data.batch_collator import PreferenceSample, Trajectory
-from rfm.data.vqa_batch_collator import ProgressSample
+from rfm.data.dataset_types import PreferenceSample, SimilaritySample, ProgressSample
 from rfm.data.generators.base import BaseDataGenerator
 from rfm.utils.logging import rank_0_print, timer
 
@@ -461,6 +460,10 @@ class PreferenceDataGenerator(BaseDataGenerator):
             rejected_frames = rejected_traj["frames"]
             rejected_progress = rejected_traj["target_progress"]
             rejected_metadata = rejected_traj["metadata"]
+
+        # If our strategy is different task, make sure the rejected trajectory has 0 progress
+        if strategy_used == "different_task":
+            rejected_progress = [0.0] * len(rejected_progress)
 
         # Create preference sample structure
         sample = PreferenceSample(

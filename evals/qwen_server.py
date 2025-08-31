@@ -169,7 +169,8 @@ class AsyncGPUPool:
                 batch_collator = VQABatchCollator(
                     processor=gpu_info["processor"],
                     resized_height=128,  # You might want to make this configurable
-                    resized_width=128
+                    resized_width=128,
+                    training=False
                 )
             else:
                 raise ValueError(f"Model type {self.model_type} not supported")

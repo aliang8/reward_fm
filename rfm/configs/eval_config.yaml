@@ -5,7 +5,7 @@
 model_path: "aliangdw/rfm_v6"  # Path to the trained model checkpoint (will load training_config.yaml from here)
 
 # GPU Pool settings
-num_gpus: 1  # Number of GPUs to use (null for all available)
+num_gpus: 4  # Number of GPUs to use (null for all available)
 max_workers: null  # Max worker threads (null for auto, typically same as num_gpus)
 
 # Evaluation parameters
@@ -50,7 +50,7 @@ data:
   # Data loading settings
   dataloader_pin_memory: false
   dataloader_num_workers: 0
-  dataset_type: reward_alignment
+  dataset_type: confusion_matrix
 
   # extra settings for eval datasets 
   num_bins: 3

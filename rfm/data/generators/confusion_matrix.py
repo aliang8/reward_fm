@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
 """
 Data generator for confusion matrix analysis.
-
-This generator creates samples where each task is paired with each trajectory
-to analyze how well the model can distinguish between different tasks and trajectories.
-For each task-trajectory pair, it creates a sample with the trajectory frames
-and the task language instruction.
 """
 
-from rfm.data.dataset_types import PreferenceSample, Trajectory
+from rfm.data.dataset_types import PreferenceSample, ProgressSample, Trajectory
 from rfm.utils.logging import rank_0_print
 from typing import Dict, List, Optional, Union
 from rfm.data.generators.base import BaseDataGenerator
@@ -121,26 +116,7 @@ class ConfusionMatrixGenerator(BaseDataGenerator):
             metadata=metadata,
         )
 
-        # Create a dummy "rejected" trajectory (same as chosen for this analysis)
-        # We only care about the task discrimination, not preference
-        rejected_trajectory = Trajectory(
-            id=original_traj["id"],
-            task=task,
-            frames=padded_frames,
-            frames_shape=padded_frames.shape,
-            data_source=original_traj["data_source"],
-            lang_vector=original_traj["lang_vector"],
-            is_robot=original_traj["is_robot"],
-            quality_label=original_traj["quality_label"],
-            data_gen_strategy="confusion_matrix",
-            target_progress=[1.0],
-            metadata=metadata,
-        )
-
-        # Create preference sample (chosen and rejected are the same for confusion matrix)
-        sample = PreferenceSample(
-            chosen_trajectory=sample_trajectory, rejected_trajectory=rejected_trajectory, sample_type="preference"
-        )
+        sample = ProgressSample(trajectory=sample_trajectory)
 
         return sample
 

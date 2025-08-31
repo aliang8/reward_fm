@@ -157,16 +157,13 @@ def main():
             last_preds = []
             last_targets = []
             for r in ra_results:
-                pred = r.get("progress_pred_chosen")
-                meta = r.get("chosen_metadata", {}) or r.get("chosen_meta", {}) or {}
+                pred = r.get("progress_pred_A")
+                meta = r.get("metadata", {}) or {}
                 tgt = meta.get("target_progress")
                 if pred and len(pred) > 0 and tgt and len(tgt) > 0:
                     last_preds.append(float(pred[-1]))
                     last_targets.append(float(tgt[-1]))
 
-            import ipdb
-
-            ipdb.set_trace()
             mse = np.mean((np.array(last_targets) - np.array(last_preds)) ** 2)
             pearson_last = compute_pearson(last_targets, last_preds)
             spearman_last = compute_spearman(last_targets, last_preds)
@@ -175,6 +172,83 @@ def main():
             print("  - Spearman:", spearman_last if not np.isnan(spearman_last) else "nan")
         else:
             print("No analyses run for reward_alignment.json")
+
+        # confusion_matrix.json: create confusion matrix analysis
+        cm_results = _load_if_exists("confusion_matrix_progress.json")
+        if cm_results:
+            print("Running analyses for confusion_matrix_progress.json:")
+
+            # Group results by confusion matrix task and trajectory original task
+            task_task_groups = {}
+
+            for r in cm_results:
+                # Get the confusion matrix task (the task we're testing with) and original trajectory task
+                meta = r.get("metadata", {}) or {}
+                cm_task = meta.get("confusion_matrix_task")  # Language task given to model
+                trajectory_original_task = meta.get("trajectory_original_task")  # Original task of trajectory
+
+                if cm_task is None or trajectory_original_task is None:
+                    continue
+
+                # Get the final progress prediction as the reward
+                progress_pred = r.get("progress_pred_A", [])
+                if not progress_pred or len(progress_pred) == 0:
+                    continue
+
+                final_reward = float(progress_pred[-1])
+
+                # Group by (cm_task, trajectory_original_task) pair
+                key = (cm_task, trajectory_original_task)
+                if key not in task_task_groups:
+                    task_task_groups[key] = []
+                task_task_groups[key].append(final_reward)
+
+            print(f"  - Found {len(task_task_groups)} task-task pairs")
+
+            # Get unique tasks for both axes
+            all_tasks = set()
+            for cm_task, traj_task in task_task_groups.keys():
+                all_tasks.add(cm_task)
+                all_tasks.add(traj_task)
+
+            unique_tasks = sorted(list(all_tasks))
+            print(f"  - Found {len(unique_tasks)} unique tasks: {unique_tasks}")
+
+            # Create confusion matrix: rows = cm_task (language given to model), cols = trajectory_original_task
+            confusion_matrix = np.zeros((len(unique_tasks), len(unique_tasks)))
+
+            # Fill confusion matrix with average rewards
+            for i, cm_task in enumerate(unique_tasks):
+                for j, traj_task in enumerate(unique_tasks):
+                    key = (cm_task, traj_task)
+                    if key in task_task_groups:
+                        # Average across all trajectories for this task-task pair
+                        avg_reward = np.mean(task_task_groups[key])
+                        confusion_matrix[i, j] = avg_reward
+                    else:
+                        confusion_matrix[i, j] = np.nan
+
+            # Print confusion matrix summary
+            print(f"  - Confusion matrix shape: {confusion_matrix.shape}")
+
+            plt.figure(figsize=(12, 10))
+            plt.imshow(confusion_matrix, cmap="viridis", aspect="auto")
+            plt.colorbar(label="Average Final Progress Reward")
+            plt.xlabel("Trajectory Original Task")
+            plt.ylabel("Language Task Given to Model")
+            plt.title("Confusion Matrix: Language Task vs Trajectory Original Task")
+            plt.xticks(range(len(unique_tasks)), unique_tasks, rotation=45, ha="right")
+            plt.yticks(range(len(unique_tasks)), unique_tasks)
+            plt.tight_layout()
+
+            # Save plot
+            plot_path = dir_path / "confusion_matrix_heatmap.png"
+            plt.savefig(plot_path, dpi=300, bbox_inches="tight")
+            print(f"  - Saved confusion matrix heatmap to: {plot_path}")
+            plt.close()
+
+        else:
+            print("No analyses run for confusion_matrix.json")
 
         print("Directory processing complete.")
         print("Done!")

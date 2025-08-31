@@ -32,7 +32,7 @@ from rfm.utils.logging import rank_0_print
 from rfm.configs.experiment_configs import ExperimentConfig, ModelConfig
 from rfm.data.vqa_batch_collator import VQABatchCollator
 
-DatasetType = Union[InfiniteDataGeneratorDataset, RewoundDataset, VideoBinnedDataset]
+SampleType = Union[InfiniteDataGeneratorDataset, RewoundDataset, VideoBinnedDataset]
 
 
 def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[AutoProcessor, RFMModel]:
@@ -251,7 +251,9 @@ def setup_data_generator(cfg: ExperimentConfig, is_eval: bool = False) -> DataGe
         elif cfg.data.dataset_type == "success_failure":
             data_generator = PairedSuccessFailureGenerator(config=cfg.data, is_evaluation=is_eval)
         elif cfg.data.dataset_type == "confusion_matrix":
-            data_generator = ConfusionMatrixGenerator(config=cfg.data, is_evaluation=is_eval, max_trajectories=cfg.data.max_trajectories)
+            data_generator = ConfusionMatrixGenerator(
+                config=cfg.data, is_evaluation=is_eval, max_trajectories=cfg.data.max_trajectories
+            )
         else:
             data_generator = DataGenerator(config=cfg.data, is_evaluation=is_eval)
 
@@ -263,7 +265,7 @@ def setup_data_generator(cfg: ExperimentConfig, is_eval: bool = False) -> DataGe
 
 def setup_dataset(
     data_generator: DataGenerator, dataset_type: str = "default", dataset_kwargs: dict = {}
-) -> DatasetType:
+) -> SampleType:
     """Shared function to create training or evaluation dataset based on config"""
 
     # Get the dataset type from the data generator config
@@ -286,7 +288,7 @@ def setup_dataset(
     return dataset
 
 
-def setup_eval_dataset(cfg: ExperimentConfig) -> DatasetType:
+def setup_eval_dataset(cfg: ExperimentConfig) -> SampleType:
     """Create evaluation dataset using eval-specific configuration"""
 
     # Create evaluation data generator

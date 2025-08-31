@@ -1,4 +1,4 @@
-from rfm.data.batch_collator import PreferenceSample, Trajectory
+from rfm.data.dataset_types import PreferenceSample, Trajectory
 from rfm.utils.logging import rank_0_print
 from typing import Dict, List
 from rfm.data.generators.base import BaseDataGenerator

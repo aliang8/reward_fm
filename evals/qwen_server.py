@@ -39,41 +39,48 @@ from rfm.utils.setup_utils import setup_model_and_processor, setup_vqa_model_and
 from rfm.configs.eval_configs import EvaluationConfig
 from rfm.configs.experiment_configs import DataConfig, ModelConfig
 from rfm.data.batch_collator import BatchCollator, PreferenceSample
-from rfm.data.vqa_batch_collator import VQABatchCollator, ProgressSample
+from rfm.data.vqa_batch_collator import VQABatchCollator
+from rfm.data.dataset_types import PreferenceSample, ProgressSample
 
 
 class AsyncGPUPool:
     """Async GPU pool for handling multiple requests efficiently across multiple GPUs."""
-    
-    def __init__(self, model_config: ModelConfig, model_path: str, num_gpus: int = None, 
-                 max_workers: int = None, model_type: str = "default"):
+
+    def __init__(
+        self,
+        model_config: ModelConfig,
+        model_path: str,
+        num_gpus: int = None,
+        max_workers: int = None,
+        model_type: str = "default",
+    ):
         self.model_config = model_config
         self.model_path = model_path
         self.num_gpus = num_gpus or torch.cuda.device_count()
         self.max_workers = max_workers or self.num_gpus
         self.model_type = model_type
-        
+
         if self.num_gpus == 0:
             raise RuntimeError("No CUDA devices available")
-        
+
         print(f"Initializing async GPU pool with {self.num_gpus} GPUs and {self.max_workers} workers")
-        
+
         # Initialize GPU pool
         self.gpu_pool = queue.Queue(maxsize=self.num_gpus)
         self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
         self.gpu_stats = {}
-        
+
         # Initialize GPUs
         self._initialize_gpus()
-        
+
         print(f"GPU pool initialized successfully")
-    
+
     def _initialize_gpus(self):
         """Initialize models on all GPUs."""
         for gpu_id in range(self.num_gpus):
             device = f"cuda:{gpu_id}"
             print(f"Loading model on GPU {gpu_id} ({device})")
-            
+
             # Load model on specific GPU
             if self.model_type == "default":
                 processor, model = setup_model_and_processor(self.model_config, self.model_path)
@@ -81,58 +88,49 @@ class AsyncGPUPool:
                 processor, model = setup_vqa_model_and_processor(self.model_config, self.model_path)
             else:
                 raise ValueError(f"Model type {self.model_type} not supported")
-            
+
             model = model.to(device)
             model.eval()
-            
+
             # Initialize GPU stats
             self.gpu_stats[gpu_id] = {
                 "total_requests": 0,
                 "total_processing_time": 0.0,
                 "last_used": time.time(),
-                "status": "ready"
+                "status": "ready",
             }
-            
+
             # Add to pool
-            self.gpu_pool.put({
-                "model": model,
-                "processor": processor,
-                "device": device,
-                "gpu_id": gpu_id,
-                "created_at": time.time()
-            })
-            
+            self.gpu_pool.put(
+                {"model": model, "processor": processor, "device": device, "gpu_id": gpu_id, "created_at": time.time()}
+            )
+
             print(f"Successfully loaded model on GPU {gpu_id}")
-    
+
     async def process_batch(self, batch_data: Union[Dict[str, Any], List[Dict[str, Any]]]):
         """Process a batch using an available GPU asynchronously."""
         loop = asyncio.get_event_loop()
-        
+
         # Get GPU from pool (this will block until one is available)
         gpu_info = await loop.run_in_executor(self.executor, self.gpu_pool.get)
-        
+
         start_time = time.time()
-        
+
         # Update GPU stats
         self.gpu_stats[gpu_info["gpu_id"]]["status"] = "processing"
         self.gpu_stats[gpu_info["gpu_id"]]["last_used"] = start_time
-        
+
         try:
             # Process batch in thread pool
-            result = await loop.run_in_executor(
-                self.executor, 
-                self._process_batch_sync, 
-                gpu_info, 
-                batch_data
-            )
-            
+            result = await loop.run_in_executor(self.executor, self._process_batch_sync, gpu_info, batch_data)
+
             # Update stats
             processing_time = time.time() - start_time
             self.gpu_stats[gpu_info["gpu_id"]]["total_requests"] += 1
             self.gpu_stats[gpu_info["gpu_id"]]["total_processing_time"] += processing_time
-            
+
             return result
-            
+
         finally:
             # Always return GPU to pool and update stats
             processing_time = time.time() - start_time
@@ -140,10 +138,10 @@ class AsyncGPUPool:
             self.gpu_stats[gpu_info["gpu_id"]]["total_processing_time"] += processing_time
             self.gpu_stats[gpu_info["gpu_id"]]["status"] = "ready"
             self.gpu_pool.put(gpu_info)
-    
+
     def _process_batch_sync(self, gpu_info: Dict, batch_data: Union[Dict[str, Any], List[Dict[str, Any]]]):
         """Synchronous batch processing on specific GPU."""
-        
+
         # Handle both dict and list inputs
         if isinstance(batch_data, dict):
             # Legacy format - extract samples from dict
@@ -151,84 +149,72 @@ class AsyncGPUPool:
         else:
             # New format - batch_data is already a list of samples
             samples = batch_data
-        
+
         if not samples:
             raise ValueError("No samples found in batch data")
-        
+
         print(f"Processing {len(samples)} samples on GPU {gpu_info['gpu_id']}")
-        
+
         # Create batch collator with processor from this GPU
         if "qwen" in self.model_config.base_model_id.lower():
             if self.model_type == "default":
                 batch_collator = BatchCollator(
                     processor=gpu_info["processor"],
                     resized_height=128,  # You might want to make this configurable
-                    resized_width=128
+                    resized_width=128,
                 )
             elif self.model_type == "vqa":
                 batch_collator = VQABatchCollator(
                     processor=gpu_info["processor"],
                     resized_height=128,  # You might want to make this configurable
                     resized_width=128,
-                    training=False
+                    training=False,
                 )
             else:
                 raise ValueError(f"Model type {self.model_type} not supported")
 
-            if self.model_type == "default":
-                # Convert to PreferenceSample
-                pref_samples = [PreferenceSample(**s) for s in samples]
-                batch_inputs = batch_collator(pref_samples)["preference_inputs"]
-            elif self.model_type == "vqa":
-                input_samples = []
-                for sample in samples:
-                    if sample["sample_type"] == "preference":
-                        input_samples.append(PreferenceSample(**sample))
-                    elif sample["sample_type"] == "progress":
-                        input_samples.append(ProgressSample(**sample))
-                # This time batch_inputs will be a dictionary with preference_inputs, similarity_inputs, and progress_inputs
-                batch_inputs = batch_collator(input_samples)
+            input_samples = []
+            for sample in samples:
+                if sample["sample_type"] == "preference":
+                    input_samples.append(PreferenceSample(**sample))
+                elif sample["sample_type"] == "progress":
+                    input_samples.append(ProgressSample(**sample))
+            # This time batch_inputs will be a dictionary with preference_inputs, similarity_inputs, and progress_inputs
+            batch_inputs = batch_collator(input_samples)
 
             # Move inputs to the correct GPU
             device = gpu_info["device"]
-            if self.model_type == "default":
-                for key, value in batch_inputs.items():
-                    if isinstance(value, torch.Tensor):
-                        batch_inputs[key] = value.to(device)            
-            elif self.model_type == "vqa":
-                for key, value in batch_inputs["preference_inputs"].items():
-                    if isinstance(value, torch.Tensor):
-                        batch_inputs["preference_inputs"][key] = value.to(device)
-                for key, value in batch_inputs["progress_inputs"].items():
-                    if isinstance(value, torch.Tensor):
-                        batch_inputs["progress_inputs"][key] = value.to(device)
+            for key, value in batch_inputs["preference_inputs"].items():
+                if isinstance(value, torch.Tensor):
+                    batch_inputs["preference_inputs"][key] = value.to(device)
+            for key, value in batch_inputs["progress_inputs"].items():
+                if isinstance(value, torch.Tensor):
+                    batch_inputs["progress_inputs"][key] = value.to(device)
         else:
             print(f"Model type {self.model_config.base_model_id} not supported")
             raise ValueError(f"Model type {self.model_config.base_model_id} not supported")
-        
-        # Run inference
-        if self.model_type == "default":
-            outputs = compute_batch_outputs(
-                gpu_info["model"], 
-                gpu_info["processor"].tokenizer, 
-                batch_inputs
+
+        if batch_inputs["num_preferences"] > 0:
+            # Run inference for preference samples
+            outputs_preference = compute_batch_outputs(
+                gpu_info["model"], gpu_info["processor"].tokenizer, batch_inputs["preference_inputs"]
             )
-        elif self.model_type == "vqa":
-            outputs_preference = compute_batch_outputs_vqa(
-                gpu_info["model"], 
-                gpu_info["processor"].tokenizer, 
-                batch_inputs["preference_inputs"]
-            )
-            outputs_progress = compute_batch_outputs_vqa(
-                gpu_info["model"], 
-                gpu_info["processor"].tokenizer, 
-                batch_inputs["progress_inputs"]
-            )
-            import pdb; pdb.set_trace()
         else:
-            raise ValueError(f"Model type {self.model_config.base_model_id} not supported")
-        return outputs
-                
+            outputs_preference = None
+
+        if batch_inputs["num_progress"] > 0:
+            # Run inference for progress samples - only compute progress for trajectory A
+            outputs_progress = compute_batch_outputs_progress_only(
+                gpu_info["model"], gpu_info["processor"].tokenizer, batch_inputs["progress_inputs"]
+            )
+        else:
+            outputs_progress = None
+
+        return {
+            "outputs_preference": outputs_preference,
+            "outputs_progress": outputs_progress,
+        }
+
     def get_pool_status(self):
         """Get status of the GPU pool."""
         return {
@@ -236,9 +222,9 @@ class AsyncGPUPool:
             "available_gpus": self.gpu_pool.qsize(),
             "max_workers": self.max_workers,
             "gpu_stats": self.gpu_stats,
-            "pool_size": self.gpu_pool.maxsize
+            "pool_size": self.gpu_pool.maxsize,
         }
-    
+
     def shutdown(self):
         """Shutdown the GPU pool and executor."""
         print("Shutting down GPU pool...")
@@ -321,6 +307,52 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: Dict[str, torch.Tensor
             "preference_labels": preference_labels,
         }
 
+
+def compute_batch_outputs_progress_only(model, tokenizer, batch_inputs: Dict[str, torch.Tensor]) -> Dict[str, Any]:
+    """Compute batch outputs for progress prediction only (trajectory A)."""
+    model.eval()
+    device = next(model.parameters()).device
+
+    with torch.no_grad():
+        outputs, progress_logits, _ = model(
+            input_ids=batch_inputs["input_ids"].to(device),
+            attention_mask=batch_inputs["attention_mask"].to(device),
+            pixel_values=batch_inputs.get("pixel_values", None).to(device)
+            if batch_inputs.get("pixel_values") is not None
+            else None,
+            pixel_values_videos=batch_inputs.get("pixel_values_videos", None).to(device)
+            if batch_inputs.get("pixel_values_videos") is not None
+            else None,
+            image_grid_thw=batch_inputs.get("image_grid_thw", None).to(device)
+            if batch_inputs.get("image_grid_thw") is not None
+            else None,
+            video_grid_thw=batch_inputs.get("video_grid_thw", None).to(device)
+            if batch_inputs.get("video_grid_thw") is not None
+            else None,
+            second_per_grid_ts=batch_inputs.get("second_per_grid_ts", None).to(device)
+            if batch_inputs.get("second_per_grid_ts") is not None
+            else None,
+            sample_type="progress",
+        )
+
+        # For progress-only samples, we only care about trajectory A progress
+        progress_pred_A = []
+
+        if isinstance(progress_logits, dict) and "A" in progress_logits:
+            for seq_A in progress_logits["A"]:
+                if seq_A is None:
+                    progress_pred_A.append([])
+                else:
+                    progress_pred_A.append(seq_A.detach().cpu().flatten().tolist())
+        else:
+            # If no progress logits, create empty lists
+            progress_pred_A = [[] for _ in range(len(batch_inputs["input_ids"]))]
+
+        return {
+            "progress_pred_A": progress_pred_A,
+        }
+
+
 def compute_batch_outputs_vqa(model, tokenizer, batch_inputs: Dict[str, torch.Tensor]) -> Dict[str, Any]:
     """Compute batch outputs for VQA."""
     model.eval()
@@ -328,10 +360,20 @@ def compute_batch_outputs_vqa(model, tokenizer, batch_inputs: Dict[str, torch.Te
 
     input_ids = batch_inputs["input_ids"].to(device)
     attention_mask = batch_inputs["attention_mask"].to(device)
-    pixel_values = batch_inputs.get("pixel_values", None).to(device) if batch_inputs.get("pixel_values") is not None else None
-    pixel_values_videos = batch_inputs.get("pixel_values_videos", None).to(device) if batch_inputs.get("pixel_values_videos") is not None else None
-    image_grid_thw = batch_inputs.get("image_grid_thw", None).to(device) if batch_inputs.get("image_grid_thw") is not None else None
-    video_grid_thw = batch_inputs.get("video_grid_thw", None).to(device) if batch_inputs.get("video_grid_thw") is not None else None
+    pixel_values = (
+        batch_inputs.get("pixel_values", None).to(device) if batch_inputs.get("pixel_values") is not None else None
+    )
+    pixel_values_videos = (
+        batch_inputs.get("pixel_values_videos", None).to(device)
+        if batch_inputs.get("pixel_values_videos") is not None
+        else None
+    )
+    image_grid_thw = (
+        batch_inputs.get("image_grid_thw", None).to(device) if batch_inputs.get("image_grid_thw") is not None else None
+    )
+    video_grid_thw = (
+        batch_inputs.get("video_grid_thw", None).to(device) if batch_inputs.get("video_grid_thw") is not None else None
+    )
     labels = batch_inputs.get("labels").to(device)
     input_to_model = {
         "input_ids": input_ids,
@@ -340,25 +382,25 @@ def compute_batch_outputs_vqa(model, tokenizer, batch_inputs: Dict[str, torch.Te
         "pixel_values_videos": pixel_values_videos,
         "image_grid_thw": image_grid_thw,
         "video_grid_thw": video_grid_thw,
-        "labels": labels
+        "labels": labels,
     }
 
     with torch.no_grad():
         output_ids = model.generate(**input_to_model, max_new_tokens=1024)
-        generated_ids = [
-            output_ids[len(input_ids):]
-            for input_ids, output_ids in zip(input_ids, output_ids)]
-        generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+        generated_ids = [output_ids[len(input_ids) :] for input_ids, output_ids in zip(input_ids, output_ids)]
+        generated_texts = tokenizer.batch_decode(
+            generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True
+        )
     print(f"generated texts: {generated_texts}")
-    import pdb; pdb.set_trace()
-    return {
-        "predictions": generated_texts,
-        "preference_labels": labels.detach().cpu().tolist()
-    }
+    import pdb
 
-def create_app(cfg: EvaluationConfig, model_config: ModelConfig, model_type: str="default"):
+    pdb.set_trace()
+    return {"predictions": generated_texts, "preference_labels": labels.detach().cpu().tolist()}
+
+
+def create_app(cfg: EvaluationConfig, model_config: ModelConfig, model_type: str = "default"):
     app = FastAPI(title="RFM Multi-GPU Evaluation Server")
-    
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -368,9 +410,9 @@ def create_app(cfg: EvaluationConfig, model_config: ModelConfig, model_type: str
     )
 
     # Initialize async GPU pool
-    num_gpus = getattr(cfg, 'num_gpus', None)
-    max_workers = getattr(cfg, 'max_workers', None)
-    
+    num_gpus = getattr(cfg, "num_gpus", None)
+    max_workers = getattr(cfg, "max_workers", None)
+
     gpu_pool = AsyncGPUPool(model_config, cfg.model_path, num_gpus, max_workers, model_type)
     print(f"GPU pool initialized with {gpu_pool.num_gpus} GPUs")
 
@@ -382,23 +424,23 @@ def create_app(cfg: EvaluationConfig, model_config: ModelConfig, model_type: str
     @app.post("/evaluate_batch_npy")
     async def evaluate_batch_npy(request: Request):
         """Evaluate a batch with .npy file support for numpy arrays.
-        
+
         This endpoint handles multipart form data where:
         - numpy arrays are sent as .npy files
         - other data is sent as form fields
         """
         # Parse form data
         form_data = await request.form()
-        
+
         # Extract numpy arrays from files
         numpy_arrays = {}
         other_data = {}
-        
+
         for key, value in form_data.items():
             # Check if this is a file upload (UploadFile object)
-            if hasattr(value, 'filename') and value.filename:
+            if hasattr(value, "filename") and value.filename:
                 # This is a file upload
-                if value.filename.endswith('.npy'):
+                if value.filename.endswith(".npy"):
                     # Load .npy file
                     content = await value.read()
                     buf = io.BytesIO(content)
@@ -415,24 +457,26 @@ def create_app(cfg: EvaluationConfig, model_config: ModelConfig, model_type: str
                 except (json.JSONDecodeError, TypeError):
                     # Keep as string if not JSON
                     other_data[key] = value
-        
+
         # Reconstruct the original payload structure
         batch_data = reconstruct_payload_from_npy(numpy_arrays, other_data)
-        
+
         # Process the batch
         return await gpu_pool.process_batch(batch_data)
-  
-    def reconstruct_payload_from_npy(numpy_arrays: Dict[str, np.ndarray], other_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+
+    def reconstruct_payload_from_npy(
+        numpy_arrays: Dict[str, np.ndarray], other_data: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
         """Reconstruct the original payload structure from .npy files and form data.
-        
+
         The client sends data in this format:
         - Files: sample_0_chosen_trajectory_frames.npy, sample_0_chosen_trajectory_lang_vector.npy, etc.
         - Data: sample_0, sample_1, etc. (each containing the full sample JSON with numpy file references)
-        
+
         We need to reconstruct the original list of sample dictionaries.
         """
         samples = []
-        
+
         # Process each sample
         for i in range(len(other_data)):
             sample_key = f"sample_{i}"
@@ -442,10 +486,17 @@ def create_app(cfg: EvaluationConfig, model_config: ModelConfig, model_type: str
                 if isinstance(sample_data, str):
                     # Parse the sample JSON if it's a string
                     sample_data = json.loads(sample_data)
-                
+
                 # Replace numpy file references with actual arrays
                 for key, value in sample_data.items():
-                    if key in ['chosen_trajectory', 'rejected_trajectory', 'reference_trajectory', 'traj_sim_trajectory', 'traj_diff_trajectory', 'trajectory']:
+                    if key in [
+                        "chosen_trajectory",
+                        "rejected_trajectory",
+                        "reference_trajectory",
+                        "traj_sim_trajectory",
+                        "traj_diff_trajectory",
+                        "trajectory",
+                    ]:
                         if isinstance(value, dict):
                             for traj_key, traj_value in value.items():
                                 if isinstance(traj_value, dict) and traj_value.get("__numpy_file__"):
@@ -453,9 +504,9 @@ def create_app(cfg: EvaluationConfig, model_config: ModelConfig, model_type: str
                                     file_key = traj_value["__numpy_file__"]
                                     if file_key in numpy_arrays:
                                         value[traj_key] = numpy_arrays[file_key]
-                
+
                 samples.append(sample_data)
-        
+
         return samples
 
     @app.get("/gpu_status")
@@ -467,11 +518,7 @@ def create_app(cfg: EvaluationConfig, model_config: ModelConfig, model_type: str
     def health_check():
         """Health check endpoint."""
         status = gpu_pool.get_pool_status()
-        return {
-            "status": "healthy",
-            "available_gpus": status["available_gpus"],
-            "total_gpus": status["total_gpus"]
-        }
+        return {"status": "healthy", "available_gpus": status["available_gpus"], "total_gpus": status["total_gpus"]}
 
     @app.on_event("shutdown")
     async def shutdown_event():
@@ -487,9 +534,14 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--config_path", type=str, default="rfm/configs/eval_config.yaml")
-    parser.add_argument("--model_config_path", type=str, default="", help="Path to the model config file (Only used if model_path is not set in eval config)")
+    parser.add_argument(
+        "--model_config_path",
+        type=str,
+        default="",
+        help="Path to the model config file (Only used if model_path is not set in eval config)",
+    )
     parser.add_argument("--host", type=str, default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8010)
+    parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--num_gpus", type=int, default=None, help="Number of GPUs to use (None for all available)")
     parser.add_argument("--max_workers", type=int, default=None, help="Max worker threads (None for auto)")
     args = parser.parse_args()
@@ -501,13 +553,13 @@ def main():
 
     cfg = EvaluationConfig(**config_dict)
     cfg.data = DataConfig(**config_dict["data"])
-    
+
     # Override config with command line args
     if args.num_gpus is not None:
         cfg.num_gpus = args.num_gpus
     if args.max_workers is not None:
         cfg.max_workers = args.max_workers
-    
+
     print(f"Evaluation config: {cfg}")
 
     if cfg.model_path != "":

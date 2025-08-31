@@ -7,7 +7,7 @@ For each trajectory, it creates multiple subsequences (0:2, 0:4, 0:6, etc.) and 
 as PreferenceSample objects that can be evaluated by the model.
 """
 
-from rfm.data.batch_collator import PreferenceSample, Trajectory
+from rfm.data.dataset_types import ProgressSample, Trajectory
 from rfm.data.vqa_batch_collator import ProgressSample
 from rfm.utils.logging import rank_0_print
 from typing import Dict, List, Optional, Union
@@ -26,13 +26,12 @@ class RewardAlignmentGenerator(BaseDataGenerator):
     """
 
     def __init__(
-        self, config, is_evaluation=False, verbose=True, max_trajectories: Optional[int] = None, frame_step: int = 2, progress_sample_ratio: float = 0.0
+        self, config, is_evaluation=False, verbose=True, max_trajectories: Optional[int] = None, frame_step: int = 2
     ):
         super().__init__(config, is_evaluation, verbose=verbose)
 
         self.max_trajectories = config.max_trajectories
         self.frame_step = frame_step
-        self.progress_sample_ratio = progress_sample_ratio
         self.sample_indices = self._generate_all_sample_indices()
         self.current_idx = 0
 
@@ -71,7 +70,7 @@ class RewardAlignmentGenerator(BaseDataGenerator):
 
         return sample_indices
 
-    def _generate_sample_from_indices(self, sample_idx_info: Dict) -> Union[PreferenceSample, ProgressSample]:
+    def _generate_sample_from_indices(self, sample_idx_info: Dict) -> ProgressSample:
         """Generate a single subsequence sample from stored indices."""
         traj_idx = sample_idx_info["traj_idx"]
         end_idx = sample_idx_info["end_idx"]
@@ -122,30 +121,7 @@ class RewardAlignmentGenerator(BaseDataGenerator):
             metadata=metadata,
         )
 
-        # Create a dummy "rejected" trajectory (same as chosen for this analysis)
-        # We only care about the progress prediction, not preference
-        rejected_trajectory = Trajectory(
-            id=original_traj["id"],
-            task=original_traj["task"],
-            frames=padded_frames,
-            frames_shape=padded_frames.shape,
-            data_source=original_traj["data_source"],
-            lang_vector=original_traj["lang_vector"],
-            is_robot=original_traj["is_robot"],
-            quality_label=original_traj["quality_label"],
-            data_gen_strategy="reward_alignment",
-            target_progress=[gt_progress],
-            metadata=metadata,
-        )
-
-        if random.random() < self.progress_sample_ratio:
-            sample = ProgressSample(
-                trajectory=subsequence_trajectory, sample_type="progress"
-            )
-        else:
-            sample = PreferenceSample(
-                chosen_trajectory=subsequence_trajectory, rejected_trajectory=rejected_trajectory, sample_type="preference"
-            )
+        sample = ProgressSample(trajectory=subsequence_trajectory, sample_type="progress")
 
         return sample
 

@@ -6,7 +6,7 @@ SimilarityDataGenerator class for producing batches of similarity scoring data.
 import random
 import numpy as np
 from typing import List, Dict, Tuple, Optional, Iterator, Union
-from rfm.data.batch_collator import SimilaritySample, Trajectory
+from rfm.data.dataset_types import SimilaritySample, Trajectory
 from rfm.data.generators.base import BaseDataGenerator
 from rfm.utils.logging import rank_0_print
 

@@ -127,7 +127,6 @@ class DataConfig:
     fps: int = field(default=10, metadata={"help": "Frames per second to extract from videos"})
 
     max_trajectories: int = field(default=-1, metadata={"help": "Maximum number of trajectories to use for dataset"})
-    
 
 
 @dataclass

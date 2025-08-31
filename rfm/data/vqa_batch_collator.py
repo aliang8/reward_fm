@@ -33,6 +33,7 @@ class VQABatchCollator:
         max_length: int = 1024,
         resized_height: int = 128,
         resized_width: int = 128,
+        training: bool = True,
     ):
         """
         Initialize the VQA batch collator.
@@ -47,6 +48,7 @@ class VQABatchCollator:
         self.max_length = max_length
         self.resized_height = resized_height
         self.resized_width = resized_width
+        self.training = training
 
     def _pad_target_progress(self, progress_list):
         """Helper function to pad target progress sequences to max length."""
@@ -66,116 +68,154 @@ class VQABatchCollator:
 
     def _create_vqa_inputs_with_labels(self, conversations, answer_texts):
         """
-        Create VQA inputs with proper labels that only calculate loss on answer tokens.
+        Create VQA inputs with proper labels that only calculate loss on answer tokens. If it is evaluation, we don't need to set the labels
 
         Args:
             conversations: list of message-lists (each item is the "conversation" you built for a sample)
             answer_texts:  list[str], e.g., "<ans>A</ans>" or "<ans>[...progress...]</ans>"
 
         Returns:
-            Dict with tokenized inputs and labels masked before the assistant answer.
+            Dict with tokenized inputs and labels masked before the assistant answer. If it is evaluation, we don't need to set the labels
         """
-        assert len(conversations) == len(answer_texts), "conversations and answer_texts must align"
+        if self.training:
+            assert len(conversations) == len(answer_texts), "conversations and answer_texts must align"
 
-        # 1) Build assistant-augmented conversations for the *full* example
-        conversations_full = []
-        for conv, ans in zip(conversations, answer_texts):
-            # Append an assistant turn holding the gold answer as text
-            assistant_turn = [{"role": "assistant", "content": [{"type": "text", "text": ans}]}]
-            # NOTE: `conv` is already a list of {role, content} dicts; keep structure consistent
-            conversations_full.append(conv + assistant_turn)
+            # 1) Build assistant-augmented conversations for the *full* example
+            conversations_full = []
+            for conv, ans in zip(conversations, answer_texts):
+                # Append an assistant turn holding the gold answer as text
+                assistant_turn = [{"role": "assistant", "content": [{"type": "text", "text": ans}]}]
+                # NOTE: `conv` is already a list of {role, content} dicts; keep structure consistent
+                conversations_full.append(conv + assistant_turn)
 
-        # 2) Render text with chat template
-        # Prompt text includes the “assistant header” via add_generation_prompt=True
-        prompt_texts = [
-            self.processor.apply_chat_template(
-                conv,
-                tokenize=False,
-                add_generation_prompt=True,  # include assistant prefix tokens
-                add_vision_id=True,
-                fps=1,
+            # 2) Render text with chat template
+            # Prompt text includes the “assistant header” via add_generation_prompt=True
+            prompt_texts = [
+                self.processor.apply_chat_template(
+                    conv,
+                    tokenize=False,
+                    add_generation_prompt=True,  # include assistant prefix tokens
+                    add_vision_id=True,
+                    fps=1,
+                )
+                for conv in conversations
+            ]
+
+            full_texts = [
+                self.processor.apply_chat_template(
+                    conv_full,
+                    tokenize=False,
+                    add_generation_prompt=False,  # full already includes assistant turn
+                    add_vision_id=True,
+                    fps=1,
+                )
+                for conv_full in conversations_full
+            ]
+
+            # 3) Pack vision once, reuse for both tokenizations to keep token alignment identical
+            image_inputs, video_inputs, video_kwargs = process_vision_info(conversations, return_video_kwargs=True)
+
+            # 4) Tokenize prompt-only (so we know exactly how many tokens precede the answer)
+            prompt_inputs = self.processor(
+                text=prompt_texts,
+                images=image_inputs,
+                videos=video_inputs,
+                padding=True,  # pad so we can batch
+                truncation=False,  # keep everything; truncate only at the "full" step if you must
+                max_length=self.max_length,
+                return_tensors="pt",
             )
-            for conv in conversations
-        ]
 
-        full_texts = [
-            self.processor.apply_chat_template(
-                conv_full,
-                tokenize=False,
-                add_generation_prompt=False,  # full already includes assistant turn
-                add_vision_id=True,
-                fps=1,
+            # 5) Tokenize full (prompt + assistant answer)
+            full_inputs = self.processor(
+                text=full_texts,
+                images=image_inputs,
+                videos=video_inputs,
+                padding=True,
+                truncation=False,  # prefer no truncation so we don't chop off the answer
+                max_length=self.max_length,
+                return_tensors="pt",
             )
-            for conv_full in conversations_full
-        ]
 
-        # 3) Pack vision once, reuse for both tokenizations to keep token alignment identical
-        image_inputs, video_inputs, video_kwargs = process_vision_info(conversations, return_video_kwargs=True)
+            input_ids = full_inputs["input_ids"]
+            attn_mask = full_inputs["attention_mask"]
+            batch_size, seq_len = input_ids.shape
 
-        # 4) Tokenize prompt-only (so we know exactly how many tokens precede the answer)
-        prompt_inputs = self.processor(
-            text=prompt_texts,
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,  # pad so we can batch
-            truncation=False,  # keep everything; truncate only at the "full" step if you must
-            max_length=self.max_length,
-            return_tensors="pt",
-        )
+            # Resolve pad token id (some Qwen tokenizers set it to eos if None)
+            pad_id = getattr(self.processor.tokenizer, "pad_token_id", None)
+            if pad_id is None:
+                pad_id = getattr(self.processor.tokenizer, "eos_token_id", None)
+            if pad_id is None:
+                raise ValueError("Tokenizer must have pad_token_id or eos_token_id defined for masking.")
 
-        # 5) Tokenize full (prompt + assistant answer)
-        full_inputs = self.processor(
-            text=full_texts,
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            truncation=False,  # prefer no truncation so we don't chop off the answer
-            max_length=self.max_length,
-            return_tensors="pt",
-        )
+            # 6) Build labels: -100 for everything up to the prompt length; copy tokens for the answer span
+            labels = torch.full_like(input_ids, fill_value=-100)
 
-        input_ids = full_inputs["input_ids"]
-        attn_mask = full_inputs["attention_mask"]
-        batch_size, seq_len = input_ids.shape
+            # We'll compute the *non-padded* length of the prompt sequence for each item, then
+            # label tokens in the full sequence strictly after that index.
+            for i in range(batch_size):
+                # length of tokens in prompt example (ignore pads)
+                # Use attention_mask from the prompt encoding for robustness
+                prompt_len = int(prompt_inputs["attention_mask"][i].sum().item())
 
-        # Resolve pad token id (some Qwen tokenizers set it to eos if None)
-        pad_id = getattr(self.processor.tokenizer, "pad_token_id", None)
-        if pad_id is None:
-            pad_id = getattr(self.processor.tokenizer, "eos_token_id", None)
-        if pad_id is None:
-            raise ValueError("Tokenizer must have pad_token_id or eos_token_id defined for masking.")
+                # length of tokens in full example (ignore pads)
+                full_len = int(attn_mask[i].sum().item())
 
-        # 6) Build labels: -100 for everything up to the prompt length; copy tokens for the answer span
-        labels = torch.full_like(input_ids, fill_value=-100)
+                # guard rails
+                prompt_len = min(prompt_len, seq_len)
+                full_len = min(full_len, seq_len)
 
-        # We'll compute the *non-padded* length of the prompt sequence for each item, then
-        # label tokens in the full sequence strictly after that index.
-        for i in range(batch_size):
-            # length of tokens in prompt example (ignore pads)
-            # Use attention_mask from the prompt encoding for robustness
-            prompt_len = int(prompt_inputs["attention_mask"][i].sum().item())
+                if full_len > prompt_len:
+                    labels[i, prompt_len:full_len] = input_ids[i, prompt_len:full_len]
+                # else: entirely masked (e.g., if truncation made the answer vanish)
 
-            # length of tokens in full example (ignore pads)
-            full_len = int(attn_mask[i].sum().item())
+            # 7) Return final dict with any extra vision fields preserved
+            result = {
+                "input_ids": input_ids,
+                "attention_mask": attn_mask,
+                "labels": labels,
+            }
+            # Carry over vision tensors if present
+            for k in ["pixel_values", "pixel_values_videos", "image_grid_thw", "video_grid_thw", "second_per_grid_ts"]:
+                if k in full_inputs:
+                    result[k] = full_inputs[k]
 
-            # guard rails
-            prompt_len = min(prompt_len, seq_len)
-            full_len = min(full_len, seq_len)
+        else:
+            prompt_texts = [
+                self.processor.apply_chat_template(
+                    conv,
+                    tokenize=False,
+                    add_generation_prompt=True,  # include assistant prefix tokens
+                    add_vision_id=True,
+                    fps=1,
+                )
+                for conv in conversations
+            ]
+            # 3) Pack vision once, reuse for both tokenizations to keep token alignment identical
+            image_inputs, video_inputs, video_kwargs = process_vision_info(conversations, return_video_kwargs=True)
 
-            if full_len > prompt_len:
-                labels[i, prompt_len:full_len] = input_ids[i, prompt_len:full_len]
-            # else: entirely masked (e.g., if truncation made the answer vanish)
+            # 4) Tokenize prompt-only (so we know exactly how many tokens precede the answer)
+            prompt_inputs = self.processor(
+                text=prompt_texts,
+                images=image_inputs,
+                videos=video_inputs,
+                padding=True,  # pad so we can batch
+                truncation=False,  # keep everything; truncate only at the "full" step if you must
+                max_length=self.max_length,
+                return_tensors="pt",
+            )
 
-        # 7) Return final dict with any extra vision fields preserved
-        result = {
-            "input_ids": input_ids,
-            "attention_mask": attn_mask,
-            "labels": labels,
-        }
-        # Carry over vision tensors if present
-        for k in ["pixel_values", "pixel_values_videos", "image_grid_thw", "video_grid_thw", "second_per_grid_ts"]:
-            if k in full_inputs:
-                result[k] = full_inputs[k]
+            input_ids = prompt_inputs["input_ids"]
+            attn_mask = prompt_inputs["attention_mask"]
+            batch_size, seq_len = input_ids.shape
+            result = {
+                "input_ids": input_ids,
+                "attention_mask": attn_mask,
+                "labels": torch.full_like(input_ids, fill_value=-100),
+            }
+            for k in ["pixel_values", "pixel_values_videos", "image_grid_thw", "video_grid_thw", "second_per_grid_ts"]:
+                if k in prompt_inputs:
+                    result[k] = prompt_inputs[k]
 
         return result
 
@@ -340,14 +380,14 @@ class VQABatchCollator:
                                 "resized_height": self.resized_height,
                                 "resized_width": self.resized_width,
                             },
-                            {"type": "text", "text": "Trajectory A"},
+                            {"type": "text", "text": "Trajectory A. "},
                             {
                                 "type": "video",
                                 "video": rejected_frames,
                                 "resized_height": self.resized_height,
                                 "resized_width": self.resized_width,
                             },
-                            {"type": "text", "text": "Trajectory B"},
+                            {"type": "text", "text": "Trajectory B. "},
                         ],
                     }
                 ]
@@ -367,14 +407,14 @@ class VQABatchCollator:
                                 "resized_height": self.resized_height,
                                 "resized_width": self.resized_width,
                             },
-                            {"type": "text", "text": "Trajectory A"},
+                            {"type": "text", "text": "Trajectory A. "},
                             {
                                 "type": "video",
                                 "video": chosen_frames,
                                 "resized_height": self.resized_height,
                                 "resized_width": self.resized_width,
                             },
-                            {"type": "text", "text": "Trajectory B"},
+                            {"type": "text", "text": "Trajectory B. "},
                         ],
                     }
                 ]
@@ -384,7 +424,7 @@ class VQABatchCollator:
         # Convert preference labels to text answers
         preference_labels_text = ["<ans>A</ans>" if label == 1 else "<ans>B</ans>" for label in preference_labels]
 
-        # Create input with generation prompt and answer for proper label setting
+        # Create input with generation prompt and answer for proper label setting, if it is evaluation, we don't need to set the labels
         batch_inputs = self._create_vqa_inputs_with_labels(all_messages, preference_labels_text)
 
         # Add metadata
@@ -459,21 +499,21 @@ class VQABatchCollator:
                             "resized_height": self.resized_height,
                             "resized_width": self.resized_width,
                         },
-                        {"type": "text", "text": "Reference Trajectory"},
+                        {"type": "text", "text": "Reference Trajectory. "},
                         {
                             "type": "video",
                             "video": traj_sim_frames,
                             "resized_height": self.resized_height,
                             "resized_width": self.resized_width,
                         },
-                        {"type": "text", "text": "Trajectory A"},
+                        {"type": "text", "text": "Trajectory A. "},
                         {
                             "type": "video",
                             "video": traj_diff_frames,
                             "resized_height": self.resized_height,
                             "resized_width": self.resized_width,
                         },
-                        {"type": "text", "text": "Trajectory B"},
+                        {"type": "text", "text": "Trajectory B. "},
                     ],
                 }
             ]
@@ -587,7 +627,7 @@ class VQABatchCollator:
             else:
                 progress_labels_text.append(f"<ans>{[0] * len(progress)}</ans>")
 
-        # Create input with generation prompt and answer for proper label setting
+        # Create input with generation prompt and answer for proper label setting, if it is evaluation, we don't need to set the labels
         batch_inputs = self._create_vqa_inputs_with_labels(all_messages, progress_labels_text)
 
         # Add metadata

@@ -59,7 +59,7 @@ class RFMModel(PreTrainedModel):
         pixel_values_videos=None,
         image_grid_thw=None,
         video_grid_thw=None,
-        sample_type=None,  # "preference", "similarity", or "paired_video"
+        sample_type=None,  # "preference", "similarity", "progress"
         second_per_grid_ts=None,
         timing_raw=None,
         **kwargs,
@@ -93,7 +93,6 @@ class RFMModel(PreTrainedModel):
                 Type of sample to process:
                 - "preference": Uses preference head with <|pref_token|> for binary trajectory comparison
                 - "similarity": Uses similarity head with <|reward_token|> for trajectory-reference scoring
-                - "paired_video": Uses similarity head with <|reward_token|> for paired video comparison
                 - None: No specific prediction, returns zero logits
 
             target_progress (torch.FloatTensor, optional):
@@ -169,38 +168,21 @@ class RFMModel(PreTrainedModel):
                 if len(vision_start_positions) <= 0:
                     raise ValueError(f"vision_start_token not found in sequence {i}")
 
-                # Find the position of the split token after vision_start
-                vision_start_pos = vision_start_positions[0].item()
-                split_positions = (seq_ids == split_token_id).nonzero(as_tuple=True)[0]
-                # Filter split positions to only those after vision_start
-                split_positions = split_positions[split_positions > vision_start_pos]
-
-                if len(split_positions) <= 0:
-                    raise ValueError(f"split_token not found after vision_start in sequence {i}")
-
                 # Get video grid dimensions for this sample
                 if video_grid_thw is None or i >= len(video_grid_thw):
                     raise ValueError(f"video_grid_thw is required for progress prediction. Got: {video_grid_thw}")
 
                 # For trajectory A: use video_grid_thw[i]
-                current_video_grid_A = video_grid_thw[i * tps]  # [T, H, W]
-                T_A, H_A, W_A = current_video_grid_A
+                current_video_grid_A = video_grid_thw[i]  # [T, H, W]
 
-                # For trajectory B: use video_grid_thw[i+1]
-                if i + 1 >= len(video_grid_thw):
-                    raise ValueError(f"video_grid_thw index {i + 1} out of bounds for trajectory B")
-                current_video_grid_B = video_grid_thw[i * tps + 1]  # [T, H, W]
-                T_B, H_B, W_B = current_video_grid_B
+                T_A, H_A, W_A = current_video_grid_A
 
                 # Calculate tokens per frame for trajectory A: (H_A * W_A) // merge_size^2
                 tokens_per_frame_A = (H_A * W_A) // (tps**2)
 
-                # Calculate tokens per frame for trajectory B: (H_B * W_B) // merge_size^2
-                tokens_per_frame_B = (H_B * W_B) // (tps**2)
-
                 # Calculate frame boundary positions for trajectory A
                 frame_boundary_positions_A = []
-                current_pos = vision_start_pos + 1  # Start after vision_start token
+                current_pos = vision_start_positions[0].item() + 1  # Start after vision_start token
 
                 # Find where each frame ends in trajectory A
                 for frame_idx in range(T_A):
@@ -209,23 +191,8 @@ class RFMModel(PreTrainedModel):
                     frame_boundary_positions_A.append(frame_end)
                     current_pos = frame_end
 
-                # Get split_pos before using it in trajectory B calculations
-                split_pos = split_positions[0].item()
-
-                # Calculate frame boundary positions for trajectory B (after split_token)
-                frame_boundary_positions_B = []
-                current_pos = split_pos + 1  # Start after split_token
-
-                # Find where each frame ends in trajectory B
-                for frame_idx in range(T_B):
-                    # Each frame takes tokens_per_frame_B tokens
-                    frame_end = current_pos + tokens_per_frame_B
-                    frame_boundary_positions_B.append(frame_end)
-                    current_pos = frame_end
-
-                # For trajectory A: extract hidden states at frame boundaries before split_token
-                trajectory_A_boundaries = torch.tensor([pos for pos in frame_boundary_positions_A if pos < split_pos])
-                trajectory_B_boundaries = torch.tensor([pos for pos in frame_boundary_positions_B if pos > split_pos])
+                # For trajectory A: extract hidden states at frame boundaries
+                trajectory_A_boundaries = torch.tensor(frame_boundary_positions_A)
 
                 # Apply progress head to hidden states at frame boundary positions for trajectory A
                 if trajectory_A_boundaries.numel() > 0:
@@ -237,25 +204,67 @@ class RFMModel(PreTrainedModel):
                 else:
                     progress_logits_A.append(torch.empty(0, device=last_hidden_state.device))
 
-                # Apply progress head to hidden states at frame boundary positions for trajectory B
-                if trajectory_B_boundaries.numel() > 0:
-                    boundary_hidden_states_B = last_hidden_state[i][
-                        trajectory_B_boundaries
-                    ]  # [num_frames_B, hidden_dim]
-                    progress_B = self.progress_head(boundary_hidden_states_B).squeeze(-1)  # [num_frames_B]
-                    progress_logits_B.append(progress_B)
+                # For progress-only samples, we don't need trajectory B
+                if sample_type != "progress":
+                    # Find the position of the split token after vision_start
+                    vision_start_pos = vision_start_positions[0].item()
+                    split_positions = (seq_ids == split_token_id).nonzero(as_tuple=True)[0]
+                    # Filter split positions to only those after vision_start
+                    split_positions = split_positions[split_positions > vision_start_pos]
+
+                    if len(split_positions) <= 0:
+                        raise ValueError(f"split_token not found after vision_start in sequence {i}")
+
+                    # For trajectory B: use video_grid_thw[i+1]
+                    if i + 1 >= len(video_grid_thw):
+                        raise ValueError(f"video_grid_thw index {i + 1} out of bounds for trajectory B")
+                    current_video_grid_B = video_grid_thw[i * tps + 1]  # [T, H, W]
+                    T_B, H_B, W_B = current_video_grid_B
+
+                    # Calculate tokens per frame for trajectory B: (H_B * W_B) // merge_size^2
+                    tokens_per_frame_B = (H_B * W_B) // (tps**2)
+
+                    # Get split_pos before using it in trajectory B calculations
+                    split_pos = split_positions[0].item()
+
+                    # Calculate frame boundary positions for trajectory B (after split_token)
+                    frame_boundary_positions_B = []
+                    current_pos = split_pos + 1  # Start after split_token
+
+                    # Find where each frame ends in trajectory B
+                    for frame_idx in range(T_B):
+                        # Each frame takes tokens_per_frame_B tokens
+                        frame_end = current_pos + tokens_per_frame_B
+                        frame_boundary_positions_B.append(frame_end)
+                        current_pos = frame_end
+
+                    # For trajectory B: extract hidden states at frame boundaries after split_token
+                    trajectory_B_boundaries = torch.tensor(
+                        [pos for pos in frame_boundary_positions_B if pos > split_pos]
+                    )
+
+                    # Apply progress head to hidden states at frame boundary positions for trajectory B
+                    if trajectory_B_boundaries.numel() > 0:
+                        boundary_hidden_states_B = last_hidden_state[i][
+                            trajectory_B_boundaries
+                        ]  # [num_frames_B, hidden_dim]
+                        progress_B = self.progress_head(boundary_hidden_states_B).squeeze(-1)  # [num_frames_B]
+                        progress_logits_B.append(progress_B)
+                    else:
+                        progress_logits_B.append(torch.empty(0, device=last_hidden_state.device))
                 else:
-                    progress_logits_B.append(torch.empty(0, device=last_hidden_state.device))
+                    # For progress-only samples, trajectory B is None
+                    progress_logits_B.append(None)
 
             progress_logits = {"A": progress_logits_A, "B": progress_logits_B}
 
         # For preference and similarity, use specific tokens
         with _timer("time/logits", timing_raw=timing_raw):
             logits = None
-            if sample_type is not None:
+            if sample_type in ["preference", "similarity"]:
                 if sample_type == "preference":
                     token_id = self.processor.tokenizer.convert_tokens_to_ids("<|pref_token|>")
-                else:  # similarity (default)
+                else:  # similarity
                     token_id = self.processor.tokenizer.convert_tokens_to_ids("<|reward_token|>")
 
                 # Find all positions where the target token appears
@@ -284,7 +293,7 @@ class RFMModel(PreTrainedModel):
                 # Apply the appropriate head
                 if sample_type == "preference":
                     logits = self.preference_head(token_hidden_states)
-                else:  # similarity (default)
+                else:  # similarity
                     logits = self.similarity_head(token_hidden_states)
 
         return SequenceClassifierOutputWithPast(logits=logits), progress_logits, timing_raw

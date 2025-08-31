@@ -15,9 +15,9 @@ import torch
 from datasets import Dataset, DatasetDict, load_dataset, Video
 import numpy as np
 from tqdm import tqdm
-
+from omegaconf import OmegaConf
 from rfm.utils.logging import rank_0_print
-from evals.eval_utils import load_experiment_config_from_yaml
+from rfm.configs.experiment_configs import ExperimentConfig
 
 
 class DatasetPreprocessor:
@@ -98,9 +98,7 @@ class DatasetPreprocessor:
                 self.dataset_indices[cache_key] = indices
 
                 # Save individual cache
-                self._save_individual_cache(
-                    individual_cache_dir, processed_dataset, indices, dataset_path, subset
-                )
+                self._save_individual_cache(individual_cache_dir, processed_dataset, indices, dataset_path, subset)
 
                 rank_0_print(f"    ✅ Successfully processed and cached {dataset_path}/{subset}")
 
@@ -538,9 +536,7 @@ class DatasetPreprocessor:
                             f"  ✅ {dataset_path}/{subset}: {trajectories} trajectories (cached at {timestamp})"
                         )
                     except:
-                        rank_0_print(
-                            f"  ✅ {dataset_path}/{subset}: Cache exists but info file corrupted"
-                        )
+                        rank_0_print(f"  ✅ {dataset_path}/{subset}: Cache exists but info file corrupted")
                 else:
                     rank_0_print(f"  ✅ {dataset_path}/{subset}: Cache exists (no info file)")
             else:
@@ -598,7 +594,8 @@ def main():
     """Main preprocessing function."""
     # Load config
     config_path = "rfm/configs/config.yaml"  # Adjust path as needed
-    config = load_experiment_config_from_yaml(config_path)
+    config = OmegaConf.load(config_path)
+    config = ExperimentConfig(**config)
 
     # Show dataset structure info
     print("\n🏗️  Dataset Configuration Structure:")

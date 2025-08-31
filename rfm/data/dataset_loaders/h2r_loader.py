@@ -13,6 +13,7 @@ from tqdm import tqdm
 from rfm.data.helpers import generate_unique_id
 import cv2
 
+
 class H2RFrameLoader:
     """Pickle-able loader that reads LIBERO frames from an HDF5 dataset on demand.
 
@@ -39,14 +40,10 @@ class H2RFrameLoader:
 
         # Ensure shape and dtype sanity
         if not isinstance(human_frames, np.ndarray) or human_frames.ndim != 4 or human_frames.shape[-1] != 3:
-            raise ValueError(
-                f"Unexpected frames shape for {self.hdf5_path}: {getattr(human_frames, 'shape', None)}"
-            )
+            raise ValueError(f"Unexpected frames shape for {self.hdf5_path}: {getattr(human_frames, 'shape', None)}")
 
         if not isinstance(robot_frames, np.ndarray) or robot_frames.ndim != 4 or robot_frames.shape[-1] != 3:
-            raise ValueError(
-                f"Unexpected frames shape for {self.hdf5_path}: {getattr(robot_frames, 'shape', None)}"
-            )
+            raise ValueError(f"Unexpected frames shape for {self.hdf5_path}: {getattr(robot_frames, 'shape', None)}")
 
         # Ensure uint8
         if human_frames.dtype != np.uint8:
@@ -56,12 +53,14 @@ class H2RFrameLoader:
 
         return human_frames, robot_frames
 
+
 # Task mapping from folder names to task descriptions
 FOLDER_TO_TASK_NAME = {
     "grab_both_cubes_v1": "pick up each cube individually and place them onto the plate.",
     "grab_cup_v1": "pick up the cup and place it in another location",
     "pull_plate_v1": "pull the plate from bottom to top.",
 }
+
 
 def _get_task_name_from_folder(folder_name: str) -> str:
     """Convert folder name to task name using the mapping."""

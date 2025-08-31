@@ -2,24 +2,27 @@ import random
 from rfm.data.generators.pref import PreferenceDataGenerator
 from rfm.data.generators.sim import SimilarityDataGenerator
 from rfm.utils.logging import rank_0_print
+from rfm.data.generators.base import BaseDataGenerator
 
-class DataGenerator:
+
+class DataGenerator(BaseDataGenerator):
     """Data generator that combines preference and similarity generation."""
 
-    def __init__(self, config, is_evaluation=False):
+    def __init__(self, config, is_evaluation=False, **kwargs):
         """Initialize DataGenerator with configuration."""
-        self.config = config
-        self.is_evaluation = is_evaluation
-        
+        super().__init__(config, is_evaluation, **kwargs)
+
         # Initialize the individual generators
-        self.preference_generator = PreferenceDataGenerator(config, is_evaluation)
-        self.similarity_generator = SimilarityDataGenerator(config, is_evaluation)
-        
+        self.preference_generator = PreferenceDataGenerator(config, is_evaluation, verbose=False)
+        self.similarity_generator = SimilarityDataGenerator(config, is_evaluation, verbose=False)
+
         # Set the ratio for sampling between preference and similarity
         self.preference_ratio = config.preference_ratio
         self.similarity_ratio = 1.0 - config.preference_ratio
-        
-        rank_0_print(f"DataGenerator initialized with preference_ratio={self.preference_ratio:.2f}, similarity_ratio={self.similarity_ratio:.2f}")
+
+        rank_0_print(
+            f"DataGenerator initialized with preference_ratio={self.preference_ratio:.2f}, similarity_ratio={self.similarity_ratio:.2f}"
+        )
 
     def _create_sample(self):
         """Create a sample based on the configured ratios."""
@@ -27,14 +30,15 @@ class DataGenerator:
             return self.preference_generator._create_preference_sample()
         else:
             return self.similarity_generator._create_similarity_sample()
-    
+
     def _create_preference_sample(self):
         """Create a preference sample using the preference generator."""
         return self.preference_generator._create_preference_sample()
-    
+
     def _create_similarity_sample(self):
         """Create a similarity sample using the similarity generator."""
         return self.similarity_generator._create_similarity_sample()
+
 
 def test():
     """Test the BatchCollator with generated samples."""
@@ -78,7 +82,7 @@ def test():
         num_proc=4,
         max_frames=8,  # Use 8 frames for testing the new subsampling logic
         force_reprocess=False,
-        model_type="default"
+        model_type="default",
     )
 
     mock_config = MockConfig(data=mock_data_config, debug=False)
@@ -107,6 +111,7 @@ def test():
     rank_0_print(
         f"Expected ratio: {generator.preference_ratio:.1f} preference, {generator.similarity_ratio:.1f} similarity"
     )
-    
+
+
 if __name__ == "__main__":
     test()

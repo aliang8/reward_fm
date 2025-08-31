@@ -15,7 +15,7 @@ uv run accelerate launch \
     --debug false \
     --model.train_preference_head true \
     --model.train_progress_head true \
-    --training.output_dir ./logs/rfm_progress_pref
+    --training.output_dir ./logs/rfm_prefprogress
     
     # --model.base_model_id Qwen/Qwen2.5-VL-7B-Instruct \
     # --training.output_dir ./logs/rfm_progress_pref_7B

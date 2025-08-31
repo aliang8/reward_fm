@@ -9,6 +9,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import PreTrainedModel, Qwen2_5_VLForConditionalGeneration
 from transformers.modeling_outputs import CausalLMOutputWithPast
+from transformers.generation.utils import GenerationMixin
+
 
 class RFMModelVQA(PreTrainedModel):
     """RFM Model for VQA using base VLM outputs as naive baseline."""
@@ -22,7 +24,7 @@ class RFMModelVQA(PreTrainedModel):
             self.model = base_model
         else:
             self.model = Qwen2_5_VLForConditionalGeneration(config)
-        
+
         self.processor = processor
 
     def gradient_checkpointing_enable(self, **kwargs):
@@ -46,35 +48,35 @@ class RFMModelVQA(PreTrainedModel):
     ):
         """
         Forward pass for VQA using base VLM outputs as naive baseline.
-        
+
         This implementation directly uses the base VLM's language modeling head
         without adding separate prediction heads, serving as a naive baseline.
-        
+
         Args:
-            input_ids (torch.LongTensor, optional): 
+            input_ids (torch.LongTensor, optional):
                 Indices of input sequence tokens in the vocabulary. Shape: [batch_size, sequence_length]
-                
-            attention_mask (torch.Tensor, optional): 
+
+            attention_mask (torch.Tensor, optional):
                 Mask to avoid performing attention on padding token indices. Shape: [batch_size, sequence_length]
-                
-            pixel_values (torch.FloatTensor, optional): 
+
+            pixel_values (torch.FloatTensor, optional):
                 Pixel values for images. Shape: [batch_size, num_channels, height, width]
-                
-            pixel_values_videos (torch.FloatTensor, optional): 
+
+            pixel_values_videos (torch.FloatTensor, optional):
                 Pixel values for video frames. Shape: [batch_size, num_frames, num_channels, height, width]
-                
-            image_grid_thw (torch.LongTensor, optional): 
+
+            image_grid_thw (torch.LongTensor, optional):
                 Image grid dimensions (N, 3) for image processing
-                
-            video_grid_thw (torch.LongTensor, optional): 
+
+            video_grid_thw (torch.LongTensor, optional):
                 Video grid dimensions (N, 3) for video processing
-                
-            labels (torch.LongTensor, optional): 
+
+            labels (torch.LongTensor, optional):
                 Labels for computing the language modeling loss. Shape: [batch_size, sequence_length]
                 If provided, the model will compute the loss for VQA training.
-                
+
             **kwargs: Additional keyword arguments passed to the base model.
-        
+
         Returns:
             CausalLMOutputWithPast:
                 - loss (torch.FloatTensor, optional): Language modeling loss if labels are provided
@@ -94,8 +96,14 @@ class RFMModelVQA(PreTrainedModel):
             labels=labels,
             **kwargs,
         )
-        
+
         # Return the outputs directly - this is the naive baseline approach
         # The base VLM's language modeling head will handle VQA generation
         return outputs
-    
+
+    def generate(self, *args, **kwargs):
+        """Generate VQA answers using the base VLM's language modeling head."""
+        return self.model.generate(*args, **kwargs)
+
+    def prepare_inputs_for_generation(self, *args, **kwargs):
+        return self.model.prepare_inputs_for_generation(*args, **kwargs)

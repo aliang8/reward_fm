@@ -86,8 +86,8 @@ def _process_single_oxe_episode(args):
     
     episode_entries = []
     
-    # Build image sequences for each view
-    steps_np = list(tfds.as_numpy(episode["steps"]))
+    # Episode is already converted to numpy format
+    steps_np = episode["steps"]
     
     for img_key in valid_img_keys:
         # Check first frame for all-black to prune
@@ -275,9 +275,15 @@ def convert_oxe_dataset_to_hf(
             lang_cache[task] = lang_model.encode(task)
         lang_vec = lang_cache[task]
 
-        # Add to current batch
-        episode_batch.append(episode)
-        episode_info_batch.append((ep_idx, task, lang_vec))
+        # Convert TensorFlow objects to numpy for pickling
+        try:
+            # Convert episode to numpy format for multiprocessing
+            episode_np = tfds.as_numpy(episode)
+            episode_batch.append(episode_np)
+            episode_info_batch.append((ep_idx, task, lang_vec))
+        except Exception as e:
+            print(f"Warning: Failed to convert episode {ep_idx} to numpy: {e}")
+            continue
 
         # Process batch when it's full or we've reached the limit
         if len(episode_batch) >= batch_size or ep_idx + 1 >= max_limit:

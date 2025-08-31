@@ -27,6 +27,7 @@ from rfm.data.dataset import (
 )
 from rfm.data.generators.success_failure import PairedSuccessFailureGenerator
 from rfm.data.generators.reward_alignment import RewardAlignmentGenerator
+from rfm.data.generators.confusion_matrix import ConfusionMatrixGenerator
 from rfm.utils.logging import rank_0_print
 from rfm.configs.experiment_configs import ExperimentConfig, ModelConfig
 from rfm.data.vqa_batch_collator import VQABatchCollator
@@ -243,17 +244,14 @@ def setup_data_generator(cfg: ExperimentConfig, is_eval: bool = False) -> DataGe
             rank_0_print(f"  Dataset {i + 1}: {dataset} -> {subset}")
 
     if cfg.data.model_type == "vqa":
-        if cfg.data.dataset_type == "reward_alignment":
-            data_generator = RewardAlignmentGenerator(config=cfg.data, is_evaluation=is_eval, progress_sample_ratio=0.5)
-        elif cfg.data.dataset_type == "success_failure":
-            data_generator = PairedSuccessFailureGenerator(config=cfg.data, is_evaluation=is_eval)
-        else:
-            data_generator = VQADataGenerator(config=cfg.data, is_evaluation=is_eval)
+        data_generator = VQADataGenerator(config=cfg.data, is_evaluation=is_eval)
     else:
         if cfg.data.dataset_type == "reward_alignment":
             data_generator = RewardAlignmentGenerator(config=cfg.data, is_evaluation=is_eval)
         elif cfg.data.dataset_type == "success_failure":
             data_generator = PairedSuccessFailureGenerator(config=cfg.data, is_evaluation=is_eval)
+        elif cfg.data.dataset_type == "confusion_matrix":
+            data_generator = ConfusionMatrixGenerator(config=cfg.data, is_evaluation=is_eval, max_trajectories=cfg.data.max_trajectories)
         else:
             data_generator = DataGenerator(config=cfg.data, is_evaluation=is_eval)
 

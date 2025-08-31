@@ -279,8 +279,36 @@ def convert_oxe_dataset_to_hf(
         try:
             # Convert episode to numpy format for multiprocessing
             episode_np = tfds.as_numpy(episode)
-            episode_batch.append(episode_np)
-            episode_info_batch.append((ep_idx, task, lang_vec))
+            
+            # Additional safety: ensure all nested objects are numpy
+            def ensure_numpy(obj):
+                if hasattr(obj, 'numpy'):
+                    try:
+                        return obj.numpy()
+                    except:
+                        # If numpy() fails, try to convert to list/array
+                        if hasattr(obj, '__array__'):
+                            return np.array(obj)
+                        else:
+                            return str(obj)  # Fallback to string representation
+                elif isinstance(obj, dict):
+                    return {k: ensure_numpy(v) for k, v in obj.items()}
+                elif isinstance(obj, (list, tuple)):
+                    return type(obj)(ensure_numpy(item) for item in obj)
+                else:
+                    return obj
+            
+            episode_np = ensure_numpy(episode_np)
+            
+            # Test if the converted episode is picklable
+            try:
+                import pickle
+                pickle.dumps(episode_np)
+                episode_batch.append(episode_np)
+                episode_info_batch.append((ep_idx, task, lang_vec))
+            except Exception as pickle_error:
+                print(f"Warning: Episode {ep_idx} is not picklable after conversion: {pickle_error}")
+                continue
         except Exception as e:
             print(f"Warning: Failed to convert episode {ep_idx} to numpy: {e}")
             continue

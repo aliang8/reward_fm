@@ -243,7 +243,12 @@ def setup_data_generator(cfg: ExperimentConfig, is_eval: bool = False) -> DataGe
             rank_0_print(f"  Dataset {i + 1}: {dataset} -> {subset}")
 
     if cfg.data.model_type == "vqa":
-        data_generator = VQADataGenerator(config=cfg.data, is_evaluation=is_eval)
+        if cfg.data.dataset_type == "reward_alignment":
+            data_generator = RewardAlignmentGenerator(config=cfg.data, is_evaluation=is_eval, progress_sample_ratio=0.5)
+        elif cfg.data.dataset_type == "success_failure":
+            data_generator = PairedSuccessFailureGenerator(config=cfg.data, is_evaluation=is_eval)
+        else:
+            data_generator = VQADataGenerator(config=cfg.data, is_evaluation=is_eval)
     else:
         if cfg.data.dataset_type == "reward_alignment":
             data_generator = RewardAlignmentGenerator(config=cfg.data, is_evaluation=is_eval)
@@ -315,7 +320,7 @@ def setup_batch_collator(processor: AutoProcessor, cfg: ExperimentConfig) -> Bat
     return batch_collator
 
 
-def setup_vqa_model_and_processor(cfg: ModelConfig):
+def setup_vqa_model_and_processor(cfg: ModelConfig, hf_model_id: str = ""):
     """Setup VQA baseline model and processor from a VQA-specific config."""
     # Get current rank for logging
     import torch.distributed as dist
@@ -356,13 +361,21 @@ def setup_vqa_model_and_processor(cfg: ModelConfig):
     # Initialize RFM model wrapper with the pre-loaded base model
     if rank == 0:
         rank_0_print(f"Initializing RFM-VQA model on rank {rank}...")
-    # Initialize VQA wrapper
-    vqa_model = RFMModelVQA(config=base_model.config, processor=processor, base_model=base_model)
+    rfm_model = RFMModelVQA(config=base_model.config, processor=processor, base_model=base_model)
 
+    if hf_model_id:
+        rank_0_print(f"Loading model from {hf_model_id} on rank {rank}")
+
+        # before = rfm_model.model.visual.blocks[0].mlp.down_proj.weight
+        # before = rfm_model.preference_head.weight
+        # load the model from the evaluation path
+        rfm_model = RFMModelVQA.from_pretrained(hf_model_id, processor=processor, base_model=base_model)
+
+    # Only print model architecture on rank 0
     if rank == 0:
-        rank_0_print("RFM-VQA model and processor initialized.")
+        rank_0_print(f"Model architecture initialized on rank {rank}")
 
-    return processor, vqa_model
+    return processor, rfm_model
 
 
 def setup_vqa_batch_collator(processor: AutoProcessor, cfg: ExperimentConfig) -> VQABatchCollator:

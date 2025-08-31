@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import PreTrainedModel, Qwen2_5_VLForConditionalGeneration
 from transformers.modeling_outputs import CausalLMOutputWithPast
+from transformers.generation.utils import GenerationMixin
 
 
 class RFMModelVQA(PreTrainedModel):
@@ -103,3 +104,6 @@ class RFMModelVQA(PreTrainedModel):
     def generate(self, *args, **kwargs):
         """Generate VQA answers using the base VLM's language modeling head."""
         return self.model.generate(*args, **kwargs)
+
+    def prepare_inputs_for_generation(self, *args, **kwargs):
+        return self.model.prepare_inputs_for_generation(*args, **kwargs)

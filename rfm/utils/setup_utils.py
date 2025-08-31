@@ -5,25 +5,34 @@ This file contains setup functions that can be reused across different training 
 """
 
 import torch
-from transformers import AutoProcessor, Qwen2_5_VLModel, TrainingArguments, Qwen2_5_VLConfig, Qwen2_5_VLForConditionalGeneration
+from transformers import (
+    AutoProcessor,
+    Qwen2_5_VLModel,
+    TrainingArguments,
+    Qwen2_5_VLConfig,
+    Qwen2_5_VLForConditionalGeneration,
+)
 from peft import get_peft_model, LoraConfig
 from typing import Tuple, Optional, Union
 
 from rfm.models.rfm import RFMModel
 from rfm.models.rfm_vqa import RFMModelVQA
 from rfm.data.generators.generator import DataGenerator
+from rfm.data.generators.vqa_generator import VQADataGenerator
 from rfm.data.batch_collator import BatchCollator
 from rfm.data.dataset import (
     InfiniteDataGeneratorDataset,
     RewoundDataset,
-    PairedSuccessFailureDataset,
     VideoBinnedDataset,
 )
+from rfm.data.generators.success_failure import PairedSuccessFailureGenerator
+from rfm.data.generators.reward_alignment import RewardAlignmentGenerator
+from rfm.data.generators.confusion_matrix import ConfusionMatrixGenerator
 from rfm.utils.logging import rank_0_print
 from rfm.configs.experiment_configs import ExperimentConfig, ModelConfig
 from rfm.data.vqa_batch_collator import VQABatchCollator
 
-DatasetType = Union[InfiniteDataGeneratorDataset, RewoundDataset, PairedSuccessFailureDataset, VideoBinnedDataset]
+SampleType = Union[InfiniteDataGeneratorDataset, RewoundDataset, VideoBinnedDataset]
 
 
 def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[AutoProcessor, RFMModel]:
@@ -205,7 +214,7 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
     return TrainingArguments(**base_args)
 
 
-def setup_data_generator(cfg: ExperimentConfig) -> DataGenerator:
+def setup_data_generator(cfg: ExperimentConfig, is_eval: bool = False) -> DataGenerator:
     """Shared function to create DataGenerator for training or evaluation"""
 
     # Get current rank for logging
@@ -214,23 +223,39 @@ def setup_data_generator(cfg: ExperimentConfig) -> DataGenerator:
     rank = dist.get_rank() if dist.is_initialized() else 0
 
     if rank == 0:
-        rank_0_print(f"Setting up data generator on rank {rank}...")
+        rank_0_print(f"Setting up data generator on rank {rank} for {'evaluation' if is_eval else 'training'}...")
+
+    if is_eval:
+        datasets = cfg.data.eval_datasets
+        subsets = cfg.data.eval_subsets
+    else:
+        datasets = cfg.data.train_datasets
+        subsets = cfg.data.train_subsets
 
     # Validate that train_datasets and train_subsets have the same length
-    if len(cfg.data.train_datasets) != len(cfg.data.train_subsets):
+    if len(datasets) != len(subsets):
         raise ValueError(
-            f"train_datasets and train_subsets must have the same length. Got {len(cfg.data.train_datasets)} datasets and {len(cfg.data.train_subsets)} subsets"
+            f"datasets and subsets must have the same length. Got {len(datasets)} datasets and {len(subsets)} subsets"
         )
 
     if rank == 0:
-        rank_0_print(f"Loading {len(cfg.data.train_datasets)} training datasets with corresponding subsets")
-        for i, (dataset, subset) in enumerate(zip(cfg.data.train_datasets, cfg.data.train_subsets)):
+        rank_0_print(f"Loading {len(datasets)} datasets with corresponding subsets")
+        for i, (dataset, subset) in enumerate(zip(datasets, subsets)):
             rank_0_print(f"  Dataset {i + 1}: {dataset} -> {subset}")
 
     if cfg.data.model_type == "vqa":
-        data_generator = VQADataGenerator(config=cfg.data)
+        data_generator = VQADataGenerator(config=cfg.data, is_evaluation=is_eval)
     else:
-        data_generator = DataGenerator(config=cfg.data)
+        if cfg.data.dataset_type == "reward_alignment":
+            data_generator = RewardAlignmentGenerator(config=cfg.data, is_evaluation=is_eval)
+        elif cfg.data.dataset_type == "success_failure":
+            data_generator = PairedSuccessFailureGenerator(config=cfg.data, is_evaluation=is_eval)
+        elif cfg.data.dataset_type == "confusion_matrix":
+            data_generator = ConfusionMatrixGenerator(
+                config=cfg.data, is_evaluation=is_eval, max_trajectories=cfg.data.max_trajectories
+            )
+        else:
+            data_generator = DataGenerator(config=cfg.data, is_evaluation=is_eval)
 
     if rank == 0:
         rank_0_print(f"Data generator initialized on rank {rank}")
@@ -238,42 +263,9 @@ def setup_data_generator(cfg: ExperimentConfig) -> DataGenerator:
     return data_generator
 
 
-def setup_eval_data_generator(cfg: ExperimentConfig) -> DataGenerator:
-    """Shared function to create DataGenerator for evaluation"""
-
-    # Get current rank for logging
-    import torch.distributed as dist
-
-    rank = dist.get_rank() if dist.is_initialized() else 0
-
-    if rank == 0:
-        rank_0_print(f"Setting up evaluation data generator on rank {rank}...")
-
-    # Validate that eval_datasets and eval_subsets have the same length
-    if len(cfg.data.eval_datasets) != len(cfg.data.eval_subsets):
-        raise ValueError(
-            f"eval_datasets and eval_subsets must have the same length. Got {len(cfg.data.eval_datasets)} datasets and {len(cfg.data.eval_subsets)} subsets"
-        )
-
-    if rank == 0:
-        rank_0_print(f"Loading {len(cfg.data.eval_datasets)} evaluation datasets with corresponding subsets")
-        for i, (dataset, subset) in enumerate(zip(cfg.data.eval_datasets, cfg.data.eval_subsets)):
-            rank_0_print(f"  Dataset {i + 1}: {dataset} -> {subset}")
-
-    if cfg.data.model_type == "vqa":
-        eval_data_generator = VQADataGenerator(config=cfg.data, is_evaluation=True)
-    else:
-        eval_data_generator = DataGenerator(config=cfg.data, is_evaluation=True)
-
-    if rank == 0:
-        rank_0_print(f"Evaluation data generator initialized on rank {rank}")
-
-    return eval_data_generator
-
-
 def setup_dataset(
     data_generator: DataGenerator, dataset_type: str = "default", dataset_kwargs: dict = {}
-) -> DatasetType:
+) -> SampleType:
     """Shared function to create training or evaluation dataset based on config"""
 
     # Get the dataset type from the data generator config
@@ -284,9 +276,6 @@ def setup_dataset(
     if config_dataset_type == "rewound":
         rank_0_print(f"Creating rewound dataset")
         dataset = RewoundDataset(data_generator, **dataset_kwargs)
-    elif config_dataset_type == "success_failure":  
-        rank_0_print(f"Creating success-failure dataset (generating all possible pairs)")
-        dataset = PairedSuccessFailureDataset(data_generator, **dataset_kwargs)
     elif config_dataset_type == "video_binned":
         rank_0_print(f"Creating video-binned dataset")
         dataset = VideoBinnedDataset(data_generator, **dataset_kwargs)
@@ -299,11 +288,11 @@ def setup_dataset(
     return dataset
 
 
-def setup_eval_dataset(cfg: ExperimentConfig) -> DatasetType:
+def setup_eval_dataset(cfg: ExperimentConfig) -> SampleType:
     """Create evaluation dataset using eval-specific configuration"""
 
     # Create evaluation data generator
-    eval_data_generator = setup_eval_data_generator(cfg)
+    eval_data_generator = setup_data_generator(cfg, is_eval=True)
 
     # Create evaluation dataset
     eval_dataset = setup_dataset(
@@ -331,7 +320,7 @@ def setup_batch_collator(processor: AutoProcessor, cfg: ExperimentConfig) -> Bat
     return batch_collator
 
 
-def setup_vqa_model_and_processor(cfg: ModelConfig):
+def setup_vqa_model_and_processor(cfg: ModelConfig, hf_model_id: str = ""):
     """Setup VQA baseline model and processor from a VQA-specific config."""
     # Get current rank for logging
     import torch.distributed as dist
@@ -358,26 +347,35 @@ def setup_vqa_model_and_processor(cfg: ModelConfig):
         processor.tokenizer.pad_token = processor.tokenizer.eos_token
 
     # Load base conditional generation model for VQA
-    base_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(cfg.model.base_model_id)
+    base_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(cfg.base_model_id)
 
     # Resize token embeddings if new tokens were added
     if len(processor.tokenizer) != base_model.config.vocab_size:
         if rank == 0:
             rank_0_print(f"Resizing token embeddings from {base_model.config.vocab_size} to {len(processor.tokenizer)}")
         base_model.resize_token_embeddings(len(processor.tokenizer))
+        base_model.config.vocab_size = len(processor.tokenizer)
         if rank == 0:
             rank_0_print(f"Resized token embeddings to {len(processor.tokenizer)}")
 
     # Initialize RFM model wrapper with the pre-loaded base model
     if rank == 0:
         rank_0_print(f"Initializing RFM-VQA model on rank {rank}...")
-    # Initialize VQA wrapper
-    vqa_model = RFMModelVQA(config=base_model.config, processor=processor, base_model=base_model)
+    rfm_model = RFMModelVQA(config=base_model.config, processor=processor, base_model=base_model)
 
+    if hf_model_id:
+        rank_0_print(f"Loading model from {hf_model_id} on rank {rank}")
+
+        # before = rfm_model.model.visual.blocks[0].mlp.down_proj.weight
+        # before = rfm_model.preference_head.weight
+        # load the model from the evaluation path
+        rfm_model = RFMModelVQA.from_pretrained(hf_model_id, processor=processor, base_model=base_model)
+
+    # Only print model architecture on rank 0
     if rank == 0:
-        rank_0_print("RFM-VQA model and processor initialized.")
+        rank_0_print(f"Model architecture initialized on rank {rank}")
 
-    return processor, vqa_model
+    return processor, rfm_model
 
 
 def setup_vqa_batch_collator(processor: AutoProcessor, cfg: ExperimentConfig) -> VQABatchCollator:

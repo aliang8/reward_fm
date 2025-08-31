@@ -88,7 +88,9 @@ class DataConfig:
     # Note: Successful trajectories are preferred over failed versions of the same task
 
     # Video processing parameters
-    max_frames_for_preprocessing: int = field(default=64, metadata={"help": "Maximum number of frames to extract from videos for preprocessing"})
+    max_frames_for_preprocessing: int = field(
+        default=64, metadata={"help": "Maximum number of frames to extract from videos for preprocessing"}
+    )
     max_frames: int = field(default=8, metadata={"help": "Maximum number of frames to extract from videos"})
     video_frame_sampling: str = field(
         default="uniform", metadata={"help": "Frame sampling strategy: 'uniform', 'random', 'start', 'end'"}
@@ -123,6 +125,8 @@ class DataConfig:
     # Video binned dataset specific parameters
     num_bins: int = field(default=10, metadata={"help": "Number of bins to use for video binned dataset"})
     fps: int = field(default=10, metadata={"help": "Frames per second to extract from videos"})
+
+    max_trajectories: int = field(default=-1, metadata={"help": "Maximum number of trajectories to use for dataset"})
 
 
 @dataclass

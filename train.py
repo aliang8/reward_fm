@@ -11,7 +11,8 @@ from PIL import Image
 import json
 import os
 import yaml
-from rfm.trainers.trainer import RFMTrainer, VQATrainer
+from rfm.trainers.rfm_heads_trainer import RFMHeadsTrainer
+from rfm.trainers.vqa_trainer import VQATrainer
 from rfm.utils.logging import is_rank_0, rank_0_print
 from pyrallis import wrap
 import wandb
@@ -111,7 +112,7 @@ def train(cfg: ExperimentConfig):
         eval_dataset = setup_eval_dataset(cfg)
         rank_0_print(f"Evaluation dataset created with {cfg.data.eval_subset_size} samples")
 
-    trainer = RFMTrainer(
+    trainer = RFMHeadsTrainer(
         model=peft_rfm_model,
         args=training_args,
         train_dataset=train_dataset,
@@ -343,7 +344,7 @@ def main(cfg: ExperimentConfig):
         if is_rank_0():
             rprint(Panel.fit("🚀 Starting RFM Training", style="bold green"))
         train(cfg)
-    elif cfg.mode == "train" and cfg.data.model_type == "vqa": # VQA training
+    elif cfg.mode == "train" and cfg.data.model_type == "vqa":  # VQA training
         if is_rank_0():
             rprint(Panel.fit("🧠 Starting VQA Baseline Training", style="bold cyan"))
         train_vqa(cfg)

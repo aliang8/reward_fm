@@ -77,6 +77,62 @@ def _build_oxe_video_paths(
     return full_path, rel_path
 
 
+def _process_single_oxe_episode(args):
+    """Worker function to process a single OXE episode.
+    
+    This function must be defined at module level to be picklable for multiprocessing.
+    """
+    episode, ep_idx, task, lang_vec, output_dir, dataset_name, max_frames, fps, valid_img_keys = args
+    
+    episode_entries = []
+    
+    # Build image sequences for each view
+    steps_np = list(tfds.as_numpy(episode["steps"]))
+    
+    for img_key in valid_img_keys:
+        # Check first frame for all-black to prune
+        if img_key not in steps_np[0]["observation"]:
+            continue
+        if np.all(steps_np[0]["observation"][img_key] == 0):
+            continue
+
+        frames = [s["observation"][img_key] for s in steps_np if img_key in s["observation"]]
+        if not frames:
+            continue
+
+        full_path, rel_path = _build_oxe_video_paths(
+            output_dir=output_dir,
+            dataset_label=dataset_name,
+            episode_idx=ep_idx,
+            view_key=img_key,
+        )
+
+        traj_dict = {
+            "id": generate_unique_id(),
+            "frames": np.stack(frames) if isinstance(frames[0], np.ndarray) else frames,
+            "task": task,
+            "is_robot": True,
+            "quality_label": "successful",
+            "preference_group_id": None,
+            "preference_rank": None,
+        }
+
+        entry = create_hf_trajectory(
+            traj_dict=traj_dict,
+            video_path=full_path,
+            lang_vector=lang_vec,
+            max_frames=max_frames,
+            dataset_name=dataset_name,
+            use_video=True,
+            fps=fps,
+        )
+        if entry:
+            entry["frames"] = rel_path
+            episode_entries.append(entry)
+    
+    return episode_entries
+
+
 def convert_oxe_dataset_to_hf(
     dataset_path: str,
     dataset_name: str,
@@ -183,58 +239,6 @@ def convert_oxe_dataset_to_hf(
     produced = 0
     
     print(f"Processing episodes in batches of {batch_size} with {num_workers} workers...")
-    
-    def process_single_episode(args):
-        """Worker function to process a single episode."""
-        episode, ep_idx, task, lang_vec = args
-        
-        episode_entries = []
-        
-        # Build image sequences for each view
-        steps_np = list(tfds.as_numpy(episode["steps"]))
-        
-        for img_key in valid_img_keys:
-            # Check first frame for all-black to prune
-            if img_key not in steps_np[0]["observation"]:
-                continue
-            if np.all(steps_np[0]["observation"][img_key] == 0):
-                continue
-
-            frames = [s["observation"][img_key] for s in steps_np if img_key in s["observation"]]
-            if not frames:
-                continue
-
-            full_path, rel_path = _build_oxe_video_paths(
-                output_dir=output_dir,
-                dataset_label=dataset_name,
-                episode_idx=ep_idx,
-                view_key=img_key,
-            )
-
-            traj_dict = {
-                "id": generate_unique_id(),
-                "frames": np.stack(frames) if isinstance(frames[0], np.ndarray) else frames,
-                "task": task,
-                "is_robot": True,
-                "quality_label": "successful",
-                "preference_group_id": None,
-                "preference_rank": None,
-            }
-
-            entry = create_hf_trajectory(
-                traj_dict=traj_dict,
-                video_path=full_path,
-                lang_vector=lang_vec,
-                max_frames=max_frames,
-                dataset_name=dataset_name,
-                use_video=True,
-                fps=fps,
-            )
-            if entry:
-                entry["frames"] = rel_path
-                episode_entries.append(entry)
-        
-        return episode_entries
 
     # Process episodes in batches to manage memory
     episode_batch = []
@@ -286,8 +290,13 @@ def convert_oxe_dataset_to_hf(
                     [info[0] for info in episode_info_batch],
                     [info[1] for info in episode_info_batch],
                     [info[2] for info in episode_info_batch],
+                    [output_dir] * len(episode_batch),
+                    [dataset_name] * len(episode_batch),
+                    [max_frames] * len(episode_batch),
+                    [fps] * len(episode_batch),
+                    [valid_img_keys] * len(episode_batch),
                 ):
-                    episode_entries = process_single_episode(args)
+                    episode_entries = _process_single_oxe_episode(args)
                     entries.extend(episode_entries)
                     produced += len(episode_entries)
             else:
@@ -301,13 +310,18 @@ def convert_oxe_dataset_to_hf(
                         [info[0] for info in episode_info_batch],
                         [info[1] for info in episode_info_batch],
                         [info[2] for info in episode_info_batch],
+                        [output_dir] * len(episode_batch),
+                        [dataset_name] * len(episode_batch),
+                        [max_frames] * len(episode_batch),
+                        [fps] * len(episode_batch),
+                        [valid_img_keys] * len(episode_batch),
                     )
                 )
 
                 with Pool(processes=num_workers) as pool:
                     results = list(
                         tqdm(
-                            pool.imap_unordered(process_single_episode, worker_args),
+                            pool.imap_unordered(_process_single_oxe_episode, worker_args),
                             total=len(worker_args),
                             desc=f"Processing batch (workers={num_workers})",
                         )

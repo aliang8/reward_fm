@@ -177,61 +177,22 @@ def convert_oxe_dataset_to_hf(
     if "language_table" in base_ds_name:
         max_limit = MAX_LANGTABLE_EPISODES
 
-    # Collect all episodes first for parallel processing
-    all_episodes = []
-    episode_info = []
-
-    print(f"Collecting episodes for {base_ds_name}...")
-    for ep_idx, episode in enumerate(tqdm(dataset, desc=f"Collecting episodes")):
-        if ep_idx >= max_limit:
-            break
-
-        # Materialize first step for language and sanity checks
-        try:
-            first_step = next(iter(tfds.as_numpy(episode["steps"])))
-        except StopIteration:
-            continue
-
-        # Extract task/instruction
-        task: Optional[str] = None
-        for key in POSSIBLE_LANG_INSTRUCTION_KEYS:
-            if key in first_step.get("observation", {}):
-                if base_ds_name == "language_table":
-                    t = first_step["observation"][key]
-                    task = bytes(t[np.where(t != 0)].tolist()).decode("utf-8")
-                else:
-                    task = first_step["observation"][key].decode()
-                break
-            elif key in first_step:
-                task = first_step[key].decode()
-                break
-        if not task:
-            continue
-
-        # Precompute embedding
-        if task not in lang_cache:
-            lang_cache[task] = lang_model.encode(task)
-        lang_vec = lang_cache[task]
-
-        # Store episode and metadata for parallel processing
-        all_episodes.append(episode)
-        episode_info.append((ep_idx, task, lang_vec))
-
-        # For language_table, cap the number of episodes considered
-        if base_ds_name == "language_table" and ep_idx + 1 >= MAX_LANGTABLE_EPISODES:
-            break
-
-    print(f"Processing {len(all_episodes)} episodes with {num_workers} workers...")
-
+        # Process episodes in batches to avoid OOM
+    batch_size = 64  # Process episodes in smaller batches
+    entries = []
+    produced = 0
+    
+    print(f"Processing episodes in batches of {batch_size} with {num_workers} workers...")
+    
     def process_single_episode(args):
         """Worker function to process a single episode."""
         episode, ep_idx, task, lang_vec = args
-
+        
         episode_entries = []
-
+        
         # Build image sequences for each view
         steps_np = list(tfds.as_numpy(episode["steps"]))
-
+        
         for img_key in valid_img_keys:
             # Check first frame for all-black to prune
             if img_key not in steps_np[0]["observation"]:
@@ -272,51 +233,102 @@ def convert_oxe_dataset_to_hf(
             if entry:
                 entry["frames"] = rel_path
                 episode_entries.append(entry)
-
+        
         return episode_entries
 
-    # Process episodes in parallel or sequentially
-    if num_workers == 1:
-        # Sequential processing
-        for args in tqdm(
-            zip(
-                all_episodes,
-                [info[0] for info in episode_info],
-                [info[1] for info in episode_info],
-                [info[2] for info in episode_info],
-            ),
-            desc="Processing episodes",
-        ):
-            episode_entries = process_single_episode(args)
-            entries.extend(episode_entries)
-            produced += len(episode_entries)
-    else:
-        # Parallel processing
-        from multiprocessing import Pool
+    # Process episodes in batches to manage memory
+    episode_batch = []
+    episode_info_batch = []
+    
+    for ep_idx, episode in enumerate(tqdm(dataset, desc=f"Processing {base_ds_name} episodes")):
+        if ep_idx >= max_limit:
+            break
+            
+        # Materialize first step for language and sanity checks
+        try:
+            first_step = next(iter(tfds.as_numpy(episode["steps"])))
+        except StopIteration:
+            continue
 
-        # Prepare arguments for workers
-        worker_args = list(
-            zip(
-                all_episodes,
-                [info[0] for info in episode_info],
-                [info[1] for info in episode_info],
-                [info[2] for info in episode_info],
-            )
-        )
+        # Extract task/instruction
+        task: Optional[str] = None
+        for key in POSSIBLE_LANG_INSTRUCTION_KEYS:
+            if key in first_step.get("observation", {}):
+                if base_ds_name == "language_table":
+                    t = first_step["observation"][key]
+                    task = bytes(t[np.where(t != 0)].tolist()).decode("utf-8")
+                else:
+                    task = first_step["observation"][key].decode()
+                break
+            elif key in first_step:
+                task = first_step[key].decode()
+                break
+        if not task:
+            continue
 
-        with Pool(processes=num_workers) as pool:
-            results = list(
-                tqdm(
-                    pool.imap_unordered(process_single_episode, worker_args),
-                    total=len(worker_args),
-                    desc=f"Processing episodes (workers={num_workers})",
+        # Precompute embedding
+        if task not in lang_cache:
+            lang_cache[task] = lang_model.encode(task)
+        lang_vec = lang_cache[task]
+
+        # Add to current batch
+        episode_batch.append(episode)
+        episode_info_batch.append((ep_idx, task, lang_vec))
+
+        # Process batch when it's full or we've reached the limit
+        if len(episode_batch) >= batch_size or ep_idx + 1 >= max_limit:
+            print(f"Processing batch of {len(episode_batch)} episodes...")
+            
+            if num_workers == 1:
+                # Sequential processing
+                for args in zip(
+                    episode_batch,
+                    [info[0] for info in episode_info_batch],
+                    [info[1] for info in episode_info_batch],
+                    [info[2] for info in episode_info_batch],
+                ):
+                    episode_entries = process_single_episode(args)
+                    entries.extend(episode_entries)
+                    produced += len(episode_entries)
+            else:
+                # Parallel processing
+                from multiprocessing import Pool
+
+                # Prepare arguments for workers
+                worker_args = list(
+                    zip(
+                        episode_batch,
+                        [info[0] for info in episode_info_batch],
+                        [info[1] for info in episode_info_batch],
+                        [info[2] for info in episode_info_batch],
+                    )
                 )
-            )
 
-        # Collect all results
-        for episode_entries in results:
-            entries.extend(episode_entries)
-            produced += len(episode_entries)
+                with Pool(processes=num_workers) as pool:
+                    results = list(
+                        tqdm(
+                            pool.imap_unordered(process_single_episode, worker_args),
+                            total=len(worker_args),
+                            desc=f"Processing batch (workers={num_workers})",
+                        )
+                    )
+
+                # Collect all results
+                for episode_entries in results:
+                    entries.extend(episode_entries)
+                    produced += len(episode_entries)
+            
+            # Clear batch for next iteration
+            episode_batch = []
+            episode_info_batch = []
+            
+            # Check if we've reached the limit
+            if produced >= max_limit:
+                break
+
+        # For language_table, cap the number of episodes considered
+        if base_ds_name == "language_table" and ep_idx + 1 >= MAX_LANGTABLE_EPISODES:
+            break
 
     if not entries:
         return Dataset.from_dict(

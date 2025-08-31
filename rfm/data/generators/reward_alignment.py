@@ -8,11 +8,13 @@ as PreferenceSample objects that can be evaluated by the model.
 """
 
 from rfm.data.batch_collator import PreferenceSample, Trajectory
+from rfm.data.vqa_batch_collator import ProgressSample
 from rfm.utils.logging import rank_0_print
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 from rfm.data.generators.base import BaseDataGenerator
 from tqdm import tqdm
 import numpy as np
+import random
 
 
 class RewardAlignmentGenerator(BaseDataGenerator):
@@ -24,12 +26,13 @@ class RewardAlignmentGenerator(BaseDataGenerator):
     """
 
     def __init__(
-        self, config, is_evaluation=False, verbose=True, max_trajectories: Optional[int] = None, frame_step: int = 2
+        self, config, is_evaluation=False, verbose=True, max_trajectories: Optional[int] = None, frame_step: int = 2, progress_sample_ratio: float = 0.0
     ):
         super().__init__(config, is_evaluation, verbose=verbose)
 
         self.max_trajectories = max_trajectories
         self.frame_step = frame_step
+        self.progress_sample_ratio = progress_sample_ratio
         self.sample_indices = self._generate_all_sample_indices()
         self.current_idx = 0
 
@@ -68,7 +71,7 @@ class RewardAlignmentGenerator(BaseDataGenerator):
 
         return sample_indices
 
-    def _generate_sample_from_indices(self, sample_idx_info: Dict) -> PreferenceSample:
+    def _generate_sample_from_indices(self, sample_idx_info: Dict) -> Union[PreferenceSample, ProgressSample]:
         """Generate a single subsequence sample from stored indices."""
         traj_idx = sample_idx_info["traj_idx"]
         end_idx = sample_idx_info["end_idx"]
@@ -135,9 +138,14 @@ class RewardAlignmentGenerator(BaseDataGenerator):
             metadata=metadata,
         )
 
-        sample = PreferenceSample(
-            chosen_trajectory=subsequence_trajectory, rejected_trajectory=rejected_trajectory, sample_type="preference"
-        )
+        if random.random() < self.progress_sample_ratio:
+            sample = ProgressSample(
+                trajectory=subsequence_trajectory, sample_type="progress"
+            )
+        else:
+            sample = PreferenceSample(
+                chosen_trajectory=subsequence_trajectory, rejected_trajectory=rejected_trajectory, sample_type="preference"
+            )
 
         return sample
 

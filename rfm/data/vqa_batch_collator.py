@@ -12,12 +12,12 @@ from transformers import AutoProcessor
 from qwen_vl_utils import process_vision_info
 import numpy as np
 import random
+from pydantic import BaseModel, field_serializer
 
 from rfm.data.batch_collator import PreferenceSample, SimilaritySample, Trajectory
 
 
-@dataclass
-class ProgressSample:
+class ProgressSample(BaseModel):
     """Sample structure for progress evaluation."""
 
     trajectory: Trajectory

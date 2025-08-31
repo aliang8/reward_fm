@@ -60,6 +60,7 @@ dependencies = [
     "imageio>=2.37.0",
     "omegaconf>=2.3.0",
     "opencv-python-headless>=4.8.0",
+    "opencv-contrib-python-headless>=4.8.0",  # Additional OpenCV modules
 ]
 
 [project.urls]

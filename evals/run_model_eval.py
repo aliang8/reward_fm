@@ -40,15 +40,15 @@ def _save_result_as_json(
     samples: List[SampleType], response: Dict[str, Any]
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Save detailed results for each sample in the batch.
-    
+
     Returns:
         tuple: (preference_results, progress_results)
     """
-    
+
     # Extract preference and progress outputs from response
     if "outputs_preference" not in response or "outputs_progress" not in response:
         raise ValueError("Server response missing required 'outputs_preference' or 'outputs_progress' keys")
-    
+
     preference_response = response["outputs_preference"]
     progress_response = response["outputs_progress"]
 
@@ -91,10 +91,15 @@ def _save_result_as_json(
             }
         else:
             preference_entry = None
-        
+
         # Create progress result entry
         if progress_response:
             progress_entry = {
+                "id": sample.trajectory.id,
+                "data_source": sample.trajectory.data_source,
+                "data_gen_strategy": sample.trajectory.data_gen_strategy,
+                "target_progress": sample.trajectory.target_progress,
+                "metadata": sample.trajectory.metadata,
                 "progress_pred_A": progress_pred_A[i] if i < len(progress_pred_A) else [],
             }
         else:
@@ -105,7 +110,7 @@ def _save_result_as_json(
     # Separate preference and progress results
     preference_results = [entry[0] for entry in batch_results]
     progress_results = [entry[1] for entry in batch_results]
-    
+
     return preference_results, progress_results
 
 
@@ -321,7 +326,7 @@ def main():
     if len(progress_results) > 0:
         with open(progress_file, "w") as f:
             json.dump(progress_results, f, indent=2)
-        print(f"Progress results saved to: {progress_file}")   
+        print(f"Progress results saved to: {progress_file}")
 
     print(f"\nEvaluation complete!")
     print(f"Total samples processed: {len(preference_results)}")
@@ -329,4 +334,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -343,7 +343,6 @@ class BatchCollator(BaseCollator):
 
             all_messages.append(conversation)
 
-
         texts = [
             self.processor.apply_chat_template(
                 msg,

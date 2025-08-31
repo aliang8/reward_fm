@@ -239,7 +239,9 @@ class RFMModel(PreTrainedModel):
                         current_pos = frame_end
 
                     # For trajectory B: extract hidden states at frame boundaries after split_token
-                    trajectory_B_boundaries = torch.tensor([pos for pos in frame_boundary_positions_B if pos > split_pos])
+                    trajectory_B_boundaries = torch.tensor(
+                        [pos for pos in frame_boundary_positions_B if pos > split_pos]
+                    )
 
                     # Apply progress head to hidden states at frame boundary positions for trajectory B
                     if trajectory_B_boundaries.numel() > 0:

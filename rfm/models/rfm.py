@@ -173,7 +173,10 @@ class RFMModel(PreTrainedModel):
                     raise ValueError(f"video_grid_thw is required for progress prediction. Got: {video_grid_thw}")
 
                 # For trajectory A: use video_grid_thw[i]
-                current_video_grid_A = video_grid_thw[i]  # [T, H, W]
+                if sample_type == "progress":
+                    current_video_grid_A = video_grid_thw[i]  # [T, H, W]
+                else:
+                    current_video_grid_A = video_grid_thw[i * tps]  # [T, H, W]
 
                 T_A, H_A, W_A = current_video_grid_A
 

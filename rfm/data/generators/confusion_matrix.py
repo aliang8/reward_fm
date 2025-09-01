@@ -93,12 +93,9 @@ class ConfusionMatrixGenerator(BaseDataGenerator):
 
         # Create metadata for the confusion matrix analysis
         metadata = {
-            "confusion_matrix_task": task,  # The task we're testing with
+            "confusion_matrix_task": task,
             "trajectory_original_task": trajectory_task,  # Original task of the trajectory
             "is_matching_task": task == trajectory_task,  # Whether task matches trajectory
-            "data_gen_strategy": "confusion_matrix",
-            "num_frames": len(frames),
-            "max_frames": max_frames,
         }
 
         # Create trajectory for the sample (using the original trajectory data but with new task)

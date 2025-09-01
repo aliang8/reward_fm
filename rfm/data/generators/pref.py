@@ -6,7 +6,7 @@ PreferenceDataGenerator class for producing batches of preference prediction dat
 import random
 import numpy as np
 from typing import List, Dict, Tuple, Optional, Iterator, Union
-from rfm.data.dataset_types import PreferenceSample, SimilaritySample, ProgressSample
+from rfm.data.dataset_types import PreferenceSample, ProgressSample, Trajectory
 from rfm.data.generators.base import BaseDataGenerator
 from rfm.utils.logging import rank_0_print, timer
 

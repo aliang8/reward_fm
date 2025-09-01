@@ -446,13 +446,14 @@ class BaseDataGenerator:
         # Select start and end indices for the chosen trajectory segment
         # Start index is in the first half of the trajectory
         start_idx = random.randint(0, num_frames_total // 2 - 1)
-        # End index is in the latter half of the trajectory
-        end_idx = random.randint(num_frames_total // 2, num_frames_total)
+        # End index is in the latter 1/3 of the trajectory
+        end = (2 * num_frames_total) // 3
+        end_idx = random.randint(end, num_frames_total)
 
         # Ensure we have enough frames between start and end
         while end_idx - start_idx < 5:
             start_idx = random.randint(0, num_frames_total // 2 - 1)
-            end_idx = random.randint(num_frames_total // 2, num_frames_total)
+            end_idx = random.randint(end, num_frames_total)
 
         # Extract the chosen segment
         segment_frames = frames[start_idx:end_idx]

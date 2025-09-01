@@ -5,7 +5,7 @@ echo "Running LIBERO regular dataset evaluations"
 # Run success/failure evaluation
 uv run python evals/run_model_eval.py \
       --config rfm/configs/eval_config.yaml \
-      --batch_size=16 \
+      --set data.batch_size=16 \
       --set data.eval_datasets=[\"abraranwar/libero_rfm\",\"ykorkmaz/libero_failure_rfm\"] \
       --set data.eval_subsets=[\"libero256_10\",\"libero_10_failure\"] \
       --set data.dataset_type=success_failure 2>&1 
@@ -14,7 +14,8 @@ uv run python evals/run_model_eval.py \
 echo "Running LIBERO10 reward alignment evaluation"
 uv run python evals/run_model_eval.py \
       --config rfm/configs/eval_config.yaml \
-      --batch_size=16 \
+      --set num_batches=2 \
+      --set data.batch_size=16 \
       --set data.eval_datasets=[\"abraranwar/libero_rfm\"] \
       --set data.eval_subsets=[\"libero256_10\"] \
       --set data.dataset_type=reward_alignment 2>&1 
@@ -23,7 +24,8 @@ uv run python evals/run_model_eval.py \
 echo "Running MetaWorld reward alignment evaluation"
 uv run python evals/run_model_eval.py \
       --config rfm/configs/eval_config.yaml \
-      --batch_size=16 \
+      --set num_batches=2 \
+      --set data.batch_size=16 \
       --set data.eval_datasets=[\"HenryZhang/metaworld_rewind_rfm_eval\"] \
       --set data.eval_subsets=[\"metaworld_rewind_eval\"] \
       --set data.dataset_type=reward_alignment 2>&1 
@@ -53,6 +55,11 @@ uv run python evals/run_model_eval.py \
 #     echo "=== Completed subset: $subset ===" | tee -a evals/logs/libero_regular_${TIMESTAMP}.log
 #     echo "" | tee -a evals/logs/libero_regular_${TIMESTAMP}.log
 # done
+
+echo "Compiling results"
+uv run python evals/compile_results.py \
+      --config rfm/configs/eval_config.yaml \
+      --eval_logs_dir eval_logs
 
 echo "Completed all LIBERO regular dataset evaluations at $(date)" | tee -a evals/logs/libero_regular_${TIMESTAMP}.log
 echo "All evaluations completed! Check logs in eval_logs/"

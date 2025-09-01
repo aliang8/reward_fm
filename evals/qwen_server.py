@@ -20,7 +20,7 @@ from __future__ import annotations
 import yaml
 import base64
 import io
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Union
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import queue
@@ -29,15 +29,14 @@ import time
 
 import numpy as np
 import torch
-from fastapi import FastAPI, HTTPException, Request, UploadFile, Form
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, field_serializer
 from huggingface_hub import hf_hub_download
 import json
 
 from rfm.utils.setup_utils import setup_model_and_processor, setup_vqa_model_and_processor
 from rfm.configs.eval_configs import EvaluationConfig
-from rfm.configs.experiment_configs import DataConfig, ModelConfig
+from rfm.configs.experiment_configs import ModelConfig
 from rfm.data.batch_collator import BatchCollator, PreferenceSample
 from rfm.data.vqa_batch_collator import VQABatchCollator
 from rfm.data.dataset_types import PreferenceSample, ProgressSample
@@ -552,7 +551,6 @@ def main():
         config_dict = yaml.safe_load(f)
 
     cfg = EvaluationConfig(**config_dict)
-    cfg.data = DataConfig(**config_dict["data"])
 
     # Override config with command line args
     if args.num_gpus is not None:

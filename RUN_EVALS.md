@@ -1,4 +1,6 @@
 ```
+# set model_path under rfm/configs/eval_configs.yaml
+
 # Step 1: Start Qwen server in separate terminal 
 
 uv run python3 evals/qwen_server.py --num_gpus=2
@@ -12,4 +14,5 @@ uv run python3 evals/qwen_server.py --num_gpus=2
 # Step 3: Compile the results 
 uv run python3 evals/compile_results.py
 
+# the outputs should be stored under eval_logs/final_metrics.json
 ```

@@ -11,11 +11,10 @@ uv run accelerate launch \
     --config rfm/configs/config.yaml \
     --data.resized_height 128 \
     --data.resized_width 128 \
-    --logging.use_wandb false \
+    --logging.use_wandb true \
     --debug false \
     --model.train_preference_head true \
     --model.train_progress_head true \
-    --training.output_dir ./logs/rfm_prefprogress
+    --training.output_dir ./logs/rfm_prefprog 
     
-    # --model.base_model_id Qwen/Qwen2.5-VL-7B-Instruct \
-    # --training.output_dir ./logs/rfm_progress_pref_7B
+    # --model.base_model_id Qwen/Qwen2.5-VL-7B-Instruc\B

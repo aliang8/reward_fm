@@ -272,6 +272,13 @@ def main():
         "--use-async", action="store_true", help="Use async concurrent evaluation (recommended for multi-GPU server)"
     )
     parser.add_argument("--max_concurrent", type=int, default=8, help="Maximum concurrent requests (default: 4)")
+    parser.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        help="Override config with dot-path assignments, e.g., --set data.max_frames=8 --set model.base_model_id='Qwen/...'.",
+    )
+
     args = parser.parse_args()
 
     # Load evaluation config manually
@@ -281,6 +288,22 @@ def main():
 
     cfg = EvaluationConfig(**config_dict)
     cfg.data = DataConfig(**config_dict["data"])
+
+    # Apply overrides from --set key=value (dot-path)
+    for assignment in args.set:
+        if "=" not in assignment:
+            continue
+        key, value_str = assignment.split("=", 1)
+        try:
+            value = ast.literal_eval(value_str)
+        except Exception:
+            value = value_str
+        target = cfg
+        parts = key.split(".")
+        for p in parts[:-1]:
+            target = getattr(target, p)
+        setattr(target, parts[-1], value)
+        
     print(f"Evaluation config: {cfg}")
 
     # Run evaluation and get results

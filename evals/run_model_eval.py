@@ -290,6 +290,8 @@ def main():
     cfg.data = DataConfig(**config_dict["data"])
 
     # Apply overrides from --set key=value (dot-path)
+    import ast
+
     for assignment in args.set:
         if "=" not in assignment:
             continue
@@ -303,7 +305,7 @@ def main():
         for p in parts[:-1]:
             target = getattr(target, p)
         setattr(target, parts[-1], value)
-        
+
     print(f"Evaluation config: {cfg}")
 
     # Run evaluation and get results

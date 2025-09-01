@@ -34,22 +34,7 @@ data:
 
   # Video processing settings
   max_frames: 16
-  video_frame_sampling: "uniform"  # "uniform", "random", "first", "middle"
-  resized_height: 128  # Height to resize images/videos to
-  resized_width: 128  # Width to resize images/videos to
   
-  # Data generation settings
-  preference_ratio: 1.0  # Ratio of preference prediction samples
-  dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
-  preference_strategy_ratio: [0.8, 0.1, 0.1, 0.0]  # [rewind_same_task, suboptimal_same_task, different_task]
-  shuffle: true
-  seed: 42
-  num_proc: 1  # Number of processes for dataset processing
-  force_reprocess: false  # Force reprocessing of dataset even if cached version exists
-  
-  # Data loading settings
-  dataloader_pin_memory: false
-  dataloader_num_workers: 0
   dataset_type: confusion_matrix
 
   # extra settings for eval datasets 

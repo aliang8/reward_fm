@@ -79,16 +79,16 @@ def _build_oxe_video_paths(
 
 def _process_single_oxe_episode(args):
     """Worker function to process a single OXE episode.
-    
+
     This function must be defined at module level to be picklable for multiprocessing.
     """
     episode, ep_idx, task, lang_vec, output_dir, dataset_name, max_frames, fps, valid_img_keys = args
-    
+
     episode_entries = []
-    
+
     # Episode is already converted to numpy format
     steps_np = episode["steps"]
-    
+
     for img_key in valid_img_keys:
         # Check first frame for all-black to prune
         if img_key not in steps_np[0]["observation"]:
@@ -129,7 +129,7 @@ def _process_single_oxe_episode(args):
         if entry:
             entry["frames"] = rel_path
             episode_entries.append(entry)
-    
+
     return episode_entries
 
 
@@ -237,17 +237,17 @@ def convert_oxe_dataset_to_hf(
     batch_size = 64  # Process episodes in smaller batches
     entries = []
     produced = 0
-    
+
     print(f"Processing episodes in batches of {batch_size} with {num_workers} workers...")
 
     # Process episodes in batches to manage memory
     episode_batch = []
     episode_info_batch = []
-    
+
     for ep_idx, episode in enumerate(tqdm(dataset, desc=f"Processing {base_ds_name} episodes")):
         if ep_idx >= max_limit:
             break
-            
+
         # Materialize first step for language and sanity checks
         try:
             first_step = next(iter(tfds.as_numpy(episode["steps"])))
@@ -279,15 +279,15 @@ def convert_oxe_dataset_to_hf(
         try:
             # Convert episode to numpy format for multiprocessing
             episode_np = tfds.as_numpy(episode)
-            
+
             # Additional safety: ensure all nested objects are numpy
             def ensure_numpy(obj):
-                if hasattr(obj, 'numpy'):
+                if hasattr(obj, "numpy"):
                     try:
                         return obj.numpy()
                     except:
                         # If numpy() fails, try to convert to list/array
-                        if hasattr(obj, '__array__'):
+                        if hasattr(obj, "__array__"):
                             return np.array(obj)
                         else:
                             return str(obj)  # Fallback to string representation
@@ -297,12 +297,13 @@ def convert_oxe_dataset_to_hf(
                     return type(obj)(ensure_numpy(item) for item in obj)
                 else:
                     return obj
-            
+
             episode_np = ensure_numpy(episode_np)
-            
+
             # Test if the converted episode is picklable
             try:
                 import pickle
+
                 pickle.dumps(episode_np)
                 episode_batch.append(episode_np)
                 episode_info_batch.append((ep_idx, task, lang_vec))
@@ -316,7 +317,7 @@ def convert_oxe_dataset_to_hf(
         # Process batch when it's full or we've reached the limit
         if len(episode_batch) >= batch_size or ep_idx + 1 >= max_limit:
             print(f"Processing batch of {len(episode_batch)} episodes...")
-            
+
             if num_workers == 1:
                 # Sequential processing
                 for args in zip(
@@ -365,11 +366,11 @@ def convert_oxe_dataset_to_hf(
                 for episode_entries in results:
                     entries.extend(episode_entries)
                     produced += len(episode_entries)
-            
+
             # Clear batch for next iteration
             episode_batch = []
             episode_info_batch = []
-            
+
             # Check if we've reached the limit
             if produced >= max_limit:
                 break

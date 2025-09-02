@@ -5,7 +5,7 @@ dataset:
 
 output:
   output_dir: datasets/h2r_rfm
-  max_trajectories: -1
+  max_trajectories: null
   max_frames: 64
   use_video: true
   fps: 30

@@ -44,7 +44,6 @@ dependencies = [
     "gradio>=4.0.0",
     "pillow>=9.0.0",
     "ffmpeg",
-    "opencv-python-headless>=4.8.0",
     "termcolor>=3.1.0",
     "qwen-vl-utils>=0.0.11",
     "torchvision>=0.23.0",
@@ -57,6 +56,11 @@ dependencies = [
     "tf-keras>=2.19.0",
     "scipy>=1.15.3",
     "codetiming>=1.4.0",
+    "robosuite==1.4.0",
+    "imageio>=2.37.0",
+    "omegaconf>=2.3.0",
+    "opencv-python-headless>=4.8.0",
+    "opencv-contrib-python-headless>=4.8.0",  # Additional OpenCV modules
 ]
 
 [project.urls]

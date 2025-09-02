@@ -1,40 +1,61 @@
 #!/bin/bash
-
-# Create logs directory if it doesn't exist
-mkdir -p evals/logs
-
-# Get current timestamp for log files
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-
 # LIBERO regular datasets
-echo "Running LIBERO regular dataset evaluations at $(date)" | tee evals/logs/libero_regular_${TIMESTAMP}.log
+echo "Running LIBERO regular dataset evaluations" 
 
 # Run success/failure evaluation
 uv run python evals/run_model_eval.py \
-      --config_path=rfm/configs/config.yaml \
-      --server_url=http://localhost:8000 \
-      --batch_size=4 \
+      --config rfm/configs/eval_config.yaml \
+      --set data.batch_size=16 \
+      --set num_batches=2 \
       --set data.eval_datasets=[\"abraranwar/libero_rfm\",\"ykorkmaz/libero_failure_rfm\"] \
-      --set data.eval_subsets=[\"libero_10\",\"libero_10_failure\"] \
-      --set data.dataset_type=success_failure 2>&1 | tee -a evals/logs/libero_regular_${TIMESTAMP}.log
+      --set data.eval_subsets=[\"libero256_10\",\"libero_10_failure\"] \
+      --set data.dataset_type=success_failure \
+      --use-async \
+      --max_concurrent=4 2>&1 
 
-# Run rewound evaluation
+# Run reward alignment evaluation for LIBERO10
+echo "Running LIBERO10 reward alignment evaluation"
 uv run python evals/run_model_eval.py \
-      --config_path=rfm/configs/config.yaml \
-      --server_url=http://localhost:8000 \
-      --batch_size=32 \
+      --config rfm/configs/eval_config.yaml \
+      --set num_batches=2 \
+      --set data.batch_size=16 \
       --set data.eval_datasets=[\"abraranwar/libero_rfm\"] \
-      --set data.eval_subsets=[\"libero_10\"] \
-      --set data.dataset_type=rewound 2>&1 | tee -a evals/logs/libero_regular_${TIMESTAMP}.log
+      --set data.eval_subsets=[\"libero256_10\"] \
+      --set data.dataset_type=reward_alignment \
+      --use-async \
+      --max_concurrent=4 2>&1 
 
+# Run reward alignment evaluation for MetaWorld eval
+echo "Running MetaWorld reward alignment evaluation"
 uv run python evals/run_model_eval.py \
-      --config_path=rfm/configs/config.yaml \
-      --server_url=http://localhost:8000 \
-      --batch_size=32 \
-      --num_batches=50 \
-      --set data.eval_datasets=[\"abraranwar/libero_rfm\"] \
-      --set data.eval_subsets=[\"libero_10\"]  \
-      --set data.dataset_type=default 2>&1 | tee -a evals/logs/libero_regular_${TIMESTAMP}.log
+      --config rfm/configs/eval_config.yaml \
+      --set num_batches=2 \
+      --set data.batch_size=16 \
+      --set data.eval_datasets=[\"HenryZhang/metaworld_rewind_rfm_eval\"] \
+      --set data.eval_subsets=[\"metaworld_rewind_eval\"] \
+      --set data.dataset_type=reward_alignment \
+      --use-async \
+      --max_concurrent=4 2>&1 
+
+# Run wrong task preference evaluation
+echo "Running wrong task preference evaluation"
+uv run python evals/run_model_eval.py \
+      --config rfm/configs/eval_config.yaml \
+      --set num_batches=10 \
+      --set data.batch_size=16 \
+      --set data.eval_datasets=[\"HenryZhang/metaworld_rewind_rfm_eval\"] \
+      --set data.eval_subsets=[\"metaworld_rewind_eval\"] \
+      --set data.dataset_type=wrong_task \
+      --use-async \
+      --max_concurrent=4 2>&1 
+
+# # Run confusion matrix evaluation
+# uv run python evals/run_model_eval.py \
+#       --config rfm/configs/eval_config.yaml \
+#       --batch_size=16 \
+#       --set data.eval_datasets=[\"abraranwar/libero_rfm\",\"ykorkmaz/libero_failure_rfm\"] \
+#       --set data.eval_subsets=[\"libero_10\",\"libero_10_failure\"] \
+#       --set data.dataset_type=confusion_matrix 2>&1 
 
 # # for subset in "libero_10" "libero_goal" "libero_object" "libero_spatial"; do
 # for subset in "libero_10"; do
@@ -54,30 +75,11 @@ uv run python evals/run_model_eval.py \
 #     echo "" | tee -a evals/logs/libero_regular_${TIMESTAMP}.log
 # done
 
+echo "Compiling results"
+uv run python evals/compile_results.py \
+      --config rfm/configs/eval_config.yaml \
+      --eval_logs_dir eval_logs
+
 echo "Completed all LIBERO regular dataset evaluations at $(date)" | tee -a evals/logs/libero_regular_${TIMESTAMP}.log
-
-# LIBERO failure datasets
-#echo "Running LIBERO failure dataset evaluations at $(date)" | tee evals/logs/libero_failure_${TIMESTAMP}.log
-#
-#for subset in "libero_10_failure"; do
-#    echo "=== Evaluating subset: $subset ===" | tee -a evals/logs/libero_failure_${TIMESTAMP}.log
-#    echo "Start time: $(date)" | tee -a evals/logs/libero_failure_${TIMESTAMP}.log
-#    
-#    uv run python evals/run_model_eval.py \
-#      --config_path=rfm/configs/config.yaml \
-#      --server_url=http://localhost:8000 \
-#      --batch_size=12 \
-#      --set evaluation.eval_dataset_path="ykorkmaz/libero_failure_rfm" \
-#      --set evaluation.eval_dataset_subsets=["$subset"] \
-#      --iterate_all_preferences 2>&1 | tee -a evals/logs/libero_failure_${TIMESTAMP}.log
-#    
-#    echo "End time: $(date)" | tee -a evals/logs/libero_failure_${TIMESTAMP}.log
-#    echo "=== Completed subset: $subset ===" | tee -a evals/logs/libero_failure_${TIMESTAMP}.log
-#    echo "" | tee -a evals/logs/libero_failure_${TIMESTAMP}.log
-#done
-#
-#echo "Completed all LIBERO failure dataset evaluations at $(date)" | tee -a evals/logs/libero_failure_${TIMESTAMP}.log
-
-echo "All evaluations completed! Check logs in evals/logs/"
-echo "Regular dataset log: evals/logs/libero_regular_${TIMESTAMP}.log"
-#echo "Failure dataset log: evals/logs/libero_failure_${TIMESTAMP}.log"
+echo "All evaluations completed! Check logs in eval_logs/"
+echo "Regular dataset log: eval_logs/libero_regular_${TIMESTAMP}.log"

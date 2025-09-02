@@ -15,9 +15,9 @@ import torch
 from datasets import Dataset, DatasetDict, load_dataset, Video
 import numpy as np
 from tqdm import tqdm
-
+from omegaconf import OmegaConf
 from rfm.utils.logging import rank_0_print
-from evals.eval_utils import load_experiment_config_from_yaml
+from rfm.configs.experiment_configs import ExperimentConfig
 
 
 class DatasetPreprocessor:
@@ -50,21 +50,21 @@ class DatasetPreprocessor:
             if isinstance(dataset_subsets, str):
                 dataset_subsets = [dataset_subsets]
             for subset in dataset_subsets:
-                all_datasets.append(("training", dataset_path, subset))
+                all_datasets.append((dataset_path, subset))
 
         # Add evaluation datasets
         for dataset_path, dataset_subsets in zip(self.config.data.eval_datasets, self.config.data.eval_subsets):
             if isinstance(dataset_subsets, str):
                 dataset_subsets = [dataset_subsets]
             for subset in dataset_subsets:
-                all_datasets.append(("evaluation", dataset_path, subset))
+                all_datasets.append((dataset_path, subset))
 
         # Show which datasets are already preprocessed
         self._show_preprocessed_datasets(all_datasets)
 
         # Process each dataset and its associated subsets
-        for i, (dataset_type, dataset_path, subset) in enumerate(all_datasets):
-            rank_0_print(f"\n📚 Processing {dataset_type} dataset {i + 1}/{len(all_datasets)}: {dataset_path}/{subset}")
+        for i, (dataset_path, subset) in enumerate(all_datasets):
+            rank_0_print(f"\n📚 Processing dataset {i + 1}/{len(all_datasets)}: {dataset_path}/{subset}")
 
             # Create individual cache key
             cache_key = f"{dataset_path}/{subset}"
@@ -98,9 +98,7 @@ class DatasetPreprocessor:
                 self.dataset_indices[cache_key] = indices
 
                 # Save individual cache
-                self._save_individual_cache(
-                    individual_cache_dir, processed_dataset, indices, dataset_path, subset, dataset_type
-                )
+                self._save_individual_cache(individual_cache_dir, processed_dataset, indices, dataset_path, subset)
 
                 rank_0_print(f"    ✅ Successfully processed and cached {dataset_path}/{subset}")
 
@@ -125,8 +123,8 @@ class DatasetPreprocessor:
 
     def _process_individual_dataset(self, dataset: Dataset, cache_dir: str, cache_key: str):
         """Process a single dataset and build its index mappings."""
-        # Cast the frames_path column to Video feature
-        dataset = dataset.cast_column("frames_path", Video(decode=True))
+        # Cast the frames_video column to Video feature
+        dataset = dataset.cast_column("frames_video", Video(decode=True))
 
         # Process videos and build indices
         processed_dataset, indices = self._process_dataset_videos_map(dataset, cache_key)
@@ -145,7 +143,7 @@ class DatasetPreprocessor:
             frames as numpy arrays with shape (max_frames, H, W, C) where T is time dimension
         """
         if num_frames is None:
-            num_frames = self.max_frames
+            num_frames = self.max_frames_for_preprocessing
 
         if frames is None:
             return np.array([])
@@ -153,6 +151,8 @@ class DatasetPreprocessor:
         try:
             # Convert VideoReader to list of frames
             all_frames = list(frames)
+            print(f"Total frames: {len(all_frames)}, num_frames: {num_frames}")
+
             total_frames = len(all_frames)
 
             if total_frames == 0:
@@ -256,13 +256,13 @@ class DatasetPreprocessor:
                 rank_0_print(f"Processing example {idx}: {example['id']} - {example['task']}")
 
             # Get the video reader object from the Video feature
-            frames = example.get("frames_path")
+            frames = example.get("frames_video")
             if frames is None:
-                rank_0_print(f"Warning: No frames_path for example {idx}")
+                rank_0_print(f"Warning: No frames_video for example {idx}")
                 return {"frames": None, "frames_processed": False}
 
             # Process video frames using the _preprocess_videos method
-            frames_array = self._preprocess_videos(frames, self.config.data.max_frames)
+            frames_array = self._preprocess_videos(frames, self.config.data.max_frames_for_preprocessing)
 
             if frames_array.size == 0:
                 rank_0_print(f"Warning: No frames processed for example {idx}")
@@ -322,14 +322,13 @@ class DatasetPreprocessor:
                 optimal_by_task[task] = []
                 suboptimal_by_task[task] = []
 
+            if "frames_video" in example:
+                del example["frames_video"]
+
             if quality in ["successful", "optimal"]:
                 optimal_by_task[task].append(idx)
             elif quality in ["suboptimal", "failed", "failure"]:
                 suboptimal_by_task[task].append(idx)
-
-            # Remove the frames_path since we don't need it anymore
-            if "frames_path" in example:
-                del example["frames_path"]
 
             return example
 
@@ -366,7 +365,6 @@ class DatasetPreprocessor:
         indices: Dict,
         dataset_path: str,
         subset: str,
-        dataset_type: str,
     ):
         """Save the processed dataset and index mappings for an individual dataset/subset."""
         # Create cache directory
@@ -387,7 +385,6 @@ class DatasetPreprocessor:
         dataset_info = {
             "dataset_path": dataset_path,
             "subset": subset,
-            "dataset_type": dataset_type,
             "total_trajectories": len(processed_dataset),
             "cache_timestamp": str(datetime.datetime.now()),
             "config_hash": self._get_config_hash(),
@@ -496,13 +493,17 @@ class DatasetPreprocessor:
             else:
                 dataset = load_dataset(dataset_path, split="train")
 
+            # dataset = dataset.select(range(100))
+
             # Just patch the paths, don't decode videos yet
-            dataset = dataset.map(lambda x: {"frames_path": patch_path(x["frames"])})
+            dataset = dataset.map(
+                lambda x: {"frames_video": patch_path(x["frames"]), "frames_path": patch_path(x["frames"])}
+            )
             return dataset
         else:
             # Load from local disk
             if subset:
-                dataset = load_dataset(dataset_path, subset)
+                dataset = load_dataset(dataset_path, name=subset)
             else:
                 dataset = load_dataset(dataset_path)
             return dataset
@@ -517,7 +518,7 @@ class DatasetPreprocessor:
         cached_count = 0
         total_count = len(all_datasets)
 
-        for dataset_type, dataset_path, subset in all_datasets:
+        for dataset_path, subset in all_datasets:
             cache_key = f"{dataset_path}/{subset}"
             individual_cache_dir = os.path.join(self.cache_dir, cache_key.replace("/", "_").replace(":", "_"))
 
@@ -532,16 +533,14 @@ class DatasetPreprocessor:
                         trajectories = info.get("total_trajectories", "unknown")
                         timestamp = info.get("cache_timestamp", "unknown")
                         rank_0_print(
-                            f"  ✅ {dataset_type}: {dataset_path}/{subset}: {trajectories} trajectories (cached at {timestamp})"
+                            f"  ✅ {dataset_path}/{subset}: {trajectories} trajectories (cached at {timestamp})"
                         )
                     except:
-                        rank_0_print(
-                            f"  ✅ {dataset_type}: {dataset_path}/{subset}: Cache exists but info file corrupted"
-                        )
+                        rank_0_print(f"  ✅ {dataset_path}/{subset}: Cache exists but info file corrupted")
                 else:
-                    rank_0_print(f"  ✅ {dataset_type}: {dataset_path}/{subset}: Cache exists (no info file)")
+                    rank_0_print(f"  ✅ {dataset_path}/{subset}: Cache exists (no info file)")
             else:
-                rank_0_print(f"  ❌ {dataset_type}: {dataset_path}/{subset}: No cache found")
+                rank_0_print(f"  ❌ {dataset_path}/{subset}: No cache found")
 
         # Show summary
         rank_0_print(f"\n📊 Cache Status Summary:")
@@ -565,7 +564,7 @@ class DatasetPreprocessor:
         loaded_count = 0
         total_count = len(all_datasets)
 
-        for dataset_type, dataset_path, subset in all_datasets:
+        for dataset_path, subset in all_datasets:
             cache_key = f"{dataset_path}/{subset}"
             individual_cache_dir = os.path.join(self.cache_dir, cache_key.replace("/", "_").replace(":", "_"))
 
@@ -573,15 +572,15 @@ class DatasetPreprocessor:
                 if os.path.exists(individual_cache_dir):
                     loaded_count += 1
                     rank_0_print(
-                        f"  ✅ {dataset_type}: {dataset_path}/{subset}: Loaded from cache ({len(self.datasets[cache_key])} trajectories)"
+                        f"  ✅ {dataset_path}/{subset}: Loaded from cache ({len(self.datasets[cache_key])} trajectories)"
                     )
                 else:
                     processed_count += 1
                     rank_0_print(
-                        f"  🔄 {dataset_type}: {dataset_path}/{subset}: Newly processed ({len(self.datasets[cache_key])} trajectories)"
+                        f"  🔄 {dataset_path}/{subset}: Newly processed ({len(self.datasets[cache_key])} trajectories)"
                     )
             else:
-                rank_0_print(f"  ❌ {dataset_type}: {dataset_path}/{subset}: Failed to load/process")
+                rank_0_print(f"  ❌ {dataset_path}/{subset}: Failed to load/process")
 
         # Show summary counts
         rank_0_print(f"\n📈 Processing Summary:")
@@ -595,7 +594,8 @@ def main():
     """Main preprocessing function."""
     # Load config
     config_path = "rfm/configs/config.yaml"  # Adjust path as needed
-    config = load_experiment_config_from_yaml(config_path)
+    config = OmegaConf.load(config_path)
+    config = ExperimentConfig(**config)
 
     # Show dataset structure info
     print("\n🏗️  Dataset Configuration Structure:")
@@ -624,6 +624,7 @@ def main():
 
     # Preprocess all datasets
     print("\n=== Processing All Datasets ===")
+
     preprocessor.preprocess_datasets()
 
     # Test the caches

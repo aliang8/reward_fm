@@ -28,7 +28,7 @@ from rfm.data.dataset import (
 from rfm.data.generators.success_failure import PairedSuccessFailureGenerator
 from rfm.data.generators.reward_alignment import RewardAlignmentGenerator
 from rfm.data.generators.confusion_matrix import ConfusionMatrixGenerator
-from rfm.data.generators.wrong_task_preference import WrongTaskPreferenceGenerator
+from rfm.data.generators.wrong_task import WrongTaskGenerator
 from rfm.utils.logging import rank_0_print
 from rfm.configs.experiment_configs import ExperimentConfig, ModelConfig
 from rfm.data.vqa_batch_collator import VQABatchCollator
@@ -255,9 +255,9 @@ def setup_data_generator(cfg: ExperimentConfig, is_eval: bool = False) -> DataGe
             data_generator = ConfusionMatrixGenerator(
                 config=cfg.data, is_evaluation=is_eval, max_trajectories=cfg.data.max_trajectories
             )
-        elif cfg.data.dataset_type == "wrong_task_preference":
-            data_generator = WrongTaskPreferenceGenerator(
-                config=cfg.data, is_evaluation=is_eval, max_trajectories=cfg.data.max_trajectories, n_wrong_tasks=cfg.data.n_wrong_tasks
+        elif cfg.data.dataset_type == "wrong_task":
+            data_generator = WrongTaskGenerator(
+                config=cfg.data, is_evaluation=is_eval, max_trajectories=cfg.data.max_trajectories
             )
         else:
             data_generator = DataGenerator(config=cfg.data, is_evaluation=is_eval)

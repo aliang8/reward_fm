@@ -26,12 +26,14 @@ def load_results(results_path: str) -> List[Dict[str, Any]]:
 
 def analyze_evaluation_type(eval_type: str, results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Analyze results based on evaluation type."""
-    if eval_type == "success_failure":
+    if eval_type == "success_failure_preference":
         return run_success_failure_eval(results)
     elif eval_type == "reward_alignment_progress":
         return run_reward_alignment_eval(results)
     elif eval_type == "confusion_matrix":
         return run_confusion_matrix_eval(results)
+    elif eval_type == "wrong_task_preference":
+        return run_success_failure_eval(results)
     else:
         return {"error": f"Unknown evaluation type: {eval_type}"}
 
@@ -52,13 +54,9 @@ def run_success_failure_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
         return y_true_all, y_pred_all
 
     y_true_sf, y_pred_sf = _extract_series(results)
-    pearson_sf = compute_pearson(y_true_sf, y_pred_sf)
-    spearman_sf = compute_spearman(y_true_sf, y_pred_sf)
     pref_acc_sf = compute_preference_accuracy(results)
 
     return {
-        "pearson_correlation": pearson_sf if not np.isnan(pearson_sf) else None,
-        "spearman_correlation": spearman_sf if not np.isnan(spearman_sf) else None,
         "preference_accuracy": pref_acc_sf["preference_accuracy"],
         "num_correct": pref_acc_sf["num_correct"],
         "num_total": pref_acc_sf["num_total"],

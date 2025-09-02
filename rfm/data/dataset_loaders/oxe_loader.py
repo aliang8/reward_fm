@@ -4,6 +4,7 @@ from tqdm import tqdm
 from typing import Dict, List, Tuple, Optional, Any
 from pathlib import Path
 import numpy as np
+from multiprocessing import cpu_count
 from rfm.data.dataset_helpers.oxe_helper import OXE_DATASET_CONFIGS
 from datasets import Dataset
 from rfm.data.helpers import (
@@ -76,6 +77,62 @@ def _build_oxe_video_paths(
     return full_path, rel_path
 
 
+def _process_single_oxe_episode(args):
+    """Worker function to process a single OXE episode.
+
+    This function must be defined at module level to be picklable for multiprocessing.
+    """
+    episode, ep_idx, task, lang_vec, output_dir, dataset_name, max_frames, fps, valid_img_keys = args
+
+    episode_entries = []
+
+    # Episode is already converted to numpy format
+    steps_np = episode["steps"]
+
+    for img_key in valid_img_keys:
+        # Check first frame for all-black to prune
+        if img_key not in steps_np[0]["observation"]:
+            continue
+        if np.all(steps_np[0]["observation"][img_key] == 0):
+            continue
+
+        frames = [s["observation"][img_key] for s in steps_np if img_key in s["observation"]]
+        if not frames:
+            continue
+
+        full_path, rel_path = _build_oxe_video_paths(
+            output_dir=output_dir,
+            dataset_label=dataset_name,
+            episode_idx=ep_idx,
+            view_key=img_key,
+        )
+
+        traj_dict = {
+            "id": generate_unique_id(),
+            "frames": np.stack(frames) if isinstance(frames[0], np.ndarray) else frames,
+            "task": task,
+            "is_robot": True,
+            "quality_label": "successful",
+            "preference_group_id": None,
+            "preference_rank": None,
+        }
+
+        entry = create_hf_trajectory(
+            traj_dict=traj_dict,
+            video_path=full_path,
+            lang_vector=lang_vec,
+            max_frames=max_frames,
+            dataset_name=dataset_name,
+            use_video=True,
+            fps=fps,
+        )
+        if entry:
+            entry["frames"] = rel_path
+            episode_entries.append(entry)
+
+    return episode_entries
+
+
 def convert_oxe_dataset_to_hf(
     dataset_path: str,
     dataset_name: str,
@@ -83,6 +140,7 @@ def convert_oxe_dataset_to_hf(
     max_trajectories: Optional[int] = None,
     max_frames: int = 64,
     fps: int = 10,
+    num_workers: int = -1,
 ) -> Dataset:
     """Convert a single OXE TFDS dataset to HF format by writing videos directly.
 
@@ -139,8 +197,8 @@ def convert_oxe_dataset_to_hf(
         else:
             raise ValueError(f"Multiple EVAL splits found for {base_ds_name} in {root}: {splits}")
         print(f"Loaded EVAL dataset for {base_ds_name} in {root}")
-        #splits = ["val", "test"]
-        #for split in splits:
+        # splits = ["val", "test"]
+        # for split in splits:
         #    try:
         #        dataset = builder.as_dataset(split=split, shuffle_files=False)
         #        break
@@ -148,7 +206,7 @@ def convert_oxe_dataset_to_hf(
         #        print(f"Error loading {split} split: {e}")
         #        dataset = None
         #        continue
-        #if dataset is None:
+        # if dataset is None:
         #    raise ValueError(f"No valid {EVAL_MODE} dataset found for {base_ds_name} in {root}")
     else:
         dataset = builder.as_dataset(split="train", shuffle_files=False)
@@ -157,6 +215,12 @@ def convert_oxe_dataset_to_hf(
     img_key_to_name = OXE_DATASET_CONFIGS[base_ds_name]["image_obs_keys"]
     img_key_to_name = {k: v for k, v in img_key_to_name.items() if k != "wrist"}
     valid_img_keys = list(img_key_to_name.values())
+
+    # Determine number of workers
+    if num_workers == -1:
+        num_workers = max(1, min(cpu_count(), 8))
+    elif num_workers == 0:
+        num_workers = 1
 
     # Language model and cache
     lang_model = load_sentence_transformer_model()
@@ -169,8 +233,19 @@ def convert_oxe_dataset_to_hf(
     if "language_table" in base_ds_name:
         max_limit = MAX_LANGTABLE_EPISODES
 
-    for ep_idx, episode in enumerate(tqdm(dataset, desc=f"Converting {base_ds_name} episodes")):
-        if produced >= max_limit:
+        # Process episodes in batches to avoid OOM
+    batch_size = 64  # Process episodes in smaller batches
+    entries = []
+    produced = 0
+
+    print(f"Processing episodes in batches of {batch_size} with {num_workers} workers...")
+
+    # Process episodes in batches to manage memory
+    episode_batch = []
+    episode_info_batch = []
+
+    for ep_idx, episode in enumerate(tqdm(dataset, desc=f"Processing {base_ds_name} episodes")):
+        if ep_idx >= max_limit:
             break
 
         # Materialize first step for language and sanity checks
@@ -200,53 +275,105 @@ def convert_oxe_dataset_to_hf(
             lang_cache[task] = lang_model.encode(task)
         lang_vec = lang_cache[task]
 
-        # Build image sequences for each view
-        # Iterate all steps once to avoid re-materializing for each view
-        steps_np = list(tfds.as_numpy(episode["steps"]))
+        # Convert TensorFlow objects to numpy for pickling
+        try:
+            # Convert episode to numpy format for multiprocessing
+            episode_np = tfds.as_numpy(episode)
 
-        for img_key in valid_img_keys:
-            # Check first frame for all-black to prune
-            if img_key not in steps_np[0]["observation"]:
+            # Additional safety: ensure all nested objects are numpy
+            def ensure_numpy(obj):
+                if hasattr(obj, "numpy"):
+                    try:
+                        return obj.numpy()
+                    except:
+                        # If numpy() fails, try to convert to list/array
+                        if hasattr(obj, "__array__"):
+                            return np.array(obj)
+                        else:
+                            return str(obj)  # Fallback to string representation
+                elif isinstance(obj, dict):
+                    return {k: ensure_numpy(v) for k, v in obj.items()}
+                elif isinstance(obj, (list, tuple)):
+                    return type(obj)(ensure_numpy(item) for item in obj)
+                else:
+                    return obj
+
+            episode_np = ensure_numpy(episode_np)
+
+            # Test if the converted episode is picklable
+            try:
+                import pickle
+
+                pickle.dumps(episode_np)
+                episode_batch.append(episode_np)
+                episode_info_batch.append((ep_idx, task, lang_vec))
+            except Exception as pickle_error:
+                print(f"Warning: Episode {ep_idx} is not picklable after conversion: {pickle_error}")
                 continue
-            if np.all(steps_np[0]["observation"][img_key] == 0):
-                continue
+        except Exception as e:
+            print(f"Warning: Failed to convert episode {ep_idx} to numpy: {e}")
+            continue
 
-            frames = [s["observation"][img_key] for s in steps_np if img_key in s["observation"]]
-            if not frames:
-                continue
+        # Process batch when it's full or we've reached the limit
+        if len(episode_batch) >= batch_size or ep_idx + 1 >= max_limit:
+            print(f"Processing batch of {len(episode_batch)} episodes...")
 
-            full_path, rel_path = _build_oxe_video_paths(
-                output_dir=output_dir,
-                dataset_label=dataset_name,
-                episode_idx=ep_idx,
-                view_key=img_key,
-            )
+            if num_workers == 1:
+                # Sequential processing
+                for args in zip(
+                    episode_batch,
+                    [info[0] for info in episode_info_batch],
+                    [info[1] for info in episode_info_batch],
+                    [info[2] for info in episode_info_batch],
+                    [output_dir] * len(episode_batch),
+                    [dataset_name] * len(episode_batch),
+                    [max_frames] * len(episode_batch),
+                    [fps] * len(episode_batch),
+                    [valid_img_keys] * len(episode_batch),
+                ):
+                    episode_entries = _process_single_oxe_episode(args)
+                    entries.extend(episode_entries)
+                    produced += len(episode_entries)
+            else:
+                # Parallel processing
+                from multiprocessing import Pool
 
-            traj_dict = {
-                "id": generate_unique_id(),
-                "frames": np.stack(frames) if isinstance(frames[0], np.ndarray) else frames,
-                "task": task,
-                "is_robot": True,
-                "quality_label": "successful",
-                "preference_group_id": None,
-                "preference_rank": None,
-            }
+                # Prepare arguments for workers
+                worker_args = list(
+                    zip(
+                        episode_batch,
+                        [info[0] for info in episode_info_batch],
+                        [info[1] for info in episode_info_batch],
+                        [info[2] for info in episode_info_batch],
+                        [output_dir] * len(episode_batch),
+                        [dataset_name] * len(episode_batch),
+                        [max_frames] * len(episode_batch),
+                        [fps] * len(episode_batch),
+                        [valid_img_keys] * len(episode_batch),
+                    )
+                )
 
-            entry = create_hf_trajectory(
-                traj_dict=traj_dict,
-                video_path=full_path,
-                lang_vector=lang_vec,
-                max_frames=max_frames,
-                dataset_name=dataset_name,
-                use_video=True,
-                fps=fps,
-            )
-            if entry:
-                entry["frames"] = rel_path
-                entries.append(entry)
-                produced += 1
-                if produced >= max_limit:
-                    break
+                with Pool(processes=num_workers) as pool:
+                    results = list(
+                        tqdm(
+                            pool.imap_unordered(_process_single_oxe_episode, worker_args),
+                            total=len(worker_args),
+                            desc=f"Processing batch (workers={num_workers})",
+                        )
+                    )
+
+                # Collect all results
+                for episode_entries in results:
+                    entries.extend(episode_entries)
+                    produced += len(episode_entries)
+
+            # Clear batch for next iteration
+            episode_batch = []
+            episode_info_batch = []
+
+            # Check if we've reached the limit
+            if produced >= max_limit:
+                break
 
         # For language_table, cap the number of episodes considered
         if base_ds_name == "language_table" and ep_idx + 1 >= MAX_LANGTABLE_EPISODES:

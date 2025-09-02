@@ -1,10 +1,10 @@
 # EgoDex dataset configuration
 dataset:
   dataset_path: "~/part2"  # Local path to EgoDex dataset directory
-  dataset_name: egodex
+  dataset_name: egodex_part2
 
 output:
-  output_dir: datasets/egodex_rfm_test
+  output_dir: datasets/egodex_rfm
   max_trajectories: -1
   max_frames: 64
   shortest_edge_size: 240
@@ -14,4 +14,4 @@ output:
 
 hub:
   push_to_hub: true 
-  hub_repo_id: egodex_rfm_test
+  hub_repo_id: egodex_rfm

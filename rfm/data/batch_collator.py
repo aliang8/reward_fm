@@ -129,6 +129,9 @@ class BatchCollator(BaseCollator):
         batch_inputs["sample_type"] = ["preference"] * len(preference_samples)
         # Use the dynamically generated preference labels based on trajectory order
         batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
+        batch_inputs["chosen_data_gen_strategy"] = [sample.chosen_trajectory.data_gen_strategy for sample in preference_samples]
+        batch_inputs["rejected_data_gen_strategy"] = [sample.rejected_trajectory.data_gen_strategy for sample in preference_samples]
+
 
         # Add target progress for both trajectories based on conversation order
         target_progress_chosen = [sample.chosen_trajectory.target_progress for sample in preference_samples]

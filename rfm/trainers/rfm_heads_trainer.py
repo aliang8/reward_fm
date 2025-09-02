@@ -26,6 +26,21 @@ class RFMHeadsTrainer(Trainer):
             "preference_loss",
             "similarity_loss",
             "progress_loss",
+            "pref_acc_rewind_same_task",
+            "pref_loss_rewind_same_task",
+            "pref_acc_suboptimal_same_task",
+            "pref_loss_suboptimal_same_task",
+            "pref_acc_different_task",
+            "pref_loss_different_task",
+            "prog_loss_chosen",
+            "prog_loss_rejected",
+            "prog_loss_rewind_same_task",
+            "prog_loss_suboptimal_same_task",
+            "prog_loss_different_task",
+            "spearman_corr_rewind_same_task",
+            "spearman_corr_suboptimal_same_task",
+            "spearman_corr_different_task",
+            "pref_loss",
             "preference_accuracy",
             "spearman_corr_avg",
         ]
@@ -296,6 +311,7 @@ class RFMHeadsTrainer(Trainer):
         frame_shape,
         target_progress_mask,
         trajectory_name="trajectory",
+        aggregate: bool = False,
     ):
         """
         Helper function to compute progress loss for a single trajectory with frame shape splicing.
@@ -305,6 +321,7 @@ class RFMHeadsTrainer(Trainer):
             target_progress: Target progress tensors (can be tensor or list of tensors)
             frame_shape: List of frame shapes for splicing
             trajectory_name: Name of trajectory for logging/debugging
+            aggregate: Whether to return the mean of the losses and correlations
 
         Returns:
             tuple: (progress_loss, spearman_correlation)
@@ -342,20 +359,26 @@ class RFMHeadsTrainer(Trainer):
             spearman_correlations.append(spearman_corr)
 
         if progress_losses:
-            progress_loss = torch.stack(progress_losses) * target_progress_mask
-            if target_progress_mask.sum() > 0:
-                progress_loss = progress_loss.sum() / target_progress_mask.sum()
-            else:
-                progress_loss = progress_loss.mean()
+            if aggregate:
+                progress_loss = torch.stack(progress_losses) * target_progress_mask
+                if target_progress_mask.sum() > 0:
+                    progress_loss = progress_loss.sum() / target_progress_mask.sum()
+                else:
+                    progress_loss = progress_loss.mean()
 
-            # Average the Spearman correlations
-            mean_spearman = torch.stack(spearman_correlations) * target_progress_mask
-            if target_progress_mask.sum() > 0:
-                mean_spearman = mean_spearman.sum() / target_progress_mask.sum()
-            else:
-                mean_spearman = mean_spearman.mean()
+                # Average the Spearman correlations
+                mean_spearman = torch.stack(spearman_correlations) * target_progress_mask
+                if target_progress_mask.sum() > 0:
+                    mean_spearman = mean_spearman.sum() / target_progress_mask.sum()
+                else:
+                    mean_spearman = mean_spearman.mean()
 
-            return progress_loss, mean_spearman
+                return progress_loss, mean_spearman
+            else:
+                progress_losses = torch.stack(progress_losses) * target_progress_mask
+                spearman_correlations = torch.stack(spearman_correlations) * target_progress_mask
+                return progress_losses, spearman_correlations
+
         return 0.0, 0.0
 
     def _compute_preference_loss(self, model, inputs, return_outputs=False):
@@ -375,6 +398,9 @@ class RFMHeadsTrainer(Trainer):
                 timing_raw=self.timing_raw,
             )
             self.timing_raw.update(model_timing_raw)
+
+        chosen_data_gen_strategy = inputs.get("chosen_data_gen_strategy", None)
+        rejected_data_gen_strategy = inputs.get("rejected_data_gen_strategy", None)
 
         preference_loss = 0.0
         progress_loss = 0.0
@@ -401,98 +427,127 @@ class RFMHeadsTrainer(Trainer):
 
             # For each sample, determine which trajectory (first or second) is the chosen one
             batch_size = len(preference_labels)
-            first_trajectory_shapes = []
-            second_trajectory_shapes = []
-            first_trajectory_progress = []
-            second_trajectory_progress = []
-            first_trajectory_progress_mask = []
-            second_trajectory_progress_mask = []
+            chosen_traj_shapes = []
+            rejected_traj_shapes = []
+            chosen_traj_progress_pred = []
+            rejected_traj_progress_pred = []
+            chosen_traj_progress_target = []
+            rejected_traj_progress_target = []
+            chosen_traj_progress_target_mask = []
+            rejected_traj_progress_target_mask = []
 
             for i in range(batch_size):
+                # First trajectory is preferred (chosen)
+                chosen_traj_shapes.append(chosen_frames_shape[i])
+                rejected_traj_shapes.append(rejected_frames_shape[i])
                 if preference_labels[i] == 1.0:
-                    # First trajectory is preferred (chosen)
-                    first_trajectory_shapes.append(chosen_frames_shape[i])
-                    second_trajectory_shapes.append(rejected_frames_shape[i])
-                    first_trajectory_progress.append(inputs["target_progress_chosen"][i])
-                    second_trajectory_progress.append(inputs["target_progress_rejected"][i])
-                    first_trajectory_progress_mask.append(inputs["target_progress_chosen_mask"][i])
-                    second_trajectory_progress_mask.append(inputs["target_progress_rejected_mask"][i])
+                    chosen_traj_progress_pred.append(progress_logits["A"][i])
+                    rejected_traj_progress_pred.append(progress_logits["B"][i])
+                    chosen_traj_progress_target.append(inputs["target_progress_chosen"][i])
+                    rejected_traj_progress_target.append(inputs["target_progress_rejected"][i])
+                    chosen_traj_progress_target_mask.append(inputs["target_progress_chosen_mask"][i])
+                    rejected_traj_progress_target_mask.append(inputs["target_progress_rejected_mask"][i])
                 else:
-                    # Second trajectory is preferred (chosen)
-                    first_trajectory_shapes.append(rejected_frames_shape[i])
-                    second_trajectory_shapes.append(chosen_frames_shape[i])
-                    first_trajectory_progress.append(inputs["target_progress_rejected"][i])
-                    second_trajectory_progress.append(inputs["target_progress_chosen"][i])
-                    first_trajectory_progress_mask.append(inputs["target_progress_rejected_mask"][i])
-                    second_trajectory_progress_mask.append(inputs["target_progress_chosen_mask"][i])
+                    # Second trajectory is preferred 
+                    chosen_traj_progress_pred.append(progress_logits["B"][i])
+                    rejected_traj_progress_pred.append(progress_logits["A"][i])
+                    chosen_traj_progress_target.append(inputs["target_progress_rejected"][i])
+                    rejected_traj_progress_target.append(inputs["target_progress_chosen"][i])
+                    chosen_traj_progress_target_mask.append(inputs["target_progress_rejected_mask"][i])
+                    rejected_traj_progress_target_mask.append(inputs["target_progress_chosen_mask"][i])
 
             # Convert to tensors for the helper function
-            first_trajectory_shapes = torch.stack(first_trajectory_shapes)
-            second_trajectory_shapes = torch.stack(second_trajectory_shapes)
-            first_trajectory_progress_mask = torch.stack(first_trajectory_progress_mask)
-            second_trajectory_progress_mask = torch.stack(second_trajectory_progress_mask)
+            chosen_traj_shapes = torch.stack(chosen_traj_shapes)
+            rejected_traj_shapes = torch.stack(rejected_traj_shapes)
+            chosen_traj_progress_target_mask = torch.stack(chosen_traj_progress_target_mask)
+            rejected_traj_progress_target_mask = torch.stack(rejected_traj_progress_target_mask)
 
             # Compute progress loss for both trajectories using the helper function
             # Now we know which shape corresponds to which trajectory based on preference labels
             if self.config.model.train_progress_head:
-                progress_loss_A, spearman_corr_A = self._compute_progress_loss(
-                    progress_logits["A"],
-                    first_trajectory_progress,
-                    first_trajectory_shapes,
-                    first_trajectory_progress_mask,
+                progress_loss_chosen, spearman_corr_chosen = self._compute_progress_loss(
+                    chosen_traj_progress_pred,
+                    chosen_traj_progress_target,
+                    chosen_traj_shapes,
+                    chosen_traj_progress_target_mask,
                     "A",
+                    aggregate=False,
                 )
-                progress_loss_B, spearman_corr_B = self._compute_progress_loss(
-                    progress_logits["B"],
-                    second_trajectory_progress,
-                    second_trajectory_shapes,
-                    second_trajectory_progress_mask,
+                progress_loss_rejected, spearman_corr_rejected = self._compute_progress_loss(
+                    rejected_traj_progress_pred,
+                    rejected_traj_progress_target,
+                    rejected_traj_shapes,
+                    rejected_traj_progress_target_mask,
                     "B",
+                    aggregate=False,
                 )
 
                 # Combine progress losses
-                progress_loss = progress_loss_A + progress_loss_B
+                progress_loss = progress_loss_chosen.mean() + progress_loss_rejected.mean()
 
         if return_outputs:
             outputs_dict = {}
+
             if self.config.model.train_preference_head and preference_loss is not None:
                 # Compute preference accuracy for training monitoring
                 preference_probs = torch.sigmoid(preference_scores)
                 preference_predictions = (preference_probs > 0.5).float()
-                preference_accuracy = (preference_predictions == preference_labels).float().mean().item()
+                preference_accuracy = (preference_predictions == preference_labels).float()
+                
+                # split acc by data gen strategy
+                rejected_strats = set(rejected_data_gen_strategy)
+                for strat in rejected_strats:
+                    mask = [1 if s == strat else 0 for s in rejected_data_gen_strategy]
+                    mask = torch.tensor(mask, device=self.accelerator.device)
+                    outputs_dict.update(
+                        {
+                            f"pref_acc_{strat}": (preference_accuracy * mask).mean().item(),
+                            f"pref_loss_{strat}": (preference_loss * mask).mean().item(),
+                        }
+                    )
+                
                 outputs_dict.update(
                     {
                         "preference_scores": preference_scores,
                         "preference_labels": preference_labels,
                         "preference_loss": preference_loss.item(),
-                        "preference_accuracy": preference_accuracy,
+                        "preference_accuracy": preference_accuracy.mean().item(),
                     }
                 )
 
             if self.config.model.train_progress_head:
+
+                # split spearman by data gen strategy
+                rejected_strats = set(rejected_data_gen_strategy)
+                for strat in rejected_strats:
+                    mask = [1 if s == strat else 0 for s in rejected_data_gen_strategy]
+                    mask = torch.tensor(mask, device=self.accelerator.device)
+                    outputs_dict.update(
+                        {
+                            f"spearman_corr_{strat}": (spearman_corr_rejected * mask).mean().item(),
+                            f"prog_loss_{strat}": (progress_loss_rejected * mask).mean().item(),
+                        }
+                    )
+
                 # Compute average Spearman correlation across trajectories A and B
                 spearman_values = []
-                if isinstance(spearman_corr_A, torch.Tensor):
-                    spearman_values.append(spearman_corr_A.item())
+                if isinstance(spearman_corr_chosen, torch.Tensor):
+                    spearman_values.append(spearman_corr_chosen.mean().item())
                 else:
-                    spearman_values.append(spearman_corr_A)
+                    spearman_values.append(spearman_corr_chosen)
 
-                if isinstance(spearman_corr_B, torch.Tensor):
-                    spearman_values.append(spearman_corr_B.item())
+                if isinstance(spearman_corr_rejected, torch.Tensor):
+                    spearman_values.append(spearman_corr_rejected.mean().item())
                 else:
-                    spearman_values.append(spearman_corr_B)
+                    spearman_values.append(spearman_corr_rejected)
 
-                avg_spearman = np.mean(spearman_values) if spearman_values else 0.0
+                avg_spearman = np.mean(spearman_values) if spearman_values else 0.0        
 
                 outputs_dict.update(
                     {
-                        "progress_loss_A": progress_loss_A.item(),
-                        "progress_loss_B": progress_loss_B.item(),
+                        "prog_loss_chosen": progress_loss_chosen.mean().item(),
+                        "prog_loss_rejected": progress_loss_rejected.mean().item(),
                         "progress_loss": progress_loss.item(),
-                        "predicted_progress_A": progress_logits["A"],
-                        "predicted_progress_B": progress_logits["B"],
-                        "target_progress_A": first_trajectory_progress,
-                        "target_progress_B": second_trajectory_progress,
                         "spearman_corr_avg": avg_spearman,
                     }
                 )

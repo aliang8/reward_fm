@@ -501,8 +501,8 @@ class RFMHeadsTrainer(Trainer):
                     mask = torch.tensor(mask, device=self.accelerator.device)
                     outputs_dict.update(
                         {
-                            f"pref_acc_{strat}": (preference_accuracy * mask).mean().item(),
-                            f"pref_loss_{strat}": (preference_loss * mask).mean().item(),
+                            f"pref_acc_{strat}": (preference_accuracy[mask == 1]).mean().item(),
+                            f"pref_loss_{strat}": (preference_loss[mask == 1]).mean().item(),
                         }
                     )
                 
@@ -524,8 +524,8 @@ class RFMHeadsTrainer(Trainer):
                     mask = torch.tensor(mask, device=self.accelerator.device)
                     outputs_dict.update(
                         {
-                            f"spearman_corr_{strat}": (spearman_corr_rejected * mask).mean().item(),
-                            f"prog_loss_{strat}": (progress_loss_rejected * mask).mean().item(),
+                            f"spearman_corr_{strat}": (spearman_corr_rejected[mask == 1]).mean().item(),
+                            f"prog_loss_{strat}": (progress_loss_rejected[mask == 1]).mean().item(),
                         }
                     )
 

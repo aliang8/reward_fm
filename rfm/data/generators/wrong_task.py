@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Data generator for wrong task preference accuracy analysis.
+Data generator for wrong task accuracy analysis.
 """
 
 from rfm.data.dataset_types import PreferenceSample, Trajectory
@@ -12,20 +12,19 @@ import numpy as np
 import random
 
 
-class WrongTaskPreferenceGenerator(BaseDataGenerator):
+class WrongTaskGenerator(BaseDataGenerator):
     """
-    Data generator that creates preference samples for wrong task analysis.
+    Data generator that creates samples for wrong task accuracy analysis.
 
     For each trajectory, creates preference samples by pairing it with N different
     trajectories from different tasks to measure preference accuracy when the
     model should prefer the original trajectory over wrong task trajectories.
     """
 
-    def __init__(self, config, is_evaluation=False, verbose=True, max_trajectories: Optional[int] = None, n_wrong_tasks: int = 5):
+    def __init__(self, config, is_evaluation=False, verbose=True, max_trajectories: Optional[int] = None):
         super().__init__(config, is_evaluation, verbose=verbose)
 
         self.max_trajectories = max_trajectories
-        self.n_wrong_tasks = n_wrong_tasks
         self.sample_indices = self._generate_all_sample_indices()
         self.current_idx = 0
 
@@ -72,9 +71,9 @@ class WrongTaskPreferenceGenerator(BaseDataGenerator):
                     wrong_task_trajectories.append(other_traj_idx)
 
             # Sample N wrong task trajectories
-            if len(wrong_task_trajectories) >= self.n_wrong_tasks:
-                sampled_wrong_trajectories = random.sample(wrong_task_trajectories, self.n_wrong_tasks)
-            else:
+            if len(wrong_task_trajectories) >= self.config.n_wrong_tasks:
+                sampled_wrong_trajectories = random.sample(wrong_task_trajectories, self.config.n_wrong_tasks)
+            else:   
                 # If not enough wrong task trajectories, use all available
                 sampled_wrong_trajectories = wrong_task_trajectories
 
@@ -127,7 +126,6 @@ class WrongTaskPreferenceGenerator(BaseDataGenerator):
         metadata = {
             "original_task": original_task,
             "wrong_task": wrong_task,
-            "is_wrong_task_preference": True,
             "chosen_trajectory_id": chosen_traj["id"],
             "rejected_trajectory_id": rejected_traj["id"],
         }
@@ -161,11 +159,11 @@ class WrongTaskPreferenceGenerator(BaseDataGenerator):
             metadata=metadata,
         )
 
+        import ipdb; ipdb.set_trace()
         # Create preference sample (chosen should be preferred over rejected)
         sample = PreferenceSample(
             chosen_trajectory=chosen_trajectory,
             rejected_trajectory=rejected_trajectory,
-            preference_label=1,  # 1 means chosen is preferred (correct)
             metadata=metadata,
         )
 

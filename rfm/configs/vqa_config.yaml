@@ -26,32 +26,40 @@ data:
   # Dataset paths and sources
   train_datasets: 
     - "abraranwar/libero_rfm"
-    # - "ykorkmaz/libero_failure_rfm"
+    - "ykorkmaz/libero_failure_rfm"
+    # - "HenryZhang/metaworld_rewind_rfm_train"
   train_subsets:
-    - ["libero_90"]
-    # - ["libero_90_failure"]
-  
+    - ["libero256_90"]
+    - ["libero_90_failure"]
+    # - ["metaworld_rewind_train"]
   # Evaluation dataset settings
   eval_datasets:
     - "abraranwar/libero_rfm"
-    # - "ykorkmaz/libero_failure_rfm"
+    - "ykorkmaz/libero_failure_rfm"
+    # - "HenryZhang/metaworld_rewind_rfm_eval"
   eval_subsets:
-    - ["libero_10"]
-    # - ["libero_10_failure"]
-  eval_subset_size: 50  # Number of evaluation examples
+    - ["libero256_10"]
+    - ["libero_10_failure"]
+    # - ["metaworld_rewind_eval"]
+  # eval_datasets: ["abraranwar/libero_rfm"]
+  # eval_subsets: ["libero_object"]
+  eval_subset_size: 500  # Number of evaluation examples
   
+  # Preprocessing settings
+  max_frames_for_preprocessing: 64
+
   # Video processing settings
-  max_frames: 8  # Maximum frames per trajectory
+  max_frames: 16  # Maximum frames per trajectory
   video_frame_sampling: "uniform"  # "uniform", "random", "first", "middle"
   resized_height: 128  # Height to resize images/videos to
   resized_width: 128   # Width to resize images/videos to
   
   # Data generation settings
-  progress_ratio: 0.0
-  preference_ratio: 1.0  # Ratio of preference prediction samples
+  progress_ratio: 0.5
+  preference_ratio: 0.5  # Ratio of preference prediction samples
   dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
   # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, video_binned]
-  preference_strategy_ratio: [0.7, 0.1, 0.1, 0.1]
+  preference_strategy_ratio: [0.8, 0.1, 0.1, 0.0]
   shuffle: true
   seed: 42
   num_proc: 1  # Number of processes for dataset processing (1 for safety, increase for speed)
@@ -62,7 +70,7 @@ data:
   dataloader_num_workers: 0
 
   # Video binned dataset parameters
-  num_bins: 3
+  num_bins: 10
 
 # =====================================================================================
 # Training Configuration
@@ -72,19 +80,19 @@ training:
   output_dir: "./logs/rfm_vqa"
   
   # Training parameters
-  per_device_train_batch_size: 2
+  per_device_train_batch_size: 8
   gradient_accumulation_steps: 1
   learning_rate: 2e-5
   num_train_epochs: -1  # Number of epochs to train for
   save_strategy: "steps"
   logging_steps: 1
   save_steps: 200
-  max_steps: 100  # -1 means no limit, use num_train_epochs instead
+  max_steps: 1000  # -1 means no limit, use num_train_epochs instead
   
   # Evaluation settings
   evaluation_strategy: "steps"  # Options: "no", "steps", "epoch"
-  eval_steps: 2  # Evaluate every 50 steps
-  per_device_eval_batch_size: 2  # Evaluation batch size per device
+  eval_steps: 50  # Evaluate every 50 steps
+  per_device_eval_batch_size: 8  # Evaluation batch size per device
   do_eval: true  # Enable evaluation during training
   prediction_loss_only: true # Only compute loss for the prediction head
   
@@ -130,6 +138,6 @@ logging:
   print_trainable_parameters: true
   # Wandb configuration
   use_wandb: false
-  wandb_project: "rfm_vqa"
-  wandb_entity: ykorkmaz
-  wandb_run_name: "debug"
+  wandb_project: "rfm"
+  wandb_entity: clvr
+  wandb_run_name: "rfm_vqa"

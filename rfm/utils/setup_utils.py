@@ -245,7 +245,12 @@ def setup_data_generator(cfg: ExperimentConfig, is_eval: bool = False) -> DataGe
             rank_0_print(f"  Dataset {i + 1}: {dataset} -> {subset}")
 
     if cfg.data.model_type == "vqa":
-        data_generator = VQADataGenerator(config=cfg.data, is_evaluation=is_eval)
+        if cfg.data.dataset_type == "reward_alignment":
+            data_generator = RewardAlignmentGenerator(config=cfg.data, is_evaluation=is_eval)
+        elif cfg.data.dataset_type == "success_failure":
+            data_generator = PairedSuccessFailureGenerator(config=cfg.data, is_evaluation=is_eval)
+        else:
+            data_generator = VQADataGenerator(config=cfg.data, is_evaluation=is_eval)
     else:
         if cfg.data.dataset_type == "reward_alignment":
             data_generator = RewardAlignmentGenerator(config=cfg.data, is_evaluation=is_eval)
@@ -344,6 +349,8 @@ def setup_vqa_model_and_processor(cfg: ModelConfig, hf_model_id: str = ""):
         # num_frames=cfg.data.max_frames,
         do_sample_frames=False,  # disable frame sampling here since we do this in the data generator
         # max_frames=cfg.data.max_frames,
+        padding_side="left",
+        cache_dir="/scr/ykorkmaz/rfm/model/base_qwen",
     )
 
     rank_0_print(f"Processor: {processor}")
@@ -352,7 +359,7 @@ def setup_vqa_model_and_processor(cfg: ModelConfig, hf_model_id: str = ""):
         processor.tokenizer.pad_token = processor.tokenizer.eos_token
 
     # Load base conditional generation model for VQA
-    base_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(cfg.base_model_id)
+    base_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(cfg.base_model_id, cache_dir="/scr/ykorkmaz/rfm/model/base_qwen")
 
     # Resize token embeddings if new tokens were added
     if len(processor.tokenizer) != base_model.config.vocab_size:

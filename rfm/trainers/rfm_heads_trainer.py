@@ -413,7 +413,8 @@ class RFMHeadsTrainer(Trainer):
             preference_scores = model_outputs.logits.squeeze(-1)  # [batch_size]
 
             # Binary cross entropy loss for preference prediction
-            preference_loss = F.binary_cross_entropy_with_logits(preference_scores, preference_labels.float())
+            preference_loss_all = F.binary_cross_entropy_with_logits(preference_scores, preference_labels.float())
+            preference_loss = preference_loss_all.mean()
 
         if self.config.model.train_progress_head:
             # Get frame shapes for splicing target progress to match predicted lengths
@@ -502,7 +503,7 @@ class RFMHeadsTrainer(Trainer):
                     outputs_dict.update(
                         {
                             f"pref_acc_{strat}": (preference_accuracy[mask == 1]).mean().item(),
-                            f"pref_loss_{strat}": (preference_loss[mask == 1]).mean().item(),
+                            f"pref_loss_{strat}": (preference_loss_all[mask == 1]).mean().item(),
                         }
                     )
                 

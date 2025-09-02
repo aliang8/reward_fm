@@ -6,9 +6,12 @@ echo "Running LIBERO regular dataset evaluations"
 uv run python evals/run_model_eval.py \
       --config rfm/configs/eval_config.yaml \
       --set data.batch_size=16 \
+      --set num_batches=2 \
       --set data.eval_datasets=[\"abraranwar/libero_rfm\",\"ykorkmaz/libero_failure_rfm\"] \
       --set data.eval_subsets=[\"libero256_10\",\"libero_10_failure\"] \
-      --set data.dataset_type=success_failure 2>&1 
+      --set data.dataset_type=success_failure \
+      --use-async \
+      --max_concurrent=4 2>&1 
 
 # Run reward alignment evaluation for LIBERO10
 echo "Running LIBERO10 reward alignment evaluation"
@@ -18,7 +21,9 @@ uv run python evals/run_model_eval.py \
       --set data.batch_size=16 \
       --set data.eval_datasets=[\"abraranwar/libero_rfm\"] \
       --set data.eval_subsets=[\"libero256_10\"] \
-      --set data.dataset_type=reward_alignment 2>&1 
+      --set data.dataset_type=reward_alignment \
+      --use-async \
+      --max_concurrent=4 2>&1 
 
 # Run reward alignment evaluation for MetaWorld eval
 echo "Running MetaWorld reward alignment evaluation"
@@ -28,7 +33,21 @@ uv run python evals/run_model_eval.py \
       --set data.batch_size=16 \
       --set data.eval_datasets=[\"HenryZhang/metaworld_rewind_rfm_eval\"] \
       --set data.eval_subsets=[\"metaworld_rewind_eval\"] \
-      --set data.dataset_type=reward_alignment 2>&1 
+      --set data.dataset_type=reward_alignment \
+      --use-async \
+      --max_concurrent=4 2>&1 
+
+# Run wrong task preference evaluation
+echo "Running wrong task preference evaluation"
+uv run python evals/run_model_eval.py \
+      --config rfm/configs/eval_config.yaml \
+      --set num_batches=10 \
+      --set data.batch_size=16 \
+      --set data.eval_datasets=[\"HenryZhang/metaworld_rewind_rfm_eval\"] \
+      --set data.eval_subsets=[\"metaworld_rewind_eval\"] \
+      --set data.dataset_type=wrong_task \
+      --use-async \
+      --max_concurrent=4 2>&1 
 
 # # Run confusion matrix evaluation
 # uv run python evals/run_model_eval.py \

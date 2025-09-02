@@ -159,7 +159,6 @@ class WrongTaskGenerator(BaseDataGenerator):
             metadata=metadata,
         )
 
-        import ipdb; ipdb.set_trace()
         # Create preference sample (chosen should be preferred over rejected)
         sample = PreferenceSample(
             chosen_trajectory=chosen_trajectory,

@@ -413,7 +413,9 @@ class RFMHeadsTrainer(Trainer):
             preference_scores = model_outputs.logits.squeeze(-1)  # [batch_size]
 
             # Binary cross entropy loss for preference prediction
-            preference_loss_all = F.binary_cross_entropy_with_logits(preference_scores, preference_labels.float(), reduction="none")
+            preference_loss_all = F.binary_cross_entropy_with_logits(
+                preference_scores, preference_labels.float(), reduction="none"
+            )
             preference_loss = preference_loss_all.mean()
 
         if self.config.model.train_progress_head:
@@ -449,7 +451,7 @@ class RFMHeadsTrainer(Trainer):
                     chosen_traj_progress_target_mask.append(inputs["target_progress_chosen_mask"][i])
                     rejected_traj_progress_target_mask.append(inputs["target_progress_rejected_mask"][i])
                 else:
-                    # Second trajectory is preferred 
+                    # Second trajectory is preferred
                     chosen_traj_progress_pred.append(progress_logits["B"][i])
                     rejected_traj_progress_pred.append(progress_logits["A"][i])
                     chosen_traj_progress_target.append(inputs["target_progress_rejected"][i])
@@ -494,20 +496,20 @@ class RFMHeadsTrainer(Trainer):
                 preference_probs = torch.sigmoid(preference_scores)
                 preference_predictions = (preference_probs > 0.5).float()
                 preference_accuracy = (preference_predictions == preference_labels).float()
-                
+
                 # split acc by data gen strategy
                 rejected_strats = set(rejected_data_gen_strategy)
                 for strat in rejected_strats:
                     mask = [1 if s == strat else 0 for s in rejected_data_gen_strategy]
                     mask = torch.tensor(mask, device=self.accelerator.device)
-                    
+
                     outputs_dict.update(
                         {
                             f"pref_acc_{strat}": (preference_accuracy[mask == 1]).mean().item(),
                             f"pref_loss_{strat}": (preference_loss_all[mask == 1]).mean().item(),
                         }
                     )
-                
+
                 outputs_dict.update(
                     {
                         "preference_scores": preference_scores,
@@ -518,7 +520,6 @@ class RFMHeadsTrainer(Trainer):
                 )
 
             if self.config.model.train_progress_head:
-
                 # split spearman by data gen strategy
                 rejected_strats = set(rejected_data_gen_strategy)
                 for strat in rejected_strats:
@@ -543,7 +544,7 @@ class RFMHeadsTrainer(Trainer):
                 else:
                     spearman_values.append(spearman_corr_rejected)
 
-                avg_spearman = np.mean(spearman_values) if spearman_values else 0.0        
+                avg_spearman = np.mean(spearman_values) if spearman_values else 0.0
 
                 outputs_dict.update(
                     {

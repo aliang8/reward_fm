@@ -29,6 +29,7 @@ from rfm.data.generators.success_failure import PairedSuccessFailureGenerator
 from rfm.data.generators.reward_alignment import RewardAlignmentGenerator
 from rfm.data.generators.confusion_matrix import ConfusionMatrixGenerator
 from rfm.data.generators.wrong_task import WrongTaskGenerator
+from rfm.data.generators.progress import ProgressGenerator
 from rfm.utils.logging import rank_0_print
 from rfm.configs.experiment_configs import ExperimentConfig, ModelConfig
 from rfm.data.vqa_batch_collator import VQABatchCollator
@@ -249,6 +250,8 @@ def setup_data_generator(cfg: ExperimentConfig, is_eval: bool = False) -> DataGe
             data_generator = RewardAlignmentGenerator(config=cfg.data, is_evaluation=is_eval)
         elif cfg.data.dataset_type == "success_failure":
             data_generator = PairedSuccessFailureGenerator(config=cfg.data, is_evaluation=is_eval)
+        elif cfg.data.dataset_type == "policy_ranking":
+            data_generator = ProgressGenerator(config=cfg.data, is_evaluation=is_eval)
         else:
             data_generator = VQADataGenerator(config=cfg.data, is_evaluation=is_eval)
     else:
@@ -256,6 +259,8 @@ def setup_data_generator(cfg: ExperimentConfig, is_eval: bool = False) -> DataGe
             data_generator = RewardAlignmentGenerator(config=cfg.data, is_evaluation=is_eval)
         elif cfg.data.dataset_type == "success_failure":
             data_generator = PairedSuccessFailureGenerator(config=cfg.data, is_evaluation=is_eval)
+        elif cfg.data.dataset_type == "policy_ranking":
+            data_generator = ProgressGenerator(config=cfg.data, is_evaluation=is_eval)
         elif cfg.data.dataset_type == "confusion_matrix":
             data_generator = ConfusionMatrixGenerator(
                 config=cfg.data, is_evaluation=is_eval, max_trajectories=cfg.data.max_trajectories
@@ -359,7 +364,9 @@ def setup_vqa_model_and_processor(cfg: ModelConfig, hf_model_id: str = ""):
         processor.tokenizer.pad_token = processor.tokenizer.eos_token
 
     # Load base conditional generation model for VQA
-    base_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(cfg.base_model_id, cache_dir="/scr/ykorkmaz/rfm/model/base_qwen")
+    base_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+        cfg.base_model_id, cache_dir="/scr/ykorkmaz/rfm/model/base_qwen"
+    )
 
     # Resize token embeddings if new tokens were added
     if len(processor.tokenizer) != base_model.config.vocab_size:

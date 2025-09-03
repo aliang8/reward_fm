@@ -197,7 +197,10 @@ class AsyncGPUPool:
         if batch_inputs["num_preferences"] > 0:
             if self.model_type == "vqa":
                 outputs_preference = compute_batch_outputs_vqa(
-                    gpu_info["model"], gpu_info["processor"].tokenizer, batch_inputs["preference_inputs"], mode="preference"
+                    gpu_info["model"],
+                    gpu_info["processor"].tokenizer,
+                    batch_inputs["preference_inputs"],
+                    mode="preference",
                 )
             else:
                 # Run inference for preference samples
@@ -363,17 +366,29 @@ def compute_batch_outputs_progress_only(model, tokenizer, batch_inputs: Dict[str
         }
 
 
-def compute_batch_outputs_vqa(model, tokenizer, batch_inputs: Dict[str, torch.Tensor], mode: str = "preference") -> Dict[str, Any]:
+def compute_batch_outputs_vqa(
+    model, tokenizer, batch_inputs: Dict[str, torch.Tensor], mode: str = "preference"
+) -> Dict[str, Any]:
     """Compute batch outputs for VQA."""
     model.eval()
     device = next(model.parameters()).device
 
     input_ids = batch_inputs["input_ids"].to(device)
     attention_mask = batch_inputs["attention_mask"].to(device)
-    pixel_values = batch_inputs.get("pixel_values", None).to(device) if batch_inputs.get("pixel_values") is not None else None
-    pixel_values_videos = batch_inputs.get("pixel_values_videos", None).to(device) if batch_inputs.get("pixel_values_videos") is not None else None
-    image_grid_thw = batch_inputs.get("image_grid_thw", None).to(device) if batch_inputs.get("image_grid_thw") is not None else None
-    video_grid_thw = batch_inputs.get("video_grid_thw", None).to(device) if batch_inputs.get("video_grid_thw") is not None else None
+    pixel_values = (
+        batch_inputs.get("pixel_values", None).to(device) if batch_inputs.get("pixel_values") is not None else None
+    )
+    pixel_values_videos = (
+        batch_inputs.get("pixel_values_videos", None).to(device)
+        if batch_inputs.get("pixel_values_videos") is not None
+        else None
+    )
+    image_grid_thw = (
+        batch_inputs.get("image_grid_thw", None).to(device) if batch_inputs.get("image_grid_thw") is not None else None
+    )
+    video_grid_thw = (
+        batch_inputs.get("video_grid_thw", None).to(device) if batch_inputs.get("video_grid_thw") is not None else None
+    )
     labels = batch_inputs.get("labels").to(device)
     input_to_model = {
         "input_ids": input_ids,
@@ -387,10 +402,10 @@ def compute_batch_outputs_vqa(model, tokenizer, batch_inputs: Dict[str, torch.Te
 
     with torch.no_grad():
         output_ids = model.generate(**input_to_model, max_new_tokens=1024)
-        generated_ids = [
-            output_ids[len(input_ids):]
-            for input_ids, output_ids in zip(input_ids, output_ids)]
-        generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+        generated_ids = [output_ids[len(input_ids) :] for input_ids, output_ids in zip(input_ids, output_ids)]
+        generated_texts = tokenizer.batch_decode(
+            generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True
+        )
     if mode == "preference":
         predictions = [_extract_answer_from_text(text) for text in generated_texts]
         predictions_num_labels = []
@@ -403,7 +418,7 @@ def compute_batch_outputs_vqa(model, tokenizer, batch_inputs: Dict[str, torch.Te
                 predictions_num_labels.append(-1)
         return {
             "predictions": predictions_num_labels,
-            "preference_labels": batch_inputs.get("preference_labels").detach().cpu().tolist()
+            "preference_labels": batch_inputs.get("preference_labels").detach().cpu().tolist(),
         }
     elif mode == "progress":
         progress_predictions = [_extract_answer_from_text(text) for text in generated_texts]
@@ -415,8 +430,10 @@ def compute_batch_outputs_vqa(model, tokenizer, batch_inputs: Dict[str, torch.Te
     else:
         raise ValueError(f"Mode {mode} not supported")
 
+
 def _extract_answer_from_text(text):
     import re
+
     m = re.search(r"<ans>(.*?)</ans>", text, re.DOTALL)
     return m.group(1).strip() if m else ""
 

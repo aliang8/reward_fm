@@ -46,6 +46,9 @@ POSSIBLE_LANG_INSTRUCTION_KEYS = [  # valid keys for language instruction in OXE
     "natural_language_instruction",
     "language_instruction",
     "instruction",
+    "language_instruction1",
+    "language_instruction2",
+    "language_instruction3",
 ]
 MAX_LANGTABLE_EPISODES = (
     50_000  # for language table, we only want to label the first 50k episodes b/c it's way too many
@@ -268,6 +271,8 @@ def convert_oxe_dataset_to_hf(
                 task = first_step[key].decode()
                 break
         if not task:
+            print(f"Warning: No task found for episode {ep_idx}")
+            breakpoint()
             continue
 
         # Precompute embedding

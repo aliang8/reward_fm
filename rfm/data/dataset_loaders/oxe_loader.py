@@ -271,7 +271,6 @@ def convert_oxe_dataset_to_hf(
                 task = first_step[key].decode()
                 break
         if not task:
-            print(f"Warning: No task found for episode {ep_idx}")
             continue
 
         # Precompute embedding

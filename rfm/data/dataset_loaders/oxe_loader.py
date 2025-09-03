@@ -272,7 +272,6 @@ def convert_oxe_dataset_to_hf(
                 break
         if not task:
             print(f"Warning: No task found for episode {ep_idx}")
-            breakpoint()
             continue
 
         # Precompute embedding
@@ -293,7 +292,6 @@ def convert_oxe_dataset_to_hf(
 
         except Exception as e:
             print(f"Warning: Failed to convert episode {ep_idx} to numpy: {e}")
-            breakpoint()
             continue
 
         # Process batch when it's full or we've reached the limit

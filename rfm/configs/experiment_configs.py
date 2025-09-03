@@ -127,7 +127,10 @@ class DataConfig:
     fps: int = field(default=10, metadata={"help": "Frames per second to extract from videos"})
 
     max_trajectories: int = field(default=-1, metadata={"help": "Maximum number of trajectories to use for dataset"})
-    n_wrong_tasks: int = field(default=5, metadata={"help": "Number of wrong tasks to use for wrong task preference dataset"})
+    n_wrong_tasks: int = field(
+        default=5, metadata={"help": "Number of wrong tasks to use for wrong task preference dataset"}
+    )
+
 
 @dataclass
 class TrainingConfig:

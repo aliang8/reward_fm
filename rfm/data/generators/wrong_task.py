@@ -62,10 +62,10 @@ class WrongTaskGenerator(BaseDataGenerator):
             for other_traj_idx in self.robot_trajectories:
                 if other_traj_idx == traj_idx:  # Skip same trajectory
                     continue
-                
+
                 other_traj = self.dataset[other_traj_idx]
                 other_task = other_traj.get("task", "unknown")
-                
+
                 # Only include trajectories from different tasks
                 if other_task != original_task:
                     wrong_task_trajectories.append(other_traj_idx)
@@ -73,7 +73,7 @@ class WrongTaskGenerator(BaseDataGenerator):
             # Sample N wrong task trajectories
             if len(wrong_task_trajectories) >= self.config.n_wrong_tasks:
                 sampled_wrong_trajectories = random.sample(wrong_task_trajectories, self.config.n_wrong_tasks)
-            else:   
+            else:
                 # If not enough wrong task trajectories, use all available
                 sampled_wrong_trajectories = wrong_task_trajectories
 
@@ -105,7 +105,7 @@ class WrongTaskGenerator(BaseDataGenerator):
         # Get frames for both trajectories
         chosen_frames = self._get_trajectory_frames(chosen_traj_idx)
         rejected_frames = self._get_trajectory_frames(rejected_traj_idx)
-        
+
         if chosen_frames is None or len(chosen_frames) == 0:
             return None
         if rejected_frames is None or len(rejected_frames) == 0:

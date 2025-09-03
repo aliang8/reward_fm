@@ -218,7 +218,7 @@ def convert_oxe_dataset_to_hf(
 
     # Determine number of workers
     if num_workers == -1:
-        num_workers = max(1, min(cpu_count(), 8))
+        num_workers = min(cpu_count(), 8) # or else ram usage will blow up
     elif num_workers == 0:
         num_workers = 1
 
@@ -280,39 +280,15 @@ def convert_oxe_dataset_to_hf(
             # Convert episode to numpy format for multiprocessing
             episode_np = tfds.as_numpy(episode)
 
-            # Additional safety: ensure all nested objects are numpy
-            def ensure_numpy(obj):
-                if hasattr(obj, "numpy"):
-                    try:
-                        return obj.numpy()
-                    except:
-                        # If numpy() fails, try to convert to list/array
-                        if hasattr(obj, "__array__"):
-                            return np.array(obj)
-                        else:
-                            return str(obj)  # Fallback to string representation
-                elif isinstance(obj, dict):
-                    return {k: ensure_numpy(v) for k, v in obj.items()}
-                elif isinstance(obj, (list, tuple)):
-                    return type(obj)(ensure_numpy(item) for item in obj)
-                else:
-                    return obj
+            # iterate through all steps and just store as a list
+            episode_np = [s for s in episode_np["steps"]]
 
-            episode_np = ensure_numpy(episode_np)
+            episode_batch.append(episode_np)
+            episode_info_batch.append((ep_idx, task, lang_vec))
 
-            # Test if the converted episode is picklable
-            try:
-                import pickle
-
-                pickle.dumps(episode_np)
-                episode_batch.append(episode_np)
-                episode_info_batch.append((ep_idx, task, lang_vec))
-            except Exception as pickle_error:
-                breakpoint()
-                print(f"Warning: Episode {ep_idx} is not picklable after conversion: {pickle_error}")
-                continue
         except Exception as e:
             print(f"Warning: Failed to convert episode {ep_idx} to numpy: {e}")
+            breakpoint()
             continue
 
         # Process batch when it's full or we've reached the limit

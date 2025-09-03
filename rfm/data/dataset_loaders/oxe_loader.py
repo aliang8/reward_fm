@@ -90,16 +90,15 @@ def _process_single_oxe_episode(args):
     episode_entries = []
 
     # Episode is already converted to numpy format
-    steps_np = episode["steps"]
 
     for img_key in valid_img_keys:
         # Check first frame for all-black to prune
-        if img_key not in steps_np[0]["observation"]:
+        if img_key not in episode[0]["observation"]:
             continue
-        if np.all(steps_np[0]["observation"][img_key] == 0):
+        if np.all(episode[0]["observation"][img_key] == 0):
             continue
 
-        frames = [s["observation"][img_key] for s in steps_np if img_key in s["observation"]]
+        frames = [s["observation"][img_key] for s in episode if img_key in s["observation"]]
         if not frames:
             continue
 

@@ -413,7 +413,7 @@ class RFMHeadsTrainer(Trainer):
             preference_scores = model_outputs.logits.squeeze(-1)  # [batch_size]
 
             # Binary cross entropy loss for preference prediction
-            preference_loss_all = F.binary_cross_entropy_with_logits(preference_scores, preference_labels.float())
+            preference_loss_all = F.binary_cross_entropy_with_logits(preference_scores, preference_labels.float(), reduction="none")
             preference_loss = preference_loss_all.mean()
 
         if self.config.model.train_progress_head:
@@ -500,6 +500,7 @@ class RFMHeadsTrainer(Trainer):
                 for strat in rejected_strats:
                     mask = [1 if s == strat else 0 for s in rejected_data_gen_strategy]
                     mask = torch.tensor(mask, device=self.accelerator.device)
+                    
                     outputs_dict.update(
                         {
                             f"pref_acc_{strat}": (preference_accuracy[mask == 1]).mean().item(),

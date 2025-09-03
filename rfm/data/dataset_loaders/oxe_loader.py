@@ -308,6 +308,7 @@ def convert_oxe_dataset_to_hf(
                 episode_batch.append(episode_np)
                 episode_info_batch.append((ep_idx, task, lang_vec))
             except Exception as pickle_error:
+                breakpoint()
                 print(f"Warning: Episode {ep_idx} is not picklable after conversion: {pickle_error}")
                 continue
         except Exception as e:

@@ -43,7 +43,7 @@ data:
     # - "aliangdw/metaworld_rfm"
   eval_subsets:
     # - ["libero256_10", "libero256_object", "libero256_spatial", "libero256_goal"]
-    - ["libero_10"]
+    - ["libero256_10"]
     - ["libero_10_failure"]
     - ["metaworld_rewind_eval"]
     # - ["metaworld"]
@@ -55,7 +55,7 @@ data:
   max_frames_for_preprocessing: 64
 
   # Video processing settings
-  max_frames: 16  # Maximum frames per trajectory
+  max_frames: 8  # Maximum frames per trajectory
   video_frame_sampling: "uniform"  # "uniform", "random", "first", "middle"
   resized_height: 128  # Height to resize images/videos to
   resized_width: 128   # Width to resize images/videos to
@@ -85,7 +85,7 @@ training:
   output_dir: "./logs/rfm_progress_pref"
   
   # Training parameters
-  per_device_train_batch_size: 16
+  per_device_train_batch_size: 8
   gradient_accumulation_steps: 1
   learning_rate: 2e-5
   num_train_epochs: -1  # Number of epochs to train for
@@ -97,7 +97,7 @@ training:
   # Evaluation settings
   evaluation_strategy: "steps"  # Options: "no", "steps", "epoch"
   eval_steps: 5  # Evaluate every 50 steps
-  per_device_eval_batch_size: 16  # Evaluation batch size per device
+  per_device_eval_batch_size: 8  # Evaluation batch size per device
   do_eval: true  # Enable evaluation during training
   prediction_loss_only: true # Only compute loss for the prediction head
   
@@ -134,6 +134,7 @@ peft:
   target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
   lora_dropout: 0.05
   bias: "none"
+  peft_vision_encoder: false # if we are using PEFT, we only want to attach LoRA to the vision encoder
 
 # =====================================================================================
 # Logging and Output Configuration

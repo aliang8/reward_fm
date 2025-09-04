@@ -115,48 +115,48 @@ def setup_peft_model(rfm_model: RFMModel, cfg: ExperimentConfig) -> RFMModel:
             lora_dropout=cfg.peft.lora_dropout,
             bias=cfg.peft.bias,
         )
-        peft_rfm_model = get_peft_model(rfm_model, lora_config)
-        for name, param in peft_rfm_model.named_parameters():
-            if any(head in name for head in ["progress_head", "preference_head", "similarity_head"]):
-                param.requires_grad = True
-        return peft_rfm_model
+        if cfg.peft.peft_vision_encoder:
+            # vision backbone is frozen, but we can still train the LoRA parameters
+            rfm_model.base_model.model.visual = get_peft_model(rfm_model.base_model.model.visual, lora_config)
     else:
         rank_0_print("Using full model training (no PEFT)...")
-        peft_rfm_model = rfm_model
-        # Configure which parts of the model to train based on config
-        for name, param in peft_rfm_model.named_parameters():
-            # Train prediction heads based on individual settings
-            if "progress_head" in name:
-                param.requires_grad = cfg.model.train_progress_head
-            elif "preference_head" in name:
-                param.requires_grad = cfg.model.train_preference_head
-            elif "similarity_head" in name:
-                param.requires_grad = cfg.model.train_similarity_head
-            # Train vision encoder if specified
-            elif "visual" in name or "vision" in name:
-                param.requires_grad = cfg.model.train_vision_encoder
-            # Train language model if specified
-            elif "model" in name and not ("visual" in name or "vision" in name):
-                param.requires_grad = cfg.model.train_language_model
-            # Default: train if language model training is enabled
+
+    # Configure which parts of the model to train based on config
+    for name, param in rfm_model.named_parameters():
+        # Train prediction heads based on individual settings
+        if "progress_head" in name:
+            param.requires_grad = cfg.model.train_progress_head
+        elif "preference_head" in name:
+            param.requires_grad = cfg.model.train_preference_head
+        elif "similarity_head" in name:
+            param.requires_grad = cfg.model.train_similarity_head
+        # Train vision encoder if specified
+        elif "visual" in name or "vision" in name:
+            # if PEFT enabled, we don't need to do anything
+            if cfg.peft.use_peft and cfg.peft.peft_vision_encoder:
+                pass 
             else:
-                param.requires_grad = cfg.model.train_language_model
+                param.requires_grad = cfg.model.train_vision_encoder
+        elif "language_model" in name:
+            param.requires_grad = cfg.model.train_language_model
+        else:
+            param.requires_grad = False
 
-        if cfg.logging.print_trainable_parameters:
-            # Count trainable parameters manually - defer printing until after FSDP setup
-            trainable_params = sum(p.numel() for p in peft_rfm_model.parameters() if p.requires_grad)
-            all_params = sum(p.numel() for p in peft_rfm_model.parameters())
-            rank_0_print(
-                f"trainable params: {trainable_params:,} || all params: {all_params:,} || trainable%: {100 * trainable_params / all_params:.4f}"
-            )
-            rank_0_print(f"Training configuration:")
-            rank_0_print(f"  - Vision encoder: {cfg.model.train_vision_encoder}")
-            rank_0_print(f"  - Language model: {cfg.model.train_language_model}")
-            rank_0_print(f"  - Progress head: {cfg.model.train_progress_head}")
-            rank_0_print(f"  - Preference head: {cfg.model.train_preference_head}")
-            rank_0_print(f"  - Similarity head: {cfg.model.train_similarity_head}")
+    if cfg.logging.print_trainable_parameters:
+        # Count trainable parameters manually - defer printing until after FSDP setup
+        trainable_params = sum(p.numel() for p in rfm_model.parameters() if p.requires_grad)
+        all_params = sum(p.numel() for p in rfm_model.parameters())
+        rank_0_print(
+            f"trainable params: {trainable_params:,} || all params: {all_params:,} || trainable%: {100 * trainable_params / all_params:.4f}"
+        )
+        rank_0_print(f"Training configuration:")
+        rank_0_print(f"  - Vision encoder: {cfg.model.train_vision_encoder}")
+        rank_0_print(f"  - Language model: {cfg.model.train_language_model}")
+        rank_0_print(f"  - Progress head: {cfg.model.train_progress_head}")
+        rank_0_print(f"  - Preference head: {cfg.model.train_preference_head}")
+        rank_0_print(f"  - Similarity head: {cfg.model.train_similarity_head}")
 
-        return peft_rfm_model
+    return rfm_model
 
 
 def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: bool = False) -> TrainingArguments:

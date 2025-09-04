@@ -174,7 +174,7 @@ class TrainingConfig:
     lr_scheduler_type: str = field(default="cosine")
     warmup_steps: int = field(default=0)
     warmup_ratio: float = field(default=0.1)
-
+    max_grad_norm: float = field(default=1.0)
 
 @dataclass
 class LoggingConfig:

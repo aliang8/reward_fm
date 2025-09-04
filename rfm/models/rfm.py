@@ -31,9 +31,9 @@ class RFMModel(PreTrainedModel):
             self.model = Qwen2_5_VLModel(config)
 
         # Three prediction heads for different objectives
-        self.progress_head = nn.Linear(config.hidden_size, 1, bias=False)  # Progress prediction (0-1)
-        self.preference_head = nn.Linear(config.hidden_size, 1, bias=False)  # Preference prediction (binary)
-        self.similarity_head = nn.Linear(config.hidden_size, 1, bias=False)  # Similarity scoring (reward)
+        self.progress_head = nn.Linear(config.hidden_size, 1)  # Progress prediction (0-1)
+        self.preference_head = nn.Linear(config.hidden_size, 1)  # Preference prediction (binary)
+        self.similarity_head = nn.Linear(config.hidden_size, 1)  # Similarity scoring (reward)
 
         # Ensure all heads have the same dtype as the base model
         self.model_dtype = self.model.dtype
@@ -128,7 +128,6 @@ class RFMModel(PreTrainedModel):
         model_kwargs = {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
-            "output_hidden_states": True,
             "pixel_values": pixel_values,
             "pixel_values_videos": pixel_values_videos,
             "image_grid_thw": image_grid_thw,
@@ -142,7 +141,7 @@ class RFMModel(PreTrainedModel):
             outputs = self.model(**model_kwargs)
 
         # [batch_size, seq_len, hidden_size]
-        last_hidden_state = outputs.hidden_states[-1]
+        last_hidden_state = outputs.last_hidden_state
 
         # Always compute progress for all timesteps if target_progress is provided
         progress_logits = None

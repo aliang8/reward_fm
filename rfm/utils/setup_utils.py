@@ -187,6 +187,7 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
         "lr_scheduler_type": cfg.training.lr_scheduler_type,
         "warmup_steps": cfg.training.warmup_steps,
         "warmup_ratio": cfg.training.warmup_ratio,
+        "max_grad_norm": cfg.training.max_grad_norm,
     }
 
     # Add eval_steps if evaluation_strategy is "steps"

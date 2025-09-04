@@ -46,14 +46,12 @@ class RFMHeadsTrainer(Trainer):
         ]
 
         self.log_keys = [
-            "num_rewind_frames_min",
-            "num_rewind_frames_max",
-            "num_rewind_frames_mean",
-            "num_rewound_trajs",
+            "num_trajs_rewind",
+            "num_trajs_same_task",
+            "num_trajs_different_task",
         ]
         self.global_metadata = {
             "total_samples": 0,
-            "total_samples_with_rewound_trajs": 0,
         }
         self.timing_raw = {}
 
@@ -258,20 +256,24 @@ class RFMHeadsTrainer(Trainer):
         # Log rewind length stats if available in preference inputs
         rewind_stats = {}
         if num_preferences > 0 and preference_inputs:
-            rewind_lengths = preference_inputs.get("rewind_lengths", None)
-
-            if rewind_lengths is not None:
-                rewind_lengths = rewind_lengths.tolist()
-                num_rewind_frames_min = min(rewind_lengths)
-                num_rewind_frames_max = max(rewind_lengths)
-                num_rewind_frames_mean = np.mean(rewind_lengths)
-                num_rewound_trajs = np.array(rewind_lengths).nonzero()[0].size
-                rewind_stats = {
-                    "num_rewind_frames_min": num_rewind_frames_min,
-                    "num_rewind_frames_max": num_rewind_frames_max,
-                    "num_rewind_frames_mean": num_rewind_frames_mean,
-                    "num_rewound_trajs": num_rewound_trajs,
+            # Count data generation strategies from the rejected trajectories
+            rejected_data_gen_strategy = preference_inputs.get("rejected_data_gen_strategy", [])
+            if isinstance(rejected_data_gen_strategy, list) and len(rejected_data_gen_strategy) > 0:
+                # Normalize keys we care about
+                strat_counts = {
+                    "num_trajs_rewind": 0,
+                    "num_trajs_same_task": 0,
+                    "num_trajs_different_task": 0,
                 }
+                for s in rejected_data_gen_strategy:
+                    if s == "rewind_same_task":
+                        strat_counts["num_trajs_rewind"] += 1
+                    elif s == "suboptimal_same_task":
+                        strat_counts["num_trajs_same_task"] += 1
+                    elif s == "different_task":
+                        strat_counts["num_trajs_different_task"] += 1
+
+                rewind_stats = {**strat_counts}
                 log_metadata.update(rewind_stats)
 
         # Always store custom losses for logging (even when return_outputs=False)
@@ -284,14 +286,6 @@ class RFMHeadsTrainer(Trainer):
             batch_size = torch.tensor(num_preferences + num_similarities, device=self.accelerator.device)
             dist.all_reduce(batch_size, op=dist.ReduceOp.SUM)
             self.global_metadata["total_samples"] += batch_size.item()
-
-            # total rewounded trajectories
-            if "num_rewound_trajs" in rewind_stats:
-                total_samples_with_rewound_trajs = torch.tensor(
-                    rewind_stats["num_rewound_trajs"], device=self.accelerator.device
-                )
-                dist.all_reduce(total_samples_with_rewound_trajs, op=dist.ReduceOp.SUM)
-                self.global_metadata["total_samples_with_rewound_trajs"] += total_samples_with_rewound_trajs.item()
 
         if return_outputs:
             # Combine outputs from all loss functions

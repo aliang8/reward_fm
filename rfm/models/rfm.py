@@ -147,7 +147,6 @@ class RFMModel(PreTrainedModel):
         progress_logits = None
         # Find vision_start_token and split_token for trajectory separation
         vision_start_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|vision_start|>")
-        split_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|split_token|>")
 
         progress_logits_A = []
         progress_logits_B = []
@@ -202,6 +201,8 @@ class RFMModel(PreTrainedModel):
                     boundary_hidden_states_A = last_hidden_state[i][
                         trajectory_A_boundaries
                     ]  # [num_frames_A, hidden_dim]
+
+                    assert boundary_hidden_states_A.shape[0] == T_A, f"Expected {T_A} frames, got {boundary_hidden_states_A.shape[0]}"
                     progress_A = self.progress_head(boundary_hidden_states_A).squeeze(-1)  # [num_frames_A]
                     progress_logits_A.append(progress_A)
                 else:
@@ -210,8 +211,8 @@ class RFMModel(PreTrainedModel):
                 # For progress-only samples, we don't need trajectory B
                 if sample_type != "progress":
                     # For trajectory B: use video_grid_thw[i+1]
-                    if i + 1 >= len(video_grid_thw):
-                        raise ValueError(f"video_grid_thw index {i + 1} out of bounds for trajectory B")
+                    if (i * tps) + 1 >= len(video_grid_thw):
+                        raise ValueError(f"video_grid_thw index {(i * tps) + 1} out of bounds for trajectory B")
                     current_video_grid_B = video_grid_thw[i * tps + 1]  # [T, H, W]
                     T_B, H_B, W_B = current_video_grid_B
 
@@ -231,12 +232,13 @@ class RFMModel(PreTrainedModel):
 
                     trajectory_B_boundaries = torch.tensor(frame_boundary_positions_B)
 
-
                     # Apply progress head to hidden states at frame boundary positions for trajectory B
                     if trajectory_B_boundaries.numel() > 0:
                         boundary_hidden_states_B = last_hidden_state[i][
                             trajectory_B_boundaries
                         ]  # [num_frames_B, hidden_dim]
+
+                        assert boundary_hidden_states_B.shape[0] == T_B, f"Expected {T_B} frames, got {boundary_hidden_states_B.shape[0]}"
                         progress_B = self.progress_head(boundary_hidden_states_B).squeeze(-1)  # [num_frames_B]
                         progress_logits_B.append(progress_B)
                     else:

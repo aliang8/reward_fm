@@ -117,6 +117,7 @@ def setup_peft_model(rfm_model: RFMModel, cfg: ExperimentConfig) -> RFMModel:
         )
         if cfg.peft.peft_vision_encoder:
             # vision backbone is frozen, but we can still train the LoRA parameters
+            rank_0_print("Attaching LoRA to only the vision encoder...")
             rfm_model.base_model.model.visual = get_peft_model(rfm_model.base_model.model.visual, lora_config)
     else:
         rank_0_print("Using full model training (no PEFT)...")

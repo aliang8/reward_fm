@@ -437,22 +437,20 @@ class RFMHeadsTrainer(Trainer):
                 # First trajectory is preferred (chosen)
                 chosen_traj_shapes.append(chosen_frames_shape[i])
                 rejected_traj_shapes.append(rejected_frames_shape[i])
+                
+                chosen_traj_progress_target.append(inputs["target_progress_chosen"][i])
+                rejected_traj_progress_target.append(inputs["target_progress_rejected"][i])
+                chosen_traj_progress_target_mask.append(inputs["target_progress_chosen_mask"][i])
+                rejected_traj_progress_target_mask.append(inputs["target_progress_rejected_mask"][i])
+
                 if preference_labels[i] == 1.0:
                     chosen_traj_progress_pred.append(progress_logits["A"][i])
                     rejected_traj_progress_pred.append(progress_logits["B"][i])
-                    chosen_traj_progress_target.append(inputs["target_progress_chosen"][i])
-                    rejected_traj_progress_target.append(inputs["target_progress_rejected"][i])
-                    chosen_traj_progress_target_mask.append(inputs["target_progress_chosen_mask"][i])
-                    rejected_traj_progress_target_mask.append(inputs["target_progress_rejected_mask"][i])
                 else:
                     # Second trajectory is preferred
                     chosen_traj_progress_pred.append(progress_logits["B"][i])
                     rejected_traj_progress_pred.append(progress_logits["A"][i])
-                    chosen_traj_progress_target.append(inputs["target_progress_rejected"][i])
-                    rejected_traj_progress_target.append(inputs["target_progress_chosen"][i])
-                    chosen_traj_progress_target_mask.append(inputs["target_progress_rejected_mask"][i])
-                    rejected_traj_progress_target_mask.append(inputs["target_progress_chosen_mask"][i])
-
+                
             # Convert to tensors for the helper function
             chosen_traj_shapes = torch.stack(chosen_traj_shapes)
             rejected_traj_shapes = torch.stack(rejected_traj_shapes)

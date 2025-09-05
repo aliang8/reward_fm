@@ -417,19 +417,20 @@ class PreferenceDataGenerator(BaseDataGenerator):
         rejected_traj = None
         strategy_used = None
 
-        if random.random() < self.preference_strategy_ratio[0]:
+        prob = random.random()
+        if prob < self.preference_strategy_ratio[0]:
             # Strategy 1: Use rewind-generated suboptimal trajectory from same task
             rejected_traj = self._create_rewind_trajectory(chosen_traj)
             strategy_used = DataGenStrat.REWIND_SAME_TASK.value
 
-        elif random.random() < self.preference_strategy_ratio[0] + self.preference_strategy_ratio[1]:
+        elif prob < self.preference_strategy_ratio[0] + self.preference_strategy_ratio[1]:
             # Strategy 2: Use random suboptimal trajectory from same task
             rejected_traj = self._create_same_task_suboptimal_trajectory(chosen_traj)
             if rejected_traj is not None:
                 strategy_used = DataGenStrat.SUBOPTIMAL_SAME_TASK.value
 
         elif (
-            random.random()
+            prob
             < self.preference_strategy_ratio[0] + self.preference_strategy_ratio[1] + self.preference_strategy_ratio[2]
         ):
             # Strategy 3: Use trajectory from different task (can be chosen or suboptimal)
@@ -557,7 +558,6 @@ class PreferenceDataGenerator(BaseDataGenerator):
         """
         # Find other tasks
         other_tasks = [task for task in self.optimal_by_task.keys() if task != chosen_traj["task"]]
-
         if other_tasks:
             other_task = random.choice(other_tasks)
             other_task_indices = self.optimal_by_task[other_task]

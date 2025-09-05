@@ -33,6 +33,11 @@ class DatasetPreprocessor:
         self.resized_width = config.data.resized_width
         self.force_reprocess = config.data.force_reprocess
         self.num_proc = config.data.num_proc
+        # Optional: number of worker threads for npz creation (fallback to CPU count or 4)
+        try:
+            self.num_threads = getattr(config.data, "num_threads", None) or os.cpu_count() or 4
+        except Exception:
+            self.num_threads = os.cpu_count() or 4
 
         # Dataset storage - store individual datasets
         self.datasets: Dict[str, Dataset] = {}  # key: "dataset_path/subset"
@@ -127,7 +132,10 @@ class DatasetPreprocessor:
         dataset = dataset.cast_column("frames_video", Video(decode=True))
 
         # Process videos and build indices
-        processed_dataset, indices = self._process_dataset_videos_map(dataset, cache_key)
+        if (self.num_threads or 0) > 1:
+            processed_dataset, indices = self._process_dataset_videos_threaded(dataset, cache_key)
+        else:
+            processed_dataset, indices = self._process_dataset_videos_map(dataset, cache_key)
 
         return processed_dataset, indices
 
@@ -342,6 +350,119 @@ class DatasetPreprocessor:
 
         # Log the built indices
         rank_0_print(f"Built index mappings for {cache_key}:")
+        rank_0_print(f"  Robot trajectories: {len(robot_trajectories)}")
+        rank_0_print(f"  Human trajectories: {len(human_trajectories)}")
+        rank_0_print(f"  Tasks: {len(task_indices)}")
+        rank_0_print(f"  Quality labels: {len(quality_indices)}")
+        rank_0_print(f"  Data sources: {len(source_indices)}")
+
+        return processed_dataset, {
+            "robot_trajectories": robot_trajectories,
+            "human_trajectories": human_trajectories,
+            "optimal_by_task": optimal_by_task,
+            "suboptimal_by_task": suboptimal_by_task,
+            "quality_indices": quality_indices,
+            "task_indices": task_indices,
+            "source_indices": source_indices,
+        }
+
+    def _process_dataset_videos_threaded(self, dataset, cache_key: str):
+        """
+        Threaded implementation to process frames and build indices, saving npz files concurrently.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        # Initialize index mappings
+        robot_trajectories = []
+        human_trajectories = []
+        optimal_by_task = {}
+        suboptimal_by_task = {}
+        quality_indices = {}
+        task_indices = {}
+        source_indices = {}
+
+        frames_dir = os.path.join(self.cache_dir, "frames")
+        os.makedirs(frames_dir, exist_ok=True)
+
+        def process_one(idx: int, example: Dict[str, Any]):
+            # Extract and process frames
+            frames = example.get("frames_video")
+            if frames is None:
+                return idx, None, None
+
+            frames_array = self._preprocess_videos(frames, self.config.data.max_frames_for_preprocessing)
+            if frames_array.size == 0:
+                return idx, None, None
+
+            # Save frames as npz file
+            frames_filename = f"trajectory_{idx:06d}_{example['id']}.npz"
+            frames_filepath = os.path.join(frames_dir, frames_filename)
+            np.savez_compressed(
+                frames_filepath,
+                frames=frames_array,
+                shape=frames_array.shape,
+                num_frames=frames_array.shape[0] if len(frames_array.shape) > 0 else 0,
+            )
+
+            # Return minimal info to update record and indices
+            return idx, frames_filepath, frames_array.shape
+
+        # Materialize dataset rows we need (to avoid HF iterator inside threads)
+        records = []
+        for i in range(len(dataset)):
+            ex = dataset[i]
+            records.append((i, ex))
+
+        # Concurrently convert and write npz for all examples, collecting results
+        idx_to_npz = {}
+        with ThreadPoolExecutor(max_workers=self.num_threads) as executor:
+            futures = [executor.submit(process_one, i, ex) for i, ex in records]
+            for fut in tqdm(as_completed(futures), total=len(futures), desc=f"Threaded processing {cache_key}"):
+                idx, frames_path, shape = fut.result()
+                if frames_path is not None:
+                    idx_to_npz[idx] = (frames_path, shape)
+
+        # Update dataset with saved paths and build indices
+        updated_rows = []
+        for i, ex in records:
+            if i in idx_to_npz:
+                frames_path, shape = idx_to_npz[i]
+                ex = dict(ex)
+                ex["frames"] = frames_path
+                ex["frames_shape"] = shape
+                ex["num_frames"] = shape[0] if len(shape) > 0 else 0
+                ex["frames_processed"] = True
+
+                # Build indices
+                if ex.get("is_robot", True):
+                    robot_trajectories.append(i)
+                else:
+                    human_trajectories.append(i)
+
+                quality = ex.get("quality_label", "successful")
+                quality_indices.setdefault(quality, []).append(i)
+
+                task = ex.get("task", "unknown")
+                task_indices.setdefault(task, []).append(i)
+
+                source = ex.get("data_source", "unknown")
+                source_indices.setdefault(source, []).append(i)
+
+                if task not in optimal_by_task:
+                    optimal_by_task[task] = []
+                    suboptimal_by_task[task] = []
+                if quality in ["successful", "optimal"]:
+                    optimal_by_task[task].append(i)
+                elif quality in ["suboptimal", "failed", "failure"]:
+                    suboptimal_by_task[task].append(i)
+
+            updated_rows.append(ex)
+
+        # Create a new Dataset from updated_rows
+        processed_dataset = Dataset.from_list(updated_rows)
+
+        # Log the built indices
+        rank_0_print(f"Built index mappings for {cache_key} (threaded):")
         rank_0_print(f"  Robot trajectories: {len(robot_trajectories)}")
         rank_0_print(f"  Human trajectories: {len(human_trajectories)}")
         rank_0_print(f"  Tasks: {len(task_indices)}")

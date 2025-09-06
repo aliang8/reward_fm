@@ -20,11 +20,7 @@ from rfm.models.rfm_vqa import RFMModelVQA
 from rfm.data.generators.generator import DataGenerator
 from rfm.data.generators.vqa_generator import VQADataGenerator
 from rfm.data.batch_collator import BatchCollator
-from rfm.data.dataset import (
-    InfiniteDataGeneratorDataset,
-    RewoundDataset,
-    VideoBinnedDataset,
-)
+from rfm.data.dataset import InfiniteDataGeneratorDataset
 from rfm.data.generators.success_failure import PairedSuccessFailureGenerator
 from rfm.data.generators.reward_alignment import RewardAlignmentGenerator
 from rfm.data.generators.confusion_matrix import ConfusionMatrixGenerator
@@ -33,8 +29,6 @@ from rfm.data.generators.progress import ProgressGenerator
 from rfm.utils.logging import rank_0_print
 from rfm.configs.experiment_configs import ExperimentConfig, ModelConfig
 from rfm.data.vqa_batch_collator import VQABatchCollator
-
-SampleType = Union[InfiniteDataGeneratorDataset, RewoundDataset, VideoBinnedDataset]
 
 
 def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[AutoProcessor, RFMModel]:
@@ -282,30 +276,20 @@ def setup_data_generator(cfg: ExperimentConfig, is_eval: bool = False) -> DataGe
 
 def setup_dataset(
     data_generator: DataGenerator, dataset_type: str = "default", dataset_kwargs: dict = {}
-) -> SampleType:
+) -> InfiniteDataGeneratorDataset:
     """Shared function to create training or evaluation dataset based on config"""
 
     # Get the dataset type from the data generator config
     config_dataset_type = data_generator.config.dataset_type
 
     rank_0_print(f"Setting up {dataset_type} dataset with type: {config_dataset_type}")
-
-    if config_dataset_type == "rewound":
-        rank_0_print(f"Creating rewound dataset")
-        dataset = RewoundDataset(data_generator, **dataset_kwargs)
-    elif config_dataset_type == "video_binned":
-        rank_0_print(f"Creating video-binned dataset")
-        dataset = VideoBinnedDataset(data_generator, **dataset_kwargs)
-    else:
-        # Default to preference/similarity dataset
-        rank_0_print("Creating preference/similarity dataset")
-        dataset = InfiniteDataGeneratorDataset(data_generator, **dataset_kwargs)
+    dataset = InfiniteDataGeneratorDataset(data_generator, **dataset_kwargs)
 
     rank_0_print(f"{dataset_type.capitalize()} dataset created successfully with {len(dataset)} samples")
     return dataset
 
 
-def setup_eval_dataset(cfg: ExperimentConfig) -> SampleType:
+def setup_eval_dataset(cfg: ExperimentConfig) -> InfiniteDataGeneratorDataset:
     """Create evaluation dataset using eval-specific configuration"""
 
     # Create evaluation data generator

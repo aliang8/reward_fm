@@ -67,15 +67,17 @@ class InfiniteDataGeneratorDataset:
         return self
 
     def __len__(self):
-        if hasattr(self.data_generator, "__len__"):
+        if hasattr(self.data_generator, "max_samples"):
+            return self.data_generator.max_samples
+        elif hasattr(self.data_generator, "__len__"):
             return self.data_generator.__len__()
         else:
             return self.max_samples
+        
+    def __getitem__(self, idx):
+        return self.__next__()
 
     def __next__(self):
         """Generate the next sample."""
         sample = self.data_generator.__next__()
         return sample
-
-    def __getitem__(self, idx):
-        return self.__next__()

@@ -10,6 +10,27 @@ from rfm.data.dataset_types import PreferenceSample, ProgressSample, Trajectory
 from rfm.data.generators.base import BaseDataGenerator
 from rfm.utils.logging import rank_0_print, timer
 
+from enum import Enum
+
+
+class DataGenStrat(Enum):
+    """Enum for different data generation strategies used in preference generation."""
+
+    # Preference generation strategies
+    REWIND_SAME_TASK = "rewind_same_task"
+    SUBOPTIMAL_SAME_TASK = "suboptimal_same_task"
+    DIFFERENT_TASK = "different_task"
+    VIDEO_BINNED = "video_binned"
+
+    # Evaluation-specific strategies
+    CONFUSION_MATRIX = "confusion_matrix"
+    WRONG_TASK_PREFERENCE = "wrong_task_preference"
+
+    # General strategies
+    SUBSAMPLE_TASK = "subsample_task"
+    REWOUND = "rewound"
+    DEFAULT = "default"
+
 
 class PreferenceDataGenerator(BaseDataGenerator):
     """Data generator for producing batches of preference prediction data."""
@@ -25,6 +46,46 @@ class PreferenceDataGenerator(BaseDataGenerator):
         self._load_preference_dataset()
 
         rank_0_print(f"PreferenceDataGenerator initialized with {len(self.dataset)} total trajectories")
+
+        # Use direct dataset iteration
+        self.current_idx = 0
+
+    def _create_preference_sample_from_chosen(self, chosen_traj: Dict) -> PreferenceSample:
+        """Create a preference sample starting from a provided chosen trajectory dict."""
+        return self._create_preference_sample_with_strategies(chosen_traj)
+
+    def __iter__(self):
+        self.current_idx = 0
+        return self
+
+    def __next__(self):
+        """Iterate over one sample per trajectory in the dataset."""
+        dataset_len = len(self.dataset)
+        if self.current_idx >= dataset_len:
+            raise StopIteration
+
+        chosen_traj = self.dataset[self.current_idx]
+        sample = self._create_preference_sample_from_chosen(chosen_traj)
+
+        # Skip invalid samples
+        while sample is None and self.current_idx < dataset_len:
+            self.current_idx += 1
+            if self.current_idx >= dataset_len:
+                raise StopIteration
+            chosen_traj = self.dataset[self.current_idx]
+            sample = self._create_preference_sample_from_chosen(chosen_traj)
+
+        if sample is None:
+            raise StopIteration
+
+        self.current_idx += 1
+        return sample
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        return self.__next__()
 
     def _create_rewind_trajectory(self, original_traj: Dict, rewind_length: Optional[int] = None) -> Dict:
         """Create a suboptimal trajectory by rewinding the original trajectory.
@@ -330,7 +391,7 @@ class PreferenceDataGenerator(BaseDataGenerator):
             else:
                 return self._create_preference_sample_with_strategies()
 
-    def _create_preference_sample_with_strategies(self) -> PreferenceSample:
+    def _create_preference_sample_with_strategies(self, chosen_traj: Optional[Dict] = None) -> PreferenceSample:
         """Create a preference prediction sample using various rejected trajectory generation strategies.
 
         This method implements four different strategies for generating rejected trajectories
@@ -377,44 +438,47 @@ class PreferenceDataGenerator(BaseDataGenerator):
             RuntimeError: If all strategies fail and fallback rewind also fails
         """
 
-        # Use preprocessed chosen trajectories from index maps
-        if not self.optimal_by_task:
-            raise ValueError("No chosen trajectories found for preference generation")
+        # Use provided chosen trajectory if given; otherwise sample one
+        if chosen_traj is None:
+            # Use preprocessed chosen trajectories from index maps
+            if not self.optimal_by_task:
+                raise ValueError("No chosen trajectories found for preference generation")
 
-        # Get a random task and chosen trajectory from it
-        task_name = random.choice(list(self.optimal_by_task.keys()))
-
-        optimal_indices = self.optimal_by_task[task_name]
-        while not optimal_indices:
+            # Get a random task and chosen trajectory from it
             task_name = random.choice(list(self.optimal_by_task.keys()))
-            optimal_indices = self.optimal_by_task[task_name]
 
-        chosen_idx = random.choice(optimal_indices)
-        chosen_traj = self.dataset[chosen_idx]
+            optimal_indices = self.optimal_by_task[task_name]
+            while not optimal_indices:
+                task_name = random.choice(list(self.optimal_by_task.keys()))
+                optimal_indices = self.optimal_by_task[task_name]
+
+            chosen_idx = random.choice(optimal_indices)
+            chosen_traj = self.dataset[chosen_idx]
 
         # Initialize variables for strategy selection
         rejected_traj = None
         strategy_used = None
 
-        if random.random() < self.preference_strategy_ratio[0]:
+        prob = random.random()
+        if prob < self.preference_strategy_ratio[0]:
             # Strategy 1: Use rewind-generated suboptimal trajectory from same task
             rejected_traj = self._create_rewind_trajectory(chosen_traj)
-            strategy_used = "rewind_same_task"
+            strategy_used = DataGenStrat.REWIND_SAME_TASK.value
 
-        elif random.random() < self.preference_strategy_ratio[0] + self.preference_strategy_ratio[1]:
+        elif prob < self.preference_strategy_ratio[0] + self.preference_strategy_ratio[1]:
             # Strategy 2: Use random suboptimal trajectory from same task
             rejected_traj = self._create_same_task_suboptimal_trajectory(chosen_traj)
             if rejected_traj is not None:
-                strategy_used = "suboptimal_same_task"
+                strategy_used = DataGenStrat.SUBOPTIMAL_SAME_TASK.value
 
         elif (
-            random.random()
+            prob
             < self.preference_strategy_ratio[0] + self.preference_strategy_ratio[1] + self.preference_strategy_ratio[2]
         ):
             # Strategy 3: Use trajectory from different task (can be chosen or suboptimal)
             rejected_traj = self._create_different_task_trajectory(chosen_traj)
             if rejected_traj is not None:
-                strategy_used = "different_task"
+                strategy_used = DataGenStrat.DIFFERENT_TASK.value
 
         else:
             # Strategy 4: Create preference sample from different bins of the same video
@@ -422,14 +486,14 @@ class PreferenceDataGenerator(BaseDataGenerator):
                 chosen_traj, rejected_traj = self._create_video_binned_trajectory(
                     chosen_traj, num_bins=self.config.num_bins
                 )
-                strategy_used = "video_binned"
+                strategy_used = DataGenStrat.VIDEO_BINNED.value
             except Exception as e:
                 rank_0_print(f"Video binning failed: {e}, will fall back to rewind")
 
         # Fallback: If any strategy failed to produce a rejected trajectory, use rewind
         if rejected_traj is None:
             rejected_traj = self._create_rewind_trajectory(chosen_traj)
-            strategy_used = "rewind_same_task"
+            strategy_used = DataGenStrat.REWIND_SAME_TASK.value
 
         # ===============================================================
         # Subsample the chosen trajectory to max_frames
@@ -448,7 +512,7 @@ class PreferenceDataGenerator(BaseDataGenerator):
         if isinstance(rejected_traj["frames"], str):
             rejected_traj["frames"] = self._load_frames_from_npz(rejected_traj["frames"])
 
-        if "rewind" not in strategy_used:
+        if DataGenStrat.REWIND_SAME_TASK.value not in strategy_used:
             # try subsampling the rejected trajectory
             rejected_frames, rejected_progress, rejected_metadata = self._subsample_frames_and_progress(
                 rejected_traj["frames"]
@@ -462,7 +526,7 @@ class PreferenceDataGenerator(BaseDataGenerator):
             rejected_metadata = rejected_traj["metadata"]
 
         # If our strategy is different task, make sure the rejected trajectory has 0 progress
-        if strategy_used == "different_task":
+        if strategy_used == DataGenStrat.DIFFERENT_TASK.value:
             rejected_progress = [0.0] * len(rejected_progress)
 
         # Create preference sample structure
@@ -478,7 +542,7 @@ class PreferenceDataGenerator(BaseDataGenerator):
                 quality_label=chosen_traj.get("quality_label"),
                 is_robot=chosen_traj["is_robot"],
                 target_progress=chosen_progress,
-                data_gen_strategy="subsample_task",
+                data_gen_strategy=DataGenStrat.SUBSAMPLE_TASK.value,
                 metadata=chosen_metadata,
             ),
             rejected_trajectory=Trajectory(
@@ -536,7 +600,6 @@ class PreferenceDataGenerator(BaseDataGenerator):
         """
         # Find other tasks
         other_tasks = [task for task in self.optimal_by_task.keys() if task != chosen_traj["task"]]
-
         if other_tasks:
             other_task = random.choice(other_tasks)
             other_task_indices = self.optimal_by_task[other_task]
@@ -583,25 +646,25 @@ class VQADataGenerator(PreferenceDataGenerator):
             if strategy_choice == 0:
                 # Strategy 1: Use rewind-generated suboptimal trajectory from same task
                 traj = self._create_rewind_trajectory(traj)
-                strategy_used = "rewind_same_task"
+                strategy_used = DataGenStrat.REWIND_SAME_TASK.value
             elif strategy_choice == 1:
                 # Strategy 2: Use random suboptimal trajectory from same task
                 traj = self._create_same_task_suboptimal_trajectory(traj)
                 if traj is not None:
-                    strategy_used = "suboptimal_same_task"
+                    strategy_used = DataGenStrat.SUBOPTIMAL_SAME_TASK.value
                 else:
                     # Fall back to rewind if no same-task suboptimal trajectories
                     traj = self._create_rewind_trajectory(traj)
-                    strategy_used = "rewind_same_task"
+                    strategy_used = DataGenStrat.REWIND_SAME_TASK.value
             else:
                 # Strategy 3: Use trajectory from different task (can be optimal or suboptimal)
                 traj = self._create_different_task_trajectory(traj)
                 if traj is not None:
-                    strategy_used = "different_task"
+                    strategy_used = DataGenStrat.DIFFERENT_TASK.value
                 else:
                     # Fall back to rewind if no other tasks available
                     traj = self._create_rewind_trajectory(traj)
-                    strategy_used = "rewind_same_task"
+                    strategy_used = DataGenStrat.REWIND_SAME_TASK.value
 
             # Handle negative trajectory frames - could be from dataset (npz) or rewind-generated (numpy)
             if isinstance(traj, dict) and "frames" in traj:

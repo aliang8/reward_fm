@@ -21,7 +21,7 @@ from rfm.data.base_collator import BaseCollator
 class VQABatchCollator(BaseCollator):
     """Batch collator that processes Sample objects through the processor for VQA-based reward modeling."""
 
-    def __init__(self, **kwargs):
+    def __init__(self, training: bool = True, **kwargs):
         """
         Initialize the VQA batch collator.
 
@@ -31,6 +31,7 @@ class VQABatchCollator(BaseCollator):
             resized_height: Height to resize images/videos to (default: 128)
             resized_width: Width to resize images/videos to (default: 128)
         """
+        self.training = training
         super().__init__(**kwargs)
 
     def _create_vqa_inputs_with_labels(self, conversations, answer_texts):
@@ -211,7 +212,7 @@ class VQABatchCollator(BaseCollator):
                         "content": [
                             {
                                 "type": "text",
-                                "text": f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', which one do you prefer? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags. For example, if you prefer trajectory A, your answer should be <ans>A</ans>.",
+                                "text": f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', which one best corresponds to solving the task? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags. For example, if you prefer trajectory A, your answer should be <ans>A</ans>.",
                             },
                             {
                                 "type": "video",
@@ -238,7 +239,7 @@ class VQABatchCollator(BaseCollator):
                         "content": [
                             {
                                 "type": "text",
-                                "text": f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', which one do you prefer? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags. For example, if you prefer trajectory A, your answer should be <ans>A</ans>.",
+                                "text": f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', which one best corresponds to solving the task? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags. For example, if you prefer trajectory A, your answer should be <ans>A</ans>.",
                             },
                             {
                                 "type": "video",

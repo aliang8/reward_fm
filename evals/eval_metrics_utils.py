@@ -57,3 +57,27 @@ def compute_preference_accuracy(results: List[Dict[str, Any]]) -> Dict[str, Any]
         "num_total": total,
         "num_skipped": skipped,
     }
+
+
+def compute_preference_accuracy_from_progress(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Compute preference accuracy by using the final progress predictions."""
+    correct = 0
+    total = 0
+    skipped = 0
+    for r in results:
+        progress_chosen = r.get("progress_pred_chosen")[-1]
+        progress_rejected = r.get("progress_pred_rejected")[-1]
+        label = r.get("preference_label")
+        if progress_chosen is None or progress_rejected is None or label is None:
+            skipped += 1
+            continue
+        if progress_chosen > progress_rejected:
+            correct += 1
+        total += 1
+    acc = (correct / total) if total > 0 else None
+    return {
+        "preference_accuracy": acc,
+        "num_correct": correct,
+        "num_total": total,
+        "num_skipped": skipped,
+    }

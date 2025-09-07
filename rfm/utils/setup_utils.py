@@ -20,20 +20,15 @@ from rfm.models.rfm_vqa import RFMModelVQA
 from rfm.data.generators.generator import DataGenerator
 from rfm.data.generators.vqa_generator import VQADataGenerator
 from rfm.data.batch_collator import BatchCollator
-from rfm.data.dataset import (
-    InfiniteDataGeneratorDataset,
-    RewoundDataset,
-    VideoBinnedDataset,
-)
+from rfm.data.dataset import InfiniteDataGeneratorDataset
 from rfm.data.generators.success_failure import PairedSuccessFailureGenerator
 from rfm.data.generators.reward_alignment import RewardAlignmentGenerator
 from rfm.data.generators.confusion_matrix import ConfusionMatrixGenerator
 from rfm.data.generators.wrong_task import WrongTaskGenerator
+from rfm.data.generators.progress import ProgressGenerator
 from rfm.utils.logging import rank_0_print
 from rfm.configs.experiment_configs import ExperimentConfig, ModelConfig
 from rfm.data.vqa_batch_collator import VQABatchCollator
-
-SampleType = Union[InfiniteDataGeneratorDataset, RewoundDataset, VideoBinnedDataset]
 
 
 def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[AutoProcessor, RFMModel]:
@@ -114,48 +109,49 @@ def setup_peft_model(rfm_model: RFMModel, cfg: ExperimentConfig) -> RFMModel:
             lora_dropout=cfg.peft.lora_dropout,
             bias=cfg.peft.bias,
         )
-        peft_rfm_model = get_peft_model(rfm_model, lora_config)
-        for name, param in peft_rfm_model.named_parameters():
-            if any(head in name for head in ["progress_head", "preference_head", "similarity_head"]):
-                param.requires_grad = True
-        return peft_rfm_model
+        if cfg.peft.peft_vision_encoder:
+            # vision backbone is frozen, but we can still train the LoRA parameters
+            rank_0_print("Attaching LoRA to only the vision encoder...")
+            rfm_model.base_model.model.visual = get_peft_model(rfm_model.base_model.model.visual, lora_config)
     else:
         rank_0_print("Using full model training (no PEFT)...")
-        peft_rfm_model = rfm_model
-        # Configure which parts of the model to train based on config
-        for name, param in peft_rfm_model.named_parameters():
-            # Train prediction heads based on individual settings
-            if "progress_head" in name:
-                param.requires_grad = cfg.model.train_progress_head
-            elif "preference_head" in name:
-                param.requires_grad = cfg.model.train_preference_head
-            elif "similarity_head" in name:
-                param.requires_grad = cfg.model.train_similarity_head
-            # Train vision encoder if specified
-            elif "visual" in name or "vision" in name:
-                param.requires_grad = cfg.model.train_vision_encoder
-            # Train language model if specified
-            elif "model" in name and not ("visual" in name or "vision" in name):
-                param.requires_grad = cfg.model.train_language_model
-            # Default: train if language model training is enabled
+
+    # Configure which parts of the model to train based on config
+    for name, param in rfm_model.named_parameters():
+        # Train prediction heads based on individual settings
+        if "progress_head" in name:
+            param.requires_grad = cfg.model.train_progress_head
+        elif "preference_head" in name:
+            param.requires_grad = cfg.model.train_preference_head
+        elif "similarity_head" in name:
+            param.requires_grad = cfg.model.train_similarity_head
+        # Train vision encoder if specified
+        elif "visual" in name or "vision" in name:
+            # if PEFT enabled, we don't need to do anything
+            if cfg.peft.use_peft and cfg.peft.peft_vision_encoder:
+                pass 
             else:
-                param.requires_grad = cfg.model.train_language_model
+                param.requires_grad = cfg.model.train_vision_encoder
+        elif "language_model" in name:
+            param.requires_grad = cfg.model.train_language_model
+        else:
+            param.requires_grad = False
 
-        if cfg.logging.print_trainable_parameters:
-            # Count trainable parameters manually - defer printing until after FSDP setup
-            trainable_params = sum(p.numel() for p in peft_rfm_model.parameters() if p.requires_grad)
-            all_params = sum(p.numel() for p in peft_rfm_model.parameters())
-            rank_0_print(
-                f"trainable params: {trainable_params:,} || all params: {all_params:,} || trainable%: {100 * trainable_params / all_params:.4f}"
-            )
-            rank_0_print(f"Training configuration:")
-            rank_0_print(f"  - Vision encoder: {cfg.model.train_vision_encoder}")
-            rank_0_print(f"  - Language model: {cfg.model.train_language_model}")
-            rank_0_print(f"  - Progress head: {cfg.model.train_progress_head}")
-            rank_0_print(f"  - Preference head: {cfg.model.train_preference_head}")
-            rank_0_print(f"  - Similarity head: {cfg.model.train_similarity_head}")
+    if cfg.logging.print_trainable_parameters:
+        # Count trainable parameters manually - defer printing until after FSDP setup
+        trainable_params = sum(p.numel() for p in rfm_model.parameters() if p.requires_grad)
+        all_params = sum(p.numel() for p in rfm_model.parameters())
+        rank_0_print(
+            f"trainable params: {trainable_params:,} || all params: {all_params:,} || trainable%: {100 * trainable_params / all_params:.4f}"
+        )
+        rank_0_print(f"Training configuration:")
+        rank_0_print(f"  - Vision encoder: {cfg.model.train_vision_encoder}")
+        rank_0_print(f"  - Language model: {cfg.model.train_language_model}")
+        rank_0_print(f"  - Progress head: {cfg.model.train_progress_head}")
+        rank_0_print(f"  - Preference head: {cfg.model.train_preference_head}")
+        rank_0_print(f"  - Similarity head: {cfg.model.train_similarity_head}")
 
-        return peft_rfm_model
+    return rfm_model
 
 
 def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: bool = False) -> TrainingArguments:
@@ -186,6 +182,7 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
         "lr_scheduler_type": cfg.training.lr_scheduler_type,
         "warmup_steps": cfg.training.warmup_steps,
         "warmup_ratio": cfg.training.warmup_ratio,
+        "max_grad_norm": cfg.training.max_grad_norm,
     }
 
     # Add eval_steps if evaluation_strategy is "steps"
@@ -245,12 +242,21 @@ def setup_data_generator(cfg: ExperimentConfig, is_eval: bool = False) -> DataGe
             rank_0_print(f"  Dataset {i + 1}: {dataset} -> {subset}")
 
     if cfg.data.model_type == "vqa":
-        data_generator = VQADataGenerator(config=cfg.data, is_evaluation=is_eval)
+        if cfg.data.dataset_type == "reward_alignment":
+            data_generator = RewardAlignmentGenerator(config=cfg.data, is_evaluation=is_eval)
+        elif cfg.data.dataset_type == "success_failure":
+            data_generator = PairedSuccessFailureGenerator(config=cfg.data, is_evaluation=is_eval)
+        elif cfg.data.dataset_type == "policy_ranking":
+            data_generator = ProgressGenerator(config=cfg.data, is_evaluation=is_eval)
+        else:
+            data_generator = VQADataGenerator(config=cfg.data, is_evaluation=is_eval)
     else:
         if cfg.data.dataset_type == "reward_alignment":
             data_generator = RewardAlignmentGenerator(config=cfg.data, is_evaluation=is_eval)
         elif cfg.data.dataset_type == "success_failure":
             data_generator = PairedSuccessFailureGenerator(config=cfg.data, is_evaluation=is_eval)
+        elif cfg.data.dataset_type == "policy_ranking":
+            data_generator = ProgressGenerator(config=cfg.data, is_evaluation=is_eval)
         elif cfg.data.dataset_type == "confusion_matrix":
             data_generator = ConfusionMatrixGenerator(
                 config=cfg.data, is_evaluation=is_eval, max_trajectories=cfg.data.max_trajectories
@@ -270,30 +276,20 @@ def setup_data_generator(cfg: ExperimentConfig, is_eval: bool = False) -> DataGe
 
 def setup_dataset(
     data_generator: DataGenerator, dataset_type: str = "default", dataset_kwargs: dict = {}
-) -> SampleType:
+) -> InfiniteDataGeneratorDataset:
     """Shared function to create training or evaluation dataset based on config"""
 
     # Get the dataset type from the data generator config
     config_dataset_type = data_generator.config.dataset_type
 
     rank_0_print(f"Setting up {dataset_type} dataset with type: {config_dataset_type}")
-
-    if config_dataset_type == "rewound":
-        rank_0_print(f"Creating rewound dataset")
-        dataset = RewoundDataset(data_generator, **dataset_kwargs)
-    elif config_dataset_type == "video_binned":
-        rank_0_print(f"Creating video-binned dataset")
-        dataset = VideoBinnedDataset(data_generator, **dataset_kwargs)
-    else:
-        # Default to preference/similarity dataset
-        rank_0_print("Creating preference/similarity dataset")
-        dataset = InfiniteDataGeneratorDataset(data_generator, **dataset_kwargs)
+    dataset = InfiniteDataGeneratorDataset(data_generator, **dataset_kwargs)
 
     rank_0_print(f"{dataset_type.capitalize()} dataset created successfully with {len(dataset)} samples")
     return dataset
 
 
-def setup_eval_dataset(cfg: ExperimentConfig) -> SampleType:
+def setup_eval_dataset(cfg: ExperimentConfig) -> InfiniteDataGeneratorDataset:
     """Create evaluation dataset using eval-specific configuration"""
 
     # Create evaluation data generator
@@ -344,6 +340,8 @@ def setup_vqa_model_and_processor(cfg: ModelConfig, hf_model_id: str = ""):
         # num_frames=cfg.data.max_frames,
         do_sample_frames=False,  # disable frame sampling here since we do this in the data generator
         # max_frames=cfg.data.max_frames,
+        padding_side="left",
+        cache_dir="/scr/ykorkmaz/rfm/model/base_qwen",
     )
 
     rank_0_print(f"Processor: {processor}")
@@ -352,7 +350,9 @@ def setup_vqa_model_and_processor(cfg: ModelConfig, hf_model_id: str = ""):
         processor.tokenizer.pad_token = processor.tokenizer.eos_token
 
     # Load base conditional generation model for VQA
-    base_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(cfg.base_model_id)
+    base_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+        cfg.base_model_id, cache_dir="/scr/ykorkmaz/rfm/model/base_qwen"
+    )
 
     # Resize token embeddings if new tokens were added
     if len(processor.tokenizer) != base_model.config.vocab_size:

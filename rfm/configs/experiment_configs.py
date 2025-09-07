@@ -39,6 +39,7 @@ class PEFTConfig:
     target_modules: List[str] = field(
         default_factory=lambda: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
     )
+    peft_vision_encoder: bool = field(default=False, metadata={"help": "Whether to attach LoRA to the vision encoder"})
 
 
 @dataclass
@@ -127,7 +128,10 @@ class DataConfig:
     fps: int = field(default=10, metadata={"help": "Frames per second to extract from videos"})
 
     max_trajectories: int = field(default=-1, metadata={"help": "Maximum number of trajectories to use for dataset"})
-    n_wrong_tasks: int = field(default=5, metadata={"help": "Number of wrong tasks to use for wrong task preference dataset"})
+    n_wrong_tasks: int = field(
+        default=5, metadata={"help": "Number of wrong tasks to use for wrong task preference dataset"}
+    )
+
 
 @dataclass
 class TrainingConfig:
@@ -171,7 +175,7 @@ class TrainingConfig:
     lr_scheduler_type: str = field(default="cosine")
     warmup_steps: int = field(default=0)
     warmup_ratio: float = field(default=0.1)
-
+    max_grad_norm: float = field(default=1.0)
 
 @dataclass
 class LoggingConfig:

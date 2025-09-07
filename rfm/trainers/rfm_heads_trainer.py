@@ -12,7 +12,7 @@ from tqdm import tqdm
 import torch.distributed as dist
 
 from rfm.utils.logging import is_rank_0, rank_0_print
-from rfm.utils.metrics import compute_auc, compute_spearman_correlation
+from rfm.utils.metrics import compute_spearman_correlation
 from rfm.utils.logging import _timer
 
 
@@ -22,37 +22,7 @@ class RFMHeadsTrainer(Trainer):
         self.config = config
         # Initialize custom loss tracking
         self.log_metadata = {}
-        self.loss_keys = [
-            "preference_loss",
-            "similarity_loss",
-            "progress_loss",
-            "pref_acc_rewind_same_task",
-            "pref_loss_rewind_same_task",
-            "pref_acc_suboptimal_same_task",
-            "pref_loss_suboptimal_same_task",
-            "pref_acc_different_task",
-            "pref_loss_different_task",
-            "prog_loss_chosen",
-            "prog_loss_rejected",
-            "prog_loss_rewind_same_task",
-            "prog_loss_suboptimal_same_task",
-            "prog_loss_different_task",
-            "spearman_corr_rewind_same_task",
-            "spearman_corr_suboptimal_same_task",
-            "spearman_corr_different_task",
-            "pref_loss",
-            "preference_accuracy",
-            "spearman_corr_avg",
-        ]
-
-        self.log_keys = [
-            "num_trajs_rewind",
-            "num_trajs_same_task",
-            "num_trajs_different_task",
-        ]
-        self.global_metadata = {
-            "total_samples": 0,
-        }
+        self.global_metadata = {"total_samples": 0}
         self.timing_raw = {}
 
     def training_step(self, model, inputs, num_items_in_batch=None):
@@ -76,21 +46,14 @@ class RFMHeadsTrainer(Trainer):
             return
 
         # Aggregate custom losses across all processes if using distributed training
-        aggregated_metadata = self._aggregate_log_metadata()
-        aggregated_losses = {
-            f"train/{key}": aggregated_metadata[key] for key in self.loss_keys if key in aggregated_metadata
-        }
-        aggregated_log_keys = {
-            f"misc/{key}": aggregated_metadata[key] for key in self.log_keys if key in aggregated_metadata
-        }
+        log_metadata = self._aggregate_log_metadata()
 
         # Prepare logging data using aggregated losses
         log_data = {
             "step": self.state.global_step,
             **self.timing_raw,
+            **log_metadata,
         }
-        log_data.update(aggregated_losses)
-        log_data.update(aggregated_log_keys)
 
         # also log the global metadata
         log_global = {f"counts/{key}": self.global_metadata[key] for key in self.global_metadata}
@@ -109,15 +72,6 @@ class RFMHeadsTrainer(Trainer):
         # Log to console on rank 0
         if is_rank_0():
             rank_0_print(f"Step {self.state.global_step} Custom Losses (Aggregated):")
-            for key in self.loss_keys:
-                if f"train/{key}" in aggregated_losses:
-                    rank_0_print(f"  {key}: {aggregated_losses[f'train/{key}']:.6f}")
-
-            rank_0_print("-" * 50)
-            for key in self.log_keys:
-                if f"misc/{key}" in aggregated_log_keys:
-                    rank_0_print(f"  {key}: {aggregated_log_keys[f'misc/{key}']:.6f}")
-
             rank_0_print("-" * 50)
             for key in log_global:
                 rank_0_print(f"  {key}: {log_global[key]}")
@@ -138,32 +92,19 @@ class RFMHeadsTrainer(Trainer):
 
         # Aggregate loss values (averages) across all processes
 
-        for key in self.loss_keys + self.log_keys:
-            if key in self.log_metadata:
-                # Convert to tensor for all_reduce
-                loss_tensor = torch.tensor(self.log_metadata[key], device=self.accelerator.device)
+        for key in self.log_metadata:
+            # Convert to tensor for all_reduce
+            loss_tensor = torch.tensor(self.log_metadata[key], device=self.accelerator.device)
 
-                # Sum across all processes
-                dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
+            # Sum across all processes
+            dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
 
-                # Average by world size
-                aggregated[key] = (loss_tensor / dist.get_world_size()).item()
-
-        # Aggregate count values (mean) across all processes
-        for key in self.log_keys:
-            if key in self.log_metadata:
-                # Convert to tensor for all_reduce
-                count_tensor = torch.tensor(self.log_metadata[key], device=self.accelerator.device)
-
-                # Sum across all processes
-                dist.all_reduce(count_tensor, op=dist.ReduceOp.SUM)
-
-                # Average by world size
-                aggregated[key] = (count_tensor / dist.get_world_size()).item()
+            # Average by world size
+            aggregated[key] = (loss_tensor / dist.get_world_size()).item()
 
         return aggregated
 
-    def evaluate(self, eval_dataset=None, ignore_keys=None, metric_key_prefix="eval") -> Dict[str, float]:
+    def evaluate(self, eval_dataset=None, ignore_keys=None) -> Dict[str, float]:
         """
         Override evaluate method to implement custom RFM evaluation metrics.
         """
@@ -189,16 +130,13 @@ class RFMHeadsTrainer(Trainer):
                     outputs.append(loss_dicts)
 
         # Aggregate outputs
-        aggregated_outputs = {}
+        metrics = {}
 
         # assume that we already called .item() on the outputs
-        for key in self.loss_keys:
-            if key in outputs[0]:
-                aggregated_outputs[key] = [output[key] for output in outputs if key in output]
-                aggregated_outputs[key] = np.array(aggregated_outputs[key]).mean()
-
-        # Compute metrics
-        metrics = {f"eval/{key}": aggregated_outputs[key] for key in aggregated_outputs}
+        keys = list(outputs[0].keys())
+        for key in keys:
+            metrics[key] = [output[key] for output in outputs if key in output]
+            metrics[key] = np.array(metrics[key]).mean()
 
         # Log metrics
         if is_rank_0():
@@ -214,7 +152,7 @@ class RFMHeadsTrainer(Trainer):
 
         return metrics
 
-    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+    def compute_loss(self, model, inputs, return_outputs=False, training=True, **kwargs):
         """Compute loss for separate preference and similarity batches."""
 
         # Extract the separate batches
@@ -232,7 +170,7 @@ class RFMHeadsTrainer(Trainer):
         if num_preferences > 0 and preference_inputs:
             with _timer("time/compute_preference_loss", timing_raw=self.timing_raw):
                 preference_loss, progress_loss, loss_dict = self._compute_preference_loss(
-                    model, preference_inputs, return_outputs=True
+                    model, preference_inputs, return_outputs=True, training=training
                 )
             if self.config.model.train_preference_head:
                 total_loss += preference_loss
@@ -245,7 +183,7 @@ class RFMHeadsTrainer(Trainer):
         if num_similarities > 0 and similarity_inputs:
             with _timer("time/compute_similarity_loss", timing_raw=self.timing_raw):
                 similarity_loss, progress_loss, loss_dict = self._compute_similarity_loss(
-                    model, similarity_inputs, return_outputs=True
+                    model, similarity_inputs, return_outputs=True, training=training
                 )
             if self.config.model.train_similarity_head:
                 total_loss += similarity_loss
@@ -375,7 +313,7 @@ class RFMHeadsTrainer(Trainer):
 
         return 0.0, 0.0
 
-    def _compute_preference_loss(self, model, inputs, return_outputs=False):
+    def _compute_preference_loss(self, model, inputs, return_outputs=False, training=True):
         """Compute preference prediction loss using Bradley-Terry model."""
         # Single forward pass with both trajectories concatenated
         # The model should handle the preference prediction at the end
@@ -483,6 +421,8 @@ class RFMHeadsTrainer(Trainer):
         if return_outputs:
             outputs_dict = {}
 
+            prefix = "train" if training else "eval"
+
             if self.config.model.train_preference_head and preference_loss is not None:
                 # Compute preference accuracy for training monitoring
                 preference_probs = torch.sigmoid(preference_scores)
@@ -497,17 +437,29 @@ class RFMHeadsTrainer(Trainer):
 
                     outputs_dict.update(
                         {
-                            f"pref_acc_{strat}": (preference_accuracy[mask == 1]).mean().item(),
-                            f"pref_loss_{strat}": (preference_loss_all[mask == 1]).mean().item(),
+                            f"{prefix}_strat/pref_acc_{strat}": (preference_accuracy[mask == 1]).mean().item(),
+                            f"{prefix}_strat/pref_loss_{strat}": (preference_loss_all[mask == 1]).mean().item(),
+                        }
+                    )
+                
+                # split acc by data source
+                data_sources = set(inputs["data_source"])
+                for data_source in data_sources:
+                    mask = [1 if s == data_source else 0 for s in inputs["data_source"]]
+                    mask = torch.tensor(mask, device=self.accelerator.device)
+                    outputs_dict.update(
+                        {   
+                            f"{prefix}_ds/pref_acc_{data_source}": (preference_accuracy[mask == 1]).mean().item(),
+                            f"{prefix}_ds/pref_loss_{data_source}": (preference_loss_all[mask == 1]).mean().item(),
                         }
                     )
 
                 outputs_dict.update(
                     {
-                        "preference_scores": preference_scores,
-                        "preference_labels": preference_labels,
-                        "preference_loss": preference_loss.item(),
-                        "preference_accuracy": preference_accuracy.mean().item(),
+                        # "preference_scores": preference_scores,
+                        # "preference_labels": preference_labels,
+                        f"{prefix}/preference_loss": preference_loss.item(),
+                        f"{prefix}/preference_accuracy": preference_accuracy.mean().item(),
                     }
                 )
 
@@ -519,8 +471,20 @@ class RFMHeadsTrainer(Trainer):
                     mask = torch.tensor(mask, device=self.accelerator.device)
                     outputs_dict.update(
                         {
-                            f"spearman_corr_{strat}": (spearman_corr_rejected[mask == 1]).mean().item(),
-                            f"prog_loss_{strat}": (progress_loss_rejected[mask == 1]).mean().item(),
+                            f"{prefix}_strat/spearman_corr_{strat}": (spearman_corr_rejected[mask == 1]).mean().item(),
+                            f"{prefix}_strat/prog_loss_{strat}": (progress_loss_rejected[mask == 1]).mean().item(),
+                        }
+                    )
+
+                # split spearman by data source
+                data_sources = set(inputs["data_source"])
+                for data_source in data_sources:
+                    mask = [1 if s == data_source else 0 for s in inputs["data_source"]]
+                    mask = torch.tensor(mask, device=self.accelerator.device)
+                    outputs_dict.update(
+                        {
+                            f"{prefix}_ds/spearman_corr_{data_source}": (spearman_corr_rejected[mask == 1]).mean().item(),
+                            f"{prefix}_ds/prog_loss_{data_source}": (progress_loss_rejected[mask == 1]).mean().item(),
                         }
                     )
 
@@ -540,10 +504,10 @@ class RFMHeadsTrainer(Trainer):
 
                 outputs_dict.update(
                     {
-                        "prog_loss_chosen": progress_loss_chosen.mean().item(),
-                        "prog_loss_rejected": progress_loss_rejected.mean().item(),
-                        "progress_loss": progress_loss.item(),
-                        "spearman_corr_avg": avg_spearman,
+                        f"{prefix}/prog_loss_chosen": progress_loss_chosen.mean().item(),
+                        f"{prefix}/prog_loss_rejected": progress_loss_rejected.mean().item(),
+                        f"{prefix}/progress_loss": progress_loss.item(),
+                        f"{prefix}/spearman_corr_avg": avg_spearman,
                     }
                 )
             return preference_loss, progress_loss, outputs_dict
@@ -645,48 +609,3 @@ class RFMHeadsTrainer(Trainer):
             }
             return total_loss, outputs_dict
         return total_loss
-
-    def _log_rewind_stats(self, batch_inputs):
-        """Log rewind length statistics during training."""
-        if "rewind_lengths" in batch_inputs:
-            rewind_lengths = batch_inputs["rewind_lengths"]
-            if len(rewind_lengths) > 0:
-                rewind_min = rewind_lengths.min().item()
-                rewind_max = rewind_lengths.max().item()
-
-                # Log to wandb
-                if self.args.report_to and "wandb" in self.args.report_to:
-                    import wandb
-
-                    wandb.log(
-                        {
-                            "train/rewind_length_min": rewind_min,
-                            "train/rewind_length_max": rewind_max,
-                        }
-                    )
-
-                # Log to console
-                rank_0_print(f"Rewind lengths - Min: {rewind_min}, Max: {rewind_max}")
-
-        # Log video-binned statistics
-        if "video_binned_metadata" in batch_inputs:
-            video_binned_metadata = batch_inputs["video_binned_metadata"]
-            video_binned_count = sum(1 for meta in video_binned_metadata if meta is not None)
-            if video_binned_count > 0:
-                # Calculate average number of bins used
-                total_bins = sum(meta.get("num_bins", 0) for meta in video_binned_metadata if meta is not None)
-                avg_bins = total_bins / video_binned_count if video_binned_count > 0 else 0
-
-                # Log to wandb
-                if self.args.report_to and "wandb" in self.args.report_to:
-                    import wandb
-
-                    wandb.log(
-                        {
-                            "train/video_binned_samples": video_binned_count,
-                            "train/video_binned_avg_bins": avg_bins,
-                        }
-                    )
-
-                # Log to console
-                rank_0_print(f"Video-binned samples in batch: {video_binned_count} (avg bins: {avg_bins:.1f})")

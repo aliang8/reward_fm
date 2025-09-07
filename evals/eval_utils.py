@@ -107,6 +107,8 @@ async def post_batch_npy_async(
     headers = {"Connection": "close"}
     # Send as multipart form data using aiohttp
     timeout = aiohttp.ClientTimeout(total=timeout_s)
-    async with session.post(url.rstrip("/") + "/evaluate_batch_npy", data=form_data, timeout=timeout, headers=headers) as resp:
+    async with session.post(
+        url.rstrip("/") + "/evaluate_batch_npy", data=form_data, timeout=timeout, headers=headers
+    ) as resp:
         resp.raise_for_status()
         return await resp.json()

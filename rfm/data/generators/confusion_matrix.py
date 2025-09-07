@@ -8,6 +8,7 @@ from rfm.utils.logging import rank_0_print
 from typing import Dict, List, Optional, Union
 from rfm.data.generators.base import BaseDataGenerator
 from tqdm import tqdm
+from rfm.data.generators.pref import DataGenStrat
 import numpy as np
 import random
 
@@ -108,7 +109,7 @@ class ConfusionMatrixGenerator(BaseDataGenerator):
             lang_vector=original_traj["lang_vector"],  # Keep original language vector
             is_robot=original_traj["is_robot"],
             quality_label=original_traj["quality_label"],
-            data_gen_strategy="confusion_matrix",
+            data_gen_strategy=DataGenStrat.CONFUSION_MATRIX.value,
             target_progress=[1.0],  # Assume trajectory is complete for confusion matrix
             metadata=metadata,
         )

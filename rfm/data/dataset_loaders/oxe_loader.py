@@ -46,6 +46,9 @@ POSSIBLE_LANG_INSTRUCTION_KEYS = [  # valid keys for language instruction in OXE
     "natural_language_instruction",
     "language_instruction",
     "instruction",
+    "language_instruction1",
+    "language_instruction2",
+    "language_instruction3",
 ]
 MAX_LANGTABLE_EPISODES = (
     50_000  # for language table, we only want to label the first 50k episodes b/c it's way too many
@@ -87,16 +90,15 @@ def _process_single_oxe_episode(args):
     episode_entries = []
 
     # Episode is already converted to numpy format
-    steps_np = episode["steps"]
 
     for img_key in valid_img_keys:
         # Check first frame for all-black to prune
-        if img_key not in steps_np[0]["observation"]:
+        if img_key not in episode[0]["observation"]:
             continue
-        if np.all(steps_np[0]["observation"][img_key] == 0):
+        if np.all(episode[0]["observation"][img_key] == 0):
             continue
 
-        frames = [s["observation"][img_key] for s in steps_np if img_key in s["observation"]]
+        frames = [s["observation"][img_key] for s in episode if img_key in s["observation"]]
         if not frames:
             continue
 
@@ -218,7 +220,7 @@ def convert_oxe_dataset_to_hf(
 
     # Determine number of workers
     if num_workers == -1:
-        num_workers = max(1, min(cpu_count(), 8))
+        num_workers = min(cpu_count(), 8) # or else ram usage will blow up
     elif num_workers == 0:
         num_workers = 1
 
@@ -280,36 +282,12 @@ def convert_oxe_dataset_to_hf(
             # Convert episode to numpy format for multiprocessing
             episode_np = tfds.as_numpy(episode)
 
-            # Additional safety: ensure all nested objects are numpy
-            def ensure_numpy(obj):
-                if hasattr(obj, "numpy"):
-                    try:
-                        return obj.numpy()
-                    except:
-                        # If numpy() fails, try to convert to list/array
-                        if hasattr(obj, "__array__"):
-                            return np.array(obj)
-                        else:
-                            return str(obj)  # Fallback to string representation
-                elif isinstance(obj, dict):
-                    return {k: ensure_numpy(v) for k, v in obj.items()}
-                elif isinstance(obj, (list, tuple)):
-                    return type(obj)(ensure_numpy(item) for item in obj)
-                else:
-                    return obj
+            # iterate through all steps and just store as a list
+            episode_np = [s for s in episode_np["steps"]]
 
-            episode_np = ensure_numpy(episode_np)
+            episode_batch.append(episode_np)
+            episode_info_batch.append((ep_idx, task, lang_vec))
 
-            # Test if the converted episode is picklable
-            try:
-                import pickle
-
-                pickle.dumps(episode_np)
-                episode_batch.append(episode_np)
-                episode_info_batch.append((ep_idx, task, lang_vec))
-            except Exception as pickle_error:
-                print(f"Warning: Episode {ep_idx} is not picklable after conversion: {pickle_error}")
-                continue
         except Exception as e:
             print(f"Warning: Failed to convert episode {ep_idx} to numpy: {e}")
             continue

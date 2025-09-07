@@ -24,21 +24,12 @@ class DataGenerator(BaseDataGenerator):
             f"DataGenerator initialized with preference_ratio={self.preference_ratio:.2f}, similarity_ratio={self.similarity_ratio:.2f}"
         )
 
-    def _create_sample(self):
+    def __next__(self):
         """Create a sample based on the configured ratios."""
         if random.random() < self.preference_ratio:
-            return self.preference_generator._create_preference_sample()
+            return self.preference_generator.__next__()
         else:
-            return self.similarity_generator._create_similarity_sample()
-
-    def _create_preference_sample(self):
-        """Create a preference sample using the preference generator."""
-        return self.preference_generator._create_preference_sample()
-
-    def _create_similarity_sample(self):
-        """Create a similarity sample using the similarity generator."""
-        return self.similarity_generator._create_similarity_sample()
-
+            return self.similarity_generator.__next__()
 
 def test():
     """Test the BatchCollator with generated samples."""
@@ -72,8 +63,8 @@ def test():
 
     # Create mock config
     mock_data_config = MockDataConfig(
-        train_datasets=["abraranwar/libero_rfm"],
-        train_subsets=["libero256_90"],
+        train_datasets=["jesbu1/oxe_rfm"],
+        train_subsets=["oxe_bridge_v2"],
         preference_ratio=1.0,
         similarity_ratio=0.0,
         preference_strategy_ratio=[0.8, 0.1, 0.1, 0.0],
@@ -101,6 +92,7 @@ def test():
 
     for i in range(10):
         sample = infinite_dataset[i]
+        import ipdb; ipdb.set_trace()
         if sample.sample_type == "preference":
             preference_count += 1
         else:

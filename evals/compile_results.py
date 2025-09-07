@@ -34,8 +34,8 @@ def analyze_evaluation_type(eval_type: str, results: List[Dict[str, Any]]) -> Di
         return run_confusion_matrix_eval(results)
     elif eval_type == "wrong_task_preference":
         return run_success_failure_eval(results)
-    else:
-        return {"error": f"Unknown evaluation type: {eval_type}"}
+    elif eval_type == "policy_ranking_progress":
+        return run_policy_ranking_eval(results)
 
 
 def run_success_failure_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -172,6 +172,105 @@ def run_confusion_matrix_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
         "num_trajectories": len(trajectory_rewards),
         "num_samples": len(results),
         "task_discrimination": task_discrimination,
+        "overall_metrics": overall_metrics,
+    }
+
+def run_policy_ranking_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Run policy_ranking evaluation analysis."""
+    # Group results by task
+    task_groups = {}
+
+    for r in results:
+        # Get task and quality label from metadata
+        meta = r.get("metadata", {}) or {}
+        task = meta.get("task")
+        quality_label = meta.get("quality_label")
+        
+        if task is None or quality_label is None:
+            continue
+        
+        # Only consider failure, successful, suboptimal
+        if quality_label not in ["failure", "successful", "suboptimal"]:
+            continue
+        
+        # Get final reward (last value of progress_pred_A)
+        progress_pred = r.get("progress_pred_A", [])
+        if not progress_pred or len(progress_pred) == 0:
+            continue
+        
+        final_reward = float(progress_pred[-1])
+        
+        # Group by task
+        if task not in task_groups:
+            task_groups[task] = []
+        task_groups[task].append({
+            "quality_label": quality_label,
+            "final_reward": final_reward,
+        })
+    
+    if not task_groups:
+        return {"error": "No valid policy ranking data found"}
+    
+    # For each task, compute ranking correlation
+    task_correlations = []
+    task_details = {}
+    
+    for task, trajectories in task_groups.items():
+        # Create gold ranking: failure=1, suboptimal=2, successful=3
+        gold_ranks = []
+        predicted_ranks = []
+        
+        for traj in trajectories:
+            quality = traj["quality_label"]
+            reward = traj["final_reward"]
+            
+            # Gold ranking
+            if quality == "failure":
+                gold_rank = 1
+            elif quality == "suboptimal":
+                gold_rank = 2
+            elif quality == "successful":
+                gold_rank = 3
+            else:
+                continue  # Skip unknown quality labels
+            
+            gold_ranks.append(gold_rank)
+            predicted_ranks.append(reward)
+        
+        # Skip if we don't have at least 2 different quality levels
+        unique_qualities = set(traj["quality_label"] for traj in trajectories)
+        if len(unique_qualities) < 2:
+            continue
+        
+        # Compute Spearman correlation
+        if len(gold_ranks) >= 2:
+            spearman_corr = compute_spearman(gold_ranks, predicted_ranks)
+            if not np.isnan(spearman_corr):
+                task_correlations.append(spearman_corr)
+                task_details[task] = {
+                    "spearman_correlation": spearman_corr,
+                    "num_trajectories": len(trajectories),
+                    "quality_distribution": {q: sum(1 for t in trajectories if t["quality_label"] == q) for q in unique_qualities},
+                    "gold_ranks": gold_ranks,
+                    "predicted_rewards": predicted_ranks,
+                }
+    
+    # Overall metrics
+    overall_metrics = {}
+    if task_correlations:
+        overall_metrics = {
+            "mean_spearman_correlation": np.mean(task_correlations),
+            "std_spearman_correlation": np.std(task_correlations),
+            "min_spearman_correlation": np.min(task_correlations),
+            "max_spearman_correlation": np.max(task_correlations),
+            "num_tasks_with_valid_correlation": len(task_correlations),
+        }
+    
+    return {
+        "num_tasks": len(task_groups),
+        "num_samples": len(results),
+        "num_tasks_with_valid_correlation": len(task_correlations),
+        "task_details": task_details,
         "overall_metrics": overall_metrics,
     }
 

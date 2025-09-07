@@ -31,9 +31,9 @@ class RFMModel(PreTrainedModel):
             self.model = Qwen2_5_VLModel(config)
 
         # Three prediction heads for different objectives
-        self.progress_head = nn.Linear(config.hidden_size, 1, bias=False)  # Progress prediction (0-1)
-        self.preference_head = nn.Linear(config.hidden_size, 1, bias=False)  # Preference prediction (binary)
-        self.similarity_head = nn.Linear(config.hidden_size, 1, bias=False)  # Similarity scoring (reward)
+        self.progress_head = nn.Linear(config.hidden_size, 1)  # Progress prediction (0-1)
+        self.preference_head = nn.Linear(config.hidden_size, 1)  # Preference prediction (binary)
+        self.similarity_head = nn.Linear(config.hidden_size, 1)  # Similarity scoring (reward)
 
         # Ensure all heads have the same dtype as the base model
         self.model_dtype = self.model.dtype
@@ -128,7 +128,6 @@ class RFMModel(PreTrainedModel):
         model_kwargs = {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
-            "output_hidden_states": True,
             "pixel_values": pixel_values,
             "pixel_values_videos": pixel_values_videos,
             "image_grid_thw": image_grid_thw,
@@ -142,17 +141,17 @@ class RFMModel(PreTrainedModel):
             outputs = self.model(**model_kwargs)
 
         # [batch_size, seq_len, hidden_size]
-        last_hidden_state = outputs.hidden_states[-1]
+        last_hidden_state = outputs.last_hidden_state
 
         # Always compute progress for all timesteps if target_progress is provided
         progress_logits = None
         # Find vision_start_token and split_token for trajectory separation
         vision_start_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|vision_start|>")
-        split_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|split_token|>")
 
         progress_logits_A = []
         progress_logits_B = []
 
+        # temporal patch size
         tps = self.processor.video_processor.merge_size
 
         with _timer("time/progress_logits", timing_raw=timing_raw):
@@ -185,7 +184,7 @@ class RFMModel(PreTrainedModel):
 
                 # Calculate frame boundary positions for trajectory A
                 frame_boundary_positions_A = []
-                current_pos = vision_start_positions[0].item() + 1  # Start after vision_start token
+                current_pos = vision_start_positions[0].item()
 
                 # Find where each frame ends in trajectory A
                 for frame_idx in range(T_A):
@@ -202,6 +201,8 @@ class RFMModel(PreTrainedModel):
                     boundary_hidden_states_A = last_hidden_state[i][
                         trajectory_A_boundaries
                     ]  # [num_frames_A, hidden_dim]
+
+                    assert boundary_hidden_states_A.shape[0] == T_A, f"Expected {T_A} frames, got {boundary_hidden_states_A.shape[0]}"
                     progress_A = self.progress_head(boundary_hidden_states_A).squeeze(-1)  # [num_frames_A]
                     progress_logits_A.append(progress_A)
                 else:
@@ -209,30 +210,18 @@ class RFMModel(PreTrainedModel):
 
                 # For progress-only samples, we don't need trajectory B
                 if sample_type != "progress":
-                    # Find the position of the split token after vision_start
-                    vision_start_pos = vision_start_positions[0].item()
-                    split_positions = (seq_ids == split_token_id).nonzero(as_tuple=True)[0]
-                    # Filter split positions to only those after vision_start
-                    split_positions = split_positions[split_positions > vision_start_pos]
-
-                    if len(split_positions) <= 0:
-                        raise ValueError(f"split_token not found after vision_start in sequence {i}")
-
                     # For trajectory B: use video_grid_thw[i+1]
-                    if i + 1 >= len(video_grid_thw):
-                        raise ValueError(f"video_grid_thw index {i + 1} out of bounds for trajectory B")
+                    if (i * tps) + 1 >= len(video_grid_thw):
+                        raise ValueError(f"video_grid_thw index {(i * tps) + 1} out of bounds for trajectory B")
                     current_video_grid_B = video_grid_thw[i * tps + 1]  # [T, H, W]
                     T_B, H_B, W_B = current_video_grid_B
 
                     # Calculate tokens per frame for trajectory B: (H_B * W_B) // merge_size^2
                     tokens_per_frame_B = (H_B * W_B) // (tps**2)
 
-                    # Get split_pos before using it in trajectory B calculations
-                    split_pos = split_positions[0].item()
-
                     # Calculate frame boundary positions for trajectory B (after split_token)
                     frame_boundary_positions_B = []
-                    current_pos = split_pos + 1  # Start after split_token
+                    current_pos = vision_start_positions[1].item()
 
                     # Find where each frame ends in trajectory B
                     for frame_idx in range(T_B):
@@ -241,16 +230,15 @@ class RFMModel(PreTrainedModel):
                         frame_boundary_positions_B.append(frame_end)
                         current_pos = frame_end
 
-                    # For trajectory B: extract hidden states at frame boundaries after split_token
-                    trajectory_B_boundaries = torch.tensor(
-                        [pos for pos in frame_boundary_positions_B if pos > split_pos]
-                    )
+                    trajectory_B_boundaries = torch.tensor(frame_boundary_positions_B)
 
                     # Apply progress head to hidden states at frame boundary positions for trajectory B
                     if trajectory_B_boundaries.numel() > 0:
                         boundary_hidden_states_B = last_hidden_state[i][
                             trajectory_B_boundaries
                         ]  # [num_frames_B, hidden_dim]
+
+                        assert boundary_hidden_states_B.shape[0] == T_B, f"Expected {T_B} frames, got {boundary_hidden_states_B.shape[0]}"
                         progress_B = self.progress_head(boundary_hidden_states_B).squeeze(-1)  # [num_frames_B]
                         progress_logits_B.append(progress_B)
                     else:

@@ -26,6 +26,7 @@ from concurrent.futures import ThreadPoolExecutor
 import queue
 import threading
 import time
+import ast
 
 import numpy as np
 import torch
@@ -194,18 +195,31 @@ class AsyncGPUPool:
             raise ValueError(f"Model type {self.model_config.base_model_id} not supported")
 
         if batch_inputs["num_preferences"] > 0:
-            # Run inference for preference samples
-            outputs_preference = compute_batch_outputs(
-                gpu_info["model"], gpu_info["processor"].tokenizer, batch_inputs["preference_inputs"]
-            )
+            if self.model_type == "vqa":
+                outputs_preference = compute_batch_outputs_vqa(
+                    gpu_info["model"],
+                    gpu_info["processor"].tokenizer,
+                    batch_inputs["preference_inputs"],
+                    mode="preference",
+                )
+            else:
+                # Run inference for preference samples
+                outputs_preference = compute_batch_outputs(
+                    gpu_info["model"], gpu_info["processor"].tokenizer, batch_inputs["preference_inputs"]
+                )
         else:
             outputs_preference = None
 
         if batch_inputs["num_progress"] > 0:
-            # Run inference for progress samples - only compute progress for trajectory A
-            outputs_progress = compute_batch_outputs_progress_only(
-                gpu_info["model"], gpu_info["processor"].tokenizer, batch_inputs["progress_inputs"]
-            )
+            if self.model_type == "vqa":
+                outputs_progress = compute_batch_outputs_vqa(
+                    gpu_info["model"], gpu_info["processor"].tokenizer, batch_inputs["progress_inputs"], mode="progress"
+                )
+            else:
+                # Run inference for progress samples - only compute progress for trajectory A
+                outputs_progress = compute_batch_outputs_progress_only(
+                    gpu_info["model"], gpu_info["processor"].tokenizer, batch_inputs["progress_inputs"]
+                )
         else:
             outputs_progress = None
 
@@ -352,7 +366,9 @@ def compute_batch_outputs_progress_only(model, tokenizer, batch_inputs: Dict[str
         }
 
 
-def compute_batch_outputs_vqa(model, tokenizer, batch_inputs: Dict[str, torch.Tensor]) -> Dict[str, Any]:
+def compute_batch_outputs_vqa(
+    model, tokenizer, batch_inputs: Dict[str, torch.Tensor], mode: str = "preference"
+) -> Dict[str, Any]:
     """Compute batch outputs for VQA."""
     model.eval()
     device = next(model.parameters()).device
@@ -390,11 +406,36 @@ def compute_batch_outputs_vqa(model, tokenizer, batch_inputs: Dict[str, torch.Te
         generated_texts = tokenizer.batch_decode(
             generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True
         )
-    print(f"generated texts: {generated_texts}")
-    import pdb
+    if mode == "preference":
+        predictions = [_extract_answer_from_text(text) for text in generated_texts]
+        predictions_num_labels = []
+        for prediction in predictions:
+            if prediction == "A":
+                predictions_num_labels.append(1)
+            elif prediction == "B":
+                predictions_num_labels.append(0)
+            else:
+                predictions_num_labels.append(-1)
+        return {
+            "predictions": predictions_num_labels,
+            "preference_labels": batch_inputs.get("preference_labels").detach().cpu().tolist(),
+        }
+    elif mode == "progress":
+        progress_predictions = [_extract_answer_from_text(text) for text in generated_texts]
+        progress_predictions = [ast.literal_eval(prediction) for prediction in progress_predictions]
+        # progress_predictions = [[progress_prediction[-1]] for progress_prediction in progress_predictions]
+        return {
+            "progress_pred_A": progress_predictions,
+        }
+    else:
+        raise ValueError(f"Mode {mode} not supported")
 
-    pdb.set_trace()
-    return {"predictions": generated_texts, "preference_labels": labels.detach().cpu().tolist()}
+
+def _extract_answer_from_text(text):
+    import re
+
+    m = re.search(r"<ans>(.*?)</ans>", text, re.DOTALL)
+    return m.group(1).strip() if m else ""
 
 
 def create_app(cfg: EvaluationConfig, model_config: ModelConfig, model_type: str = "default"):

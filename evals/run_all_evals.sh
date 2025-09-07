@@ -49,6 +49,18 @@ uv run python evals/run_model_eval.py \
       --use-async \
       --max_concurrent=4 2>&1 
 
+# Run progress evaluation for policy ranking 
+echo "Running progress evaluation for policy ranking"
+uv run python evals/run_model_eval.py \
+      --config rfm/configs/eval_config.yaml \
+      --set num_batches=10 \
+      --set data.batch_size=16 \
+      --set data.eval_datasets=[\"aliangdw/metaworld_rfm\"] \
+      --set data.eval_subsets=[\"metaworld\"] \
+      --set data.dataset_type=policy_ranking \
+      --use-async \
+      --max_concurrent=4 2>&1
+
 # # Run confusion matrix evaluation
 # uv run python evals/run_model_eval.py \
 #       --config rfm/configs/eval_config.yaml \

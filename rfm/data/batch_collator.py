@@ -126,6 +126,7 @@ class BatchCollator(BaseCollator):
         )
 
         # Add metadata
+        batch_inputs["data_source"] = [sample.chosen_trajectory.data_source for sample in preference_samples]
         batch_inputs["sample_type"] = ["preference"] * len(preference_samples)
         # Use the dynamically generated preference labels based on trajectory order
         batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)

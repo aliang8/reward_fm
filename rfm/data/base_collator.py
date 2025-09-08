@@ -8,12 +8,13 @@ import numpy as np
 
 class BaseCollator:
     def __init__(
-        self, processor: AutoProcessor, max_length: int = 1024, resized_height: int = 128, resized_width: int = 128
+        self, processor: AutoProcessor, max_length: int = 1024, resized_height: int = 128, resized_width: int = 128, tokenizer = None, **kwargs
     ):
         self.processor = processor
         self.max_length = max_length
         self.resized_height = resized_height
         self.resized_width = resized_width
+        self.tokenizer = tokenizer
 
     def _pad_target_progress(self, progress_list):
         """Helper function to pad target progress sequences to max length."""

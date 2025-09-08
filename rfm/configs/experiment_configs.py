@@ -10,6 +10,18 @@ from typing import List, Optional, Union
 
 
 @dataclass
+class RewindConfig:
+    video_feature_dim: int = 768
+    text_feature_dim: int = 384
+    hidden_dim: int = 512
+    num_hidden_layers: int = 4
+    num_attention_heads: int = 8
+    dropout: float = 0.1
+    max_len: int = 16
+    train_vision_encoder: bool = False
+    train_language_model: bool = False
+
+@dataclass
 class ModelConfig:
     """Config for model settings"""
 
@@ -25,7 +37,8 @@ class ModelConfig:
         default=True, metadata={"help": "Whether to train the preference prediction head"}
     )
     train_similarity_head: bool = field(default=True, metadata={"help": "Whether to train the similarity scoring head"})
-
+    # rewind sub-config
+    rewind: Optional[RewindConfig] = field(default=None)
 
 @dataclass
 class PEFTConfig:
@@ -202,3 +215,5 @@ class ExperimentConfig:
     data: DataConfig = field(default_factory=DataConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+
+

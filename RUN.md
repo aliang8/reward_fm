@@ -5,6 +5,13 @@
 git clone https://github.com/aliang8/reward_fm.git 
 git checkout anthony
 
+# get uv 
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env
+
+# install dependencies
+uv pip install huggingface_hub
+
 # download dataset to local 
 # might have to run this multiple times if it crashes
 ./setup.sh

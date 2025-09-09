@@ -1,3 +1,4 @@
+import collections
 import ast
 from re import M, S
 import wandb
@@ -20,9 +21,9 @@ class RFMHeadsTrainer(Trainer):
     def __init__(self, config, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.config = config
-        self.log_metadata = {}
-        self.global_metadata = {}
-        self.timing_raw = {}
+        self.log_metadata = collections.defaultdict(float)
+        self.global_metadata = collections.defaultdict(float)
+        self.timing_raw = collections.defaultdict(float)
 
     def training_step(self, model, inputs, num_items_in_batch=None):
         """
@@ -72,7 +73,7 @@ class RFMHeadsTrainer(Trainer):
         # Keep sum counts over all processes
         if dist.is_initialized():
             # add to total batch size and sum across all processes
-            batch_size = torch.tensor(num_items_in_batch, device=self.accelerator.device)
+            batch_size = torch.tensor(num_preferences + num_similarities + num_progress, device=self.accelerator.device)
             dist.all_reduce(batch_size, op=dist.ReduceOp.SUM)
             self.global_metadata["total_samples"] += batch_size.item()
 

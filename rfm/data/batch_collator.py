@@ -32,6 +32,74 @@ class BatchCollator(BaseCollator):
         """
         super().__init__(**kwargs)
 
+    def _add_preference_meta(
+        self, batch_inputs: Dict[str, torch.Tensor], preference_samples: List[PreferenceSample]
+    ) -> Dict[str, torch.Tensor]:
+        """Add metadata to the batch inputs."""
+        batch_inputs["data_source"] = [sample.chosen_trajectory.data_source for sample in preference_samples]
+        batch_inputs["sample_type"] = ["preference"] * len(preference_samples)
+        batch_inputs["chosen_data_gen_strategy"] = [
+            sample.chosen_trajectory.data_gen_strategy for sample in preference_samples
+        ]
+        batch_inputs["rejected_data_gen_strategy"] = [
+            sample.rejected_trajectory.data_gen_strategy for sample in preference_samples
+        ]
+
+        # Add target progress for both trajectories based on conversation order
+        target_progress_chosen = [sample.chosen_trajectory.target_progress for sample in preference_samples]
+        target_progress_rejected = [sample.rejected_trajectory.target_progress for sample in preference_samples]
+        target_progress_chosen_mask = [
+            1.0
+            if sample.chosen_trajectory.quality_label == "successful"
+            or sample.chosen_trajectory.data_gen_strategy == "rewind_same_task"
+            else 0.0
+            for sample in preference_samples
+        ]
+        target_progress_rejected_mask = [
+            1.0
+            if sample.rejected_trajectory.quality_label == "successful"
+            or sample.rejected_trajectory.data_gen_strategy == "rewind_same_task"
+            else 0.0
+            for sample in preference_samples
+        ]
+
+        # Pad target progress tensors to max length in last dimension
+        batch_inputs["target_progress_chosen"] = self._pad_target_progress(target_progress_chosen)
+        batch_inputs["target_progress_rejected"] = self._pad_target_progress(target_progress_rejected)
+        batch_inputs["target_progress_chosen_mask"] = torch.tensor(target_progress_chosen_mask, dtype=torch.float32)
+        batch_inputs["target_progress_rejected_mask"] = torch.tensor(target_progress_rejected_mask, dtype=torch.float32)
+
+        # Also add the frame_shapes
+        batch_inputs["chosen_frames_shape"] = torch.tensor(
+            [sample.chosen_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
+        )
+        batch_inputs["rejected_frames_shape"] = torch.tensor(
+            [sample.rejected_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
+        )
+        return batch_inputs
+
+    def _add_progress_meta(
+        self, batch_inputs: Dict[str, torch.Tensor], progress_samples: List[ProgressSample]
+    ) -> Dict[str, torch.Tensor]:
+        """Add metadata to the batch inputs."""
+        # Add target progress and quality labels
+        target_progress_list = []
+        quality_labels = []
+
+        for sample in progress_samples:
+            if sample.trajectory.target_progress is not None:
+                target_progress_list.append(sample.trajectory.target_progress)
+            quality_labels.append(1.0 if sample.trajectory.quality_label == "successful" else 0.0)
+
+        # Add metadata
+        batch_inputs["sample_type"] = ["progress"] * len(progress_samples)
+
+        # Pad target progress tensors to max length in last dimension
+        batch_inputs["target_progress"] = self._pad_target_progress(target_progress_list)
+        batch_inputs["quality_labels"] = torch.tensor(quality_labels, dtype=torch.float32)
+
+        return batch_inputs
+
     def _process_preference_batch(self, preference_samples: List[PreferenceSample]) -> Dict[str, torch.Tensor]:
         """Process a batch of preference samples."""
         # Collect all messages for batch processing
@@ -124,50 +192,9 @@ class BatchCollator(BaseCollator):
             max_length=self.max_length,
             return_tensors="pt",
         )
-
-        # Add metadata
-        batch_inputs["data_source"] = [sample.chosen_trajectory.data_source for sample in preference_samples]
-        batch_inputs["sample_type"] = ["preference"] * len(preference_samples)
         # Use the dynamically generated preference labels based on trajectory order
         batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
-        batch_inputs["chosen_data_gen_strategy"] = [
-            sample.chosen_trajectory.data_gen_strategy for sample in preference_samples
-        ]
-        batch_inputs["rejected_data_gen_strategy"] = [
-            sample.rejected_trajectory.data_gen_strategy for sample in preference_samples
-        ]
-
-        # Add target progress for both trajectories based on conversation order
-        target_progress_chosen = [sample.chosen_trajectory.target_progress for sample in preference_samples]
-        target_progress_rejected = [sample.rejected_trajectory.target_progress for sample in preference_samples]
-        target_progress_chosen_mask = [
-            1.0
-            if sample.chosen_trajectory.quality_label == "successful"
-            or sample.chosen_trajectory.data_gen_strategy == "rewind_same_task"
-            else 0.0
-            for sample in preference_samples
-        ]
-        target_progress_rejected_mask = [
-            1.0
-            if sample.rejected_trajectory.quality_label == "successful"
-            or sample.rejected_trajectory.data_gen_strategy == "rewind_same_task"
-            else 0.0
-            for sample in preference_samples
-        ]
-
-        # Pad target progress tensors to max length in last dimension
-        batch_inputs["target_progress_chosen"] = self._pad_target_progress(target_progress_chosen)
-        batch_inputs["target_progress_rejected"] = self._pad_target_progress(target_progress_rejected)
-        batch_inputs["target_progress_chosen_mask"] = torch.tensor(target_progress_chosen_mask, dtype=torch.float32)
-        batch_inputs["target_progress_rejected_mask"] = torch.tensor(target_progress_rejected_mask, dtype=torch.float32)
-
-        # Also add the frame_shapes
-        batch_inputs["chosen_frames_shape"] = torch.tensor(
-            [sample.chosen_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
-        )
-        batch_inputs["rejected_frames_shape"] = torch.tensor(
-            [sample.rejected_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
-        )
+        batch_inputs = self._add_preference_meta(batch_inputs, preference_samples)
         return batch_inputs
 
     def _process_similarity_batch(self, similarity_samples: List[SimilaritySample]) -> Dict[str, torch.Tensor]:
@@ -374,21 +401,5 @@ class BatchCollator(BaseCollator):
             return_tensors="pt",
             **video_kwargs,
         )
-
-        # Add target progress and quality labels
-        target_progress_list = []
-        quality_labels = []
-
-        for sample in progress_samples:
-            if sample.trajectory.target_progress is not None:
-                target_progress_list.append(sample.trajectory.target_progress)
-            quality_labels.append(1.0 if sample.trajectory.quality_label == "successful" else 0.0)
-
-        # Add metadata
-        batch_inputs["sample_type"] = ["progress"] * len(progress_samples)
-
-        # Pad target progress tensors to max length in last dimension
-        batch_inputs["target_progress"] = self._pad_target_progress(target_progress_list)
-        batch_inputs["quality_labels"] = torch.tensor(quality_labels, dtype=torch.float32)
-
+        batch_inputs = self._add_progress_meta(batch_inputs, progress_samples)
         return batch_inputs

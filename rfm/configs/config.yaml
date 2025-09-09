@@ -6,6 +6,7 @@
 # =====================================================================================
 mode: "train"  # "train" or "evaluate"
 debug: false  # Set to true for debugging (reduces dataset size, enables debug features)
+trainer_cls: "rfm_heads" # "rewind_transformer", "rfm_vqa"
 
 # =====================================================================================
 # Model Configuration

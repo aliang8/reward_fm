@@ -58,6 +58,8 @@ class RFMHeadsTrainer(Trainer):
         # also log the global metadata
         log_global = {f"counts/{key}": self.global_metadata[key] for key in self.global_metadata}
         log_data.update(log_global)
+        # make sure values are floats so they are loggable into wandb reports
+        log_data = {k: float(v) for k, v in log_data.items()}
 
         # Log to wandb if available and configured (only on rank 0)
         if self.args.report_to and "wandb" in self.args.report_to and is_rank_0():

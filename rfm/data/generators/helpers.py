@@ -5,7 +5,27 @@ import os
 from rfm.data.dataset_types import Trajectory
 from rfm.utils.logging import rank_0_print
 
+from enum import Enum
 
+
+class DataGenStrat(Enum):
+    """Enum for different data generation strategies used in preference generation."""
+
+    # Preference generation strategies
+    REWIND_SAME_TASK = "rewind_same_task"
+    SUBOPTIMAL_SAME_TASK = "suboptimal_same_task"
+    DIFFERENT_TASK = "different_task"
+    VIDEO_BINNED = "video_binned"
+
+    # Evaluation-specific strategies
+    CONFUSION_MATRIX = "confusion_matrix"
+    WRONG_TASK_PREFERENCE = "wrong_task_preference"
+
+    # General strategies
+    SUBSAMPLE_TASK = "subsample_task"
+    REWOUND = "rewound"
+    DEFAULT = "default"
+    
 def load_frames_from_npz(npz_filepath: str) -> np.ndarray:
     """Load frames on-demand from npz file.
 

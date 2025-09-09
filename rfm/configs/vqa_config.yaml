@@ -1,4 +1,5 @@
 # RFM VQA
+trainer_cls: "rfm_vqa"
 
 model:
   model_type: "vqa"

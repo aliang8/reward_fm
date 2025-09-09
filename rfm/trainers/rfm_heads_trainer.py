@@ -20,9 +20,8 @@ class RFMHeadsTrainer(Trainer):
     def __init__(self, config, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.config = config
-        # Initialize custom loss tracking
         self.log_metadata = {}
-        self.global_metadata = {"total_samples": 0}
+        self.global_metadata = {}
         self.timing_raw = {}
 
     def training_step(self, model, inputs, num_items_in_batch=None):
@@ -30,9 +29,52 @@ class RFMHeadsTrainer(Trainer):
         Perform a training step and log custom losses.
         """
         self.timing_raw = {}
+
+        # Initialize log_metadata
+        self.log_metadata = {}
+
         with _timer("time/training_step", timing_raw=self.timing_raw):
             # Call the parent training_step to handle all the standard training logic
             loss = super().training_step(model, inputs, num_items_in_batch)
+
+        # Extract the separate batches
+        preference_inputs = inputs.get("preference_inputs", {})
+        similarity_inputs = inputs.get("similarity_inputs", {})
+        progress_inputs = inputs.get("progress_inputs", {})
+        num_preferences = inputs.get("num_preferences", 0)
+        num_similarities = inputs.get("num_similarities", 0)
+        num_progress = inputs.get("num_progress", 0)
+
+        # Log rewind length stats if available in preference inputs
+        rewind_stats = {}
+        if num_preferences > 0 and preference_inputs:
+            # Count data generation strategies from the rejected trajectories
+            rejected_data_gen_strategy = preference_inputs.get("rejected_data_gen_strategy", [])
+            if isinstance(rejected_data_gen_strategy, list) and len(rejected_data_gen_strategy) > 0:
+                # Normalize keys we care about
+                strat_counts = {
+                    "num_trajs_rewind": 0,
+                    "num_trajs_same_task": 0,
+                    "num_trajs_different_task": 0,
+                }
+                for s in rejected_data_gen_strategy:
+                    if s == "rewind_same_task":
+                        strat_counts["num_trajs_rewind"] += 1
+                    elif s == "suboptimal_same_task":
+                        strat_counts["num_trajs_same_task"] += 1
+                    elif s == "different_task":
+                        strat_counts["num_trajs_different_task"] += 1
+
+                rewind_stats = {**strat_counts}
+                self.log_metadata.update(rewind_stats)
+
+        # Update global metadata for training
+        # Keep sum counts over all processes
+        if dist.is_initialized():
+            # add to total batch size and sum across all processes
+            batch_size = torch.tensor(num_items_in_batch, device=self.accelerator.device)
+            dist.all_reduce(batch_size, op=dist.ReduceOp.SUM)
+            self.global_metadata["total_samples"] += batch_size.item()
 
         # Log custom losses at specified intervals
         if self.state.global_step % self.args.logging_steps == 0:
@@ -193,39 +235,8 @@ class RFMHeadsTrainer(Trainer):
                 total_loss += progress_loss
             log_metadata.update(loss_dict)
 
-        # Log rewind length stats if available in preference inputs
-        rewind_stats = {}
-        if num_preferences > 0 and preference_inputs:
-            # Count data generation strategies from the rejected trajectories
-            rejected_data_gen_strategy = preference_inputs.get("rejected_data_gen_strategy", [])
-            if isinstance(rejected_data_gen_strategy, list) and len(rejected_data_gen_strategy) > 0:
-                # Normalize keys we care about
-                strat_counts = {
-                    "num_trajs_rewind": 0,
-                    "num_trajs_same_task": 0,
-                    "num_trajs_different_task": 0,
-                }
-                for s in rejected_data_gen_strategy:
-                    if s == "rewind_same_task":
-                        strat_counts["num_trajs_rewind"] += 1
-                    elif s == "suboptimal_same_task":
-                        strat_counts["num_trajs_same_task"] += 1
-                    elif s == "different_task":
-                        strat_counts["num_trajs_different_task"] += 1
-
-                rewind_stats = {**strat_counts}
-                log_metadata.update(rewind_stats)
-
         # Always store custom losses for logging (even when return_outputs=False)
         self.log_metadata = log_metadata
-
-        # Update global metadata for training
-        # Keep sum counts over all processes
-        if kwargs.get("training", True) and dist.is_initialized():
-            # add to total batch size and sum across all processes
-            batch_size = torch.tensor(num_preferences + num_similarities, device=self.accelerator.device)
-            dist.all_reduce(batch_size, op=dist.ReduceOp.SUM)
-            self.global_metadata["total_samples"] += batch_size.item()
 
         if return_outputs:
             # Combine outputs from all loss functions

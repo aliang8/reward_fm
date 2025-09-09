@@ -113,6 +113,7 @@ def train(cfg: ExperimentConfig):
         "rewind_transformer": ReWiNDTrainer,
         "rfm_vqa": VQATrainer,
     }[cfg.trainer_cls]
+    rank_0_print(f"Trainer class: {trainer_cls}")
 
     trainer = trainer_cls(
         model=peft_rfm_model,

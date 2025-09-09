@@ -1,3 +1,4 @@
+import pyrallis
 import warnings
 import torch
 from datasets import Dataset
@@ -35,12 +36,12 @@ from rfm.utils.setup_utils import (
     setup_batch_collator,
     setup_dataset,
     setup_eval_dataset,
-    setup_rewind_batch_collator,
+    # setup_rewind_batch_collator,
     setup_vqa_model_and_processor,
     setup_vqa_batch_collator,
-    setup_transformer_model_and_processor
+    # setup_transformer_model_and_processor
 )
-
+from rfm.utils.parser import parse_multiple
 from rfm.utils.logging import _timer
 
 # Suppress FSDP ShardedTensor deprecation warning
@@ -50,10 +51,6 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
 def train(cfg: ExperimentConfig):
-    # If cfg is a string (config path), load it
-    if isinstance(cfg, str):
-        cfg = ExperimentConfig.from_yaml(cfg)
-
     timing_raw = {}
     # Create DataGenerator for training using shared utility
     with _timer("time/setup_data_generator", timing_raw=timing_raw):
@@ -82,7 +79,7 @@ def train(cfg: ExperimentConfig):
 
     # Use the shared function to set up model and processor
     with _timer("time/setup_model_and_processor", timing_raw=timing_raw):
-        processor, rfm_model = setup_model_and_processor(cfg.model)
+        tokenizer, processor, rfm_model = setup_model_and_processor(cfg.model)
 
     # Apply PEFT if enabled
     peft_rfm_model = setup_peft_model(rfm_model, cfg)
@@ -106,7 +103,7 @@ def train(cfg: ExperimentConfig):
 
     # Use the shared utilities for batch collator and dataset
     with _timer("time/setup_data", timing_raw=timing_raw):
-        batch_collator = setup_batch_collator(processor, cfg)
+        batch_collator = setup_batch_collator(processor, tokenizer, cfg)
         train_dataset = setup_dataset(data_generator)
 
     # Set up evaluation dataset if evaluation is enabled
@@ -115,7 +112,13 @@ def train(cfg: ExperimentConfig):
         eval_dataset = setup_eval_dataset(cfg)
         rank_0_print(f"Evaluation dataset created with {cfg.data.eval_subset_size} samples")
 
-    trainer = RFMHeadsTrainer(
+    trainer_cls = {
+        "rfm_heads": RFMHeadsTrainer,
+        "rewind_transformer": ReWiNDTrainer,
+        "rfm_vqa": VQATrainer,
+    }[cfg.trainer_cls]
+
+    trainer = trainer_cls(
         model=peft_rfm_model,
         args=training_args,
         train_dataset=train_dataset,
@@ -254,10 +257,6 @@ def train_vqa(cfg: ExperimentConfig):
     rank_0_print(f"Training complete! Check {cfg.training.output_dir} for checkpoints and final model.")
 
 def train_transformer(cfg: ExperimentConfig):
-    # If cfg is a string (config path), load it
-    if isinstance(cfg, str):
-        cfg = ExperimentConfig.from_yaml(cfg)
-
     timing_raw = {}
     # Create DataGenerator for training using shared utility
     with _timer("time/setup_data_generator", timing_raw=timing_raw):
@@ -430,29 +429,27 @@ def display_config(cfg: ExperimentConfig):
 
     console.print(table)
 
-
-@wrap()
-def main(cfg: ExperimentConfig):
+def main(cfg: ExperimentConfig):    
     # Display the configuration in a nice Rich format
     display_config(cfg)
     assert cfg.data.model_type in ["default", "vqa"], "Model type must be either 'default' or 'vqa'"
 
-    if cfg.mode == "train" and cfg.data.model_type == "default" and "Qwen" in cfg.model.base_model_id:
+    if cfg.mode == "train" and cfg.data.model_type == "default": # and "Qwen" in cfg.model.base_model_id:
         if is_rank_0():
             rprint(Panel.fit("🚀 Starting RFM Training", style="bold green"))
         train(cfg)
-    elif cfg.mode == "train" and cfg.data.model_type == "vqa":  # VQA training
-        if is_rank_0():
-            rprint(Panel.fit("🧠 Starting VQA Baseline Training", style="bold cyan"))
-        train_vqa(cfg)
-    elif cfg.mode == "train" and cfg.data.model_type == "default" and "Qwen" not in cfg.model.base_model_id:
-        # train rewind transformer
-        if is_rank_0():
-            rprint(Panel.fit("🔄 Starting ReWiND Transformer Training", style="bold magenta"))
-        train_transformer(cfg)
+    # elif cfg.mode == "train" and cfg.data.model_type == "vqa":  # VQA training
+    #     if is_rank_0():
+    #         rprint(Panel.fit("🧠 Starting VQA Baseline Training", style="bold cyan"))
+    #     train_vqa(cfg)
+    # elif cfg.mode == "train" and cfg.data.model_type == "default" and "Qwen" not in cfg.model.base_model_id:
+    #     # train rewind transformer
+    #     if is_rank_0():
+    #         rprint(Panel.fit("🔄 Starting ReWiND Transformer Training", style="bold magenta"))
+    #     train_transformer(cfg)
     else:
         raise ValueError(f"Unknown mode: {cfg.mode}. Must be 'train' or 'evaluate'")
 
-
 if __name__ == "__main__":
-    main()
+    cfg = parse_multiple(ExperimentConfig)
+    main(cfg)

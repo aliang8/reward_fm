@@ -4,6 +4,7 @@ Shared setup utilities for RFM training.
 This file contains setup functions that can be reused across different training scripts.
 """
 
+from dataclasses import asdict
 import torch
 from transformers import (
     AutoProcessor,
@@ -11,12 +12,16 @@ from transformers import (
     TrainingArguments,
     Qwen2_5_VLConfig,
     Qwen2_5_VLForConditionalGeneration,
+    AutoImageProcessor,
+    AutoTokenizer,
+    AutoModel,
 )
 from peft import get_peft_model, LoraConfig
 from typing import Tuple, Optional, Union
 
 from rfm.models.rfm import RFMModel
 from rfm.models.rfm_vqa import RFMModelVQA
+from rfm.models.rewind_transformer import ReWiNDTransformer
 from rfm.data.generators.generator import DataGenerator
 from rfm.data.generators.vqa_generator import VQADataGenerator
 from rfm.data.batch_collator import BatchCollator
@@ -29,72 +34,82 @@ from rfm.data.generators.progress import ProgressGenerator
 from rfm.utils.logging import rank_0_print
 from rfm.configs.experiment_configs import ExperimentConfig, ModelConfig
 from rfm.data.vqa_batch_collator import VQABatchCollator
+from rfm.data.rewind_batch_collator import ReWiNDBatchCollator
 
 
 def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[AutoProcessor, RFMModel]:
     """Shared function to set up model, processor, and tokenizer for both training and evaluation"""
 
-    # Get current rank for logging
-    import torch.distributed as dist
-
-    rank = dist.get_rank() if dist.is_initialized() else 0
-
-    if rank == 0:
-        rank_0_print(f"Setting up model and processor on rank {rank}...")
-
     # Load processor and tokenizer
-    processor = AutoProcessor.from_pretrained(
-        cfg.base_model_id,
-        trust_remote_code=cfg.trust_remote_code,
-        # temporal_patch_size=1,
-        # fps=1,
-        # num_frames=cfg.data.max_frames,
-        do_sample_frames=False,  # disable frame sampling here since we do this in the data generator
-        # max_frames=cfg.data.max_frames,
-    )
+    if "Qwen" in cfg.base_model_id:
+        processor = AutoProcessor.from_pretrained(
+            cfg.base_model_id,
+            trust_remote_code=cfg.trust_remote_code,
+            # temporal_patch_size=1,
+            # fps=1,
+            # num_frames=cfg.data.max_frames,
+            do_sample_frames=False,  # disable frame sampling here since we do this in the data generator
+            # max_frames=cfg.data.max_frames,
+        )
 
-    rank_0_print(f"Processor: {processor}")
+        rank_0_print(f"Processor: {processor}")
 
-    if processor.tokenizer.pad_token is None:
-        processor.tokenizer.pad_token = processor.tokenizer.eos_token
+        if processor.tokenizer.pad_token is None:
+            processor.tokenizer.pad_token = processor.tokenizer.eos_token
 
-    # Create a fresh model instance
-    base_model = Qwen2_5_VLModel.from_pretrained(cfg.base_model_id)
+        # Create a fresh model instance
+        base_model = Qwen2_5_VLModel.from_pretrained(cfg.base_model_id)
 
-    # Add RFM special tokens if they don't exist
-    special_tokens = ["<|split_token|>", "<|reward_token|>", "<|pref_token|>"]
-    for token in special_tokens:
-        if token not in processor.tokenizer.get_vocab():
-            processor.tokenizer.add_special_tokens({"additional_special_tokens": [token]})
-            if rank == 0:
+        # Add RFM special tokens if they don't exist
+        special_tokens = ["<|split_token|>", "<|reward_token|>", "<|pref_token|>"]
+        for token in special_tokens:
+            if token not in processor.tokenizer.get_vocab():
+                processor.tokenizer.add_special_tokens({"additional_special_tokens": [token]})
                 rank_0_print(f"Added special token: {token}")
 
-    # Resize token embeddings if new tokens were added
-    if len(processor.tokenizer) != base_model.config.vocab_size:
-        if rank == 0:
+        # Resize token embeddings if new tokens were added
+        if len(processor.tokenizer) != base_model.config.vocab_size:
             rank_0_print(f"Resizing token embeddings from {base_model.config.vocab_size} to {len(processor.tokenizer)}")
-        base_model.resize_token_embeddings(len(processor.tokenizer))
-        if rank == 0:
+            base_model.resize_token_embeddings(len(processor.tokenizer))
             rank_0_print(f"Resized token embeddings to {len(processor.tokenizer)}")
 
-    # Initialize RFM model wrapper with the pre-loaded base model
-    if rank == 0:
-        rank_0_print(f"Initializing RFM model on rank {rank}...")
-    rfm_model = RFMModel(config=base_model.config, processor=processor, base_model=base_model)
+        # Initialize RFM model wrapper with the pre-loaded base model
+        rank_0_print(f"Initializing RFM model...")
+        rfm_model = RFMModel(config=base_model.config, processor=processor, base_model=base_model)
 
-    if hf_model_id:
-        rank_0_print(f"Loading model from {hf_model_id} on rank {rank}")
+        if hf_model_id:
+            rank_0_print(f"Loading model from {hf_model_id}")
 
-        # before = rfm_model.model.visual.blocks[0].mlp.down_proj.weight
-        # before = rfm_model.preference_head.weight
-        # load the model from the evaluation path
-        rfm_model = RFMModel.from_pretrained(hf_model_id, processor=processor, base_model=base_model)
+            # before = rfm_model.model.visual.blocks[0].mlp.down_proj.weight
+            # before = rfm_model.preference_head.weight
+            # load the model from the evaluation path
+            rfm_model = RFMModel.from_pretrained(hf_model_id, processor=processor, base_model=base_model)
 
-    # Only print model architecture on rank 0
-    if rank == 0:
-        rank_0_print(f"Model architecture initialized on rank {rank}")
+        tokenizer = processor.tokenizer
 
-    return processor, rfm_model
+    elif "rewind_transformer" in cfg.base_model_id:
+        # Pretrained image and text encoders
+        image_encoder = AutoModel.from_pretrained("facebook/dinov2-base")
+        text_encoder = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L12-v2")
+        processor = AutoImageProcessor.from_pretrained("facebook/dinov2-base", use_fast=True)
+        tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L12-v2")
+
+        train_img = cfg.train_vision_encoder
+        train_text = cfg.train_language_model
+
+        for p in image_encoder.parameters():
+            p.requires_grad = train_img
+
+        for p in text_encoder.parameters():
+            p.requires_grad = train_text
+
+        rank_0_print(f"Initializing ReWiND model...")
+        rfm_model = ReWiNDTransformer(config=cfg, image_encoder=image_encoder, text_encoder=text_encoder)
+
+    rank_0_print(f"Model architecture initialized")
+    rank_0_print(f"Model architecture: {rfm_model}")
+
+    return tokenizer, processor, rfm_model
 
 
 def setup_peft_model(rfm_model: RFMModel, cfg: ExperimentConfig) -> RFMModel:
@@ -129,7 +144,7 @@ def setup_peft_model(rfm_model: RFMModel, cfg: ExperimentConfig) -> RFMModel:
         elif "visual" in name or "vision" in name:
             # if PEFT enabled, we don't need to do anything
             if cfg.peft.use_peft and cfg.peft.peft_vision_encoder:
-                pass 
+                pass
             else:
                 param.requires_grad = cfg.model.train_vision_encoder
         elif "language_model" in name:
@@ -305,17 +320,26 @@ def setup_eval_dataset(cfg: ExperimentConfig) -> InfiniteDataGeneratorDataset:
     return eval_dataset
 
 
-def setup_batch_collator(processor: AutoProcessor, cfg: ExperimentConfig) -> BatchCollator:
+def setup_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg: ExperimentConfig) -> BatchCollator:
     """Shared function to create BatchCollator"""
 
     rank_0_print("Setting up batch collator...")
 
-    batch_collator = BatchCollator(
-        processor=processor,
-        max_length=cfg.training.max_seq_length,
-        resized_height=cfg.data.resized_height,
-        resized_width=cfg.data.resized_width,
-    )
+    if "Qwen" in cfg.model.base_model_id:
+        batch_collator = BatchCollator(
+            processor=processor,
+            max_length=cfg.training.max_seq_length,
+            resized_height=cfg.data.resized_height,
+            resized_width=cfg.data.resized_width,
+        )
+    elif "rewind_transformer" in cfg.model.base_model_id:
+        batch_collator = ReWiNDBatchCollator(
+            processor=processor,
+            tokenizer=tokenizer,
+            max_length=cfg.training.max_seq_length,
+            resized_height=cfg.data.resized_height,
+            resized_width=cfg.data.resized_width,
+        )
 
     rank_0_print("Batch collator created successfully")
     return batch_collator

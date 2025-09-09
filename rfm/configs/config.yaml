@@ -6,6 +6,7 @@
 # =====================================================================================
 mode: "train"  # "train" or "evaluate"
 debug: false  # Set to true for debugging (reduces dataset size, enables debug features)
+trainer_cls: "rfm_heads" # "rewind_transformer", "rfm_vqa"
 
 # =====================================================================================
 # Model Configuration
@@ -31,10 +32,12 @@ data:
     - "abraranwar/libero_rfm"
     - "ykorkmaz/libero_failure_rfm"
     - "HenryZhang/metaworld_rewind_rfm_train"
+    - "jesbu1/oxe_rfm"
   train_subsets:
     - ["libero256_90"]
     - ["libero_90_failure"]
     - ["metaworld_rewind_train"]
+    - ["oxe_bridge_v2"]
   # Evaluation dataset settings
   eval_datasets:
     - "abraranwar/libero_rfm"
@@ -55,7 +58,7 @@ data:
   max_frames_for_preprocessing: 64
 
   # Video processing settings
-  max_frames: 8  # Maximum frames per trajectory
+  max_frames: 16  # Maximum frames per trajectory
   video_frame_sampling: "uniform"  # "uniform", "random", "first", "middle"
   resized_height: 128  # Height to resize images/videos to
   resized_width: 128   # Width to resize images/videos to
@@ -96,7 +99,7 @@ training:
   
   # Evaluation settings
   evaluation_strategy: "steps"  # Options: "no", "steps", "epoch"
-  eval_steps: 5  # Evaluate every 50 steps
+  eval_steps: 100  # Evaluate every 100 steps
   per_device_eval_batch_size: 8  # Evaluation batch size per device
   do_eval: true  # Enable evaluation during training
   prediction_loss_only: true # Only compute loss for the prediction head

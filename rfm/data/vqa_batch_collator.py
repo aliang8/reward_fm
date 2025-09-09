@@ -21,17 +21,19 @@ from rfm.data.batch_collator import BatchCollator
 class VQABatchCollator(BatchCollator):
     """Batch collator that processes Sample objects through the processor for VQA-based reward modeling."""
 
-    def __init__(self, training: bool = True, **kwargs):
+    def __init__(self, training: bool = True, inference: bool = False, **kwargs):
         """
         Initialize the VQA batch collator.
 
         Args:
+            inference: Whether to return the labels for the batch
             processor: HuggingFace processor for text and vision processing
             max_length: Maximum sequence length for text
             resized_height: Height to resize images/videos to (default: 128)
             resized_width: Width to resize images/videos to (default: 128)
         """
         self.training = training
+        self.inference = inference
         super().__init__(**kwargs)
 
     def _process_preference_batch(self, preference_samples: List[PreferenceSample]) -> Dict[str, torch.Tensor]:
@@ -76,7 +78,7 @@ class VQABatchCollator(BatchCollator):
                         ],
                     },
                 ]
-                if self.training:
+                if not self.inference:
                     conversation.append({"role": "assistant", "content": "<ans>A</ans>"})
 
             else:
@@ -103,7 +105,7 @@ class VQABatchCollator(BatchCollator):
                         ],
                     }
                 ]
-                if self.training:
+                if not self.inference:
                     conversation.append({"role": "assistant", "content": "<ans>B</ans>"})
 
             all_messages.append(conversation)
@@ -132,19 +134,18 @@ class VQABatchCollator(BatchCollator):
             return_tensors="pt",
         )
 
-        labels = batch_inputs["input_ids"].clone()
+        if not self.inference:
+            labels = batch_inputs["input_ids"].clone()
 
-        # mask out the prompt
-        assistant_id = self.processor.tokenizer.encode("assistant", add_special_tokens=False)[0] 
-        for i in range(len(labels)):
-            token_after_assistant = (labels[i] == assistant_id).nonzero()[0][0] + 1
-            labels[i][:token_after_assistant] = -100
+            # mask out the prompt
+            assistant_id = self.processor.tokenizer.encode("assistant", add_special_tokens=False)[0] 
+            for i in range(len(labels)):
+                token_after_assistant = (labels[i] == assistant_id).nonzero()[0][0] + 1
+                labels[i][:token_after_assistant] = -100
 
         # Use the dynamically generated preference labels based on trajectory order
         batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
-
-        if self.training:
-            batch_inputs["labels"] = labels
+        batch_inputs["labels"] = labels
 
         batch_inputs = self._add_preference_meta(batch_inputs, preference_samples)
 
@@ -177,8 +178,7 @@ class VQABatchCollator(BatchCollator):
                     ],
                 }
             ]
-
-            if self.training:
+            if not self.inference:
                 conversation.append({"role": "assistant", "content": f"<ans>{target_progress}</ans>"})
 
             all_messages.append(conversation)
@@ -207,13 +207,16 @@ class VQABatchCollator(BatchCollator):
             return_tensors="pt",
         )
 
-        labels = batch_inputs["input_ids"].clone()
+        if not self.inference:
+            labels = batch_inputs["input_ids"].clone()
 
-        # mask out the prompt
-        assistant_id = self.processor.tokenizer.encode("assistant", add_special_tokens=False)[0] 
-        for i in range(len(labels)):
-            token_after_assistant = (labels[i] == assistant_id).nonzero()[0][0] + 1
-            labels[i][:token_after_assistant] = -100
+            # mask out the prompt
+            assistant_id = self.processor.tokenizer.encode("assistant", add_special_tokens=False)[0] 
+            for i in range(len(labels)):
+                token_after_assistant = (labels[i] == assistant_id).nonzero()[0][0] + 1
+                labels[i][:token_after_assistant] = -100
+
+            batch_inputs["labels"] = labels
 
         batch_inputs = self._add_progress_meta(batch_inputs, progress_samples)
 

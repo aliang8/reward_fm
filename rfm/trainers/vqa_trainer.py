@@ -79,11 +79,6 @@ class VQATrainer(RFMHeadsTrainer):
         return total_loss
 
     def _compute_vqa_loss(self, model, inputs, return_outputs=False, mode=None):
-
-        import ipdb
-
-        ipdb.set_trace()
-
         outputs = model(
             input_ids=inputs["input_ids"],
             attention_mask=inputs["attention_mask"],

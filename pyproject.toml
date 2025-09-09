@@ -61,6 +61,7 @@ dependencies = [
     "omegaconf>=2.3.0",
     "opencv-python-headless>=4.8.0",
     "opencv-contrib-python-headless>=4.8.0",  # Additional OpenCV modules
+    "einops>=0.8.0",
 ]
 
 [project.urls]

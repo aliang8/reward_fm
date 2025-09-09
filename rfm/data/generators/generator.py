@@ -31,6 +31,7 @@ class DataGenerator(BaseDataGenerator):
         else:
             return self.similarity_generator.__next__()
 
+
 def test():
     """Test the BatchCollator with generated samples."""
     # Create a mock config for testing
@@ -92,7 +93,9 @@ def test():
 
     for i in range(10):
         sample = infinite_dataset[i]
-        import ipdb; ipdb.set_trace()
+        import ipdb
+
+        ipdb.set_trace()
         if sample.sample_type == "preference":
             preference_count += 1
         else:

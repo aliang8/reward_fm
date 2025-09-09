@@ -11,7 +11,9 @@ from transformers import PretrainedConfig
 
 
 @dataclass
-class ReWINDTransformerConfig:
+class ReWINDTransformerConfig(PretrainedConfig):
+    model_type = "rewind_transformer"
+
     video_feature_dim: int = 768
     text_feature_dim: int = 384
     hidden_dim: int = 512

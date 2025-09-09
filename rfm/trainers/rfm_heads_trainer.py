@@ -275,7 +275,10 @@ class RFMHeadsTrainer(Trainer):
 
         for i, (pred, target, shape) in enumerate(zip(progress_logits, target_progress, frame_shape)):
             num_frames = shape[0] if len(shape) > 0 else 0
-            spliced_target = target[:num_frames][::2]
+            if "Qwen" in self.config.model.base_model_id:
+                spliced_target = target[:num_frames][::2]
+            else:
+                spliced_target = target[:num_frames]
 
             spliced_progress_logits.append(pred)
             spliced_target_progress.append(spliced_target)

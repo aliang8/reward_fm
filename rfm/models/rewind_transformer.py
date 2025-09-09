@@ -124,19 +124,19 @@ class ReWiNDTransformer(PreTrainedModel):
         token_embeddings = self.transformer(token_sequence)
         D = token_embeddings.shape[-1]
 
-        final_embeddings_A = token_embeddings[:, 1 : 1 + T, :]  # avoid the text embedding
-        final_embeddings_B = token_embeddings[:, 1 + T : -2, :]  # avoid the text embedding
+        final_embeddings_A = token_embeddings[:, 1 : 1 + T//2, :]  # avoid the text embedding
+        final_embeddings_B = token_embeddings[:, 1 + T//2 : -2, :]  # avoid the text embedding
 
         progress_A_logits = self.progress_head(final_embeddings_A.reshape(-1, D))
         progress_A_logits = einops.rearrange(progress_A_logits, "(b t) 1 -> b t", b=B)
-
+            
         if sample_type != "progress":
-            progress_B_logits = self.progress_head(video_embeddings_B.reshape(-1, D))
+            progress_B_logits = self.progress_head(final_embeddings_B.reshape(-1, D))
             progress_B_logits = einops.rearrange(progress_B_logits, "(b t) 1 -> b t", b=B)
         else:
             # for progress only samples, we don't need trajectory B
             progress_B_logits = None
-            
+
         progress_logits = {"A": progress_A_logits, "B": progress_B_logits}
 
         preference_class_token = token_embeddings[:, -2, :]  # [B, D]

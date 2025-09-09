@@ -482,5 +482,5 @@ class BaseDataGenerator:
         }
         return frames, progress, metadata
 
-    def __next__(self):
-        return self._create_sample()
+    # def __next__(self):
+    #     return self._create_sample()

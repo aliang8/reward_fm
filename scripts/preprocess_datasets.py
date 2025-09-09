@@ -33,6 +33,8 @@ class DatasetPreprocessor:
         self.resized_width = config.data.resized_width
         self.force_reprocess = config.data.force_reprocess
         self.num_proc = config.data.num_proc
+        
+        self.num_threads = 36
 
         # Dataset storage - store individual datasets
         self.datasets: Dict[str, Dataset] = {}  # key: "dataset_path/subset"
@@ -123,12 +125,15 @@ class DatasetPreprocessor:
 
     def _process_individual_dataset(self, dataset: Dataset, cache_dir: str, cache_key: str):
         """Process a single dataset and build its index mappings."""
-        # Cast the frames_video column to Video feature
-        dataset = dataset.cast_column("frames_video", Video(decode=True))
-
         # Process videos and build indices
-        processed_dataset, indices = self._process_dataset_videos_map(dataset, cache_key)
-
+        # Only cast to Video with decode=True for the .map path. The threaded path will
+        # open and close readers per-sample to avoid keeping many files open at once.
+        if self.num_threads > 1:
+            processed_dataset, indices = self._process_dataset_videos_threaded(dataset, cache_key)
+        else:
+            dataset = dataset.cast_column("frames_video", Video(decode=True))
+            processed_dataset, indices = self._process_dataset_videos_map(dataset, cache_key)
+         
         return processed_dataset, indices
 
     def _preprocess_videos(self, frames, num_frames: int = None) -> np.ndarray:
@@ -151,7 +156,7 @@ class DatasetPreprocessor:
         try:
             # Convert VideoReader to list of frames
             all_frames = list(frames)
-            print(f"Total frames: {len(all_frames)}, num_frames: {num_frames}")
+            # print(f"Total frames: {len(all_frames)}, num_frames: {num_frames}")
 
             total_frames = len(all_frames)
 
@@ -206,6 +211,15 @@ class DatasetPreprocessor:
         except Exception as e:
             rank_0_print(f"Error in _preprocess_videos: {e}")
             return np.array([])
+        finally:
+            # Ensure underlying video resources are released
+            try:
+                if hasattr(frames, "close"):
+                    frames.close()
+                elif hasattr(frames, "reader") and hasattr(frames.reader, "close"):
+                    frames.reader.close()
+            except Exception:
+                pass
 
     def _process_dataset_videos_map(self, dataset, cache_key: str):
         """
@@ -342,6 +356,145 @@ class DatasetPreprocessor:
 
         # Log the built indices
         rank_0_print(f"Built index mappings for {cache_key}:")
+        rank_0_print(f"  Robot trajectories: {len(robot_trajectories)}")
+        rank_0_print(f"  Human trajectories: {len(human_trajectories)}")
+        rank_0_print(f"  Tasks: {len(task_indices)}")
+        rank_0_print(f"  Quality labels: {len(quality_indices)}")
+        rank_0_print(f"  Data sources: {len(source_indices)}")
+
+        return processed_dataset, {
+            "robot_trajectories": robot_trajectories,
+            "human_trajectories": human_trajectories,
+            "optimal_by_task": optimal_by_task,
+            "suboptimal_by_task": suboptimal_by_task,
+            "quality_indices": quality_indices,
+            "task_indices": task_indices,
+            "source_indices": source_indices,
+        }
+
+    def _process_dataset_videos_threaded(self, dataset, cache_key: str):
+        """
+        Threaded implementation to process frames and build indices, saving npz files concurrently.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from datasets import Sequence, Value
+
+        # Initialize index mappings
+        robot_trajectories = []
+        human_trajectories = []
+        optimal_by_task = {}
+        suboptimal_by_task = {}
+        quality_indices = {}
+        task_indices = {}
+        source_indices = {}
+
+        frames_dir = os.path.join(self.cache_dir, "frames")
+        os.makedirs(frames_dir, exist_ok=True)
+
+        def process_one(idx: int):
+            # Fetch example inside the worker to avoid holding many decoded readers
+            example: Dict[str, Any] = dataset[idx]
+            frames_src = example.get("frames_video")
+            if frames_src is None:
+                return idx, None, None
+
+            # If the source is a path string, open with a lightweight reader
+            if isinstance(frames_src, str):
+                reader = None
+                try:
+                    try:
+                        import imageio.v2 as iio  # type: ignore
+                    except Exception:
+                        import imageio as iio  # type: ignore
+                    reader = iio.get_reader(frames_src)
+                    frames_iter = (frame for frame in reader)
+                    frames_array = self._preprocess_videos(frames_iter, self.config.data.max_frames_for_preprocessing)
+                finally:
+                    try:
+                        if reader is not None:
+                            reader.close()
+                    except Exception:
+                        pass
+            else:
+                frames_array = self._preprocess_videos(frames_src, self.config.data.max_frames_for_preprocessing)
+
+            if frames_array.size == 0:
+                return idx, None, None
+
+            # Save frames as npz file
+            frames_filename = f"trajectory_{idx:06d}_{example['id']}.npz"
+            frames_filepath = os.path.join(frames_dir, frames_filename)
+            np.savez_compressed(
+                frames_filepath,
+                frames=frames_array,
+                shape=frames_array.shape,
+                num_frames=frames_array.shape[0] if len(frames_array.shape) > 0 else 0,
+            )
+
+            # Return minimal info to update record and indices
+            return idx, frames_filepath, frames_array.shape
+
+        # Prepare indices only; fetch rows inside workers to limit open file handles
+        indices_only = list(range(len(dataset)))
+        # indices_only = list(range(100))
+        _ = tqdm(indices_only, total=len(indices_only), desc=f"Indexing {cache_key}", unit="traj", leave=False)
+
+        # Concurrently convert and write npz for all examples, collecting results
+        idx_to_npz = {}
+        with ThreadPoolExecutor(max_workers=self.num_threads) as executor:
+            futures = [executor.submit(process_one, i) for i in indices_only]
+            for fut in tqdm(as_completed(futures), total=len(futures), desc=f"Processing {cache_key}", unit="traj", leave=False):
+                idx, frames_path, shape = fut.result()
+                if frames_path is not None:
+                    idx_to_npz[idx] = (frames_path, shape)
+
+        # Update dataset with saved paths and build indices
+        updated_rows = []
+        for i in tqdm(indices_only, total=len(indices_only), desc=f"Finalizing {cache_key}", unit="traj", leave=False):
+            ex = dataset[i]
+            if i in idx_to_npz:
+                frames_path, shape = idx_to_npz[i]
+                ex = dict(ex)
+                ex["frames"] = frames_path
+                ex["frames_shape"] = shape
+                ex["num_frames"] = shape[0] if len(shape) > 0 else 0
+                ex["frames_processed"] = True
+
+                # Build indices
+                if ex.get("is_robot", True):
+                    robot_trajectories.append(i)
+                else:
+                    human_trajectories.append(i)
+
+                quality = ex.get("quality_label", "successful")
+                quality_indices.setdefault(quality, []).append(i)
+
+                task = ex.get("task", "unknown")
+                task_indices.setdefault(task, []).append(i)
+
+                source = ex.get("data_source", "unknown")
+                source_indices.setdefault(source, []).append(i)
+
+                if task not in optimal_by_task:
+                    optimal_by_task[task] = []
+                    suboptimal_by_task[task] = []
+                if quality in ["successful", "optimal"]:
+                    optimal_by_task[task].append(i)
+                elif quality in ["suboptimal", "failed", "failure"]:
+                    suboptimal_by_task[task].append(i)
+
+            # Drop any lingering video readers from rows to free FDs
+            if isinstance(ex, dict):
+                ex.pop("frames_video", None)
+
+            updated_rows.append(ex)
+
+        # Create a new Dataset from updated_rows
+        processed_dataset = Dataset.from_list(updated_rows)
+        processed_dataset = processed_dataset.cast_column("lang_vector", Sequence(feature=Value("float32")))
+
+        # Log the built indices
+        rank_0_print(f"Built index mappings for {cache_key} (threaded):")
         rank_0_print(f"  Robot trajectories: {len(robot_trajectories)}")
         rank_0_print(f"  Human trajectories: {len(human_trajectories)}")
         rank_0_print(f"  Tasks: {len(task_indices)}")
@@ -592,6 +745,16 @@ class DatasetPreprocessor:
 
 def main():
     """Main preprocessing function."""
+    # Try to increase the soft limit for open files to reduce 'Too many open files'
+    try:
+        import resource  # type: ignore
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        target_soft = min(hard, 65535)
+        if soft < target_soft:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (target_soft, hard))
+    except Exception:
+        pass
+
     # Load config
     config_path = "rfm/configs/config.yaml"  # Adjust path as needed
     config = OmegaConf.load(config_path)

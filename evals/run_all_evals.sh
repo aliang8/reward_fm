@@ -17,7 +17,7 @@ uv run python evals/run_model_eval.py \
 echo "Running LIBERO10 reward alignment evaluation"
 uv run python evals/run_model_eval.py \
       --config rfm/configs/eval_config.yaml \
-      --set num_batches=2 \
+      --set num_batches=-1 \
       --set data.batch_size=16 \
       --set data.eval_datasets=[\"abraranwar/libero_rfm\"] \
       --set data.eval_subsets=[\"libero256_10\"] \
@@ -25,15 +25,29 @@ uv run python evals/run_model_eval.py \
       --use-async \
       --max_concurrent=4 2>&1 
 
+
 # Run reward alignment evaluation for MetaWorld eval
 echo "Running MetaWorld reward alignment evaluation"
 uv run python evals/run_model_eval.py \
       --config rfm/configs/eval_config.yaml \
-      --set num_batches=2 \
+      --set num_batches=-1 \
       --set data.batch_size=16 \
       --set data.eval_datasets=[\"HenryZhang/metaworld_rewind_rfm_eval\"] \
       --set data.eval_subsets=[\"metaworld_rewind_eval\"] \
       --set data.dataset_type=reward_alignment \
+      --use-async \
+      --max_concurrent=4 2>&1 
+
+
+# Run wrong task preference evaluation for LIBERO10
+echo "Running wrong task preference evaluation for LIBERO10"
+uv run python evals/run_model_eval.py \
+      --config rfm/configs/eval_config.yaml \
+      --set num_batches=10 \
+      --set data.batch_size=16 \
+      --set data.eval_datasets=[\"abraranwar/libero_rfm\"] \
+      --set data.eval_subsets=[\"libero256_10\"] \
+      --set data.dataset_type=wrong_task \
       --use-async \
       --max_concurrent=4 2>&1 
 
@@ -62,12 +76,12 @@ uv run python evals/run_model_eval.py \
       --max_concurrent=4 2>&1
 
 # # Run confusion matrix evaluation
-# uv run python evals/run_model_eval.py \
-#       --config rfm/configs/eval_config.yaml \
-#       --batch_size=16 \
-#       --set data.eval_datasets=[\"abraranwar/libero_rfm\",\"ykorkmaz/libero_failure_rfm\"] \
-#       --set data.eval_subsets=[\"libero_10\",\"libero_10_failure\"] \
-#       --set data.dataset_type=confusion_matrix 2>&1 
+uv run python evals/run_model_eval.py \
+      --config rfm/configs/eval_config.yaml \
+      --set data.batch_size=16 \
+      --set data.eval_datasets=[\"aliangdw/metaworld_rfm\"] \
+      --set data.eval_subsets=[\"metaworld\"] \
+      --set data.dataset_type=confusion_matrix 2>&1 
 
 # # for subset in "libero_10" "libero_goal" "libero_object" "libero_spatial"; do
 # for subset in "libero_10"; do

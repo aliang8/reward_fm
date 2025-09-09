@@ -47,6 +47,46 @@ class PreferenceDataGenerator(BaseDataGenerator):
 
         rank_0_print(f"PreferenceDataGenerator initialized with {len(self.dataset)} total trajectories")
 
+        # Use direct dataset iteration
+        self.current_idx = 0
+
+    def _create_preference_sample_from_chosen(self, chosen_traj: Dict) -> PreferenceSample:
+        """Create a preference sample starting from a provided chosen trajectory dict."""
+        return self._create_preference_sample_with_strategies(chosen_traj)
+
+    def __iter__(self):
+        self.current_idx = 0
+        return self
+
+    def __next__(self):
+        """Iterate over one sample per trajectory in the dataset."""
+        dataset_len = len(self.dataset)
+        if self.current_idx >= dataset_len:
+            raise StopIteration
+
+        chosen_traj = self.dataset[self.current_idx]
+        sample = self._create_preference_sample_from_chosen(chosen_traj)
+
+        # Skip invalid samples
+        while sample is None and self.current_idx < dataset_len:
+            self.current_idx += 1
+            if self.current_idx >= dataset_len:
+                raise StopIteration
+            chosen_traj = self.dataset[self.current_idx]
+            sample = self._create_preference_sample_from_chosen(chosen_traj)
+
+        if sample is None:
+            raise StopIteration
+
+        self.current_idx += 1
+        return sample
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        return self.__next__()
+
     def _create_rewind_trajectory(self, original_traj: Dict, rewind_length: Optional[int] = None) -> Dict:
         """Create a suboptimal trajectory by rewinding the original trajectory.
 
@@ -351,7 +391,7 @@ class PreferenceDataGenerator(BaseDataGenerator):
             else:
                 return self._create_preference_sample_with_strategies()
 
-    def _create_preference_sample_with_strategies(self) -> PreferenceSample:
+    def _create_preference_sample_with_strategies(self, chosen_traj: Optional[Dict] = None) -> PreferenceSample:
         """Create a preference prediction sample using various rejected trajectory generation strategies.
 
         This method implements four different strategies for generating rejected trajectories
@@ -398,38 +438,41 @@ class PreferenceDataGenerator(BaseDataGenerator):
             RuntimeError: If all strategies fail and fallback rewind also fails
         """
 
-        # Use preprocessed chosen trajectories from index maps
-        if not self.optimal_by_task:
-            raise ValueError("No chosen trajectories found for preference generation")
+        # Use provided chosen trajectory if given; otherwise sample one
+        if chosen_traj is None:
+            # Use preprocessed chosen trajectories from index maps
+            if not self.optimal_by_task:
+                raise ValueError("No chosen trajectories found for preference generation")
 
-        # Get a random task and chosen trajectory from it
-        task_name = random.choice(list(self.optimal_by_task.keys()))
-
-        optimal_indices = self.optimal_by_task[task_name]
-        while not optimal_indices:
+            # Get a random task and chosen trajectory from it
             task_name = random.choice(list(self.optimal_by_task.keys()))
-            optimal_indices = self.optimal_by_task[task_name]
 
-        chosen_idx = random.choice(optimal_indices)
-        chosen_traj = self.dataset[chosen_idx]
+            optimal_indices = self.optimal_by_task[task_name]
+            while not optimal_indices:
+                task_name = random.choice(list(self.optimal_by_task.keys()))
+                optimal_indices = self.optimal_by_task[task_name]
+
+            chosen_idx = random.choice(optimal_indices)
+            chosen_traj = self.dataset[chosen_idx]
 
         # Initialize variables for strategy selection
         rejected_traj = None
         strategy_used = None
 
-        if random.random() < self.preference_strategy_ratio[0]:
+        prob = random.random()
+        if prob < self.preference_strategy_ratio[0]:
             # Strategy 1: Use rewind-generated suboptimal trajectory from same task
             rejected_traj = self._create_rewind_trajectory(chosen_traj)
             strategy_used = DataGenStrat.REWIND_SAME_TASK.value
 
-        elif random.random() < self.preference_strategy_ratio[0] + self.preference_strategy_ratio[1]:
+        elif prob < self.preference_strategy_ratio[0] + self.preference_strategy_ratio[1]:
             # Strategy 2: Use random suboptimal trajectory from same task
             rejected_traj = self._create_same_task_suboptimal_trajectory(chosen_traj)
             if rejected_traj is not None:
                 strategy_used = DataGenStrat.SUBOPTIMAL_SAME_TASK.value
 
         elif (
-            random.random()
+            prob
             < self.preference_strategy_ratio[0] + self.preference_strategy_ratio[1] + self.preference_strategy_ratio[2]
         ):
             # Strategy 3: Use trajectory from different task (can be chosen or suboptimal)
@@ -557,7 +600,6 @@ class PreferenceDataGenerator(BaseDataGenerator):
         """
         # Find other tasks
         other_tasks = [task for task in self.optimal_by_task.keys() if task != chosen_traj["task"]]
-
         if other_tasks:
             other_task = random.choice(other_tasks)
             other_task_indices = self.optimal_by_task[other_task]

@@ -7,6 +7,7 @@ Note: make sure that the forward pass uses all of the
 heads or there will be some problems with FSDP sharding.
 """
 
+import einops
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -16,22 +17,18 @@ from typing import Optional, Dict, Any
 from rfm.utils.logging import _timer
 from transformers import AutoModel
 
+
 def mean_pooling(model_output, attention_mask):
-    token_embeddings = model_output[
-        0
-    ]  # First element of model_output contains all token embeddings
-    input_mask_expanded = (
-        attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-    )
-    return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(
-        input_mask_expanded.sum(1), min=1e-9
-    )
+    token_embeddings = model_output[0]  # First element of model_output contains all token embeddings
+    input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+    return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
 
 
 class ReWiNDTransformer(PreTrainedModel):
     """ReWiND Transformer with three prediction heads for different objectives."""
+
     def __init__(self, config, image_encoder=None, text_encoder=None):
-        super().__init__(config)        
+        super().__init__(config)
         rewind_tfm_config = config.rewind
 
         self.image_encoder = image_encoder
@@ -47,21 +44,21 @@ class ReWiNDTransformer(PreTrainedModel):
             nhead=rewind_tfm_config.num_attention_heads,
             dim_feedforward=rewind_tfm_config.hidden_dim * 4,
             dropout=rewind_tfm_config.dropout,
-            batch_first=True
+            batch_first=True,
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=rewind_tfm_config.num_layers)
 
         # Class token
         self.preference_token = nn.Parameter(torch.randn(1, 1, rewind_tfm_config.hidden_dim))
         self.similarity_token = nn.Parameter(torch.randn(1, 1, rewind_tfm_config.hidden_dim))
-        
+
         # Positional embeddings (for vision sequence length)
         self.pos_embed = nn.Parameter(torch.randn(1, rewind_tfm_config.max_len, rewind_tfm_config.hidden_dim))
-        
-        self.progress_head = nn.Linear(rewind_tfm_config.hidden_dim, 1, bias=False)  # Progress prediction (0-1)
-        self.preference_head = nn.Linear(rewind_tfm_config.hidden_dim, 1, bias=False)  # Preference prediction (binary)
-        self.similarity_head = nn.Linear(rewind_tfm_config.hidden_dim, 1, bias=False)  # Similarity scoring (reward)
-        
+
+        self.progress_head = nn.Linear(rewind_tfm_config.hidden_dim, 1, bias=False)
+        self.preference_head = nn.Linear(rewind_tfm_config.hidden_dim, 1, bias=False)
+        self.similarity_head = nn.Linear(rewind_tfm_config.hidden_dim, 1, bias=False)
+
         # Ensure all heads have the same dtype as the base model
         self.model_dtype = next(self.video_proj.parameters()).dtype
         self.transformer = self.transformer.to(dtype=self.model_dtype)
@@ -86,72 +83,66 @@ class ReWiNDTransformer(PreTrainedModel):
         """Forward pass for ReWiND Transformer. See RFM model for more details"""
         if timing_raw is None:
             timing_raw = {}
-        
-        import ipdb; ipdb.set_trace()
+
+        if pixel_values_videos is None:
+            raise ValueError("pixel_values_videos is required")
+
+        B, T, C, H, W = pixel_values_videos.shape
 
         # processing text inputs
         with torch.no_grad():
             text_embeddings = self.text_encoder(input_ids=input_ids, attention_mask=attention_mask)
-            text_embeddings = mean_pooling(text_embeddings, attention_mask)  # [batch_size, text_hidden_dim]
-            text_embeddings = self.text_proj(text_embeddings)  # [batch_size, hidden_dim]
+            text_embeddings = mean_pooling(text_embeddings, attention_mask)  # [B, text_hidden_dim]
+            text_embeddings = self.text_proj(text_embeddings)  # [B, D]
 
             # processing video inputs
-            B = pixel_values_videos.shape[0]
-            T = pixel_values_videos.shape[1]
-            C = pixel_values_videos.shape[2]
-            H = pixel_values_videos.shape[3]
-            W = pixel_values_videos.shape[4]
-            pixel_values_videos = pixel_values_videos.view(B * T, C, H, W)  # merge batch & time
-            pixel_values_videos = pixel_values_videos.view(B * T, C, H, W).to(self.image_encoder.device)
-            video_embeddings = self.image_encoder(pixel_values=pixel_values_videos).pooler_output  # [batch_size, vision_hidden_dim]
-            video_embeddings = self.video_proj(video_embeddings)  # [batch_size * T, hidden_dim]
-            video_embeddings = video_embeddings.view(B, T, -1)  # [batch_size, T, hidden_dim]
-        
-        # concatenate video and text embeddings
-        embedding_A = video_embeddings[::2].clone()  # [batch_size/2, T, hidden_dim]
-        embedding_B = video_embeddings[1::2].clone()  # [batch_size/2, T, hidden_dim]
-        
+            # T should contain both chosen and rejected trajectories concatenated together
+            pixel_values_videos = pixel_values_videos.view(B * T, C, H, W)
+            video_embeddings = self.image_encoder(
+                pixel_values=pixel_values_videos
+            ).pooler_output  # [B, vision_hidden_dim]
+            video_embeddings = self.video_proj(video_embeddings)  # [B * T, D]
+            video_embeddings = video_embeddings.view(B, T, -1)  # [B, T, D]
+
+            video_embeddings_A = video_embeddings[:, : T // 2]
+            video_embeddings_B = video_embeddings[:, T // 2 :]
+
         # Add the first embedding to the beginning of embedding A
-        first_frame_emb_A = self.first_embedding_A.expand(embedding_A.size(0), -1, -1)  # [batch_size/2, 1, hidden_dim]
-        first_frame_emb_B = self.first_embedding_B.expand(embedding_B.size(0), -1, -1)  # [batch_size/2, 1, hidden_dim]
+        first_frame_emb_A = einops.repeat(self.first_embedding_A, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
+        first_frame_emb_B = einops.repeat(self.first_embedding_B, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
 
-        embedding_A[:,0:1] += first_frame_emb_A
-        embedding_B[:,0:1] += first_frame_emb_B
-        # cat text embeddings together
-        length_A = embedding_A.size(1)
-        length_B = embedding_B.size(1)
-        total_embedding = torch.cat([
-            text_embeddings.unsqueeze(1), 
-            embedding_A, 
-            embedding_B,
-            self.preference_token.expand(embedding_A.size(0), -1, -1),
-            self.similarity_token.expand(embedding_A.size(0), -1, -1)
-            ], dim=1)  # [batch_size/2, 2*T + 1, hidden_dim]
+        video_embeddings_A[:, 0:1] += first_frame_emb_A
+        video_embeddings_B[:, 0:1] += first_frame_emb_B
 
-        embedding_A = total_embedding[:,1:1+length_A,:] # avoid the text embedding
-        embedding_B = total_embedding[:,1+length_A:-2,:] # avoid the text embedding
+        pref_token = einops.repeat(self.preference_token, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
+        sim_token = einops.repeat(self.similarity_token, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
 
-        batch_size = total_embedding.size(0)
-        feature_dim = total_embedding.size(-1)
-        progress_A_logits = self.progress_head(
-            embedding_A.reshape(-1, feature_dim)
-            ).squeeze(-1).view(batch_size, -1)  # [batch_size/2, T]
-        
+        token_sequence = torch.cat(
+            [text_embeddings.unsqueeze(1), video_embeddings_A, video_embeddings_B, pref_token, sim_token], dim=1
+        )  # shape: [B, 2*T + 2, D]
+
+        token_embeddings = self.transformer(token_sequence)
+        D = token_embeddings.shape[-1]
+
+        final_embeddings_A = token_embeddings[:, 1 : 1 + T, :]  # avoid the text embedding
+        final_embeddings_B = token_embeddings[:, 1 + T : -2, :]  # avoid the text embedding
+
+        progress_A_logits = self.progress_head(final_embeddings_A.reshape(-1, D))
+        progress_A_logits = einops.rearrange(progress_A_logits, "(b t) 1 -> b t", b=B)
 
         if sample_type != "progress":
-            progress_B_logits = self.progress_head(
-                embedding_B.reshape(-1, feature_dim)
-                ).squeeze(-1).view(batch_size, -1)  # [batch_size/2, T]
+            progress_B_logits = self.progress_head(video_embeddings_B.reshape(-1, D))
+            progress_B_logits = einops.rearrange(progress_B_logits, "(b t) 1 -> b t", b=B)
         else:
             # for progress only samples, we don't need trajectory B
             progress_B_logits = None
+            
         progress_logits = {"A": progress_A_logits, "B": progress_B_logits}
 
-        preference_class_token = total_embedding[:,-2,:]  # [batch_size/2, hidden_dim]
-        similarity_class_token = total_embedding[:,-1,:]  # [batch_size/2, hidden_dim]
+        preference_class_token = token_embeddings[:, -2, :]  # [B, D]
         if sample_type == "preference":
             logits = self.preference_head(preference_class_token)
         else:  # similarity
-            logits = self.similarity_head(similarity_class_token)
+            pass
 
         return SequenceClassifierOutputWithPast(logits=logits), progress_logits, timing_raw

@@ -73,7 +73,7 @@ class InfiniteDataGeneratorDataset:
             return self.data_generator.__len__()
         else:
             return self.max_samples
-        
+
     def __getitem__(self, idx):
         return self.__next__()
 

@@ -8,7 +8,13 @@ import numpy as np
 
 class BaseCollator:
     def __init__(
-        self, processor: AutoProcessor, tokenizer: AutoTokenizer = None, max_length: int = 1024, resized_height: int = 128, resized_width: int = 128, **kwargs
+        self,
+        processor: AutoProcessor,
+        tokenizer: AutoTokenizer = None,
+        max_length: int = 1024,
+        resized_height: int = 128,
+        resized_width: int = 128,
+        **kwargs,
     ):
         self.processor = processor
         self.tokenizer = tokenizer

@@ -11,6 +11,7 @@ import numpy as np
 from rfm.data.dataset_types import PreferenceSample, ProgressSample
 from rfm.data.batch_collator import BatchCollator
 
+
 class ReWiNDBatchCollator(BatchCollator):
     """Batch collator that processes Sample objects through the processor."""
 
@@ -25,7 +26,6 @@ class ReWiNDBatchCollator(BatchCollator):
             resized_width: Width to resize images/videos to (default: 128)
         """
         super().__init__(**kwargs)
-
 
     def _process_preference_batch(self, preference_samples: List[PreferenceSample]) -> Dict[str, torch.Tensor]:
         """Process a batch of preference samples."""
@@ -51,16 +51,16 @@ class ReWiNDBatchCollator(BatchCollator):
 
         frame_len = len(all_chosen_frames[0])
         # [(B*T), C, H, W]
-        chosen_video_inputs = self.processor(images=all_chosen_frames, return_tensors="pt")['pixel_values']
+        chosen_video_inputs = self.processor(images=all_chosen_frames, return_tensors="pt")["pixel_values"]
         _, C, H, W = chosen_video_inputs.shape
         chosen_video_inputs = chosen_video_inputs.view(len(preference_samples), frame_len, C, H, W)
-        rejected_video_inputs = self.processor(images=all_rejected_frames, return_tensors="pt")['pixel_values']
+        rejected_video_inputs = self.processor(images=all_rejected_frames, return_tensors="pt")["pixel_values"]
         rejected_video_inputs = rejected_video_inputs.view(len(preference_samples), frame_len, C, H, W)
 
         # interleave them based on preference_labels
         video_inputs = torch.empty(len(preference_samples), frame_len * 2, C, H, W)
         for i in range(len(preference_samples)):
-            if preference_labels[i] == 1: # means chosen first 
+            if preference_labels[i] == 1:  # means chosen first
                 video_inputs[i] = torch.cat([chosen_video_inputs[i], rejected_video_inputs[i]], dim=0)
             else:
                 video_inputs[i] = torch.cat([rejected_video_inputs[i], chosen_video_inputs[i]], dim=0)
@@ -72,10 +72,11 @@ class ReWiNDBatchCollator(BatchCollator):
             return_tensors="pt",
         )
         batch_inputs = {
-            "text_inputs" : encodings["input_ids"],
-            "text_attention_mask": encodings['attention_mask'],
-            "video_inputs" : video_inputs,
+            "input_ids": encodings["input_ids"],
+            "attention_mask": encodings["attention_mask"],
+            "pixel_values_videos": video_inputs,
         }
+        batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
 
         batch_inputs = self._add_preference_meta(batch_inputs, preference_samples)
         return batch_inputs
@@ -88,7 +89,7 @@ class ReWiNDBatchCollator(BatchCollator):
             all_frames.append(frames)
 
         # here we directly use dino processor process the images and videos to tensors
-        video_inputs = self.processor(images=all_frames, return_tensors="pt")['pixel_values']
+        video_inputs = self.processor(images=all_frames, return_tensors="pt")["pixel_values"]
         frame_len = len(all_frames[0])
         _, C, H, W = video_inputs.shape
         video_inputs = video_inputs.view(len(progress_samples), frame_len, C, H, W)
@@ -102,11 +103,10 @@ class ReWiNDBatchCollator(BatchCollator):
             return_tensors="pt",
         )
 
-
         batch_inputs = {
-            "text_inputs" : encodings["input_ids"],
-            "text_attention_mask": encodings["attention_mask"],
-            "video_inputs" : video_inputs,
+            "input_ids": encodings["input_ids"],
+            "attention_mask": encodings["attention_mask"],
+            "pixel_values_videos": video_inputs,
         }
 
         batch_inputs = self._add_progress_meta(batch_inputs, progress_samples)

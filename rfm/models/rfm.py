@@ -202,7 +202,9 @@ class RFMModel(PreTrainedModel):
                         trajectory_A_boundaries
                     ]  # [num_frames_A, hidden_dim]
 
-                    assert boundary_hidden_states_A.shape[0] == T_A, f"Expected {T_A} frames, got {boundary_hidden_states_A.shape[0]}"
+                    assert boundary_hidden_states_A.shape[0] == T_A, (
+                        f"Expected {T_A} frames, got {boundary_hidden_states_A.shape[0]}"
+                    )
                     progress_A = self.progress_head(boundary_hidden_states_A).squeeze(-1)  # [num_frames_A]
                     progress_logits_A.append(progress_A)
                 else:
@@ -238,7 +240,9 @@ class RFMModel(PreTrainedModel):
                             trajectory_B_boundaries
                         ]  # [num_frames_B, hidden_dim]
 
-                        assert boundary_hidden_states_B.shape[0] == T_B, f"Expected {T_B} frames, got {boundary_hidden_states_B.shape[0]}"
+                        assert boundary_hidden_states_B.shape[0] == T_B, (
+                            f"Expected {T_B} frames, got {boundary_hidden_states_B.shape[0]}"
+                        )
                         progress_B = self.progress_head(boundary_hidden_states_B).squeeze(-1)  # [num_frames_B]
                         progress_logits_B.append(progress_B)
                     else:

@@ -323,11 +323,11 @@ class RFMHeadsTrainer(Trainer):
             model_outputs, progress_logits, model_timing_raw = model(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
-                pixel_values=inputs.get("pixel_values"),
-                pixel_values_videos=inputs.get("pixel_values_videos"),
-                image_grid_thw=inputs.get("image_grid_thw"),
-                video_grid_thw=inputs.get("video_grid_thw"),
-                second_per_grid_ts=inputs.get("second_per_grid_ts"),
+                pixel_values=inputs.get("pixel_values", None),
+                pixel_values_videos=inputs.get("pixel_values_videos", None),
+                image_grid_thw=inputs.get("image_grid_thw", None),
+                video_grid_thw=inputs.get("video_grid_thw", None),
+                second_per_grid_ts=inputs.get("second_per_grid_ts", None),
                 sample_type="preference",
                 timing_raw=self.timing_raw,
             )
@@ -377,7 +377,7 @@ class RFMHeadsTrainer(Trainer):
                 # First trajectory is preferred (chosen)
                 chosen_traj_shapes.append(chosen_frames_shape[i])
                 rejected_traj_shapes.append(rejected_frames_shape[i])
-                
+
                 chosen_traj_progress_target.append(inputs["target_progress_chosen"][i])
                 rejected_traj_progress_target.append(inputs["target_progress_rejected"][i])
                 chosen_traj_progress_target_mask.append(inputs["target_progress_chosen_mask"][i])
@@ -390,7 +390,7 @@ class RFMHeadsTrainer(Trainer):
                     # Second trajectory is preferred
                     chosen_traj_progress_pred.append(progress_logits["B"][i])
                     rejected_traj_progress_pred.append(progress_logits["A"][i])
-                
+
             # Convert to tensors for the helper function
             chosen_traj_shapes = torch.stack(chosen_traj_shapes)
             rejected_traj_shapes = torch.stack(rejected_traj_shapes)
@@ -443,14 +443,14 @@ class RFMHeadsTrainer(Trainer):
                             f"{prefix}_strat/pref_loss_{strat}": (preference_loss_all[mask == 1]).mean().item(),
                         }
                     )
-                
+
                 # split acc by data source
                 data_sources = set(inputs["data_source"])
                 for data_source in data_sources:
                     mask = [1 if s == data_source else 0 for s in inputs["data_source"]]
                     mask = torch.tensor(mask, device=self.accelerator.device)
                     outputs_dict.update(
-                        {   
+                        {
                             f"{prefix}_ds/pref_acc_{data_source}": (preference_accuracy[mask == 1]).mean().item(),
                             f"{prefix}_ds/pref_loss_{data_source}": (preference_loss_all[mask == 1]).mean().item(),
                         }
@@ -485,7 +485,9 @@ class RFMHeadsTrainer(Trainer):
                     mask = torch.tensor(mask, device=self.accelerator.device)
                     outputs_dict.update(
                         {
-                            f"{prefix}_ds/spearman_corr_{data_source}": (spearman_corr_rejected[mask == 1]).mean().item(),
+                            f"{prefix}_ds/spearman_corr_{data_source}": (spearman_corr_rejected[mask == 1])
+                            .mean()
+                            .item(),
                             f"{prefix}_ds/prog_loss_{data_source}": (progress_loss_rejected[mask == 1]).mean().item(),
                         }
                     )

@@ -256,11 +256,12 @@ def train_vqa(cfg: ExperimentConfig):
     trainer.save_model(cfg.training.output_dir)
     rank_0_print(f"Training complete! Check {cfg.training.output_dir} for checkpoints and final model.")
 
+
 def train_transformer(cfg: ExperimentConfig):
     timing_raw = {}
     # Create DataGenerator for training using shared utility
     with _timer("time/setup_data_generator", timing_raw=timing_raw):
-        data_generator = setup_data_generator(cfg) # should be same as RFM the data format will be same
+        data_generator = setup_data_generator(cfg)  # should be same as RFM the data format will be same
     run_name = f"{cfg.logging.wandb_run_name}"
     if cfg.debug:
         run_name += "_debug"
@@ -282,9 +283,8 @@ def train_transformer(cfg: ExperimentConfig):
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-
     # Use the shared function to set up model and processor
-    with _timer("time/setup_model_and_processor", timing_raw=timing_raw): # here need to change to custom transformer
+    with _timer("time/setup_model_and_processor", timing_raw=timing_raw):  # here need to change to custom transformer
         tokenizer, processor, rewind_model = setup_transformer_model_and_processor(cfg.model)
     train_args = create_training_arguments(cfg, cfg.training.output_dir)
     # Save config to output directory
@@ -347,6 +347,7 @@ def train_transformer(cfg: ExperimentConfig):
     trainer.train(resume_from_checkpoint=cfg.training.resume_from_checkpoint)
     trainer.save_model(cfg.training.output_dir)
     rank_0_print(f"Training complete! Check {cfg.training.output_dir} for checkpoints and final model.")
+
 
 def display_config(cfg: ExperimentConfig):
     """Display the configuration in a nice Rich format."""
@@ -429,12 +430,13 @@ def display_config(cfg: ExperimentConfig):
 
     console.print(table)
 
-def main(cfg: ExperimentConfig):    
+
+def main(cfg: ExperimentConfig):
     # Display the configuration in a nice Rich format
     display_config(cfg)
     assert cfg.data.model_type in ["default", "vqa"], "Model type must be either 'default' or 'vqa'"
 
-    if cfg.mode == "train" and cfg.data.model_type == "default": # and "Qwen" in cfg.model.base_model_id:
+    if cfg.mode == "train" and cfg.data.model_type == "default":  # and "Qwen" in cfg.model.base_model_id:
         if is_rank_0():
             rprint(Panel.fit("🚀 Starting RFM Training", style="bold green"))
         train(cfg)
@@ -449,6 +451,7 @@ def main(cfg: ExperimentConfig):
     #     train_transformer(cfg)
     else:
         raise ValueError(f"Unknown mode: {cfg.mode}. Must be 'train' or 'evaluate'")
+
 
 if __name__ == "__main__":
     cfg = parse_multiple(ExperimentConfig)

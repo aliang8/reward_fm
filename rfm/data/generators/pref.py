@@ -526,8 +526,12 @@ class PreferenceDataGenerator(BaseDataGenerator):
             rejected_metadata = rejected_traj["metadata"]
 
         # Let's make sure to pad both trajectories to max_frames
-        chosen_frames, chosen_progress = self._pad_trajectory_to_max_frames(chosen_frames, chosen_progress, self.config.max_frames)
-        rejected_frames, rejected_progress = self._pad_trajectory_to_max_frames(rejected_frames, rejected_progress, self.config.max_frames)
+        chosen_frames, chosen_progress = self._pad_trajectory_to_max_frames(
+            chosen_frames, chosen_progress, self.config.max_frames
+        )
+        rejected_frames, rejected_progress = self._pad_trajectory_to_max_frames(
+            rejected_frames, rejected_progress, self.config.max_frames
+        )
 
         # If our strategy is different task, make sure the rejected trajectory has 0 progress
         if strategy_used == DataGenStrat.DIFFERENT_TASK.value:

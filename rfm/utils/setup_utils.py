@@ -92,7 +92,7 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[
         image_encoder = AutoModel.from_pretrained("facebook/dinov2-base")
         text_encoder = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L12-v2")
         processor = AutoImageProcessor.from_pretrained("facebook/dinov2-base", use_fast=True)
-        tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L12-v2")    
+        tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L12-v2")
 
         train_img = cfg.train_vision_encoder
         train_text = cfg.train_language_model
@@ -144,7 +144,7 @@ def setup_peft_model(rfm_model: RFMModel, cfg: ExperimentConfig) -> RFMModel:
         elif "visual" in name or "vision" in name:
             # if PEFT enabled, we don't need to do anything
             if cfg.peft.use_peft and cfg.peft.peft_vision_encoder:
-                pass 
+                pass
             else:
                 param.requires_grad = cfg.model.train_vision_encoder
         elif "language_model" in name:

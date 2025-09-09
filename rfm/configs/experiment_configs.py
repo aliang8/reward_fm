@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Union
 from transformers import PretrainedConfig
 
+
 @dataclass
 class ReWINDTransformerConfig:
     video_feature_dim: int = 768
@@ -18,6 +19,7 @@ class ReWINDTransformerConfig:
     num_attention_heads: int = 8
     dropout: float = 0.1
     max_len: int = 16
+
 
 @dataclass
 class ModelConfig(PretrainedConfig):
@@ -35,9 +37,10 @@ class ModelConfig(PretrainedConfig):
         default=True, metadata={"help": "Whether to train the preference prediction head"}
     )
     train_similarity_head: bool = field(default=True, metadata={"help": "Whether to train the similarity scoring head"})
-    
+
     # rewind sub-config
     rewind: Optional[ReWINDTransformerConfig] = field(default=None)
+
 
 @dataclass
 class PEFTConfig:
@@ -189,6 +192,7 @@ class TrainingConfig:
     warmup_ratio: float = field(default=0.1)
     max_grad_norm: float = field(default=1.0)
 
+
 @dataclass
 class LoggingConfig:
     """Config for logging settings"""
@@ -209,11 +213,11 @@ class ExperimentConfig:
 
     mode: str = field(default="train", metadata={"help": "Mode: 'train' or 'evaluate'"})
     debug: bool = field(default=False, metadata={"help": "Whether to run in debug mode"})
-    trainer_cls: str = field(default="rfm_heads", metadata={"help": "Trainer class: 'rfm_heads', 'rewind_transformer', 'rfm_vqa'"})
+    trainer_cls: str = field(
+        default="rfm_heads", metadata={"help": "Trainer class: 'rfm_heads', 'rewind_transformer', 'rfm_vqa'"}
+    )
     model: ModelConfig = field(default_factory=ModelConfig)
     peft: PEFTConfig = field(default_factory=PEFTConfig)
     data: DataConfig = field(default_factory=DataConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
-
-

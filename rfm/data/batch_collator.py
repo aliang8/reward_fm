@@ -32,13 +32,19 @@ class BatchCollator(BaseCollator):
         """
         super().__init__(**kwargs)
 
-    def _add_preference_meta(self, batch_inputs: Dict[str, torch.Tensor], preference_samples: List[PreferenceSample]) -> Dict[str, torch.Tensor]:
+    def _add_preference_meta(
+        self, batch_inputs: Dict[str, torch.Tensor], preference_samples: List[PreferenceSample]
+    ) -> Dict[str, torch.Tensor]:
         """Add metadata to the batch inputs."""
         batch_inputs["data_source"] = [sample.chosen_trajectory.data_source for sample in preference_samples]
         batch_inputs["sample_type"] = ["preference"] * len(preference_samples)
-        batch_inputs["chosen_data_gen_strategy"] = [sample.chosen_trajectory.data_gen_strategy for sample in preference_samples]
-        batch_inputs["rejected_data_gen_strategy"] = [sample.rejected_trajectory.data_gen_strategy for sample in preference_samples]
-        
+        batch_inputs["chosen_data_gen_strategy"] = [
+            sample.chosen_trajectory.data_gen_strategy for sample in preference_samples
+        ]
+        batch_inputs["rejected_data_gen_strategy"] = [
+            sample.rejected_trajectory.data_gen_strategy for sample in preference_samples
+        ]
+
         # Add target progress for both trajectories based on conversation order
         target_progress_chosen = [sample.chosen_trajectory.target_progress for sample in preference_samples]
         target_progress_rejected = [sample.rejected_trajectory.target_progress for sample in preference_samples]
@@ -72,7 +78,9 @@ class BatchCollator(BaseCollator):
         )
         return batch_inputs
 
-    def _add_progress_meta(self, batch_inputs: Dict[str, torch.Tensor], progress_samples: List[ProgressSample]) -> Dict[str, torch.Tensor]:
+    def _add_progress_meta(
+        self, batch_inputs: Dict[str, torch.Tensor], progress_samples: List[ProgressSample]
+    ) -> Dict[str, torch.Tensor]:
         """Add metadata to the batch inputs."""
         # Add target progress and quality labels
         target_progress_list = []
@@ -395,4 +403,3 @@ class BatchCollator(BaseCollator):
         )
         batch_inputs = self._add_progress_meta(batch_inputs, progress_samples)
         return batch_inputs
-        

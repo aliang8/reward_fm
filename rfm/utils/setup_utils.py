@@ -88,10 +88,10 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[
         tokenizer = processor.tokenizer
 
     elif "rewind_transformer" in cfg.base_model_id:
-        # 1. Pretrained image encoder (frozen DINOv2)
+        # Pretrained image and text encoders
         image_encoder = AutoModel.from_pretrained("facebook/dinov2-base")
         text_encoder = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L12-v2")
-        processor = AutoImageProcessor.from_pretrained("facebook/dinov2-base")
+        processor = AutoImageProcessor.from_pretrained("facebook/dinov2-base", use_fast=True)
         tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L12-v2")    
 
         train_img = cfg.train_vision_encoder
@@ -407,59 +407,6 @@ def setup_vqa_model_and_processor(cfg: ModelConfig, hf_model_id: str = ""):
     return processor, rfm_model
 
 
-# def setup_transformer_model_and_processor(cfg: ModelConfig, hf_model_id: str = ""):
-#     """Shared function to set up model, processor, and tokenizer for both training and evaluation"""
-#     'The data should be same with RFM model'
-#     'The model should be different, should be the transformer model'
-#     # Get current rank for logging
-#     import torch.distributed as dist
-
-#     rank = dist.get_rank() if dist.is_initialized() else 0
-
-#     if rank == 0:
-#         rank_0_print(f"Setting up model and processor on rank {rank}...")
-
-#     # Load processor and tokenizer 
-#     # here should change to DInov2 processor maybe correct here?
-#     processor = AutoImageProcessor.from_pretrained('facebook/dinov2-base', use_fast=True)
-
-#     rank_0_print(f"Processor: {processor}")
-
-#     # then here we should load minilm tokenizer
-#     tokenizer = AutoTokenizer.from_pretrained(
-#         "sentence-transformers/all-MiniLM-L12-v2"
-#     ) # here we finish init the tokenizer and processor
-    
-#     # Initialize RFM model wrapper with the pre-loaded base model
-#     if rank == 0:
-#         rank_0_print(f"Initializing ReWiND model on rank {rank}...")
-#     rfm_config = RFMConfig(**asdict(cfg.rewind))
-#     rfm_model = RFMTransformer(config=rfm_config)
-#     # Not support loading from hf for now cuz we are training from scratch
-#     '''
-#     Maybe add pre-trained weight here in the future
-#     '''
-#     # load the model from the evaluation path
-#     if hf_model_id:
-#         rank_0_print(f"Loading model from {hf_model_id} on rank {rank}")
-
-#         # before = rfm_model.model.visual.blocks[0].mlp.down_proj.weight
-#         # before = rfm_model.preference_head.weight
-#         # load the model from the evaluation path
-#         state_dict = torch.load(hf_model_id, map_location='cpu')
-#         rfm_model.load_state_dict(state_dict)
-
-#     # Only print model architecture on rank 0
-#     if rank == 0:
-#         rank_0_print(f"Model architecture initialized on rank {rank}")
-
-#     return tokenizer, processor, rfm_model
-
-
-
-
-
-
 def setup_vqa_batch_collator(processor: AutoProcessor, cfg: ExperimentConfig) -> VQABatchCollator:
     """Create VQA batch collator using VQA config."""
     rank_0_print("Setting up VQA batch collator...")
@@ -471,19 +418,3 @@ def setup_vqa_batch_collator(processor: AutoProcessor, cfg: ExperimentConfig) ->
     )
     rank_0_print("VQA batch collator created successfully")
     return collator
-
-
-def setup_rewind_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg: ExperimentConfig) -> BatchCollator:
-    """Shared function to create BatchCollator"""
-
-    rank_0_print("Setting up batch collator...")
-    batch_collator = ReWiNDBatchCollator(
-        processor=processor,
-        tokenizer = tokenizer,
-        max_length=cfg.training.max_seq_length,
-        resized_height=cfg.data.resized_height,
-        resized_width=cfg.data.resized_width,
-    )
-
-    rank_0_print("Batch collator created successfully")
-    return batch_collator

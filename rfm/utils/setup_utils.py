@@ -21,9 +21,11 @@ from typing import Tuple, Optional, Union
 
 from rfm.models.rfm import RFMModel
 from rfm.models.rfm_vqa import RFMModelVQA
+
 from rfm.models.rewind_transformer import ReWiNDTransformer
+from rfm.data.rewind_batch_collator import ReWiNDBatchCollator
+
 from rfm.data.generators.generator import DataGenerator
-from rfm.data.generators.vqa_generator import VQADataGenerator
 from rfm.data.batch_collator import BatchCollator
 from rfm.data.dataset import InfiniteDataGeneratorDataset
 from rfm.data.generators.success_failure import PairedSuccessFailureGenerator
@@ -31,10 +33,10 @@ from rfm.data.generators.reward_alignment import RewardAlignmentGenerator
 from rfm.data.generators.confusion_matrix import ConfusionMatrixGenerator
 from rfm.data.generators.wrong_task import WrongTaskGenerator
 from rfm.data.generators.progress import ProgressGenerator
+
 from rfm.utils.logging import rank_0_print
 from rfm.configs.experiment_configs import ExperimentConfig, ModelConfig
 from rfm.data.vqa_batch_collator import VQABatchCollator
-from rfm.data.rewind_batch_collator import ReWiNDBatchCollator
 
 
 def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[AutoProcessor, RFMModel]:
@@ -50,6 +52,7 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[
             # num_frames=cfg.data.max_frames,
             do_sample_frames=False,  # disable frame sampling here since we do this in the data generator
             # max_frames=cfg.data.max_frames,
+            padding_side="left",
         )
 
         rank_0_print(f"Processor: {processor}")
@@ -58,24 +61,34 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[
             processor.tokenizer.pad_token = processor.tokenizer.eos_token
 
         # Create a fresh model instance
-        base_model = Qwen2_5_VLModel.from_pretrained(cfg.base_model_id)
+        if cfg.model_type == "default":
+            qwen_model_cls = Qwen2_5_VLModel
+            rfm_model_cls = RFMModel
+        elif cfg.model_type == "vqa":
+            qwen_model_cls = Qwen2_5_VLForConditionalGeneration
+            rfm_model_cls = RFMModelVQA
+
+        base_model = qwen_model_cls.from_pretrained(cfg.base_model_id)
 
         # Add RFM special tokens if they don't exist
-        special_tokens = ["<|split_token|>", "<|reward_token|>", "<|pref_token|>"]
-        for token in special_tokens:
-            if token not in processor.tokenizer.get_vocab():
-                processor.tokenizer.add_special_tokens({"additional_special_tokens": [token]})
-                rank_0_print(f"Added special token: {token}")
+        if cfg.model_type == "default":
+            special_tokens = ["<|split_token|>", "<|reward_token|>", "<|pref_token|>"]
+            for token in special_tokens:
+                if token not in processor.tokenizer.get_vocab():
+                    processor.tokenizer.add_special_tokens({"additional_special_tokens": [token]})
+                    rank_0_print(f"Added special token: {token}")
 
-        # Resize token embeddings if new tokens were added
-        if len(processor.tokenizer) != base_model.config.vocab_size:
-            rank_0_print(f"Resizing token embeddings from {base_model.config.vocab_size} to {len(processor.tokenizer)}")
-            base_model.resize_token_embeddings(len(processor.tokenizer))
-            rank_0_print(f"Resized token embeddings to {len(processor.tokenizer)}")
+            # Resize token embeddings if new tokens were added
+            if len(processor.tokenizer) != base_model.config.vocab_size:
+                rank_0_print(
+                    f"Resizing token embeddings from {base_model.config.vocab_size} to {len(processor.tokenizer)}"
+                )
+                base_model.resize_token_embeddings(len(processor.tokenizer))
+                rank_0_print(f"Resized token embeddings to {len(processor.tokenizer)}")
 
         # Initialize RFM model wrapper with the pre-loaded base model
         rank_0_print(f"Initializing RFM model...")
-        rfm_model = RFMModel(config=base_model.config, processor=processor, base_model=base_model)
+        rfm_model = rfm_model_cls(config=base_model.config, processor=processor, base_model=base_model)
 
         if hf_model_id:
             rank_0_print(f"Loading model from {hf_model_id}")
@@ -83,7 +96,7 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[
             # before = rfm_model.model.visual.blocks[0].mlp.down_proj.weight
             # before = rfm_model.preference_head.weight
             # load the model from the evaluation path
-            rfm_model = RFMModel.from_pretrained(hf_model_id, processor=processor, base_model=base_model)
+            rfm_model = rfm_model_cls.from_pretrained(hf_model_id, processor=processor, base_model=base_model)
 
         tokenizer = processor.tokenizer
 
@@ -256,32 +269,22 @@ def setup_data_generator(cfg: ExperimentConfig, is_eval: bool = False) -> DataGe
         for i, (dataset, subset) in enumerate(zip(datasets, subsets)):
             rank_0_print(f"  Dataset {i + 1}: {dataset} -> {subset}")
 
-    if cfg.data.model_type == "vqa":
-        if cfg.data.dataset_type == "reward_alignment":
-            data_generator = RewardAlignmentGenerator(config=cfg.data, is_evaluation=is_eval)
-        elif cfg.data.dataset_type == "success_failure":
-            data_generator = PairedSuccessFailureGenerator(config=cfg.data, is_evaluation=is_eval)
-        elif cfg.data.dataset_type == "policy_ranking":
-            data_generator = ProgressGenerator(config=cfg.data, is_evaluation=is_eval)
-        else:
-            data_generator = VQADataGenerator(config=cfg.data, is_evaluation=is_eval)
+    if cfg.data.dataset_type == "reward_alignment":
+        data_generator = RewardAlignmentGenerator(config=cfg.data, is_evaluation=is_eval)
+    elif cfg.data.dataset_type == "success_failure":
+        data_generator = PairedSuccessFailureGenerator(config=cfg.data, is_evaluation=is_eval)
+    elif cfg.data.dataset_type == "policy_ranking":
+        data_generator = ProgressGenerator(config=cfg.data, is_evaluation=is_eval)
+    elif cfg.data.dataset_type == "confusion_matrix":
+        data_generator = ConfusionMatrixGenerator(
+            config=cfg.data, is_evaluation=is_eval, max_trajectories=cfg.data.max_trajectories
+        )
+    elif cfg.data.dataset_type == "wrong_task":
+        data_generator = WrongTaskGenerator(
+            config=cfg.data, is_evaluation=is_eval, max_trajectories=cfg.data.max_trajectories
+        )
     else:
-        if cfg.data.dataset_type == "reward_alignment":
-            data_generator = RewardAlignmentGenerator(config=cfg.data, is_evaluation=is_eval)
-        elif cfg.data.dataset_type == "success_failure":
-            data_generator = PairedSuccessFailureGenerator(config=cfg.data, is_evaluation=is_eval)
-        elif cfg.data.dataset_type == "policy_ranking":
-            data_generator = ProgressGenerator(config=cfg.data, is_evaluation=is_eval)
-        elif cfg.data.dataset_type == "confusion_matrix":
-            data_generator = ConfusionMatrixGenerator(
-                config=cfg.data, is_evaluation=is_eval, max_trajectories=cfg.data.max_trajectories
-            )
-        elif cfg.data.dataset_type == "wrong_task":
-            data_generator = WrongTaskGenerator(
-                config=cfg.data, is_evaluation=is_eval, max_trajectories=cfg.data.max_trajectories
-            )
-        else:
-            data_generator = DataGenerator(config=cfg.data, is_evaluation=is_eval)
+        data_generator = DataGenerator(config=cfg.data, is_evaluation=is_eval)
 
     if rank == 0:
         rank_0_print(f"Data generator initialized on rank {rank}")
@@ -326,12 +329,20 @@ def setup_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg
     rank_0_print("Setting up batch collator...")
 
     if "Qwen" in cfg.model.base_model_id:
-        batch_collator = BatchCollator(
-            processor=processor,
-            max_length=cfg.training.max_seq_length,
-            resized_height=cfg.data.resized_height,
-            resized_width=cfg.data.resized_width,
-        )
+        if cfg.model.model_type == "default":
+            batch_collator = BatchCollator(
+                processor=processor,
+                max_length=cfg.training.max_seq_length,
+                resized_height=cfg.data.resized_height,
+                resized_width=cfg.data.resized_width,
+            )
+        elif cfg.model.model_type == "vqa":
+            batch_collator = VQABatchCollator(
+                processor=processor,
+                max_length=cfg.training.max_seq_length,
+                resized_height=cfg.data.resized_height,
+                resized_width=cfg.data.resized_width,
+            )
     elif "rewind_transformer" in cfg.model.base_model_id:
         batch_collator = ReWiNDBatchCollator(
             processor=processor,
@@ -343,78 +354,3 @@ def setup_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg
 
     rank_0_print("Batch collator created successfully")
     return batch_collator
-
-
-def setup_vqa_model_and_processor(cfg: ModelConfig, hf_model_id: str = ""):
-    """Setup VQA baseline model and processor from a VQA-specific config."""
-    # Get current rank for logging
-    import torch.distributed as dist
-
-    rank = dist.get_rank() if dist.is_initialized() else 0
-
-    if rank == 0:
-        rank_0_print(f"Setting up model and processor on rank {rank}...")
-
-    # Load processor and tokenizer
-    processor = AutoProcessor.from_pretrained(
-        cfg.base_model_id,
-        trust_remote_code=cfg.trust_remote_code,
-        # temporal_patch_size=1,
-        # fps=1,
-        # num_frames=cfg.data.max_frames,
-        do_sample_frames=False,  # disable frame sampling here since we do this in the data generator
-        # max_frames=cfg.data.max_frames,
-        padding_side="left",
-        cache_dir="/scr/ykorkmaz/rfm/model/base_qwen",
-    )
-
-    rank_0_print(f"Processor: {processor}")
-
-    if processor.tokenizer.pad_token is None:
-        processor.tokenizer.pad_token = processor.tokenizer.eos_token
-
-    # Load base conditional generation model for VQA
-    base_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-        cfg.base_model_id, cache_dir="/scr/ykorkmaz/rfm/model/base_qwen"
-    )
-
-    # Resize token embeddings if new tokens were added
-    if len(processor.tokenizer) != base_model.config.vocab_size:
-        if rank == 0:
-            rank_0_print(f"Resizing token embeddings from {base_model.config.vocab_size} to {len(processor.tokenizer)}")
-        base_model.resize_token_embeddings(len(processor.tokenizer))
-        base_model.config.vocab_size = len(processor.tokenizer)
-        if rank == 0:
-            rank_0_print(f"Resized token embeddings to {len(processor.tokenizer)}")
-
-    # Initialize RFM model wrapper with the pre-loaded base model
-    if rank == 0:
-        rank_0_print(f"Initializing RFM-VQA model on rank {rank}...")
-    rfm_model = RFMModelVQA(config=base_model.config, processor=processor, base_model=base_model)
-
-    if hf_model_id:
-        rank_0_print(f"Loading model from {hf_model_id} on rank {rank}")
-
-        # before = rfm_model.model.visual.blocks[0].mlp.down_proj.weight
-        # before = rfm_model.preference_head.weight
-        # load the model from the evaluation path
-        rfm_model = RFMModelVQA.from_pretrained(hf_model_id, processor=processor, base_model=base_model)
-
-    # Only print model architecture on rank 0
-    if rank == 0:
-        rank_0_print(f"Model architecture initialized on rank {rank}")
-
-    return processor, rfm_model
-
-
-def setup_vqa_batch_collator(processor: AutoProcessor, cfg: ExperimentConfig) -> VQABatchCollator:
-    """Create VQA batch collator using VQA config."""
-    rank_0_print("Setting up VQA batch collator...")
-    collator = VQABatchCollator(
-        processor=processor,
-        max_length=cfg.training.max_seq_length,
-        resized_height=cfg.data.resized_height,
-        resized_width=cfg.data.resized_width,
-    )
-    rank_0_print("VQA batch collator created successfully")
-    return collator

@@ -28,6 +28,7 @@ class ModelConfig(PretrainedConfig):
     """Config for model settings"""
 
     base_model_id: str = field(default="Qwen/Qwen2.5-VL-3B-Instruct")
+    model_type: str = field(default="default")
     torch_dtype: str = field(default="bfloat16")
     trust_remote_code: bool = field(default=True)
     train_vision_encoder: bool = field(default=False, metadata={"help": "Whether to train the vision encoder"})
@@ -62,9 +63,6 @@ class PEFTConfig:
 @dataclass
 class DataConfig:
     """Configuration for data loading and processing."""
-
-    # Model type for correct data generation
-    model_type: str = field(default="default", metadata={"help": "Model type: 'default', 'vqa'"})
 
     # Dataset paths and subsets
     train_datasets: List[str] = field(
@@ -117,8 +115,9 @@ class DataConfig:
     resized_width: int = field(default=224, metadata={"help": "Width to resize video frames to"})
 
     # Data generation parameters
-    preference_ratio: float = field(default=0.7, metadata={"help": "Ratio of preference samples to similarity samples"})
-    progress_ratio: float = field(default=0.5, metadata={"help": "Ratio of progress samples for VQA training"})
+    sample_type_ratio: List[float] = field(
+        default_factory=lambda: [1.0, 0.0, 0.0], metadata={"help": "Ratio of pref, sim, and progress samples"}
+    )
     dataset_preference_ratio: float = field(
         default=0.8, metadata={"help": "Ratio of dataset preference samples to generated preference samples"}
     )

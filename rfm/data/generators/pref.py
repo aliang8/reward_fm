@@ -16,28 +16,8 @@ from rfm.data.generators.helpers import (
     subsample_frames_and_progress,
     create_rewind_trajectory,
     load_frames_from_npz,
+    DataGenStrat,
 )
-from enum import Enum
-
-
-class DataGenStrat(Enum):
-    """Enum for different data generation strategies used in preference generation."""
-
-    # Preference generation strategies
-    REWIND_SAME_TASK = "rewind_same_task"
-    SUBOPTIMAL_SAME_TASK = "suboptimal_same_task"
-    DIFFERENT_TASK = "different_task"
-    VIDEO_BINNED = "video_binned"
-
-    # Evaluation-specific strategies
-    CONFUSION_MATRIX = "confusion_matrix"
-    WRONG_TASK_PREFERENCE = "wrong_task_preference"
-
-    # General strategies
-    SUBSAMPLE_TASK = "subsample_task"
-    REWOUND = "rewound"
-    DEFAULT = "default"
-
 
 class PreferenceDataGenerator(BaseDataGenerator):
     """Data generator for producing batches of preference prediction data."""
@@ -319,13 +299,13 @@ class PreferenceDataGenerator(BaseDataGenerator):
         if prob < self.preference_strategy_ratio[0]:
             # Strategy 1: Use rewind-generated suboptimal trajectory from same task
             rejected_traj = create_rewind_trajectory(chosen_traj, max_frames=self.config.max_frames)
-            strategy_used = DataGenStrat.REWIND_SAME_TASK.value
+            strategy_used = DataGenStrat.REWIND_SAME_TASK
 
         elif prob < self.preference_strategy_ratio[0] + self.preference_strategy_ratio[1]:
             # Strategy 2: Use random suboptimal trajectory from same task
             rejected_traj = self._create_same_task_suboptimal_trajectory(chosen_traj)
             if rejected_traj is not None:
-                strategy_used = DataGenStrat.SUBOPTIMAL_SAME_TASK.value
+                strategy_used = DataGenStrat.SUBOPTIMAL_SAME_TASK
 
         elif (
             prob
@@ -334,7 +314,7 @@ class PreferenceDataGenerator(BaseDataGenerator):
             # Strategy 3: Use trajectory from different task (can be chosen or suboptimal)
             rejected_traj = self._create_different_task_trajectory(chosen_traj)
             if rejected_traj is not None:
-                strategy_used = DataGenStrat.DIFFERENT_TASK.value
+                strategy_used = DataGenStrat.DIFFERENT_TASK
 
         else:
             # Strategy 4: Create preference sample from different bins of the same video
@@ -342,14 +322,14 @@ class PreferenceDataGenerator(BaseDataGenerator):
                 chosen_traj, rejected_traj = self._create_video_binned_trajectory(
                     chosen_traj, num_bins=self.config.num_bins
                 )
-                strategy_used = DataGenStrat.VIDEO_BINNED.value
+                strategy_used = DataGenStrat.VIDEO_BINNED
             except Exception as e:
                 rank_0_print(f"Video binning failed: {e}, will fall back to rewind")
 
         # Fallback: If any strategy failed to produce a rejected trajectory, use rewind
         if rejected_traj is None:
             rejected_traj = create_rewind_trajectory(chosen_traj, max_frames=self.config.max_frames)
-            strategy_used = DataGenStrat.REWIND_SAME_TASK.value
+            strategy_used = DataGenStrat.REWIND_SAME_TASK
 
         # ===============================================================
         # Subsample the chosen trajectory to max_frames
@@ -370,7 +350,7 @@ class PreferenceDataGenerator(BaseDataGenerator):
         if isinstance(rejected_traj["frames"], str):
             rejected_traj["frames"] = load_frames_from_npz(rejected_traj["frames"])
 
-        if DataGenStrat.REWIND_SAME_TASK.value not in strategy_used:
+        if strategy_used != DataGenStrat.REWIND_SAME_TASK:
             # try subsampling the rejected trajectory
             rejected_frames, rejected_progress, rejected_metadata = subsample_frames_and_progress(
                 rejected_traj["frames"], self.config.max_frames
@@ -392,7 +372,7 @@ class PreferenceDataGenerator(BaseDataGenerator):
         )
 
         # If our strategy is different task, make sure the rejected trajectory has 0 progress
-        if strategy_used == DataGenStrat.DIFFERENT_TASK.value:
+        if strategy_used == DataGenStrat.DIFFERENT_TASK:
             rejected_progress = [0.0] * len(rejected_progress)
 
         # Create preference sample structure
@@ -421,7 +401,7 @@ class PreferenceDataGenerator(BaseDataGenerator):
                 quality_label=rejected_traj["quality_label"],
                 is_robot=rejected_traj["is_robot"],
                 target_progress=rejected_progress,
-                data_gen_strategy=strategy_used,
+                data_gen_strategy=strategy_used.value,
                 metadata=rejected_metadata,
             ),
         )

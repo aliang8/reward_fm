@@ -339,6 +339,7 @@ def setup_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg
         elif cfg.model.model_type == "vqa":
             batch_collator = VQABatchCollator(
                 processor=processor,
+                inference=cfg.mode == "eval",
                 max_length=cfg.training.max_seq_length,
                 resized_height=cfg.data.resized_height,
                 resized_width=cfg.data.resized_width,

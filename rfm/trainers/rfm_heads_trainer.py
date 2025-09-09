@@ -229,7 +229,7 @@ class RFMHeadsTrainer(Trainer):
             # Combine outputs from all loss functions
             extra_info = {
                 **log_metadata,
-                "total_loss": total_loss,
+                "total_loss": total_loss.item(),
                 "batch_size": num_preferences + num_similarities,
             }
             return total_loss, extra_info

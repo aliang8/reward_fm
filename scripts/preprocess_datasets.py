@@ -33,7 +33,7 @@ class DatasetPreprocessor:
         self.resized_width = config.data.resized_width
         self.force_reprocess = config.data.force_reprocess
         self.num_proc = config.data.num_proc
-        
+
         self.num_threads = 36
 
         # Dataset storage - store individual datasets
@@ -133,7 +133,7 @@ class DatasetPreprocessor:
         else:
             dataset = dataset.cast_column("frames_video", Video(decode=True))
             processed_dataset, indices = self._process_dataset_videos_map(dataset, cache_key)
-         
+
         return processed_dataset, indices
 
     def _preprocess_videos(self, frames, num_frames: int = None) -> np.ndarray:
@@ -443,7 +443,9 @@ class DatasetPreprocessor:
         idx_to_npz = {}
         with ThreadPoolExecutor(max_workers=self.num_threads) as executor:
             futures = [executor.submit(process_one, i) for i in indices_only]
-            for fut in tqdm(as_completed(futures), total=len(futures), desc=f"Processing {cache_key}", unit="traj", leave=False):
+            for fut in tqdm(
+                as_completed(futures), total=len(futures), desc=f"Processing {cache_key}", unit="traj", leave=False
+            ):
                 idx, frames_path, shape = fut.result()
                 if frames_path is not None:
                     idx_to_npz[idx] = (frames_path, shape)
@@ -748,6 +750,7 @@ def main():
     # Try to increase the soft limit for open files to reduce 'Too many open files'
     try:
         import resource  # type: ignore
+
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
         target_soft = min(hard, 65535)
         if soft < target_soft:

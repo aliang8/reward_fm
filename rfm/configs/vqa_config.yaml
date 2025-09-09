@@ -1,143 +1,16 @@
-# RFM (Reward Foundation Model) Configuration
-# Configuration file for training and evaluating the RFM model with three objectives
+# RFM VQA
 
-# =====================================================================================
-# Experiment Mode
-# =====================================================================================
-mode: "train"  # "train" or "evaluate"
-debug: false  # Set to true for debugging (reduces dataset size, enables debug features)
-
-# =====================================================================================
-# Model Configuration
-# =====================================================================================
 model:
-  base_model_id: "Qwen/Qwen2.5-VL-3B-Instruct"
-  torch_dtype: "bfloat16"
-  trust_remote_code: true
-  # Additional options for more comprehensive training (when use_peft: false)
-  train_vision_encoder: true  # Whether to train the vision encoder
-  train_language_model: false   # Whether to train the language model
+  model_type: "vqa"
 
-# =====================================================================================
-# Data Configuration
-# =====================================================================================
-data:
-  model_type: "vqa" # "vqa" or "default"
-  # Dataset paths and sources
-  train_datasets: 
-    - "abraranwar/libero_rfm"
-    - "ykorkmaz/libero_failure_rfm"
-    # - "HenryZhang/metaworld_rewind_rfm_train"
-  train_subsets:
-    - ["libero256_90"]
-    - ["libero_90_failure"]
-    # - ["metaworld_rewind_train"]
-  # Evaluation dataset settings
-  eval_datasets:
-    - "abraranwar/libero_rfm"
-    - "ykorkmaz/libero_failure_rfm"
-    # - "HenryZhang/metaworld_rewind_rfm_eval"
-  eval_subsets:
-    - ["libero256_10"]
-    - ["libero_10_failure"]
-    # - ["metaworld_rewind_eval"]
-  # eval_datasets: ["abraranwar/libero_rfm"]
-  # eval_subsets: ["libero_object"]
-  eval_subset_size: 500  # Number of evaluation examples
-  
-  # Preprocessing settings
-  max_frames_for_preprocessing: 64
 
-  # Video processing settings
-  max_frames: 16  # Maximum frames per trajectory
-  video_frame_sampling: "uniform"  # "uniform", "random", "first", "middle"
-  resized_height: 128  # Height to resize images/videos to
-  resized_width: 128   # Width to resize images/videos to
-  
-  # Data generation settings
-  progress_ratio: 0.5
-  preference_ratio: 0.5  # Ratio of preference prediction samples
-  dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
-  # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, video_binned]
-  preference_strategy_ratio: [0.8, 0.1, 0.1, 0.0]
-  shuffle: true
-  seed: 42
-  num_proc: 1  # Number of processes for dataset processing (1 for safety, increase for speed)
-  force_reprocess: false  # Force reprocessing of dataset even if cached version exists
-  
-  # Data loading settings
-  dataloader_pin_memory: false
-  dataloader_num_workers: 0
+data:  
+  sample_type_ratio: [0.5, 0.0, 0.5]
 
-  # Video binned dataset parameters
-  num_bins: 10
-
-# =====================================================================================
-# Training Configuration
-# =====================================================================================
 training:  
-  # Output and logging
-  output_dir: "./logs/rfm_rewind"
-  
-  # Training parameters
-  per_device_train_batch_size: 8
-  gradient_accumulation_steps: 1
-  learning_rate: 2e-5
-  num_train_epochs: -1  # Number of epochs to train for
-  save_strategy: "steps"
-  logging_steps: 1
-  save_steps: 200
-  max_steps: 1000  # -1 means no limit, use num_train_epochs instead
-  
-  # Evaluation settings
-  evaluation_strategy: "steps"  # Options: "no", "steps", "epoch"
-  eval_steps: 50  # Evaluate every 50 steps
-  per_device_eval_batch_size: 8  # Evaluation batch size per device
-  do_eval: true  # Enable evaluation during training
-  prediction_loss_only: true # Only compute loss for the prediction head
-  
-  # Model settings
-  max_seq_length: 1024 # currently not used
-  beta: 0.1  # DPO beta parameter
-  
-  # Resume training
-  resume_from_checkpoint: null  # Set to checkpoint path to resume, null for fresh start
-  
-  # Mixed precision and optimization
-  bf16: true
-  fp16: false
-  remove_unused_columns: false
-  gradient_checkpointing: true  # Re-enabled since FSDP is handled by accelerate config
-    
-  # Distributed training settings
-  ddp_find_unused_parameters: true
-  ddp_bucket_cap_mb: 25
+  output_dir: "./logs/rfm_vqa"
 
-  # Optimizer settings
-  lr_scheduler_type: "cosine"
-  warmup_steps: 0
-  warmup_ratio: 0.1
-
-# =====================================================================================
-# PEFT Configuration
-# =====================================================================================
-peft:
-  use_peft: false  # Set to false to train the full model instead of using PEFT/LoRA
-  r: 32
-  lora_alpha: 64
-  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
-  lora_dropout: 0.05
-  bias: "none"
-
-# =====================================================================================
-# Logging and Output Configuration
-# =====================================================================================
 logging:
-  save_model: true
-  save_processor: true
-  print_trainable_parameters: true
-  # Wandb configuration
-  use_wandb: false
   wandb_project: "rfm"
   wandb_entity: clvr
   wandb_run_name: "rfm_vqa"

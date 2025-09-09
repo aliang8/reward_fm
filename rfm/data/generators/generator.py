@@ -3,6 +3,7 @@ from rfm.data.generators.pref import PreferenceDataGenerator
 from rfm.data.generators.sim import SimilarityDataGenerator
 from rfm.utils.logging import rank_0_print
 from rfm.data.generators.base import BaseDataGenerator
+from rfm.data.generators.vqa_progress import VQAProgressGenerator
 
 
 class DataGenerator(BaseDataGenerator):
@@ -15,21 +16,20 @@ class DataGenerator(BaseDataGenerator):
         # Initialize the individual generators
         self.preference_generator = PreferenceDataGenerator(config, is_evaluation, verbose=False)
         self.similarity_generator = SimilarityDataGenerator(config, is_evaluation, verbose=False)
+        self.progress_generator = VQAProgressGenerator(config, is_evaluation, verbose=False)
 
-        # Set the ratio for sampling between preference and similarity
-        self.preference_ratio = config.preference_ratio
-        self.similarity_ratio = 1.0 - config.preference_ratio
-
-        rank_0_print(
-            f"DataGenerator initialized with preference_ratio={self.preference_ratio:.2f}, similarity_ratio={self.similarity_ratio:.2f}"
-        )
+        # Set the ratio for sampling between preference, similarity, and progress
+        self.sample_type_ratio = config.sample_type_ratio
 
     def __next__(self):
         """Create a sample based on the configured ratios."""
-        if random.random() < self.preference_ratio:
+        prob = random.random()
+        if prob < self.sample_type_ratio[0]:
             return self.preference_generator.__next__()
-        else:
+        elif prob < self.sample_type_ratio[0] + self.sample_type_ratio[1]:
             return self.similarity_generator.__next__()
+        else:
+            return self.progress_generator.__next__()
 
 
 def test():
@@ -44,9 +44,7 @@ def test():
         train_subsets: List[str] = None
         eval_datasets: List[str] = None
         eval_subsets: List[str] = None
-        preference_ratio: float = 1.0
-        similarity_ratio: float = 0.0
-        dataset_preference_ratio: float = 0.7
+        sample_type_ratio: List[float] = None
         shuffle: bool = True
         seed: int = 42
         num_proc: int = 4
@@ -66,8 +64,7 @@ def test():
     mock_data_config = MockDataConfig(
         train_datasets=["jesbu1/oxe_rfm"],
         train_subsets=["oxe_bridge_v2"],
-        preference_ratio=1.0,
-        similarity_ratio=0.0,
+        sample_type_ratio=[1.0, 0.0, 0.0],
         preference_strategy_ratio=[0.8, 0.1, 0.1, 0.0],
         shuffle=True,
         seed=42,

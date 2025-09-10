@@ -4,7 +4,7 @@
 export RFM_DATASET_PATH=/home/thecodeboy/reward_fm/rfm_dataset
 
 # Run training with FSDP using accelerate launch
-CUDA_VISIBLE_DEVICES=0uv run accelerate launch \
+CUDA_VISIBLE_DEVICES=0 uv run accelerate launch \
     --config_file rfm/configs/fsdp_single.yaml \
     train.py \
     --config rfm/configs/config.yaml \

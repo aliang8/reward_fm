@@ -115,7 +115,7 @@ class VQABatchCollator(BatchCollator):
             self.processor.apply_chat_template(
                 conv,
                 tokenize=False,
-                add_generation_prompt=False,  # include assistant prefix tokens
+                add_generation_prompt=self.inference,  # include assistant prefix tokens
                 add_vision_id=True,
                 fps=1,
             )
@@ -143,9 +143,10 @@ class VQABatchCollator(BatchCollator):
                 token_after_assistant = (labels[i] == assistant_id).nonzero()[0][0] + 1
                 labels[i][:token_after_assistant] = -100
 
+            batch_inputs["labels"] = labels
+
         # Use the dynamically generated preference labels based on trajectory order
         batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
-        batch_inputs["labels"] = labels
 
         batch_inputs = self._add_preference_meta(batch_inputs, preference_samples)
 
@@ -158,6 +159,9 @@ class VQABatchCollator(BatchCollator):
 
         for i, sample in enumerate(progress_samples):
             target_progress = sample.trajectory.target_progress
+            
+            # Let's round the target progress to 2 decimal places
+            target_progress = np.round(target_progress, 2)
 
             # Convert frames to appropriate format using stored shapes
             frames = self._convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
@@ -188,7 +192,7 @@ class VQABatchCollator(BatchCollator):
             self.processor.apply_chat_template(
                 conv,
                 tokenize=False,
-                add_generation_prompt=False,  # include assistant prefix tokens
+                add_generation_prompt=self.inference,  # include assistant prefix tokens
                 add_vision_id=True,
                 fps=1,
             )
@@ -217,6 +221,8 @@ class VQABatchCollator(BatchCollator):
                 labels[i][:token_after_assistant] = -100
 
             batch_inputs["labels"] = labels
+
+        batch_inputs["data_gen_strategy"] = [sample.trajectory.data_gen_strategy for sample in progress_samples]
 
         batch_inputs = self._add_progress_meta(batch_inputs, progress_samples)
 

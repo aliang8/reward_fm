@@ -9,6 +9,7 @@ import torch
 from datasets import concatenate_datasets, Dataset
 from rfm.utils.logging import rank_0_print
 import json
+from rfm.data.generators.helpers import load_frames_from_npz
 
 
 class BaseDataGenerator:
@@ -281,4 +282,4 @@ class BaseDataGenerator:
         if not npz_filepath:
             raise ValueError(f"No frames path found for trajectory {trajectory_idx}")
 
-        return self._load_frames_from_npz(npz_filepath)
+        return load_frames_from_npz(npz_filepath)

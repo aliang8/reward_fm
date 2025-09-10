@@ -4,6 +4,7 @@ from typing import Dict, List
 from rfm.data.generators.base import BaseDataGenerator
 from tqdm import tqdm
 import numpy as np
+from rfm.data.generators.helpers import subsample_frames_and_progress
 
 
 class PairedSuccessFailureGenerator(BaseDataGenerator):
@@ -76,8 +77,8 @@ class PairedSuccessFailureGenerator(BaseDataGenerator):
         failure_frames = self._get_trajectory_frames(failure_idx)
 
         # Subsample frames
-        success_frames, success_progress, success_metadata = self._subsample_frames_and_progress(success_frames)
-        failure_frames, failure_progress, failure_metadata = self._subsample_frames_and_progress(failure_frames)
+        success_frames, success_progress, success_metadata = subsample_frames_and_progress(success_frames)
+        failure_frames, failure_progress, failure_metadata = subsample_frames_and_progress(failure_frames)
 
         chosen_trajectory = Trajectory(
             frames=success_frames,

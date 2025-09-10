@@ -105,7 +105,7 @@ def _save_result_as_json(
         else:
             progress_entry = None
 
-        batch_results.append((preference_entry, progress_entry))
+    batch_results.append((preference_entry, progress_entry))
 
     # Separate preference and progress results
     preference_results = [entry[0] for entry in batch_results]

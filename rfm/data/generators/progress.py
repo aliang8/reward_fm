@@ -4,6 +4,7 @@ from typing import Dict, List
 from rfm.data.generators.base import BaseDataGenerator
 from tqdm import tqdm
 import numpy as np
+from rfm.data.generators.helpers import linspace_subsample_frames, pad_trajectory_to_max_frames
 
 
 class ProgressGenerator(BaseDataGenerator):
@@ -24,14 +25,14 @@ class ProgressGenerator(BaseDataGenerator):
 
         # Use linspace sampling to get max_frames
         max_frames = self.config.max_frames
-        frames, frame_indices = self._linspace_subsample_frames(frames, max_frames)
+        frames, frame_indices = linspace_subsample_frames(frames, max_frames)
 
         # Calculate progress based on the sampled frame indices
         total_frames = len(self._get_trajectory_frames(traj_idx))
         progress = [idx / (total_frames - 1) if total_frames > 1 else 0.0 for idx in frame_indices]
 
         # Pad frames and progress if needed
-        frames, progress = self._pad_trajectory_to_max_frames(frames, progress, max_frames)
+        frames, progress = pad_trajectory_to_max_frames(frames, progress, max_frames)
 
         metadata = {
             "quality_label": traj["quality_label"],

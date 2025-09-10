@@ -56,7 +56,7 @@ class VQAProgressGenerator(BaseDataGenerator):
                     prob = random.random()
                     if prob < 0.5:
                         strategy = DataGenStrat.REWIND_SAME_TASK
-                        other_traj = create_rewind_trajectory(other_traj, max_frames=self.config.max_frames)
+                        other_traj = create_rewind_trajectory(traj, max_frames=self.config.max_frames)
                         traj = other_traj
                     else:
                         # nothing happens, we use the same trajectory

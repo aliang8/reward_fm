@@ -36,10 +36,6 @@ from rfm.utils.setup_utils import (
     setup_batch_collator,
     setup_dataset,
     setup_eval_dataset,
-    # setup_rewind_batch_collator,
-    setup_vqa_model_and_processor,
-    setup_vqa_batch_collator,
-    # setup_transformer_model_and_processor
 )
 from rfm.utils.parser import parse_multiple
 from rfm.utils.logging import _timer
@@ -117,6 +113,7 @@ def train(cfg: ExperimentConfig):
         "rewind_transformer": ReWiNDTrainer,
         "rfm_vqa": VQATrainer,
     }[cfg.trainer_cls]
+    rank_0_print(f"Trainer class: {trainer_cls}")
 
     trainer = trainer_cls(
         model=peft_rfm_model,
@@ -154,108 +151,6 @@ def train(cfg: ExperimentConfig):
     rank_0_print(f"Training complete! Check {cfg.training.output_dir} for checkpoints and final model.")
 
 
-def train_vqa(cfg: ExperimentConfig):
-    # If cfg is a string (config path), load it
-    if isinstance(cfg, str):
-        cfg = ExperimentConfig.from_yaml(cfg)
-
-    timing_raw = {}
-    # Create DataGenerator for training using shared utility
-    with _timer("time/setup_data_generator", timing_raw=timing_raw):
-        data_generator = setup_data_generator(cfg)
-
-    run_name = f"{cfg.logging.wandb_run_name}"
-    if cfg.debug:
-        run_name += "_debug"
-
-    # Initialize wandb if enabled (only on rank 0)
-    if cfg.logging.use_wandb and is_rank_0():
-        # Convert config to dict for wandb using dataclass asdict
-        config_dict = asdict(cfg)
-
-        wandb.init(
-            project=cfg.logging.wandb_project, entity=cfg.logging.wandb_entity, name=run_name, config=config_dict
-        )
-        rank_0_print(f"Wandb initialized: {wandb.run.name}")
-    elif cfg.logging.use_wandb:
-        rank_0_print("Wandb logging enabled but skipped on non-rank-0 processes")
-
-    # Set memory management
-    torch.backends.cudnn.benchmark = True
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
-    # Use the shared function to set up model and processor
-    with _timer("time/setup_model_and_processor", timing_raw=timing_raw):
-        processor, vqa_model = setup_vqa_model_and_processor(cfg.model)
-
-    # # Apply PEFT if enabled - Disabled for now
-    # peft_vqa_model = setup_peft_model(vqa_model, cfg)
-
-    # Create training arguments from config
-    if cfg.debug:
-        cfg.training.save_steps = 2
-        cfg.training.logging_steps = 2
-        cfg.training.eval_steps = 2
-        cfg.data.eval_subset_size = 10
-
-    training_args = create_training_arguments(cfg, cfg.training.output_dir)
-
-    # Save config to output directory
-    os.makedirs(cfg.training.output_dir, exist_ok=True)
-    config_save_path = os.path.join(cfg.training.output_dir, "config.yaml")
-    config_dict = asdict(cfg)
-    with open(config_save_path, "w") as f:
-        yaml.dump(config_dict, f, default_flow_style=False, indent=2)
-    rank_0_print(f"Saved training config to: {config_save_path}")
-
-    # Use the shared utilities for batch collator and dataset
-    with _timer("time/setup_data", timing_raw=timing_raw):
-        batch_collator = setup_vqa_batch_collator(processor, cfg)
-        train_dataset = setup_dataset(data_generator)
-
-    # Set up evaluation dataset if evaluation is enabled
-    eval_dataset = None
-    if cfg.training.do_eval:
-        eval_dataset = setup_eval_dataset(cfg)
-        rank_0_print(f"Evaluation dataset created with {cfg.data.eval_subset_size} samples")
-
-    trainer = VQATrainer(
-        model=vqa_model,
-        args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        data_collator=batch_collator,
-        config=cfg,
-    )
-
-    if is_rank_0():
-        print("\n" + "=" * 80)
-        print("--- PRE-TRAINING FSDP DIAGNOSTICS ---")
-        # The Trainer creates its own Accelerator instance. Let's check its state.
-        if hasattr(trainer, "accelerator"):
-            print(f"Trainer's Accelerator object found.")
-            fsdp_plugin = getattr(trainer.accelerator.state, "fsdp_plugin", None)
-            if fsdp_plugin:
-                print(f"FSDP Plugin found in Accelerator state.")
-                # This is the configuration the accelerator will ACTUALLY use for wrapping.
-                print(f"VERIFY: Actual FSDP plugin config being used: {fsdp_plugin}")
-            else:
-                print("ERROR: FSDP Plugin NOT found in the Trainer's accelerator state!")
-        else:
-            print("ERROR: Trainer has no 'accelerator' attribute yet. This check needs to be later.")
-        print("=" * 80 + "\n")
-
-    # log timing_raw to wandb
-    if cfg.logging.use_wandb and is_rank_0():
-        wandb.log(timing_raw)
-
-    rank_0_print(f"Timing raw: {timing_raw}")
-    rank_0_print(f"Training from checkpoint: {cfg.training.resume_from_checkpoint}")
-    trainer.train(resume_from_checkpoint=cfg.training.resume_from_checkpoint)
-    trainer.save_model(cfg.training.output_dir)
-    rank_0_print(f"Training complete! Check {cfg.training.output_dir} for checkpoints and final model.")
-
 def display_config(cfg: ExperimentConfig):
     """Display the configuration in a nice Rich format."""
     if not is_rank_0():
@@ -290,7 +185,7 @@ def display_config(cfg: ExperimentConfig):
     table.add_row("Data", "Video Frame Sampling", cfg.data.video_frame_sampling)
     table.add_row("Data", "Resized Height", str(cfg.data.resized_height))
     table.add_row("Data", "Resized Width", str(cfg.data.resized_width))
-    table.add_row("Data", "Preference Ratio", str(cfg.data.preference_ratio))
+    table.add_row("Data", "Sample Type Ratio", str(cfg.data.sample_type_ratio))
     table.add_row("Data", "Dataset Preference Ratio", str(cfg.data.dataset_preference_ratio))
     table.add_row("Data", "Shuffle", str(cfg.data.shuffle))
     table.add_row("Data", "Seed", str(cfg.data.seed))
@@ -341,16 +236,11 @@ def display_config(cfg: ExperimentConfig):
 def main(cfg: ExperimentConfig):
     # Display the configuration in a nice Rich format
     display_config(cfg)
-    assert cfg.data.model_type in ["default", "vqa"], "Model type must be either 'default' or 'vqa'"
 
-    if cfg.mode == "train" and cfg.data.model_type == "default":  # and "Qwen" in cfg.model.base_model_id:
+    if cfg.mode == "train":
         if is_rank_0():
             rprint(Panel.fit("🚀 Starting RFM Training", style="bold green"))
         train(cfg)
-    # elif cfg.mode == "train" and cfg.data.model_type == "vqa":  # VQA training
-    #     if is_rank_0():
-    #         rprint(Panel.fit("🧠 Starting VQA Baseline Training", style="bold cyan"))
-    #     train_vqa(cfg)
     else:
         raise ValueError(f"Unknown mode: {cfg.mode}. Must be 'train' or 'evaluate'")
 

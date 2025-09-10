@@ -12,6 +12,7 @@ trainer_cls: "rfm_heads" # "rewind_transformer", "rfm_vqa"
 # Model Configuration
 # =====================================================================================
 model:
+  model_type: "default" # "default" or "vqa"
   base_model_id: "Qwen/Qwen2.5-VL-3B-Instruct"
   torch_dtype: "bfloat16"
   trust_remote_code: true
@@ -26,7 +27,6 @@ model:
 # Data Configuration
 # =====================================================================================
 data:
-  model_type: "default" # "default" or "vqa"
   # Dataset paths and sources
   train_datasets: 
     - "abraranwar/libero_rfm"
@@ -64,7 +64,7 @@ data:
   resized_width: 128   # Width to resize images/videos to
   
   # Data generation settings
-  preference_ratio: 1.0  # Ratio of preference prediction samples
+  sample_type_ratio: [1.0, 0.0, 0.0]  
   dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
   # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, video_binned]
   preference_strategy_ratio: [0.4, 0.3, 0.3, 0.0]

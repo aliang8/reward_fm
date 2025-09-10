@@ -335,7 +335,7 @@ def main():
 
     # Create results directory structure
     dataset_name = f"{cfg.data.eval_datasets[0].replace('/', '_')}_{cfg.data.eval_subsets[0]}"
-    model_name = cfg.model_path.replace("/", "_") if cfg.model_path else f"base_model_{cfg.data.model_type}"
+    model_name = cfg.model_path.replace("/", "_") if cfg.model_path else f"base_model"
     eval_log_dir = Path(cfg.log_dir) / model_name / dataset_name
     os.makedirs(eval_log_dir, exist_ok=True)
 

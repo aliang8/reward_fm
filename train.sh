@@ -1,11 +1,10 @@
 #!/bin/bash
 
 # Script to run RFM training with FSDP using accelerate launch
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export RFM_DATASET_PATH=/home/thecodeboy/reward_fm/rfm_dataset
 
 # Run training with FSDP using accelerate launch
-uv run accelerate launch \
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 uv run accelerate launch \
     --config_file rfm/configs/fsdp.yaml \
     train.py \
     --config rfm/configs/config.yaml \

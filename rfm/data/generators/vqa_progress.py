@@ -20,6 +20,7 @@ class VQAProgressGenerator(BaseDataGenerator):
     def __init__(self, config, is_evaluation=False, verbose=True):
         super().__init__(config, is_evaluation, verbose=verbose)
         self.iter_dataset = self.dataset.filter(lambda x: x["quality_label"] not in ["failure", "suboptimal"])
+        self.current_idx = 0
 
     def __iter__(self):
         self.current_idx = 0

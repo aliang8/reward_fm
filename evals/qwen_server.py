@@ -27,7 +27,6 @@ import queue
 import threading
 import time
 import ast
-import re
 
 import numpy as np
 import torch
@@ -42,6 +41,7 @@ from rfm.configs.experiment_configs import ModelConfig
 from rfm.data.batch_collator import BatchCollator, PreferenceSample
 from rfm.data.vqa_batch_collator import VQABatchCollator
 from rfm.data.dataset_types import PreferenceSample, ProgressSample
+from rfm.evals.eval_utils import extract_answer_from_text
 
 
 class AsyncGPUPool:
@@ -401,7 +401,7 @@ def compute_batch_outputs_vqa(
         )
 
     if mode == "preference":
-        predictions = [_extract_answer_from_text(text) for text in generated_texts]
+        predictions = [extract_answer_from_text(text) for text in generated_texts]
         predictions_num_labels = []
         for prediction in predictions:
             if prediction == "A":
@@ -415,19 +415,13 @@ def compute_batch_outputs_vqa(
             "preference_labels": batch_inputs.get("preference_labels").detach().cpu().tolist(),
         }
     elif mode == "progress":
-        progress_predictions = [_extract_answer_from_text(text) for text in generated_texts]
+        progress_predictions = [extract_answer_from_text(text) for text in generated_texts]
         progress_predictions = [ast.literal_eval(prediction) for prediction in progress_predictions]
         return {
             "progress_pred_A": progress_predictions,
         }
     else:
         raise ValueError(f"Mode {mode} not supported")
-
-
-def _extract_answer_from_text(text):
-    m = re.search(r"<ans>(.*?)</ans>", text, re.DOTALL)
-    return m.group(1).strip() if m else ""
-
 
 def create_app(cfg: EvaluationConfig, model_config: ModelConfig):
     app = FastAPI(title="RFM Multi-GPU Evaluation Server")

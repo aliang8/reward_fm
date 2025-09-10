@@ -73,8 +73,6 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[
         # Add RFM special tokens if they don't exist
         if cfg.model_type == "default":
             special_tokens = ["<|split_token|>", "<|reward_token|>", "<|pref_token|>"]
-        elif cfg.model_type == "vqa":
-            special_tokens = ["<ans>"]
         else:
             special_tokens = []
 

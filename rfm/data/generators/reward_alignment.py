@@ -15,7 +15,7 @@ from rfm.data.generators.base import BaseDataGenerator
 from tqdm import tqdm
 import numpy as np
 import random
-
+from rfm.data.generators.helpers import linspace_subsample_frames, pad_trajectory_to_max_frames
 
 class RewardAlignmentGenerator(BaseDataGenerator):
     """
@@ -91,10 +91,10 @@ class RewardAlignmentGenerator(BaseDataGenerator):
         max_frames = self.config.max_frames
 
         # Uniform subsample to max_frames
-        subsequence_frames, _ = self._linspace_subsample_frames(subsequence_frames, max_frames)
+        subsequence_frames, _ = linspace_subsample_frames(subsequence_frames, max_frames)
 
         # Use the existing helper function to pad/subsample frames
-        padded_frames, _ = self._pad_trajectory_to_max_frames(subsequence_frames, [0], max_frames)
+        padded_frames, _ = pad_trajectory_to_max_frames(subsequence_frames, [0], max_frames)
 
         # Ground truth progress: linear from 0 to 1
         gt_progress = end_idx / num_frames

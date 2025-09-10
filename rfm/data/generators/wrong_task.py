@@ -10,6 +10,7 @@ from rfm.data.generators.base import BaseDataGenerator
 from tqdm import tqdm
 import numpy as np
 import random
+from rfm.data.generators.helpers import linspace_subsample_frames, pad_trajectory_to_max_frames
 
 
 class WrongTaskGenerator(BaseDataGenerator):
@@ -115,12 +116,12 @@ class WrongTaskGenerator(BaseDataGenerator):
         max_frames = self.config.max_frames
 
         # Uniform subsample to max_frames for both trajectories
-        chosen_frames, _ = self._linspace_subsample_frames(chosen_frames, max_frames)
-        rejected_frames, _ = self._linspace_subsample_frames(rejected_frames, max_frames)
+        chosen_frames, _ = linspace_subsample_frames(chosen_frames, max_frames)
+        rejected_frames, _ = linspace_subsample_frames(rejected_frames, max_frames)
 
         # Use the existing helper function to pad/subsample frames
-        chosen_padded_frames, _ = self._pad_trajectory_to_max_frames(chosen_frames, [0], max_frames)
-        rejected_padded_frames, _ = self._pad_trajectory_to_max_frames(rejected_frames, [0], max_frames)
+        chosen_padded_frames, _ = pad_trajectory_to_max_frames(chosen_frames, [0], max_frames)
+        rejected_padded_frames, _ = pad_trajectory_to_max_frames(rejected_frames, [0], max_frames)
 
         # Create metadata for the wrong task preference analysis
         metadata = {

@@ -64,13 +64,18 @@ class VQAProgressGenerator(BaseDataGenerator):
                 else:
                     traj = other_traj
 
-            frames = load_frames_from_npz(traj["frames"])
+            if strategy == DataGenStrat.REWIND_SAME_TASK:
+                frames = traj["frames"]
+                progress = traj["target_progress"]
+                metadata = traj["metadata"]
+            else:
+                frames = load_frames_from_npz(traj["frames"])
 
-            # subsample frames and progress
-            frames, progress, metadata = subsample_frames_and_progress(frames, self.config.max_frames)
+                # subsample frames and progress
+                frames, progress, metadata = subsample_frames_and_progress(frames, self.config.max_frames)
 
-            # pad frames and progress to max_frames
-            frames, progress = pad_trajectory_to_max_frames(frames, progress, self.config.max_frames)
+                # pad frames and progress to max_frames
+                frames, progress = pad_trajectory_to_max_frames(frames, progress, self.config.max_frames)
 
         if strategy == DataGenStrat.DIFFERENT_TASK:
             progress = [0.0] * len(progress)

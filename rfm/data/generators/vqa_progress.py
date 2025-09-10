@@ -51,8 +51,19 @@ class VQAProgressGenerator(BaseDataGenerator):
             metadata = traj["metadata"]
         else:
             if strategy == DataGenStrat.DIFFERENT_TASK:
-                traj = self._create_different_task_trajectory(traj)
-    
+                other_traj = self._create_different_task_trajectory(traj)
+                if other_traj is None:
+                    prob = random.random()
+                    if prob < 0.5:
+                        strategy = DataGenStrat.REWIND_SAME_TASK
+                        other_traj = create_rewind_trajectory(other_traj, max_frames=self.config.max_frames)
+                        traj = other_traj
+                    else:
+                        # nothing happens, we use the same trajectory
+                        strategy = "default"
+                else:
+                    traj = other_traj
+
             frames = load_frames_from_npz(traj["frames"])
 
             # subsample frames and progress

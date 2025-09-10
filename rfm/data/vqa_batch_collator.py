@@ -159,6 +159,9 @@ class VQABatchCollator(BatchCollator):
 
         for i, sample in enumerate(progress_samples):
             target_progress = sample.trajectory.target_progress
+            
+            # Let's round the target progress to 2 decimal places
+            target_progress = np.round(target_progress, 2)
 
             # Convert frames to appropriate format using stored shapes
             frames = self._convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
@@ -218,6 +221,8 @@ class VQABatchCollator(BatchCollator):
                 labels[i][:token_after_assistant] = -100
 
             batch_inputs["labels"] = labels
+
+        batch_inputs["data_gen_strategy"] = [sample.trajectory.data_gen_strategy for sample in progress_samples]
 
         batch_inputs = self._add_progress_meta(batch_inputs, progress_samples)
 

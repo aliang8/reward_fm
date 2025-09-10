@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import re
 import io
 import json
 from typing import Any, Dict, List, Union, Tuple
@@ -10,6 +11,9 @@ import requests
 import aiohttp
 from rfm.data.batch_collator import PreferenceSample, SimilaritySample
 
+def extract_answer_from_text(text):
+    m = re.search(r"<ans>(.*?)</ans>", text, re.DOTALL)
+    return m.group(1).strip() if m else ""
 
 def post_batch(url: str, payload: Dict[str, Any], timeout_s: float = 120.0) -> Dict[str, Any]:
     """POST a batch payload to the evaluation server and return parsed JSON."""

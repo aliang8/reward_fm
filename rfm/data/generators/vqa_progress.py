@@ -11,6 +11,7 @@ from rfm.data.generators.helpers import (
 from enum import Enum
 import random
 from rfm.data.dataset_types import Trajectory
+from typing import Dict, Optional
 
 
 class VQAProgressGenerator(BaseDataGenerator):
@@ -18,26 +19,21 @@ class VQAProgressGenerator(BaseDataGenerator):
 
     def __init__(self, config, is_evaluation=False, verbose=True):
         super().__init__(config, is_evaluation, verbose=verbose)
+        self.iter_dataset = self.dataset.filter(lambda x: x["quality_label"] not in ["failure", "suboptimal"])
+
+    def __iter__(self):
+        self.current_idx = 0
+        return self
 
     def __next__(self):
-        return self._create_progress_sample()
+        """Iterate over one sample per trajectory in the dataset."""
+        dataset_len = len(self.iter_dataset)
+        traj = self.iter_dataset[self.current_idx % dataset_len]
+        sample = self._create_progress_sample(traj)
+        self.current_idx += 1
+        return sample
 
-    def _create_progress_sample(self):
-        # Use preprocessed chosen trajectories from index maps
-        if not self.optimal_by_task:
-            raise ValueError("No chosen trajectories found for preference generation")
-
-        # Get a random task and chosen trajectory from it
-        task_name = random.choice(list(self.optimal_by_task.keys()))
-
-        optimal_indices = self.optimal_by_task[task_name]
-        while not optimal_indices:
-            task_name = random.choice(list(self.optimal_by_task.keys()))
-            optimal_indices = self.optimal_by_task[task_name]
-
-        idx = random.choice(optimal_indices)
-        traj = self.dataset[idx]
-
+    def _create_progress_sample(self, traj: Dict):
         # either return the original trajectory, rewinded traj, or wrong task traj
         prob = random.random()
         if prob < 0.33:
@@ -53,6 +49,9 @@ class VQAProgressGenerator(BaseDataGenerator):
             progress = traj["target_progress"]
             metadata = traj["metadata"]
         else:
+            if strategy == DataGenStrat.DIFFERENT_TASK:
+                traj = self._create_different_task_trajectory(traj)
+    
             frames = load_frames_from_npz(traj["frames"])
 
             # subsample frames and progress
@@ -60,6 +59,9 @@ class VQAProgressGenerator(BaseDataGenerator):
 
             # pad frames and progress to max_frames
             frames, progress = pad_trajectory_to_max_frames(frames, progress, self.config.max_frames)
+
+        if strategy == DataGenStrat.DIFFERENT_TASK:
+            progress = [0.0] * len(progress)
 
         progress_traj = Trajectory(
             frames=frames,
@@ -79,3 +81,34 @@ class VQAProgressGenerator(BaseDataGenerator):
             trajectory=progress_traj,
             sample_type="progress",
         )
+    
+    def _create_different_task_trajectory(self, chosen_traj: Dict) -> Optional[Dict]:
+        """Create a trajectory from a different task than the chosen trajectory.
+
+        This function tries to find trajectories from different tasks.
+        Returns None if no other tasks are available.
+
+        Args:
+            chosen_traj: The chosen trajectory dictionary
+
+        Returns:
+            Optional[Dict]: The rejected trajectory, or None if none available
+        """
+        # Find other tasks
+        other_tasks = [task for task in self.optimal_by_task.keys() if task != chosen_traj["task"]]
+        if other_tasks:
+            other_task = random.choice(other_tasks)
+            other_task_indices = self.optimal_by_task[other_task]
+
+            if other_task_indices:
+                other_idx = random.choice(other_task_indices)
+                other_traj = self.dataset[other_idx]
+
+                # Check if it's not the same trajectory
+                if other_traj["id"] != chosen_traj["id"]:
+                    return other_traj
+        else:
+            # Only one task available
+            return None
+
+        return None

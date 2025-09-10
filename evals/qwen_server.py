@@ -394,7 +394,7 @@ def compute_batch_outputs_vqa(
     }
 
     with torch.no_grad():
-        output_ids = model.generate(**input_to_model, max_new_tokens=100)
+        output_ids = model.generate(**input_to_model, max_new_tokens=1024)
         generated_ids = [output_ids[len(input_ids) :] for input_ids, output_ids in zip(input_ids, output_ids)]
         generated_texts = tokenizer.batch_decode(
             generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True

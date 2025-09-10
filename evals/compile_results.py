@@ -92,6 +92,53 @@ def run_reward_alignment_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def run_reward_alignment_eval_per_trajectory(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Run reward_alignment evaluation analysis."""
+    unique_trajectory_ids = set()
+    mse_per_trajectory = 0
+    pearson_trajectories = []
+    spearman_trajectories = []
+    for r in results:
+        trajectory_id = r.get("id")
+        if trajectory_id:
+            unique_trajectory_ids.add(trajectory_id)
+    for trajectory_id in unique_trajectory_ids:
+        last_preds = []
+        last_targets = []
+        results_for_trajectory = [r for r in results if r.get("id") == trajectory_id]
+        results_for_trajectory.sort(key=lambda r: r['metadata']['subsequence_end'])
+        for r in results_for_trajectory:
+            pred = r.get("progress_pred_A")
+            tgt = r.get("target_progress")
+            meta = r.get("metadata", {})
+            if pred and len(pred) > 0 and tgt and len(tgt) > 0:
+                last_preds.append(float(pred[-1]))
+                last_targets.append(float(tgt[-1]))
+        if not last_preds or not last_targets:
+            print("No valid predictions or targets found for trajectory: ", trajectory_id)
+            continue
+
+        mse_per_trajectory += np.mean((np.array(last_targets) - np.array(last_preds)) ** 2)
+        pearson = compute_pearson(last_targets, last_preds)
+        if not np.isnan(pearson):
+            pearson_trajectories.append(pearson)
+        spearman = compute_spearman(last_targets, last_preds)
+        if not np.isnan(spearman):
+            spearman_trajectories.append(spearman)
+
+    # import pdb; pdb.set_trace()
+    mse_per_trajectory = mse_per_trajectory / len(unique_trajectory_ids)
+    pearson_per_trajectory = np.mean(pearson_trajectories)
+    spearman_per_trajectory = np.mean(spearman_trajectories)
+
+    return {
+        "mse": mse_per_trajectory,
+        "pearson_correlation": pearson_per_trajectory,
+        "spearman_correlation": spearman_per_trajectory,
+        "num_samples": len(unique_trajectory_ids),
+    }
+
+
 def run_confusion_matrix_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Run confusion_matrix evaluation analysis."""
     # Group results by confusion matrix task
@@ -409,9 +456,9 @@ def main():
             return []
 
         # success_failure.json: compute Pearson/Spearman for success trajectory + preference accuracy
-        sf_results = _load_if_exists("success_failure.json")
+        sf_results = _load_if_exists("success_failure_preference.json")
         if sf_results:
-            print("Running analyses for success_failure.json:")
+            print("Running analyses for success_failure_preference.json:")
             metrics = run_success_failure_eval(sf_results)
             for metric_name, value in metrics.items():
                 if isinstance(value, float):
@@ -419,10 +466,10 @@ def main():
                 else:
                     print(f"  - {metric_name}: {value}")
 
-        # reward_alignment.json: reuse compute_metrics and summaries
-        ra_results = _load_if_exists("reward_alignment.json")
+        # reward_alignment_progress.json: reuse compute_metrics and summaries
+        ra_results = _load_if_exists("reward_alignment_progress.json")
         if ra_results:
-            print("Running analyses for reward_alignment.json:")
+            print("Running analyses for reward_alignment_progress.json:")
             metrics = run_reward_alignment_eval(ra_results)
             for metric_name, value in metrics.items():
                 if isinstance(value, float):
@@ -430,7 +477,7 @@ def main():
                 else:
                     print(f"  - {metric_name}: {value}")
         else:
-            print("No analyses run for reward_alignment.json")
+            print("No analyses run for reward_alignment_progress.json")
 
         # confusion_matrix.json: create confusion matrix analysis
         cm_results = _load_if_exists("confusion_matrix.json")

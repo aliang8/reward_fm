@@ -73,18 +73,25 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[
         # Add RFM special tokens if they don't exist
         if cfg.model_type == "default":
             special_tokens = ["<|split_token|>", "<|reward_token|>", "<|pref_token|>"]
-            for token in special_tokens:
-                if token not in processor.tokenizer.get_vocab():
-                    processor.tokenizer.add_special_tokens({"additional_special_tokens": [token]})
-                    rank_0_print(f"Added special token: {token}")
+        elif cfg.model_type == "vqa":
+            special_tokens = ["<ans>"]
+        else:
+            special_tokens = []
 
-            # Resize token embeddings if new tokens were added
-            if len(processor.tokenizer) != base_model.config.vocab_size:
-                rank_0_print(
-                    f"Resizing token embeddings from {base_model.config.vocab_size} to {len(processor.tokenizer)}"
-                )
-                base_model.resize_token_embeddings(len(processor.tokenizer))
-                rank_0_print(f"Resized token embeddings to {len(processor.tokenizer)}")
+        # Add special tokens to the tokenizer
+        for token in special_tokens:
+            if token not in processor.tokenizer.get_vocab():
+                processor.tokenizer.add_special_tokens({"additional_special_tokens": [token]})
+                rank_0_print(f"Added special token: {token}")
+        
+
+        # Resize token embeddings if new tokens were added
+        if len(processor.tokenizer) != base_model.config.vocab_size:
+            rank_0_print(
+                f"Resizing token embeddings from {base_model.config.vocab_size} to {len(processor.tokenizer)}"
+            )
+            base_model.resize_token_embeddings(len(processor.tokenizer))
+            rank_0_print(f"Resized token embeddings to {len(processor.tokenizer)}")
 
         # Initialize RFM model wrapper with the pre-loaded base model
         rank_0_print(f"Initializing RFM model...")

@@ -77,8 +77,8 @@ class PairedSuccessFailureGenerator(BaseDataGenerator):
         failure_frames = self._get_trajectory_frames(failure_idx)
 
         # Subsample frames
-        success_frames, success_progress, success_metadata = subsample_frames_and_progress(success_frames)
-        failure_frames, failure_progress, failure_metadata = subsample_frames_and_progress(failure_frames)
+        success_frames, success_progress, success_metadata = subsample_frames_and_progress(success_frames, max_frames=self.config.max_frames)
+        failure_frames, failure_progress, failure_metadata = subsample_frames_and_progress(failure_frames, max_frames=self.config.max_frames)
 
         chosen_trajectory = Trajectory(
             frames=success_frames,

@@ -115,7 +115,7 @@ class VQABatchCollator(BatchCollator):
             self.processor.apply_chat_template(
                 conv,
                 tokenize=False,
-                add_generation_prompt=False,  # include assistant prefix tokens
+                add_generation_prompt=self.inference,  # include assistant prefix tokens
                 add_vision_id=True,
                 fps=1,
             )
@@ -143,9 +143,10 @@ class VQABatchCollator(BatchCollator):
                 token_after_assistant = (labels[i] == assistant_id).nonzero()[0][0] + 1
                 labels[i][:token_after_assistant] = -100
 
+            batch_inputs["labels"] = labels
+
         # Use the dynamically generated preference labels based on trajectory order
         batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
-        batch_inputs["labels"] = labels
 
         batch_inputs = self._add_preference_meta(batch_inputs, preference_samples)
 
@@ -188,7 +189,7 @@ class VQABatchCollator(BatchCollator):
             self.processor.apply_chat_template(
                 conv,
                 tokenize=False,
-                add_generation_prompt=False,  # include assistant prefix tokens
+                add_generation_prompt=self.inference,  # include assistant prefix tokens
                 add_vision_id=True,
                 fps=1,
             )

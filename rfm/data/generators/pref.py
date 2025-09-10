@@ -37,9 +37,8 @@ class PreferenceDataGenerator(BaseDataGenerator):
         # Use direct dataset iteration
         self.current_idx = 0
 
-    def _create_preference_sample_from_chosen(self, chosen_traj: Dict) -> PreferenceSample:
-        """Create a preference sample starting from a provided chosen trajectory dict."""
-        return self._create_preference_sample_with_strategies(chosen_traj)
+        # We only want to iterate over non-failure and suboptimal trajectories 
+        self.iter_dataset = self.dataset.filter(lambda x: x["quality_label"] not in ["failure", "suboptimal"])
 
     def __iter__(self):
         self.current_idx = 0
@@ -47,14 +46,14 @@ class PreferenceDataGenerator(BaseDataGenerator):
 
     def __next__(self):
         """Iterate over one sample per trajectory in the dataset."""
-        dataset_len = len(self.dataset)
-        chosen_traj = self.dataset[self.current_idx % dataset_len]
+        dataset_len = len(self.iter_dataset)
+        chosen_traj = self.iter_dataset[self.current_idx % dataset_len]
         sample = self._create_preference_sample_with_strategies(chosen_traj)
         self.current_idx += 1
         return sample
 
     def __len__(self):
-        return len(self.dataset)
+        return len(self.iter_dataset)
 
     def __getitem__(self, idx):
         return self.__next__()

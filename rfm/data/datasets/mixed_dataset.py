@@ -1,35 +1,42 @@
 import random
-from rfm.data.generators.pref import PreferenceDataGenerator
-from rfm.data.generators.sim import SimilarityDataGenerator
+from rfm.data.datasets.pref import PrefDataset
+from rfm.data.datasets.sim import SimilarityDataset
 from rfm.utils.logging import rank_0_print
-from rfm.data.generators.base import BaseDataGenerator
-from rfm.data.generators.vqa_progress import VQAProgressGenerator
+from rfm.data.datasets.base import RFMBaseDataset
+from rfm.data.datasets.vqa_progress import VQAProgressDataset
 
 
-class DataGenerator(BaseDataGenerator):
-    """Data generator that combines preference and similarity generation."""
+class MixedDataset(RFMBaseDataset):
+    """Dataset that combines preference and similarity generation."""
 
-    def __init__(self, config, is_evaluation=False, **kwargs):
-        """Initialize DataGenerator with configuration."""
+    def __init__(self, config, is_evaluation=False, max_samples=None, **kwargs):
+        """Initialize MixedDataset with configuration."""
         super().__init__(config, is_evaluation, **kwargs)
 
-        # Initialize the individual generators
-        self.preference_generator = PreferenceDataGenerator(config, is_evaluation, verbose=False)
-        self.similarity_generator = SimilarityDataGenerator(config, is_evaluation, verbose=False)
-        self.progress_generator = VQAProgressGenerator(config, is_evaluation, verbose=False)
+        # Initialize the individual datasets
+        self.pref_dataset = PrefDataset(config, is_evaluation, verbose=False)
+        self.similarity_dataset = SimilarityDataset(config, is_evaluation, verbose=False)
+        self.progress_dataset = VQAProgressDataset(config, is_evaluation, verbose=False)
 
         # Set the ratio for sampling between preference, similarity, and progress
         self.sample_type_ratio = config.sample_type_ratio
+        self.max_samples = max_samples
 
-    def __next__(self):
+    def __len__(self):
+        if self.max_samples is None:
+            return max(len(self.pref_dataset), len(self.similarity_dataset), len(self.progress_dataset))
+        else:
+            return self.max_samples
+
+    def __getitem__(self, idx):
         """Create a sample based on the configured ratios."""
         prob = random.random()
         if prob < self.sample_type_ratio[0]:
-            return self.preference_generator.__next__()
+            return self.pref_dataset[idx]
         elif prob < self.sample_type_ratio[0] + self.sample_type_ratio[1]:
-            return self.similarity_generator.__next__()
+            return self.similarity_dataset[idx]
         else:
-            return self.progress_generator.__next__()
+            return self.progress_dataset[idx]
 
 
 def test():
@@ -77,27 +84,20 @@ def test():
     mock_config = MockConfig(data=mock_data_config, debug=False)
 
     # Create data generator with mock config
-    generator = DataGenerator(config=mock_data_config)
+    generator = MixedDataset(config=mock_data_config)
 
     # Test the infinite dataset
     rank_0_print("Testing InfiniteDataGeneratorDataset...")
-    from rfm.data.dataset import InfiniteDataGeneratorDataset
-
-    infinite_dataset = InfiniteDataGeneratorDataset(generator)
 
     preference_count = 0
     similarity_count = 0
 
     for i in range(10):
-        sample = infinite_dataset[i]
+        sample = generator[i]
         import ipdb
 
         ipdb.set_trace()
-        if sample.sample_type == "preference":
-            preference_count += 1
-        else:
-            similarity_count += 1
-        rank_0_print(f"Sample {i}: {sample.sample_type}")
+        rank_0_print(f"Sample {i}: {sample}")
 
     rank_0_print(f"Generated {preference_count} preference samples and {similarity_count} similarity samples")
     rank_0_print(

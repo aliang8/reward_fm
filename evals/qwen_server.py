@@ -424,6 +424,7 @@ def compute_batch_outputs_vqa(
     else:
         raise ValueError(f"Mode {mode} not supported")
 
+
 def create_app(cfg: EvaluationConfig, model_config: ModelConfig):
     app = FastAPI(title="RFM Multi-GPU Evaluation Server")
 
@@ -561,8 +562,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config_path", type=str, default="rfm/configs/eval_config.yaml")
     parser.add_argument(
-        "--model_config_paths", 
-        nargs="*", 
+        "--model_config_paths",
+        nargs="*",
         default=[],
         help="Paths to the model config files (Only used if model_path is not set in eval config)",
     )

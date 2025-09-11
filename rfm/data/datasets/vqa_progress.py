@@ -1,7 +1,7 @@
-from rfm.data.generators.base import BaseDataGenerator
+from rfm.data.datasets.base import RFMBaseDataset
 from rfm.data.dataset_types import ProgressSample
 from rfm.utils.logging import rank_0_print, timer
-from rfm.data.generators.helpers import (
+from rfm.data.datasets.helpers import (
     pad_trajectory_to_max_frames,
     subsample_frames_and_progress,
     create_rewind_trajectory,
@@ -14,24 +14,21 @@ from rfm.data.dataset_types import Trajectory
 from typing import Dict, Optional
 
 
-class VQAProgressGenerator(BaseDataGenerator):
+class VQAProgressDataset(RFMBaseDataset):
     """Data generator for VQA progress samples."""
 
     def __init__(self, config, is_evaluation=False, verbose=True):
         super().__init__(config, is_evaluation, verbose=verbose)
         self.iter_dataset = self.dataset.filter(lambda x: x["quality_label"] not in ["failure", "suboptimal"])
-        self.current_idx = 0
 
-    def __iter__(self):
-        self.current_idx = 0
-        return self
+    def __len__(self):
+        return len(self.iter_dataset)
 
-    def __next__(self):
+    def __getitem__(self, idx):
         """Iterate over one sample per trajectory in the dataset."""
         dataset_len = len(self.iter_dataset)
-        traj = self.iter_dataset[self.current_idx % dataset_len]
+        traj = self.iter_dataset[idx % dataset_len]
         sample = self._create_progress_sample(traj)
-        self.current_idx += 1
         return sample
 
     def _create_progress_sample(self, traj: Dict):
@@ -98,7 +95,7 @@ class VQAProgressGenerator(BaseDataGenerator):
             trajectory=progress_traj,
             sample_type="progress",
         )
-    
+
     def _create_different_task_trajectory(self, chosen_traj: Dict) -> Optional[Dict]:
         """Create a trajectory from a different task than the chosen trajectory.
 

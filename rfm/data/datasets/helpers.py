@@ -25,7 +25,8 @@ class DataGenStrat(Enum):
     SUBSAMPLE_TASK = "subsample_task"
     REWOUND = "rewound"
     DEFAULT = "default"
-    
+
+
 def load_frames_from_npz(npz_filepath: str) -> np.ndarray:
     """Load frames on-demand from npz file.
 

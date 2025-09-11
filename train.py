@@ -32,10 +32,8 @@ from rfm.utils.setup_utils import (
     setup_model_and_processor,
     setup_peft_model,
     create_training_arguments,
-    setup_data_generator,
-    setup_batch_collator,
     setup_dataset,
-    setup_eval_dataset,
+    setup_batch_collator,
 )
 from rfm.utils.parser import parse_multiple
 from rfm.utils.logging import _timer
@@ -48,9 +46,6 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def train(cfg: ExperimentConfig):
     timing_raw = {}
-    # Create DataGenerator for training using shared utility
-    with _timer("time/setup_data_generator", timing_raw=timing_raw):
-        data_generator = setup_data_generator(cfg)
 
     run_name = f"{cfg.logging.wandb_run_name}"
     if cfg.debug:
@@ -100,12 +95,14 @@ def train(cfg: ExperimentConfig):
     # Use the shared utilities for batch collator and dataset
     with _timer("time/setup_data", timing_raw=timing_raw):
         batch_collator = setup_batch_collator(processor, tokenizer, cfg)
-        train_dataset = setup_dataset(data_generator)
+        train_dataset = setup_dataset(cfg.data)
 
     # Set up evaluation dataset if evaluation is enabled
     eval_dataset = None
     if cfg.training.do_eval:
-        eval_dataset = setup_eval_dataset(cfg)
+        dataset_kwargs = {"max_samples": cfg.data.eval_subset_size}
+
+        eval_dataset = setup_dataset(cfg.data, is_eval=True, **dataset_kwargs)
         rank_0_print(f"Evaluation dataset created with {cfg.data.eval_subset_size} samples")
 
     trainer_cls = {

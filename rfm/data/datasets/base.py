@@ -9,11 +9,12 @@ import torch
 from datasets import concatenate_datasets, Dataset
 from rfm.utils.logging import rank_0_print
 import json
-from rfm.data.generators.helpers import load_frames_from_npz
+from rfm.data.datasets.helpers import load_frames_from_npz
 
 
-class BaseDataGenerator:
-    def __init__(self, config, is_evaluation=False, verbose=True):
+class RFMBaseDataset(torch.utils.data.Dataset):
+    def __init__(self, config, is_evaluation=False, verbose=True, **kwargs):
+        super().__init__()
         self.config = config
         self.is_evaluation = is_evaluation
 

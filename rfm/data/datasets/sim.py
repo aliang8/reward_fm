@@ -7,19 +7,25 @@ import random
 import numpy as np
 from typing import List, Dict, Tuple, Optional, Iterator, Union
 from rfm.data.dataset_types import SimilaritySample, Trajectory
-from rfm.data.generators.base import BaseDataGenerator
+from rfm.data.datasets.base import RFMBaseDataset
 from rfm.utils.logging import rank_0_print
 
 
-class SimilarityDataGenerator(BaseDataGenerator):
+class SimilarityDataset(RFMBaseDataset):
     """Data generator for producing batches of similarity scoring data."""
 
     def __init__(self, config, is_evaluation=False, verbose=True):
-        """Initialize SimilarityDataGenerator with configuration."""
+        """Initialize SimilarityDataset with configuration."""
         # Call parent constructor to load datasets
         super().__init__(config, is_evaluation, verbose=verbose)
 
-        rank_0_print(f"SimilarityDataGenerator initialized with {len(self.dataset)} total trajectories")
+        rank_0_print(f"SimilarityDataset initialized with {len(self.dataset)} total trajectories")
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        return self._create_similarity_sample()
 
     def _create_similarity_sample(self) -> SimilaritySample:
         """Create a similarity scoring sample: o^1 and o^2 ranked against o^ref.

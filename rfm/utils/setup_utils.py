@@ -25,17 +25,18 @@ from rfm.models.rfm_vqa import RFMModelVQA
 from rfm.models.rewind_transformer import ReWiNDTransformer
 from rfm.data.rewind_batch_collator import ReWiNDBatchCollator
 
-from rfm.data.generators.generator import DataGenerator
 from rfm.data.batch_collator import BatchCollator
-from rfm.data.dataset import InfiniteDataGeneratorDataset
-from rfm.data.generators.success_failure import PairedSuccessFailureGenerator
-from rfm.data.generators.reward_alignment import RewardAlignmentGenerator
-from rfm.data.generators.confusion_matrix import ConfusionMatrixGenerator
-from rfm.data.generators.wrong_task import WrongTaskGenerator
-from rfm.data.generators.progress import ProgressGenerator
-
+from rfm.data.datasets import (
+    RFMBaseDataset,
+    ProgressDataset,
+    RewardAlignmentDataset,
+    PairedSuccessFailureDataset,
+    ConfusionMatrixDataset,
+    WrongTaskDataset,
+    MixedDataset,
+)
 from rfm.utils.logging import rank_0_print
-from rfm.configs.experiment_configs import ExperimentConfig, ModelConfig
+from rfm.configs.experiment_configs import ExperimentConfig, ModelConfig, DataConfig
 from rfm.data.vqa_batch_collator import VQABatchCollator
 
 
@@ -81,13 +82,10 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[
             if token not in processor.tokenizer.get_vocab():
                 processor.tokenizer.add_special_tokens({"additional_special_tokens": [token]})
                 rank_0_print(f"Added special token: {token}")
-        
 
         # Resize token embeddings if new tokens were added
         if len(processor.tokenizer) != base_model.config.vocab_size:
-            rank_0_print(
-                f"Resizing token embeddings from {base_model.config.vocab_size} to {len(processor.tokenizer)}"
-            )
+            rank_0_print(f"Resizing token embeddings from {base_model.config.vocab_size} to {len(processor.tokenizer)}")
             base_model.resize_token_embeddings(len(processor.tokenizer))
             rank_0_print(f"Resized token embeddings to {len(processor.tokenizer)}")
 
@@ -245,22 +243,17 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
     return TrainingArguments(**base_args)
 
 
-def setup_data_generator(cfg: ExperimentConfig, is_eval: bool = False) -> DataGenerator:
+def setup_dataset(cfg: DataConfig, is_eval: bool = False, **kwargs) -> RFMBaseDataset:
     """Shared function to create DataGenerator for training or evaluation"""
 
-    # Get current rank for logging
-    import torch.distributed as dist
-
-    rank = dist.get_rank() if dist.is_initialized() else 0
-
-    rank_0_print(f"Setting up data generator on rank {rank} for {'evaluation' if is_eval else 'training'}...")
+    rank_0_print(f"Setting up data generator for {'evaluation' if is_eval else 'training'}...")
 
     if is_eval:
-        datasets = cfg.data.eval_datasets
-        subsets = cfg.data.eval_subsets
+        datasets = cfg.eval_datasets
+        subsets = cfg.eval_subsets
     else:
-        datasets = cfg.data.train_datasets
-        subsets = cfg.data.train_subsets
+        datasets = cfg.train_datasets
+        subsets = cfg.train_subsets
 
     # Validate that train_datasets and train_subsets have the same length
     if len(datasets) != len(subsets):
@@ -272,56 +265,18 @@ def setup_data_generator(cfg: ExperimentConfig, is_eval: bool = False) -> DataGe
     for i, (dataset, subset) in enumerate(zip(datasets, subsets)):
         rank_0_print(f"  Dataset {i + 1}: {dataset} -> {subset}")
 
-    if cfg.data.dataset_type == "reward_alignment":
-        data_generator = RewardAlignmentGenerator(config=cfg.data, is_evaluation=is_eval)
-    elif cfg.data.dataset_type == "success_failure":
-        data_generator = PairedSuccessFailureGenerator(config=cfg.data, is_evaluation=is_eval)
-    elif cfg.data.dataset_type == "policy_ranking":
-        data_generator = ProgressGenerator(config=cfg.data, is_evaluation=is_eval)
-    elif cfg.data.dataset_type == "confusion_matrix":
-        data_generator = ConfusionMatrixGenerator(
-            config=cfg.data, is_evaluation=is_eval, max_trajectories=cfg.data.max_trajectories
-        )
-    elif cfg.data.dataset_type == "wrong_task":
-        data_generator = WrongTaskGenerator(
-            config=cfg.data, is_evaluation=is_eval, max_trajectories=cfg.data.max_trajectories
-        )
-    else:
-        data_generator = DataGenerator(config=cfg.data, is_evaluation=is_eval)
+    dataset_cls = {
+        "reward_alignment": RewardAlignmentDataset,
+        "success_failure": PairedSuccessFailureDataset,
+        "policy_ranking": ProgressDataset,
+        "confusion_matrix": ConfusionMatrixDataset,
+        "wrong_task": WrongTaskDataset,
+        "default": MixedDataset,
+    }
 
-    rank_0_print(f"Data generator initialized on rank {rank}")
-    return data_generator
-
-
-def setup_dataset(
-    data_generator: DataGenerator, dataset_type: str = "default", dataset_kwargs: dict = {}
-) -> InfiniteDataGeneratorDataset:
-    """Shared function to create training or evaluation dataset based on config"""
-
-    # Get the dataset type from the data generator config
-    config_dataset_type = data_generator.config.dataset_type
-
-    rank_0_print(f"Setting up {dataset_type} dataset with type: {config_dataset_type}")
-    dataset = InfiniteDataGeneratorDataset(data_generator, **dataset_kwargs)
-
-    rank_0_print(f"{dataset_type.capitalize()} dataset created successfully with {len(dataset)} samples")
+    dataset = dataset_cls[cfg.dataset_type](config=cfg, is_evaluation=is_eval, **kwargs)
+    rank_0_print(f"Dataset initialized")
     return dataset
-
-
-def setup_eval_dataset(cfg: ExperimentConfig) -> InfiniteDataGeneratorDataset:
-    """Create evaluation dataset using eval-specific configuration"""
-
-    # Create evaluation data generator
-    eval_data_generator = setup_data_generator(cfg, is_eval=True)
-
-    # Create evaluation dataset
-    eval_dataset = setup_dataset(
-        eval_data_generator,
-        dataset_type=cfg.data.dataset_type,
-        dataset_kwargs={"max_samples": cfg.data.eval_subset_size, "num_bins": cfg.data.num_bins, "fps": cfg.data.fps},
-    )
-
-    return eval_dataset
 
 
 def setup_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg: ExperimentConfig) -> BatchCollator:

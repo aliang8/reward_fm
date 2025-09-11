@@ -11,13 +11,14 @@ from rfm.data.dataset_types import ProgressSample, Trajectory
 from rfm.data.vqa_batch_collator import ProgressSample
 from rfm.utils.logging import rank_0_print
 from typing import Dict, List, Optional, Union
-from rfm.data.generators.base import BaseDataGenerator
+from rfm.data.datasets.base import RFMBaseDataset
 from tqdm import tqdm
 import numpy as np
 import random
-from rfm.data.generators.helpers import linspace_subsample_frames, pad_trajectory_to_max_frames
+from rfm.data.datasets.helpers import linspace_subsample_frames, pad_trajectory_to_max_frames
 
-class RewardAlignmentGenerator(BaseDataGenerator):
+
+class RewardAlignmentDataset(RFMBaseDataset):
     """
     Data generator that creates subsequence samples for reward alignment evaluation.
 
@@ -125,38 +126,8 @@ class RewardAlignmentGenerator(BaseDataGenerator):
 
         return sample
 
-    def __iter__(self):
-        self.current_idx = 0
-        return self
-
-    def __next__(self):
-        """Get the next sample by generating it from stored indices."""
-        if self.current_idx >= len(self.sample_indices):
-            raise StopIteration
-
-        # Get the sample indices for this sample
-        sample_idx_info = self.sample_indices[self.current_idx]
-
-        # Generate the actual sample on-demand
-        sample = self._generate_sample_from_indices(sample_idx_info)
-
-        # Skip invalid samples
-        while sample is None and self.current_idx < len(self.sample_indices):
-            self.current_idx += 1
-            if self.current_idx >= len(self.sample_indices):
-                raise StopIteration
-
-            sample_idx_info = self.sample_indices[self.current_idx]
-            sample = self._generate_sample_from_indices(sample_idx_info)
-
-        if sample is None:
-            raise StopIteration
-
-        self.current_idx += 1
-        return sample
-
     def __len__(self):
         return len(self.sample_indices)
 
     def __getitem__(self, idx):
-        return self.__next__()
+        return self._generate_sample_from_indices(self.sample_indices[idx])

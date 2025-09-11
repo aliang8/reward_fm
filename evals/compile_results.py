@@ -106,7 +106,7 @@ def run_reward_alignment_eval_per_trajectory(results: List[Dict[str, Any]]) -> D
         last_preds = []
         last_targets = []
         results_for_trajectory = [r for r in results if r.get("id") == trajectory_id]
-        results_for_trajectory.sort(key=lambda r: r['metadata']['subsequence_end'])
+        results_for_trajectory.sort(key=lambda r: r["metadata"]["subsequence_end"])
         for r in results_for_trajectory:
             pred = r.get("progress_pred_A")
             tgt = r.get("target_progress")

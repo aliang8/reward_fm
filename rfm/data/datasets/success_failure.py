@@ -1,13 +1,13 @@
 from rfm.data.dataset_types import PreferenceSample, Trajectory
 from rfm.utils.logging import rank_0_print
 from typing import Dict, List
-from rfm.data.generators.base import BaseDataGenerator
+from rfm.data.datasets.base import RFMBaseDataset
 from tqdm import tqdm
 import numpy as np
-from rfm.data.generators.helpers import subsample_frames_and_progress
+from rfm.data.datasets.helpers import subsample_frames_and_progress
 
 
-class PairedSuccessFailureGenerator(BaseDataGenerator):
+class PairedSuccessFailureDataset(RFMBaseDataset):
     """Dataset that generates preference samples by pairing successful and failed trajectories for the same task."""
 
     def __init__(self, config, is_evaluation=False, verbose=True):
@@ -77,8 +77,12 @@ class PairedSuccessFailureGenerator(BaseDataGenerator):
         failure_frames = self._get_trajectory_frames(failure_idx)
 
         # Subsample frames
-        success_frames, success_progress, success_metadata = subsample_frames_and_progress(success_frames, max_frames=self.config.max_frames)
-        failure_frames, failure_progress, failure_metadata = subsample_frames_and_progress(failure_frames, max_frames=self.config.max_frames)
+        success_frames, success_progress, success_metadata = subsample_frames_and_progress(
+            success_frames, max_frames=self.config.max_frames
+        )
+        failure_frames, failure_progress, failure_metadata = subsample_frames_and_progress(
+            failure_frames, max_frames=self.config.max_frames
+        )
 
         chosen_trajectory = Trajectory(
             frames=success_frames,
@@ -115,23 +119,8 @@ class PairedSuccessFailureGenerator(BaseDataGenerator):
 
         return sample
 
-    def __iter__(self):
-        self.current_idx = 0
-        return self
-
-    def __next__(self):
-        """Get the next sample by generating it from stored indices."""
-        if self.current_idx >= len(self.sample_indices):
-            raise StopIteration
-
-        # Get the sample indices for this sample
-        sample_idx_info = self.sample_indices[self.current_idx]
-
-        # Generate the actual sample on-demand
-        sample = self._generate_sample_from_indices(sample_idx_info)
-
-        self.current_idx += 1
-        return sample
+    def __getitem__(self, idx):
+        return self._generate_sample_from_indices(self.sample_indices[idx])
 
     def __len__(self):
         return len(self.sample_indices)

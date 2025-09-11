@@ -46,8 +46,6 @@ class RFMHeadsTrainer(Trainer):
         num_similarities = inputs.get("num_similarities", 0)
         num_progress = inputs.get("num_progress", 0)
 
-        # Log rewind length stats if available in preference inputs
-        rewind_stats = {}
         if num_preferences > 0 and preference_inputs:
             # Count data generation strategies from the rejected trajectories
             rejected_data_gen_strategy = preference_inputs.get("rejected_data_gen_strategy", [])
@@ -66,16 +64,25 @@ class RFMHeadsTrainer(Trainer):
                     elif s == "different_task":
                         strat_counts["num_trajs_different_task"] += 1
 
-                rewind_stats = {**strat_counts}
-                self.log_metadata.update(rewind_stats)
+                self.log_metadata.update(strat_counts)
+
+            data_sources = preference_inputs.get("data_source", None)
+            if data_sources is not None:
+                for ds in data_sources:
+                    self.global_metadata[f"total_{ds}"] += 1.0
 
         # Update global metadata for training
-        # Keep sum counts over all processes
+        # add to total batch size and sum across all processes
+        self.global_metadata["total_samples"] += num_preferences + num_similarities + num_progress
+        self.global_metadata["total_preferences"] += num_preferences
+        self.global_metadata["total_similarities"] += num_similarities
+        self.global_metadata["total_progress"] += num_progress
+
         if dist.is_initialized():
-            # add to total batch size and sum across all processes
-            batch_size = torch.tensor(num_preferences + num_similarities + num_progress, device=self.accelerator.device)
-            dist.all_reduce(batch_size, op=dist.ReduceOp.SUM)
-            self.global_metadata["total_samples"] += batch_size.item()
+            for key in self.global_metadata:
+                dist.all_reduce(
+                    torch.tensor(self.global_metadata[key], device=self.accelerator.device), op=dist.ReduceOp.SUM
+                )
 
         # Log custom losses at specified intervals
         if self.state.global_step % self.args.logging_steps == 0:
@@ -183,19 +190,6 @@ class RFMHeadsTrainer(Trainer):
             metrics[key] = [output[key] for output in outputs if key in output]
             metrics[key] = np.array(metrics[key]).mean()
 
-        # If distributed training, aggregate metrics across all processes
-        if dist.is_initialized():
-            distributed_metrics = {}
-            for key, value in metrics.items():
-                # Convert to tensor and move to device
-                tensor_val = torch.tensor(value, dtype=torch.float32, device=self.args.device)
-                # Sum across all processes
-                dist.all_reduce(tensor_val, op=dist.ReduceOp.SUM)
-                # Average by number of processes
-                tensor_val = tensor_val / dist.get_world_size()
-                distributed_metrics[key] = tensor_val.item()
-            metrics = distributed_metrics
-
         # Log metrics
         if is_rank_0():
             rank_0_print(f"\n=== Custom RFM Evaluation Results ===")
@@ -254,11 +248,7 @@ class RFMHeadsTrainer(Trainer):
 
         if return_outputs:
             # Combine outputs from all loss functions
-            extra_info = {
-                **log_metadata,
-                "total_loss": total_loss.item(),
-                "batch_size": num_preferences + num_similarities,
-            }
+            extra_info = {**log_metadata, "total_loss": total_loss.item()}
             return total_loss, extra_info
 
         return total_loss

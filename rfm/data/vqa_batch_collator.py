@@ -138,7 +138,7 @@ class VQABatchCollator(BatchCollator):
             labels = batch_inputs["input_ids"].clone()
 
             # mask out the prompt
-            assistant_id = self.processor.tokenizer.encode("assistant", add_special_tokens=False)[0] 
+            assistant_id = self.processor.tokenizer.encode("assistant", add_special_tokens=False)[0]
             for i in range(len(labels)):
                 token_after_assistant = (labels[i] == assistant_id).nonzero()[0][0] + 1
                 labels[i][:token_after_assistant] = -100
@@ -159,7 +159,7 @@ class VQABatchCollator(BatchCollator):
 
         for i, sample in enumerate(progress_samples):
             target_progress = sample.trajectory.target_progress
-            
+
             # Let's round the target progress to 2 decimal places
             target_progress = np.round(target_progress, 2)
 
@@ -215,7 +215,7 @@ class VQABatchCollator(BatchCollator):
             labels = batch_inputs["input_ids"].clone()
 
             # mask out the prompt
-            assistant_id = self.processor.tokenizer.encode("assistant", add_special_tokens=False)[0] 
+            assistant_id = self.processor.tokenizer.encode("assistant", add_special_tokens=False)[0]
             for i in range(len(labels)):
                 token_after_assistant = (labels[i] == assistant_id).nonzero()[0][0] + 1
                 labels[i][:token_after_assistant] = -100

@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-PreferenceDataGenerator class for producing batches of preference prediction data.
+PrefDataset class for producing batches of preference prediction data.
 """
 
 import random
 import numpy as np
 from typing import List, Dict, Tuple, Optional, Iterator, Union
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, Trajectory
-from rfm.data.generators.base import BaseDataGenerator
+from rfm.data.datasets.base import RFMBaseDataset
 from rfm.utils.logging import rank_0_print, timer
-from rfm.data.generators.helpers import (
+from rfm.data.datasets.helpers import (
     linspace_subsample_frames,
     randomly_subsample_frames,
     pad_trajectory_to_max_frames,
@@ -19,44 +19,34 @@ from rfm.data.generators.helpers import (
     DataGenStrat,
 )
 
-class PreferenceDataGenerator(BaseDataGenerator):
+
+class PrefDataset(RFMBaseDataset):
     """Data generator for producing batches of preference prediction data."""
 
-    def __init__(self, config, is_evaluation=False, verbose=True):
-        """Initialize PreferenceDataGenerator with configuration."""
+    def __init__(self, config, is_evaluation=False, verbose=True, **kwargs):
+        """Initialize PrefDataset with configuration."""
         self.dataset_preference_ratio = config.dataset_preference_ratio
         self.preference_strategy_ratio: List[float] = config.preference_strategy_ratio
 
-        super().__init__(config, is_evaluation, verbose=verbose)
+        super().__init__(config, is_evaluation, verbose=verbose, **kwargs)
 
         # Initialize preference dataset
         self._load_preference_dataset()
 
-        rank_0_print(f"PreferenceDataGenerator initialized with {len(self.dataset)} total trajectories")
+        rank_0_print(f"PrefDataset initialized with {len(self.dataset)} total trajectories")
 
-        # Use direct dataset iteration
-        self.current_idx = 0
-
-        # We only want to iterate over non-failure and suboptimal trajectories 
-        self.iter_dataset = self.dataset.filter(lambda x: x["quality_label"] not in ["failure", "suboptimal"])
-
-    def __iter__(self):
-        self.current_idx = 0
-        return self
-
-    def __next__(self):
-        """Iterate over one sample per trajectory in the dataset."""
-        dataset_len = len(self.iter_dataset)
-        chosen_traj = self.iter_dataset[self.current_idx % dataset_len]
-        sample = self._create_preference_sample_with_strategies(chosen_traj)
-        self.current_idx += 1
-        return sample
+        # We only want to iterate over non-failure and suboptimal trajectories
+        self.filtered_ds = self.dataset.filter(lambda x: x["quality_label"] not in ["failure", "suboptimal"])
 
     def __len__(self):
-        return len(self.iter_dataset)
+        return len(self.filtered_ds)
 
     def __getitem__(self, idx):
-        return self.__next__()
+        """Iterate over one sample per trajectory in the dataset."""
+        dataset_len = len(self.filtered_ds)
+        chosen_traj = self.filtered_ds[idx % dataset_len]
+        sample = self._create_preference_sample_with_strategies(chosen_traj)
+        return sample
 
     def _create_video_binned_trajectory(self, original_traj: Dict, num_bins: int = 10) -> Tuple[Dict, Dict]:
         """Create a preference sample by splitting a video into temporal bins and sampling from different bins.

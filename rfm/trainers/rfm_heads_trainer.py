@@ -80,7 +80,7 @@ class RFMHeadsTrainer(Trainer):
 
         if dist.is_initialized():
             for key in self.global_metadata:
-                dist.all_reduce(
+                self.global_metadata[key] = dist.all_reduce(
                     torch.tensor(self.global_metadata[key], device=self.accelerator.device), op=dist.ReduceOp.SUM
                 )
 

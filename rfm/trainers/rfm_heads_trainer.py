@@ -457,8 +457,8 @@ class RFMHeadsTrainer(Trainer):
 
                     outputs_dict.update(
                         {
-                            f"{prefix}_strat/pref_acc_{strat}": (preference_accuracy[mask == 1]).mean().item(),
-                            f"{prefix}_strat/pref_loss_{strat}": (preference_loss_all[mask == 1]).mean().item(),
+                            f"{prefix}_strat_pref_acc/{strat}": (preference_accuracy[mask == 1]).mean().item(),
+                            f"{prefix}_strat_pref_loss/{strat}": (preference_loss_all[mask == 1]).mean().item(),
                         }
                     )
 
@@ -491,8 +491,8 @@ class RFMHeadsTrainer(Trainer):
                     mask = torch.tensor(mask, device=self.accelerator.device)
                     outputs_dict.update(
                         {
-                            f"{prefix}_strat/spearman_corr_{strat}": (spearman_corr_rejected[mask == 1]).mean().item(),
-                            f"{prefix}_strat/prog_loss_{strat}": (progress_loss_rejected[mask == 1]).mean().item(),
+                            f"{prefix}_strat_spearman_corr/{strat}": (spearman_corr_rejected[mask == 1]).mean().item(),
+                            f"{prefix}_strat_prog_loss/{strat}": (progress_loss_rejected[mask == 1]).mean().item(),
                         }
                     )
 
@@ -503,10 +503,10 @@ class RFMHeadsTrainer(Trainer):
                     mask = torch.tensor(mask, device=self.accelerator.device)
                     outputs_dict.update(
                         {
-                            f"{prefix}_ds/spearman_corr_{data_source}": (spearman_corr_rejected[mask == 1])
+                            f"{prefix}_ds_spearman_corr/{data_source}": (spearman_corr_rejected[mask == 1])
                             .mean()
                             .item(),
-                            f"{prefix}_ds/prog_loss_{data_source}": (progress_loss_rejected[mask == 1]).mean().item(),
+                            f"{prefix}_ds_prog_loss/{data_source}": (progress_loss_rejected[mask == 1]).mean().item(),
                         }
                     )
 

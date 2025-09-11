@@ -15,8 +15,6 @@ class PairedSuccessFailureDataset(RFMBaseDataset):
 
         # Generate all possible sample indices upfront (not the actual samples)
         self.sample_indices = self._generate_all_sample_indices()
-        self.current_idx = 0
-
         rank_0_print(f"Generated {len(self.sample_indices)} success-failure sample indices")
 
     def _generate_all_sample_indices(self) -> List[Dict]:

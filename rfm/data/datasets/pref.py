@@ -24,11 +24,10 @@ class PrefDataset(RFMBaseDataset):
     """Data generator for producing batches of preference prediction data."""
 
     def __init__(self, config, is_evaluation=False, verbose=True, **kwargs):
-        """Initialize PrefDataset with configuration."""
+        super().__init__(config, is_evaluation, verbose=verbose, **kwargs)
+
         self.dataset_preference_ratio = config.dataset_preference_ratio
         self.preference_strategy_ratio: List[float] = config.preference_strategy_ratio
-
-        super().__init__(config, is_evaluation, verbose=verbose, **kwargs)
 
         # Initialize preference dataset
         self._load_preference_dataset()
@@ -45,7 +44,7 @@ class PrefDataset(RFMBaseDataset):
         """Iterate over one sample per trajectory in the dataset."""
         dataset_len = len(self.filtered_ds)
         chosen_traj = self.filtered_ds[idx % dataset_len]
-        sample = self._create_preference_sample_with_strategies(chosen_traj)
+        sample = self._create_pref_sample(chosen_traj)
         return sample
 
     def _create_video_binned_trajectory(self, original_traj: Dict, num_bins: int = 10) -> Tuple[Dict, Dict]:
@@ -169,7 +168,7 @@ class PrefDataset(RFMBaseDataset):
 
         return chosen_traj, rejected_traj
 
-    def _create_preference_sample_from_dataset(self) -> PreferenceSample:
+    def _create_pref_sample_from_dataset(self) -> PreferenceSample:
         """Create a preference sample from the loaded preference dataset."""
         if not self.preferences:
             raise ValueError("No preferences loaded from dataset")
@@ -201,7 +200,7 @@ class PrefDataset(RFMBaseDataset):
         - Controlled by config.dataset_preference_ratio
 
         **Data Augmentation Strategies:**
-        When not using dataset preferences, delegates to _create_preference_sample_with_strategies()
+        When not using dataset preferences, delegates to _create_pref_sample()
         which implements various strategies for generating rejected trajectories.
 
         Returns:
@@ -212,11 +211,11 @@ class PrefDataset(RFMBaseDataset):
         with timer("create_preference_sample", verbose=False):
             if random.random() < self.dataset_preference_ratio and self.preferences:
                 # Use preference trajectories from dataset
-                return self._create_preference_sample_from_dataset()
+                return self._create_pref_sample_from_dataset()
             else:
-                return self._create_preference_sample_with_strategies()
+                return self._create_pref_sample()
 
-    def _create_preference_sample_with_strategies(self, chosen_traj: Optional[Dict] = None) -> PreferenceSample:
+    def _create_pref_sample(self, chosen_traj: Optional[Dict] = None) -> PreferenceSample:
         """Create a preference prediction sample using various rejected trajectory generation strategies.
 
         This method implements four different strategies for generating rejected trajectories

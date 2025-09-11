@@ -152,81 +152,8 @@ def display_config(cfg: ExperimentConfig):
         return  # Only display config on rank 0
 
     console = Console()
-
-    # Print a nice header
-    console.print(Panel.fit("🤖 RFM (Reward Function Model) Configuration", style="bold cyan"))
-
-    # Create a table for the main config
-    table = Table(title="Experiment Settings", show_header=True, header_style="bold magenta")
-    table.add_column("Section", style="cyan", no_wrap=True)
-    table.add_column("Key", style="green")
-    table.add_column("Value", style="yellow")
-
-    # Mode and debug
-    table.add_row("General", "Mode", cfg.mode)
-    table.add_row("General", "Debug", str(cfg.debug))
-
-    # Model config
-    table.add_row("Model", "Base Model", cfg.model.base_model_id)
-    table.add_row("Model", "Torch Dtype", cfg.model.torch_dtype)
-    table.add_row("Model", "Trust Remote Code", str(cfg.model.trust_remote_code))
-
-    # Data config
-    table.add_row("Data", "Training Datasets", ", ".join(cfg.data.train_datasets))
-    table.add_row("Data", "Training Subsets", ", ".join(str(subset) for subset in cfg.data.train_subsets))
-    table.add_row("Data", "Eval Datasets", ", ".join(cfg.data.eval_datasets))
-    table.add_row("Data", "Eval Subsets", ", ".join(str(subset) for subset in cfg.data.eval_subsets))
-    table.add_row("Data", "Max Frames", str(cfg.data.max_frames))
-    table.add_row("Data", "Video Frame Sampling", cfg.data.video_frame_sampling)
-    table.add_row("Data", "Resized Height", str(cfg.data.resized_height))
-    table.add_row("Data", "Resized Width", str(cfg.data.resized_width))
-    table.add_row("Data", "Sample Type Ratio", str(cfg.data.sample_type_ratio))
-    table.add_row("Data", "Dataset Preference Ratio", str(cfg.data.dataset_preference_ratio))
-    table.add_row("Data", "Shuffle", str(cfg.data.shuffle))
-    table.add_row("Data", "Seed", str(cfg.data.seed))
-    table.add_row("Data", "Num Proc", str(cfg.data.num_proc))
-    table.add_row("Data", "Force Reprocess", str(cfg.data.force_reprocess))
-    table.add_row("Data", "Dataloader Pin Memory", str(cfg.data.dataloader_pin_memory))
-    table.add_row("Data", "Dataloader Num Workers", str(cfg.data.dataloader_num_workers))
-
-    # Training config
-    table.add_row("Training", "Number of GPUs", str(cfg.training.num_gpus))
-    table.add_row("Training", "Output Directory", cfg.training.output_dir)
-    table.add_row("Training", "Batch Size", str(cfg.training.per_device_train_batch_size))
-    table.add_row("Training", "Learning Rate", f"{cfg.training.learning_rate:.2e}")
-    table.add_row("Training", "Epochs", str(cfg.training.num_train_epochs))
-    table.add_row("Training", "Max Seq Length", str(cfg.training.max_seq_length))
-    table.add_row("Training", "Beta", str(cfg.training.beta))
-    table.add_row("Training", "Gradient Accumulation", str(cfg.training.gradient_accumulation_steps))
-    table.add_row("Training", "Save Strategy", cfg.training.save_strategy)
-    table.add_row("Training", "Logging Steps", str(cfg.training.logging_steps))
-    table.add_row("Training", "Save Steps", str(cfg.training.save_steps))
-    table.add_row("Training", "FP16", str(cfg.training.fp16))
-    table.add_row("Training", "BF16", str(cfg.training.bf16))
-
-    # PEFT config
-    table.add_row("PEFT", "Use PEFT", str(cfg.peft.use_peft))
-    if cfg.peft.use_peft:
-        table.add_row("PEFT", "LoRA Rank (r)", str(cfg.peft.r))
-        table.add_row("PEFT", "LoRA Alpha", str(cfg.peft.lora_alpha))
-        table.add_row("PEFT", "LoRA Dropout", str(cfg.peft.lora_dropout))
-        table.add_row("PEFT", "Target Modules", ", ".join(cfg.peft.target_modules))
-        table.add_row("PEFT", "Train Vision Encoder", str(cfg.model.train_vision_encoder))
-        table.add_row("PEFT", "Train Language Model", str(cfg.model.train_language_model))
-        table.add_row("PEFT", "Train Value Head", str(cfg.model.train_value_head))
-        table.add_row("PEFT", "Train Progress Head", str(cfg.model.train_progress_head))
-        table.add_row("PEFT", "Train Preference Head", str(cfg.model.train_preference_head))
-        table.add_row("PEFT", "Train Similarity Head", str(cfg.model.train_similarity_head))
-
-    # Logging config
-    table.add_row("Logging", "Use Wandb", str(cfg.logging.use_wandb))
-    if cfg.logging.use_wandb:
-        table.add_row("Logging", "Wandb Project", cfg.logging.wandb_project)
-        table.add_row("Logging", "Wandb Entity", str(cfg.logging.wandb_entity))
-        table.add_row("Logging", "Wandb Run Name", str(cfg.logging.wandb_run_name))
-
-    console.print(table)
-
+    console.print(cfg)
+   
 
 def main(cfg: ExperimentConfig):
     # Display the configuration in a nice Rich format

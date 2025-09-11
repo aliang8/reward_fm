@@ -15,10 +15,11 @@ import random
 from pydantic import BaseModel, field_serializer
 
 from rfm.data.dataset_types import PreferenceSample, SimilaritySample, ProgressSample
-from rfm.data.batch_collator import BatchCollator
+from rfm.data.collators import RFMBatchCollator
+from rfm.data.collators.utils import convert_frames_to_pil_images
 
 
-class VQABatchCollator(BatchCollator):
+class VQABatchCollator(RFMBatchCollator):
     """Batch collator that processes Sample objects through the processor for VQA-based reward modeling."""
 
     def __init__(self, training: bool = True, inference: bool = False, **kwargs):
@@ -46,10 +47,10 @@ class VQABatchCollator(BatchCollator):
 
         for i, sample in enumerate(preference_samples):
             # Convert frames to appropriate format using stored shapes
-            chosen_frames = self._convert_frames_to_pil_images(
+            chosen_frames = convert_frames_to_pil_images(
                 sample.chosen_trajectory.frames, sample.chosen_trajectory.frames_shape
             )
-            rejected_frames = self._convert_frames_to_pil_images(
+            rejected_frames = convert_frames_to_pil_images(
                 sample.rejected_trajectory.frames, sample.rejected_trajectory.frames_shape
             )
             prompt = f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', which one best corresponds to solving the task? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags. For example, if you prefer trajectory A, your answer should be <ans>A</ans>."
@@ -164,7 +165,7 @@ class VQABatchCollator(BatchCollator):
             target_progress = np.round(target_progress, 2)
 
             # Convert frames to appropriate format using stored shapes
-            frames = self._convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
+            frames = convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
 
             prompt = f"For the task '{sample.trajectory.task}', estimate the progress at each frame in the trajectory. Give a list of numbers between 0 and 1 where 0 means no progress and 1 means successful completion of the task. Format your answer enclosed by <ans> and </ans> tags. For example, if you think the progress at each frame is [0.0, 0.1, 0.2, 0.3, 0.4, 0.5], your answer should be <ans>[0.0, 0.1, 0.2, 0.3, 0.4, 0.5]</ans>."
             # Create conversation for progress evaluation

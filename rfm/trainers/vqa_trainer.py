@@ -16,7 +16,7 @@ from transformers.trainer import PredictionOutput
 from rfm.utils.logging import is_rank_0, rank_0_print
 from rfm.utils.metrics import compute_auc, compute_spearman_correlation
 from rfm.utils.logging import _timer
-from rfm.trainers.rfm_heads_trainer import RFMHeadsTrainer
+from rfm.trainers import RFMHeadsTrainer
 from evals.eval_utils import extract_answer_from_text
 
 
@@ -64,7 +64,7 @@ def ForCausalLMLoss(
     return loss
 
 
-class VQATrainer(RFMHeadsTrainer):
+class RFMVQATrainer(RFMHeadsTrainer):
     def __init__(self, config, *args, **kwargs):
         super().__init__(config, *args, **kwargs)
 

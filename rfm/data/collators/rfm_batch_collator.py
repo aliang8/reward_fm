@@ -14,10 +14,11 @@ import numpy as np
 import random
 
 from rfm.data.dataset_types import PreferenceSample, SimilaritySample, ProgressSample
-from rfm.data.base_collator import BaseCollator
+from rfm.data.collators import BaseCollator
+from rfm.data.collators.utils import convert_frames_to_pil_images, pad_target_progress
 
 
-class BatchCollator(BaseCollator):
+class RFMBatchCollator(BaseCollator):
     """Batch collator that processes Sample objects through the processor."""
 
     def __init__(self, **kwargs):
@@ -64,8 +65,8 @@ class BatchCollator(BaseCollator):
         ]
 
         # Pad target progress tensors to max length in last dimension
-        batch_inputs["target_progress_chosen"] = self._pad_target_progress(target_progress_chosen)
-        batch_inputs["target_progress_rejected"] = self._pad_target_progress(target_progress_rejected)
+        batch_inputs["target_progress_chosen"] = pad_target_progress(target_progress_chosen)
+        batch_inputs["target_progress_rejected"] = pad_target_progress(target_progress_rejected)
         batch_inputs["target_progress_chosen_mask"] = torch.tensor(target_progress_chosen_mask, dtype=torch.float32)
         batch_inputs["target_progress_rejected_mask"] = torch.tensor(target_progress_rejected_mask, dtype=torch.float32)
 
@@ -95,7 +96,7 @@ class BatchCollator(BaseCollator):
         batch_inputs["sample_type"] = ["progress"] * len(progress_samples)
 
         # Pad target progress tensors to max length in last dimension
-        batch_inputs["target_progress"] = self._pad_target_progress(target_progress_list)
+        batch_inputs["target_progress"] = pad_target_progress(target_progress_list)
         batch_inputs["quality_labels"] = torch.tensor(quality_labels, dtype=torch.float32)
 
         return batch_inputs
@@ -110,10 +111,10 @@ class BatchCollator(BaseCollator):
 
         for i, sample in enumerate(preference_samples):
             # Convert frames to appropriate format using stored shapes
-            chosen_frames = self._convert_frames_to_pil_images(
+            chosen_frames = convert_frames_to_pil_images(
                 sample.chosen_trajectory.frames, sample.chosen_trajectory.frames_shape
             )
-            rejected_frames = self._convert_frames_to_pil_images(
+            rejected_frames = convert_frames_to_pil_images(
                 sample.rejected_trajectory.frames, sample.rejected_trajectory.frames_shape
             )
 
@@ -354,7 +355,7 @@ class BatchCollator(BaseCollator):
 
         for sample in progress_samples:
             # Convert frames to appropriate format using stored shapes
-            frames = self._convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
+            frames = convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
 
             # Create conversation for progress evaluation
             conversation = [

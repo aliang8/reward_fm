@@ -19,13 +19,8 @@ from transformers import (
 from peft import get_peft_model, LoraConfig
 from typing import Tuple, Optional, Union
 
-from rfm.models.rfm import RFMModel
-from rfm.models.rfm_vqa import RFMModelVQA
-
-from rfm.models.rewind_transformer import ReWiNDTransformer
-from rfm.data.rewind_batch_collator import ReWiNDBatchCollator
-
-from rfm.data.batch_collator import BatchCollator
+from rfm.models import RFM, RFMVQA, ReWiNDTransformer
+from rfm.data.collators import RFMBatchCollator, VQABatchCollator, ReWiNDBatchCollator, BaseCollator
 from rfm.data.datasets import (
     RFMBaseDataset,
     ProgressDataset,
@@ -37,10 +32,9 @@ from rfm.data.datasets import (
 )
 from rfm.utils.logging import rank_0_print
 from rfm.configs.experiment_configs import ExperimentConfig, ModelConfig, DataConfig
-from rfm.data.vqa_batch_collator import VQABatchCollator
 
 
-def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[AutoProcessor, RFMModel]:
+def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[AutoProcessor, RFM]:
     """Shared function to set up model, processor, and tokenizer for both training and evaluation"""
 
     # Load processor and tokenizer
@@ -64,10 +58,10 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[
         # Create a fresh model instance
         if cfg.model_type == "default":
             qwen_model_cls = Qwen2_5_VLModel
-            rfm_model_cls = RFMModel
+            rfm_model_cls = RFM
         elif cfg.model_type == "vqa":
             qwen_model_cls = Qwen2_5_VLForConditionalGeneration
-            rfm_model_cls = RFMModelVQA
+            rfm_model_cls = RFMVQA
 
         base_model = qwen_model_cls.from_pretrained(cfg.base_model_id)
 
@@ -128,7 +122,7 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[
     return tokenizer, processor, rfm_model
 
 
-def setup_peft_model(rfm_model: RFMModel, cfg: ExperimentConfig) -> RFMModel:
+def setup_peft_model(rfm_model: RFM, cfg: ExperimentConfig) -> RFM:
     """Shared function to apply PEFT configuration to the model"""
 
     if cfg.peft.use_peft:
@@ -279,14 +273,14 @@ def setup_dataset(cfg: DataConfig, is_eval: bool = False, **kwargs) -> RFMBaseDa
     return dataset
 
 
-def setup_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg: ExperimentConfig) -> BatchCollator:
+def setup_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg: ExperimentConfig) -> BaseCollator:
     """Shared function to create BatchCollator"""
 
     rank_0_print("Setting up batch collator...")
 
     if "Qwen" in cfg.model.base_model_id:
         if cfg.model.model_type == "default":
-            batch_collator = BatchCollator(
+            batch_collator = RFMBatchCollator(
                 processor=processor,
                 max_length=cfg.training.max_seq_length,
                 resized_height=cfg.data.resized_height,

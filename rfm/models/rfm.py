@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 RFM (Reward Foundation Model) implementation.
-Contains the RFMModel class with three prediction heads for different objectives.
+Contains the RFM class with three prediction heads for different objectives.
 
 Note: make sure that the forward pass uses all of the
 heads or there will be some problems with FSDP sharding.
@@ -16,14 +16,14 @@ from typing import Optional, Dict, Any
 from rfm.utils.logging import _timer
 
 
-class RFMModel(PreTrainedModel):
+class RFM(PreTrainedModel):
     """Reward Foundation Model with three prediction heads for different objectives."""
 
     config_class = Qwen2_5_VLModel.config_class
 
     def __init__(self, config, processor, base_model=None):
         super().__init__(config)
-        # The RFMModel now owns and creates its submodules.
+        # The RFM now owns and creates its submodules.
         # This is the standard pattern for PreTrainedModel.
         if base_model is not None:
             self.model = base_model

@@ -12,9 +12,6 @@ from PIL import Image
 import json
 import os
 import yaml
-from rfm.trainers.rfm_heads_trainer import RFMHeadsTrainer
-from rfm.trainers.vqa_trainer import VQATrainer
-from rfm.trainers.rewind_trainer import ReWiNDTrainer
 from rfm.utils.logging import is_rank_0, rank_0_print
 from pyrallis import wrap
 import wandb
@@ -28,6 +25,7 @@ import yaml
 
 # Import shared configs and utilities
 from rfm.configs.experiment_configs import ExperimentConfig
+from rfm.trainers import RFMHeadsTrainer, RFMVQATrainer, ReWiNDTrainer
 from rfm.utils.setup_utils import (
     setup_model_and_processor,
     setup_peft_model,
@@ -108,7 +106,7 @@ def train(cfg: ExperimentConfig):
     trainer_cls = {
         "rfm_heads": RFMHeadsTrainer,
         "rewind_transformer": ReWiNDTrainer,
-        "rfm_vqa": VQATrainer,
+        "rfm_vqa": RFMVQATrainer,
     }[cfg.trainer_cls]
     rank_0_print(f"Trainer class: {trainer_cls}")
 

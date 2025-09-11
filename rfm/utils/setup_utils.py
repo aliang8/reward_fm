@@ -253,8 +253,7 @@ def setup_data_generator(cfg: ExperimentConfig, is_eval: bool = False) -> DataGe
 
     rank = dist.get_rank() if dist.is_initialized() else 0
 
-    if rank == 0:
-        rank_0_print(f"Setting up data generator on rank {rank} for {'evaluation' if is_eval else 'training'}...")
+    rank_0_print(f"Setting up data generator on rank {rank} for {'evaluation' if is_eval else 'training'}...")
 
     if is_eval:
         datasets = cfg.data.eval_datasets
@@ -269,10 +268,9 @@ def setup_data_generator(cfg: ExperimentConfig, is_eval: bool = False) -> DataGe
             f"datasets and subsets must have the same length. Got {len(datasets)} datasets and {len(subsets)} subsets"
         )
 
-    if rank == 0:
-        rank_0_print(f"Loading {len(datasets)} datasets with corresponding subsets")
-        for i, (dataset, subset) in enumerate(zip(datasets, subsets)):
-            rank_0_print(f"  Dataset {i + 1}: {dataset} -> {subset}")
+    rank_0_print(f"Loading {len(datasets)} datasets with corresponding subsets")
+    for i, (dataset, subset) in enumerate(zip(datasets, subsets)):
+        rank_0_print(f"  Dataset {i + 1}: {dataset} -> {subset}")
 
     if cfg.data.dataset_type == "reward_alignment":
         data_generator = RewardAlignmentGenerator(config=cfg.data, is_evaluation=is_eval)
@@ -291,9 +289,7 @@ def setup_data_generator(cfg: ExperimentConfig, is_eval: bool = False) -> DataGe
     else:
         data_generator = DataGenerator(config=cfg.data, is_evaluation=is_eval)
 
-    if rank == 0:
-        rank_0_print(f"Data generator initialized on rank {rank}")
-
+    rank_0_print(f"Data generator initialized on rank {rank}")
     return data_generator
 
 

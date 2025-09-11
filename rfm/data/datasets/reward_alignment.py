@@ -8,7 +8,6 @@ as PreferenceSample objects that can be evaluated by the model.
 """
 
 from rfm.data.dataset_types import ProgressSample, Trajectory
-from rfm.data.vqa_batch_collator import ProgressSample
 from rfm.utils.logging import rank_0_print
 from typing import Dict, List, Optional, Union
 from rfm.data.datasets.base import RFMBaseDataset

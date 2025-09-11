@@ -9,10 +9,11 @@ from typing import List, Dict
 import numpy as np
 
 from rfm.data.dataset_types import PreferenceSample, ProgressSample
-from rfm.data.batch_collator import BatchCollator
+from rfm.data.collators import RFMBatchCollator
+from rfm.data.collators.utils import convert_frames_to_pil_images
 
 
-class ReWiNDBatchCollator(BatchCollator):
+class ReWiNDBatchCollator(RFMBatchCollator):
     """Batch collator that processes Sample objects through the processor."""
 
     def __init__(self, **kwargs):
@@ -39,10 +40,10 @@ class ReWiNDBatchCollator(BatchCollator):
         for i, sample in enumerate(preference_samples):
             # Convert frames to appropriate format using stored shapes
             # NOTE: these should already be padded to max_frames by the data generator
-            chosen_frames = self._convert_frames_to_pil_images(
+            chosen_frames = convert_frames_to_pil_images(
                 sample.chosen_trajectory.frames, sample.chosen_trajectory.frames_shape
             )
-            rejected_frames = self._convert_frames_to_pil_images(
+            rejected_frames = convert_frames_to_pil_images(
                 sample.rejected_trajectory.frames, sample.rejected_trajectory.frames_shape
             )
             all_chosen_frames.append(chosen_frames)
@@ -85,7 +86,7 @@ class ReWiNDBatchCollator(BatchCollator):
         """Process a batch of progress samples with VQA-style question."""
         all_frames = []
         for sample in progress_samples:
-            frames = self._convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
+            frames = convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
             all_frames.append(frames)
 
         # here we directly use dino processor process the images and videos to tensors

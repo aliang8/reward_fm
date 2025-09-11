@@ -80,9 +80,9 @@ class RFMHeadsTrainer(Trainer):
 
         if dist.is_initialized():
             for key in self.global_metadata:
-                self.global_metadata[key] = dist.all_reduce(
-                    torch.tensor(self.global_metadata[key], device=self.accelerator.device), op=dist.ReduceOp.SUM
-                )
+                value = torch.tensor(self.global_metadata[key], device=self.accelerator.device)
+                dist.all_reduce(value, op=dist.ReduceOp.SUM)
+                self.global_metadata[key] = value.item()
 
         # Log custom losses at specified intervals
         if self.state.global_step % self.args.logging_steps == 0:

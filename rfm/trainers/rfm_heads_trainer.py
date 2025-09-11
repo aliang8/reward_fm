@@ -183,6 +183,19 @@ class RFMHeadsTrainer(Trainer):
             metrics[key] = [output[key] for output in outputs if key in output]
             metrics[key] = np.array(metrics[key]).mean()
 
+        # If distributed training, aggregate metrics across all processes
+        if dist.is_initialized():
+            distributed_metrics = {}
+            for key, value in metrics.items():
+                # Convert to tensor and move to device
+                tensor_val = torch.tensor(value, dtype=torch.float32, device=self.args.device)
+                # Sum across all processes
+                dist.all_reduce(tensor_val, op=dist.ReduceOp.SUM)
+                # Average by number of processes
+                tensor_val = tensor_val / dist.get_world_size()
+                distributed_metrics[key] = tensor_val.item()
+            metrics = distributed_metrics
+
         # Log metrics
         if is_rank_0():
             rank_0_print(f"\n=== Custom RFM Evaluation Results ===")

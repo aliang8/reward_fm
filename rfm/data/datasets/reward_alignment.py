@@ -34,7 +34,6 @@ class RewardAlignmentDataset(RFMBaseDataset):
         self.max_trajectories = config.max_trajectories
         self.frame_step = frame_step
         self.sample_indices = self._generate_all_sample_indices()
-        self.current_idx = 0
 
         rank_0_print(
             f"Generated {len(self.sample_indices)} reward alignment sample indices from {min(len(self.robot_trajectories), self.max_trajectories) if self.max_trajectories else len(self.robot_trajectories)} trajectories"

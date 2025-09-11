@@ -7,16 +7,15 @@ from rfm.data.datasets.vqa_progress import VQAProgressDataset
 
 
 class MixedDataset(RFMBaseDataset):
-    """Dataset that combines preference and similarity generation."""
+    """Dataset that combines preference, similarity, and progress generation."""
 
     def __init__(self, config, is_evaluation=False, max_samples=None, **kwargs):
-        """Initialize MixedDataset with configuration."""
         super().__init__(config, is_evaluation, **kwargs)
 
         # Initialize the individual datasets
-        self.pref_dataset = PrefDataset(config, is_evaluation, verbose=False)
-        self.similarity_dataset = SimilarityDataset(config, is_evaluation, verbose=False)
-        self.progress_dataset = VQAProgressDataset(config, is_evaluation, verbose=False)
+        self.pref_dataset = PrefDataset(config, is_evaluation, verbose=False, **kwargs)
+        self.similarity_dataset = SimilarityDataset(config, is_evaluation, verbose=False, **kwargs)
+        self.progress_dataset = VQAProgressDataset(config, is_evaluation, verbose=False, **kwargs)
 
         # Set the ratio for sampling between preference, similarity, and progress
         self.sample_type_ratio = config.sample_type_ratio

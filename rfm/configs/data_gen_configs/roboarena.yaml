@@ -14,4 +14,4 @@ output:
 
 hub:
   push_to_hub: true
-  hub_repo_id: jesbu1/roboarena_08-05-2025
+  hub_repo_id: roboarena_rfm_08-05-2025

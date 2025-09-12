@@ -65,7 +65,7 @@ data_path: "test_datasets/DataDump_08-05-2025" # Adjust this to your dataset pat
 Once your configuration is set up, you can generate the HuggingFace dataset using the `generate_hf_dataset.py` script:
 
 ```bash
-uv run python data/generate_hf_dataset.py --config_path=configs/data_gen_configs/roboarena.yaml
+uv run python -m rfm.data.generate_hf_dataset --config_path=rfm/configs/data_gen_configs/roboarena.yaml
 ```
 
 This command will:

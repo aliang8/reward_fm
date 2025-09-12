@@ -11,7 +11,7 @@ trajectory_info_template = {
     "id": [],
     "task": [],
     #"lang_vector": [],
-    #"data_source": [],
+    "data_source": None,
     "frames": None,
     "is_robot": None,
     "quality_label": None,
@@ -68,6 +68,7 @@ def create_new_trajectory(video_path: str, partial_success: int, task_name: str)
     trajectory_info["is_robot"] = True
     trajectory_info["quality_label"] = "successful" if partial_success == 1.0 else "failure"
     trajectory_info["partial_success"] = partial_success
+    trajectory_info["data_source"] = "roboarena"
     return trajectory_info
 
 

@@ -538,6 +538,13 @@ def main(cfg: GenerateConfig):
         print(f"Loading H2R dataset from: {cfg.dataset.dataset_path}")
         task_data = load_h2r_dataset(cfg.dataset.dataset_path)
         trajectories = flatten_task_data(task_data)
+    elif "roboarena" in cfg.dataset.dataset_name.lower():
+        from rfm.data.dataset_loaders.roboarena_loader import load_roboarena_dataset
+
+        # Load the trajectories using the loader with max_trajectories limit
+        print(f"Loading RoboArena dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_roboarena_dataset(cfg.dataset.dataset_path)
+        trajectories = flatten_task_data(task_data)
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")
 

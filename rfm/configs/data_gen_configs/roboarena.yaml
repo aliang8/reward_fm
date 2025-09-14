@@ -4,7 +4,7 @@ dataset:
   dataset_name: roboarena # This will be the dataset name / data source
 
 output:
-  output_dir: rfm_dataset
+  output_dir: ./rfm_dataset/roboarena_0825_rfm
   max_trajectories: -1
   max_frames: 64
   use_video: true

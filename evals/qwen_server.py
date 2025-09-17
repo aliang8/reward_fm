@@ -39,8 +39,8 @@ from rfm.utils.setup_utils import setup_model_and_processor
 from rfm.utils.parser import deep_merge
 from rfm.configs.eval_configs import EvaluationConfig
 from rfm.configs.experiment_configs import ModelConfig
-from rfm.data.batch_collator import BatchCollator, PreferenceSample
-from rfm.data.vqa_batch_collator import VQABatchCollator
+from rfm.data.collators.rfm_batch_collator import RFMBatchCollator
+from rfm.data.collators.vqa_batch_collator import VQABatchCollator
 from rfm.data.dataset_types import PreferenceSample, ProgressSample
 from evals.eval_utils import extract_answer_from_text
 
@@ -153,7 +153,7 @@ class AsyncGPUPool:
         # Create batch collator with processor from this GPU
         if "qwen" in self.model_config.base_model_id.lower():
             if self.model_config.model_type == "default":
-                batch_collator = BatchCollator(
+                batch_collator = RFMBatchCollator(
                     processor=gpu_info["processor"],
                     resized_height=128,  # You might want to make this configurable
                     resized_width=128,

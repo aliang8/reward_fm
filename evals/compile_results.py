@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from scipy.stats import spearmanr
 from typing import Dict, List, Any
 import matplotlib.patches as patches
+from itertools import combinations, product
 from PIL import Image
 import io
 import base64
@@ -327,6 +328,103 @@ def run_policy_ranking_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def run_policy_ranking_eval_per_ranked_set(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Run policy_ranking evaluation analysis per ranked set."""
+    # Group results by task
+    task_groups = {}
+
+    for r in results:
+        meta = r.get("metadata", {}) or {}
+        task = meta.get("task")
+        quality_label = meta.get("quality_label")
+
+        if task is None or quality_label is None:
+            continue
+
+        if quality_label not in ["failure", "successful", "suboptimal"]:
+            continue
+
+        progress_pred = r.get("progress_pred_A", [])
+        if not progress_pred or len(progress_pred) == 0:
+            continue
+
+        final_reward = float(progress_pred[-1])
+
+        if task not in task_groups:
+            task_groups[task] = []
+        task_groups[task].append(
+            {
+                "quality_label": quality_label,
+                "final_reward": final_reward,
+            }
+        )
+
+    if not task_groups:
+        return {"error": "No valid policy ranking data found"}
+
+    # For each task, compute ranking correlation
+    task_correlations = []
+    task_details = {}
+
+    quality_order = {"failure": 1, "suboptimal": 2, "successful": 3}
+    all_labels = ["failure", "suboptimal", "successful"]
+
+    for task, trajectories in task_groups.items():
+        # Collect rewards per quality
+        quality_to_rewards = {q: [] for q in all_labels}
+        for t in trajectories:
+            quality_to_rewards[t["quality_label"]].append(t["final_reward"])
+
+        present_labels = [q for q in all_labels if quality_to_rewards[q]]
+        if len(present_labels) < 2:
+            continue
+
+        # Use triplets if all three present, else pairs
+        k_values = [3] if len(present_labels) == 3 else [2]
+
+        spearman_corrs = []
+
+        for k in k_values:
+            for labels_combo in combinations(present_labels, k):
+                gold_ranks = [quality_order[q] for q in labels_combo]
+                # All ways to pick one reward per selected quality
+                for rewards_tuple in product(*(quality_to_rewards[q] for q in labels_combo)):
+                    spearman_corr = compute_spearman(gold_ranks, list(rewards_tuple))
+                    if not np.isnan(spearman_corr):
+                        spearman_corrs.append(spearman_corr)
+
+        if spearman_corrs:
+            avg_spearman_corr = np.mean(spearman_corrs)
+            task_correlations.append(avg_spearman_corr)
+            task_details[task] = {
+                "average_spearman_correlation": avg_spearman_corr,
+                "num_triplets/tuples": len(spearman_corrs),
+                "quality_distribution": {
+                    "failure": len(quality_to_rewards["failure"]),
+                    "suboptimal": len(quality_to_rewards["suboptimal"]),
+                    "successful": len(quality_to_rewards["successful"]),
+                },
+            }
+
+    overall_metrics = {}
+    if task_correlations:
+        overall_metrics = {
+            "mean_spearman_correlation": np.mean(task_correlations),
+            "std_spearman_correlation": np.std(task_correlations),
+            "min_spearman_correlation": np.min(task_correlations),
+            "max_spearman_correlation": np.max(task_correlations),
+            "num_tasks_with_valid_correlation": len(task_correlations),
+        }
+
+    return {
+        "num_tasks": len(task_groups),
+        "num_samples": len(results),
+        "num_tasks_with_valid_correlation": len(task_correlations),
+        "task_details": task_details,
+        "overall_metrics": overall_metrics,
+    }
+
+
 def main():
     import yaml
     from rfm.configs.experiment_configs import DataConfig
@@ -498,6 +596,19 @@ def main():
                     print(f"  - {metric_name}: {value}")
         else:
             print("No analyses run for confusion_matrix.json")
+
+        # policy_ranking_progress.json: create policy ranking analysis
+        pr_results = _load_if_exists("policy_ranking_progress.json")
+        if pr_results:
+            print("Running analyses for policy_ranking_progress.json:")
+            metrics = run_policy_ranking_eval(pr_results)
+            for metric_name, value in metrics.items():
+                if isinstance(value, float):
+                    print(f"  - {metric_name}: {value:.4f}")
+                else:
+                    print(f"  - {metric_name}: {value}")
+        else:
+            print("No analyses run for policy_ranking_progress.json")
 
         print("Directory processing complete.")
         print("Done!")

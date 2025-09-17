@@ -29,7 +29,7 @@ from pathlib import Path
 import time
 
 from rfm.configs.eval_configs import EvaluationConfig
-from rfm.utils.setup_utils import setup_eval_dataset
+from rfm.utils.setup_utils import setup_dataset
 from evals.eval_utils import post_batch, post_batch_npy, post_batch_npy_async, build_payload
 
 from rfm.utils.logging import _timer, timer
@@ -123,7 +123,7 @@ async def iter_eval_batches_async(
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Run evaluation batches asynchronously with concurrent requests."""
     # Create eval data generator and dataset-like iterator
-    dataset = setup_eval_dataset(eval_cfg)
+    dataset = setup_dataset(eval_cfg, is_eval=True)
 
     # Determine actual number of batches
     dataset_size = len(dataset)
@@ -205,7 +205,7 @@ def iter_eval_batches_sync(
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Run evaluation batches synchronously (original implementation)."""
     # Create eval data generator and dataset-like iterator
-    dataset = setup_eval_dataset(eval_cfg)
+    dataset = setup_dataset(eval_cfg.data, is_eval=True)
 
     # Determine actual number of batches
     dataset_size = len(dataset)

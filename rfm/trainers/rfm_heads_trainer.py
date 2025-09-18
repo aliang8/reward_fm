@@ -16,6 +16,29 @@ from rfm.utils.logging import is_rank_0, rank_0_print
 from rfm.utils.metrics import compute_spearman_correlation
 from rfm.utils.logging import _timer
 
+def all_reduce_metrics(metrics: dict):
+    """
+    All-reduce multiple scalar metrics at once.
+    metrics: dict of {name: float or tensor}
+    Returns dict with averaged metrics across all ranks.
+    """
+    if not dist.is_initialized():
+        return metrics
+
+    # Convert values to tensor (on CUDA) and stack
+    values = [torch.tensor(v, dtype=torch.float32, device="cuda") 
+              if not torch.is_tensor(v) else v.to("cuda", torch.float32)
+              for v in metrics.values()]
+    stacked = torch.stack(values)  # shape [num_metrics]
+
+    # All-reduce (sum over all ranks)
+    dist.all_reduce(stacked, op=dist.ReduceOp.SUM)
+
+    # Average across world size
+    stacked /= dist.get_world_size()
+
+    # Return dict again
+    return {k: stacked[i].item() for i, k in enumerate(metrics.keys())}
 
 class RFMHeadsTrainer(Trainer):
     def __init__(self, config, *args, **kwargs):
@@ -78,11 +101,7 @@ class RFMHeadsTrainer(Trainer):
         self.global_metadata["total_similarities"] += num_similarities
         self.global_metadata["total_progress"] += num_progress
 
-        if dist.is_initialized():
-            for key in self.global_metadata:
-                value = torch.tensor(self.global_metadata[key], device=self.accelerator.device)
-                dist.all_reduce(value, op=dist.ReduceOp.SUM)
-                self.global_metadata[key] = value.item()
+        # self.global_metadata = all_reduce_metrics(self.global_metadata)
 
         # Log custom losses at specified intervals
         if self.state.global_step % self.args.logging_steps == 0:
@@ -96,7 +115,9 @@ class RFMHeadsTrainer(Trainer):
             return
 
         # Aggregate custom losses across all processes if using distributed training
-        log_metadata = self._aggregate_log_metadata()
+        # log_metadata = all_reduce_metrics(self.log_metadata)
+
+        log_metadata = self.log_metadata
 
         # Prepare logging data using aggregated losses
         log_data = {
@@ -130,31 +151,6 @@ class RFMHeadsTrainer(Trainer):
 
             rounded_times = {k: round(v, 2) for k, v in self.timing_raw.items()}
             rank_0_print(f"Timing raw: {rounded_times}")
-
-    def _aggregate_log_metadata(self):
-        """Aggregate custom losses across all processes using all_reduce."""
-        if not self.log_metadata:
-            return {}
-
-        # If not using distributed training, return losses as-is
-        if not dist.is_initialized():
-            return self.log_metadata.copy()
-
-        aggregated = {}
-
-        # Aggregate loss values (averages) across all processes
-
-        for key in self.log_metadata:
-            # Convert to tensor for all_reduce
-            loss_tensor = torch.tensor(self.log_metadata[key], device=self.accelerator.device)
-
-            # Sum across all processes
-            dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
-
-            # Average by world size
-            aggregated[key] = (loss_tensor / dist.get_world_size()).item()
-
-        return aggregated
 
     def evaluate(self, eval_dataset=None, ignore_keys=None) -> Dict[str, float]:
         """

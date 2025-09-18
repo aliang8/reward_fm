@@ -19,7 +19,7 @@ from pyrallis import wrap
 from multiprocessing import Pool, cpu_count
 import multiprocessing as mp
 from functools import partial
-from rfm.data.helpers import (
+from rfm.data_preprocess.helpers import (
     load_sentence_transformer_model,
     create_output_directory,
     flatten_task_data,

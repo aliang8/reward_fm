@@ -73,7 +73,17 @@ uv run python evals/run_model_eval.py \
       --set data.eval_subsets=[\"metaworld\"] \
       --set data.dataset_type=policy_ranking \
       --use-async \
-      --max_concurrent=4 2>&1
+      --max_concurrent=2 2>&1
+
+uv run python evals/run_model_eval.py \
+      --config rfm/configs/eval_config.yaml \
+      --set num_batches=10 \
+      --set data.batch_size=16 \
+      --set data.eval_datasets=[\"ykorkmaz/libero_failure_rfm\"] \
+      --set data.eval_subsets=[\"libero_10_failure\"] \
+      --set data.dataset_type=policy_ranking \
+      --use-async \
+      --max_concurrent=2 2>&1
 
 # # Run confusion matrix evaluation
 uv run python evals/run_model_eval.py \

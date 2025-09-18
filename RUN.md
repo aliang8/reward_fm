@@ -33,7 +33,7 @@ uv run python3 scripts/preprocess_datasets.py
 uv run python3 scripts/upload_to_hub.py --model_dir=logs/rfm_v3/checkpoint-900/ --hub_model_id=aliangdw/rfm_v3
 
 # start eval server in one terminal
-uv run python3 evals/qwen_server.py 
+uv run python3 evals/qwen_server.py --num_gpus=2
 
 # run eval in another terminal
 # look at rfm/configs/eval_config.yaml for eval parameters

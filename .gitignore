@@ -35,3 +35,4 @@ processed_datasets/*
 processed_datasets_old/*
 test.py
 *.ipynb
+rfm/metaworld/*

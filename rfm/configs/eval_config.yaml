@@ -2,7 +2,7 @@
 # This config is used specifically for evaluation runs
 
 # Model path to load training config from
-model_path: "aliangdw/rfm_vqa"  # Path to the trained model checkpoint (will load training_config.yaml from here)
+model_path: "aliangdw/rfm_prefprog_v4"  # Path to the trained model checkpoint (will load training_config.yaml from here)
 
 # GPU Pool settings
 num_gpus: 4  # Number of GPUs to use (null for all available)
@@ -21,10 +21,13 @@ data:
   # Evaluation dataset settings
   # eval_datasets: ["abraranwar/libero_rfm", "ykorkmaz/libero_failure_rfm"]
   # eval_subsets: ["libero256_10", "libero_10_failure"]
-  eval_datasets: ["HenryZhang/metaworld_rewind_rfm_eval"]
-  eval_subsets: ["metaworld_rewind_eval"]
+  # eval_datasets: ["HenryZhang/metaworld_rewind_rfm_eval"]
+  # eval_subsets: ["metaworld_rewind_eval"]
   # eval_datasets: ["abraranwar/libero_rfm"]
   # eval_subsets: ["libero256_10"]
+  eval_datasets: ["aliangdw/metaworld_rfm"]
+  eval_subsets: ["metaworld"]
+  
   eval_subset_size: 1000  # Number of evaluation examples
   
   # For preprocessing

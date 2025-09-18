@@ -437,7 +437,7 @@ def main():
     )
     parser.add_argument("--results_dir", type=str, default=None, help="Directory containing multiple results JSONs")
     parser.add_argument(
-        "--eval_logs_dir", type=str, default="./eval_logs", help="Root directory containing eval_logs structure"
+        "--eval_logs_dir", type=str, default=None, help="Root directory containing eval_logs structure"
     )
     parser.add_argument("--max_samples", type=int, default=5, help="Maximum number of samples to visualize")
     args = parser.parse_args()

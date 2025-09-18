@@ -123,7 +123,7 @@ async def iter_eval_batches_async(
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Run evaluation batches asynchronously with concurrent requests."""
     # Create eval data generator and dataset-like iterator
-    dataset = setup_dataset(eval_cfg, is_eval=True)
+    dataset = setup_dataset(eval_cfg.data, is_eval=True)
 
     # Determine actual number of batches
     dataset_size = len(dataset)

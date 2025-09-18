@@ -19,12 +19,16 @@ log_dir: "./eval_logs"  # Directory to save evaluation results
 # Data settings (reused from experiment_configs.DataConfig)
 data:
   # Evaluation dataset settings
+  # success/failure
   # eval_datasets: ["abraranwar/libero_rfm", "ykorkmaz/libero_failure_rfm"]
   # eval_subsets: ["libero256_10", "libero_10_failure"]
+  # reward alignment
   # eval_datasets: ["HenryZhang/metaworld_rewind_rfm_eval"]
   # eval_subsets: ["metaworld_rewind_eval"]
+  # reward alignment
   # eval_datasets: ["abraranwar/libero_rfm"]
   # eval_subsets: ["libero256_10"]
+  # policy ranking
   eval_datasets: ["aliangdw/metaworld_rfm"]
   eval_subsets: ["metaworld"]
   
@@ -36,7 +40,7 @@ data:
   # Video processing settings
   max_frames: 16
   
-  dataset_type: reward_alignment
+  dataset_type: reward_alignment  # reward_alignment, success_failure, policy_ranking, confusion_matrix, wrong_task, default
 
   # extra settings for eval datasets 
   num_bins: 3

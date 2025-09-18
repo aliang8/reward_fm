@@ -380,18 +380,17 @@ def run_policy_ranking_eval_per_ranked_set(results: List[Dict[str, Any]]) -> Dic
             continue
 
         # Use triplets if all three present, else pairs
-        k_values = [3] if len(present_labels) == 3 else [2]
+        k = len(present_labels)
 
         spearman_corrs = []
 
-        for k in k_values:
-            for labels_combo in combinations(present_labels, k):
-                gold_ranks = [quality_order[q] for q in labels_combo]
-                # All ways to pick one reward per selected quality
-                for rewards_tuple in product(*(quality_to_rewards[q] for q in labels_combo)):
-                    spearman_corr = compute_spearman(gold_ranks, list(rewards_tuple))
-                    if not np.isnan(spearman_corr):
-                        spearman_corrs.append(spearman_corr)
+        for labels_combo in combinations(present_labels, k):
+            gold_ranks = [quality_order[q] for q in labels_combo]
+            # All ways to pick one reward per selected quality
+            for rewards_tuple in product(*(quality_to_rewards[q] for q in labels_combo)):
+                spearman_corr = compute_spearman(gold_ranks, list(rewards_tuple))
+                if not np.isnan(spearman_corr):
+                    spearman_corrs.append(spearman_corr)
 
         if spearman_corrs:
             avg_spearman_corr = np.mean(spearman_corrs)
@@ -601,7 +600,7 @@ def main():
         pr_results = _load_if_exists("policy_ranking_progress.json")
         if pr_results:
             print("Running analyses for policy_ranking_progress.json:")
-            metrics = run_policy_ranking_eval(pr_results)
+            metrics = run_policy_ranking_eval_per_ranked_set(pr_results)
             for metric_name, value in metrics.items():
                 if isinstance(value, float):
                     print(f"  - {metric_name}: {value:.4f}")

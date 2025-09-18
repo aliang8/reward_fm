@@ -57,6 +57,8 @@ def _save_result_as_json(
         predictions = preference_response.get("predictions", [])
         prediction_probs = preference_response.get("prediction_probs", [])
         preference_labels = preference_response.get("preference_labels", [])
+        progress_pred_chosen = preference_response.get("progress_pred_chosen", [])
+        progress_pred_rejected = preference_response.get("progress_pred_rejected", [])
 
     # Extract progress data
     if progress_response:
@@ -86,6 +88,8 @@ def _save_result_as_json(
                 "preference_label": int(preference_labels[i]),
                 "predicted_preference": int(predictions[i]),
                 "predicted_preference_prob": prediction_probs[i] if prediction_probs else None,
+                "progress_pred_chosen": progress_pred_chosen[i] if i < len(progress_pred_chosen) else [],
+                "progress_pred_rejected": progress_pred_rejected[i] if i < len(progress_pred_rejected) else [],
                 "chosen_meta": chosen_meta,
                 "rejected_meta": rejected_meta,
             }

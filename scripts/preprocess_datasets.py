@@ -23,7 +23,7 @@ from rfm.configs.experiment_configs import ExperimentConfig
 class DatasetPreprocessor:
     """Unified preprocessor for all datasets with individual caching per dataset/subset."""
 
-    def __init__(self, config, cache_dir: str = "./processed_datasets"):
+    def __init__(self, config, cache_dir: str):
         self.config = config
         self.cache_dir = cache_dir
 
@@ -746,6 +746,16 @@ class DatasetPreprocessor:
 
 
 def main():
+    import argparse
+
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Preprocess datasets and create caches.")
+    parser.add_argument("--cache_dir", type=str, default="./processed_datasets", help="Directory to store processed dataset caches.")
+    args = parser.parse_args()
+
+    # Use the cache_dir argument
+    cache_dir = args.cache_dir
+
     """Main preprocessing function."""
     # Try to increase the soft limit for open files to reduce 'Too many open files'
     try:
@@ -786,7 +796,7 @@ def main():
     print("   - Multiple subsets: ['subset1', 'subset2', 'subset3']")
 
     # Create unified preprocessor for all datasets
-    preprocessor = DatasetPreprocessor(config)
+    preprocessor = DatasetPreprocessor(config, cache_dir=cache_dir)
 
     # Preprocess all datasets
     print("\n=== Processing All Datasets ===")
@@ -814,9 +824,6 @@ def main():
             if len(first_dataset) > 0:
                 test_traj = first_dataset[0]
                 print(f"  Sample trajectory: {test_traj['id']} - {test_traj['task']}")
-
-    print("\n✅ Dataset preprocessing complete!")
-    print(f"Unified cache: {preprocessor.cache_dir}")
 
     # Show individual dataset info
     print(f"\n📊 Individual Dataset Summary:")
@@ -849,6 +856,11 @@ def main():
                 print(f"    ✅ {subset}: {len(preprocessor.datasets[cache_key])} trajectories")
             else:
                 print(f"    ❌ {subset}: Failed to load")
+
+    print("\n✅ Dataset preprocessing complete!")
+    print(f"Unified cache: {preprocessor.cache_dir}")
+    print(f"Please set the RFM_PROCESSED_DATASETS_PATH environment variable to {preprocessor.cache_dir} by running:")
+    print(f"export RFM_PROCESSED_DATASETS_PATH={preprocessor.cache_dir}")
 
 
 if __name__ == "__main__":

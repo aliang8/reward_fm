@@ -55,7 +55,9 @@ class RFMBaseDataset(torch.utils.data.Dataset):
 
     def _load_trajectory_dataset(self):
         """Load trajectory dataset using preprocessed index-based cache."""
-        cache_dir = "./processed_datasets"
+        cache_dir = os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
+        if not cache_dir:
+            raise ValueError("RFM_PROCESSED_DATASETS_PATH environment variable not set. Please set it to the directory containing your processed datasets.")
         cache_type = "evaluation" if self.is_evaluation else "training"
 
         # Check if preprocessed cache exists
@@ -217,7 +219,9 @@ class RFMBaseDataset(torch.utils.data.Dataset):
     def show_available_datasets(self):
         """Show which datasets are available in the cache."""
         # The preprocessing script now creates individual cache directories for each dataset/subset pair
-        cache_dir = "./processed_datasets"
+        cache_dir = os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
+        if not cache_dir:
+            raise ValueError("RFM_PROCESSED_DATASETS_PATH environment variable not set. Please set it to the directory containing your processed datasets.")
 
         rank_0_print(f"=" * 100)
         rank_0_print(f"\n🔍 Available datasets in {cache_dir}:")

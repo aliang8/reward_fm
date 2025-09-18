@@ -41,5 +41,5 @@ uv run python3 evals/qwen_server.py --num_gpus=2
 uv run python3 evals/run_model_eval.py
 
 # visualize results 
-uv run python3 evals/compile_result.py {insert json file from eval}
+uv run python3 evals/compile_results.py {insert json file from eval}
 ```

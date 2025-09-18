@@ -177,7 +177,8 @@ uv run python rfm/data/generate_hf_dataset.py \
 ```bash
 
 # Preprocess the dataset
-uv run scripts/preprocess_dataset.py
+uv run scripts/preprocess_datasets.py  --cache_dir /path/to/save/processed_datasets (./processed_datasets by default)
+export RFM_PROCESSED_DATASETS_PATH=/path/to/save/processed_datasets
 
 # Training
 uv run accelerate launch --config_file rfm/configs/fsdp.yaml train.py --config_path=rfm/configs/config.yaml

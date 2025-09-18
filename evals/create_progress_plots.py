@@ -357,7 +357,7 @@ def main():
         default="eval_logs/aliangdw_rfm_prefprog_v4/ykorkmaz_libero_failure_rfm_libero_10_failure/reward_alignment_progress.json",
         help="Path to the JSON file containing reward alignment results",
     )
-    parser.add_argument("--output_dir", help="Directory for saving trajectory plots")
+    parser.add_argument("--output_dir", required=True, help="Directory for saving trajectory plots")
 
     args = parser.parse_args()
 

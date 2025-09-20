@@ -12,17 +12,18 @@ source $HOME/.local/bin/env
 # install dependencies
 uv pip install huggingface_hub
 
+export RFM_DATASET_PATH=/scr/shared/reward_fm/rfm_dataset
+export RFM_PROCESSED_DATASETS_PATH=/scr/shared/reward_fm/processed_dataset
+
 # download dataset to local 
 # might have to run this multiple times if it crashes
 ./setup.sh
-
-export RFM_DATASET_PATH=./rfm_dataset
 
 # install ffmpeg if not already have
 sudo apt-get install ffmpeg
 
 # preprocess dataset 
-uv run python3 scripts/preprocess_datasets.py
+uv run python3 scripts/preprocess_datasets.py --cache_dir=$RFM_PROCESSED_DATASETS_PATH
 
 # train
 # look at rfm/configs/config.yaml for parameters

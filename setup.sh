@@ -107,8 +107,8 @@ download_dataset() {
 # download_dataset HenryZhang/metaworld_rewind_rfm_train
 # download_dataset HenryZhang/metaworld_rewind_rfm_eval
 # download_dataset ykorkmaz/h2r_rfm
-# download_dataset aliangdw/metaworld_rfm
+download_dataset aliangdw/metaworld_rfm
 # download_dataset jesbu1/oxe_rfm
-download_dataset jesbu1/oxe_rfm_eval
+# download_dataset jesbu1/oxe_rfm_eval
 
 echo "Done. Set RFM_DATASET_PATH=${BASE_DIR} for training/eval."

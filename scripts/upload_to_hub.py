@@ -65,66 +65,41 @@ def create_model_card(model_dir: Path, base_model: str, model_name: str):
         model_type = "unknown"
         architectures = ["unknown"]
 
+    # Try to read wandb info if available
+    wandb_info_path = model_dir / "wandb_info.json"
+    wandb_section = ""
+    if wandb_info_path.exists():
+        try:
+            with open(wandb_info_path, "r") as f:
+                wandb_info = json.load(f)
+            wandb_section = f"""
+## Training Run
+
+- **Wandb Run**: [{wandb_info.get('wandb_name', 'N/A')}]({wandb_info.get('wandb_url', '#')})
+- **Wandb ID**: `{wandb_info.get('wandb_id', 'N/A')}`
+- **Project**: {wandb_info.get('wandb_project', 'N/A')}
+"""
+        except Exception as e:
+            logger.warning(f"Could not read wandb info: {e}")
+            wandb_section = ""
+
     model_card_content = f"""---
 license: apache-2.0
 base_model: {base_model}
 tags:
-- reward-model
+- reward_model
 - rfm
-- vision-language
-- multimodal
+- preference_comparisons
 library_name: transformers
 ---
 
 # {model_name}
 
-This is a Reward Function Model (RFM) for vision-language preference learning and similarity assessment.
-
 ## Model Details
 
 - **Base Model**: {base_model}
 - **Model Type**: {model_type}
-- **Architecture**: {", ".join(architectures)}
-- **Task**: Vision-Language Reward Modeling
-- **Training Method**: FSDP (Fully Sharded Data Parallel)
-
-## Usage
-
-```python
-from transformers import AutoProcessor, AutoModel
-import torch
-
-# Load model and processor
-processor = AutoProcessor.from_pretrained("{model_name}", trust_remote_code=True)
-model = AutoModel.from_pretrained("{model_name}", trust_remote_code=True)
-
-# Example usage for preference scoring
-# inputs = processor(images=images, text=text, return_tensors="pt")
-# outputs = model(**inputs, sample_type="preference")
-```
-
-## Model Capabilities
-
-This RFM model can perform:
-
-1. **Preference Prediction**: Given two trajectories A and B, predict which one is preferred
-2. **Similarity Assessment**: Evaluate how similar a trajectory is to a reference
-3. **Progress Estimation**: Estimate task completion progress
-
-## Training
-
-The model was trained using:
-- FSDP for distributed training
-- Mixed precision (bfloat16)
-- Custom loss functions for preference and similarity learning
-
-## Files
-
-This repository contains:
-- Model weights in SafeTensors format
-- Configuration files
-- Tokenizer/Processor files
-
+{wandb_section}
 ## Citation
 
 If you use this model, please cite:

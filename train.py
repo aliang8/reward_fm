@@ -90,6 +90,21 @@ def train(cfg: ExperimentConfig):
         yaml.dump(config_dict, f, default_flow_style=False, indent=2)
     rank_0_print(f"Saved training config to: {config_save_path}")
 
+    # Save wandb run ID to a file for later reference (only on rank 0)
+    if cfg.logging.use_wandb and is_rank_0() and wandb.run is not None:
+        wandb_info = {
+            "wandb_id": wandb.run.id,
+            "wandb_name": wandb.run.name,
+            "wandb_project": wandb.run.project,
+            "wandb_entity": wandb.run.entity,
+            "wandb_url": wandb.run.url
+        }
+        wandb_info_path = os.path.join(cfg.training.output_dir, "wandb_info.json")
+        with open(wandb_info_path, "w") as f:
+            json.dump(wandb_info, f, indent=2)
+        rank_0_print(f"Saved wandb run info to: {wandb_info_path}")
+        rank_0_print(f"Wandb ID: {wandb.run.id}")
+
     # Use the shared utilities for batch collator and dataset
     with _timer("time/setup_data", timing_raw=timing_raw):
         batch_collator = setup_batch_collator(processor, tokenizer, cfg)

@@ -2,6 +2,19 @@
 """
 Metaworld dataset loader for the generic dataset converter for RFM model training.
 This module contains logic for loading metaworld data organized by task and quality.
+
+uv run python data_preprocess/generate_hf_dataset.py \
+    --config_path=data_preprocess/configs/data_gen_configs/metaworld.yaml \
+    --dataset.dataset_name=metaworld \
+    --dataset.dataset_path=self_collected_videos \
+    --output.output_dir=metaworld \
+    --output.max_trajectories=1000 \
+    --output.max_frames=-1 \
+    --output.use_video=true \
+    --output.fps=10 \
+    --output.shortest_edge_size=240 \
+    --output.center_crop=true \
+    --output.num_workers=8
 """
 
 import os
@@ -9,7 +22,37 @@ import numpy as np
 from typing import List, Dict, Any
 from pathlib import Path
 from tqdm import tqdm
-from rfm.data.video_helpers import load_video_frames
+from PIL import Image
+import torch
+from torchvision import transforms
+from data_preprocess.video_helpers import load_video_frames
+
+
+def apply_center_crop_to_frames(frames: np.ndarray) -> np.ndarray:
+    """Apply center crop (224, 224) to video frames using torchvision transforms.
+    
+    Args:
+        frames: numpy array of shape (T, H, W, 3) in RGB order
+    
+    Returns:
+        numpy array of shape (T, 224, 224, 3) with center cropped frames
+    """
+    # Define the center crop transform
+    center_crop = transforms.CenterCrop(224)
+    
+    cropped_frames = []
+    for frame in frames:
+        # Convert numpy array to PIL Image
+        pil_frame = Image.fromarray(frame.astype(np.uint8))
+        
+        # Apply center crop
+        cropped_pil = center_crop(pil_frame)
+        
+        # Convert back to numpy array
+        cropped_frame = np.array(cropped_pil)
+        cropped_frames.append(cropped_frame)
+    
+    return np.array(cropped_frames)
 
 
 def map_quality_label(original_label: str) -> str:
@@ -90,9 +133,13 @@ def load_metaworld_dataset(base_path: str) -> Dict[str, List[Dict]]:
                     print(f"Warning: Could not parse index from filename: {video_file.name}")
                     idx = 0
 
+                # Load frames and apply center crop
+                original_frames = load_video_frames(video_file)
+                cropped_frames = apply_center_crop_to_frames(original_frames)
+                
                 # Create trajectory entry
                 trajectory = {
-                    "frames": load_video_frames(video_file),
+                    "frames": cropped_frames,
                     "task": map_task_to_natural_language(task_name),  # Natural language task
                     "quality_label": quality_label,  # Mapped quality label
                     "is_robot": True,

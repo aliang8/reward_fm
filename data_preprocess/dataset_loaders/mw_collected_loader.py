@@ -4,17 +4,7 @@ Metaworld dataset loader for the generic dataset converter for RFM model trainin
 This module contains logic for loading metaworld data organized by task and quality.
 
 uv run python data_preprocess/generate_hf_dataset.py \
-    --config_path=data_preprocess/configs/data_gen_configs/metaworld.yaml \
-    --dataset.dataset_name=metaworld \
-    --dataset.dataset_path=self_collected_videos \
-    --output.output_dir=metaworld \
-    --output.max_trajectories=1000 \
-    --output.max_frames=-1 \
-    --output.use_video=true \
-    --output.fps=10 \
-    --output.shortest_edge_size=240 \
-    --output.center_crop=true \
-    --output.num_workers=8
+    --config_path=data_preprocess/configs/data_gen_configs/metaworld.yaml
 """
 
 import os

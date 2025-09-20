@@ -1,13 +1,13 @@
 dataset:
   dataset_name: metaworld
-  dataset_path: rfm/data/metaworld
+  dataset_path: self_collected_videos
 
 output:
   output_dir: datasets/metaworld_rfm
   use_video: true  # Convert to MP4 videos
   fps: 10  # Target frame rate for output videos
   shortest_edge_size: 240  # Resize videos to this shortest edge
-  center_crop: false  # Don't center crop, maintain aspect ratio
+  center_crop: true  # Don't center crop, maintain aspect ratio
   max_trajectories: -1  # -1 for all trajectories
   max_frames: -1  # -1 for all frames
 

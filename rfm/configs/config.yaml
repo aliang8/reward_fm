@@ -32,24 +32,24 @@ data:
     - "abraranwar/libero_rfm"
     - "ykorkmaz/libero_failure_rfm"
     - "HenryZhang/metaworld_rewind_rfm_train"
-    - "jesbu1/oxe_rfm"
+    # - "jesbu1/oxe_rfm"
   train_subsets:
     - ["libero256_90"]
     - ["libero_90_failure"]
     - ["metaworld_rewind_train"]
-    - ["oxe_bridge_v2"]
+    # - ["oxe_bridge_v2"]
   # Evaluation dataset settings
   eval_datasets:
     - "abraranwar/libero_rfm"
     - "ykorkmaz/libero_failure_rfm"
     - "HenryZhang/metaworld_rewind_rfm_eval"
-    # - "aliangdw/metaworld_rfm"
+    - "aliangdw/metaworld_rfm"
   eval_subsets:
     # - ["libero256_10", "libero256_object", "libero256_spatial", "libero256_goal"]
     - ["libero256_10"]
     - ["libero_10_failure"]
     - ["metaworld_rewind_eval"]
-    # - ["metaworld"]
+    - ["metaworld"]
   # eval_datasets: ["abraranwar/libero_rfm"]
   # eval_subsets: ["libero_object"]
   eval_subset_size: 500  # Number of evaluation examples

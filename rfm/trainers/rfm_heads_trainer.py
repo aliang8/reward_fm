@@ -10,35 +10,104 @@ from transformers import Trainer
 from typing import List, Dict, Optional, Union, Any
 import numpy as np
 from tqdm import tqdm
-import torch.distributed as dist
 
 from rfm.utils.logging import is_rank_0, rank_0_print
 from rfm.utils.metrics import compute_spearman_correlation
 from rfm.utils.logging import _timer
 
-def all_reduce_metrics(metrics: dict):
+
+def reduce_metrics_with_accelerate(metrics: dict, accelerator):
     """
-    All-reduce multiple scalar metrics at once.
+    Reduce multiple scalar metrics using Accelerate's built-in methods.
+    Handles cases where different processes have different metric keys.
     metrics: dict of {name: float or tensor}
     Returns dict with averaged metrics across all ranks.
     """
-    if not dist.is_initialized():
+    if not metrics:
         return metrics
 
-    # Convert values to tensor (on CUDA) and stack
-    values = [torch.tensor(v, dtype=torch.float32, device="cuda") 
-              if not torch.is_tensor(v) else v.to("cuda", torch.float32)
-              for v in metrics.values()]
-    stacked = torch.stack(values)  # shape [num_metrics]
+    try:
+        # Step 1: Gather all metric keys from all processes
+        local_keys = list(metrics.keys())
+        all_keys_gathered = accelerator.gather_for_metrics(local_keys)
+        
+        # Step 2: Create union of all keys across all processes
+        all_unique_keys = set()
+        for keys_from_process in all_keys_gathered:
+            if isinstance(keys_from_process, list):
+                all_unique_keys.update(keys_from_process)
+            else:
+                # Handle single key case
+                all_unique_keys.add(keys_from_process)
+        
+        all_unique_keys = sorted(list(all_unique_keys))
+        
+        # Step 3: Create synchronized metrics dict with 0.0 for missing keys
+        synchronized_metrics = {}
+        for key in all_unique_keys:
+            if key in metrics:
+                synchronized_metrics[key] = metrics[key]
+            else:
+                # This process doesn't have this metric, use 0.0
+                synchronized_metrics[key] = 0.0
+        
+        # Step 4: Now reduce all metrics (all processes have same keys)
+        result_metrics = {}
+        
+        for key, value in synchronized_metrics.items():
+            try:
+                # Convert to tensor on accelerator device
+                if torch.is_tensor(value):
+                    tensor_val = value.to(accelerator.device, dtype=torch.float32)
+                else:
+                    tensor_val = torch.tensor(float(value), dtype=torch.float32, device=accelerator.device)
+                
+                # Check for NaN values before reduction
+                if torch.isnan(tensor_val).any():
+                    rank_0_print(f"Warning: NaN detected in metric '{key}', using 0.0")
+                    tensor_val = torch.tensor(0.0, dtype=torch.float32, device=accelerator.device)
+                
+                # Check for infinity values
+                if torch.isinf(tensor_val).any():
+                    rank_0_print(f"Warning: Infinity detected in metric '{key}', using 0.0")
+                    tensor_val = torch.tensor(0.0, dtype=torch.float32, device=accelerator.device)
+                
+                # Use accelerator's reduce method - all processes participate
+                reduced_val = accelerator.reduce(tensor_val, reduction="sum")
+                
+                # Final check for NaN in reduced result
+                if torch.isnan(reduced_val).any():
+                    rank_0_print(f"Warning: NaN in reduced result for metric '{key}', using fallback")
+                    result_metrics[key] = 0.0
+                else:
+                    result_metrics[key] = reduced_val.item()
+                
+            except Exception as metric_error:
+                # If individual metric fails, keep original value (or 0.0 if missing)
+                rank_0_print(f"Warning: Failed to reduce metric '{key}': {metric_error}")
+                if key in metrics:
+                    original_val = float(metrics[key]) if not torch.is_tensor(metrics[key]) else metrics[key].item()
+                    result_metrics[key] = 0.0 if np.isnan(original_val) else original_val
+                else:
+                    result_metrics[key] = 0.0
+        
+        # Step 5: Only return metrics that were originally present in this process
+        final_metrics = {}
+        for key in metrics.keys():
+            final_metrics[key] = result_metrics[key]
+        
+        return final_metrics
+        
+    except Exception as e:
+        # Fallback: return original metrics if reduction fails
+        rank_0_print(f"Warning: reduce_metrics_with_accelerate failed with error: {e}. Returning original metrics.")
+        fallback_metrics = {}
+        for k, v in metrics.items():
+            val = float(v) if not torch.is_tensor(v) else v.item()
+            # Replace NaN with 0.0 in fallback
+            fallback_metrics[k] = 0.0 if np.isnan(val) else val
+        return fallback_metrics
 
-    # All-reduce (sum over all ranks)
-    dist.all_reduce(stacked, op=dist.ReduceOp.SUM)
-
-    # Average across world size
-    stacked /= dist.get_world_size()
-
-    # Return dict again
-    return {k: stacked[i].item() for i, k in enumerate(metrics.keys())}
 
 class RFMHeadsTrainer(Trainer):
     def __init__(self, config, *args, **kwargs):
@@ -101,8 +170,6 @@ class RFMHeadsTrainer(Trainer):
         self.global_metadata["total_similarities"] += num_similarities
         self.global_metadata["total_progress"] += num_progress
 
-        # self.global_metadata = all_reduce_metrics(self.global_metadata)
-
         # Log custom losses at specified intervals
         if self.state.global_step % self.args.logging_steps == 0:
             self._log_metadata()
@@ -114,10 +181,8 @@ class RFMHeadsTrainer(Trainer):
         if not self.log_metadata:
             return
 
-        # Aggregate custom losses across all processes if using distributed training
-        # log_metadata = all_reduce_metrics(self.log_metadata)
-
-        log_metadata = self.log_metadata
+        # Use local metrics (no aggregation needed for individual GPU metrics)
+        log_metadata = reduce_metrics_with_accelerate(self.log_metadata, self.accelerator)
 
         # Prepare logging data using aggregated losses
         log_data = {
@@ -126,8 +191,9 @@ class RFMHeadsTrainer(Trainer):
             **log_metadata,
         }
 
-        # also log the global metadata
-        log_global = {f"counts/{key}": self.global_metadata[key] for key in self.global_metadata}
+        # Log global metadata
+        global_metadata = reduce_metrics_with_accelerate(self.global_metadata, self.accelerator)
+        log_global = {f"counts/{key}": global_metadata[key] for key in global_metadata}
         log_data.update(log_global)
         # make sure values are floats so they are loggable into wandb reports
         log_data = {k: float(v) for k, v in log_data.items()}
@@ -186,9 +252,12 @@ class RFMHeadsTrainer(Trainer):
             metrics[key] = [output[key] for output in outputs if key in output]
             metrics[key] = np.array(metrics[key]).mean()
 
+        # Aggregate metrics across all processes using accelerator
+        metrics = reduce_metrics_with_accelerate(metrics, self.accelerator)
+
         # Log metrics
         if is_rank_0():
-            rank_0_print(f"\n=== Custom RFM Evaluation Results ===")
+            rank_0_print(f"\n=== Custom RFM Evaluation Results (Aggregated) ===")
             for key, value in metrics.items():
                 rank_0_print(f"{key}: {value:.6f}")
             rank_0_print("=" * 50)

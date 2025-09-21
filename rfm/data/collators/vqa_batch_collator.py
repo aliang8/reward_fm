@@ -160,6 +160,9 @@ class VQABatchCollator(RFMBatchCollator):
 
         for i, sample in enumerate(progress_samples):
             target_progress = sample.trajectory.target_progress
+            
+            # Let's round the target progress to 2 decimal places
+            target_progress = np.round(target_progress, 2)
 
             # Let's round the target progress to 2 decimal places
             target_progress = np.round(target_progress, 2)

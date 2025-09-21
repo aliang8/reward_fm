@@ -16,6 +16,9 @@ def extract_answer_from_text(text):
     m = re.search(r"<ans>(.*?)</ans>", text, re.DOTALL)
     return m.group(1).strip() if m else ""
 
+def extract_answer_from_text(text):
+    m = re.search(r"<ans>(.*?)</ans>", text, re.DOTALL)
+    return m.group(1).strip() if m else ""
 
 def post_batch(url: str, payload: Dict[str, Any], timeout_s: float = 120.0) -> Dict[str, Any]:
     """POST a batch payload to the evaluation server and return parsed JSON."""

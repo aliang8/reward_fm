@@ -53,13 +53,9 @@ data:
   # eval_datasets: ["abraranwar/libero_rfm"]
   # eval_subsets: ["libero_object"]
   eval_subset_size: 500  # Number of evaluation examples
-  
-  # Preprocessing settings
-  max_frames_for_preprocessing: 64
 
   # Video processing settings
   max_frames: 16  # Maximum frames per trajectory
-  video_frame_sampling: "uniform"  # "uniform", "random", "first", "middle"
   resized_height: 240  # Height to resize images/videos to
   resized_width: 240   # Width to resize images/videos to
   
@@ -70,9 +66,7 @@ data:
   preference_strategy_ratio: [0.4, 0.3, 0.3, 0.0]
   shuffle: true
   seed: 42
-  num_proc: 1  # Number of processes for dataset processing (1 for safety, increase for speed)
-  force_reprocess: false  # Force reprocessing of dataset even if cached version exists
-  
+
   # Data loading settings
   dataloader_pin_memory: false
   dataloader_num_workers: 0
@@ -88,7 +82,7 @@ training:
   output_dir: "./logs/rfm_progress_pref"
   
   # Training parameters
-  per_device_train_batch_size: 8
+  per_device_train_batch_size: 4
   gradient_accumulation_steps: 1
   learning_rate: 2e-5
   num_train_epochs: -1  # Number of epochs to train for
@@ -100,7 +94,7 @@ training:
   # Evaluation settings
   evaluation_strategy: "steps"  # Options: "no", "steps", "epoch"
   eval_steps: 100  # Evaluate every 100 steps
-  per_device_eval_batch_size: 8  # Evaluation batch size per device
+  per_device_eval_batch_size: 4  # Evaluation batch size per device
   do_eval: true  # Enable evaluation during training
   prediction_loss_only: true # Only compute loss for the prediction head
   

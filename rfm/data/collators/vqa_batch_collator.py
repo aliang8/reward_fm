@@ -164,9 +164,6 @@ class VQABatchCollator(RFMBatchCollator):
             # Let's round the target progress to 2 decimal places
             target_progress = np.round(target_progress, 2)
 
-            # Let's round the target progress to 2 decimal places
-            target_progress = np.round(target_progress, 2)
-
             # Convert frames to appropriate format using stored shapes
             frames = convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
 

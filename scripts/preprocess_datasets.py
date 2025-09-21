@@ -426,11 +426,34 @@ class DatasetPreprocessor:
                 try:
                     try:
                         import imageio.v2 as iio  # type: ignore
+                        reader = iio.get_reader(frames_src)
+                        frames_iter = (frame for frame in reader)
+                        frames_array = self._preprocess_videos(frames_iter, self.config.max_frames_for_preprocessing)
                     except Exception:
-                        import imageio as iio  # type: ignore
-                    reader = iio.get_reader(frames_src)
-                    frames_iter = (frame for frame in reader)
-                    frames_array = self._preprocess_videos(frames_iter, self.config.max_frames_for_preprocessing)
+                        try:
+                            import imageio as iio  # type: ignore
+                            reader = iio.get_reader(frames_src)
+                            frames_iter = (frame for frame in reader)
+                            frames_array = self._preprocess_videos(frames_iter, self.config.max_frames_for_preprocessing)
+                        except Exception:
+                            # Fallback to OpenCV
+                            import cv2  # type: ignore
+                            cap = cv2.VideoCapture(frames_src)
+                            frames_list = []
+                            while True:
+                                ret, frame = cap.read()
+                                if not ret:
+                                    break
+                                # Convert BGR to RGB
+                                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                                frames_list.append(frame_rgb)
+                            cap.release()
+                            
+                            if frames_list:
+                                frames_array = np.stack(frames_list)
+                                frames_array = self._preprocess_videos(frames_array, self.config.max_frames_for_preprocessing)
+                            else:
+                                frames_array = np.array([])
                 finally:
                     try:
                         if reader is not None:

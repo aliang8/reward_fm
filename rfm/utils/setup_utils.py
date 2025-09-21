@@ -48,6 +48,7 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[
             do_sample_frames=False,  # disable frame sampling here since we do this in the data generator
             # max_frames=cfg.data.max_frames,
             padding_side="left",
+            attn_implementation="flash_attention_2",
         )
 
         rank_0_print(f"Processor: {processor}")

@@ -97,20 +97,7 @@ class DataConfig:
         default=1, metadata={"help": "Number of preference samples to generate per trajectory for rewound dataset"}
     )
 
-    # Success-failure dataset specific parameters
-    # Example success_failure config:
-    # dataset_type: "success_failure"
-    # Note: Generates ALL possible pairs between successful and failed trajectories for each task
-    # Note: Successful trajectories are preferred over failed versions of the same task
-
-    # Video processing parameters
-    max_frames_for_preprocessing: int = field(
-        default=64, metadata={"help": "Maximum number of frames to extract from videos for preprocessing"}
-    )
     max_frames: int = field(default=8, metadata={"help": "Maximum number of frames to extract from videos"})
-    video_frame_sampling: str = field(
-        default="uniform", metadata={"help": "Frame sampling strategy: 'uniform', 'random', 'start', 'end'"}
-    )
     resized_height: int = field(default=224, metadata={"help": "Height to resize video frames to"})
     resized_width: int = field(default=224, metadata={"help": "Width to resize video frames to"})
 
@@ -127,10 +114,6 @@ class DataConfig:
     # Processing parameters
     shuffle: bool = field(default=True, metadata={"help": "Whether to shuffle the dataset"})
     seed: int = field(default=42, metadata={"help": "Random seed for reproducibility"})
-    num_proc: int = field(default=1, metadata={"help": "Number of processes for dataset processing"})
-    force_reprocess: bool = field(
-        default=False, metadata={"help": "Force reprocessing of datasets even if cache exists"}
-    )
 
     # Evaluation parameters
     eval_subset_size: Optional[int] = field(default=100, metadata={"help": "Number of samples to use for evaluation"})

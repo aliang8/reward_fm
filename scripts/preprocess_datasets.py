@@ -16,25 +16,47 @@ from datasets import Dataset, DatasetDict, load_dataset, Video
 import numpy as np
 from tqdm import tqdm
 from omegaconf import OmegaConf
+from dataclasses import dataclass, field
 from rfm.utils.logging import rank_0_print
-from rfm.configs.experiment_configs import ExperimentConfig
+from pyrallis import wrap
 
+@dataclass
+class DataPreprocessConfig:
+    """Configuration for data loading and processing."""
+
+    # Dataset paths and subsets
+    train_datasets: List[str] = field(
+        default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of training dataset names"}
+    )
+    train_subsets: List[List[str]] = field(
+        default_factory=lambda: [["libero_90"]], metadata={"help": "List of training dataset subsets"}
+    )
+    eval_datasets: List[str] = field(
+        default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of evaluation dataset names"}
+    )
+    eval_subsets: List[List[str]] = field(
+        default_factory=lambda: [["libero_10"]], metadata={"help": "List of evaluation dataset subsets"}
+    )
+
+    # Video processing parameters
+    max_frames_for_preprocessing: int = field(
+        default=64, metadata={"help": "Maximum number of frames to extract from videos for preprocessing"}
+    )
+    video_frame_sampling: str = field(
+        default="uniform", metadata={"help": "Frame sampling strategy: 'uniform', 'random', 'start', 'end'"}
+    )
+    num_proc: int = field(default=1, metadata={"help": "Number of processes for dataset processing"})
+    force_reprocess: bool = field(
+        default=False, metadata={"help": "Force reprocessing of datasets even if cache exists"}
+    )
+    num_threads: int = field(default=36, metadata={"help": "Number of threads for dataset processing"})
+    cache_dir: str = field(default="", metadata={"help": "Directory to store processed dataset caches"})
 
 class DatasetPreprocessor:
     """Unified preprocessor for all datasets with individual caching per dataset/subset."""
 
-    def __init__(self, config, cache_dir: str):
+    def __init__(self, config):
         self.config = config
-        self.cache_dir = cache_dir
-
-        # Add attributes for video processing
-        self.max_frames = config.data.max_frames
-        self.resized_height = config.data.resized_height
-        self.resized_width = config.data.resized_width
-        self.force_reprocess = config.data.force_reprocess
-        self.num_proc = config.data.num_proc
-
-        self.num_threads = 36
 
         # Dataset storage - store individual datasets
         self.datasets: Dict[str, Dataset] = {}  # key: "dataset_path/subset"
@@ -48,14 +70,14 @@ class DatasetPreprocessor:
         all_datasets = []
 
         # Add training datasets
-        for dataset_path, dataset_subsets in zip(self.config.data.train_datasets, self.config.data.train_subsets):
+        for dataset_path, dataset_subsets in zip(self.config.train_datasets, self.config.train_subsets):
             if isinstance(dataset_subsets, str):
                 dataset_subsets = [dataset_subsets]
             for subset in dataset_subsets:
                 all_datasets.append((dataset_path, subset))
 
         # Add evaluation datasets
-        for dataset_path, dataset_subsets in zip(self.config.data.eval_datasets, self.config.data.eval_subsets):
+        for dataset_path, dataset_subsets in zip(self.config.eval_datasets, self.config.eval_subsets):
             if isinstance(dataset_subsets, str):
                 dataset_subsets = [dataset_subsets]
             for subset in dataset_subsets:
@@ -70,10 +92,10 @@ class DatasetPreprocessor:
 
             # Create individual cache key
             cache_key = f"{dataset_path}/{subset}"
-            individual_cache_dir = os.path.join(self.cache_dir, cache_key.replace("/", "_").replace(":", "_"))
+            individual_cache_dir = os.path.join(self.config.cache_dir, cache_key.replace("/", "_").replace(":", "_"))
 
             # Check if already processed
-            if os.path.exists(individual_cache_dir) and not self.force_reprocess:
+            if os.path.exists(individual_cache_dir) and not self.config.force_reprocess:
                 rank_0_print(f"    ✅ Cache already exists at {individual_cache_dir}, loading...")
                 self._load_individual_cache(individual_cache_dir, cache_key)
                 continue
@@ -128,7 +150,7 @@ class DatasetPreprocessor:
         # Process videos and build indices
         # Only cast to Video with decode=True for the .map path. The threaded path will
         # open and close readers per-sample to avoid keeping many files open at once.
-        if self.num_threads > 1:
+        if self.config.num_threads > 1:
             processed_dataset, indices = self._process_dataset_videos_threaded(dataset, cache_key)
         else:
             dataset = dataset.cast_column("frames_video", Video(decode=True))
@@ -142,7 +164,7 @@ class DatasetPreprocessor:
 
         Args:
             frames: VideoReader object from HuggingFace Video feature
-            num_frames: Number of frames to extract (default: uses self.max_frames)
+            num_frames: Number of frames to extract
 
         Returns:
             frames as numpy arrays with shape (max_frames, H, W, C) where T is time dimension
@@ -237,10 +259,10 @@ class DatasetPreprocessor:
         sample_item = dataset[0]
         frames_data = sample_item.get("frames")
 
-        if isinstance(frames_data, str) and frames_data.endswith(".npz") and not self.force_reprocess:
+        if isinstance(frames_data, str) and frames_data.endswith(".npz") and not self.config.force_reprocess:
             rank_0_print("Frames already processed as npz file paths, skipping processing.")
             return dataset, {}  # Return empty index mappings if already processed
-        elif self.force_reprocess and isinstance(frames_data, str) and frames_data.endswith(".npz"):
+        elif self.config.force_reprocess and isinstance(frames_data, str) and frames_data.endswith(".npz"):
             rank_0_print("Force reprocessing enabled. Reprocessing frames despite being already processed.")
 
         rank_0_print("Processing video frames into npz files and building index mappings...")
@@ -260,7 +282,7 @@ class DatasetPreprocessor:
         source_indices = {}
 
         # Create frames directory for npz files
-        frames_dir = os.path.join(self.cache_dir, "frames")
+        frames_dir = os.path.join(self.config.cache_dir, "frames")
         os.makedirs(frames_dir, exist_ok=True)
 
         def process_videos_and_build_indices(example, idx):
@@ -276,7 +298,7 @@ class DatasetPreprocessor:
                 return {"frames": None, "frames_processed": False}
 
             # Process video frames using the _preprocess_videos method
-            frames_array = self._preprocess_videos(frames, self.config.data.max_frames_for_preprocessing)
+            frames_array = self._preprocess_videos(frames, self.config.max_frames_for_preprocessing)
 
             if frames_array.size == 0:
                 rank_0_print(f"Warning: No frames processed for example {idx}")
@@ -351,7 +373,7 @@ class DatasetPreprocessor:
             process_videos_and_build_indices,
             with_indices=True,
             desc="Processing video frames and building indices",
-            num_proc=self.config.data.num_proc,
+            num_proc=self.config.num_proc,
         )
 
         # Log the built indices
@@ -388,7 +410,7 @@ class DatasetPreprocessor:
         task_indices = {}
         source_indices = {}
 
-        frames_dir = os.path.join(self.cache_dir, "frames")
+        frames_dir = os.path.join(self.config.cache_dir, "frames")
         os.makedirs(frames_dir, exist_ok=True)
 
         def process_one(idx: int):
@@ -408,7 +430,7 @@ class DatasetPreprocessor:
                         import imageio as iio  # type: ignore
                     reader = iio.get_reader(frames_src)
                     frames_iter = (frame for frame in reader)
-                    frames_array = self._preprocess_videos(frames_iter, self.config.data.max_frames_for_preprocessing)
+                    frames_array = self._preprocess_videos(frames_iter, self.config.max_frames_for_preprocessing)
                 finally:
                     try:
                         if reader is not None:
@@ -416,7 +438,7 @@ class DatasetPreprocessor:
                     except Exception:
                         pass
             else:
-                frames_array = self._preprocess_videos(frames_src, self.config.data.max_frames_for_preprocessing)
+                frames_array = self._preprocess_videos(frames_src, self.config.max_frames_for_preprocessing)
 
             if frames_array.size == 0:
                 return idx, None, None
@@ -441,7 +463,7 @@ class DatasetPreprocessor:
 
         # Concurrently convert and write npz for all examples, collecting results
         idx_to_npz = {}
-        with ThreadPoolExecutor(max_workers=self.num_threads) as executor:
+        with ThreadPoolExecutor(max_workers=self.config.num_threads) as executor:
             futures = [executor.submit(process_one, i) for i in indices_only]
             for fut in tqdm(
                 as_completed(futures), total=len(futures), desc=f"Processing {cache_key}", unit="traj", leave=False
@@ -556,7 +578,7 @@ class DatasetPreprocessor:
         import hashlib
 
         # Create a string representation of relevant config parameters
-        config_str = f"{self.config.data.max_frames}_{self.config.data.resized_height}_{self.config.data.resized_width}"
+        config_str = f"{self.config.max_frames}_{self.config.resized_height}_{self.config.resized_width}"
         return hashlib.md5(config_str.encode()).hexdigest()
 
     def _load_individual_cache(self, cache_dir: str, cache_key: str):
@@ -675,7 +697,7 @@ class DatasetPreprocessor:
 
         for dataset_path, subset in all_datasets:
             cache_key = f"{dataset_path}/{subset}"
-            individual_cache_dir = os.path.join(self.cache_dir, cache_key.replace("/", "_").replace(":", "_"))
+            individual_cache_dir = os.path.join(self.config.cache_dir, cache_key.replace("/", "_").replace(":", "_"))
 
             if os.path.exists(individual_cache_dir):
                 cached_count += 1
@@ -721,7 +743,7 @@ class DatasetPreprocessor:
 
         for dataset_path, subset in all_datasets:
             cache_key = f"{dataset_path}/{subset}"
-            individual_cache_dir = os.path.join(self.cache_dir, cache_key.replace("/", "_").replace(":", "_"))
+            individual_cache_dir = os.path.join(self.config.cache_dir, cache_key.replace("/", "_").replace(":", "_"))
 
             if cache_key in self.datasets:
                 if os.path.exists(individual_cache_dir):
@@ -744,20 +766,8 @@ class DatasetPreprocessor:
         rank_0_print(f"  ❌ Failed: {total_count - processed_count - loaded_count} dataset/subset pairs")
         rank_0_print(f"  📊 Total available: {processed_count + loaded_count}/{total_count} dataset/subset pairs")
 
-
-def main():
-    import argparse
-
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Preprocess datasets and create caches.")
-    parser.add_argument(
-        "--cache_dir", type=str, default="./processed_datasets", help="Directory to store processed dataset caches."
-    )
-    args = parser.parse_args()
-
-    # Use the cache_dir argument
-    cache_dir = args.cache_dir
-
+@wrap()
+def main(config: DataPreprocessConfig):
     """Main preprocessing function."""
     # Try to increase the soft limit for open files to reduce 'Too many open files'
     try:
@@ -770,15 +780,10 @@ def main():
     except Exception:
         pass
 
-    # Load config
-    config_path = "rfm/configs/config.yaml"  # Adjust path as needed
-    config = OmegaConf.load(config_path)
-    config = ExperimentConfig(**config)
-
     # Show dataset structure info
     print("\n🏗️  Dataset Configuration Structure:")
     print("Training datasets:")
-    for dataset_path, dataset_subsets in zip(config.data.train_datasets, config.data.train_subsets):
+    for dataset_path, dataset_subsets in zip(config.train_datasets, config.train_subsets):
         if isinstance(dataset_subsets, str):
             dataset_subsets = [dataset_subsets]
         print(f"  📚 {dataset_path}: {len(dataset_subsets)} subset(s)")
@@ -786,7 +791,7 @@ def main():
             print(f"    📂 {subset}")
 
     print("Evaluation datasets:")
-    for dataset_path, dataset_subsets in zip(config.data.eval_datasets, config.data.eval_subsets):
+    for dataset_path, dataset_subsets in zip(config.eval_datasets, config.eval_subsets):
         if isinstance(dataset_subsets, str):
             dataset_subsets = [dataset_subsets]
         print(f"  📚 {dataset_path}: {len(dataset_subsets)} subset(s)")
@@ -798,7 +803,7 @@ def main():
     print("   - Multiple subsets: ['subset1', 'subset2', 'subset3']")
 
     # Create unified preprocessor for all datasets
-    preprocessor = DatasetPreprocessor(config, cache_dir=cache_dir)
+    preprocessor = DatasetPreprocessor(config)
 
     # Preprocess all datasets
     print("\n=== Processing All Datasets ===")
@@ -836,7 +841,7 @@ def main():
     # Show dataset structure
     print(f"\n🏗️  Dataset Structure:")
     print(f"Training datasets:")
-    for dataset_path, dataset_subsets in zip(config.data.train_datasets, config.data.train_subsets):
+    for dataset_path, dataset_subsets in zip(config.train_datasets, config.train_subsets):
         if isinstance(dataset_subsets, str):
             dataset_subsets = [dataset_subsets]
         print(f"  📚 {dataset_path}: {len(dataset_subsets)} subset(s)")
@@ -848,7 +853,7 @@ def main():
                 print(f"    ❌ {subset}: Failed to load")
 
     print(f"Evaluation datasets:")
-    for dataset_path, dataset_subsets in zip(config.data.eval_datasets, config.data.eval_subsets):
+    for dataset_path, dataset_subsets in zip(config.eval_datasets, config.eval_subsets):
         if isinstance(dataset_subsets, str):
             dataset_subsets = [dataset_subsets]
         print(f"  📚 {dataset_path}: {len(dataset_subsets)} subset(s)")
@@ -860,9 +865,9 @@ def main():
                 print(f"    ❌ {subset}: Failed to load")
 
     print("\n✅ Dataset preprocessing complete!")
-    print(f"Unified cache: {preprocessor.cache_dir}")
-    print(f"Please set the RFM_PROCESSED_DATASETS_PATH environment variable to {preprocessor.cache_dir} by running:")
-    print(f"export RFM_PROCESSED_DATASETS_PATH={preprocessor.cache_dir}")
+    print(f"Unified cache: {config.cache_dir}")
+    print(f"Please set the RFM_PROCESSED_DATASETS_PATH environment variable to {config.cache_dir} by running:")
+    print(f"export RFM_PROCESSED_DATASETS_PATH={config.cache_dir}")
 
 
 if __name__ == "__main__":

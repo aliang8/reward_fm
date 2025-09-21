@@ -23,7 +23,7 @@ export RFM_PROCESSED_DATASETS_PATH=/scr/shared/reward_fm/processed_dataset
 sudo apt-get install ffmpeg
 
 # preprocess dataset 
-uv run python3 rfm/data/preprocess_datasets.py \
+uv run python3 rfm/data/scripts/preprocess_datasets.py \
     --config_path=rfm/configs/preprocess.yaml \
     cache_dir=$RFM_PROCESSED_DATASETS_PATH
 

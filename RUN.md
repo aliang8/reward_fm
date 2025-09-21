@@ -17,21 +17,23 @@ export RFM_PROCESSED_DATASETS_PATH=/scr/shared/reward_fm/processed_dataset
 
 # download dataset to local 
 # might have to run this multiple times if it crashes
-./setup.sh
+./scripts/download_data.sh
 
 # install ffmpeg if not already have
 sudo apt-get install ffmpeg
 
 # preprocess dataset 
-uv run python3 scripts/preprocess_datasets.py --cache_dir=$RFM_PROCESSED_DATASETS_PATH
+uv run python3 rfm/data/preprocess_datasets.py \
+    --config_path=rfm/configs/preprocess.yaml \
+    cache_dir=$RFM_PROCESSED_DATASETS_PATH
 
 # train
 # look at rfm/configs/config.yaml for parameters
-./train.sh 
+./scripts/train.sh 
 
 # upload your trained model to huggingface 
 # this should take a couple minutes
-uv run python3 scripts/upload_to_hub.py --model_dir=logs/rfm_v3/checkpoint-900/ --hub_model_id=aliangdw/rfm_v3
+uv run python3 rfm/utils/upload_to_hub.py --model_dir=logs/rfm_v3/checkpoint-900/ --hub_model_id=aliangdw/rfm_v3
 
 # start eval server in one terminal
 uv run python3 evals/qwen_server.py --num_gpus=2

@@ -622,9 +622,7 @@ class DatasetPreprocessor:
     def _get_config_hash(self) -> str:
         """Generate a hash of the relevant config parameters."""
         import hashlib
-
-        # Create a string representation of relevant config parameters
-        config_str = f"{self.config.max_frames}_{self.config.resized_height}_{self.config.resized_width}"
+        config_str = str(self.config.max_frames_for_preprocessing)
         return hashlib.md5(config_str.encode()).hexdigest()
 
     def _load_individual_cache(self, cache_dir: str, cache_key: str):

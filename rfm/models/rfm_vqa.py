@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 RFM (Reward Foundation Model) VQA version implementation.
-Contains the RFMModel class by using the standard Qwen2.5-VL model, training it with VQA data.
+Contains the RFM class by using the standard Qwen2.5-VL model, training it with VQA data.
 """
 
 import torch
@@ -12,7 +12,7 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.generation.utils import GenerationMixin
 
 
-class RFMModelVQA(PreTrainedModel):
+class RFMVQA(PreTrainedModel):
     """RFM Model for VQA using base VLM outputs as naive baseline."""
 
     config_class = Qwen2_5_VLForConditionalGeneration.config_class

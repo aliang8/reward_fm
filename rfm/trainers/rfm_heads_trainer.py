@@ -10,11 +10,103 @@ from transformers import Trainer
 from typing import List, Dict, Optional, Union, Any
 import numpy as np
 from tqdm import tqdm
-import torch.distributed as dist
 
 from rfm.utils.logging import is_rank_0, rank_0_print
 from rfm.utils.metrics import compute_spearman_correlation
 from rfm.utils.logging import _timer
+
+
+def reduce_metrics_with_accelerate(metrics: dict, accelerator, aggregate_method="sum"):
+    """
+    Reduce multiple scalar metrics using Accelerate's built-in methods.
+    Handles cases where different processes have different metric keys.
+    metrics: dict of {name: float or tensor}
+    Returns dict with averaged metrics across all ranks.
+    """
+    if not metrics:
+        return metrics
+
+    try:
+        # Step 1: Gather all metric keys from all processes
+        local_keys = list(metrics.keys())
+        all_keys_gathered = accelerator.gather_for_metrics(local_keys)
+
+        # Step 2: Create union of all keys across all processes
+        all_unique_keys = set()
+        for keys_from_process in all_keys_gathered:
+            if isinstance(keys_from_process, list):
+                all_unique_keys.update(keys_from_process)
+            else:
+                # Handle single key case
+                all_unique_keys.add(keys_from_process)
+
+        all_unique_keys = sorted(list(all_unique_keys))
+
+        # Step 3: Create synchronized metrics dict with 0.0 for missing keys
+        synchronized_metrics = {}
+        for key in all_unique_keys:
+            if key in metrics:
+                synchronized_metrics[key] = metrics[key]
+            else:
+                # This process doesn't have this metric, use 0.0
+                synchronized_metrics[key] = 0.0
+
+        # Step 4: Now reduce all metrics (all processes have same keys)
+        result_metrics = {}
+
+        for key, value in synchronized_metrics.items():
+            try:
+                # Convert to tensor on accelerator device
+                if torch.is_tensor(value):
+                    tensor_val = value.to(accelerator.device, dtype=torch.float32)
+                else:
+                    tensor_val = torch.tensor(float(value), dtype=torch.float32, device=accelerator.device)
+
+                # Check for NaN values before reduction
+                if torch.isnan(tensor_val).any():
+                    rank_0_print(f"Warning: NaN detected in metric '{key}', using 0.0")
+                    tensor_val = torch.tensor(0.0, dtype=torch.float32, device=accelerator.device)
+
+                # Check for infinity values
+                if torch.isinf(tensor_val).any():
+                    rank_0_print(f"Warning: Infinity detected in metric '{key}', using 0.0")
+                    tensor_val = torch.tensor(0.0, dtype=torch.float32, device=accelerator.device)
+
+                # Use accelerator's reduce method - all processes participate
+                reduced_val = accelerator.reduce(tensor_val, reduction=aggregate_method)
+
+                # Final check for NaN in reduced result
+                if torch.isnan(reduced_val).any():
+                    rank_0_print(f"Warning: NaN in reduced result for metric '{key}', using fallback")
+                    result_metrics[key] = 0.0
+                else:
+                    result_metrics[key] = reduced_val.item()
+
+            except Exception as metric_error:
+                # If individual metric fails, keep original value (or 0.0 if missing)
+                rank_0_print(f"Warning: Failed to reduce metric '{key}': {metric_error}")
+                if key in metrics:
+                    original_val = float(metrics[key]) if not torch.is_tensor(metrics[key]) else metrics[key].item()
+                    result_metrics[key] = 0.0 if np.isnan(original_val) else original_val
+                else:
+                    result_metrics[key] = 0.0
+
+        # Step 5: Only return metrics that were originally present in this process
+        final_metrics = {}
+        for key in metrics.keys():
+            final_metrics[key] = result_metrics[key]
+
+        return final_metrics
+
+    except Exception as e:
+        # Fallback: return original metrics if reduction fails
+        rank_0_print(f"Warning: reduce_metrics_with_accelerate failed with error: {e}. Returning original metrics.")
+        fallback_metrics = {}
+        for k, v in metrics.items():
+            val = float(v) if not torch.is_tensor(v) else v.item()
+            # Replace NaN with 0.0 in fallback
+            fallback_metrics[k] = 0.0 if np.isnan(val) else val
+        return fallback_metrics
 
 
 class RFMHeadsTrainer(Trainer):
@@ -46,8 +138,6 @@ class RFMHeadsTrainer(Trainer):
         num_similarities = inputs.get("num_similarities", 0)
         num_progress = inputs.get("num_progress", 0)
 
-        # Log rewind length stats if available in preference inputs
-        rewind_stats = {}
         if num_preferences > 0 and preference_inputs:
             # Count data generation strategies from the rejected trajectories
             rejected_data_gen_strategy = preference_inputs.get("rejected_data_gen_strategy", [])
@@ -66,16 +156,19 @@ class RFMHeadsTrainer(Trainer):
                     elif s == "different_task":
                         strat_counts["num_trajs_different_task"] += 1
 
-                rewind_stats = {**strat_counts}
-                self.log_metadata.update(rewind_stats)
+                self.log_metadata.update(strat_counts)
+
+            data_sources = preference_inputs.get("data_source", None)
+            if data_sources is not None:
+                for ds in data_sources:
+                    self.global_metadata[f"total_{ds}"] += 1.0
 
         # Update global metadata for training
-        # Keep sum counts over all processes
-        if dist.is_initialized():
-            # add to total batch size and sum across all processes
-            batch_size = torch.tensor(num_preferences + num_similarities + num_progress, device=self.accelerator.device)
-            dist.all_reduce(batch_size, op=dist.ReduceOp.SUM)
-            self.global_metadata["total_samples"] += batch_size.item()
+        # add to total batch size and sum across all processes
+        self.global_metadata["total_samples"] += num_preferences + num_similarities + num_progress
+        self.global_metadata["total_preferences"] += num_preferences
+        self.global_metadata["total_similarities"] += num_similarities
+        self.global_metadata["total_progress"] += num_progress
 
         # Log custom losses at specified intervals
         if self.state.global_step % self.args.logging_steps == 0:
@@ -88,8 +181,8 @@ class RFMHeadsTrainer(Trainer):
         if not self.log_metadata:
             return
 
-        # Aggregate custom losses across all processes if using distributed training
-        log_metadata = self._aggregate_log_metadata()
+        # Use local metrics (no aggregation needed for individual GPU metrics)
+        log_metadata = reduce_metrics_with_accelerate(self.log_metadata, self.accelerator, aggregate_method="mean")
 
         # Prepare logging data using aggregated losses
         log_data = {
@@ -98,8 +191,9 @@ class RFMHeadsTrainer(Trainer):
             **log_metadata,
         }
 
-        # also log the global metadata
-        log_global = {f"counts/{key}": self.global_metadata[key] for key in self.global_metadata}
+        # Log global metadata
+        global_metadata = reduce_metrics_with_accelerate(self.global_metadata, self.accelerator, aggregate_method="sum")
+        log_global = {f"counts/{key}": global_metadata[key] for key in global_metadata}
         log_data.update(log_global)
         # make sure values are floats so they are loggable into wandb reports
         log_data = {k: float(v) for k, v in log_data.items()}
@@ -123,31 +217,6 @@ class RFMHeadsTrainer(Trainer):
 
             rounded_times = {k: round(v, 2) for k, v in self.timing_raw.items()}
             rank_0_print(f"Timing raw: {rounded_times}")
-
-    def _aggregate_log_metadata(self):
-        """Aggregate custom losses across all processes using all_reduce."""
-        if not self.log_metadata:
-            return {}
-
-        # If not using distributed training, return losses as-is
-        if not dist.is_initialized():
-            return self.log_metadata.copy()
-
-        aggregated = {}
-
-        # Aggregate loss values (averages) across all processes
-
-        for key in self.log_metadata:
-            # Convert to tensor for all_reduce
-            loss_tensor = torch.tensor(self.log_metadata[key], device=self.accelerator.device)
-
-            # Sum across all processes
-            dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
-
-            # Average by world size
-            aggregated[key] = (loss_tensor / dist.get_world_size()).item()
-
-        return aggregated
 
     def evaluate(self, eval_dataset=None, ignore_keys=None) -> Dict[str, float]:
         """
@@ -183,9 +252,12 @@ class RFMHeadsTrainer(Trainer):
             metrics[key] = [output[key] for output in outputs if key in output]
             metrics[key] = np.array(metrics[key]).mean()
 
+        # Aggregate metrics across all processes using accelerator
+        metrics = reduce_metrics_with_accelerate(metrics, self.accelerator, aggregate_method="mean")
+
         # Log metrics
         if is_rank_0():
-            rank_0_print(f"\n=== Custom RFM Evaluation Results ===")
+            rank_0_print(f"\n=== Custom RFM Evaluation Results (Aggregated) ===")
             for key, value in metrics.items():
                 rank_0_print(f"{key}: {value:.6f}")
             rank_0_print("=" * 50)
@@ -241,11 +313,7 @@ class RFMHeadsTrainer(Trainer):
 
         if return_outputs:
             # Combine outputs from all loss functions
-            extra_info = {
-                **log_metadata,
-                "total_loss": total_loss.item(),
-                "batch_size": num_preferences + num_similarities,
-            }
+            extra_info = {**log_metadata, "total_loss": total_loss.item()}
             return total_loss, extra_info
 
         return total_loss
@@ -454,8 +522,8 @@ class RFMHeadsTrainer(Trainer):
 
                     outputs_dict.update(
                         {
-                            f"{prefix}_strat/pref_acc_{strat}": (preference_accuracy[mask == 1]).mean().item(),
-                            f"{prefix}_strat/pref_loss_{strat}": (preference_loss_all[mask == 1]).mean().item(),
+                            f"{prefix}_strat_pref_acc/{strat}": (preference_accuracy[mask == 1]).mean().item(),
+                            f"{prefix}_strat_pref_loss/{strat}": (preference_loss_all[mask == 1]).mean().item(),
                         }
                     )
 
@@ -488,8 +556,8 @@ class RFMHeadsTrainer(Trainer):
                     mask = torch.tensor(mask, device=self.accelerator.device)
                     outputs_dict.update(
                         {
-                            f"{prefix}_strat/spearman_corr_{strat}": (spearman_corr_rejected[mask == 1]).mean().item(),
-                            f"{prefix}_strat/prog_loss_{strat}": (progress_loss_rejected[mask == 1]).mean().item(),
+                            f"{prefix}_strat_spearman_corr/{strat}": (spearman_corr_rejected[mask == 1]).mean().item(),
+                            f"{prefix}_strat_prog_loss/{strat}": (progress_loss_rejected[mask == 1]).mean().item(),
                         }
                     )
 
@@ -500,10 +568,10 @@ class RFMHeadsTrainer(Trainer):
                     mask = torch.tensor(mask, device=self.accelerator.device)
                     outputs_dict.update(
                         {
-                            f"{prefix}_ds/spearman_corr_{data_source}": (spearman_corr_rejected[mask == 1])
+                            f"{prefix}_ds_spearman_corr/{data_source}": (spearman_corr_rejected[mask == 1])
                             .mean()
                             .item(),
-                            f"{prefix}_ds/prog_loss_{data_source}": (progress_loss_rejected[mask == 1]).mean().item(),
+                            f"{prefix}_ds_prog_loss/{data_source}": (progress_loss_rejected[mask == 1]).mean().item(),
                         }
                     )
 

@@ -121,12 +121,12 @@ For space reasons, you should symlink `~/.cache/huggingface/datasets` to some ot
 
 ```bash
 # Download the dataset
-./setup.sh
+./scripts/download_data.sh
 ```
 
 If you're running into issues with HuggingFace's API while downloading the dataset, you can use 
 ```bash
-RFM_DOWNLOAD_METHOD=git ./setup.sh
+RFM_DOWNLOAD_METHOD=git ./scripts/download_data.sh
 ```
 to download via git-lfs instead. Make sure `git-lfs` is first installed.
 
@@ -177,7 +177,8 @@ uv run python rfm/data/generate_hf_dataset.py \
 ```bash
 
 # Preprocess the dataset
-uv run scripts/preprocess_dataset.py
+uv run data/scripts/preprocess_datasets.py  --cache_dir /path/to/save/processed_datasets (./processed_datasets by default)
+export RFM_PROCESSED_DATASETS_PATH=/path/to/save/processed_datasets
 
 # Training
 uv run accelerate launch --config_file rfm/configs/fsdp.yaml train.py --config_path=rfm/configs/config.yaml

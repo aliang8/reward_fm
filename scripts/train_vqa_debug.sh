@@ -1,0 +1,11 @@
+#!/bin/bash
+
+CUDA_VISIBLE_DEVICES=0 uv run accelerate launch \
+    --num_processes=1 \
+    train.py \
+    --config_paths rfm/configs/config.yaml rfm/configs/vqa_config.yaml \
+    --logging.use_wandb false \
+    --debug true \
+    --model.train_preference_head true \
+    --model.train_progress_head true \
+    --training.output_dir ./logs/vqa_debug

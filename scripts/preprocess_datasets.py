@@ -435,24 +435,47 @@ class DatasetPreprocessor:
                             reader = iio.get_reader(frames_src)
                             frames_iter = (frame for frame in reader)
                             frames_array = self._preprocess_videos(frames_iter, self.config.max_frames_for_preprocessing)
-                        except Exception:
+                        except Exception as e2:
                             # Fallback to OpenCV
-                            import cv2  # type: ignore
-                            cap = cv2.VideoCapture(frames_src)
-                            frames_list = []
-                            while True:
-                                ret, frame = cap.read()
-                                if not ret:
-                                    break
-                                # Convert BGR to RGB
-                                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                                frames_list.append(frame_rgb)
-                            cap.release()
-                            
-                            if frames_list:
-                                frames_array = np.stack(frames_list)
-                                frames_array = self._preprocess_videos(frames_array, self.config.max_frames_for_preprocessing)
-                            else:
+                            try:
+                                import cv2  # type: ignore
+                                cap = cv2.VideoCapture(frames_src)
+                                
+                                # Check if video file can be opened
+                                if not cap.isOpened():
+                                    rank_0_print(f"Warning: Cannot open video file {frames_src} with OpenCV")
+                                    frames_array = np.array([])
+                                else:
+                                    # Get video properties
+                                    total_frames_cv = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                                    fps = cap.get(cv2.CAP_PROP_FPS)
+                                    
+                                    if total_frames_cv <= 0:
+                                        rank_0_print(f"Warning: Invalid frame count ({total_frames_cv}) for video {frames_src}")
+                                        frames_array = np.array([])
+                                    else:
+                                        frames_list = []
+                                        frame_count = 0
+                                        max_attempts = min(total_frames_cv, 1000)  # Limit attempts for corrupted files
+                                        
+                                        while frame_count < max_attempts:
+                                            ret, frame = cap.read()
+                                            if not ret:
+                                                break
+                                            # Convert BGR to RGB
+                                            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                                            frames_list.append(frame_rgb)
+                                            frame_count += 1
+                                        
+                                        cap.release()
+                                        
+                                        if frames_list:
+                                            frames_array = np.stack(frames_list)
+                                            frames_array = self._preprocess_videos(frames_array, self.config.max_frames_for_preprocessing)
+                                        else:
+                                            frames_array = np.array([])
+                            except Exception as e3:
+                                rank_0_print(f"Warning: All video reading methods failed for {frames_src}: imageio error: {e2}, OpenCV error: {e3}")
                                 frames_array = np.array([])
                 finally:
                     try:

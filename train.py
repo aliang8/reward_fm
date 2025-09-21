@@ -97,7 +97,7 @@ def train(cfg: ExperimentConfig):
             "wandb_name": wandb.run.name,
             "wandb_project": wandb.run.project,
             "wandb_entity": wandb.run.entity,
-            "wandb_url": wandb.run.url
+            "wandb_url": wandb.run.url,
         }
         wandb_info_path = os.path.join(cfg.training.output_dir, "wandb_info.json")
         with open(wandb_info_path, "w") as f:
@@ -168,7 +168,7 @@ def display_config(cfg: ExperimentConfig):
 
     console = Console()
     console.print(cfg)
-   
+
 
 def main(cfg: ExperimentConfig):
     # Display the configuration in a nice Rich format

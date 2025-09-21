@@ -26,8 +26,6 @@ class RFMBaseDataset(torch.utils.data.Dataset):
             self.datasets = config.train_datasets
             self.subsets = config.train_subsets
 
-        self.force_reprocess = config.force_reprocess
-
         # Initialize dataset and index mappings
         self.dataset = None
         self.robot_trajectories = []
@@ -57,11 +55,13 @@ class RFMBaseDataset(torch.utils.data.Dataset):
         """Load trajectory dataset using preprocessed index-based cache."""
         cache_dir = os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
         if not cache_dir:
-            raise ValueError("RFM_PROCESSED_DATASETS_PATH environment variable not set. Please set it to the directory containing your processed datasets.")
+            raise ValueError(
+                "RFM_PROCESSED_DATASETS_PATH environment variable not set. Please set it to the directory containing your processed datasets."
+            )
         cache_type = "evaluation" if self.is_evaluation else "training"
 
         # Check if preprocessed cache exists
-        if os.path.exists(cache_dir) and not self.force_reprocess:
+        if os.path.exists(cache_dir):
             rank_0_print(f"Found preprocessed cache at {cache_dir}, loading {cache_type} datasets...")
             self._load_preprocessed_cache(cache_dir, is_training=not self.is_evaluation)
             rank_0_print(
@@ -221,7 +221,9 @@ class RFMBaseDataset(torch.utils.data.Dataset):
         # The preprocessing script now creates individual cache directories for each dataset/subset pair
         cache_dir = os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
         if not cache_dir:
-            raise ValueError("RFM_PROCESSED_DATASETS_PATH environment variable not set. Please set it to the directory containing your processed datasets.")
+            raise ValueError(
+                "RFM_PROCESSED_DATASETS_PATH environment variable not set. Please set it to the directory containing your processed datasets."
+            )
 
         rank_0_print(f"=" * 100)
         rank_0_print(f"\n🔍 Available datasets in {cache_dir}:")

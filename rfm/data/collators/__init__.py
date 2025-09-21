@@ -4,9 +4,4 @@ from .vqa_batch_collator import VQABatchCollator
 from .rewind_batch_collator import ReWiNDBatchCollator
 from .utils import convert_frames_to_pil_images, pad_target_progress
 
-__all__ = [
-    "BaseCollator",
-    "RFMBatchCollator",
-    "VQABatchCollator",
-    "ReWiNDBatchCollator"
-]
+__all__ = ["BaseCollator", "RFMBatchCollator", "VQABatchCollator", "ReWiNDBatchCollator"]

@@ -3,8 +3,8 @@
 Metaworld dataset loader for the generic dataset converter for RFM model training.
 This module contains logic for loading metaworld data organized by task and quality.
 
-uv run python data_preprocess/generate_hf_dataset.py \
-    --config_path=data_preprocess/configs/data_gen_configs/metaworld.yaml
+uv run python dataset_upload/generate_hf_dataset.py \
+    --config_path=dataset_upload/configs/data_gen_configs/metaworld.yaml
 """
 
 import os
@@ -15,33 +15,33 @@ from tqdm import tqdm
 from PIL import Image
 import torch
 from torchvision import transforms
-from data_preprocess.video_helpers import load_video_frames
+from dataset_upload.video_helpers import load_video_frames
 
 
 def apply_center_crop_to_frames(frames: np.ndarray) -> np.ndarray:
     """Apply center crop (224, 224) to video frames using torchvision transforms.
-    
+
     Args:
         frames: numpy array of shape (T, H, W, 3) in RGB order
-    
+
     Returns:
         numpy array of shape (T, 224, 224, 3) with center cropped frames
     """
     # Define the center crop transform
     center_crop = transforms.CenterCrop(224)
-    
+
     cropped_frames = []
     for frame in frames:
         # Convert numpy array to PIL Image
         pil_frame = Image.fromarray(frame.astype(np.uint8))
-        
+
         # Apply center crop
         cropped_pil = center_crop(pil_frame)
-        
+
         # Convert back to numpy array
         cropped_frame = np.array(cropped_pil)
         cropped_frames.append(cropped_frame)
-    
+
     return np.array(cropped_frames)
 
 
@@ -126,7 +126,7 @@ def load_metaworld_dataset(base_path: str) -> Dict[str, List[Dict]]:
                 # Load frames and apply center crop
                 original_frames = load_video_frames(video_file)
                 cropped_frames = apply_center_crop_to_frames(original_frames)
-                
+
                 # Create trajectory entry
                 trajectory = {
                     "frames": cropped_frames,

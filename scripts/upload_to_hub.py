@@ -75,9 +75,9 @@ def create_model_card(model_dir: Path, base_model: str, model_name: str):
             wandb_section = f"""
 ## Training Run
 
-- **Wandb Run**: [{wandb_info.get('wandb_name', 'N/A')}]({wandb_info.get('wandb_url', '#')})
-- **Wandb ID**: `{wandb_info.get('wandb_id', 'N/A')}`
-- **Project**: {wandb_info.get('wandb_project', 'N/A')}
+- **Wandb Run**: [{wandb_info.get("wandb_name", "N/A")}]({wandb_info.get("wandb_url", "#")})
+- **Wandb ID**: `{wandb_info.get("wandb_id", "N/A")}`
+- **Project**: {wandb_info.get("wandb_project", "N/A")}
 """
         except Exception as e:
             logger.warning(f"Could not read wandb info: {e}")

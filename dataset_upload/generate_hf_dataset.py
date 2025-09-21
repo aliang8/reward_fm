@@ -393,14 +393,14 @@ def main(cfg: GenerateConfig):
 
     # Import the appropriate dataset loader and trajectory creator
     if "libero" in cfg.dataset.dataset_name:
-        from data_preprocess.dataset_loaders.libero_loader import load_libero_dataset
+        from dataset_upload.dataset_loaders.libero_loader import load_libero_dataset
 
         # Load the trajectories using the loader
         task_data = load_libero_dataset(cfg.dataset.dataset_path)
         trajectories = flatten_task_data(task_data)
     elif "agibotworld" in (cfg.dataset.dataset_name or "").lower():
         # Stream + convert directly inside the AgiBotWorld loader
-        from data_preprocess.dataset_loaders.agibotworld_loader import (
+        from dataset_upload.dataset_loaders.agibotworld_loader import (
             convert_agibotworld_streaming_to_hf,
         )
 
@@ -449,7 +449,7 @@ def main(cfg: GenerateConfig):
         return
 
     elif "egodex" in cfg.dataset.dataset_name.lower():
-        from data_preprocess.dataset_loaders.egodex_loader import load_egodex_dataset
+        from dataset_upload.dataset_loaders.egodex_loader import load_egodex_dataset
 
         # Load the trajectories using the loader with max_trajectories limit
         print(f"Loading EgoDex dataset from: {cfg.dataset.dataset_path}")
@@ -461,7 +461,7 @@ def main(cfg: GenerateConfig):
     elif cfg.dataset.dataset_name.lower().startswith("oxe_"):
         # Treat OXE like AgiBotWorld: create videos and HF entries directly in the loader
         os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
-        from data_preprocess.dataset_loaders.oxe_loader import convert_oxe_dataset_to_hf
+        from dataset_upload.dataset_loaders.oxe_loader import convert_oxe_dataset_to_hf
 
         print(f"Converting OXE dataset directly to HF from: {cfg.dataset.dataset_path}")
         dataset = convert_oxe_dataset_to_hf(
@@ -513,7 +513,7 @@ def main(cfg: GenerateConfig):
         print("Dataset conversion complete!")
         return
     elif "robofail" in cfg.dataset.dataset_name.lower():
-        from data_preprocess.dataset_loaders.robofail_loader import load_robofail_dataset
+        from dataset_upload.dataset_loaders.robofail_loader import load_robofail_dataset
 
         # Load the trajectories using the loader with max_trajectories limit
         print(f"Loading RoboFail dataset from: {cfg.dataset.dataset_path}")
@@ -523,7 +523,7 @@ def main(cfg: GenerateConfig):
         )
         trajectories = flatten_task_data(task_data)
     elif "metaworld" in cfg.dataset.dataset_name.lower():
-        from data_preprocess.dataset_loaders.mw_collected_loader import load_metaworld_dataset
+        from dataset_upload.dataset_loaders.mw_collected_loader import load_metaworld_dataset
 
         # Load the trajectories using the loader with max_trajectories limit
         print(f"Loading metaworld dataset from: {cfg.dataset.dataset_path}")
@@ -532,14 +532,14 @@ def main(cfg: GenerateConfig):
         )
         trajectories = flatten_task_data(task_data)
     elif "h2r" in cfg.dataset.dataset_name.lower():
-        from data_preprocess.dataset_loaders.h2r_loader import load_h2r_dataset
+        from dataset_upload.dataset_loaders.h2r_loader import load_h2r_dataset
 
         # Load the trajectories using the loader with max_trajectories limit
         print(f"Loading H2R dataset from: {cfg.dataset.dataset_path}")
         task_data = load_h2r_dataset(cfg.dataset.dataset_path)
         trajectories = flatten_task_data(task_data)
     elif "roboarena" in cfg.dataset.dataset_name.lower():
-        from data_preprocess.dataset_loaders.roboarena_loader import load_roboarena_dataset
+        from dataset_upload.dataset_loaders.roboarena_loader import load_roboarena_dataset
 
         # Load the trajectories using the loader with max_trajectories limit
         print(f"Loading RoboArena dataset from: {cfg.dataset.dataset_path}")

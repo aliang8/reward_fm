@@ -750,7 +750,9 @@ def main():
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Preprocess datasets and create caches.")
-    parser.add_argument("--cache_dir", type=str, default="./processed_datasets", help="Directory to store processed dataset caches.")
+    parser.add_argument(
+        "--cache_dir", type=str, default="./processed_datasets", help="Directory to store processed dataset caches."
+    )
     args = parser.parse_args()
 
     # Use the cache_dir argument

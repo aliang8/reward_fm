@@ -60,11 +60,11 @@ data:
   # Video processing settings
   max_frames: 16  # Maximum frames per trajectory
   video_frame_sampling: "uniform"  # "uniform", "random", "first", "middle"
-  resized_height: 128  # Height to resize images/videos to
-  resized_width: 128   # Width to resize images/videos to
+  resized_height: 240  # Height to resize images/videos to
+  resized_width: 240   # Width to resize images/videos to
   
   # Data generation settings
-  sample_type_ratio: [1.0, 0.0, 0.0]  
+  sample_type_ratio: [1.0, 0.0, 0.0]  # Ratio of preference, progress, and similarity samples
   dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
   # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, video_binned]
   preference_strategy_ratio: [0.4, 0.3, 0.3, 0.0]

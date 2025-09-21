@@ -16,8 +16,9 @@ from transformers.trainer import PredictionOutput
 from rfm.utils.logging import is_rank_0, rank_0_print
 from rfm.utils.metrics import compute_auc, compute_spearman_correlation
 from rfm.utils.logging import _timer
-from rfm.trainers.rfm_heads_trainer import RFMHeadsTrainer
+from rfm.trainers import RFMHeadsTrainer
 from evals.eval_utils import extract_answer_from_text
+
 
 # copied because the original function forces the metric reduction
 def fixed_cross_entropy(
@@ -63,7 +64,7 @@ def ForCausalLMLoss(
     return loss
 
 
-class VQATrainer(RFMHeadsTrainer):
+class RFMVQATrainer(RFMHeadsTrainer):
     def __init__(self, config, *args, **kwargs):
         super().__init__(config, *args, **kwargs)
 
@@ -123,7 +124,6 @@ class VQATrainer(RFMHeadsTrainer):
         return total_loss
 
     def _compute_vqa_loss(self, model, inputs, return_outputs=False, mode=None, training=True):
-
         B = inputs["input_ids"].shape[0]
         outputs = model(
             input_ids=inputs["input_ids"],
@@ -141,7 +141,7 @@ class VQATrainer(RFMHeadsTrainer):
             vocab_size=self.model.base_model.model.config.text_config.vocab_size,
             reduction="none",
         )
-        # reshape 
+        # reshape
         loss = loss.reshape(B, -1)
         loss_per_example = loss.mean(dim=1)
         loss = loss.mean()
@@ -149,7 +149,7 @@ class VQATrainer(RFMHeadsTrainer):
         prefix = "train" if training else "eval"
         loss_dict = {f"{prefix}/{mode}_loss": loss.item()}
 
-        # compute accuracy 
+        # compute accuracy
         pred_ids = outputs.logits.argmax(dim=-1)
         tokenizer = self.model.base_model.processor.tokenizer
         pred_texts = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
@@ -192,7 +192,9 @@ class VQATrainer(RFMHeadsTrainer):
                 mask = [1 if s == strat else 0 for s in rejected_data_gen_strategy]
                 mask = torch.tensor(mask, device=self.accelerator.device)
                 loss_dict.update({f"{prefix}_strat/{mode}_loss_{strat}": (loss_per_example[mask == 1]).mean().item()})
-                loss_dict.update({f"{prefix}_strat/{mode}_accuracy_{strat}": (preference_correct[mask == 1]).mean().item()})
+                loss_dict.update(
+                    {f"{prefix}_strat/{mode}_accuracy_{strat}": (preference_correct[mask == 1]).mean().item()}
+                )
 
         elif mode == "progress":
             data_gen_strategy = inputs["data_gen_strategy"]
@@ -208,8 +210,10 @@ class VQATrainer(RFMHeadsTrainer):
             mask = [1 if s == data_source else 0 for s in inputs["data_source"]]
             mask = torch.tensor(mask, device=self.accelerator.device)
             loss_dict.update({f"{prefix}_ds/{mode}_loss_{data_source}": (loss_per_example[mask == 1]).mean().item()})
-            
+
             if mode == "preference":
-                loss_dict.update({f"{prefix}_ds/{mode}_accuracy_{data_source}": (preference_correct[mask == 1]).mean().item()})
+                loss_dict.update(
+                    {f"{prefix}_ds/{mode}_accuracy_{data_source}": (preference_correct[mask == 1]).mean().item()}
+                )
 
         return (loss, loss_dict) if return_outputs else loss

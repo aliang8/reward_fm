@@ -354,10 +354,10 @@ def main():
     parser = argparse.ArgumentParser(description="Plot predicted progress values from reward alignment results")
     parser.add_argument(
         "--json_file",
-        default="/home/ykorkmaz/reward_fm/eval_logs/base_model_vqa/abraranwar_libero_rfm_libero256_10/reward_alignment_progress.json",
+        default="eval_logs/aliangdw_rfm_prefprog_v4/ykorkmaz_libero_failure_rfm_libero_10_failure/reward_alignment_progress.json",
         help="Path to the JSON file containing reward alignment results",
     )
-    parser.add_argument("--output_dir", help="Directory for saving trajectory plots")
+    parser.add_argument("--output_dir", required=True, help="Directory for saving trajectory plots")
 
     args = parser.parse_args()
 

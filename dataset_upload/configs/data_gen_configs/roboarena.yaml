@@ -1,0 +1,17 @@
+# config.yaml
+dataset:
+  dataset_path: ./test_datasets/DataDump_08-05-2025
+  dataset_name: roboarena # This will be the dataset name / data source
+
+output:
+  output_dir: ./rfm_dataset/roboarena_0825_rfm
+  max_trajectories: -1
+  max_frames: 64
+  use_video: true
+  fps: 10
+  shortest_edge_size: 240
+  center_crop: false
+
+hub:
+  push_to_hub: true
+  hub_repo_id: roboarena_0825_rfm

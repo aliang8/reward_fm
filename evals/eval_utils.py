@@ -9,7 +9,12 @@ from typing import Any, Dict, List, Union, Tuple
 import numpy as np
 import requests
 import aiohttp
-from rfm.data.batch_collator import PreferenceSample, SimilaritySample
+from rfm.data.dataset_types import PreferenceSample, SimilaritySample
+
+
+def extract_answer_from_text(text):
+    m = re.search(r"<ans>(.*?)</ans>", text, re.DOTALL)
+    return m.group(1).strip() if m else ""
 
 def extract_answer_from_text(text):
     m = re.search(r"<ans>(.*?)</ans>", text, re.DOTALL)

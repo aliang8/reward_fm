@@ -36,12 +36,13 @@ from huggingface_hub import hf_hub_download
 import json
 
 from rfm.utils.setup_utils import setup_model_and_processor
+from rfm.utils.parser import deep_merge
 from rfm.configs.eval_configs import EvaluationConfig
 from rfm.configs.experiment_configs import ModelConfig
-from rfm.data.batch_collator import BatchCollator, PreferenceSample
-from rfm.data.vqa_batch_collator import VQABatchCollator
+from rfm.data.collators.rfm_batch_collator import RFMBatchCollator
+from rfm.data.collators.vqa_batch_collator import VQABatchCollator
 from rfm.data.dataset_types import PreferenceSample, ProgressSample
-from rfm.evals.eval_utils import extract_answer_from_text
+from evals.eval_utils import extract_answer_from_text
 
 
 class AsyncGPUPool:
@@ -152,7 +153,7 @@ class AsyncGPUPool:
         # Create batch collator with processor from this GPU
         if "qwen" in self.model_config.base_model_id.lower():
             if self.model_config.model_type == "default":
-                batch_collator = BatchCollator(
+                batch_collator = RFMBatchCollator(
                     processor=gpu_info["processor"],
                     resized_height=128,  # You might want to make this configurable
                     resized_width=128,
@@ -423,6 +424,7 @@ def compute_batch_outputs_vqa(
     else:
         raise ValueError(f"Mode {mode} not supported")
 
+
 def create_app(cfg: EvaluationConfig, model_config: ModelConfig):
     app = FastAPI(title="RFM Multi-GPU Evaluation Server")
 
@@ -560,10 +562,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config_path", type=str, default="rfm/configs/eval_config.yaml")
     parser.add_argument(
-        "--model_config_path",
-        type=str,
-        default="",
-        help="Path to the model config file (Only used if model_path is not set in eval config)",
+        "--model_config_paths",
+        nargs="*",
+        default=[],
+        help="Paths to the model config files (Only used if model_path is not set in eval config)",
     )
     parser.add_argument("--host", type=str, default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
@@ -594,13 +596,18 @@ def main():
 
         model_config = ModelConfig(**model_config_dict["model"])
     else:
-        print(f"Saved checkpoint is not found, loading model config from local path")
-        print(f"Loading model config from local path: {args.model_config_path}")
+        print(f"Saved checkpoint is not found, initializing base model")
+        print(f"Loading model configs from local paths: {args.model_config_paths}")
         # load model config from local path
-        assert args.model_config_path != "", "Model config path is required if model path is not set in eval config"
-        with open(args.model_config_path, "r") as f:
-            model_config_dict = yaml.safe_load(f)
-        model_config = ModelConfig(**model_config_dict["model"])
+        assert args.model_config_paths != "", "Model config path is required if model path is not set in eval config"
+        # load & deep-merge YAMLs in order (later files override earlier ones)
+        merged: Dict[str, Any] = {}
+        for path in args.model_config_paths:
+            with open(path, "r") as f:
+                doc = yaml.safe_load(f) or {}
+            deep_merge(merged, doc)
+        model_config = ModelConfig(**merged["model"])
+
     app = create_app(cfg, model_config)
     print(f"Running async multi-GPU server on {args.host}:{args.port}")
     print(f"Using {cfg.num_gpus or torch.cuda.device_count()} GPUs")

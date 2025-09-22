@@ -1,8 +1,8 @@
 #!/bin/bash
 
-NUM_GPUS=2
-CUDA_VISIBLE_DEVICES=0,1
-USE_ACCELERATE=true
+NUM_GPUS=1
+CUDA_VISIBLE_DEVICES=0
+USE_ACCELERATE=false
 OUTPUT_DIR=./logs/rfm_prefprog
 
 if [ "${USE_ACCELERATE}" = true ]; then

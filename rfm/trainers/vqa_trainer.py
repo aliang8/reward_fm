@@ -160,7 +160,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
             gt_labels = inputs["preference_labels"]
 
             preference_correct = (predictions_num_labels == gt_labels).float()
-            loss_dict.update({f"{prefix}/{mode_name}_acc": preference_correct.mean().item()})
+            loss_dict.update({f"{prefix}/{mode}_acc": preference_correct.mean().item()})
         elif mode == "progress":
             predictions = [extract_answer_from_text(text) for text in pred_texts]
             gt_labels = inputs["target_progress"]

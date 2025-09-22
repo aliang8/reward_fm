@@ -136,8 +136,9 @@ class RFMVQATrainer(RFMHeadsTrainer):
         loss = loss.mean()
 
         prefix = "train" if training else "eval"
-        mode = "pref" if mode == "preference" else "prog" if mode == "progress" else "sim"
         loss_dict = {f"{prefix}/{mode}_loss": loss.item()}
+
+        mode_name = "pref" if mode == "preference" else "prog" if mode == "progress" else "sim"
 
         # compute accuracy
         pred_ids = outputs.logits.argmax(dim=-1)
@@ -159,7 +160,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
             gt_labels = inputs["preference_labels"]
 
             preference_correct = (predictions_num_labels == gt_labels).float()
-            loss_dict.update({f"{prefix}/{mode}_acc": preference_correct.mean().item()})
+            loss_dict.update({f"{prefix}/{mode_name}_acc": preference_correct.mean().item()})
         elif mode == "progress":
             predictions = [extract_answer_from_text(text) for text in pred_texts]
             gt_labels = inputs["target_progress"]
@@ -181,9 +182,9 @@ class RFMVQATrainer(RFMHeadsTrainer):
             for strat in set(rejected_data_gen_strategy):
                 mask = [1 if s == strat else 0 for s in rejected_data_gen_strategy]
                 mask = torch.tensor(mask, device=self.accelerator.device)
-                loss_dict.update({f"{prefix}_strat/{mode}_loss_{strat}": (loss_per_example[mask == 1]).mean().item()})
+                loss_dict.update({f"{prefix}_strat/{mode_name}_loss_{strat}": (loss_per_example[mask == 1]).mean().item()})
                 loss_dict.update({
-                    f"{prefix}_strat/{mode}_acc_{strat}": (preference_correct[mask == 1]).mean().item()
+                    f"{prefix}_strat/{mode_name}_acc_{strat}": (preference_correct[mask == 1]).mean().item()
                 })
 
         elif mode == "progress":
@@ -192,18 +193,18 @@ class RFMVQATrainer(RFMHeadsTrainer):
             for strat in set(data_gen_strategy):
                 mask = [1 if s == strat else 0 for s in data_gen_strategy]
                 mask = torch.tensor(mask, device=self.accelerator.device)
-                loss_dict.update({f"{prefix}_strat/{mode}_loss_{strat}": (loss_per_example[mask == 1]).mean().item()})
+                loss_dict.update({f"{prefix}_strat/{mode_name}_loss_{strat}": (loss_per_example[mask == 1]).mean().item()})
 
         data_source = inputs.get("data_source", [])
 
         for data_source in set(data_source):
             mask = [1 if s == data_source else 0 for s in inputs["data_source"]]
             mask = torch.tensor(mask, device=self.accelerator.device)
-            loss_dict.update({f"{prefix}_ds/{mode}_loss_{data_source}": (loss_per_example[mask == 1]).mean().item()})
+            loss_dict.update({f"{prefix}_ds/{mode_name}_loss_{data_source}": (loss_per_example[mask == 1]).mean().item()})
 
             if mode == "preference":
                 loss_dict.update({
-                    f"{prefix}_ds/{mode}_acc_{data_source}": (preference_correct[mask == 1]).mean().item()
+                    f"{prefix}_ds/{mode_name}_acc_{data_source}": (preference_correct[mask == 1]).mean().item()
                 })
 
         return (loss, loss_dict) if return_outputs else loss

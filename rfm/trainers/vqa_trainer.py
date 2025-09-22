@@ -136,6 +136,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
         loss = loss.mean()
 
         prefix = "train" if training else "eval"
+        mode = "pref" if mode == "preference" else "prog" if mode == "progress" else "sim"
         loss_dict = {f"{prefix}/{mode}_loss": loss.item()}
 
         # compute accuracy
@@ -158,7 +159,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
             gt_labels = inputs["preference_labels"]
 
             preference_correct = (predictions_num_labels == gt_labels).float()
-            loss_dict.update({f"{prefix}/{mode}_accuracy": preference_correct.mean().item()})
+            loss_dict.update({f"{prefix}/{mode}_acc": preference_correct.mean().item()})
         elif mode == "progress":
             predictions = [extract_answer_from_text(text) for text in pred_texts]
             gt_labels = inputs["target_progress"]
@@ -182,7 +183,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
                 mask = torch.tensor(mask, device=self.accelerator.device)
                 loss_dict.update({f"{prefix}_strat/{mode}_loss_{strat}": (loss_per_example[mask == 1]).mean().item()})
                 loss_dict.update({
-                    f"{prefix}_strat/{mode}_accuracy_{strat}": (preference_correct[mask == 1]).mean().item()
+                    f"{prefix}_strat/{mode}_acc_{strat}": (preference_correct[mask == 1]).mean().item()
                 })
 
         elif mode == "progress":
@@ -202,7 +203,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
             if mode == "preference":
                 loss_dict.update({
-                    f"{prefix}_ds/{mode}_accuracy_{data_source}": (preference_correct[mask == 1]).mean().item()
+                    f"{prefix}_ds/{mode}_acc_{data_source}": (preference_correct[mask == 1]).mean().item()
                 })
 
         return (loss, loss_dict) if return_outputs else loss

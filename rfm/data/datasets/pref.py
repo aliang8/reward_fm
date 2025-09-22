@@ -280,38 +280,78 @@ class PrefDataset(RFMBaseDataset):
         rejected_traj = None
         strategy_used = None
 
-        prob = random.random()
-        if prob < self.preference_strategy_ratio[0]:
-            # Strategy 1: Use rewind-generated suboptimal trajectory from same task
-            rejected_traj = create_rewind_trajectory(chosen_traj, max_frames=self.config.max_frames)
-            strategy_used = DataGenStrat.REWIND_SAME_TASK
-
-        elif prob < self.preference_strategy_ratio[0] + self.preference_strategy_ratio[1]:
-            # Strategy 2: Use random suboptimal trajectory from same task
-            rejected_traj = self._create_same_task_suboptimal_trajectory(chosen_traj)
-            if rejected_traj is not None:
-                strategy_used = DataGenStrat.SUBOPTIMAL_SAME_TASK
-
-        elif (
-            prob
-            < self.preference_strategy_ratio[0] + self.preference_strategy_ratio[1] + self.preference_strategy_ratio[2]
-        ):
-            # Strategy 3: Use trajectory from different task (can be chosen or suboptimal)
-            rejected_traj = self._create_different_task_trajectory(chosen_traj)
-            if rejected_traj is not None:
-                strategy_used = DataGenStrat.DIFFERENT_TASK
-
-        else:
-            # Strategy 4: Create preference sample from different bins of the same video
-            try:
-                chosen_traj, rejected_traj = self._create_video_binned_trajectory(
-                    chosen_traj, num_bins=self.config.num_bins
-                )
-                strategy_used = DataGenStrat.VIDEO_BINNED
-            except Exception as e:
-                rank_0_print(f"Video binning failed: {e}, will fall back to rewind")
-
-        # Fallback: If any strategy failed to produce a rejected trajectory, use rewind
+        # Strategy selection with rebalancing on failure
+        strategies = [
+            (DataGenStrat.REWIND_SAME_TASK, self.preference_strategy_ratio[0]),
+            (DataGenStrat.SUBOPTIMAL_SAME_TASK, self.preference_strategy_ratio[1]),
+            (DataGenStrat.DIFFERENT_TASK, self.preference_strategy_ratio[2]),
+            (DataGenStrat.VIDEO_BINNED, self.preference_strategy_ratio[3] if len(self.preference_strategy_ratio) > 3 else 0.0),
+        ]
+        
+        # Remove strategies with zero probability
+        strategies = [(strat, prob) for strat, prob in strategies if prob > 0]
+        
+        max_attempts = 3  # Limit retry attempts to prevent infinite loops
+        attempt = 0
+        
+        while rejected_traj is None and attempt < max_attempts:
+            attempt += 1
+            
+            # Rebalance probabilities based on remaining strategies
+            total_prob = sum(prob for _, prob in strategies)
+            if total_prob == 0:
+                # All strategies have zero probability, fallback to rewind
+                rejected_traj = create_rewind_trajectory(chosen_traj, max_frames=self.config.max_frames)
+                strategy_used = DataGenStrat.REWIND_SAME_TASK
+                break
+            
+            # Normalize probabilities
+            normalized_strategies = [(strat, prob / total_prob) for strat, prob in strategies]
+            
+            # Select strategy based on rebalanced probabilities
+            prob = random.random()
+            cumulative_prob = 0.0
+            selected_strategy = None
+            
+            for strat, normalized_prob in normalized_strategies:
+                cumulative_prob += normalized_prob
+                if prob <= cumulative_prob:
+                    selected_strategy = strat
+                    break
+            
+            # Execute selected strategy
+            if selected_strategy == DataGenStrat.REWIND_SAME_TASK:
+                rejected_traj = create_rewind_trajectory(chosen_traj, max_frames=self.config.max_frames)
+                strategy_used = DataGenStrat.REWIND_SAME_TASK
+                
+            elif selected_strategy == DataGenStrat.SUBOPTIMAL_SAME_TASK:
+                rejected_traj = self._create_same_task_suboptimal_trajectory(chosen_traj)
+                if rejected_traj is not None:
+                    strategy_used = DataGenStrat.SUBOPTIMAL_SAME_TASK
+                else:
+                    # Strategy failed, remove it from future attempts
+                    strategies = [(strat, prob) for strat, prob in strategies if strat != DataGenStrat.SUBOPTIMAL_SAME_TASK]
+                    
+            elif selected_strategy == DataGenStrat.DIFFERENT_TASK:
+                rejected_traj = self._create_different_task_trajectory(chosen_traj)
+                if rejected_traj is not None:
+                    strategy_used = DataGenStrat.DIFFERENT_TASK
+                else:
+                    # Strategy failed, remove it from future attempts
+                    strategies = [(strat, prob) for strat, prob in strategies if strat != DataGenStrat.DIFFERENT_TASK]
+                    
+            elif selected_strategy == DataGenStrat.VIDEO_BINNED:
+                try:
+                    chosen_traj, rejected_traj = self._create_video_binned_trajectory(
+                        chosen_traj, num_bins=self.config.num_bins
+                    )
+                    strategy_used = DataGenStrat.VIDEO_BINNED
+                except Exception as e:
+                    rank_0_print(f"Video binning failed: {e}, removing from available strategies")
+                    # Strategy failed, remove it from future attempts
+                    strategies = [(strat, prob) for strat, prob in strategies if strat != DataGenStrat.VIDEO_BINNED]
+        
+        # Final fallback: If all strategies failed, use rewind
         if rejected_traj is None:
             rejected_traj = create_rewind_trajectory(chosen_traj, max_frames=self.config.max_frames)
             strategy_used = DataGenStrat.REWIND_SAME_TASK

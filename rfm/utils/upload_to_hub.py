@@ -5,12 +5,13 @@ Simple script to upload an already consolidated model to HuggingFace Hub.
 This script is for models that are already in the standard format with safetensors files.
 """
 
-import os
 import argparse
-from pathlib import Path
-from huggingface_hub import HfApi, login
 import json
 import logging
+import os
+from pathlib import Path
+
+from huggingface_hub import HfApi, login
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -57,20 +58,19 @@ def create_model_card(model_dir: Path, base_model: str, model_name: str):
     # Try to read existing config to get more info
     config_path = model_dir / "config.json"
     try:
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             config = json.load(f)
         model_type = config.get("model_type", "unknown")
-        architectures = config.get("architectures", ["unknown"])
+        config.get("architectures", ["unknown"])
     except:
         model_type = "unknown"
-        architectures = ["unknown"]
 
     # Try to read wandb info if available
     wandb_info_path = model_dir / "wandb_info.json"
     wandb_section = ""
     if wandb_info_path.exists():
         try:
-            with open(wandb_info_path, "r") as f:
+            with open(wandb_info_path) as f:
                 wandb_info = json.load(f)
             wandb_section = f"""
 ## Training Run
@@ -115,7 +115,7 @@ def upload_model_to_hub(
     model_dir: str,
     hub_model_id: str,
     private: bool = False,
-    token: str = None,
+    token: str | None = None,
     commit_message: str = "Upload RFM model",
     base_model: str = "Qwen/Qwen2.5-VL-3B-Instruct",
 ):
@@ -212,7 +212,7 @@ def main():
             base_model=args.base_model,
         )
 
-        logger.info(f"\n🎉 Upload completed successfully!")
+        logger.info("\n🎉 Upload completed successfully!")
         logger.info(f"Model URL: {url}")
 
     except Exception as e:

@@ -5,27 +5,22 @@ Script to compile evaluation results from JSON files.
 
 import argparse
 import json
-import os
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.stats import spearmanr
-from typing import Dict, List, Any
-import matplotlib.patches as patches
 from itertools import combinations, product
-from PIL import Image
-import io
-import base64
 from pathlib import Path
-from evals.eval_metrics_utils import compute_pearson, compute_spearman, compute_preference_accuracy
+from typing import Any
+
+import numpy as np
+
+from evals.eval_metrics_utils import compute_pearson, compute_preference_accuracy, compute_spearman
 
 
-def load_results(results_path: str) -> List[Dict[str, Any]]:
+def load_results(results_path: str) -> list[dict[str, Any]]:
     """Load results from JSON file."""
-    with open(results_path, "r") as f:
+    with open(results_path) as f:
         return json.load(f)
 
 
-def analyze_evaluation_type(eval_type: str, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def analyze_evaluation_type(eval_type: str, results: list[dict[str, Any]]) -> dict[str, Any]:
     """Analyze results based on evaluation type."""
     if eval_type == "success_failure_preference":
         return run_success_failure_eval(results)
@@ -39,10 +34,10 @@ def analyze_evaluation_type(eval_type: str, results: List[Dict[str, Any]]) -> Di
         return run_policy_ranking_eval(results)
 
 
-def run_success_failure_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def run_success_failure_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Run success_failure evaluation analysis."""
 
-    def _extract_series(results: List[Dict[str, Any]]):
+    def _extract_series(results: list[dict[str, Any]]):
         y_true_all = []
         y_pred_all = []
         for r in results:
@@ -54,7 +49,7 @@ def run_success_failure_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
                 y_true_all.extend(list(tgt))
         return y_true_all, y_pred_all
 
-    y_true_sf, y_pred_sf = _extract_series(results)
+    _y_true_sf, _y_pred_sf = _extract_series(results)
     pref_acc_sf = compute_preference_accuracy(results)
 
     return {
@@ -66,14 +61,14 @@ def run_success_failure_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def run_reward_alignment_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def run_reward_alignment_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Run reward_alignment evaluation analysis."""
     last_preds = []
     last_targets = []
     for r in results:
         pred = r.get("progress_pred_A")
         tgt = r.get("target_progress")
-        meta = r.get("metadata", {})
+        r.get("metadata", {})
         if pred and len(pred) > 0 and tgt and len(tgt) > 0:
             last_preds.append(float(pred[-1]))
             last_targets.append(float(tgt[-1]))
@@ -93,7 +88,7 @@ def run_reward_alignment_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def run_reward_alignment_eval_per_trajectory(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def run_reward_alignment_eval_per_trajectory(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Run reward_alignment evaluation analysis."""
     unique_trajectory_ids = set()
     mse_per_trajectory = 0
@@ -111,7 +106,7 @@ def run_reward_alignment_eval_per_trajectory(results: List[Dict[str, Any]]) -> D
         for r in results_for_trajectory:
             pred = r.get("progress_pred_A")
             tgt = r.get("target_progress")
-            meta = r.get("metadata", {})
+            r.get("metadata", {})
             if pred and len(pred) > 0 and tgt and len(tgt) > 0:
                 last_preds.append(float(pred[-1]))
                 last_targets.append(float(tgt[-1]))
@@ -140,7 +135,7 @@ def run_reward_alignment_eval_per_trajectory(results: List[Dict[str, Any]]) -> D
     }
 
 
-def run_confusion_matrix_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def run_confusion_matrix_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Run confusion_matrix evaluation analysis."""
     # Group results by confusion matrix task
     task_groups = {}
@@ -166,14 +161,12 @@ def run_confusion_matrix_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
         # Group by confusion matrix task
         if cm_task not in task_groups:
             task_groups[cm_task] = []
-        task_groups[cm_task].append(
-            {
-                "trajectory_id": trajectory_id,
-                "trajectory_original_task": trajectory_original_task,
-                "final_reward": final_reward,
-                "is_matching": cm_task == trajectory_original_task,
-            }
-        )
+        task_groups[cm_task].append({
+            "trajectory_id": trajectory_id,
+            "trajectory_original_task": trajectory_original_task,
+            "final_reward": final_reward,
+            "is_matching": cm_task == trajectory_original_task,
+        })
 
         # Track trajectory rewards across all tasks
         if trajectory_id not in trajectory_rewards:
@@ -224,7 +217,7 @@ def run_confusion_matrix_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def run_policy_ranking_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def run_policy_ranking_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Run policy_ranking evaluation analysis."""
     # Group results by task
     task_groups = {}
@@ -252,12 +245,10 @@ def run_policy_ranking_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
         # Group by task
         if task not in task_groups:
             task_groups[task] = []
-        task_groups[task].append(
-            {
-                "quality_label": quality_label,
-                "final_reward": final_reward,
-            }
-        )
+        task_groups[task].append({
+            "quality_label": quality_label,
+            "final_reward": final_reward,
+        })
 
     if not task_groups:
         return {"error": "No valid policy ranking data found"}
@@ -289,7 +280,7 @@ def run_policy_ranking_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
             predicted_ranks.append(reward)
 
         # Skip if we don't have at least 2 different quality levels
-        unique_qualities = set(traj["quality_label"] for traj in trajectories)
+        unique_qualities = {traj["quality_label"] for traj in trajectories}
         if len(unique_qualities) < 2:
             continue
 
@@ -328,7 +319,7 @@ def run_policy_ranking_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def run_policy_ranking_eval_per_ranked_set(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def run_policy_ranking_eval_per_ranked_set(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Run policy_ranking evaluation analysis per ranked set."""
     # Group results by task
     task_groups = {}
@@ -352,12 +343,10 @@ def run_policy_ranking_eval_per_ranked_set(results: List[Dict[str, Any]]) -> Dic
 
         if task not in task_groups:
             task_groups[task] = []
-        task_groups[task].append(
-            {
-                "quality_label": quality_label,
-                "final_reward": final_reward,
-            }
-        )
+        task_groups[task].append({
+            "quality_label": quality_label,
+            "final_reward": final_reward,
+        })
 
     if not task_groups:
         return {"error": "No valid policy ranking data found"}
@@ -426,9 +415,9 @@ def run_policy_ranking_eval_per_ranked_set(results: List[Dict[str, Any]]) -> Dic
 
 def main():
     import yaml
-    from rfm.configs.experiment_configs import DataConfig
+
     from rfm.configs.eval_configs import EvaluationConfig
-    from pathlib import Path
+    from rfm.configs.experiment_configs import DataConfig
 
     parser = argparse.ArgumentParser(description="Compile evaluation results and create visualizations")
     parser.add_argument(
@@ -441,7 +430,7 @@ def main():
 
     # Load evaluation config manually
     print(f"Loading evaluation config from: {args.config}")
-    with open(args.config, "r") as f:
+    with open(args.config) as f:
         config_dict = yaml.safe_load(f)
 
     cfg = EvaluationConfig(**config_dict)
@@ -540,10 +529,10 @@ def main():
 
         print(f"Scanning results directory: {dir_path}")
         available = {p.name: p for p in dir_path.glob("*.json")}
-        print(f"Found JSON files: {sorted(list(available.keys()))}")
+        print(f"Found JSON files: {sorted(available.keys())}")
 
         # Helper to safely load a file
-        def _load_if_exists(name: str) -> List[Dict[str, Any]]:
+        def _load_if_exists(name: str) -> list[dict[str, Any]]:
             if name in available:
                 print(f"Loading {name}...")
                 return load_results(str(available[name]))

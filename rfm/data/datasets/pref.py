@@ -4,20 +4,17 @@ PrefDataset class for producing batches of preference prediction data.
 """
 
 import random
-import numpy as np
-from typing import List, Dict, Tuple, Optional, Iterator, Union
-from rfm.data.dataset_types import PreferenceSample, ProgressSample, Trajectory
-from rfm.data.datasets.base import RFMBaseDataset
-from rfm.utils.logging import rank_0_print, timer
-from rfm.data.datasets.helpers import (
-    linspace_subsample_frames,
-    randomly_subsample_frames,
-    pad_trajectory_to_max_frames,
-    subsample_frames_and_progress,
+
+from rfm.data.dataset_types import PreferenceSample, Trajectory
+from .base import RFMBaseDataset
+from .helpers import (
+    DataGenStrat,
     create_rewind_trajectory,
     load_frames_from_npz,
-    DataGenStrat,
+    pad_trajectory_to_max_frames,
+    subsample_frames_and_progress,
 )
+from rfm.utils.logging import rank_0_print, timer
 
 
 class PrefDataset(RFMBaseDataset):
@@ -27,7 +24,7 @@ class PrefDataset(RFMBaseDataset):
         super().__init__(config, is_evaluation, verbose=verbose, **kwargs)
 
         self.dataset_preference_ratio = config.dataset_preference_ratio
-        self.preference_strategy_ratio: List[float] = config.preference_strategy_ratio
+        self.preference_strategy_ratio: list[float] = config.preference_strategy_ratio
 
         # Initialize preference dataset
         self._load_preference_dataset()
@@ -47,7 +44,7 @@ class PrefDataset(RFMBaseDataset):
         sample = self._create_pref_sample(chosen_traj)
         return sample
 
-    def _create_video_binned_trajectory(self, original_traj: Dict, num_bins: int = 10) -> Tuple[Dict, Dict]:
+    def _create_video_binned_trajectory(self, original_traj: dict, num_bins: int = 10) -> tuple[dict, dict]:
         """Create a preference sample by splitting a video into temporal bins and sampling from different bins.
 
         This strategy creates preference samples by:
@@ -175,7 +172,7 @@ class PrefDataset(RFMBaseDataset):
 
         # For now, return a simple preference sample
         # This can be enhanced later when we have actual preference data
-        preference = random.choice(self.preferences)
+        random.choice(self.preferences)
 
         # This is a placeholder - would need to be implemented based on actual preference data structure
         raise NotImplementedError("Preference sample creation from dataset not yet implemented")
@@ -215,7 +212,7 @@ class PrefDataset(RFMBaseDataset):
             else:
                 return self._create_pref_sample()
 
-    def _create_pref_sample(self, chosen_traj: Optional[Dict] = None) -> PreferenceSample:
+    def _create_pref_sample(self, chosen_traj: dict | None = None) -> PreferenceSample:
         """Create a preference prediction sample using various rejected trajectory generation strategies.
 
         This method implements four different strategies for generating rejected trajectories
@@ -395,7 +392,7 @@ class PrefDataset(RFMBaseDataset):
         )
         return sample
 
-    def _create_same_task_suboptimal_trajectory(self, chosen_traj: Dict) -> Optional[Dict]:
+    def _create_same_task_suboptimal_trajectory(self, chosen_traj: dict) -> dict | None:
         """Create a suboptimal trajectory from the same task as the chosen trajectory.
 
         This function tries to find an existing suboptimal/failure trajectory from the same task.
@@ -420,7 +417,7 @@ class PrefDataset(RFMBaseDataset):
         else:
             return None
 
-    def _create_different_task_trajectory(self, chosen_traj: Dict) -> Optional[Dict]:
+    def _create_different_task_trajectory(self, chosen_traj: dict) -> dict | None:
         """Create a trajectory from a different task than the chosen trajectory.
 
         This function tries to find trajectories from different tasks.

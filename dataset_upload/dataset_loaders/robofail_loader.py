@@ -4,13 +4,12 @@ RoboFail dataset loader for the generic dataset converter for RFM model training
 This module contains RoboFail-specific logic for loading and processing data files.
 """
 
-import h5py
-import numpy as np
-from typing import List, Dict, Optional, Tuple
 from pathlib import Path
-from tqdm import tqdm
+
+import numpy as np
 from rfm.data.helpers import generate_unique_id
 from rfm.data.video_helpers import load_video_frames
+from tqdm import tqdm
 
 
 class RoboFailFrameLoader:
@@ -83,7 +82,7 @@ def _get_task_name_from_folder(folder_name: str) -> str:
     return task.strip()
 
 
-def _discover_robofail_files(dataset_path: Path) -> List[Tuple[Path, str]]:
+def _discover_robofail_files(dataset_path: Path) -> list[tuple[Path, str]]:
     """Discover all video files in the RoboFail dataset structure.
 
     Expected structure:
@@ -99,7 +98,7 @@ def _discover_robofail_files(dataset_path: Path) -> List[Tuple[Path, str]]:
     Returns:
         List of tuples: (video_file_path, task_name)
     """
-    trajectory_files: List[Tuple[Path, str]] = []
+    trajectory_files: list[tuple[Path, str]] = []
 
     # Look for folders under robofail/real_data
     real_data_path = dataset_path / "real_data"
@@ -124,7 +123,7 @@ def _discover_robofail_files(dataset_path: Path) -> List[Tuple[Path, str]]:
     return trajectory_files
 
 
-def load_robofail_dataset(dataset_path: str, max_trajectories: Optional[int] = None) -> Dict[str, List[Dict]]:
+def load_robofail_dataset(dataset_path: str, max_trajectories: int | None = None) -> dict[str, list[dict]]:
     """Load RoboFail dataset and organize by task.
 
     Args:
@@ -147,7 +146,7 @@ def load_robofail_dataset(dataset_path: str, max_trajectories: Optional[int] = N
     traj_files = _discover_robofail_files(dataset_path)
     print(f"Found {len(traj_files)} trajectory files")
 
-    task_data: Dict[str, List[Dict]] = {}
+    task_data: dict[str, list[dict]] = {}
     loaded_count = 0
 
     for video_file, task_name in tqdm(traj_files, desc="Processing RoboFail trajectories"):

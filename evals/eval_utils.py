@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import re
 import io
 import json
-from typing import Any, Dict, List, Union, Tuple
+import re
+from typing import Any
 
+import aiohttp
 import numpy as np
 import requests
-import aiohttp
+
 from rfm.data.dataset_types import PreferenceSample, SimilaritySample
 
 
@@ -16,11 +17,13 @@ def extract_answer_from_text(text):
     m = re.search(r"<ans>(.*?)</ans>", text, re.DOTALL)
     return m.group(1).strip() if m else ""
 
+
 def extract_answer_from_text(text):
     m = re.search(r"<ans>(.*?)</ans>", text, re.DOTALL)
     return m.group(1).strip() if m else ""
 
-def post_batch(url: str, payload: Dict[str, Any], timeout_s: float = 120.0) -> Dict[str, Any]:
+
+def post_batch(url: str, payload: dict[str, Any], timeout_s: float = 120.0) -> dict[str, Any]:
     """POST a batch payload to the evaluation server and return parsed JSON."""
     resp = requests.post(url.rstrip("/") + "/evaluate_batch", json=payload, timeout=timeout_s)
     resp.raise_for_status()
@@ -28,8 +31,8 @@ def post_batch(url: str, payload: Dict[str, Any], timeout_s: float = 120.0) -> D
 
 
 def build_payload(
-    samples: List[Union[PreferenceSample, SimilaritySample]],
-) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    samples: list[PreferenceSample | SimilaritySample],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Build a payload with numpy array handling.
 
     Args:
@@ -82,8 +85,8 @@ def build_payload(
 
 
 def post_batch_npy(
-    url: str, files: Dict[str, Any], sample_data: List[Dict[str, Any]], timeout_s: float = 120.0
-) -> Dict[str, Any]:
+    url: str, files: dict[str, Any], sample_data: list[dict[str, Any]], timeout_s: float = 120.0
+) -> dict[str, Any]:
     """POST batch using .npy format for numpy arrays."""
     # Convert sample_data to form data
     data = {f"sample_{i}": json.dumps(sample) for i, sample in enumerate(sample_data)}
@@ -97,10 +100,10 @@ def post_batch_npy(
 async def post_batch_npy_async(
     session: aiohttp.ClientSession,
     url: str,
-    files: Dict[str, Any],
-    sample_data: List[Dict[str, Any]],
+    files: dict[str, Any],
+    sample_data: list[dict[str, Any]],
     timeout_s: float = 120.0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Async version of post_batch_npy using aiohttp."""
     # Create FormData for aiohttp
     form_data = aiohttp.FormData()

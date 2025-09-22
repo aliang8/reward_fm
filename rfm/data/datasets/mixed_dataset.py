@@ -1,9 +1,10 @@
 import random
-from rfm.data.datasets.pref import PrefDataset
-from rfm.data.datasets.sim import SimilarityDataset
+
+from .base import RFMBaseDataset
+from .pref import PrefDataset
+from .sim import SimilarityDataset
+from .vqa_progress import VQAProgressDataset
 from rfm.utils.logging import rank_0_print
-from rfm.data.datasets.base import RFMBaseDataset
-from rfm.data.datasets.vqa_progress import VQAProgressDataset
 
 
 class MixedDataset(RFMBaseDataset):
@@ -42,15 +43,14 @@ def test():
     """Test the BatchCollator with generated samples."""
     # Create a mock config for testing
     from dataclasses import dataclass
-    from typing import List
 
     @dataclass
     class MockDataConfig:
-        train_datasets: List[str] = None
-        train_subsets: List[str] = None
-        eval_datasets: List[str] = None
-        eval_subsets: List[str] = None
-        sample_type_ratio: List[float] = None
+        train_datasets: list[str] = None
+        train_subsets: list[str] = None
+        eval_datasets: list[str] = None
+        eval_subsets: list[str] = None
+        sample_type_ratio: list[float] = None
         shuffle: bool = True
         seed: int = 42
         num_proc: int = 4
@@ -59,7 +59,7 @@ def test():
         dataloader_pin_memory: bool = False
         dataloader_num_workers: int = 0
         model_type: str = "default"
-        preference_strategy_ratio: List[float] = None
+        preference_strategy_ratio: list[float] = None
 
     @dataclass
     class MockConfig:
@@ -80,7 +80,7 @@ def test():
         model_type="default",
     )
 
-    mock_config = MockConfig(data=mock_data_config, debug=False)
+    MockConfig(data=mock_data_config, debug=False)
 
     # Create data generator with mock config
     generator = MixedDataset(config=mock_data_config)

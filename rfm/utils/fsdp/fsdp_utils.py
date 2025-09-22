@@ -19,7 +19,6 @@ import math
 import os
 from collections import OrderedDict
 from contextlib import contextmanager, nullcontext
-from typing import Dict
 
 import torch
 import torch.distributed as dist
@@ -30,7 +29,6 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp._runtime_utils import _lazy_init
 from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy, transformer_auto_wrap_policy
 from transformers.trainer_pt_utils import get_module_class_from_name
-
 from verl.utils.device import get_device_name, get_torch_device
 
 if version.parse(torch.__version__) >= version.parse("2.6"):
@@ -51,7 +49,9 @@ def init_fn(x: torch.nn.Module):
 def get_init_weight_context_manager(use_meta_tensor=True, mesh: DeviceMesh = None):
     from accelerate import init_empty_weights
 
-    cpu_init_weights = lambda: torch.device("cpu")
+    def cpu_init_weights():
+        return torch.device("cpu")
+
     if use_meta_tensor:
         if mesh is None:
             init_context = init_empty_weights if torch.distributed.get_rank() != 0 else cpu_init_weights
@@ -289,7 +289,7 @@ def parallel_load_safetensors(filepath):
     total_files = len(safetensors2param)
     ckpt_chunks = sorted(safetensors2param.keys())
     world_size = dist.get_world_size()
-    size = int(math.ceil(total_files / world_size))
+    size = math.ceil(total_files / world_size)
     ckpt_chunks = [ckpt_chunks[rank * size : rank * size + size] for rank in range(world_size)]
 
     shard_states = {}
@@ -308,7 +308,7 @@ def parallel_load_safetensors(filepath):
     return shard_states
 
 
-def parallel_init_module_fn(module: torch.nn.Module, shard_states: Dict[str, torch.nn.Parameter]):
+def parallel_init_module_fn(module: torch.nn.Module, shard_states: dict[str, torch.nn.Parameter]):
     """
     Generate a function to initialize sub-modules in the `module` with `shard_states`
     from huggingface checkpoint.
@@ -429,7 +429,7 @@ def fsdp2_load_full_state_dict(model: torch.nn.Module, full_state: dict, device_
     set_model_state_dict(model, full_state, options=options)
 
     # rotary_emb is not in state_dict, so we need to broadcast it manually
-    for name, buf in model.named_buffers():
+    for _name, buf in model.named_buffers():
         dist.broadcast(buf, src=0)
 
     if cpu_offload:
@@ -453,13 +453,13 @@ def apply_fsdp2(model, fsdp_kwargs, config):
     assert len(fsdp_transformer_layer_cls_to_wrap) > 0 and fsdp_transformer_layer_cls_to_wrap[0] is not None
 
     modules = []
-    for name, module in model.named_modules():
+    for _name, module in model.named_modules():
         if module.__class__.__name__ in fsdp_transformer_layer_cls_to_wrap or (
             isinstance(module, nn.Embedding) and not model.config.tie_word_embeddings
         ):
             modules.append(module)
 
-    for idx, module in enumerate(modules):
+    for _idx, module in enumerate(modules):
         fully_shard(module, **fsdp_kwargs)
     fully_shard(model, **fsdp_kwargs)  # fsdp2 will not reshard_after_forward for root module
 

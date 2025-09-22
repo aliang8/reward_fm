@@ -5,36 +5,35 @@ Uses HuggingFace's .map() for efficient processing and saves trajectory indices.
 Creates one unified cache for each dataset/subset split.
 """
 
-import os
-import json
-import shutil
 import datetime
-from pathlib import Path
-from typing import Dict, List, Optional, Any
-import torch
-from datasets import Dataset, DatasetDict, load_dataset, Video
-import numpy as np
-from tqdm import tqdm
-from omegaconf import OmegaConf
+import json
+import os
 from dataclasses import dataclass, field
-from rfm.utils.logging import rank_0_print
+from typing import Any
+
+import numpy as np
 from pyrallis import wrap
+from tqdm import tqdm
+
+from datasets import Dataset, DatasetDict, Video, load_dataset
+from rfm.utils.logging import rank_0_print
+
 
 @dataclass
 class DataPreprocessConfig:
     """Configuration for data loading and processing."""
 
     # Dataset paths and subsets
-    train_datasets: List[str] = field(
+    train_datasets: list[str] = field(
         default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of training dataset names"}
     )
-    train_subsets: List[List[str]] = field(
+    train_subsets: list[list[str]] = field(
         default_factory=lambda: [["libero_90"]], metadata={"help": "List of training dataset subsets"}
     )
-    eval_datasets: List[str] = field(
+    eval_datasets: list[str] = field(
         default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of evaluation dataset names"}
     )
-    eval_subsets: List[List[str]] = field(
+    eval_subsets: list[list[str]] = field(
         default_factory=lambda: [["libero_10"]], metadata={"help": "List of evaluation dataset subsets"}
     )
 
@@ -52,6 +51,7 @@ class DataPreprocessConfig:
     num_threads: int = field(default=36, metadata={"help": "Number of threads for dataset processing"})
     cache_dir: str = field(default="", metadata={"help": "Directory to store processed dataset caches"})
 
+
 class DatasetPreprocessor:
     """Unified preprocessor for all datasets with individual caching per dataset/subset."""
 
@@ -59,25 +59,25 @@ class DatasetPreprocessor:
         self.config = config
 
         # Dataset storage - store individual datasets
-        self.datasets: Dict[str, Dataset] = {}  # key: "dataset_path/subset"
-        self.dataset_indices: Dict[str, Dict] = {}  # key: "dataset_path/subset", value: index mappings
+        self.datasets: dict[str, Dataset] = {}  # key: "dataset_path/subset"
+        self.dataset_indices: dict[str, dict] = {}  # key: "dataset_path/subset", value: index mappings
 
     def preprocess_datasets(self):
         """Preprocess each dataset/subset pair individually and create index-based caches."""
-        rank_0_print(f"\n🔧 Preprocessing all datasets...")
+        rank_0_print("\n🔧 Preprocessing all datasets...")
 
         # Collect all dataset/subset combinations
         all_datasets = []
 
         # Add training datasets
-        for dataset_path, dataset_subsets in zip(self.config.train_datasets, self.config.train_subsets):
+        for dataset_path, dataset_subsets in zip(self.config.train_datasets, self.config.train_subsets, strict=False):
             if isinstance(dataset_subsets, str):
                 dataset_subsets = [dataset_subsets]
             for subset in dataset_subsets:
                 all_datasets.append((dataset_path, subset))
 
         # Add evaluation datasets
-        for dataset_path, dataset_subsets in zip(self.config.eval_datasets, self.config.eval_subsets):
+        for dataset_path, dataset_subsets in zip(self.config.eval_datasets, self.config.eval_subsets, strict=False):
             if isinstance(dataset_subsets, str):
                 dataset_subsets = [dataset_subsets]
             for subset in dataset_subsets:
@@ -158,7 +158,7 @@ class DatasetPreprocessor:
 
         return processed_dataset, indices
 
-    def _preprocess_videos(self, frames, num_frames: int = None) -> np.ndarray:
+    def _preprocess_videos(self, frames, num_frames: int | None = None) -> np.ndarray:
         """
         Process video frames from VideoReader objects into numpy arrays with downsampling.
 
@@ -399,6 +399,7 @@ class DatasetPreprocessor:
         Threaded implementation to process frames and build indices, saving npz files concurrently.
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
+
         from datasets import Sequence, Value
 
         # Initialize index mappings
@@ -415,7 +416,7 @@ class DatasetPreprocessor:
 
         def process_one(idx: int):
             # Fetch example inside the worker to avoid holding many decoded readers
-            example: Dict[str, Any] = dataset[idx]
+            example: dict[str, Any] = dataset[idx]
             frames_src = example.get("frames_video")
             if frames_src is None:
                 return idx, None, None
@@ -426,21 +427,26 @@ class DatasetPreprocessor:
                 try:
                     try:
                         import imageio.v2 as iio  # type: ignore
+
                         reader = iio.get_reader(frames_src)
                         frames_iter = (frame for frame in reader)
                         frames_array = self._preprocess_videos(frames_iter, self.config.max_frames_for_preprocessing)
                     except Exception:
                         try:
                             import imageio as iio  # type: ignore
+
                             reader = iio.get_reader(frames_src)
                             frames_iter = (frame for frame in reader)
-                            frames_array = self._preprocess_videos(frames_iter, self.config.max_frames_for_preprocessing)
+                            frames_array = self._preprocess_videos(
+                                frames_iter, self.config.max_frames_for_preprocessing
+                            )
                         except Exception as e2:
                             # Fallback to OpenCV
                             try:
                                 import cv2  # type: ignore
+
                                 cap = cv2.VideoCapture(frames_src)
-                                
+
                                 # Check if video file can be opened
                                 if not cap.isOpened():
                                     rank_0_print(f"Warning: Cannot open video file {frames_src} with OpenCV")
@@ -448,16 +454,18 @@ class DatasetPreprocessor:
                                 else:
                                     # Get video properties
                                     total_frames_cv = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                                    fps = cap.get(cv2.CAP_PROP_FPS)
-                                    
+                                    cap.get(cv2.CAP_PROP_FPS)
+
                                     if total_frames_cv <= 0:
-                                        rank_0_print(f"Warning: Invalid frame count ({total_frames_cv}) for video {frames_src}")
+                                        rank_0_print(
+                                            f"Warning: Invalid frame count ({total_frames_cv}) for video {frames_src}"
+                                        )
                                         frames_array = np.array([])
                                     else:
                                         frames_list = []
                                         frame_count = 0
                                         max_attempts = min(total_frames_cv, 1000)  # Limit attempts for corrupted files
-                                        
+
                                         while frame_count < max_attempts:
                                             ret, frame = cap.read()
                                             if not ret:
@@ -466,16 +474,20 @@ class DatasetPreprocessor:
                                             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                                             frames_list.append(frame_rgb)
                                             frame_count += 1
-                                        
+
                                         cap.release()
-                                        
+
                                         if frames_list:
                                             frames_array = np.stack(frames_list)
-                                            frames_array = self._preprocess_videos(frames_array, self.config.max_frames_for_preprocessing)
+                                            frames_array = self._preprocess_videos(
+                                                frames_array, self.config.max_frames_for_preprocessing
+                                            )
                                         else:
                                             frames_array = np.array([])
                             except Exception as e3:
-                                rank_0_print(f"Warning: All video reading methods failed for {frames_src}: imageio error: {e2}, OpenCV error: {e3}")
+                                rank_0_print(
+                                    f"Warning: All video reading methods failed for {frames_src}: imageio error: {e2}, OpenCV error: {e3}"
+                                )
                                 frames_array = np.array([])
                 finally:
                     try:
@@ -585,7 +597,7 @@ class DatasetPreprocessor:
         self,
         cache_dir: str,
         processed_dataset: Dataset,
-        indices: Dict,
+        indices: dict,
         dataset_path: str,
         subset: str,
     ):
@@ -622,6 +634,7 @@ class DatasetPreprocessor:
     def _get_config_hash(self) -> str:
         """Generate a hash of the relevant config parameters."""
         import hashlib
+
         config_str = str(self.config.max_frames_for_preprocessing)
         return hashlib.md5(config_str.encode()).hexdigest()
 
@@ -639,7 +652,7 @@ class DatasetPreprocessor:
         if not os.path.exists(mappings_file):
             raise FileNotFoundError(f"Index mappings not found at {mappings_file}")
 
-        with open(mappings_file, "r") as f:
+        with open(mappings_file) as f:
             self.dataset_indices[cache_key] = json.load(f)
 
         # Log loaded cache
@@ -686,7 +699,7 @@ class DatasetPreprocessor:
 
         return combined_indices
 
-    def _load_dataset_from_path(self, dataset_path: str, subset: str = None):
+    def _load_dataset_from_path(self, dataset_path: str, subset: str | None = None):
         """Load dataset from path with proper video handling."""
         if "/" in dataset_path and not os.path.exists(dataset_path):
             # Loading from HuggingFace Hub - handle video paths
@@ -729,12 +742,12 @@ class DatasetPreprocessor:
                 dataset = load_dataset(dataset_path)
             return dataset
 
-    def _show_preprocessed_datasets(self, all_datasets: List[tuple]):
+    def _show_preprocessed_datasets(self, all_datasets: list[tuple]):
         """
         Show which datasets are already preprocessed and which are not.
         This helps avoid re-processing already cached datasets.
         """
-        rank_0_print(f"\n🔍 Checking for pre-existing caches...")
+        rank_0_print("\n🔍 Checking for pre-existing caches...")
 
         cached_count = 0
         total_count = len(all_datasets)
@@ -749,7 +762,7 @@ class DatasetPreprocessor:
                 info_file = os.path.join(individual_cache_dir, "dataset_info.json")
                 if os.path.exists(info_file):
                     try:
-                        with open(info_file, "r") as f:
+                        with open(info_file) as f:
                             info = json.load(f)
                         trajectories = info.get("total_trajectories", "unknown")
                         timestamp = info.get("cache_timestamp", "unknown")
@@ -764,22 +777,22 @@ class DatasetPreprocessor:
                 rank_0_print(f"  ❌ {dataset_path}/{subset}: No cache found")
 
         # Show summary
-        rank_0_print(f"\n📊 Cache Status Summary:")
+        rank_0_print("\n📊 Cache Status Summary:")
         rank_0_print(f"  ✅ Already cached: {cached_count}/{total_count} dataset/subset pairs")
         rank_0_print(f"  🔄 Need processing: {total_count - cached_count}/{total_count} dataset/subset pairs")
 
         if cached_count == total_count:
-            rank_0_print(f"  🎉 All dataset/subset pairs are already cached! Use --force-reprocess to reprocess.")
+            rank_0_print("  🎉 All dataset/subset pairs are already cached! Use --force-reprocess to reprocess.")
         elif cached_count > 0:
-            rank_0_print(f"  💡 Some dataset/subset pairs are cached. Only uncached ones will be processed.")
+            rank_0_print("  💡 Some dataset/subset pairs are cached. Only uncached ones will be processed.")
         else:
-            rank_0_print(f"  🚀 No dataset/subset pairs are cached. All will be processed.")
+            rank_0_print("  🚀 No dataset/subset pairs are cached. All will be processed.")
 
-    def _show_final_status_summary(self, all_datasets: List[tuple]):
+    def _show_final_status_summary(self, all_datasets: list[tuple]):
         """
         Show a summary of which datasets were processed and which were loaded from cache.
         """
-        rank_0_print(f"\n📊 Final Status Summary for Dataset Preprocessing:")
+        rank_0_print("\n📊 Final Status Summary for Dataset Preprocessing:")
 
         processed_count = 0
         loaded_count = 0
@@ -804,11 +817,12 @@ class DatasetPreprocessor:
                 rank_0_print(f"  ❌ {dataset_path}/{subset}: Failed to load/process")
 
         # Show summary counts
-        rank_0_print(f"\n📈 Processing Summary:")
+        rank_0_print("\n📈 Processing Summary:")
         rank_0_print(f"  🔄 Newly processed: {processed_count} dataset/subset pairs")
         rank_0_print(f"  ✅ Loaded from cache: {loaded_count} dataset/subset pairs")
         rank_0_print(f"  ❌ Failed: {total_count - processed_count - loaded_count} dataset/subset pairs")
         rank_0_print(f"  📊 Total available: {processed_count + loaded_count}/{total_count} dataset/subset pairs")
+
 
 @wrap()
 def main(config: DataPreprocessConfig):
@@ -827,7 +841,7 @@ def main(config: DataPreprocessConfig):
     # Show dataset structure info
     print("\n🏗️  Dataset Configuration Structure:")
     print("Training datasets:")
-    for dataset_path, dataset_subsets in zip(config.train_datasets, config.train_subsets):
+    for dataset_path, dataset_subsets in zip(config.train_datasets, config.train_subsets, strict=False):
         if isinstance(dataset_subsets, str):
             dataset_subsets = [dataset_subsets]
         print(f"  📚 {dataset_path}: {len(dataset_subsets)} subset(s)")
@@ -835,7 +849,7 @@ def main(config: DataPreprocessConfig):
             print(f"    📂 {subset}")
 
     print("Evaluation datasets:")
-    for dataset_path, dataset_subsets in zip(config.eval_datasets, config.eval_subsets):
+    for dataset_path, dataset_subsets in zip(config.eval_datasets, config.eval_subsets, strict=False):
         if isinstance(dataset_subsets, str):
             dataset_subsets = [dataset_subsets]
         print(f"  📚 {dataset_path}: {len(dataset_subsets)} subset(s)")
@@ -858,7 +872,7 @@ def main(config: DataPreprocessConfig):
     print("\n=== Testing Caches ===")
 
     if preprocessor.datasets:
-        print(f"\n📚 All Datasets:")
+        print("\n📚 All Datasets:")
         total_trajectories = sum(len(dataset) for dataset in preprocessor.datasets.values())
         print(f"  Total trajectories: {total_trajectories}")
 
@@ -877,15 +891,15 @@ def main(config: DataPreprocessConfig):
                 print(f"  Sample trajectory: {test_traj['id']} - {test_traj['task']}")
 
     # Show individual dataset info
-    print(f"\n📊 Individual Dataset Summary:")
+    print("\n📊 Individual Dataset Summary:")
     print(f"Total datasets processed: {len(preprocessor.datasets)}")
     for cache_key, dataset in preprocessor.datasets.items():
         print(f"  ✅ {cache_key}: {len(dataset)} trajectories")
 
     # Show dataset structure
-    print(f"\n🏗️  Dataset Structure:")
-    print(f"Training datasets:")
-    for dataset_path, dataset_subsets in zip(config.train_datasets, config.train_subsets):
+    print("\n🏗️  Dataset Structure:")
+    print("Training datasets:")
+    for dataset_path, dataset_subsets in zip(config.train_datasets, config.train_subsets, strict=False):
         if isinstance(dataset_subsets, str):
             dataset_subsets = [dataset_subsets]
         print(f"  📚 {dataset_path}: {len(dataset_subsets)} subset(s)")
@@ -896,8 +910,8 @@ def main(config: DataPreprocessConfig):
             else:
                 print(f"    ❌ {subset}: Failed to load")
 
-    print(f"Evaluation datasets:")
-    for dataset_path, dataset_subsets in zip(config.eval_datasets, config.eval_subsets):
+    print("Evaluation datasets:")
+    for dataset_path, dataset_subsets in zip(config.eval_datasets, config.eval_subsets, strict=False):
         if isinstance(dataset_subsets, str):
             dataset_subsets = [dataset_subsets]
         print(f"  📚 {dataset_path}: {len(dataset_subsets)} subset(s)")

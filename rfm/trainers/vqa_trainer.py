@@ -1,30 +1,19 @@
 import ast
-from re import M, S
-import wandb
-import warnings
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import Trainer
-from typing import List, Dict, Optional, Union, Any, Tuple
-import numpy as np
-from tqdm import tqdm
-import torch.distributed as dist
-from transformers.trainer_utils import EvalPrediction
-from transformers.trainer import PredictionOutput
 
-from rfm.utils.logging import is_rank_0, rank_0_print
-from rfm.utils.metrics import compute_auc, compute_spearman_correlation
-from rfm.utils.logging import _timer
-from rfm.trainers import RFMHeadsTrainer
 from evals.eval_utils import extract_answer_from_text
+from .rfm_heads_trainer import RFMHeadsTrainer
+from rfm.utils.logging import _timer
 
 
 # copied because the original function forces the metric reduction
 def fixed_cross_entropy(
     source: torch.Tensor,
     target: torch.Tensor,
-    num_items_in_batch: Optional[torch.Tensor] = None,
+    num_items_in_batch: torch.Tensor | None = None,
     ignore_index: int = -100,
     reduction: str = "mean",
     **kwargs,
@@ -42,9 +31,9 @@ def ForCausalLMLoss(
     logits,
     labels,
     vocab_size: int,
-    num_items_in_batch: Optional[torch.Tensor] = None,
+    num_items_in_batch: torch.Tensor | None = None,
     ignore_index: int = -100,
-    shift_labels: Optional[torch.Tensor] = None,
+    shift_labels: torch.Tensor | None = None,
     **kwargs,
 ) -> torch.Tensor:
     # Upcast to float if we need to compute the loss to avoid potential precision issues
@@ -192,9 +181,9 @@ class RFMVQATrainer(RFMHeadsTrainer):
                 mask = [1 if s == strat else 0 for s in rejected_data_gen_strategy]
                 mask = torch.tensor(mask, device=self.accelerator.device)
                 loss_dict.update({f"{prefix}_strat/{mode}_loss_{strat}": (loss_per_example[mask == 1]).mean().item()})
-                loss_dict.update(
-                    {f"{prefix}_strat/{mode}_accuracy_{strat}": (preference_correct[mask == 1]).mean().item()}
-                )
+                loss_dict.update({
+                    f"{prefix}_strat/{mode}_accuracy_{strat}": (preference_correct[mask == 1]).mean().item()
+                })
 
         elif mode == "progress":
             data_gen_strategy = inputs["data_gen_strategy"]
@@ -212,8 +201,8 @@ class RFMVQATrainer(RFMHeadsTrainer):
             loss_dict.update({f"{prefix}_ds/{mode}_loss_{data_source}": (loss_per_example[mask == 1]).mean().item()})
 
             if mode == "preference":
-                loss_dict.update(
-                    {f"{prefix}_ds/{mode}_accuracy_{data_source}": (preference_correct[mask == 1]).mean().item()}
-                )
+                loss_dict.update({
+                    f"{prefix}_ds/{mode}_accuracy_{data_source}": (preference_correct[mask == 1]).mean().item()
+                })
 
         return (loss, loss_dict) if return_outputs else loss

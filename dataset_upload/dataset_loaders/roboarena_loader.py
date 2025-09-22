@@ -1,11 +1,10 @@
 import os
 from collections import defaultdict
-from typing import Dict, List
-import yaml
-import numpy as np
-import cv2
-from rfm.data.helpers import generate_unique_id
 
+import cv2
+import numpy as np
+import yaml
+from rfm.data.helpers import generate_unique_id
 
 trajectory_info_template = {
     "id": [],
@@ -72,7 +71,7 @@ def create_new_trajectory(video_path: str, partial_success: int, task_name: str)
     return trajectory_info
 
 
-def load_roboarena_dataset(dataset_path: str) -> Dict[str, List[Dict]]:
+def load_roboarena_dataset(dataset_path: str) -> dict[str, list[dict]]:
     path_to_roboarena = "test_datasets/DataDump_08-05-2025"
     eval_folder = os.path.join(path_to_roboarena, "evaluation_sessions")
     eval_sessions = os.listdir(eval_folder)
@@ -85,7 +84,7 @@ def load_roboarena_dataset(dataset_path: str) -> Dict[str, List[Dict]]:
         eval_session_path = os.path.join(eval_folder, eval_session)
         metadata_path = os.path.join(eval_session_path, "metadata.yaml")
         # load metadata
-        with open(metadata_path, "r") as f:
+        with open(metadata_path) as f:
             metadata = yaml.load(f, Loader=yaml.FullLoader)
         task = metadata["language_instruction"]
         # if task in tasks_to_videos:

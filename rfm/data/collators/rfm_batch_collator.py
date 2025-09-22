@@ -4,18 +4,13 @@ Batch collator for processing Sample objects through the processor and returning
 This collator handles the conversion from PreferenceSample and SimilaritySample objects to processed tensors.
 """
 
-import base64
-import torch
-from typing import List, Dict, Optional, Union, Any
-from dataclasses import dataclass, field
-from transformers import AutoProcessor
-from qwen_vl_utils import process_vision_info
 import numpy as np
-import random
+import torch
+from qwen_vl_utils import process_vision_info
 
-from rfm.data.dataset_types import PreferenceSample, SimilaritySample, ProgressSample
-from rfm.data.collators import BaseCollator
-from rfm.data.collators.utils import convert_frames_to_pil_images, pad_target_progress
+from .base_collator import BaseCollator
+from .utils import convert_frames_to_pil_images, pad_target_progress
+from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample
 
 
 class RFMBatchCollator(BaseCollator):
@@ -34,8 +29,8 @@ class RFMBatchCollator(BaseCollator):
         super().__init__(**kwargs)
 
     def _add_preference_meta(
-        self, batch_inputs: Dict[str, torch.Tensor], preference_samples: List[PreferenceSample]
-    ) -> Dict[str, torch.Tensor]:
+        self, batch_inputs: dict[str, torch.Tensor], preference_samples: list[PreferenceSample]
+    ) -> dict[str, torch.Tensor]:
         """Add metadata to the batch inputs."""
         batch_inputs["data_source"] = [sample.chosen_trajectory.data_source for sample in preference_samples]
         batch_inputs["sample_type"] = ["preference"] * len(preference_samples)
@@ -80,8 +75,8 @@ class RFMBatchCollator(BaseCollator):
         return batch_inputs
 
     def _add_progress_meta(
-        self, batch_inputs: Dict[str, torch.Tensor], progress_samples: List[ProgressSample]
-    ) -> Dict[str, torch.Tensor]:
+        self, batch_inputs: dict[str, torch.Tensor], progress_samples: list[ProgressSample]
+    ) -> dict[str, torch.Tensor]:
         """Add metadata to the batch inputs."""
         # Add target progress and quality labels
         target_progress_list = []
@@ -101,7 +96,7 @@ class RFMBatchCollator(BaseCollator):
 
         return batch_inputs
 
-    def _process_preference_batch(self, preference_samples: List[PreferenceSample]) -> Dict[str, torch.Tensor]:
+    def _process_preference_batch(self, preference_samples: list[PreferenceSample]) -> dict[str, torch.Tensor]:
         """Process a batch of preference samples."""
         # Collect all messages for batch processing
         all_messages = []
@@ -181,7 +176,7 @@ class RFMBatchCollator(BaseCollator):
             for msg in all_messages
         ]
 
-        image_inputs, video_inputs, video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
+        image_inputs, video_inputs, _video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
 
         # Process through the processor in one batch
         batch_inputs = self.processor(
@@ -198,7 +193,7 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs = self._add_preference_meta(batch_inputs, preference_samples)
         return batch_inputs
 
-    def _process_similarity_batch(self, similarity_samples: List[SimilaritySample]) -> Dict[str, torch.Tensor]:
+    def _process_similarity_batch(self, similarity_samples: list[SimilaritySample]) -> dict[str, torch.Tensor]:
         """Process a batch of similarity samples."""
         # Collect all messages for batch processing (ref and traj_sim for each sample)
         all_messages = []
@@ -277,7 +272,7 @@ class RFMBatchCollator(BaseCollator):
             for msg in all_messages
         ]
 
-        image_inputs, video_inputs, video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
+        image_inputs, video_inputs, _video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
 
         # Process through the processor in one batch
         batch_inputs = self.processor(
@@ -348,7 +343,7 @@ class RFMBatchCollator(BaseCollator):
         )
         return combined_inputs
 
-    def _process_progress_batch(self, progress_samples: List[ProgressSample]) -> Dict[str, torch.Tensor]:
+    def _process_progress_batch(self, progress_samples: list[ProgressSample]) -> dict[str, torch.Tensor]:
         """Process a batch of progress samples with VQA-style question."""
         # Collect all messages for batch processing
         all_messages = []

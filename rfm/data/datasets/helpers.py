@@ -1,11 +1,10 @@
-import random
-import numpy as np
-from typing import List, Tuple, Optional, Dict
 import os
-from rfm.data.dataset_types import Trajectory
-from rfm.utils.logging import rank_0_print
-
+import random
 from enum import Enum
+
+import numpy as np
+
+from rfm.utils.logging import rank_0_print
 
 
 class DataGenStrat(Enum):
@@ -56,8 +55,8 @@ def load_frames_from_npz(npz_filepath: str) -> np.ndarray:
 
 
 def pad_trajectory_to_max_frames(
-    frames: np.ndarray, progress: List[float], max_frames: int
-) -> Tuple[np.ndarray, List[float]]:
+    frames: np.ndarray, progress: list[float], max_frames: int
+) -> tuple[np.ndarray, list[float]]:
     """Pad trajectory frames and progress to max_frames by repeating the first frame/progress if needed.
 
     Args:
@@ -90,7 +89,7 @@ def pad_trajectory_to_max_frames(
     return padded_frames, padded_progress
 
 
-def linspace_subsample_frames(frames: np.ndarray, num_frames: int = 8) -> Tuple[np.ndarray, List[int]]:
+def linspace_subsample_frames(frames: np.ndarray, num_frames: int = 8) -> tuple[np.ndarray, list[int]]:
     """Uniformly subsample frames from a trajectory and return the indices.
 
     This method takes the full trajectory (e.g., 64 frames) and uniformly subsamples
@@ -139,8 +138,8 @@ def linspace_subsample_frames(frames: np.ndarray, num_frames: int = 8) -> Tuple[
 
 
 def randomly_subsample_frames(
-    frames: np.ndarray, num_frames: int = 8, seed: Optional[int] = None
-) -> Tuple[np.ndarray, List[int]]:
+    frames: np.ndarray, num_frames: int = 8, seed: int | None = None
+) -> tuple[np.ndarray, list[int]]:
     """Randomly subsample frames from a trajectory and return the indices.
 
     This method takes the full trajectory and randomly selects num_frames from it.
@@ -184,7 +183,7 @@ def randomly_subsample_frames(
     return subsampled_frames, indices
 
 
-def subsample_frames_and_progress(frames: np.ndarray, max_frames: int) -> Tuple[np.ndarray, List[float]]:
+def subsample_frames_and_progress(frames: np.ndarray, max_frames: int) -> tuple[np.ndarray, list[float]]:
     """For trajectory, sample start and end indices to create a segment.
 
     This makes the progress calculation consistent with rewind trajectories.
@@ -231,7 +230,7 @@ def subsample_frames_and_progress(frames: np.ndarray, max_frames: int) -> Tuple[
     return frames, progress, metadata
 
 
-def create_rewind_trajectory(original_traj: Dict, rewind_length: Optional[int] = None, max_frames: int = 8) -> Dict:
+def create_rewind_trajectory(original_traj: dict, rewind_length: int | None = None, max_frames: int = 8) -> dict:
     """Create a suboptimal trajectory by rewinding the original trajectory.
 
     This method creates a trajectory that goes forward then rewinds back:

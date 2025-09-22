@@ -17,7 +17,7 @@ DeepSpeed Ulysses Paper: https://arxiv.org/abs/2309.14509
 Inspired from: https://github.com/deepspeedai/DeepSpeed/blob/master/deepspeed/sequence/layer.py
 """
 
-from typing import Any, Optional, Tuple
+from typing import Any
 
 import torch
 import torch.distributed as dist
@@ -35,7 +35,7 @@ def set_ulysses_sequence_parallel_group(group: dist.ProcessGroup):
     _ULYSSES_SEQUENCE_PARALLEL_GROUP = group
 
 
-def get_ulysses_sequence_parallel_group() -> Optional[dist.ProcessGroup]:
+def get_ulysses_sequence_parallel_group() -> dist.ProcessGroup | None:
     """
     Get ulysses sequence parallel process group.
     """
@@ -134,7 +134,7 @@ def all_to_all_tensor(
     local_input: Tensor,
     scatter_dim: int,
     gather_dim: int,
-    group: Optional[dist.ProcessGroup] = None,
+    group: dist.ProcessGroup | None = None,
     async_op: bool = False,
 ):
     group = get_ulysses_sequence_parallel_group() if group is None else group
@@ -152,7 +152,7 @@ def all_to_all_tensor(
     return torch.cat(output_list, dim=gather_dim).contiguous()
 
 
-def all_gather_tensor(local_tensor: Tensor, group: Optional[dist.ProcessGroup] = None, async_op: bool = False):
+def all_gather_tensor(local_tensor: Tensor, group: dist.ProcessGroup | None = None, async_op: bool = False):
     group = get_ulysses_sequence_parallel_group() if group is None else group
     sp_world_size = dist.get_world_size(group=group)
     output_shape = list(local_tensor.shape)
@@ -179,7 +179,7 @@ class SeqAllToAll(torch.autograd.Function):
         return all_to_all_tensor(local_input, scatter_dim, gather_dim, group, async_op)
 
     @staticmethod
-    def backward(ctx: Any, *grad_output: Tensor) -> Tuple[None, Tensor, None, None]:
+    def backward(ctx: Any, *grad_output: Tensor) -> tuple[None, Tensor, None, None]:
         input_t = torch.cat(grad_output[1:], dim=ctx.gather_dim).contiguous() if ctx.async_op else grad_output[0]
         return (
             None,
@@ -237,10 +237,10 @@ class Gather(torch.autograd.Function):
 def gather_outpus_and_unpad(
     x: Tensor,
     gather_dim: int,
-    unpad_dim: int = None,
+    unpad_dim: int | None = None,
     padding_size: int = 0,
     grad_scaler: bool = True,
-    group: Optional[dist.ProcessGroup] = None,
+    group: dist.ProcessGroup | None = None,
 ):
     """
     Gather a tensor across a process group and optionally unpad its padded elements.
@@ -269,7 +269,7 @@ def gather_outpus_and_unpad(
     return x
 
 
-def ulysses_pad(input_ids_rmpad: torch.Tensor, position_ids_rmpad: Optional[torch.Tensor] = None, sp_size: int = 1):
+def ulysses_pad(input_ids_rmpad: torch.Tensor, position_ids_rmpad: torch.Tensor | None = None, sp_size: int = 1):
     if position_ids_rmpad is not None:
         assert position_ids_rmpad.size(0) == 1
         assert input_ids_rmpad.size(1) == position_ids_rmpad.size(1)
@@ -286,7 +286,7 @@ def ulysses_pad(input_ids_rmpad: torch.Tensor, position_ids_rmpad: Optional[torc
 
 
 def ulysses_pad_and_slice_inputs(
-    input_ids_rmpad: torch.Tensor, position_ids_rmpad: Optional[torch.Tensor] = None, sp_size: int = 1
+    input_ids_rmpad: torch.Tensor, position_ids_rmpad: torch.Tensor | None = None, sp_size: int = 1
 ):
     """
     Pad and slice input_ids to be divisible by sp_size

@@ -1,9 +1,10 @@
-from typing import List, Dict, Any
+from typing import Any
+
 import numpy as np
-from scipy.stats import pearsonr, spearmanr
+from scipy.stats import spearmanr
 
 
-def compute_pearson(y_true: List[float], y_pred: List[float]) -> float:
+def compute_pearson(y_true: list[float], y_pred: list[float]) -> float:
     """Compute Pearson correlation, robust to constant inputs; returns np.nan if undefined."""
     import numpy as _np
     from scipy.stats import pearsonr as _pearsonr
@@ -20,7 +21,7 @@ def compute_pearson(y_true: List[float], y_pred: List[float]) -> float:
     return corr
 
 
-def compute_spearman(y_true: List[float], y_pred: List[float]) -> float:
+def compute_spearman(y_true: list[float], y_pred: list[float]) -> float:
     """Compute Spearman correlation, robust to constant inputs; returns np.nan if undefined."""
     a = np.asarray(y_true, dtype=float)
     b = np.asarray(y_pred, dtype=float)
@@ -33,7 +34,7 @@ def compute_spearman(y_true: List[float], y_pred: List[float]) -> float:
     return corr
 
 
-def compute_preference_accuracy(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def compute_preference_accuracy(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Compute preference accuracy over a list of result dicts.
     Expects keys 'predicted_preference' and 'preference_label' per sample.
     Returns dict with accuracy, correct, total, and skipped counts.
@@ -59,7 +60,7 @@ def compute_preference_accuracy(results: List[Dict[str, Any]]) -> Dict[str, Any]
     }
 
 
-def compute_preference_accuracy_from_progress(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def compute_preference_accuracy_from_progress(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Compute preference accuracy by using the final progress predictions."""
     correct = 0
     total = 0

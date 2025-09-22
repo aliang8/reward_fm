@@ -7,14 +7,13 @@ uv run python dataset_upload/generate_hf_dataset.py \
     --config_path=dataset_upload/configs/data_gen_configs/metaworld.yaml
 """
 
-import os
-import numpy as np
-from typing import List, Dict, Any
 from pathlib import Path
-from tqdm import tqdm
+
+import numpy as np
 from PIL import Image
-import torch
 from torchvision import transforms
+from tqdm import tqdm
+
 from dataset_upload.video_helpers import load_video_frames
 
 
@@ -74,7 +73,7 @@ def map_task_to_natural_language(task_name: str) -> str:
     return task_mapping.get(task_name, task_name.replace("_", " ").title())
 
 
-def load_metaworld_dataset(base_path: str) -> Dict[str, List[Dict]]:
+def load_metaworld_dataset(base_path: str) -> dict[str, list[dict]]:
     """Load metaworld dataset and organize by task.
 
     Args:
@@ -118,10 +117,9 @@ def load_metaworld_dataset(base_path: str) -> Dict[str, List[Dict]]:
             for video_file in video_files:
                 # Extract index from filename (e.g., "1.mp4" -> 1)
                 try:
-                    idx = int(video_file.stem)
+                    int(video_file.stem)
                 except ValueError:
                     print(f"Warning: Could not parse index from filename: {video_file.name}")
-                    idx = 0
 
                 # Load frames and apply center crop
                 original_frames = load_video_frames(video_file)

@@ -4,14 +4,12 @@ LIBERO dataset loader for the generic dataset converter for RFM model training.
 This module contains LIBERO-specific logic for loading and processing HDF5 files.
 """
 
-import h5py
-import os
-import numpy as np
-from typing import List, Dict, Tuple
 from pathlib import Path
-from tqdm import tqdm
+
+import h5py
+import numpy as np
 from rfm.data.helpers import generate_unique_id
-import cv2
+from tqdm import tqdm
 
 
 class H2RFrameLoader:
@@ -24,7 +22,7 @@ class H2RFrameLoader:
         self.hdf5_path = hdf5_path
         self.convert_to_rgb = convert_to_rgb
 
-    def __call__(self) -> Tuple[np.ndarray, np.ndarray]:
+    def __call__(self) -> tuple[np.ndarray, np.ndarray]:
         """Load frames from HDF5 when called.
 
         Returns:
@@ -78,7 +76,7 @@ def _get_task_name_from_folder(folder_name: str) -> str:
     return task.strip()
 
 
-def _discover_h2r_files(dataset_path: Path) -> List[Tuple[Path, str]]:
+def _discover_h2r_files(dataset_path: Path) -> list[tuple[Path, str]]:
     """Discover all video files in the H2R dataset structure.
 
     Expected structure:
@@ -98,7 +96,7 @@ def _discover_h2r_files(dataset_path: Path) -> List[Tuple[Path, str]]:
     Returns:
         List of tuples: (hdf5_file_path, task_name)
     """
-    trajectory_files: List[Tuple[Path, str]] = []
+    trajectory_files: list[tuple[Path, str]] = []
     for folder in dataset_path.iterdir():
         if folder.is_dir():
             for file in folder.glob("*.hdf5"):
@@ -107,7 +105,7 @@ def _discover_h2r_files(dataset_path: Path) -> List[Tuple[Path, str]]:
     return trajectory_files
 
 
-def load_h2r_dataset(base_path: str) -> Dict[str, List[Dict]]:
+def load_h2r_dataset(base_path: str) -> dict[str, list[dict]]:
     """Load H2R dataset from HDF5 files and organize by task.
 
     Args:

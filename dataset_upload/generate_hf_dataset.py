@@ -4,27 +4,27 @@ Main dataset converter that can convert any dataset to HuggingFace format for RF
 This is a generic converter that works with any dataset-specific loader.
 """
 
-import json
 import os
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # hide INFO/WARN/ERROR; only FATAL remains
-import numpy as np
-from typing import List, Dict, Tuple, Optional, Callable, Any
-from pathlib import Path
-from datasets import Dataset, Audio
-import datasets
-from tqdm import tqdm
-from dataclasses import dataclass, field
-from pyrallis import wrap
-from multiprocessing import Pool, cpu_count
 import multiprocessing as mp
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from functools import partial
+from multiprocessing import Pool, cpu_count
+from typing import Any
+
 from helpers import (
-    load_sentence_transformer_model,
+    create_hf_trajectory,
     create_output_directory,
     flatten_task_data,
-    create_hf_trajectory,
+    load_sentence_transformer_model,
 )
+from pyrallis import wrap
+from tqdm import tqdm
+
+import datasets
+from datasets import Dataset
 from rfm.data.dataset_types import Trajectory
 
 # make sure these come after importing torch. otherwise something breaks...
@@ -78,9 +78,7 @@ class DatasetConfig:
     """Config for dataset settings"""
 
     dataset_path: str = field(default="", metadata={"help": "Path to the dataset"})
-    dataset_name: Optional[str] = field(
-        default=None, metadata={"help": "Name of the dataset (defaults to dataset_type)"}
-    )
+    dataset_name: str | None = field(default=None, metadata={"help": "Name of the dataset (defaults to dataset_type)"})
 
 
 @dataclass
@@ -88,7 +86,7 @@ class OutputConfig:
     """Config for output settings"""
 
     output_dir: str = field(default="rfm_dataset", metadata={"help": "Output directory for the dataset"})
-    max_trajectories: Optional[int] = field(
+    max_trajectories: int | None = field(
         default=None, metadata={"help": "Maximum number of trajectories to process (None for all)"}
     )
     max_frames: int = field(
@@ -96,7 +94,7 @@ class OutputConfig:
     )
     use_video: bool = field(default=True, metadata={"help": "Use MP4 videos instead of individual frame images"})
     shortest_edge_size: int = field(default=240, metadata={"help": "Shortest edge size for video resizing"})
-    center_crop: Optional[bool] = field(
+    center_crop: bool | None = field(
         default=False,
         metadata={"help": "Center crop the video to the target size. Defaults to False, which means no cropping."},
     )
@@ -111,8 +109,8 @@ class HubConfig:
     """Config for HuggingFace Hub settings"""
 
     push_to_hub: bool = field(default=False, metadata={"help": "Push dataset to HuggingFace Hub"})
-    hub_repo_id: Optional[str] = field(default=None, metadata={"help": "HuggingFace Hub repository ID"})
-    hub_token: Optional[str] = field(
+    hub_repo_id: str | None = field(default=None, metadata={"help": "HuggingFace Hub repository ID"})
+    hub_token: str | None = field(
         default=None, metadata={"help": "HuggingFace Hub token (or set HF_TOKEN environment variable)"}
     )
 
@@ -173,18 +171,18 @@ def process_single_trajectory(args):
 
 
 def convert_dataset_to_hf_format(
-    trajectories: List[Dict],
-    hf_creator_fn: Callable[[Dict, str, str, int, Any, int, str], Trajectory],
+    trajectories: list[dict],
+    hf_creator_fn: Callable[[dict, str, str, int, Any, int, str], Trajectory],
     output_dir: str = "rfm_dataset",
     dataset_name: str = "",
-    max_trajectories: int = None,
+    max_trajectories: int | None = None,
     max_frames: int = -1,
     use_video: bool = True,
     fps: int = 10,
     num_workers: int = -1,
     push_to_hub: bool = False,
-    hub_repo_id: Optional[str] = None,
-    hub_token: Optional[str] = None,
+    hub_repo_id: str | None = None,
+    hub_token: str | None = None,
 ) -> Dataset:
     """Convert a list of trajectories to HuggingFace format."""
 
@@ -235,7 +233,7 @@ def convert_dataset_to_hf_format(
     if num_workers == 1:
         # Sequential processing (using pre-computed embeddings)
         for trajectory_idx, (trajectory, lang_vector) in enumerate(
-            tqdm(zip(trajectories, lang_vectors), desc="Processing trajectories")
+            tqdm(zip(trajectories, lang_vectors, strict=False), desc="Processing trajectories")
         ):
             # Create output directory for this trajectory with subdirectory structure
             subdir_name = get_trajectory_subdir_path(trajectory_idx)
@@ -262,7 +260,7 @@ def convert_dataset_to_hf_format(
 
         # Prepare arguments for worker processes
         worker_args = []
-        for trajectory_idx, (trajectory, lang_vector) in enumerate(zip(trajectories, lang_vectors)):
+        for trajectory_idx, (trajectory, lang_vector) in enumerate(zip(trajectories, lang_vectors, strict=False)):
             args = (
                 trajectory_idx,
                 trajectory,
@@ -345,7 +343,7 @@ def convert_dataset_to_hf_format(
             print(f"📁 Dataset available as config: {dataset_name.lower()}")
 
             # Also push the video files folder to the hub
-            print(f"\nPushing video files to HuggingFace Hub...")
+            print("\nPushing video files to HuggingFace Hub...")
             from huggingface_hub import HfApi
 
             api = HfApi(token=hub_token)
@@ -428,7 +426,7 @@ def main(cfg: GenerateConfig):
                 print(f"✅ Successfully pushed dataset to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}")
 
                 # Push the large video folder(s)
-                print(f"\nPushing video files to HuggingFace Hub...")
+                print("\nPushing video files to HuggingFace Hub...")
                 from huggingface_hub import HfApi
 
                 api = HfApi(token=cfg.hub.hub_token)
@@ -490,7 +488,7 @@ def main(cfg: GenerateConfig):
                 )
 
                 # Push the large video folder(s)
-                print(f"\nPushing video files to HuggingFace Hub...")
+                print("\nPushing video files to HuggingFace Hub...")
                 from huggingface_hub import HfApi
 
                 api = HfApi(token=cfg.hub.hub_token)

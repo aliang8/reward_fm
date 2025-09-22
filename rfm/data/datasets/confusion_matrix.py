@@ -3,14 +3,12 @@
 Data generator for confusion matrix analysis.
 """
 
-from rfm.data.dataset_types import PreferenceSample, ProgressSample, Trajectory
-from rfm.utils.logging import rank_0_print
-from typing import Dict, List, Optional, Union
-from rfm.data.datasets.base import RFMBaseDataset
 from tqdm import tqdm
-from rfm.data.datasets.pref import DataGenStrat
-import numpy as np
-import random
+
+from rfm.data.dataset_types import PreferenceSample, ProgressSample, Trajectory
+from .base import RFMBaseDataset
+from .pref import DataGenStrat
+from rfm.utils.logging import rank_0_print
 
 
 class ConfusionMatrixDataset(RFMBaseDataset):
@@ -21,7 +19,7 @@ class ConfusionMatrixDataset(RFMBaseDataset):
     how well the model can distinguish between different tasks.
     """
 
-    def __init__(self, config, is_evaluation=False, verbose=True, max_trajectories: Optional[int] = None):
+    def __init__(self, config, is_evaluation=False, verbose=True, max_trajectories: int | None = None):
         super().__init__(config, is_evaluation, verbose=verbose)
 
         self.max_trajectories = max_trajectories
@@ -32,7 +30,7 @@ class ConfusionMatrixDataset(RFMBaseDataset):
             f"Generated {len(self.sample_indices)} confusion matrix sample indices from {min(len(self.robot_trajectories), self.max_trajectories) if self.max_trajectories else len(self.robot_trajectories)} trajectories and {len(self.task_indices)} tasks"
         )
 
-    def _generate_all_sample_indices(self) -> List[Dict]:
+    def _generate_all_sample_indices(self) -> list[dict]:
         """Generate all possible task-trajectory pair sample indices."""
         sample_indices = []
 
@@ -58,18 +56,16 @@ class ConfusionMatrixDataset(RFMBaseDataset):
                     continue
 
                 # Store the pairing information
-                sample_indices.append(
-                    {
-                        "traj_idx": traj_idx,
-                        "task": task,
-                        "trajectory_task": traj.get("task", "unknown"),  # Original task of trajectory
-                    }
-                )
+                sample_indices.append({
+                    "traj_idx": traj_idx,
+                    "task": task,
+                    "trajectory_task": traj.get("task", "unknown"),  # Original task of trajectory
+                })
 
         rank_0_print(f"Generated {len(sample_indices)} task-trajectory pairs")
         return sample_indices
 
-    def _generate_sample_from_indices(self, sample_idx_info: Dict) -> PreferenceSample:
+    def _generate_sample_from_indices(self, sample_idx_info: dict) -> PreferenceSample:
         """Generate a single task-trajectory sample from stored indices."""
         traj_idx = sample_idx_info["traj_idx"]
         task = sample_idx_info["task"]

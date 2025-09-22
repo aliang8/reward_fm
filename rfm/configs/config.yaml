@@ -56,8 +56,8 @@ data:
 
   # Video processing settings
   max_frames: 16  # Maximum frames per trajectory
-  resized_height: 240  # Height to resize images/videos to
-  resized_width: 240   # Width to resize images/videos to
+  resized_height: 128  # Height to resize images/videos to
+  resized_width: 128   # Width to resize images/videos to
   
   # Data generation settings
   sample_type_ratio: [1.0, 0.0, 0.0]  # Ratio of preference, progress, and similarity samples

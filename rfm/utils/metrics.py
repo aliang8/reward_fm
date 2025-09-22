@@ -3,10 +3,9 @@
 Utility functions for computing evaluation metrics.
 """
 
+import numpy as np
 import torch
 import torch.nn.functional as F
-import numpy as np
-from typing import List, Optional
 
 
 def compute_spearman_correlation(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
@@ -35,7 +34,7 @@ def compute_spearman_correlation(pred: torch.Tensor, target: torch.Tensor) -> to
         # Handle 2D arrays (batch, sequence)
         elif pred_np.ndim == 2 and target_np.ndim == 2:
             correlations = []
-            for p, t in zip(pred_np, target_np):
+            for p, t in zip(pred_np, target_np, strict=False):
                 if len(p) > 1 and len(t) > 1:  # Need at least 2 points for correlation
                     corr, _ = spearmanr(p, t)
                     if not np.isnan(corr):
@@ -84,7 +83,7 @@ def manual_spearman_correlation(pred: torch.Tensor, target: torch.Tensor) -> tor
     # Handle 2D tensors (batch, sequence)
     elif pred.ndim == 2 and target.ndim == 2:
         correlations = []
-        for p, t in zip(pred, target):
+        for p, t in zip(pred, target, strict=False):
             if len(p) > 1 and len(t) > 1:
                 corr = manual_spearman_correlation(p, t)
                 if not torch.isnan(corr):

@@ -1,10 +1,9 @@
-import torch
 import os
-from rich import print as rprint
-from contextlib import contextmanager
-from typing import Dict
-from codetiming import Timer
 import time
+from contextlib import contextmanager
+
+from codetiming import Timer
+from rich import print as rprint
 
 
 def is_rank_0():
@@ -47,7 +46,7 @@ def timer(name: str, verbose: bool = False):
 
 
 @contextmanager
-def _timer(name: str, timing_raw: Dict[str, float]):
+def _timer(name: str, timing_raw: dict[str, float]):
     """Context manager for timing code execution.
 
     This utility function measures the execution time of code within its context

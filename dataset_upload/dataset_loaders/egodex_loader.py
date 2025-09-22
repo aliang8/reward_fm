@@ -9,13 +9,13 @@ This module provides a simple, readable loader inspired by the LIBERO loader:
 """
 
 import os
+from pathlib import Path
+
 import h5py
 import numpy as np
-from typing import Dict, Tuple, Optional, List
-from pathlib import Path
-from tqdm import tqdm
 from rfm.data.helpers import generate_unique_id
 from rfm.data.video_helpers import load_video_frames
+from tqdm import tqdm
 
 
 class EgoDexFrameLoader:
@@ -29,9 +29,9 @@ class EgoDexFrameLoader:
         return load_video_frames(Path(self.mp4_path))
 
 
-def _discover_trajectory_files(dataset_path: Path) -> List[Tuple[Path, Path, str]]:
+def _discover_trajectory_files(dataset_path: Path) -> list[tuple[Path, Path, str]]:
     """Discover all (HDF5, MP4) pairs grouped by task directory."""
-    trajectory_files: List[Tuple[Path, Path, str]] = []
+    trajectory_files: list[tuple[Path, Path, str]] = []
     for task_dir in dataset_path.iterdir():
         if not task_dir.is_dir():
             continue
@@ -45,7 +45,7 @@ def _discover_trajectory_files(dataset_path: Path) -> List[Tuple[Path, Path, str
     return trajectory_files
 
 
-def _load_hdf5_data(hdf5_path: Path) -> Tuple[np.ndarray, str]:
+def _load_hdf5_data(hdf5_path: Path) -> tuple[np.ndarray, str]:
     """Load pose data and task description from EgoDex HDF5 file."""
     with h5py.File(hdf5_path, "r") as f:
         task_description = ""
@@ -71,7 +71,7 @@ def _load_hdf5_data(hdf5_path: Path) -> Tuple[np.ndarray, str]:
 
 def _extract_pose_actions(hdf5_file) -> np.ndarray:
     """Extract pose actions (positions) from EgoDex HDF5."""
-    actions: List[np.ndarray] = []
+    actions: list[np.ndarray] = []
     pose_keys = [
         "transforms/leftHand",
         "transforms/rightHand",
@@ -95,7 +95,7 @@ def _extract_pose_actions(hdf5_file) -> np.ndarray:
     return np.concatenate(actions, axis=1)
 
 
-def load_egodex_dataset(dataset_path: str, max_trajectories: int = 100) -> Dict[str, List[Dict]]:
+def load_egodex_dataset(dataset_path: str, max_trajectories: int = 100) -> dict[str, list[dict]]:
     """Load EgoDex dataset and organize by task, without a separate iterator class."""
     print(f"Loading EgoDex dataset from: {dataset_path}")
     print("=" * 100)
@@ -109,7 +109,7 @@ def load_egodex_dataset(dataset_path: str, max_trajectories: int = 100) -> Dict[
     traj_files = _discover_trajectory_files(dataset_path)
     print(f"Found {len(traj_files)} trajectory pairs")
 
-    task_data: Dict[str, List[Dict]] = {}
+    task_data: dict[str, list[dict]] = {}
     loaded_count = 0
 
     for hdf5_path, mp4_path, task_name in tqdm(traj_files, desc="Processing trajectories"):

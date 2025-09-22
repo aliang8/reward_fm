@@ -1,17 +1,14 @@
-from rfm.data.datasets.base import RFMBaseDataset
-from rfm.data.dataset_types import ProgressSample
-from rfm.utils.logging import rank_0_print, timer
-from rfm.data.datasets.helpers import (
-    pad_trajectory_to_max_frames,
-    subsample_frames_and_progress,
+import random
+
+from rfm.data.dataset_types import ProgressSample, Trajectory
+from .base import RFMBaseDataset
+from .helpers import (
+    DataGenStrat,
     create_rewind_trajectory,
     load_frames_from_npz,
-    DataGenStrat,
+    pad_trajectory_to_max_frames,
+    subsample_frames_and_progress,
 )
-from enum import Enum
-import random
-from rfm.data.dataset_types import Trajectory
-from typing import Dict, Optional
 
 
 class VQAProgressDataset(RFMBaseDataset):
@@ -31,7 +28,7 @@ class VQAProgressDataset(RFMBaseDataset):
         sample = self._create_progress_sample(traj)
         return sample
 
-    def _create_progress_sample(self, traj: Dict):
+    def _create_progress_sample(self, traj: dict):
         # either return the original trajectory, rewinded traj, or wrong task traj
         prob = random.random()
         if prob < 0.33:
@@ -96,7 +93,7 @@ class VQAProgressDataset(RFMBaseDataset):
             sample_type="progress",
         )
 
-    def _create_different_task_trajectory(self, chosen_traj: Dict) -> Optional[Dict]:
+    def _create_different_task_trajectory(self, chosen_traj: dict) -> dict | None:
         """Create a trajectory from a different task than the chosen trajectory.
 
         This function tries to find trajectories from different tasks.

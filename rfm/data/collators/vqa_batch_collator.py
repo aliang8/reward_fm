@@ -5,18 +5,13 @@ This collator handles the conversion from PreferenceSample, SimilaritySample, an
 for VQA-based reward modeling with different question types.
 """
 
-import torch
-from typing import List, Dict, Optional, Union, Any
-from dataclasses import dataclass, field
-from transformers import AutoProcessor
-from qwen_vl_utils import process_vision_info
 import numpy as np
-import random
-from pydantic import BaseModel, field_serializer
+import torch
+from qwen_vl_utils import process_vision_info
 
-from rfm.data.dataset_types import PreferenceSample, SimilaritySample, ProgressSample
-from rfm.data.collators import RFMBatchCollator
-from rfm.data.collators.utils import convert_frames_to_pil_images
+from .rfm_batch_collator import RFMBatchCollator
+from .utils import convert_frames_to_pil_images
+from rfm.data.dataset_types import PreferenceSample, ProgressSample
 
 
 class VQABatchCollator(RFMBatchCollator):
@@ -37,7 +32,7 @@ class VQABatchCollator(RFMBatchCollator):
         self.inference = inference
         super().__init__(**kwargs)
 
-    def _process_preference_batch(self, preference_samples: List[PreferenceSample]) -> Dict[str, torch.Tensor]:
+    def _process_preference_batch(self, preference_samples: list[PreferenceSample]) -> dict[str, torch.Tensor]:
         """Process a batch of preference samples with VQA-style question."""
         # Collect all messages for batch processing
         all_messages = []
@@ -123,7 +118,7 @@ class VQABatchCollator(RFMBatchCollator):
             for conv in all_messages
         ]
 
-        image_inputs, video_inputs, video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
+        image_inputs, video_inputs, _video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
 
         batch_inputs = self.processor(
             text=texts,
@@ -153,14 +148,14 @@ class VQABatchCollator(RFMBatchCollator):
 
         return batch_inputs
 
-    def _process_progress_batch(self, progress_samples: List[ProgressSample]) -> Dict[str, torch.Tensor]:
+    def _process_progress_batch(self, progress_samples: list[ProgressSample]) -> dict[str, torch.Tensor]:
         """Process a batch of progress samples with VQA-style question."""
         # Collect all messages for batch processing
         all_messages = []
 
         for i, sample in enumerate(progress_samples):
             target_progress = sample.trajectory.target_progress
-            
+
             # Let's round the target progress to 2 decimal places
             target_progress = np.round(target_progress, 2)
 
@@ -200,7 +195,7 @@ class VQABatchCollator(RFMBatchCollator):
             for conv in all_messages
         ]
 
-        image_inputs, video_inputs, video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
+        image_inputs, video_inputs, _video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
 
         batch_inputs = self.processor(
             text=texts,

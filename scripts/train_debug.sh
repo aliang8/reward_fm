@@ -1,7 +1,7 @@
 #!/bin/bash
 
 NUM_GPUS=1
-CUDA_VISIBLE_DEVICES=0
+CUDA_VISIBLE_DEVICES=7
 
 CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} uv run accelerate launch \
     --config_file rfm/configs/fsdp_single.yaml \

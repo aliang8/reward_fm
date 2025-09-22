@@ -4,29 +4,30 @@ Dataclasses for RFM model dataset trajectory structures.
 Defines the standard format for HuggingFace dataset trajectories.
 """
 
-from pydantic import BaseModel
-from typing import Optional, Union, List, Dict, Any
+from typing import Any, Union
+
 import numpy as np
+from pydantic import BaseModel
 
 
 class Trajectory(BaseModel):
     """Trajectory structure containing frames, metadata, and progress information."""
 
     # Core trajectory fields
-    frames: Optional[Union[List[str], np.ndarray]] = None
-    frames_shape: Optional[tuple] = None
-    id: Optional[str] = None
-    task: Optional[str] = None
-    lang_vector: Optional[Union[np.ndarray, List[float]]] = None
-    data_source: Optional[str] = None
-    quality_label: Optional[str] = None
-    is_robot: Optional[bool] = None
+    frames: list[str] | np.ndarray | None = None
+    frames_shape: tuple | None = None
+    id: str | None = None
+    task: str | None = None
+    lang_vector: np.ndarray | list[float] | None = None
+    data_source: str | None = None
+    quality_label: str | None = None
+    is_robot: bool | None = None
 
-    data_gen_strategy: Optional[str] = None
+    data_gen_strategy: str | None = None
 
     # Progress and metadata
-    target_progress: Optional[List[float]] = None
-    metadata: Optional[Dict[str, Any]] = None
+    target_progress: list[float] | None = None
+    metadata: dict[str, Any] | None = None
 
     class Config:
         arbitrary_types_allowed = True

@@ -1,19 +1,14 @@
 import collections
-import ast
-from re import M, S
-import wandb
-import warnings
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from transformers import Trainer
-from typing import List, Dict, Optional, Union, Any
-import numpy as np
-from tqdm import tqdm
 
-from rfm.utils.logging import is_rank_0, rank_0_print
+import numpy as np
+import torch
+import torch.nn.functional as F
+from tqdm import tqdm
+from transformers import Trainer
+
+import wandb
+from rfm.utils.logging import _timer, is_rank_0, rank_0_print
 from rfm.utils.metrics import compute_spearman_correlation
-from rfm.utils.logging import _timer
 
 
 def reduce_metrics_with_accelerate(metrics: dict, accelerator, aggregate_method="sum"):
@@ -40,7 +35,7 @@ def reduce_metrics_with_accelerate(metrics: dict, accelerator, aggregate_method=
                 # Handle single key case
                 all_unique_keys.add(keys_from_process)
 
-        all_unique_keys = sorted(list(all_unique_keys))
+        all_unique_keys = sorted(all_unique_keys)
 
         # Step 3: Create synchronized metrics dict with 0.0 for missing keys
         synchronized_metrics = {}
@@ -132,8 +127,8 @@ class RFMHeadsTrainer(Trainer):
 
         # Extract the separate batches
         preference_inputs = inputs.get("preference_inputs", {})
-        similarity_inputs = inputs.get("similarity_inputs", {})
-        progress_inputs = inputs.get("progress_inputs", {})
+        inputs.get("similarity_inputs", {})
+        inputs.get("progress_inputs", {})
         num_preferences = inputs.get("num_preferences", 0)
         num_similarities = inputs.get("num_similarities", 0)
         num_progress = inputs.get("num_progress", 0)
@@ -218,7 +213,7 @@ class RFMHeadsTrainer(Trainer):
             rounded_times = {k: round(v, 2) for k, v in self.timing_raw.items()}
             rank_0_print(f"Timing raw: {rounded_times}")
 
-    def evaluate(self, eval_dataset=None, ignore_keys=None) -> Dict[str, float]:
+    def evaluate(self, eval_dataset=None, ignore_keys=None) -> dict[str, float]:
         """
         Override evaluate method to implement custom RFM evaluation metrics.
         """
@@ -232,7 +227,7 @@ class RFMHeadsTrainer(Trainer):
         outputs = []
         with _timer("time/evaluate", timing_raw=self.timing_raw):
             with torch.no_grad():
-                for step, inputs in tqdm(
+                for _step, inputs in tqdm(
                     enumerate(eval_dataloader),
                     total=len(eval_dataloader),
                     desc="Evaluating",
@@ -257,7 +252,7 @@ class RFMHeadsTrainer(Trainer):
 
         # Log metrics
         if is_rank_0():
-            rank_0_print(f"\n=== Custom RFM Evaluation Results (Aggregated) ===")
+            rank_0_print("\n=== Custom RFM Evaluation Results (Aggregated) ===")
             for key, value in metrics.items():
                 rank_0_print(f"{key}: {value:.6f}")
             rank_0_print("=" * 50)
@@ -353,7 +348,7 @@ class RFMHeadsTrainer(Trainer):
         spliced_progress_logits = []
         spliced_target_progress = []
 
-        for i, (pred, target, shape) in enumerate(zip(progress_logits, target_progress, frame_shape)):
+        for _i, (pred, target, shape) in enumerate(zip(progress_logits, target_progress, frame_shape, strict=False)):
             num_frames = shape[0] if len(shape) > 0 else 0
             if "Qwen" in self.config.model.base_model_id:
                 spliced_target = target[:num_frames][::2]
@@ -367,7 +362,7 @@ class RFMHeadsTrainer(Trainer):
         progress_losses = []
         spearman_correlations = []
 
-        for i, (pred, target) in enumerate(zip(spliced_progress_logits, spliced_target_progress)):
+        for _i, (pred, target) in enumerate(zip(spliced_progress_logits, spliced_target_progress, strict=False)):
             loss = F.mse_loss(pred, target)
             progress_losses.append(loss)
 
@@ -416,7 +411,7 @@ class RFMHeadsTrainer(Trainer):
             )
             self.timing_raw.update(model_timing_raw)
 
-        chosen_data_gen_strategy = inputs.get("chosen_data_gen_strategy", None)
+        inputs.get("chosen_data_gen_strategy", None)
         rejected_data_gen_strategy = inputs.get("rejected_data_gen_strategy", None)
 
         preference_loss = 0.0
@@ -520,33 +515,27 @@ class RFMHeadsTrainer(Trainer):
                     mask = [1 if s == strat else 0 for s in rejected_data_gen_strategy]
                     mask = torch.tensor(mask, device=self.accelerator.device)
 
-                    outputs_dict.update(
-                        {
-                            f"{prefix}_strat_pref_acc/{strat}": (preference_accuracy[mask == 1]).mean().item(),
-                            f"{prefix}_strat_pref_loss/{strat}": (preference_loss_all[mask == 1]).mean().item(),
-                        }
-                    )
+                    outputs_dict.update({
+                        f"{prefix}_strat_pref_acc/{strat}": (preference_accuracy[mask == 1]).mean().item(),
+                        f"{prefix}_strat_pref_loss/{strat}": (preference_loss_all[mask == 1]).mean().item(),
+                    })
 
                 # split acc by data source
                 data_sources = set(inputs["data_source"])
                 for data_source in data_sources:
                     mask = [1 if s == data_source else 0 for s in inputs["data_source"]]
                     mask = torch.tensor(mask, device=self.accelerator.device)
-                    outputs_dict.update(
-                        {
-                            f"{prefix}_ds/pref_acc_{data_source}": (preference_accuracy[mask == 1]).mean().item(),
-                            f"{prefix}_ds/pref_loss_{data_source}": (preference_loss_all[mask == 1]).mean().item(),
-                        }
-                    )
+                    outputs_dict.update({
+                        f"{prefix}_ds/pref_acc_{data_source}": (preference_accuracy[mask == 1]).mean().item(),
+                        f"{prefix}_ds/pref_loss_{data_source}": (preference_loss_all[mask == 1]).mean().item(),
+                    })
 
-                outputs_dict.update(
-                    {
-                        # "preference_scores": preference_scores,
-                        # "preference_labels": preference_labels,
-                        f"{prefix}/preference_loss": preference_loss.item(),
-                        f"{prefix}/preference_accuracy": preference_accuracy.mean().item(),
-                    }
-                )
+                outputs_dict.update({
+                    # "preference_scores": preference_scores,
+                    # "preference_labels": preference_labels,
+                    f"{prefix}/preference_loss": preference_loss.item(),
+                    f"{prefix}/preference_accuracy": preference_accuracy.mean().item(),
+                })
 
             if self.config.model.train_progress_head:
                 # split spearman by data gen strategy
@@ -554,26 +543,20 @@ class RFMHeadsTrainer(Trainer):
                 for strat in rejected_strats:
                     mask = [1 if s == strat else 0 for s in rejected_data_gen_strategy]
                     mask = torch.tensor(mask, device=self.accelerator.device)
-                    outputs_dict.update(
-                        {
-                            f"{prefix}_strat_spearman_corr/{strat}": (spearman_corr_rejected[mask == 1]).mean().item(),
-                            f"{prefix}_strat_prog_loss/{strat}": (progress_loss_rejected[mask == 1]).mean().item(),
-                        }
-                    )
+                    outputs_dict.update({
+                        f"{prefix}_strat_spearman_corr/{strat}": (spearman_corr_rejected[mask == 1]).mean().item(),
+                        f"{prefix}_strat_prog_loss/{strat}": (progress_loss_rejected[mask == 1]).mean().item(),
+                    })
 
                 # split spearman by data source
                 data_sources = set(inputs["data_source"])
                 for data_source in data_sources:
                     mask = [1 if s == data_source else 0 for s in inputs["data_source"]]
                     mask = torch.tensor(mask, device=self.accelerator.device)
-                    outputs_dict.update(
-                        {
-                            f"{prefix}_ds_spearman_corr/{data_source}": (spearman_corr_rejected[mask == 1])
-                            .mean()
-                            .item(),
-                            f"{prefix}_ds_prog_loss/{data_source}": (progress_loss_rejected[mask == 1]).mean().item(),
-                        }
-                    )
+                    outputs_dict.update({
+                        f"{prefix}_ds_spearman_corr/{data_source}": (spearman_corr_rejected[mask == 1]).mean().item(),
+                        f"{prefix}_ds_prog_loss/{data_source}": (progress_loss_rejected[mask == 1]).mean().item(),
+                    })
 
                 # Compute average Spearman correlation across trajectories A and B
                 spearman_values = []
@@ -589,14 +572,12 @@ class RFMHeadsTrainer(Trainer):
 
                 avg_spearman = np.mean(spearman_values) if spearman_values else 0.0
 
-                outputs_dict.update(
-                    {
-                        f"{prefix}/prog_loss_chosen": progress_loss_chosen.mean().item(),
-                        f"{prefix}/prog_loss_rejected": progress_loss_rejected.mean().item(),
-                        f"{prefix}/progress_loss": progress_loss.item(),
-                        f"{prefix}/spearman_corr_avg": avg_spearman,
-                    }
-                )
+                outputs_dict.update({
+                    f"{prefix}/prog_loss_chosen": progress_loss_chosen.mean().item(),
+                    f"{prefix}/prog_loss_rejected": progress_loss_rejected.mean().item(),
+                    f"{prefix}/progress_loss": progress_loss.item(),
+                    f"{prefix}/spearman_corr_avg": avg_spearman,
+                })
             return preference_loss, progress_loss, outputs_dict
         return preference_loss, progress_loss
 

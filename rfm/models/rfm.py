@@ -9,10 +9,9 @@ heads or there will be some problems with FSDP sharding.
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from transformers import PreTrainedModel, Qwen2_5_VLModel
 from transformers.modeling_outputs import SequenceClassifierOutputWithPast
-from typing import Optional, Dict, Any
+
 from rfm.utils.logging import _timer
 
 
@@ -187,7 +186,7 @@ class RFM(PreTrainedModel):
                 current_pos = vision_start_positions[0].item()
 
                 # Find where each frame ends in trajectory A
-                for frame_idx in range(T_A):
+                for _frame_idx in range(T_A):
                     # Each frame takes tokens_per_frame_A tokens
                     frame_end = current_pos + tokens_per_frame_A
                     frame_boundary_positions_A.append(frame_end)
@@ -226,7 +225,7 @@ class RFM(PreTrainedModel):
                     current_pos = vision_start_positions[1].item()
 
                     # Find where each frame ends in trajectory B
-                    for frame_idx in range(T_B):
+                    for _frame_idx in range(T_B):
                         # Each frame takes tokens_per_frame_B tokens
                         frame_end = current_pos + tokens_per_frame_B
                         frame_boundary_positions_B.append(frame_end)

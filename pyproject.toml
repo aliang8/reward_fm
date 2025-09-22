@@ -112,25 +112,16 @@ packages = ["models", "data"]
 [tool.ruff]
 line-length = 120
 target-version = "py310"
+fix = true
+unsafe-fixes = true  # <- allow deletions that might have side effects; optional, use with care
 
 [tool.ruff.lint]
-select = [
-    "E",  # pycodestyle errors
-    "W",  # pycodestyle warnings
-    "F",  # pyflakes
-    "I",  # isort
-    "B",  # flake8-bugbear
-    "C4", # flake8-comprehensions
-    "UP", # pyupgrade
-    "RUF",# Ruff-specific rules
-]
-ignore = [
-    "T201", # Allows `print` statements
-]
+select = ["E", "W", "F", "I", "B", "C4", "UP", "RUF"]
+ignore = ["T201"]
 
 [tool.ruff.lint.isort]
-force-single-line = true
+combine-as-imports = true
+split-on-trailing-comma = true
 
-# Tool configuration for 'pytest'
-[tool.pytest.ini_options]
-testpaths = ["tests"] # Assuming your tests are in a 'tests' directory
+[tool.ruff.format]
+preview = true

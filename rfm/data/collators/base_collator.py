@@ -1,9 +1,7 @@
-from rfm.data.dataset_types import SampleType, PreferenceSample, SimilaritySample, ProgressSample
-from transformers import AutoProcessor, AutoTokenizer
-from typing import List, Dict
 import torch
-from rfm.data.dataset_types import SampleType
-import numpy as np
+from transformers import AutoProcessor, AutoTokenizer
+
+from rfm.data.dataset_types import PreferenceSample, ProgressSample, SampleType, SimilaritySample
 
 
 class BaseCollator:
@@ -25,8 +23,8 @@ class BaseCollator:
 
     def __call__(
         self,
-        samples: List[SampleType],
-    ) -> Dict[str, torch.Tensor]:
+        samples: list[SampleType],
+    ) -> dict[str, torch.Tensor]:
         """
         Collate a list of samples into separate batches for preferences, progress, and similarities.
         For VQA-based reward modeling, everything goes through language generation.

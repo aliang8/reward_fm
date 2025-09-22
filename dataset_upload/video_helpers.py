@@ -5,16 +5,15 @@ backend fallbacks. Centralized here to be reused across dataset loaders.
 """
 
 import os
-import tempfile
 import shutil
-from typing import Optional, List
-
-import numpy as np
-import cv2
 import subprocess
+import tempfile
+
+import cv2
+import numpy as np
 
 
-def _ffprobe_codec_name(path: str) -> Optional[str]:
+def _ffprobe_codec_name(path: str) -> str | None:
     """Return codec_name for the first video stream using ffprobe, or None on failure."""
     if shutil.which("ffprobe") is None:
         return None
@@ -32,8 +31,7 @@ def _ffprobe_codec_name(path: str) -> Optional[str]:
                 "default=nk=1:nw=1",
                 path,
             ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             check=True,
             text=True,
         )
@@ -43,7 +41,7 @@ def _ffprobe_codec_name(path: str) -> Optional[str]:
         return None
 
 
-def _reencode_to_h264(input_path: str) -> Optional[str]:
+def _reencode_to_h264(input_path: str) -> str | None:
     """Re-encode input video to H.264 yuv420p if ffmpeg is available. Returns output path or None."""
     if shutil.which("ffmpeg") is None:
         return None
@@ -77,9 +75,9 @@ def _reencode_to_h264(input_path: str) -> Optional[str]:
         return None
 
 
-def _open_with_best_backend(path: str) -> Optional[cv2.VideoCapture]:
+def _open_with_best_backend(path: str) -> cv2.VideoCapture | None:
     """Try multiple OpenCV backends and return an opened capture or None."""
-    backends: List[int] = [getattr(cv2, "CAP_FFMPEG", cv2.CAP_ANY), cv2.CAP_ANY]
+    backends: list[int] = [getattr(cv2, "CAP_FFMPEG", cv2.CAP_ANY), cv2.CAP_ANY]
     for backend in backends:
         try:
             cap_try = cv2.VideoCapture(path, backend)
@@ -105,8 +103,8 @@ def load_video_frames(video_input) -> np.ndarray:
     - Uses OpenCV with FFMPEG backend when available
     - Returns numpy array of shape (T, H, W, 3) in RGB order
     """
-    temp_files_to_cleanup: List[str] = []
-    cap: Optional[cv2.VideoCapture] = None
+    temp_files_to_cleanup: list[str] = []
+    cap: cv2.VideoCapture | None = None
 
     if isinstance(video_input, (str, os.PathLike)):
         video_path = str(video_input)
@@ -129,7 +127,7 @@ def load_video_frames(video_input) -> np.ndarray:
         cap = _open_with_best_backend(decodable_path)
 
     try:
-        frames: List[np.ndarray] = []
+        frames: list[np.ndarray] = []
         if cap is None or not cap.isOpened():
             raise ValueError(
                 "Could not open video file with available backends. If the source is AV1, install AV1 support or enable ffmpeg re-encode."

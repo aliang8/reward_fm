@@ -1,40 +1,28 @@
-import pyrallis
-import warnings
-import torch
-from datasets import Dataset
-from transformers import (
-    AutoProcessor,
-    Qwen2_5_VLModel,
-    TrainingArguments,
-)
-
-from PIL import Image
 import json
 import os
-import yaml
-from rfm.utils.logging import is_rank_0, rank_0_print
-from pyrallis import wrap
-import wandb
-import numpy as np
-from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
-from rich import print as rprint
+import warnings
 from dataclasses import asdict
+
+import torch
 import yaml
+from rich import print as rprint
+from rich.console import Console
+from rich.panel import Panel
+
+import wandb
 
 # Import shared configs and utilities
 from rfm.configs.experiment_configs import ExperimentConfig
-from rfm.trainers import RFMHeadsTrainer, RFMVQATrainer, ReWiNDTrainer
+from rfm.trainers import ReWiNDTrainer, RFMHeadsTrainer, RFMVQATrainer
+from rfm.utils.logging import _timer, is_rank_0, rank_0_print
+from rfm.utils.parser import parse_multiple
 from rfm.utils.setup_utils import (
+    create_training_arguments,
+    setup_batch_collator,
+    setup_dataset,
     setup_model_and_processor,
     setup_peft_model,
-    create_training_arguments,
-    setup_dataset,
-    setup_batch_collator,
 )
-from rfm.utils.parser import parse_multiple
-from rfm.utils.logging import _timer
 
 # Suppress FSDP ShardedTensor deprecation warning
 warnings.filterwarnings("ignore", message="Please use DTensor instead and we are deprecating ShardedTensor")
@@ -138,10 +126,10 @@ def train(cfg: ExperimentConfig):
         print("--- PRE-TRAINING FSDP DIAGNOSTICS ---")
         # The Trainer creates its own Accelerator instance. Let's check its state.
         if hasattr(trainer, "accelerator"):
-            print(f"Trainer's Accelerator object found.")
+            print("Trainer's Accelerator object found.")
             fsdp_plugin = getattr(trainer.accelerator.state, "fsdp_plugin", None)
             if fsdp_plugin:
-                print(f"FSDP Plugin found in Accelerator state.")
+                print("FSDP Plugin found in Accelerator state.")
                 # This is the configuration the accelerator will ACTUALLY use for wrapping.
                 print(f"VERIFY: Actual FSDP plugin config being used: {fsdp_plugin}")
             else:

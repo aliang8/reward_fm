@@ -1,7 +1,5 @@
-import torch
 import numpy as np
-from PIL import Image
-from typing import List, Optional, Tuple, Union, Any
+import torch
 
 
 def pad_target_progress(progress_list):

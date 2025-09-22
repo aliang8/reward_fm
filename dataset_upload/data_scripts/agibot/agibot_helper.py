@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterable
 from glob import glob
-from typing import Dict, Iterable, List, Tuple
 
 # Default locations used by the downloader
 DEFAULT_DATASET_ROOT: str = os.path.join("datasets", "tmp", "agibotworld_alpha")
@@ -36,7 +36,7 @@ def build_episode_to_task_index(
     task_info_dir: str = DEFAULT_TASK_INFO_DIR,
     output_index_path: str = DEFAULT_INDEX_PATH,
     verbose: bool = True,
-) -> Dict[str, str]:
+) -> dict[str, str]:
     """Build an index mapping episode_id -> task_json_path and save to disk.
 
     Keys are stored as strings in the JSON index for portability, but callers
@@ -48,12 +48,12 @@ def build_episode_to_task_index(
     if not os.path.isdir(task_info_dir):
         raise FileNotFoundError(f"Task info directory not found: {os.path.abspath(task_info_dir)}")
 
-    episode_to_task: Dict[str, str] = {}
-    duplicate_episode_ids: List[str] = []
+    episode_to_task: dict[str, str] = {}
+    duplicate_episode_ids: list[str] = []
 
     for json_path in _task_json_files(task_info_dir):
         try:
-            with open(json_path, "r", encoding="utf-8") as f:
+            with open(json_path, encoding="utf-8") as f:
                 entries = json.load(f)
         except Exception as exc:  # pragma: no cover - defensive logging
             if verbose:
@@ -92,7 +92,7 @@ def build_episode_to_task_index(
     return episode_to_task
 
 
-def load_episode_to_task_index(index_path: str = DEFAULT_INDEX_PATH) -> Dict[str, str]:
+def load_episode_to_task_index(index_path: str = DEFAULT_INDEX_PATH) -> dict[str, str]:
     """Load the episode->task index from disk.
 
     Raises FileNotFoundError if the index doesn't exist.
@@ -102,7 +102,7 @@ def load_episode_to_task_index(index_path: str = DEFAULT_INDEX_PATH) -> Dict[str
         raise FileNotFoundError(
             f"Episode index not found: {os.path.abspath(index_path)}. Build it with build_episode_to_task_index()."
         )
-    with open(index_path, "r", encoding="utf-8") as f:
+    with open(index_path, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -110,7 +110,7 @@ def ensure_episode_index(
     task_info_dir: str = DEFAULT_TASK_INFO_DIR,
     index_path: str = DEFAULT_INDEX_PATH,
     verbose: bool = False,
-) -> Dict[str, str]:
+) -> dict[str, str]:
     """Return an in-memory episode->task index, building it if missing."""
 
     if os.path.isfile(index_path):
@@ -140,7 +140,7 @@ def get_episode_record(
     episode_id: int | str,
     task_info_dir: str = DEFAULT_TASK_INFO_DIR,
     index_path: str = DEFAULT_INDEX_PATH,
-) -> Tuple[str, dict]:
+) -> tuple[str, dict]:
     """Return (json_path, episode_record) for the given episode id.
 
     This reads the relevant task JSON file and returns the full dictionary
@@ -149,7 +149,7 @@ def get_episode_record(
     """
 
     json_path = find_task_json_for_episode(episode_id=episode_id, task_info_dir=task_info_dir, index_path=index_path)
-    with open(json_path, "r", encoding="utf-8") as f:
+    with open(json_path, encoding="utf-8") as f:
         entries = json.load(f)
     key = int(episode_id)
     for item in entries:
@@ -160,11 +160,11 @@ def get_episode_record(
 
 __all__ = [
     "DEFAULT_DATASET_ROOT",
-    "DEFAULT_TASK_INFO_DIR",
     "DEFAULT_INDEX_PATH",
+    "DEFAULT_TASK_INFO_DIR",
     "build_episode_to_task_index",
-    "load_episode_to_task_index",
     "ensure_episode_index",
     "find_task_json_for_episode",
     "get_episode_record",
+    "load_episode_to_task_index",
 ]

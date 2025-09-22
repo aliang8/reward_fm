@@ -5,14 +5,13 @@ Contains utility functions for processing frames, saving images, and managing da
 """
 
 import os
+import subprocess as sp
+import uuid
+
+import cv2
 import numpy as np
 from PIL import Image
-from typing import List, Dict, Any, Tuple
-from pathlib import Path
-import uuid
 from sentence_transformers import SentenceTransformer
-import cv2
-import subprocess as sp
 
 
 def save_frame_as_image(frame_data: np.ndarray, output_path: str) -> str:
@@ -61,7 +60,15 @@ def motion_aware_downsample(frames: np.ndarray, max_frames: int = 32) -> np.ndar
     gray = [_prep(f) for f in frames]
 
     scores = np.zeros(T, dtype=np.float32)
-    fb_args = dict(pyr_scale=0.5, levels=3, winsize=15, iterations=3, poly_n=5, poly_sigma=1.2, flags=0)
+    fb_args = {
+        "pyr_scale": 0.5,
+        "levels": 3,
+        "winsize": 15,
+        "iterations": 3,
+        "poly_n": 5,
+        "poly_sigma": 1.2,
+        "flags": 0,
+    }
     for i in range(T - 1):
         flow = cv2.calcOpticalFlowFarneback(gray[i], gray[i + 1], None, **fb_args)
         scores[i + 1] = np.linalg.norm(flow, axis=-1).mean()
@@ -119,14 +126,14 @@ def create_trajectory_video(
         target_width = width
 
     # Create sequence directory and video file path
-    video_path = os.path.join(output_dir, f"trajectory.mp4")
+    video_path = os.path.join(output_dir, "trajectory.mp4")
     print(f"Saving video to: {video_path}")
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     video_writer = cv2.VideoWriter(video_path, fourcc, fps, (target_width, target_height))
 
     if not video_writer.isOpened():
-        raise Exception(f"Could not create video writer with any codec")
+        raise Exception("Could not create video writer with any codec")
 
     # Write frames to video
     for frame in frames:
@@ -280,8 +287,8 @@ def create_trajectory_video_optimized(
 
 
 def create_trajectory_sequence(
-    frames: List[str], output_dir: str, sequence_name: str, max_frames: int = -1
-) -> List[str]:
+    frames: list[str], output_dir: str, sequence_name: str, max_frames: int = -1
+) -> list[str]:
     """Create a trajectory sequence from frames and save as images."""
 
     sequence_dir = os.path.join(output_dir, sequence_name)
@@ -305,7 +312,7 @@ def generate_unique_id() -> str:
 
 
 def create_hf_trajectory(
-    traj_dict: Dict,
+    traj_dict: dict,
     video_path: str,
     lang_vector: np.ndarray,
     max_frames: int = -1,
@@ -314,8 +321,8 @@ def create_hf_trajectory(
     fps: int = 10,
     shortest_edge_size: int = 240,
     center_crop: bool = False,
-    hub_repo_id: str = None,
-) -> Dict:
+    hub_repo_id: str | None = None,
+) -> dict:
     """Create a HuggingFace dataset trajectory with unified frame loading."""
 
     # Handle frames - could be np.array, callable, or missing
@@ -365,7 +372,7 @@ def create_output_directory(output_dir: str) -> None:
     os.makedirs(output_dir, exist_ok=True)
 
 
-def flatten_task_data(task_data: Dict[str, List[Dict]]) -> List[Dict]:
+def flatten_task_data(task_data: dict[str, list[dict]]) -> list[dict]:
     """Flatten task data into a list of trajectories."""
     all_trajectories = []
     for task_name, trajectories in task_data.items():

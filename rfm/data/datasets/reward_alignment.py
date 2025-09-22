@@ -7,14 +7,12 @@ For each trajectory, it creates multiple subsequences (0:2, 0:4, 0:6, etc.) and 
 as PreferenceSample objects that can be evaluated by the model.
 """
 
-from rfm.data.dataset_types import ProgressSample, Trajectory
-from rfm.utils.logging import rank_0_print
-from typing import Dict, List, Optional, Union
-from rfm.data.datasets.base import RFMBaseDataset
 from tqdm import tqdm
-import numpy as np
-import random
-from rfm.data.datasets.helpers import linspace_subsample_frames, pad_trajectory_to_max_frames
+
+from rfm.data.dataset_types import ProgressSample, Trajectory
+from .base import RFMBaseDataset
+from .helpers import linspace_subsample_frames, pad_trajectory_to_max_frames
+from rfm.utils.logging import rank_0_print
 
 
 class RewardAlignmentDataset(RFMBaseDataset):
@@ -26,7 +24,7 @@ class RewardAlignmentDataset(RFMBaseDataset):
     """
 
     def __init__(
-        self, config, is_evaluation=False, verbose=True, max_trajectories: Optional[int] = None, frame_step: int = 2
+        self, config, is_evaluation=False, verbose=True, max_trajectories: int | None = None, frame_step: int = 2
     ):
         super().__init__(config, is_evaluation, verbose=verbose)
 
@@ -38,7 +36,7 @@ class RewardAlignmentDataset(RFMBaseDataset):
             f"Generated {len(self.sample_indices)} reward alignment sample indices from {min(len(self.robot_trajectories), self.max_trajectories) if self.max_trajectories else len(self.robot_trajectories)} trajectories"
         )
 
-    def _generate_all_sample_indices(self) -> List[Dict]:
+    def _generate_all_sample_indices(self) -> list[dict]:
         """Generate all possible subsequence sample indices (not the actual samples)."""
         sample_indices = []
 
@@ -69,7 +67,7 @@ class RewardAlignmentDataset(RFMBaseDataset):
 
         return sample_indices
 
-    def _generate_sample_from_indices(self, sample_idx_info: Dict) -> ProgressSample:
+    def _generate_sample_from_indices(self, sample_idx_info: dict) -> ProgressSample:
         """Generate a single subsequence sample from stored indices."""
         traj_idx = sample_idx_info["traj_idx"]
         end_idx = sample_idx_info["end_idx"]

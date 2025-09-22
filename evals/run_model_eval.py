@@ -19,26 +19,25 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+import asyncio
 import json
 import os
-import asyncio
-import aiohttp
-from datetime import datetime
-from pathlib import Path
 import time
+from pathlib import Path
+from typing import Any
 
+import aiohttp
+
+from evals.eval_utils import build_payload, post_batch, post_batch_npy, post_batch_npy_async
 from rfm.configs.eval_configs import EvaluationConfig
-from rfm.utils.setup_utils import setup_dataset
-from evals.eval_utils import post_batch, post_batch_npy, post_batch_npy_async, build_payload
-
-from rfm.utils.logging import _timer, timer
 from rfm.data.dataset_types import SampleType
+from rfm.utils.logging import timer
+from rfm.utils.setup_utils import setup_dataset
 
 
 def _save_result_as_json(
-    samples: List[SampleType], response: Dict[str, Any]
-) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    samples: list[SampleType], response: dict[str, Any]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Save detailed results for each sample in the batch.
 
     Returns:
@@ -124,7 +123,7 @@ async def iter_eval_batches_async(
     num_batches: int = 10,
     batch_size: int = 4,
     max_concurrent_requests: int = 4,
-) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Run evaluation batches asynchronously with concurrent requests."""
     # Create eval data generator and dataset-like iterator
     dataset = setup_dataset(eval_cfg.data, is_eval=True)
@@ -139,8 +138,8 @@ async def iter_eval_batches_async(
         actual_num_batches = num_batches
         print(f"\nProcessing {actual_num_batches} batches of size {batch_size} (dataset size: {dataset_size})")
 
-    all_preference_results: List[Dict[str, Any]] = []
-    all_progress_results: List[Dict[str, Any]] = []
+    all_preference_results: list[dict[str, Any]] = []
+    all_progress_results: list[dict[str, Any]] = []
     idx = 0
 
     # Use aiohttp session for concurrent requests
@@ -184,7 +183,9 @@ async def iter_eval_batches_async(
             round_time = time.time() - start_time
 
             # Process results and handle any errors
-            for i, (batch_result, batch_samples) in enumerate(zip(batch_results_list, batch_samples_list)):
+            for _i, (batch_result, batch_samples) in enumerate(
+                zip(batch_results_list, batch_samples_list, strict=False)
+            ):
                 # Process detailed results for this batch
                 preference_results, progress_results = _save_result_as_json(batch_samples, batch_result)
                 all_preference_results.extend(preference_results)
@@ -206,7 +207,7 @@ def iter_eval_batches_sync(
     num_batches: int = 10,
     batch_size: int = 4,
     post_function: callable = post_batch,
-) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Run evaluation batches synchronously (original implementation)."""
     # Create eval data generator and dataset-like iterator
     dataset = setup_dataset(eval_cfg.data, is_eval=True)
@@ -221,8 +222,8 @@ def iter_eval_batches_sync(
         actual_num_batches = num_batches
         print(f"\nProcessing {actual_num_batches} batches of size {batch_size} (dataset size: {dataset_size})")
 
-    all_preference_results: List[Dict[str, Any]] = []
-    all_progress_results: List[Dict[str, Any]] = []
+    all_preference_results: list[dict[str, Any]] = []
+    all_progress_results: list[dict[str, Any]] = []
     idx = 0
 
     for batch_idx in range(actual_num_batches):
@@ -265,7 +266,9 @@ def iter_eval_batches_sync(
 def main():
     """Main evaluation function using simple argparse for config loading."""
     import argparse
+
     import yaml
+
     from rfm.configs.experiment_configs import DataConfig
 
     parser = argparse.ArgumentParser(description="Evaluate RFM model")
@@ -287,7 +290,7 @@ def main():
 
     # Load evaluation config manually
     print(f"Loading evaluation config from: {args.config}")
-    with open(args.config, "r") as f:
+    with open(args.config) as f:
         config_dict = yaml.safe_load(f)
 
     cfg = EvaluationConfig(**config_dict)
@@ -339,7 +342,7 @@ def main():
 
     # Create results directory structure
     dataset_name = f"{cfg.data.eval_datasets[0].replace('/', '_')}_{cfg.data.eval_subsets[0]}"
-    model_name = cfg.model_path.replace("/", "_") if cfg.model_path else f"base_model"
+    model_name = cfg.model_path.replace("/", "_") if cfg.model_path else "base_model"
     eval_log_dir = Path(cfg.log_dir) / model_name / dataset_name
     os.makedirs(eval_log_dir, exist_ok=True)
 
@@ -357,7 +360,7 @@ def main():
             json.dump(progress_results, f, indent=2)
         print(f"Progress results saved to: {progress_file}")
 
-    print(f"\nEvaluation complete!")
+    print("\nEvaluation complete!")
     print(f"Total samples processed: {len(preference_results)}")
 
 

@@ -1,10 +1,9 @@
-from rfm.data.dataset_types import ProgressSample, Trajectory
-from rfm.utils.logging import rank_0_print
-from typing import Dict, List
-from rfm.data.datasets.base import RFMBaseDataset
-from tqdm import tqdm
 import numpy as np
-from rfm.data.datasets.helpers import linspace_subsample_frames, pad_trajectory_to_max_frames
+
+from rfm.data.dataset_types import ProgressSample, Trajectory
+from .base import RFMBaseDataset
+from .helpers import linspace_subsample_frames, pad_trajectory_to_max_frames
+from rfm.utils.logging import rank_0_print
 
 
 class ProgressDataset(RFMBaseDataset):

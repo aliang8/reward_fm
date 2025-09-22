@@ -6,7 +6,8 @@ across different training scripts.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Union
+from typing import Optional
+
 from transformers import PretrainedConfig
 
 
@@ -54,7 +55,7 @@ class PEFTConfig:
     lora_alpha: int = field(default=64)
     lora_dropout: float = field(default=0.05)
     bias: str = field(default="none")
-    target_modules: List[str] = field(
+    target_modules: list[str] = field(
         default_factory=lambda: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
     )
     peft_vision_encoder: bool = field(default=False, metadata={"help": "Whether to attach LoRA to the vision encoder"})
@@ -65,16 +66,16 @@ class DataConfig:
     """Configuration for data loading and processing."""
 
     # Dataset paths and subsets
-    train_datasets: List[str] = field(
+    train_datasets: list[str] = field(
         default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of training dataset names"}
     )
-    train_subsets: List[List[str]] = field(
+    train_subsets: list[list[str]] = field(
         default_factory=lambda: [["libero_90"]], metadata={"help": "List of training dataset subsets"}
     )
-    eval_datasets: List[str] = field(
+    eval_datasets: list[str] = field(
         default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of evaluation dataset names"}
     )
-    eval_subsets: List[List[str]] = field(
+    eval_subsets: list[list[str]] = field(
         default_factory=lambda: [["libero_10"]], metadata={"help": "List of evaluation dataset subsets"}
     )
 
@@ -90,7 +91,7 @@ class DataConfig:
     # rewind_lengths: [1, 2, 4, 8]  # Generate rewinds of 1, 2, 4, and 8 frames
     # samples_per_trajectory: 2  # Generate 2 preference samples per trajectory
     # Note: Original trajectories are preferred over rewound versions
-    rewind_lengths: Optional[List[int]] = field(
+    rewind_lengths: Optional[list[int]] = field(
         default=None, metadata={"help": "List of rewind lengths for rewound dataset (default: 1 to max_frames)"}
     )
     samples_per_trajectory: int = field(
@@ -102,14 +103,14 @@ class DataConfig:
     resized_width: int = field(default=224, metadata={"help": "Width to resize video frames to"})
 
     # Data generation parameters
-    sample_type_ratio: List[float] = field(
+    sample_type_ratio: list[float] = field(
         default_factory=lambda: [1.0, 0.0, 0.0], metadata={"help": "Ratio of pref, sim, and progress samples"}
     )
     dataset_preference_ratio: float = field(
         default=0.8, metadata={"help": "Ratio of dataset preference samples to generated preference samples"}
     )
     # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, video_binned]
-    preference_strategy_ratio: List[float] = field(default_factory=lambda: [0.7, 0.1, 0.1, 0.1])
+    preference_strategy_ratio: list[float] = field(default_factory=lambda: [0.7, 0.1, 0.1, 0.1])
 
     # Processing parameters
     shuffle: bool = field(default=True, metadata={"help": "Whether to shuffle the dataset"})

@@ -1,24 +1,23 @@
 import os
-import itertools
-from tqdm import tqdm
-from typing import Dict, List, Tuple, Optional, Any
-from pathlib import Path
-import numpy as np
 from multiprocessing import cpu_count
+from pathlib import Path
+from typing import Any
+
+import numpy as np
 from rfm.data.dataset_helpers.oxe_helper import OXE_DATASET_CONFIGS
-from datasets import Dataset
 from rfm.data.helpers import (
-    create_trajectory_video_optimized,
-    load_sentence_transformer_model,
     create_hf_trajectory,
     generate_unique_id,
+    load_sentence_transformer_model,
 )
+from tqdm import tqdm
+
+from datasets import Dataset
 
 # Disable GPUs for TensorFlow in this loader to avoid CUDA context issues in workers
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
 import tensorflow_datasets as tfds
-import tensorflow as tf
 
 OXE_VALID_DATASETS = [
     "austin_buds_dataset_converted_externally_to_rlds",
@@ -70,7 +69,7 @@ def _build_oxe_video_paths(
     dataset_label: str,
     episode_idx: int,
     view_key: str,
-) -> Tuple[str, str]:
+) -> tuple[str, str]:
     shard_dir = _stable_shard_for_index(episode_idx)
     episode_dir = os.path.join(output_dir, dataset_label.lower(), shard_dir, f"episode_{episode_idx:06d}")
     os.makedirs(episode_dir, exist_ok=True)
@@ -139,7 +138,7 @@ def convert_oxe_dataset_to_hf(
     dataset_path: str,
     dataset_name: str,
     output_dir: str,
-    max_trajectories: Optional[int] = None,
+    max_trajectories: int | None = None,
     max_frames: int = 64,
     fps: int = 10,
     num_workers: int = -1,
@@ -226,9 +225,9 @@ def convert_oxe_dataset_to_hf(
 
     # Language model and cache
     lang_model = load_sentence_transformer_model()
-    lang_cache: Dict[str, Any] = {}
+    lang_cache: dict[str, Any] = {}
 
-    entries: List[Dict[str, Any]] = []
+    entries: list[dict[str, Any]] = []
     produced = 0
     max_limit = float("inf") if (max_trajectories is None or max_trajectories == -1) else int(max_trajectories)
 
@@ -257,7 +256,7 @@ def convert_oxe_dataset_to_hf(
             continue
 
         # Extract task/instruction
-        task: Optional[str] = None
+        task: str | None = None
         for key in POSSIBLE_LANG_INSTRUCTION_KEYS:
             if key in first_step.get("observation", {}):
                 if base_ds_name == "language_table":
@@ -283,7 +282,7 @@ def convert_oxe_dataset_to_hf(
             episode_np = tfds.as_numpy(episode)
 
             # iterate through all steps and just store as a list
-            episode_np = [s for s in episode_np["steps"]]
+            episode_np = list(episode_np["steps"])
 
             episode_batch.append(episode_np)
             episode_info_batch.append((ep_idx, task, lang_vec))
@@ -308,6 +307,7 @@ def convert_oxe_dataset_to_hf(
                     [max_frames] * len(episode_batch),
                     [fps] * len(episode_batch),
                     [valid_img_keys] * len(episode_batch),
+                    strict=False,
                 ):
                     episode_entries = _process_single_oxe_episode(args)
                     entries.extend(episode_entries)
@@ -328,6 +328,7 @@ def convert_oxe_dataset_to_hf(
                         [max_frames] * len(episode_batch),
                         [fps] * len(episode_batch),
                         [valid_img_keys] * len(episode_batch),
+                        strict=False,
                     )
                 )
 
@@ -358,18 +359,16 @@ def convert_oxe_dataset_to_hf(
             break
 
     if not entries:
-        return Dataset.from_dict(
-            {
-                "id": [],
-                "task": [],
-                "lang_vector": [],
-                "data_source": [],
-                "frames": [],
-                "is_robot": [],
-                "quality_label": [],
-                "preference_group_id": [],
-                "preference_rank": [],
-            }
-        )
+        return Dataset.from_dict({
+            "id": [],
+            "task": [],
+            "lang_vector": [],
+            "data_source": [],
+            "frames": [],
+            "is_robot": [],
+            "quality_label": [],
+            "preference_group_id": [],
+            "preference_rank": [],
+        })
 
     return Dataset.from_list(entries)

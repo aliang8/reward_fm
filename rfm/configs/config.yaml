@@ -13,8 +13,8 @@ trainer_cls: "rfm_heads" # "rewind_transformer", "rfm_vqa"
 # =====================================================================================
 model:
   model_type: "default" # "default" or "vqa"
-  # base_model_id: "Qwen/Qwen2.5-VL-3B-Instruct"
-  base_model_id: "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
+  base_model_id: "Qwen/Qwen2.5-VL-3B-Instruct"
+  # base_model_id: "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
   torch_dtype: "bfloat16"
   trust_remote_code: true
   # Additional options for more comprehensive training (when use_peft: false)

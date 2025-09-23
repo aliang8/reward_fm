@@ -269,12 +269,9 @@ class RFMHeadsTrainer(Trainer):
 
         # Extract the separate batches
         preference_inputs = inputs.get("preference_inputs", {})
-        progress_inputs = inputs.get("progress_inputs", {})
         similarity_inputs = inputs.get("similarity_inputs", {})
-
         num_preferences = inputs.get("num_preferences", 0)
         num_similarities = inputs.get("num_similarities", 0)
-        num_progress = inputs.get("num_progress", 0)
 
         # Initialize loss components and metadata
         total_loss = 0.0
@@ -283,29 +280,26 @@ class RFMHeadsTrainer(Trainer):
         # Compute preference loss if we have preference samples
 
         if num_preferences > 0 and preference_inputs and self.config.model.train_preference_head:
-            with _timer("time/compute_preference_loss", timing_raw=self.timing_raw):
-                preference_loss, loss_dict = self._compute_preference_loss(
-                    model, preference_inputs, return_outputs=True, training=training
-                )
-                total_loss += preference_loss
-                log_metadata.update(loss_dict)
-
-        # Compute progress loss if we have progress samples
-        if num_progress > 0 and progress_inputs and self.config.model.train_progress_head:
-            with _timer("time/compute_progress_loss", timing_raw=self.timing_raw):
-                progress_loss, loss_dict = self._compute_progress_loss(
-                    model, progress_inputs, return_outputs=True, training=training
-                )
+                with _timer("time/compute_preference_loss", timing_raw=self.timing_raw):
+                    preference_loss, loss_dict = self._compute_preference_loss(
+                        model, preference_inputs, return_outputs=True, training=training
+                    )
+                    total_loss += preference_loss
+            if self.config.model.train_progress_head:
                 total_loss += progress_loss
+
             log_metadata.update(loss_dict)
 
         # Compute similarity loss if we have similarity samples
-        if num_similarities > 0 and similarity_inputs and self.config.model.train_similarity_head:
+        if num_similarities > 0 and similarity_inputs:
             with _timer("time/compute_similarity_loss", timing_raw=self.timing_raw):
-                similarity_loss, loss_dict = self._compute_similarity_loss(
+                similarity_loss, progress_loss, loss_dict = self._compute_similarity_loss(
                     model, similarity_inputs, return_outputs=True, training=training
                 )
+            if self.config.model.train_similarity_head:
                 total_loss += similarity_loss
+            if self.config.model.train_progress_head:
+                total_loss += progress_loss
             log_metadata.update(loss_dict)
 
         # Always store custom losses for logging (even when return_outputs=False)
@@ -318,12 +312,13 @@ class RFMHeadsTrainer(Trainer):
 
         return total_loss
 
-    def _compute_progress_loss_helper(
+    def _compute_progress_loss(
         self,
         progress_logits,
         target_progress,
         frame_shape,
         target_progress_mask,
+        trajectory_name="trajectory",
         aggregate: bool = False,
     ):
         """
@@ -333,6 +328,7 @@ class RFMHeadsTrainer(Trainer):
             progress_logits: Progress prediction tensors (can be tensor or list of tensors)
             target_progress: Target progress tensors (can be tensor or list of tensors)
             frame_shape: List of frame shapes for splicing
+            trajectory_name: Name of trajectory for logging/debugging
             aggregate: Whether to return the mean of the losses and correlations
 
         Returns:
@@ -344,7 +340,7 @@ class RFMHeadsTrainer(Trainer):
 
         # Ensure we have the same number of samples
         assert len(progress_logits) == len(target_progress), (
-            f"Progress logits and target progress have different batch sizes"
+            f"{trajectory_name}: Progress logits and target progress have different batch sizes"
         )
 
         # Splice both predicted and target logits based on frame shapes
@@ -396,80 +392,6 @@ class RFMHeadsTrainer(Trainer):
 
         return 0.0, 0.0
 
-    def _compute_progress_loss(self, model, inputs, return_outputs=False, training=True):
-        """Compute progress prediction loss."""
-        with _timer("time/prog_forward", timing_raw=self.timing_raw):
-            model_outputs, progress_logits, model_timing_raw = model(
-                input_ids=inputs["input_ids"],
-                attention_mask=inputs["attention_mask"],
-                pixel_values=inputs.get("pixel_values", None),
-                pixel_values_videos=inputs.get("pixel_values_videos", None),
-                image_grid_thw=inputs.get("image_grid_thw", None),
-                video_grid_thw=inputs.get("video_grid_thw", None),
-                second_per_grid_ts=inputs.get("second_per_grid_ts", None),
-                sample_type="progress",
-                timing_raw=self.timing_raw,
-            )
-            self.timing_raw.update(model_timing_raw)
-
-        progress_pred = progress_logits["A"]
-        progress_target = inputs["target_progress"]
-        frame_shapes = inputs["frame_shapes"]
-        progress_target_mask = inputs["target_progress_mask"]
-
-        progress_loss_all, spearman_corr_all = self._compute_progress_loss_helper(
-            progress_pred,
-            progress_target,
-            frame_shapes,
-            progress_target_mask,
-            aggregate=False,
-        )
-
-        progress_loss = progress_loss_all.mean()
-
-        if return_outputs:
-            outputs_dict = {}
-
-            prefix = "train" if training else "eval"
-
-            # split spearman by data gen strategy
-            strats = set(inputs["data_gen_strategy"])
-            for strat in strats:
-                mask = [1 if s == strat else 0 for s in inputs["data_gen_strategy"]]
-                mask = torch.tensor(mask, device=self.accelerator.device)
-                outputs_dict.update({
-                    f"{prefix}_strat_spearman_corr/{strat}": (spearman_corr_all[mask == 1]).mean().item(),
-                    f"{prefix}_strat_prog_loss/{strat}": (progress_loss_all[mask == 1]).mean().item(),
-                })
-
-            # split spearman by data source
-            data_sources = set(inputs["data_source"])
-            for data_source in data_sources:
-                mask = [1 if s == data_source else 0 for s in inputs["data_source"]]
-                mask = torch.tensor(mask, device=self.accelerator.device)
-                outputs_dict.update({
-                    f"{prefix}_ds_spearman_corr/{data_source}": (spearman_corr_all[mask == 1]).mean().item(),
-                    f"{prefix}_ds_prog_loss/{data_source}": (progress_loss_all[mask == 1]).mean().item(),
-                })
-
-            # Compute average Spearman correlation across trajectories A and B
-            spearman_values = []
-            if isinstance(spearman_corr_all, torch.Tensor):
-                spearman_values.append(spearman_corr_all.mean().item())
-            else:
-                spearman_values.append(spearman_corr_all)
-
-            avg_spearman = np.mean(spearman_values) if spearman_values else 0.0
-
-            outputs_dict.update({
-                f"{prefix}/prog_loss": progress_loss.item(),
-                f"{prefix}/spearman_corr_avg": avg_spearman,
-            })
-
-            return progress_loss, outputs_dict
-
-        return progress_loss
-
     def _compute_preference_loss(self, model, inputs, return_outputs=False, training=True):
         """Compute preference prediction loss using Bradley-Terry model."""
         # Single forward pass with both trajectories concatenated
@@ -507,12 +429,80 @@ class RFMHeadsTrainer(Trainer):
             )
             preference_loss = preference_loss_all.mean()
 
+        # if self.config.model.train_progress_head:
+        #     # Get frame shapes for splicing target progress to match predicted lengths
+        #     # Since the order is randomized, we need to use preference labels to determine which is which
+        #     chosen_frames_shape = inputs.get("chosen_frames_shape", None)
+        #     rejected_frames_shape = inputs.get("rejected_frames_shape", None)
+
+        #     # Determine which frame shape corresponds to which trajectory based on preference labels
+        #     # preference_labels: 1.0 = first trajectory preferred, 0.0 = second trajectory preferred
+        #     # We need to map this to chosen vs rejected for progress loss calculation
+
+        #     # For each sample, determine which trajectory (first or second) is the chosen one
+        #     batch_size = len(preference_labels)
+        #     chosen_traj_shapes = []
+        #     rejected_traj_shapes = []
+        #     chosen_traj_progress_pred = []
+        #     rejected_traj_progress_pred = []
+        #     chosen_traj_progress_target = []
+        #     rejected_traj_progress_target = []
+        #     chosen_traj_progress_target_mask = []
+        #     rejected_traj_progress_target_mask = []
+
+        #     for i in range(batch_size):
+        #         # First trajectory is preferred (chosen)
+        #         chosen_traj_shapes.append(chosen_frames_shape[i])
+        #         rejected_traj_shapes.append(rejected_frames_shape[i])
+
+        #         chosen_traj_progress_target.append(inputs["target_progress_chosen"][i])
+        #         rejected_traj_progress_target.append(inputs["target_progress_rejected"][i])
+        #         chosen_traj_progress_target_mask.append(inputs["target_progress_chosen_mask"][i])
+        #         rejected_traj_progress_target_mask.append(inputs["target_progress_rejected_mask"][i])
+
+        #         if preference_labels[i] == 1.0:
+        #             chosen_traj_progress_pred.append(progress_logits["A"][i])
+        #             rejected_traj_progress_pred.append(progress_logits["B"][i])
+        #         else:
+        #             # Second trajectory is preferred
+        #             chosen_traj_progress_pred.append(progress_logits["B"][i])
+        #             rejected_traj_progress_pred.append(progress_logits["A"][i])
+
+        #     # Convert to tensors for the helper function
+        #     chosen_traj_shapes = torch.stack(chosen_traj_shapes)
+        #     rejected_traj_shapes = torch.stack(rejected_traj_shapes)
+        #     chosen_traj_progress_target_mask = torch.stack(chosen_traj_progress_target_mask)
+        #     rejected_traj_progress_target_mask = torch.stack(rejected_traj_progress_target_mask)
+
+        #     # Compute progress loss for both trajectories using the helper function
+        #     # Now we know which shape corresponds to which trajectory based on preference labels
+        #     if self.config.model.train_progress_head:
+        #         progress_loss_chosen, spearman_corr_chosen = self._compute_progress_loss(
+        #             chosen_traj_progress_pred,
+        #             chosen_traj_progress_target,
+        #             chosen_traj_shapes,
+        #             chosen_traj_progress_target_mask,
+        #             "A",
+        #             aggregate=False,
+        #         )
+        #         progress_loss_rejected, spearman_corr_rejected = self._compute_progress_loss(
+        #             rejected_traj_progress_pred,
+        #             rejected_traj_progress_target,
+        #             rejected_traj_shapes,
+        #             rejected_traj_progress_target_mask,
+        #             "B",
+        #             aggregate=False,
+        #         )
+
+        #         # Combine progress losses
+        #         progress_loss = progress_loss_chosen.mean() + progress_loss_rejected.mean()
+
         if return_outputs:
             outputs_dict = {}
 
             prefix = "train" if training else "eval"
 
-            if preference_loss is not None:
+            if self.config.model.train_preference_head and preference_loss is not None:
                 # Compute preference accuracy for training monitoring
                 preference_probs = torch.sigmoid(preference_scores)
                 preference_predictions = (preference_probs > 0.5).float()
@@ -546,7 +536,58 @@ class RFMHeadsTrainer(Trainer):
                     f"{prefix}/preference_accuracy": preference_accuracy.mean().item(),
                 })
 
+        #     if self.config.model.train_progress_head:
+        #         # split spearman by data gen strategy
+        #         rejected_strats = set(rejected_data_gen_strategy)
+        #         for strat in rejected_strats:
+        #             mask = [1 if s == strat else 0 for s in rejected_data_gen_strategy]
+        #             mask = torch.tensor(mask, device=self.accelerator.device)
+        #             outputs_dict.update({
+        #                 f"{prefix}_strat_spearman_corr/{strat}": (spearman_corr_rejected[mask == 1]).mean().item(),
+        #                 f"{prefix}_strat_prog_loss/{strat}": (progress_loss_rejected[mask == 1]).mean().item(),
+        #             })
+
+        #         # split spearman by data source
+        #         data_sources = set(inputs["data_source"])
+        #         for data_source in data_sources:
+        #             mask = [1 if s == data_source else 0 for s in inputs["data_source"]]
+        #             mask = torch.tensor(mask, device=self.accelerator.device)
+        #             outputs_dict.update({
+        #                 f"{prefix}_ds_spearman_corr/{data_source}": (spearman_corr_rejected[mask == 1]).mean().item(),
+        #                 f"{prefix}_ds_prog_loss/{data_source}": (progress_loss_rejected[mask == 1]).mean().item(),
+        #             })
+
+        #         # Compute average Spearman correlation across trajectories A and B
+        #         spearman_values = []
+        #         if isinstance(spearman_corr_chosen, torch.Tensor):
+        #             spearman_values.append(spearman_corr_chosen.mean().item())
+        #         else:
+        #             spearman_values.append(spearman_corr_chosen)
+
+        #         if isinstance(spearman_corr_rejected, torch.Tensor):
+        #             spearman_values.append(spearman_corr_rejected.mean().item())
+        #         else:
+        #             spearman_values.append(spearman_corr_rejected)
+
+        #         avg_spearman = np.mean(spearman_values) if spearman_values else 0.0
+
+        #         outputs_dict.update({
+        #             f"{prefix}/prog_loss_chosen": progress_loss_chosen.mean().item(),
+        #             f"{prefix}/prog_loss_rejected": progress_loss_rejected.mean().item(),
+        #             f"{prefix}/progress_loss": progress_loss.item(),
+        #             f"{prefix}/spearman_corr_avg": avg_spearman,
+        #         })
+        #     return preference_loss, progress_loss, outputs_dict
+        # return preference_loss, progress_loss
         return preference_loss, outputs_dict
+
+    def _compute_progress_loss(self, model, inputs, return_outputs=False, training=True):
+        """Compute progress prediction loss."""
+        with _timer("time/prog_forward", timing_raw=self.timing_raw):
+            model_outputs, progress_logits, model_timing_raw = model(
+                input_ids=inputs["input_ids"],
+                attention_mask=inputs["attention_mask"],
+            )
 
     def _compute_similarity_loss(self, model, inputs, return_outputs=False):
         """Compute similarity scoring loss (DPO-style)."""

@@ -93,7 +93,23 @@ class RFMBatchCollator(BaseCollator):
         # Pad target progress tensors to max length in last dimension
         batch_inputs["target_progress"] = pad_target_progress(target_progress_list)
         batch_inputs["quality_labels"] = torch.tensor(quality_labels, dtype=torch.float32)
-
+        batch_inputs["frame_shapes"] = torch.tensor(
+            [sample.trajectory.frames_shape for sample in progress_samples], dtype=torch.int32
+        )
+        batch_inputs["data_source"] = [
+            sample.trajectory.data_source for sample in progress_samples
+        ]
+        batch_inputs["data_gen_strategy"] = [
+            sample.trajectory.data_gen_strategy for sample in progress_samples
+        ]
+        target_progress_mask = [
+            1.0
+            if sample.trajectory.quality_label == "successful"
+            or sample.trajectory.data_gen_strategy == "rewind_same_task"
+            else 0.0
+            for sample in progress_samples
+        ]
+        batch_inputs["target_progress_mask"] = torch.tensor(target_progress_mask, dtype=torch.float32)  
         return batch_inputs
 
     def _process_preference_batch(self, preference_samples: list[PreferenceSample]) -> dict[str, torch.Tensor]:

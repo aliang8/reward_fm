@@ -104,13 +104,16 @@ class DataConfig:
 
     # Data generation parameters
     sample_type_ratio: list[float] = field(
-        default_factory=lambda: [1.0, 0.0, 0.0], metadata={"help": "Ratio of pref, sim, and progress samples"}
+        default_factory=lambda: [1, 1, 1], metadata={"help": "Ratio of pref, progress and similarity samples"}
     )
     dataset_preference_ratio: float = field(
         default=0.8, metadata={"help": "Ratio of dataset preference samples to generated preference samples"}
     )
     # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, video_binned]
-    preference_strategy_ratio: list[float] = field(default_factory=lambda: [0.7, 0.1, 0.1, 0.1])
+    preference_strategy_ratio: list[float] = field(default_factory=lambda: [1, 1, 1, 1])
+    # Tunable strategy ratios for progress generation: [default, rewind_same_task, different_task]
+    progress_strategy_ratio: list[float] = field(default_factory=lambda: [1, 1, 1])
+
 
     # Processing parameters
     shuffle: bool = field(default=True, metadata={"help": "Whether to shuffle the dataset"})

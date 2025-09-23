@@ -3,7 +3,7 @@
 NUM_GPUS=1
 CUDA_VISIBLE_DEVICES=0
 USE_ACCELERATE=false
-OUTPUT_DIR=./logs/rfm_prefprog
+OUTPUT_DIR=./logs/rfm_prefprog_mw_2
 
 if [ "${USE_ACCELERATE}" = true ]; then
     CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} uv run accelerate launch \

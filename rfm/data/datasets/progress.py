@@ -1,65 +1,171 @@
-import numpy as np
+import random
 
 from rfm.data.dataset_types import ProgressSample, Trajectory
 from .base import RFMBaseDataset
-from .helpers import linspace_subsample_frames, pad_trajectory_to_max_frames
-from rfm.utils.logging import rank_0_print
+from .helpers import (
+    DataGenStrat,
+    create_rewind_trajectory,
+    load_frames_from_npz,
+    pad_trajectory_to_max_frames,
+    subsample_frames_and_progress,
+)
 
 
 class ProgressDataset(RFMBaseDataset):
-    """Dataset that generates progress samples by iterating through each trajectory in the dataset."""
+    """Data generator for progress samples."""
 
     def __init__(self, config, is_evaluation=False, verbose=True):
         super().__init__(config, is_evaluation, verbose=verbose)
-        self.current_idx = 0
-        rank_0_print(f"ProgressDataset initialized with {len(self.robot_trajectories)} trajectories")
+        self.iter_dataset = self.dataset.filter(lambda x: x["quality_label"] not in ["failure", "suboptimal"])
+        self.progress_strategy_ratio = config.progress_strategy_ratio
 
-    def _create_progress_sample(self, idx: int) -> ProgressSample:
-        """Generate a single progress sample from trajectory index."""
-        # Get the trajectory
-        traj = self.dataset[idx]
+    def __len__(self):
+        return len(self.iter_dataset)
 
-        # Get frames
-        frames = self._get_trajectory_frames(idx)
+    def __getitem__(self, idx):
+        """Iterate over one sample per trajectory in the dataset."""
+        dataset_len = len(self.iter_dataset)
+        traj = self.iter_dataset[idx % dataset_len]
+        sample = self._create_progress_sample(traj)
+        return sample
 
-        # Use linspace sampling to get max_frames
-        max_frames = self.config.max_frames
-        frames, frame_indices = linspace_subsample_frames(frames, max_frames)
+    def _create_progress_sample(self, traj: dict):
+        """Create a progress sample using normalized and rebalanced strategy selection.
+        
+        Implements three strategies:
+        1. Default: Use original trajectory as-is
+        2. Rewind Same Task: Create rewound trajectory from same task
+        3. Different Task: Use trajectory from different task (progress set to 0.0)
+        """
+        
+        # Initialize variables for strategy selection
+        processed_traj = None
+        strategy_used = None
+        
+        # Strategy setup with rebalancing on failure
+        strategies = [
+            ("default", self.progress_strategy_ratio[0]),
+            (DataGenStrat.REWIND_SAME_TASK, self.progress_strategy_ratio[1]),
+            (DataGenStrat.DIFFERENT_TASK, self.progress_strategy_ratio[2]),
+        ]
+        
+        # Remove strategies with zero probability
+        strategies = [(strat, prob) for strat, prob in strategies if prob > 0]
+        
+        max_attempts = 3  # Limit retry attempts to prevent infinite loops
+        attempt = 0
+        
+        while processed_traj is None and attempt < max_attempts:
+            attempt += 1
+            
+            # Rebalance probabilities based on remaining strategies
+            total_prob = sum(prob for _, prob in strategies)
+            if total_prob == 0:
+                # All strategies have zero probability, fallback to default
+                processed_traj = traj
+                strategy_used = "default"
+                break
+            
+            # Normalize probabilities
+            normalized_strategies = [(strat, prob / total_prob) for strat, prob in strategies]
+            
+            # Select strategy based on rebalanced probabilities
+            prob = random.random()
+            cumulative_prob = 0.0
+            selected_strategy = None
+            
+            for strat, normalized_prob in normalized_strategies:
+                cumulative_prob += normalized_prob
+                if prob <= cumulative_prob:
+                    selected_strategy = strat
+                    break
+            
+            # Execute selected strategy
+            if selected_strategy == "default":
+                processed_traj = traj
+                strategy_used = "default"
+                
+            elif selected_strategy == DataGenStrat.REWIND_SAME_TASK:
+                processed_traj = create_rewind_trajectory(traj, max_frames=self.config.max_frames)
+                strategy_used = DataGenStrat.REWIND_SAME_TASK
+                
+            elif selected_strategy == DataGenStrat.DIFFERENT_TASK:
+                other_traj = self._create_different_task_trajectory(traj)
+                if other_traj is not None:
+                    processed_traj = other_traj
+                    strategy_used = DataGenStrat.DIFFERENT_TASK
+                else:
+                    # Strategy failed, remove it from future attempts
+                    strategies = [(strat, prob) for strat, prob in strategies if strat != DataGenStrat.DIFFERENT_TASK]
+        
+        # Final fallback: If all strategies failed, use default
+        if processed_traj is None:
+            processed_traj = traj
+            strategy_used = "default"
+        
+        # Process frames and progress based on strategy used
+        if strategy_used == DataGenStrat.REWIND_SAME_TASK:
+            frames = processed_traj["frames"]
+            progress = processed_traj["target_progress"]
+            metadata = processed_traj["metadata"]
+        else:
+            frames = load_frames_from_npz(processed_traj["frames"])
+            
+            # subsample frames and progress
+            frames, progress, metadata = subsample_frames_and_progress(frames, self.config.max_frames)
+            
+            # pad frames and progress to max_frames
+            frames, progress = pad_trajectory_to_max_frames(frames, progress, self.config.max_frames)
 
-        # Calculate progress based on the sampled frame indices
-        total_frames = len(self._get_trajectory_frames(idx))
-        progress = [idx / (total_frames - 1) if total_frames > 1 else 0.0 for idx in frame_indices]
+        if strategy_used == DataGenStrat.DIFFERENT_TASK:
+            progress = [0.0] * len(progress)
 
-        # Pad frames and progress if needed
-        frames, progress = pad_trajectory_to_max_frames(frames, progress, max_frames)
-
-        metadata = {
-            "quality_label": traj["quality_label"],
-            "data_source": traj["data_source"],
-            "task": traj["task"],
-        }
-
-        # Create trajectory for the progress sample
-        trajectory = Trajectory(
+        progress_traj = Trajectory(
             frames=frames,
-            frames_shape=frames.shape if hasattr(frames, "shape") else (len(frames),),
-            id=traj["id"],
-            task=traj["task"],
-            lang_vector=np.array(traj["lang_vector"]),
-            data_source=traj["data_source"],
-            quality_label=traj["quality_label"],
-            is_robot=traj["is_robot"],
             target_progress=progress,
+            frames_shape=frames.shape,
+            id=processed_traj["id"],
+            task=processed_traj["task"],
+            lang_vector=processed_traj["lang_vector"],
+            data_source=processed_traj["data_source"],
+            quality_label=processed_traj["quality_label"],
+            is_robot=processed_traj["is_robot"],
+            data_gen_strategy=strategy_used,
             metadata=metadata,
         )
 
-        # Create progress sample
-        sample = ProgressSample(trajectory=trajectory)
+        return ProgressSample(
+            trajectory=progress_traj,
+            sample_type="progress",
+        )
 
-        return sample
+    def _create_different_task_trajectory(self, chosen_traj: dict) -> dict | None:
+        """Create a trajectory from a different task than the chosen trajectory.
 
-    def __len__(self):
-        return len(self.robot_trajectories)
+        This function tries to find trajectories from different tasks.
+        Returns None if no other tasks are available.
 
-    def __getitem__(self, idx):
-        return self._create_progress_sample(idx)
+        Args:
+            chosen_traj: The chosen trajectory dictionary
+
+        Returns:
+            Optional[Dict]: The rejected trajectory, or None if none available
+        """
+        # Find other tasks
+        other_tasks = [task for task in self.optimal_by_task.keys() if task != chosen_traj["task"]]
+        if other_tasks:
+            other_task = random.choice(other_tasks)
+            other_task_indices = self.optimal_by_task[other_task]
+
+            if other_task_indices:
+                other_idx = random.choice(other_task_indices)
+                other_traj = self.dataset[other_idx]
+
+                # Check if it's not the same trajectory
+                if other_traj["id"] != chosen_traj["id"]:
+                    return other_traj
+        else:
+            # Only one task available
+            return None
+
+        return None

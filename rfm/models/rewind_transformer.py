@@ -47,6 +47,7 @@ class ReWiNDTransformer(PreTrainedModel):
         # Class token
         self.preference_token = nn.Parameter(torch.randn(1, 1, rewind_tfm_config.hidden_dim))
         self.similarity_token = nn.Parameter(torch.randn(1, 1, rewind_tfm_config.hidden_dim))
+        self.progress_token = nn.Parameter(torch.randn(1, 1, rewind_tfm_config.hidden_dim))
 
         # Positional embeddings (for vision sequence length)
         self.pos_embed = nn.Parameter(torch.randn(1, rewind_tfm_config.max_len, rewind_tfm_config.hidden_dim))
@@ -76,7 +77,7 @@ class ReWiNDTransformer(PreTrainedModel):
         timing_raw=None,
         **kwargs,
     ):
-        """Forward pass for ReWiND Transformer. See RFM model for more details"""
+        """Forward pass for ReWiND Transformer."""
         if timing_raw is None:
             timing_raw = {}
 
@@ -100,45 +101,50 @@ class ReWiNDTransformer(PreTrainedModel):
             video_embeddings = self.video_proj(video_embeddings)  # [B * T, D]
             video_embeddings = video_embeddings.view(B, T, -1)  # [B, T, D]
 
+        if sample_type == "preference" or sample_type == "similarity":
             video_embeddings_A = video_embeddings[:, : T // 2]
             video_embeddings_B = video_embeddings[:, T // 2 :]
 
-        # Add the first embedding to the beginning of embedding A
-        first_frame_emb_A = einops.repeat(self.first_embedding_A, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
-        first_frame_emb_B = einops.repeat(self.first_embedding_B, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
+            # Add the first embedding to the beginning of embedding A
+            first_frame_emb_A = einops.repeat(self.first_embedding_A, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
+            first_frame_emb_B = einops.repeat(self.first_embedding_B, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
 
-        video_embeddings_A[:, 0:1] += first_frame_emb_A
-        video_embeddings_B[:, 0:1] += first_frame_emb_B
+            video_embeddings_A[:, 0:1] += first_frame_emb_A
+            video_embeddings_B[:, 0:1] += first_frame_emb_B
+            
+            pref_token = einops.repeat(self.preference_token, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
+            sim_token = einops.repeat(self.similarity_token, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
 
-        pref_token = einops.repeat(self.preference_token, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
-        sim_token = einops.repeat(self.similarity_token, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
+            token_sequence = torch.cat(
+                [text_embeddings.unsqueeze(1), video_embeddings_A, video_embeddings_B, pref_token, sim_token], dim=1
+            )  # shape: [B, 2*T + 2, D]
 
-        token_sequence = torch.cat(
-            [text_embeddings.unsqueeze(1), video_embeddings_A, video_embeddings_B, pref_token, sim_token], dim=1
-        )  # shape: [B, 2*T + 2, D]
+            token_embeddings = self.transformer(token_sequence)
+            D = token_embeddings.shape[-1]
 
-        token_embeddings = self.transformer(token_sequence)
-        D = token_embeddings.shape[-1]
+            final_embeddings_A = token_embeddings[:, 1 : 1 + T // 2, :]  # avoid the text embedding
+            final_embeddings_B = token_embeddings[:, 1 + T // 2 : -2, :]  # avoid the text embedding
 
-        final_embeddings_A = token_embeddings[:, 1 : 1 + T // 2, :]  # avoid the text embedding
-        final_embeddings_B = token_embeddings[:, 1 + T // 2 : -2, :]  # avoid the text embedding
+            progress_A_logits = self.progress_head(final_embeddings_A.reshape(-1, D))
+            progress_A_logits = einops.rearrange(progress_A_logits, "(b t) 1 -> b t", b=B)
 
-        progress_A_logits = self.progress_head(final_embeddings_A.reshape(-1, D))
-        progress_A_logits = einops.rearrange(progress_A_logits, "(b t) 1 -> b t", b=B)
-
-        if sample_type != "progress":
             progress_B_logits = self.progress_head(final_embeddings_B.reshape(-1, D))
             progress_B_logits = einops.rearrange(progress_B_logits, "(b t) 1 -> b t", b=B)
-        else:
-            # for progress only samples, we don't need trajectory B
-            progress_B_logits = None
 
-        progress_logits = {"A": progress_A_logits, "B": progress_B_logits}
+            progress_logits = {"A": progress_A_logits, "B": progress_B_logits}
 
-        preference_class_token = token_embeddings[:, -2, :]  # [B, D]
-        if sample_type == "preference":
-            logits = self.preference_head(preference_class_token)
-        else:  # similarity
-            pass
+            preference_class_token = token_embeddings[:, -2, :]  # [B, D]
+
+            logits = None
+            if sample_type == "preference":
+                logits = self.preference_head(preference_class_token)
+            else:  # similarity
+                pass
+        elif sample_type == "progress":
+            progress_logits = self.progress_head(video_embeddings)
+            progress_logits = progress_logits.squeeze(-1)
+
+            logits = None
+            progress_logits = {"A": progress_logits, "B": None}
 
         return SequenceClassifierOutputWithPast(logits=logits), progress_logits, timing_raw

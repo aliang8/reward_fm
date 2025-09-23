@@ -92,14 +92,14 @@ class ReWiNDTransformer(PreTrainedModel):
             text_embeddings = mean_pooling(text_embeddings, attention_mask)  # [B, text_hidden_dim]
             text_embeddings = self.text_proj(text_embeddings)  # [B, D]
 
-            # processing video inputs
-            # T should contain both chosen and rejected trajectories concatenated together
-            pixel_values_videos = pixel_values_videos.view(B * T, C, H, W)
-            video_embeddings = self.image_encoder(
-                pixel_values=pixel_values_videos
-            ).pooler_output  # [B, vision_hidden_dim]
-            video_embeddings = self.video_proj(video_embeddings)  # [B * T, D]
-            video_embeddings = video_embeddings.view(B, T, -1)  # [B, T, D]
+        # processing video inputs
+        # T should contain both chosen and rejected trajectories concatenated together
+        pixel_values_videos = pixel_values_videos.view(B * T, C, H, W)
+        video_embeddings = self.image_encoder(
+            pixel_values=pixel_values_videos
+        ).pooler_output  # [B, vision_hidden_dim]
+        video_embeddings = self.video_proj(video_embeddings)  # [B * T, D]
+        video_embeddings = video_embeddings.view(B, T, -1)  # [B, T, D]
 
         if sample_type == "preference" or sample_type == "similarity":
             video_embeddings_A = video_embeddings[:, : T // 2]
@@ -141,7 +141,18 @@ class ReWiNDTransformer(PreTrainedModel):
             else:  # similarity
                 pass
         elif sample_type == "progress":
-            progress_logits = self.progress_head(video_embeddings)
+            first_frame_emb = einops.repeat(self.first_embedding_A, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
+            
+            # [B, T, D]
+            video_embeddings[:, 0:1] += first_frame_emb
+            
+            token_sequence = torch.cat(
+                [text_embeddings.unsqueeze(1), video_embeddings], dim=1
+            )  # shape: [B, T, D]
+            token_embeddings = self.transformer(token_sequence)
+            D = token_embeddings.shape[-1]
+            final_embeddings = token_embeddings[:, 1 :, :]  # avoid the text embedding
+            progress_logits = self.progress_head(final_embeddings)
             progress_logits = progress_logits.squeeze(-1)
 
             logits = None

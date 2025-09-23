@@ -180,7 +180,7 @@ def setup_peft_model(rfm_model: RFM, cfg: ExperimentConfig) -> RFM:
         elif "language_model" in name:
             param.requires_grad = cfg.model.train_language_model
         else:
-            param.requires_grad = False
+            param.requires_grad = True
 
     if cfg.logging.print_trainable_parameters:
         # Count trainable parameters manually - defer printing until after FSDP setup

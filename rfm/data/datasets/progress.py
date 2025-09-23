@@ -114,8 +114,8 @@ class ProgressDataset(RFMBaseDataset):
             # subsample frames and progress
             frames, progress, metadata = subsample_frames_and_progress(frames, self.config.max_frames)
             
-            # pad frames and progress to max_frames
-            frames, progress = pad_trajectory_to_max_frames(frames, progress, self.config.max_frames)
+        # pad frames and progress to max_frames
+        frames, progress = pad_trajectory_to_max_frames(frames, progress, self.config.max_frames)
 
         if strategy_used == DataGenStrat.DIFFERENT_TASK:
             progress = [0.0] * len(progress)

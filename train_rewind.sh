@@ -11,8 +11,8 @@ CUDA_VISIBLE_DEVICES=0 uv run accelerate launch \
     --config_paths rfm/configs/config.yaml rfm/configs/rewind_transformer_config.yaml \
     --data.resized_height 128 \
     --data.resized_width 128 \
-    --logging.use_wandb false \
-    --debug true \
+    --logging.use_wandb true \
+    --debug false \
     --model.train_preference_head true \
     --model.train_progress_head true \
     --training.output_dir ./logs/rewind_debug

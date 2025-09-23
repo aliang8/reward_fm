@@ -5,9 +5,14 @@
 
 uv run python3 evals/qwen_server.py --num_gpus=2
 
+# For evaluating rewind
+uv run python3 evals/rewind_server.py --num_gpus=0
+
 
 # Step 2: Run all evals [reward_alignment, success_failure, confusion_matrix]
 ./evals/run_all_evals.sh
+./evals/run_all_evals_rewind.sh
+
 
 # OR run them separately
 

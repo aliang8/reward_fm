@@ -127,11 +127,11 @@ class RFMHeadsTrainer(Trainer):
 
         # Extract the separate batches
         preference_inputs = inputs.get("preference_inputs", {})
-        inputs.get("similarity_inputs", {})
-        inputs.get("progress_inputs", {})
+        progress_inputs = inputs.get("progress_inputs", {})
+        similarity_inputs = inputs.get("similarity_inputs", {})
         num_preferences = inputs.get("num_preferences", 0)
-        num_similarities = inputs.get("num_similarities", 0)
         num_progress = inputs.get("num_progress", 0)
+        num_similarities = inputs.get("num_similarities", 0)
 
         if num_preferences > 0 and preference_inputs:
             # Count data generation strategies from the rejected trajectories
@@ -154,6 +154,30 @@ class RFMHeadsTrainer(Trainer):
                 self.log_metadata.update(strat_counts)
 
             data_sources = preference_inputs.get("data_source", None)
+            if data_sources is not None:
+                for ds in data_sources:
+                    self.global_metadata[f"total_{ds}"] += 1.0
+        
+        # Count data generation strategies from the progress samples
+        if num_progress > 0 and progress_inputs:
+            data_gen_strategy = progress_inputs.get("data_gen_strategy", [])
+            if isinstance(data_gen_strategy, list) and len(data_gen_strategy) > 0:
+                strat_counts = {
+                    "num_trajs_default": 0,
+                    "num_trajs_rewind_same_task": 0,
+                    "num_trajs_different_task": 0,
+                }
+                for s in data_gen_strategy:
+                    if s == "default":
+                        strat_counts["num_trajs_default"] += 1
+                    elif s == "rewind_same_task":
+                        strat_counts["num_trajs_rewind_same_task"] += 1
+                    elif s == "different_task":
+                        strat_counts["num_trajs_different_task"] += 1
+
+                self.log_metadata.update(strat_counts)
+
+            data_sources = progress_inputs.get("data_source", None)
             if data_sources is not None:
                 for ds in data_sources:
                     self.global_metadata[f"total_{ds}"] += 1.0

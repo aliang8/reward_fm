@@ -192,7 +192,7 @@ You can run evaluations through a lightweight HTTP server that hosts the model a
 
 Start the server (optionally override YAML fields with --set):
 ```bash
-uv run evals/qwen_server.py \
+uv run evals/eval_server.py \
   --config_path=rfm/configs/config.yaml \
   --host=0.0.0.0 --port=8000 \
   --set 'evaluation.model_path="aliangdw/rfm_v1"'

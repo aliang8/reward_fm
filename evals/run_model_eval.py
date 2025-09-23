@@ -61,7 +61,7 @@ def _save_result_as_json(
 
     # Extract progress data
     if progress_response:
-        progress_pred_A = progress_response.get("progress_pred_A", [])
+        progress_pred = progress_response.get("progress_pred_A", [])
 
     batch_results = []
 
@@ -103,7 +103,7 @@ def _save_result_as_json(
                 "data_gen_strategy": sample.trajectory.data_gen_strategy,
                 "target_progress": sample.trajectory.target_progress,
                 "metadata": sample.trajectory.metadata,
-                "progress_pred_A": progress_pred_A[i] if i < len(progress_pred_A) else [],
+                "progress_pred": progress_pred[i] if i < len(progress_pred) else [],
             }
         else:
             progress_entry = None

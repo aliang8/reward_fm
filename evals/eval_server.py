@@ -12,8 +12,6 @@ Response payload (JSON), per-sample outputs for client-side aggregation:
     "reward_chosen": List[List[float]],    # per-frame rewards for chosen (maps to progress head A)
     "reward_rejected": List[List[float]]   # per-frame rewards for rejected (maps to progress head B)
   }
-
-e.g.: uv run /home/jessez/reward_fm/evals/server.py --config_path=/home/jessez/reward_fm/rfm/configs/config.yaml --host=0.0.0.0 --port=8000
 """
 
 from __future__ import annotations
@@ -37,11 +35,9 @@ from huggingface_hub import hf_hub_download
 from evals.eval_utils import extract_answer_from_text
 from rfm.configs.eval_configs import EvaluationConfig
 from rfm.configs.experiment_configs import ModelConfig
-from rfm.data.collators.rfm_batch_collator import RFMBatchCollator
-from rfm.data.collators.vqa_batch_collator import VQABatchCollator
 from rfm.data.dataset_types import PreferenceSample, ProgressSample
 from rfm.utils.parser import deep_merge
-from rfm.utils.setup_utils import setup_model_and_processor
+from rfm.utils.setup_utils import setup_model_and_processor, setup_batch_collator
 
 
 class AsyncGPUPool:
@@ -153,45 +149,24 @@ class AsyncGPUPool:
 
         print(f"Processing {len(samples)} samples on GPU {gpu_info['gpu_id']}")
 
-        # Create batch collator with processor from this GPU
-        if "qwen" in self.model_config.base_model_id.lower():
-            if self.model_config.model_type == "default":
-                batch_collator = RFMBatchCollator(
-                    processor=gpu_info["processor"],
-                    resized_height=128,  # You might want to make this configurable
-                    resized_width=128,
-                )
-            elif self.model_config.model_type == "vqa":
-                batch_collator = VQABatchCollator(
-                    processor=gpu_info["processor"],
-                    resized_height=128,  # You might want to make this configurable
-                    resized_width=128,
-                    training=False,
-                    inference=True,
-                )
-            else:
-                raise ValueError(f"Model type {self.model_config.model_type} not supported")
+        batch_collator = setup_batch_collator(gpu_info["processor"], gpu_info["model"].config.tokenizer, self.model_config)
+        input_samples = []
+        for sample in samples:
+            if sample["sample_type"] == "preference":
+                input_samples.append(PreferenceSample(**sample))
+            elif sample["sample_type"] == "progress":
+                input_samples.append(ProgressSample(**sample))
+        # This time batch_inputs will be a dictionary with preference_inputs, similarity_inputs, and progress_inputs
+        batch_inputs = batch_collator(input_samples)
 
-            input_samples = []
-            for sample in samples:
-                if sample["sample_type"] == "preference":
-                    input_samples.append(PreferenceSample(**sample))
-                elif sample["sample_type"] == "progress":
-                    input_samples.append(ProgressSample(**sample))
-            # This time batch_inputs will be a dictionary with preference_inputs, similarity_inputs, and progress_inputs
-            batch_inputs = batch_collator(input_samples)
-
-            # Move inputs to the correct GPU
-            device = gpu_info["device"]
-            for key, value in batch_inputs["preference_inputs"].items():
-                if isinstance(value, torch.Tensor):
-                    batch_inputs["preference_inputs"][key] = value.to(device)
-            for key, value in batch_inputs["progress_inputs"].items():
-                if isinstance(value, torch.Tensor):
-                    batch_inputs["progress_inputs"][key] = value.to(device)
-        else:
-            print(f"Model type {self.model_config.base_model_id} not supported")
-            raise ValueError(f"Model type {self.model_config.base_model_id} not supported")
+        # Move inputs to the correct GPU
+        device = gpu_info["device"]
+        for key, value in batch_inputs["preference_inputs"].items():
+            if isinstance(value, torch.Tensor):
+                batch_inputs["preference_inputs"][key] = value.to(device)
+        for key, value in batch_inputs["progress_inputs"].items():
+            if isinstance(value, torch.Tensor):
+                batch_inputs["progress_inputs"][key] = value.to(device)
 
         if batch_inputs["num_preferences"] > 0:
             if self.model_config.model_type == "vqa":

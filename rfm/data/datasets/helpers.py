@@ -153,11 +153,6 @@ def randomly_subsample_frames(
 
     Returns:
         Tuple[np.ndarray, List[int]: (subsampled_frames, subsampled_indices)
-
-    Example:
-        If we have 64 frames and want 8 frames:
-        - Random indices: [7, 23, 41, 12, 58, 3, 35, 49] (example)
-        - Subsampled frames: frames[7], frames[23], frames[41], etc.
     """
     if hasattr(frames, "shape"):
         total_frames = frames.shape[0]
@@ -217,10 +212,6 @@ def subsample_frames_and_progress(frames: np.ndarray, max_frames: int) -> tuple[
     # Map the subsampled indices to the corresponding progress values from the full segment
     # The chosen_indices tell us which frames from the segment we're using
     progress = [segment_progress[idx] for idx in indices]
-
-    # Ensure both trajectories have exactly max_frames by padding if needed
-    # Pad by repeating the first frame and first progress value
-    frames, progress = pad_trajectory_to_max_frames(frames, progress, max_frames)
 
     metadata = {
         "start_idx": start_idx,

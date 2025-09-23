@@ -12,6 +12,7 @@ class BaseCollator:
         max_length: int = 1024,
         resized_height: int = 128,
         resized_width: int = 128,
+        base_model_id: str = None,
         **kwargs,
     ):
         self.processor = processor
@@ -20,6 +21,19 @@ class BaseCollator:
         self.resized_height = resized_height
         self.resized_width = resized_width
         self.tokenizer = tokenizer
+        self.base_model_id = base_model_id
+
+        # Update processor based on base model id
+        # if "SmolVLM" in self.base_model_id:
+        #     # For image processor
+        #     self.processor.image_processor.max_image_size = {"longest_edge": self.resized_height}
+        #     self.processor.image_processor.size = {"longest_edge": self.resized_height}
+        #     self.processor.image_processor.video_sampling["video_size"] = {"longest_edge": self.resized_height}
+    
+        #     # for video processor
+        #     self.processor.video_processor.max_image_size = {"longest_edge": self.resized_height}
+        #     self.processor.video_processor.size = {"longest_edge": self.resized_height}
+        #     self.processor.video_processor.video_sampling["video_size"] = {"longest_edge": self.resized_height}
 
     def __call__(
         self,

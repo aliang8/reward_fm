@@ -5,26 +5,22 @@ Script to compile evaluation results from JSON files.
 
 import argparse
 import json
-import os
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.stats import spearmanr
-from typing import Dict, List, Any
-import matplotlib.patches as patches
-from PIL import Image
-import io
-import base64
+from itertools import combinations, product
 from pathlib import Path
-from evals.eval_metrics_utils import compute_pearson, compute_spearman, compute_preference_accuracy
+from typing import Any
+
+import numpy as np
+
+from evals.eval_metrics_utils import compute_pearson, compute_preference_accuracy, compute_spearman
 
 
-def load_results(results_path: str) -> List[Dict[str, Any]]:
+def load_results(results_path: str) -> list[dict[str, Any]]:
     """Load results from JSON file."""
-    with open(results_path, "r") as f:
+    with open(results_path) as f:
         return json.load(f)
 
 
-def analyze_evaluation_type(eval_type: str, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def analyze_evaluation_type(eval_type: str, results: list[dict[str, Any]]) -> dict[str, Any]:
     """Analyze results based on evaluation type."""
     if eval_type == "success_failure_preference":
         return run_success_failure_eval(results)
@@ -38,10 +34,10 @@ def analyze_evaluation_type(eval_type: str, results: List[Dict[str, Any]]) -> Di
         return run_policy_ranking_eval(results)
 
 
-def run_success_failure_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def run_success_failure_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Run success_failure evaluation analysis."""
 
-    def _extract_series(results: List[Dict[str, Any]]):
+    def _extract_series(results: list[dict[str, Any]]):
         y_true_all = []
         y_pred_all = []
         for r in results:
@@ -53,7 +49,7 @@ def run_success_failure_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
                 y_true_all.extend(list(tgt))
         return y_true_all, y_pred_all
 
-    y_true_sf, y_pred_sf = _extract_series(results)
+    _y_true_sf, _y_pred_sf = _extract_series(results)
     pref_acc_sf = compute_preference_accuracy(results)
 
     return {
@@ -65,14 +61,14 @@ def run_success_failure_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def run_reward_alignment_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def run_reward_alignment_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Run reward_alignment evaluation analysis."""
     last_preds = []
     last_targets = []
     for r in results:
         pred = r.get("progress_pred_A")
         tgt = r.get("target_progress")
-        meta = r.get("metadata", {})
+        r.get("metadata", {})
         if pred and len(pred) > 0 and tgt and len(tgt) > 0:
             last_preds.append(float(pred[-1]))
             last_targets.append(float(tgt[-1]))
@@ -92,7 +88,54 @@ def run_reward_alignment_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def run_confusion_matrix_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def run_reward_alignment_eval_per_trajectory(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Run reward_alignment evaluation analysis."""
+    unique_trajectory_ids = set()
+    mse_per_trajectory = 0
+    pearson_trajectories = []
+    spearman_trajectories = []
+    for r in results:
+        trajectory_id = r.get("id")
+        if trajectory_id:
+            unique_trajectory_ids.add(trajectory_id)
+    for trajectory_id in unique_trajectory_ids:
+        last_preds = []
+        last_targets = []
+        results_for_trajectory = [r for r in results if r.get("id") == trajectory_id]
+        results_for_trajectory.sort(key=lambda r: r["metadata"]["subsequence_end"])
+        for r in results_for_trajectory:
+            pred = r.get("progress_pred_A")
+            tgt = r.get("target_progress")
+            r.get("metadata", {})
+            if pred and len(pred) > 0 and tgt and len(tgt) > 0:
+                last_preds.append(float(pred[-1]))
+                last_targets.append(float(tgt[-1]))
+        if not last_preds or not last_targets:
+            print("No valid predictions or targets found for trajectory: ", trajectory_id)
+            continue
+
+        mse_per_trajectory += np.mean((np.array(last_targets) - np.array(last_preds)) ** 2)
+        pearson = compute_pearson(last_targets, last_preds)
+        if not np.isnan(pearson):
+            pearson_trajectories.append(pearson)
+        spearman = compute_spearman(last_targets, last_preds)
+        if not np.isnan(spearman):
+            spearman_trajectories.append(spearman)
+
+    # import pdb; pdb.set_trace()
+    mse_per_trajectory = mse_per_trajectory / len(unique_trajectory_ids)
+    pearson_per_trajectory = np.mean(pearson_trajectories)
+    spearman_per_trajectory = np.mean(spearman_trajectories)
+
+    return {
+        "mse": mse_per_trajectory,
+        "pearson_correlation": pearson_per_trajectory,
+        "spearman_correlation": spearman_per_trajectory,
+        "num_samples": len(unique_trajectory_ids),
+    }
+
+
+def run_confusion_matrix_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Run confusion_matrix evaluation analysis."""
     # Group results by confusion matrix task
     task_groups = {}
@@ -118,14 +161,12 @@ def run_confusion_matrix_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
         # Group by confusion matrix task
         if cm_task not in task_groups:
             task_groups[cm_task] = []
-        task_groups[cm_task].append(
-            {
-                "trajectory_id": trajectory_id,
-                "trajectory_original_task": trajectory_original_task,
-                "final_reward": final_reward,
-                "is_matching": cm_task == trajectory_original_task,
-            }
-        )
+        task_groups[cm_task].append({
+            "trajectory_id": trajectory_id,
+            "trajectory_original_task": trajectory_original_task,
+            "final_reward": final_reward,
+            "is_matching": cm_task == trajectory_original_task,
+        })
 
         # Track trajectory rewards across all tasks
         if trajectory_id not in trajectory_rewards:
@@ -176,7 +217,7 @@ def run_confusion_matrix_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def run_policy_ranking_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def run_policy_ranking_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Run policy_ranking evaluation analysis."""
     # Group results by task
     task_groups = {}
@@ -204,12 +245,10 @@ def run_policy_ranking_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
         # Group by task
         if task not in task_groups:
             task_groups[task] = []
-        task_groups[task].append(
-            {
-                "quality_label": quality_label,
-                "final_reward": final_reward,
-            }
-        )
+        task_groups[task].append({
+            "quality_label": quality_label,
+            "final_reward": final_reward,
+        })
 
     if not task_groups:
         return {"error": "No valid policy ranking data found"}
@@ -241,7 +280,7 @@ def run_policy_ranking_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
             predicted_ranks.append(reward)
 
         # Skip if we don't have at least 2 different quality levels
-        unique_qualities = set(traj["quality_label"] for traj in trajectories)
+        unique_qualities = {traj["quality_label"] for traj in trajectories}
         if len(unique_qualities) < 2:
             continue
 
@@ -280,26 +319,118 @@ def run_policy_ranking_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def run_policy_ranking_eval_per_ranked_set(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Run policy_ranking evaluation analysis per ranked set."""
+    # Group results by task
+    task_groups = {}
+
+    for r in results:
+        meta = r.get("metadata", {}) or {}
+        task = meta.get("task")
+        quality_label = meta.get("quality_label")
+
+        if task is None or quality_label is None:
+            continue
+
+        if quality_label not in ["failure", "successful", "suboptimal"]:
+            continue
+
+        progress_pred = r.get("progress_pred_A", [])
+        if not progress_pred or len(progress_pred) == 0:
+            continue
+
+        final_reward = float(progress_pred[-1])
+
+        if task not in task_groups:
+            task_groups[task] = []
+        task_groups[task].append({
+            "quality_label": quality_label,
+            "final_reward": final_reward,
+        })
+
+    if not task_groups:
+        return {"error": "No valid policy ranking data found"}
+
+    # For each task, compute ranking correlation
+    task_correlations = []
+    task_details = {}
+
+    quality_order = {"failure": 1, "suboptimal": 2, "successful": 3}
+    all_labels = ["failure", "suboptimal", "successful"]
+
+    for task, trajectories in task_groups.items():
+        # Collect rewards per quality
+        quality_to_rewards = {q: [] for q in all_labels}
+        for t in trajectories:
+            quality_to_rewards[t["quality_label"]].append(t["final_reward"])
+
+        present_labels = [q for q in all_labels if quality_to_rewards[q]]
+        if len(present_labels) < 2:
+            continue
+
+        # Use triplets if all three present, else pairs
+        k = len(present_labels)
+
+        spearman_corrs = []
+
+        for labels_combo in combinations(present_labels, k):
+            gold_ranks = [quality_order[q] for q in labels_combo]
+            # All ways to pick one reward per selected quality
+            for rewards_tuple in product(*(quality_to_rewards[q] for q in labels_combo)):
+                spearman_corr = compute_spearman(gold_ranks, list(rewards_tuple))
+                if not np.isnan(spearman_corr):
+                    spearman_corrs.append(spearman_corr)
+
+        if spearman_corrs:
+            avg_spearman_corr = np.mean(spearman_corrs)
+            task_correlations.append(avg_spearman_corr)
+            task_details[task] = {
+                "average_spearman_correlation": avg_spearman_corr,
+                "num_triplets/tuples": len(spearman_corrs),
+                "quality_distribution": {
+                    "failure": len(quality_to_rewards["failure"]),
+                    "suboptimal": len(quality_to_rewards["suboptimal"]),
+                    "successful": len(quality_to_rewards["successful"]),
+                },
+            }
+
+    overall_metrics = {}
+    if task_correlations:
+        overall_metrics = {
+            "mean_spearman_correlation": np.mean(task_correlations),
+            "std_spearman_correlation": np.std(task_correlations),
+            "min_spearman_correlation": np.min(task_correlations),
+            "max_spearman_correlation": np.max(task_correlations),
+            "num_tasks_with_valid_correlation": len(task_correlations),
+        }
+
+    return {
+        "num_tasks": len(task_groups),
+        "num_samples": len(results),
+        "num_tasks_with_valid_correlation": len(task_correlations),
+        "task_details": task_details,
+        "overall_metrics": overall_metrics,
+    }
+
+
 def main():
     import yaml
-    from rfm.configs.experiment_configs import DataConfig
+
     from rfm.configs.eval_configs import EvaluationConfig
-    from pathlib import Path
+    from rfm.configs.experiment_configs import DataConfig
 
     parser = argparse.ArgumentParser(description="Compile evaluation results and create visualizations")
     parser.add_argument(
         "--config", type=str, default="rfm/configs/eval_config.yaml", help="Path to evaluation configuration file"
     )
     parser.add_argument("--results_dir", type=str, default=None, help="Directory containing multiple results JSONs")
-    parser.add_argument(
-        "--eval_logs_dir", type=str, default="./eval_logs", help="Root directory containing eval_logs structure"
-    )
+    parser.add_argument("--eval_logs_dir", type=str, default=None, help="Root directory containing eval_logs structure")
     parser.add_argument("--max_samples", type=int, default=5, help="Maximum number of samples to visualize")
     args = parser.parse_args()
 
     # Load evaluation config manually
     print(f"Loading evaluation config from: {args.config}")
-    with open(args.config, "r") as f:
+    with open(args.config) as f:
         config_dict = yaml.safe_load(f)
 
     cfg = EvaluationConfig(**config_dict)
@@ -398,10 +529,10 @@ def main():
 
         print(f"Scanning results directory: {dir_path}")
         available = {p.name: p for p in dir_path.glob("*.json")}
-        print(f"Found JSON files: {sorted(list(available.keys()))}")
+        print(f"Found JSON files: {sorted(available.keys())}")
 
         # Helper to safely load a file
-        def _load_if_exists(name: str) -> List[Dict[str, Any]]:
+        def _load_if_exists(name: str) -> list[dict[str, Any]]:
             if name in available:
                 print(f"Loading {name}...")
                 return load_results(str(available[name]))
@@ -409,9 +540,9 @@ def main():
             return []
 
         # success_failure.json: compute Pearson/Spearman for success trajectory + preference accuracy
-        sf_results = _load_if_exists("success_failure.json")
+        sf_results = _load_if_exists("success_failure_preference.json")
         if sf_results:
-            print("Running analyses for success_failure.json:")
+            print("Running analyses for success_failure_preference.json:")
             metrics = run_success_failure_eval(sf_results)
             for metric_name, value in metrics.items():
                 if isinstance(value, float):
@@ -419,10 +550,10 @@ def main():
                 else:
                     print(f"  - {metric_name}: {value}")
 
-        # reward_alignment.json: reuse compute_metrics and summaries
-        ra_results = _load_if_exists("reward_alignment.json")
+        # reward_alignment_progress.json: reuse compute_metrics and summaries
+        ra_results = _load_if_exists("reward_alignment_progress.json")
         if ra_results:
-            print("Running analyses for reward_alignment.json:")
+            print("Running analyses for reward_alignment_progress.json:")
             metrics = run_reward_alignment_eval(ra_results)
             for metric_name, value in metrics.items():
                 if isinstance(value, float):
@@ -430,7 +561,7 @@ def main():
                 else:
                     print(f"  - {metric_name}: {value}")
         else:
-            print("No analyses run for reward_alignment.json")
+            print("No analyses run for reward_alignment_progress.json")
 
         # confusion_matrix.json: create confusion matrix analysis
         cm_results = _load_if_exists("confusion_matrix.json")
@@ -451,6 +582,19 @@ def main():
                     print(f"  - {metric_name}: {value}")
         else:
             print("No analyses run for confusion_matrix.json")
+
+        # policy_ranking_progress.json: create policy ranking analysis
+        pr_results = _load_if_exists("policy_ranking_progress.json")
+        if pr_results:
+            print("Running analyses for policy_ranking_progress.json:")
+            metrics = run_policy_ranking_eval_per_ranked_set(pr_results)
+            for metric_name, value in metrics.items():
+                if isinstance(value, float):
+                    print(f"  - {metric_name}: {value:.4f}")
+                else:
+                    print(f"  - {metric_name}: {value}")
+        else:
+            print("No analyses run for policy_ranking_progress.json")
 
         print("Directory processing complete.")
         print("Done!")

@@ -4,42 +4,33 @@ Shared setup utilities for RFM training.
 This file contains setup functions that can be reused across different training scripts.
 """
 
-from dataclasses import asdict
-import torch
+from peft import LoraConfig, get_peft_model
 from transformers import (
+    AutoImageProcessor,
+    AutoModel,
     AutoProcessor,
+    AutoTokenizer,
+    Qwen2_5_VLForConditionalGeneration,
     Qwen2_5_VLModel,
     TrainingArguments,
-    Qwen2_5_VLConfig,
-    Qwen2_5_VLForConditionalGeneration,
-    AutoImageProcessor,
-    AutoTokenizer,
-    AutoModel,
 )
-from peft import get_peft_model, LoraConfig
-from typing import Tuple, Optional, Union
 
-from rfm.models.rfm import RFMModel
-from rfm.models.rfm_vqa import RFMModelVQA
-
-from rfm.models.rewind_transformer import ReWiNDTransformer
-from rfm.data.rewind_batch_collator import ReWiNDBatchCollator
-
-from rfm.data.generators.generator import DataGenerator
-from rfm.data.batch_collator import BatchCollator
-from rfm.data.dataset import InfiniteDataGeneratorDataset
-from rfm.data.generators.success_failure import PairedSuccessFailureGenerator
-from rfm.data.generators.reward_alignment import RewardAlignmentGenerator
-from rfm.data.generators.confusion_matrix import ConfusionMatrixGenerator
-from rfm.data.generators.wrong_task import WrongTaskGenerator
-from rfm.data.generators.progress import ProgressGenerator
-
+from rfm.configs.experiment_configs import DataConfig, ExperimentConfig, ModelConfig
+from rfm.data.collators import BaseCollator, ReWiNDBatchCollator, RFMBatchCollator, VQABatchCollator
+from rfm.data.datasets import (
+    ConfusionMatrixDataset,
+    MixedDataset,
+    PairedSuccessFailureDataset,
+    ProgressDataset,
+    RewardAlignmentDataset,
+    RFMBaseDataset,
+    WrongTaskDataset,
+)
+from rfm.models import RFM, RFMVQA, ReWiNDTransformer
 from rfm.utils.logging import rank_0_print
-from rfm.configs.experiment_configs import ExperimentConfig, ModelConfig
-from rfm.data.vqa_batch_collator import VQABatchCollator
 
 
-def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[AutoProcessor, RFMModel]:
+def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[AutoProcessor, RFM]:
     """Shared function to set up model, processor, and tokenizer for both training and evaluation"""
 
     # Load processor and tokenizer
@@ -53,6 +44,7 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[
             do_sample_frames=False,  # disable frame sampling here since we do this in the data generator
             # max_frames=cfg.data.max_frames,
             padding_side="left",
+            attn_implementation="flash_attention_2",
         )
 
         rank_0_print(f"Processor: {processor}")
@@ -63,31 +55,33 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[
         # Create a fresh model instance
         if cfg.model_type == "default":
             qwen_model_cls = Qwen2_5_VLModel
-            rfm_model_cls = RFMModel
+            rfm_model_cls = RFM
         elif cfg.model_type == "vqa":
             qwen_model_cls = Qwen2_5_VLForConditionalGeneration
-            rfm_model_cls = RFMModelVQA
+            rfm_model_cls = RFMVQA
 
         base_model = qwen_model_cls.from_pretrained(cfg.base_model_id)
 
         # Add RFM special tokens if they don't exist
         if cfg.model_type == "default":
             special_tokens = ["<|split_token|>", "<|reward_token|>", "<|pref_token|>"]
-            for token in special_tokens:
-                if token not in processor.tokenizer.get_vocab():
-                    processor.tokenizer.add_special_tokens({"additional_special_tokens": [token]})
-                    rank_0_print(f"Added special token: {token}")
+        else:
+            special_tokens = []
 
-            # Resize token embeddings if new tokens were added
-            if len(processor.tokenizer) != base_model.config.vocab_size:
-                rank_0_print(
-                    f"Resizing token embeddings from {base_model.config.vocab_size} to {len(processor.tokenizer)}"
-                )
-                base_model.resize_token_embeddings(len(processor.tokenizer))
-                rank_0_print(f"Resized token embeddings to {len(processor.tokenizer)}")
+        # Add special tokens to the tokenizer
+        for token in special_tokens:
+            if token not in processor.tokenizer.get_vocab():
+                processor.tokenizer.add_special_tokens({"additional_special_tokens": [token]})
+                rank_0_print(f"Added special token: {token}")
+
+        # Resize token embeddings if new tokens were added
+        if len(processor.tokenizer) != base_model.config.vocab_size:
+            rank_0_print(f"Resizing token embeddings from {base_model.config.vocab_size} to {len(processor.tokenizer)}")
+            base_model.resize_token_embeddings(len(processor.tokenizer))
+            rank_0_print(f"Resized token embeddings to {len(processor.tokenizer)}")
 
         # Initialize RFM model wrapper with the pre-loaded base model
-        rank_0_print(f"Initializing RFM model...")
+        rank_0_print("Initializing RFM model...")
         rfm_model = rfm_model_cls(config=base_model.config, processor=processor, base_model=base_model)
 
         if hf_model_id:
@@ -116,16 +110,16 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> Tuple[
         for p in text_encoder.parameters():
             p.requires_grad = train_text
 
-        rank_0_print(f"Initializing ReWiND model...")
+        rank_0_print("Initializing ReWiND model...")
         rfm_model = ReWiNDTransformer(config=cfg, image_encoder=image_encoder, text_encoder=text_encoder)
 
-    rank_0_print(f"Model architecture initialized")
+    rank_0_print("Model architecture initialized")
     rank_0_print(f"Model architecture: {rfm_model}")
 
     return tokenizer, processor, rfm_model
 
 
-def setup_peft_model(rfm_model: RFMModel, cfg: ExperimentConfig) -> RFMModel:
+def setup_peft_model(rfm_model: RFM, cfg: ExperimentConfig) -> RFM:
     """Shared function to apply PEFT configuration to the model"""
 
     if cfg.peft.use_peft:
@@ -172,7 +166,7 @@ def setup_peft_model(rfm_model: RFMModel, cfg: ExperimentConfig) -> RFMModel:
         rank_0_print(
             f"trainable params: {trainable_params:,} || all params: {all_params:,} || trainable%: {100 * trainable_params / all_params:.4f}"
         )
-        rank_0_print(f"Training configuration:")
+        rank_0_print("Training configuration:")
         rank_0_print(f"  - Vision encoder: {cfg.model.train_vision_encoder}")
         rank_0_print(f"  - Language model: {cfg.model.train_language_model}")
         rank_0_print(f"  - Progress head: {cfg.model.train_progress_head}")
@@ -219,44 +213,34 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
 
     if is_eval:
         # Evaluation-specific arguments
-        base_args.update(
-            {
-                "per_device_eval_batch_size": 2,
-                "num_train_epochs": -1,
-                "max_steps": 1,
-                "report_to": "none",
-            }
-        )
+        base_args.update({
+            "per_device_eval_batch_size": 2,
+            "num_train_epochs": -1,
+            "max_steps": 1,
+            "report_to": "none",
+        })
     else:
         # Training-specific arguments
-        base_args.update(
-            {
-                "num_train_epochs": cfg.training.num_train_epochs if cfg.training.num_train_epochs is not None else 1,
-                "max_steps": cfg.training.max_steps if cfg.training.max_steps is not None else -1,
-                "report_to": ["wandb"] if cfg.logging.use_wandb else [],
-            }
-        )
+        base_args.update({
+            "num_train_epochs": cfg.training.num_train_epochs if cfg.training.num_train_epochs is not None else 1,
+            "max_steps": cfg.training.max_steps if cfg.training.max_steps is not None else -1,
+            "report_to": ["wandb"] if cfg.logging.use_wandb else [],
+        })
 
     return TrainingArguments(**base_args)
 
 
-def setup_data_generator(cfg: ExperimentConfig, is_eval: bool = False) -> DataGenerator:
+def setup_dataset(cfg: DataConfig, is_eval: bool = False, **kwargs) -> RFMBaseDataset:
     """Shared function to create DataGenerator for training or evaluation"""
 
-    # Get current rank for logging
-    import torch.distributed as dist
-
-    rank = dist.get_rank() if dist.is_initialized() else 0
-
-    if rank == 0:
-        rank_0_print(f"Setting up data generator on rank {rank} for {'evaluation' if is_eval else 'training'}...")
+    rank_0_print(f"Setting up data generator for {'evaluation' if is_eval else 'training'}...")
 
     if is_eval:
-        datasets = cfg.data.eval_datasets
-        subsets = cfg.data.eval_subsets
+        datasets = cfg.eval_datasets
+        subsets = cfg.eval_subsets
     else:
-        datasets = cfg.data.train_datasets
-        subsets = cfg.data.train_subsets
+        datasets = cfg.train_datasets
+        subsets = cfg.train_subsets
 
     # Validate that train_datasets and train_subsets have the same length
     if len(datasets) != len(subsets):
@@ -264,73 +248,32 @@ def setup_data_generator(cfg: ExperimentConfig, is_eval: bool = False) -> DataGe
             f"datasets and subsets must have the same length. Got {len(datasets)} datasets and {len(subsets)} subsets"
         )
 
-    if rank == 0:
-        rank_0_print(f"Loading {len(datasets)} datasets with corresponding subsets")
-        for i, (dataset, subset) in enumerate(zip(datasets, subsets)):
-            rank_0_print(f"  Dataset {i + 1}: {dataset} -> {subset}")
+    rank_0_print(f"Loading {len(datasets)} datasets with corresponding subsets")
+    for i, (dataset, subset) in enumerate(zip(datasets, subsets, strict=False)):
+        rank_0_print(f"  Dataset {i + 1}: {dataset} -> {subset}")
 
-    if cfg.data.dataset_type == "reward_alignment":
-        data_generator = RewardAlignmentGenerator(config=cfg.data, is_evaluation=is_eval)
-    elif cfg.data.dataset_type == "success_failure":
-        data_generator = PairedSuccessFailureGenerator(config=cfg.data, is_evaluation=is_eval)
-    elif cfg.data.dataset_type == "policy_ranking":
-        data_generator = ProgressGenerator(config=cfg.data, is_evaluation=is_eval)
-    elif cfg.data.dataset_type == "confusion_matrix":
-        data_generator = ConfusionMatrixGenerator(
-            config=cfg.data, is_evaluation=is_eval, max_trajectories=cfg.data.max_trajectories
-        )
-    elif cfg.data.dataset_type == "wrong_task":
-        data_generator = WrongTaskGenerator(
-            config=cfg.data, is_evaluation=is_eval, max_trajectories=cfg.data.max_trajectories
-        )
-    else:
-        data_generator = DataGenerator(config=cfg.data, is_evaluation=is_eval)
+    dataset_cls = {
+        "reward_alignment": RewardAlignmentDataset,
+        "success_failure": PairedSuccessFailureDataset,
+        "policy_ranking": ProgressDataset,
+        "confusion_matrix": ConfusionMatrixDataset,
+        "wrong_task": WrongTaskDataset,
+        "default": MixedDataset,
+    }
 
-    if rank == 0:
-        rank_0_print(f"Data generator initialized on rank {rank}")
-
-    return data_generator
-
-
-def setup_dataset(
-    data_generator: DataGenerator, dataset_type: str = "default", dataset_kwargs: dict = {}
-) -> InfiniteDataGeneratorDataset:
-    """Shared function to create training or evaluation dataset based on config"""
-
-    # Get the dataset type from the data generator config
-    config_dataset_type = data_generator.config.dataset_type
-
-    rank_0_print(f"Setting up {dataset_type} dataset with type: {config_dataset_type}")
-    dataset = InfiniteDataGeneratorDataset(data_generator, **dataset_kwargs)
-
-    rank_0_print(f"{dataset_type.capitalize()} dataset created successfully with {len(dataset)} samples")
+    dataset = dataset_cls[cfg.dataset_type](config=cfg, is_evaluation=is_eval, **kwargs)
+    rank_0_print("Dataset initialized")
     return dataset
 
 
-def setup_eval_dataset(cfg: ExperimentConfig) -> InfiniteDataGeneratorDataset:
-    """Create evaluation dataset using eval-specific configuration"""
-
-    # Create evaluation data generator
-    eval_data_generator = setup_data_generator(cfg, is_eval=True)
-
-    # Create evaluation dataset
-    eval_dataset = setup_dataset(
-        eval_data_generator,
-        dataset_type=cfg.data.dataset_type,
-        dataset_kwargs={"max_samples": cfg.data.eval_subset_size, "num_bins": cfg.data.num_bins, "fps": cfg.data.fps},
-    )
-
-    return eval_dataset
-
-
-def setup_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg: ExperimentConfig) -> BatchCollator:
+def setup_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg: ExperimentConfig) -> BaseCollator:
     """Shared function to create BatchCollator"""
 
     rank_0_print("Setting up batch collator...")
 
     if "Qwen" in cfg.model.base_model_id:
         if cfg.model.model_type == "default":
-            batch_collator = BatchCollator(
+            batch_collator = RFMBatchCollator(
                 processor=processor,
                 max_length=cfg.training.max_seq_length,
                 resized_height=cfg.data.resized_height,

@@ -5,7 +5,7 @@ This file contains the EvaluationConfig dataclass for evaluation-specific parame
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+
 from rfm.configs.experiment_configs import DataConfig
 
 

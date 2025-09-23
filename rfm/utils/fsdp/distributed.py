@@ -16,7 +16,6 @@
 import os
 
 import torch.distributed
-
 from rfm.utils.device import get_torch_device, is_cuda_available
 
 

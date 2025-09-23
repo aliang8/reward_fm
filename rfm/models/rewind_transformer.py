@@ -10,12 +10,8 @@ heads or there will be some problems with FSDP sharding.
 import einops
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from transformers import PreTrainedModel, PretrainedConfig
+from transformers import PreTrainedModel
 from transformers.modeling_outputs import SequenceClassifierOutputWithPast
-from typing import Optional, Dict, Any
-from rfm.utils.logging import _timer
-from transformers import AutoModel
 
 
 def mean_pooling(model_output, attention_mask):

@@ -29,50 +29,44 @@ model:
 data:
   # Dataset paths and sources
   train_datasets: 
-    - "abraranwar/libero_rfm"
-    - "ykorkmaz/libero_failure_rfm"
+    # - "abraranwar/libero_rfm"
+    # - "ykorkmaz/libero_failure_rfm"
     - "HenryZhang/metaworld_rewind_rfm_train"
-    - "jesbu1/oxe_rfm"
+    # - "jesbu1/oxe_rfm"
   train_subsets:
-    - ["libero256_90"]
-    - ["libero_90_failure"]
+    # - ["libero256_90"]
+    # - ["libero_90_failure"]
     - ["metaworld_rewind_train"]
-    - ["oxe_bridge_v2"]
+    # - ["oxe_bridge_v2"]
   # Evaluation dataset settings
   eval_datasets:
-    - "abraranwar/libero_rfm"
-    - "ykorkmaz/libero_failure_rfm"
+    # - "abraranwar/libero_rfm"
+    # - "ykorkmaz/libero_failure_rfm"
     - "HenryZhang/metaworld_rewind_rfm_eval"
     # - "aliangdw/metaworld_rfm"
   eval_subsets:
     # - ["libero256_10", "libero256_object", "libero256_spatial", "libero256_goal"]
-    - ["libero256_10"]
-    - ["libero_10_failure"]
+    # - ["libero256_10"]
+    # - ["libero_10_failure"]
     - ["metaworld_rewind_eval"]
     # - ["metaworld"]
   # eval_datasets: ["abraranwar/libero_rfm"]
   # eval_subsets: ["libero_object"]
   eval_subset_size: 500  # Number of evaluation examples
-  
-  # Preprocessing settings
-  max_frames_for_preprocessing: 64
 
   # Video processing settings
   max_frames: 16  # Maximum frames per trajectory
-  video_frame_sampling: "uniform"  # "uniform", "random", "first", "middle"
   resized_height: 128  # Height to resize images/videos to
   resized_width: 128   # Width to resize images/videos to
   
   # Data generation settings
-  sample_type_ratio: [1.0, 0.0, 0.0]  
+  sample_type_ratio: [1.0, 0.0, 0.0]  # Ratio of preference, progress, and similarity samples
   dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
   # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, video_binned]
-  preference_strategy_ratio: [0.4, 0.3, 0.3, 0.0]
+  preference_strategy_ratio: [1, 1, 1, 0]
   shuffle: true
   seed: 42
-  num_proc: 1  # Number of processes for dataset processing (1 for safety, increase for speed)
-  force_reprocess: false  # Force reprocessing of dataset even if cached version exists
-  
+
   # Data loading settings
   dataloader_pin_memory: false
   dataloader_num_workers: 0
@@ -95,7 +89,7 @@ training:
   save_strategy: "steps"
   logging_steps: 1
   save_steps: 200
-  max_steps: 5000  # -1 means no limit, use num_train_epochs instead
+  max_steps: 10000  # -1 means no limit, use num_train_epochs instead
   
   # Evaluation settings
   evaluation_strategy: "steps"  # Options: "no", "steps", "epoch"

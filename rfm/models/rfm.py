@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 RFM (Reward Foundation Model) implementation.
-Contains the RFMModel class with three prediction heads for different objectives.
+Contains the RFM class with three prediction heads for different objectives.
 
 Note: make sure that the forward pass uses all of the
 heads or there will be some problems with FSDP sharding.
@@ -9,21 +9,20 @@ heads or there will be some problems with FSDP sharding.
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from transformers import PreTrainedModel, Qwen2_5_VLModel
 from transformers.modeling_outputs import SequenceClassifierOutputWithPast
-from typing import Optional, Dict, Any
+
 from rfm.utils.logging import _timer
 
 
-class RFMModel(PreTrainedModel):
+class RFM(PreTrainedModel):
     """Reward Foundation Model with three prediction heads for different objectives."""
 
     config_class = Qwen2_5_VLModel.config_class
 
     def __init__(self, config, processor, base_model=None):
         super().__init__(config)
-        # The RFMModel now owns and creates its submodules.
+        # The RFM now owns and creates its submodules.
         # This is the standard pattern for PreTrainedModel.
         if base_model is not None:
             self.model = base_model
@@ -187,7 +186,7 @@ class RFMModel(PreTrainedModel):
                 current_pos = vision_start_positions[0].item()
 
                 # Find where each frame ends in trajectory A
-                for frame_idx in range(T_A):
+                for _frame_idx in range(T_A):
                     # Each frame takes tokens_per_frame_A tokens
                     frame_end = current_pos + tokens_per_frame_A
                     frame_boundary_positions_A.append(frame_end)
@@ -226,7 +225,7 @@ class RFMModel(PreTrainedModel):
                     current_pos = vision_start_positions[1].item()
 
                     # Find where each frame ends in trajectory B
-                    for frame_idx in range(T_B):
+                    for _frame_idx in range(T_B):
                         # Each frame takes tokens_per_frame_B tokens
                         frame_end = current_pos + tokens_per_frame_B
                         frame_boundary_positions_B.append(frame_end)

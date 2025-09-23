@@ -1,5 +1,4 @@
-from rfm.trainers.rfm_heads_trainer import RFMHeadsTrainer
-from transformers import Trainer
+from .rfm_heads_trainer import RFMHeadsTrainer
 
 # should be the same as RFMHeadsTrainer
 

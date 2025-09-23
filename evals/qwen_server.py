@@ -17,30 +17,31 @@ e.g.: uv run /home/jessez/reward_fm/evals/server.py --config_path=/home/jessez/r
 """
 
 from __future__ import annotations
-import yaml
-import base64
-import io
-from typing import Any, Dict, List, Union
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
-import queue
-import threading
-import time
+
 import ast
+import asyncio
+import io
+import json
+import queue
+import time
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 import numpy as np
 import torch
+import yaml
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from huggingface_hub import hf_hub_download
-import json
 
-from rfm.utils.setup_utils import setup_model_and_processor, setup_vqa_model_and_processor
+from evals.eval_utils import extract_answer_from_text
 from rfm.configs.eval_configs import EvaluationConfig
 from rfm.configs.experiment_configs import ModelConfig
-from rfm.data.batch_collator import BatchCollator, PreferenceSample
-from rfm.data.vqa_batch_collator import VQABatchCollator
+from rfm.data.collators.rfm_batch_collator import RFMBatchCollator
+from rfm.data.collators.vqa_batch_collator import VQABatchCollator
 from rfm.data.dataset_types import PreferenceSample, ProgressSample
+from rfm.utils.parser import deep_merge
+from rfm.utils.setup_utils import setup_model_and_processor
 
 
 class AsyncGPUPool:
@@ -50,15 +51,13 @@ class AsyncGPUPool:
         self,
         model_config: ModelConfig,
         model_path: str,
-        num_gpus: int = None,
-        max_workers: int = None,
-        model_type: str = "default",
+        num_gpus: int | None = None,
+        max_workers: int | None = None,
     ):
         self.model_config = model_config
         self.model_path = model_path
         self.num_gpus = num_gpus or torch.cuda.device_count()
         self.max_workers = max_workers or self.num_gpus
-        self.model_type = model_type
 
         if self.num_gpus == 0:
             raise RuntimeError("No CUDA devices available")
@@ -73,7 +72,7 @@ class AsyncGPUPool:
         # Initialize GPUs
         self._initialize_gpus()
 
-        print(f"GPU pool initialized successfully")
+        print("GPU pool initialized successfully")
 
     def _initialize_gpus(self):
         """Initialize models on all GPUs."""
@@ -82,12 +81,7 @@ class AsyncGPUPool:
             print(f"Loading model on GPU {gpu_id} ({device})")
 
             # Load model on specific GPU
-            if self.model_type == "default":
-                processor, model = setup_model_and_processor(self.model_config, self.model_path)
-            elif self.model_type == "vqa":
-                processor, model = setup_vqa_model_and_processor(self.model_config, self.model_path)
-            else:
-                raise ValueError(f"Model type {self.model_type} not supported")
+            _tokenizer, processor, model = setup_model_and_processor(self.model_config, self.model_path)
 
             model = model.to(device)
             model.eval()
@@ -101,13 +95,17 @@ class AsyncGPUPool:
             }
 
             # Add to pool
-            self.gpu_pool.put(
-                {"model": model, "processor": processor, "device": device, "gpu_id": gpu_id, "created_at": time.time()}
-            )
+            self.gpu_pool.put({
+                "model": model,
+                "processor": processor,
+                "device": device,
+                "gpu_id": gpu_id,
+                "created_at": time.time(),
+            })
 
             print(f"Successfully loaded model on GPU {gpu_id}")
 
-    async def process_batch(self, batch_data: Union[Dict[str, Any], List[Dict[str, Any]]]):
+    async def process_batch(self, batch_data: dict[str, Any] | list[dict[str, Any]]):
         """Process a batch using an available GPU asynchronously."""
         loop = asyncio.get_event_loop()
 
@@ -139,7 +137,7 @@ class AsyncGPUPool:
             self.gpu_stats[gpu_info["gpu_id"]]["status"] = "ready"
             self.gpu_pool.put(gpu_info)
 
-    def _process_batch_sync(self, gpu_info: Dict, batch_data: Union[Dict[str, Any], List[Dict[str, Any]]]):
+    def _process_batch_sync(self, gpu_info: dict, batch_data: dict[str, Any] | list[dict[str, Any]]):
         """Synchronous batch processing on specific GPU."""
 
         # Handle both dict and list inputs
@@ -157,21 +155,22 @@ class AsyncGPUPool:
 
         # Create batch collator with processor from this GPU
         if "qwen" in self.model_config.base_model_id.lower():
-            if self.model_type == "default":
-                batch_collator = BatchCollator(
+            if self.model_config.model_type == "default":
+                batch_collator = RFMBatchCollator(
                     processor=gpu_info["processor"],
                     resized_height=128,  # You might want to make this configurable
                     resized_width=128,
                 )
-            elif self.model_type == "vqa":
+            elif self.model_config.model_type == "vqa":
                 batch_collator = VQABatchCollator(
                     processor=gpu_info["processor"],
                     resized_height=128,  # You might want to make this configurable
                     resized_width=128,
                     training=False,
+                    inference=True,
                 )
             else:
-                raise ValueError(f"Model type {self.model_type} not supported")
+                raise ValueError(f"Model type {self.model_config.model_type} not supported")
 
             input_samples = []
             for sample in samples:
@@ -195,7 +194,7 @@ class AsyncGPUPool:
             raise ValueError(f"Model type {self.model_config.base_model_id} not supported")
 
         if batch_inputs["num_preferences"] > 0:
-            if self.model_type == "vqa":
+            if self.model_config.model_type == "vqa":
                 outputs_preference = compute_batch_outputs_vqa(
                     gpu_info["model"],
                     gpu_info["processor"].tokenizer,
@@ -211,7 +210,7 @@ class AsyncGPUPool:
             outputs_preference = None
 
         if batch_inputs["num_progress"] > 0:
-            if self.model_type == "vqa":
+            if self.model_config.model_type == "vqa":
                 outputs_progress = compute_batch_outputs_vqa(
                     gpu_info["model"], gpu_info["processor"].tokenizer, batch_inputs["progress_inputs"], mode="progress"
                 )
@@ -245,7 +244,7 @@ class AsyncGPUPool:
         print("GPU pool shutdown complete")
 
 
-def compute_batch_outputs(model, tokenizer, batch_inputs: Dict[str, torch.Tensor]) -> Dict[str, Any]:
+def compute_batch_outputs(model, tokenizer, batch_inputs: dict[str, torch.Tensor]) -> dict[str, Any]:
     """Compute batch outputs for preference prediction."""
     model.eval()
     device = next(model.parameters()).device
@@ -281,15 +280,15 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: Dict[str, torch.Tensor
 
         # Extract progress predictions for A and B if available
         # Map back to chosen/rejected based on preference labels
-        progress_pred_chosen: List[List[float]] = []
-        progress_pred_rejected: List[List[float]] = []
+        progress_pred_chosen: list[list[float]] = []
+        progress_pred_rejected: list[list[float]] = []
 
         if isinstance(progress_logits, dict):
             # Get preference labels to determine which trajectory (A or B) corresponds to chosen/rejected
             preference_labels = batch_inputs["preference_labels"].cpu().tolist()
 
-            for i, (label, seq_A, seq_B) in enumerate(
-                zip(preference_labels, progress_logits.get("A", []), progress_logits.get("B", []))
+            for _i, (label, seq_A, seq_B) in enumerate(
+                zip(preference_labels, progress_logits.get("A", []), progress_logits.get("B", []), strict=False)
             ):
                 if label == 1.0:
                     # First trajectory (A) is chosen, second trajectory (B) is rejected
@@ -321,13 +320,13 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: Dict[str, torch.Tensor
         }
 
 
-def compute_batch_outputs_progress_only(model, tokenizer, batch_inputs: Dict[str, torch.Tensor]) -> Dict[str, Any]:
+def compute_batch_outputs_progress_only(model, tokenizer, batch_inputs: dict[str, torch.Tensor]) -> dict[str, Any]:
     """Compute batch outputs for progress prediction only (trajectory A)."""
     model.eval()
     device = next(model.parameters()).device
 
     with torch.no_grad():
-        outputs, progress_logits, _ = model(
+        _outputs, progress_logits, _ = model(
             input_ids=batch_inputs["input_ids"].to(device),
             attention_mask=batch_inputs["attention_mask"].to(device),
             pixel_values=batch_inputs.get("pixel_values", None).to(device)
@@ -348,27 +347,27 @@ def compute_batch_outputs_progress_only(model, tokenizer, batch_inputs: Dict[str
             sample_type="progress",
         )
 
-        # For progress-only samples, we only care about trajectory A progress
-        progress_pred_A = []
+    # For progress-only samples, we only care about trajectory A progress
+    progress_pred_A = []
 
-        if isinstance(progress_logits, dict) and "A" in progress_logits:
-            for seq_A in progress_logits["A"]:
-                if seq_A is None:
-                    progress_pred_A.append([])
-                else:
-                    progress_pred_A.append(seq_A.detach().cpu().flatten().tolist())
-        else:
-            # If no progress logits, create empty lists
-            progress_pred_A = [[] for _ in range(len(batch_inputs["input_ids"]))]
+    if isinstance(progress_logits, dict) and "A" in progress_logits:
+        for seq_A in progress_logits["A"]:
+            if seq_A is None:
+                progress_pred_A.append([])
+            else:
+                progress_pred_A.append(seq_A.detach().cpu().flatten().tolist())
+    else:
+        # If no progress logits, create empty lists
+        progress_pred_A = [[] for _ in range(len(batch_inputs["input_ids"]))]
 
-        return {
-            "progress_pred_A": progress_pred_A,
-        }
+    return {
+        "progress_pred_A": progress_pred_A,
+    }
 
 
 def compute_batch_outputs_vqa(
-    model, tokenizer, batch_inputs: Dict[str, torch.Tensor], mode: str = "preference"
-) -> Dict[str, Any]:
+    model, tokenizer, batch_inputs: dict[str, torch.Tensor], mode: str = "preference"
+) -> dict[str, Any]:
     """Compute batch outputs for VQA."""
     model.eval()
     device = next(model.parameters()).device
@@ -389,7 +388,6 @@ def compute_batch_outputs_vqa(
     video_grid_thw = (
         batch_inputs.get("video_grid_thw", None).to(device) if batch_inputs.get("video_grid_thw") is not None else None
     )
-    labels = batch_inputs.get("labels").to(device)
     input_to_model = {
         "input_ids": input_ids,
         "attention_mask": attention_mask,
@@ -397,17 +395,19 @@ def compute_batch_outputs_vqa(
         "pixel_values_videos": pixel_values_videos,
         "image_grid_thw": image_grid_thw,
         "video_grid_thw": video_grid_thw,
-        "labels": labels,
     }
 
     with torch.no_grad():
         output_ids = model.generate(**input_to_model, max_new_tokens=1024)
-        generated_ids = [output_ids[len(input_ids) :] for input_ids, output_ids in zip(input_ids, output_ids)]
+        generated_ids = [
+            output_ids[len(input_ids) :] for input_ids, output_ids in zip(input_ids, output_ids, strict=False)
+        ]
         generated_texts = tokenizer.batch_decode(
             generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True
         )
+
     if mode == "preference":
-        predictions = [_extract_answer_from_text(text) for text in generated_texts]
+        predictions = [extract_answer_from_text(text) for text in generated_texts]
         predictions_num_labels = []
         for prediction in predictions:
             if prediction == "A":
@@ -421,9 +421,8 @@ def compute_batch_outputs_vqa(
             "preference_labels": batch_inputs.get("preference_labels").detach().cpu().tolist(),
         }
     elif mode == "progress":
-        progress_predictions = [_extract_answer_from_text(text) for text in generated_texts]
+        progress_predictions = [extract_answer_from_text(text) for text in generated_texts]
         progress_predictions = [ast.literal_eval(prediction) for prediction in progress_predictions]
-        # progress_predictions = [[progress_prediction[-1]] for progress_prediction in progress_predictions]
         return {
             "progress_pred_A": progress_predictions,
         }
@@ -431,14 +430,7 @@ def compute_batch_outputs_vqa(
         raise ValueError(f"Mode {mode} not supported")
 
 
-def _extract_answer_from_text(text):
-    import re
-
-    m = re.search(r"<ans>(.*?)</ans>", text, re.DOTALL)
-    return m.group(1).strip() if m else ""
-
-
-def create_app(cfg: EvaluationConfig, model_config: ModelConfig, model_type: str = "default"):
+def create_app(cfg: EvaluationConfig, model_config: ModelConfig):
     app = FastAPI(title="RFM Multi-GPU Evaluation Server")
 
     app.add_middleware(
@@ -453,11 +445,11 @@ def create_app(cfg: EvaluationConfig, model_config: ModelConfig, model_type: str
     num_gpus = getattr(cfg, "num_gpus", None)
     max_workers = getattr(cfg, "max_workers", None)
 
-    gpu_pool = AsyncGPUPool(model_config, cfg.model_path, num_gpus, max_workers, model_type)
+    gpu_pool = AsyncGPUPool(model_config, cfg.model_path, num_gpus, max_workers)
     print(f"GPU pool initialized with {gpu_pool.num_gpus} GPUs")
 
     @app.post("/evaluate_batch")
-    async def evaluate_batch(batch: Dict[str, Any]):
+    async def evaluate_batch(batch: dict[str, Any]):
         """Evaluate a batch of preference samples using async GPU pool."""
         return await gpu_pool.process_batch(batch)
 
@@ -505,8 +497,8 @@ def create_app(cfg: EvaluationConfig, model_config: ModelConfig, model_type: str
         return await gpu_pool.process_batch(batch_data)
 
     def reconstruct_payload_from_npy(
-        numpy_arrays: Dict[str, np.ndarray], other_data: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        numpy_arrays: dict[str, np.ndarray], other_data: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Reconstruct the original payload structure from .npy files and form data.
 
         The client sends data in this format:
@@ -570,15 +562,16 @@ def create_app(cfg: EvaluationConfig, model_config: ModelConfig, model_type: str
 
 def main():
     import argparse
+
     import uvicorn
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--config_path", type=str, default="rfm/configs/eval_config.yaml")
     parser.add_argument(
-        "--model_config_path",
-        type=str,
-        default="",
-        help="Path to the model config file (Only used if model_path is not set in eval config)",
+        "--model_config_paths",
+        nargs="*",
+        default=[],
+        help="Paths to the model config files (Only used if model_path is not set in eval config)",
     )
     parser.add_argument("--host", type=str, default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
@@ -588,7 +581,7 @@ def main():
 
     # Load evaluation config manually
     print(f"Loading evaluation config from: {args.config_path}")
-    with open(args.config_path, "r") as f:
+    with open(args.config_path) as f:
         config_dict = yaml.safe_load(f)
 
     cfg = EvaluationConfig(**config_dict)
@@ -604,21 +597,24 @@ def main():
     if cfg.model_path != "":
         # Download model config from Hugging Face
         model_config_path = hf_hub_download(repo_id=cfg.model_path, filename="config.yaml")
-        with open(model_config_path, "r") as f:
+        with open(model_config_path) as f:
             model_config_dict = yaml.safe_load(f)
 
         model_config = ModelConfig(**model_config_dict["model"])
-        model_type = model_config_dict["data"]["model_type"]
     else:
-        print(f"Saved checkpoint is not found, loading model config from local path")
-        print(f"Loading model config from local path: {args.model_config_path}")
+        print("Saved checkpoint is not found, initializing base model")
+        print(f"Loading model configs from local paths: {args.model_config_paths}")
         # load model config from local path
-        assert args.model_config_path != "", "Model config path is required if model path is not set in eval config"
-        with open(args.model_config_path, "r") as f:
-            model_config_dict = yaml.safe_load(f)
-        model_type = model_config_dict["data"]["model_type"]
-        model_config = ModelConfig(**model_config_dict["model"])
-    app = create_app(cfg, model_config, model_type)
+        assert args.model_config_paths != "", "Model config path is required if model path is not set in eval config"
+        # load & deep-merge YAMLs in order (later files override earlier ones)
+        merged: dict[str, Any] = {}
+        for path in args.model_config_paths:
+            with open(path) as f:
+                doc = yaml.safe_load(f) or {}
+            deep_merge(merged, doc)
+        model_config = ModelConfig(**merged["model"])
+
+    app = create_app(cfg, model_config)
     print(f"Running async multi-GPU server on {args.host}:{args.port}")
     print(f"Using {cfg.num_gpus or torch.cuda.device_count()} GPUs")
     uvicorn.run(app, host=args.host, port=args.port)

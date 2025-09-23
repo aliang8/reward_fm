@@ -21,8 +21,8 @@ import copy
 import logging
 import os
 import pickle
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -33,7 +33,6 @@ import torch.distributed
 from packaging import version
 from tensordict import TensorDict
 from torch.utils.data import DataLoader
-
 from verl.utils.device import get_torch_device
 from verl.utils.py_functional import union_two_dict
 from verl.utils.torch_functional import allgather_dict_tensors
@@ -86,7 +85,7 @@ def pad_dataproto_to_divisor(data: "DataProto", size_divisor: int):
             take_size = min(remaining_pad, len(data))
             padding_protos.append(data[:take_size])
             remaining_pad -= take_size
-        data_padded = DataProto.concat([data] + padding_protos)
+        data_padded = DataProto.concat([data, *padding_protos])
     else:
         if len(data) == 0:
             logging.warning("padding a DataProto with no item, no changed made")
@@ -199,8 +198,8 @@ def collate_fn(x: list["DataProtoItem"]):
 class DataProtoItem:
     # TODO(zhangchi.usc1992) add consistency check
     batch: TensorDict = None
-    non_tensor_batch: Dict = field(default_factory=dict)
-    meta_info: Dict = field(default_factory=dict)
+    non_tensor_batch: dict = field(default_factory=dict)
+    meta_info: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -213,8 +212,8 @@ class DataProto:
     """
 
     batch: TensorDict = None
-    non_tensor_batch: Dict = field(default_factory=dict)
-    meta_info: Dict = field(default_factory=dict)
+    non_tensor_batch: dict = field(default_factory=dict)
+    meta_info: dict = field(default_factory=dict)
 
     def __post_init__(self):
         # perform necessary checking
@@ -224,7 +223,7 @@ class DataProto:
         if self.batch is not None:
             return self.batch.batch_size[0]
         elif self.non_tensor_batch is not None and len(self.non_tensor_batch) > 0:
-            random_key = list(self.non_tensor_batch.keys())[0]
+            random_key = next(iter(self.non_tensor_batch.keys()))
             return self.non_tensor_batch[random_key].shape[0]
         else:
             return 0
@@ -301,10 +300,10 @@ class DataProto:
     def print_size(self, prefix=""):
         size_of_tensordict = 0
         if self.batch is None:
-            for key, tensor in self.batch.items():
+            for _key, tensor in self.batch.items():
                 size_of_tensordict += tensor.element_size() * tensor.numel()
         size_of_numpy_array = 0
-        for key, numpy_array in self.non_tensor_batch.items():
+        for _key, numpy_array in self.non_tensor_batch.items():
             size_of_numpy_array += numpy_array.nbytes
 
         size_of_numpy_array /= 1024**3
@@ -341,7 +340,7 @@ class DataProto:
                 )
 
     @classmethod
-    def from_single_dict(cls, data: Dict[str, Union[torch.Tensor, np.ndarray]], meta_info=None, auto_padding=False):
+    def from_single_dict(cls, data: dict[str, torch.Tensor | np.ndarray], meta_info=None, auto_padding=False):
         """Create a DataProto from a dict of tensors and non_tensors"""
         tensors = {}
         non_tensors = {}
@@ -359,7 +358,7 @@ class DataProto:
     @classmethod
     def from_dict(
         cls,
-        tensors: Optional[Dict[str, torch.Tensor]] = None,
+        tensors: dict[str, torch.Tensor] | None = None,
         non_tensors=None,
         meta_info=None,
         num_batch_dims=1,
@@ -643,7 +642,7 @@ class DataProto:
         else:
             generator = None
 
-        assert isinstance(dataloader_kwargs, Dict)
+        assert isinstance(dataloader_kwargs, dict)
         train_dataloader = DataLoader(
             dataset=self, batch_size=mini_batch_size, collate_fn=collate_fn, generator=generator, **dataloader_kwargs
         )
@@ -680,7 +679,7 @@ class DataProto:
         self.batch = padded_dp.batch
         self.non_tensor_batch = padded_dp.non_tensor_batch
 
-    def chunk(self, chunks: int) -> List["DataProto"]:
+    def chunk(self, chunks: int) -> list["DataProto"]:
         """Split the batch among dim=0 into chunks. The meta_info is passed to each DataProto after split.
 
         Args:
@@ -722,7 +721,7 @@ class DataProto:
         return output
 
     @staticmethod
-    def concat(data: List["DataProto"]) -> "DataProto":
+    def concat(data: list["DataProto"]) -> "DataProto":
         """Concat a list of DataProto. The batch is concatenated among dim=0.
         The meta_info is assumed to be identical and will use the first one.
 
@@ -796,7 +795,7 @@ class DataProto:
             meta_info=self.meta_info,
         )
 
-    def unfold_column_chunks(self, n_split: int, split_keys: Optional[List[str]] = None):
+    def unfold_column_chunks(self, n_split: int, split_keys: list[str] | None = None):
         """Split along the second dim into `n_split`, unfold it to the first dim (batch dim)
         Useful in passing grouped tensors that doesn't want to be shuffled in dataset.
         keys not in split_keys are repeated to match the shape
@@ -899,15 +898,15 @@ class DataProtoFuture:
     """
 
     collect_fn: Callable
-    futures: List[ray.ObjectRef]
+    futures: list[ray.ObjectRef]
     dispatch_fn: Callable = None
 
     @staticmethod
-    def concat(data: List[ray.ObjectRef]) -> "DataProtoFuture":
+    def concat(data: list[ray.ObjectRef]) -> "DataProtoFuture":
         output = DataProtoFuture(collect_fn=DataProto.concat, futures=data)
         return output
 
-    def chunk(self, chunks: int) -> List["DataProtoFuture"]:
+    def chunk(self, chunks: int) -> list["DataProtoFuture"]:
         from functools import partial
 
         arg_future_lst = []

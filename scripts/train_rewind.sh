@@ -1,0 +1,13 @@
+#!/bin/bash
+
+CUDA_VISIBLE_DEVICES=0 uv run accelerate launch \
+    --num_processes=1 \
+    train.py \
+    --config_paths rfm/configs/config.yaml rfm/configs/rewind_transformer_config.yaml \
+    --data.resized_height 128 \
+    --data.resized_width 128 \
+    --logging.use_wandb true \
+    --debug false \
+    --model.train_preference_head true \
+    --model.train_progress_head true \
+    --training.output_dir ./logs/rewind_debug

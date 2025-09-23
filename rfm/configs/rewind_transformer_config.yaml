@@ -26,6 +26,10 @@ training:
   bf16: false
   fp16: true
 
+  per_device_train_batch_size: 32
+  per_device_eval_batch_size: 32
+  learning_rate: 2e-4
+
 data:
   sample_type_ratio: [0, 1, 0] # only progress samples 
   progress_strategy_ratio: [1, 8, 1] # default success, rewind, different task

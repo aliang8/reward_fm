@@ -4,10 +4,12 @@ Shared setup utilities for RFM training.
 This file contains setup functions that can be reused across different training scripts.
 """
 
+import torch
 from peft import LoraConfig, get_peft_model
 from transformers import (
     AutoImageProcessor,
     AutoModel,
+    AutoModelForImageTextToText,
     AutoProcessor,
     AutoTokenizer,
     Qwen2_5_VLForConditionalGeneration,
@@ -34,33 +36,52 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
     """Shared function to set up model, processor, and tokenizer for both training and evaluation"""
 
     # Load processor and tokenizer
-    if "Qwen" in cfg.base_model_id:
-        processor = AutoProcessor.from_pretrained(
-            cfg.base_model_id,
-            trust_remote_code=cfg.trust_remote_code,
-            # temporal_patch_size=1,
-            # fps=1,
-            # num_frames=cfg.data.max_frames,
-            do_sample_frames=False,  # disable frame sampling here since we do this in the data generator
-            # max_frames=cfg.data.max_frames,
-            padding_side="left",
-            attn_implementation="flash_attention_2",
-        )
+    if "SmolVLM" in cfg.base_model_id or "Qwen" in cfg.base_model_id:
+        if "SmolVLM" in cfg.base_model_id:
+            processor = AutoProcessor.from_pretrained(
+                cfg.base_model_id,
+                trust_remote_code=cfg.trust_remote_code,
+                padding_side="left",
+            )
+            
+            rank_0_print(f"SmolVLM Processor: {processor}")
+            base_model = AutoModelForImageTextToText.from_pretrained(
+                cfg.base_model_id,
+                torch_dtype=torch.bfloat16,
+                # _attn_implementation="flash_attention_2",
+            )
+            rfm_model_cls = RFM  
+        
+    
+        elif "Qwen" in cfg.base_model_id:
+            if cfg.model_type == "default":
+                qwen_model_cls = Qwen2_5_VLModel
+                rfm_model_cls = RFM
+            elif cfg.model_type == "vqa":
+                qwen_model_cls = Qwen2_5_VLForConditionalGeneration
+                rfm_model_cls = RFMVQA
 
-        rank_0_print(f"Processor: {processor}")
+            base_model = qwen_model_cls.from_pretrained(cfg.base_model_id)
+            
+            processor = AutoProcessor.from_pretrained(
+                cfg.base_model_id,
+                trust_remote_code=cfg.trust_remote_code,
+                # temporal_patch_size=1,
+                # fps=1,
+                # num_frames=cfg.data.max_frames,
+                do_sample_frames=False,  # disable frame sampling here since we do this in the data generator
+                # max_frames=cfg.data.max_frames,
+                padding_side="left",
+                attn_implementation="flash_attention_2",
+            )
 
+            rank_0_print(f"Qwen Processor: {processor}")
+        else:
+            raise ValueError(f"Invalid base model id: {cfg.base_model_id}")
+        
         if processor.tokenizer.pad_token is None:
             processor.tokenizer.pad_token = processor.tokenizer.eos_token
 
-        # Create a fresh model instance
-        if cfg.model_type == "default":
-            qwen_model_cls = Qwen2_5_VLModel
-            rfm_model_cls = RFM
-        elif cfg.model_type == "vqa":
-            qwen_model_cls = Qwen2_5_VLForConditionalGeneration
-            rfm_model_cls = RFMVQA
-
-        base_model = qwen_model_cls.from_pretrained(cfg.base_model_id)
 
         # Add RFM special tokens if they don't exist
         if cfg.model_type == "default":
@@ -82,7 +103,7 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
 
         # Initialize RFM model wrapper with the pre-loaded base model
         rank_0_print("Initializing RFM model...")
-        rfm_model = rfm_model_cls(config=base_model.config, processor=processor, base_model=base_model)
+        rfm_model = rfm_model_cls(config=base_model.config, processor=processor, base_model=base_model, base_model_id=cfg.base_model_id)
 
         if hf_model_id:
             rank_0_print(f"Loading model from {hf_model_id}")
@@ -270,31 +291,20 @@ def setup_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg
     """Shared function to create BatchCollator"""
 
     rank_0_print("Setting up batch collator...")
-
-    if "Qwen" in cfg.model.base_model_id:
+    collator_kwargs = {
+        "processor": processor,
+        "max_length": cfg.training.max_seq_length,
+        "resized_height": cfg.data.resized_height,
+        "resized_width": cfg.data.resized_width,
+        "base_model_id": cfg.model.base_model_id,
+    }
+    if "Qwen" in cfg.model.base_model_id or "SmolVLM" in cfg.model.base_model_id:
         if cfg.model.model_type == "default":
-            batch_collator = RFMBatchCollator(
-                processor=processor,
-                max_length=cfg.training.max_seq_length,
-                resized_height=cfg.data.resized_height,
-                resized_width=cfg.data.resized_width,
-            )
+            batch_collator = RFMBatchCollator(**collator_kwargs)
         elif cfg.model.model_type == "vqa":
-            batch_collator = VQABatchCollator(
-                processor=processor,
-                inference=cfg.mode == "eval",
-                max_length=cfg.training.max_seq_length,
-                resized_height=cfg.data.resized_height,
-                resized_width=cfg.data.resized_width,
-            )
+            batch_collator = VQABatchCollator(**collator_kwargs, inference=cfg.mode == "eval")
     elif "rewind_transformer" in cfg.model.base_model_id:
-        batch_collator = ReWiNDBatchCollator(
-            processor=processor,
-            tokenizer=tokenizer,
-            max_length=cfg.training.max_seq_length,
-            resized_height=cfg.data.resized_height,
-            resized_width=cfg.data.resized_width,
-        )
+        batch_collator = ReWiNDBatchCollator(**collator_kwargs, tokenizer=tokenizer)
 
     rank_0_print("Batch collator created successfully")
     return batch_collator

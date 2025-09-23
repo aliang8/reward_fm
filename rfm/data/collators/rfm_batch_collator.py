@@ -4,13 +4,16 @@ Batch collator for processing Sample objects through the processor and returning
 This collator handles the conversion from PreferenceSample and SimilaritySample objects to processed tensors.
 """
 
+import tempfile
+from pathlib import Path
 import numpy as np
 import torch
 from qwen_vl_utils import process_vision_info
 
 from .base_collator import BaseCollator
-from .utils import convert_frames_to_pil_images, pad_target_progress
+from .utils import convert_frames_to_pil_images, pad_target_progress, write_mp4
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample
+from typing import List, Dict
 
 
 class RFMBatchCollator(BaseCollator):
@@ -27,6 +30,59 @@ class RFMBatchCollator(BaseCollator):
             resized_width: Width to resize images/videos to (default: 128)
         """
         super().__init__(**kwargs)
+
+    def __process_conversation(self, conversations: List[List[Dict]]) -> Dict[str, torch.Tensor]:
+        """
+        Process a list of conversations into a batch of inputs.
+
+        Args:
+            conversations: List of conversations
+
+        Returns:
+            Batch of inputs
+        """
+        
+        if "Qwen" in self.base_model_id:
+            # Process all messages in one batch
+            texts = [
+                self.processor.apply_chat_template(
+                    msg,
+                    tokenize=False,
+                    add_generation_prompt=False,
+                    add_vision_id=True,
+                    fps=1,
+                )
+                for msg in conversations
+            ]
+
+            image_inputs, video_inputs, _video_kwargs = process_vision_info(conversations, return_video_kwargs=True)
+
+            # Process through the processor in one batch
+            batch_inputs = self.processor(
+                text=texts,
+                images=image_inputs,
+                videos=video_inputs,
+                padding=True,
+                truncation=False,
+                max_length=self.max_length,
+                return_tensors="pt",
+            )
+        elif "SmolVLM" in self.base_model_id:
+            batch_inputs = self.processor.apply_chat_template(
+                conversations,
+                add_generation_prompt=False,
+                tokenize=True,
+                padding=True,
+                truncation=False,
+                max_length=self.max_length,
+                return_dict=True,
+                return_tensors="pt",
+                fps=4, # this should be same as fps for write_mp4
+            )
+        else:
+            raise ValueError(f"Invalid base model id: {self.base_model_id}")
+
+        return batch_inputs
 
     def _add_preference_meta(
         self, batch_inputs: dict[str, torch.Tensor], preference_samples: list[PreferenceSample]
@@ -120,6 +176,7 @@ class RFMBatchCollator(BaseCollator):
         # Randomly decide whether chosen trajectory goes first or second
         preference_labels = np.random.randint(0, 2, len(preference_samples))
 
+        # Build batch of conversations
         for i, sample in enumerate(preference_samples):
             # Convert frames to appropriate format using stored shapes
             chosen_frames = convert_frames_to_pil_images(
@@ -128,6 +185,23 @@ class RFMBatchCollator(BaseCollator):
             rejected_frames = convert_frames_to_pil_images(
                 sample.rejected_trajectory.frames, sample.rejected_trajectory.frames_shape
             )
+
+            if "Qwen" in self.base_model_id:
+                content_extras = {
+                    "resized_height": self.resized_height,
+                    "resized_width": self.resized_width,
+                }
+            elif "SmolVLM" in self.base_model_id:
+                # we need to write the frames to a temporary file
+                tmp = Path(tempfile.gettempdir()) / f"tmp_chosen.mp4"
+                write_mp4(chosen_frames, tmp)
+                chosen_frames = str(tmp)
+                tmp = Path(tempfile.gettempdir()) / f"tmp_rejected.mp4"
+                write_mp4(rejected_frames, tmp)
+                rejected_frames = str(tmp)
+                content_extras = {}
+            else:
+                content_extras = {}
 
             if preference_labels[i] == 1.0:
                 # Chosen trajectory first: task + video A (chosen) + <|split_token|> + video B (rejected) + <|pref_token|>
@@ -139,15 +213,13 @@ class RFMBatchCollator(BaseCollator):
                             {
                                 "type": "video",
                                 "video": chosen_frames,
-                                "resized_height": self.resized_height,
-                                "resized_width": self.resized_width,
+                                **content_extras,
                             },
                             {"type": "text", "text": "<|split_token|>"},
                             {
                                 "type": "video",
                                 "video": rejected_frames,
-                                "resized_height": self.resized_height,
-                                "resized_width": self.resized_width,
+                                **content_extras,
                             },
                             {"type": "text", "text": "<|pref_token|>"},
                         ],
@@ -163,15 +235,13 @@ class RFMBatchCollator(BaseCollator):
                             {
                                 "type": "video",
                                 "video": rejected_frames,
-                                "resized_height": self.resized_height,
-                                "resized_width": self.resized_width,
+                                **content_extras,
                             },
                             {"type": "text", "text": "<|split_token|>"},
                             {
                                 "type": "video",
                                 "video": chosen_frames,
-                                "resized_height": self.resized_height,
-                                "resized_width": self.resized_width,
+                                **content_extras,
                             },
                             {"type": "text", "text": "<|pref_token|>"},
                         ],
@@ -180,30 +250,7 @@ class RFMBatchCollator(BaseCollator):
 
             all_messages.append(conversation)
 
-        # Process all messages in one batch
-        texts = [
-            self.processor.apply_chat_template(
-                msg,
-                tokenize=False,
-                add_generation_prompt=False,
-                add_vision_id=True,
-                fps=1,
-            )
-            for msg in all_messages
-        ]
-
-        image_inputs, video_inputs, _video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
-
-        # Process through the processor in one batch
-        batch_inputs = self.processor(
-            text=texts,
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            truncation=False,
-            max_length=self.max_length,
-            return_tensors="pt",
-        )
+        batch_inputs = self.__process_conversation(all_messages)
         # Use the dynamically generated preference labels based on trajectory order
         batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
         batch_inputs = self._add_preference_meta(batch_inputs, preference_samples)
@@ -368,6 +415,20 @@ class RFMBatchCollator(BaseCollator):
             # Convert frames to appropriate format using stored shapes
             frames = convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
 
+            if "Qwen" in self.base_model_id:
+                content_extras = {
+                    "resized_height": self.resized_height,
+                    "resized_width": self.resized_width,
+                }
+            elif "SmolVLM" in self.base_model_id:
+                # we need to write the frames to a temporary file
+                tmp = Path(tempfile.gettempdir()) / f"tmp_progress.mp4"
+                write_mp4(frames, tmp)
+                frames = str(tmp)
+                content_extras = {}
+            else:
+                content_extras = {}
+
             # Create conversation for progress evaluation
             conversation = [
                 {
@@ -380,8 +441,7 @@ class RFMBatchCollator(BaseCollator):
                         {
                             "type": "video",
                             "video": frames,
-                            "resized_height": self.resized_height,
-                            "resized_width": self.resized_width,
+                            **content_extras,
                         },
                     ],
                 }
@@ -389,29 +449,6 @@ class RFMBatchCollator(BaseCollator):
 
             all_messages.append(conversation)
 
-        texts = [
-            self.processor.apply_chat_template(
-                msg,
-                tokenize=False,
-                add_generation_prompt=False,
-                add_vision_id=True,
-                fps=1,
-            )
-            for msg in all_messages
-        ]
-
-        image_inputs, video_inputs, video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
-
-        # Process through the processor in one batch
-        batch_inputs = self.processor(
-            text=texts,
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            truncation=False,
-            max_length=self.max_length,
-            return_tensors="pt",
-            **video_kwargs,
-        )
+        batch_inputs = self.__process_conversation(all_messages)
         batch_inputs = self._add_progress_meta(batch_inputs, progress_samples)
         return batch_inputs

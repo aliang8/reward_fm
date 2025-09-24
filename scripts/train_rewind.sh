@@ -8,4 +8,4 @@ CUDA_VISIBLE_DEVICES=0 uv run accelerate launch \
     --debug false \
     --model.train_preference_head false \
     --model.train_progress_head true \
-    --training.output_dir ./logs/rewind_progress_equal
+    --training.output_dir ./logs/rewind_progress_linspace

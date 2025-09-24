@@ -1,12 +1,7 @@
 #!/usr/bin/env python3
-"""
-Batch collator for processing Sample objects through the processor and returning processed tensors.
-This collator handles the conversion from PreferenceSample and SimilaritySample objects to processed tensors.
-"""
 
 import numpy as np
 import torch
-import os
 
 from .rfm_batch_collator import RFMBatchCollator
 from .utils import convert_frames_to_pil_images

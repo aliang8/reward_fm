@@ -8,7 +8,10 @@ import json
 from itertools import combinations, product
 from pathlib import Path
 from typing import Any
+import yaml
 
+from rfm.configs.eval_configs import EvaluationConfig
+from rfm.configs.experiment_configs import DataConfig
 import numpy as np
 
 from evals.eval_metrics_utils import compute_pearson, compute_preference_accuracy, compute_spearman
@@ -31,7 +34,7 @@ def analyze_evaluation_type(eval_type: str, results: list[dict[str, Any]]) -> di
     elif eval_type == "wrong_task_preference":
         return run_success_failure_eval(results)
     elif eval_type == "policy_ranking_progress":
-        return run_policy_ranking_eval(results)
+        return run_policy_ranking_eval_per_ranked_set(results)
 
 
 def run_success_failure_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
@@ -66,7 +69,7 @@ def run_reward_alignment_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
     last_preds = []
     last_targets = []
     for r in results:
-        pred = r.get("progress_pred_A")
+        pred = r.get("progress_pred")
         tgt = r.get("target_progress")
         r.get("metadata", {})
         if pred and len(pred) > 0 and tgt and len(tgt) > 0:
@@ -104,7 +107,7 @@ def run_reward_alignment_eval_per_trajectory(results: list[dict[str, Any]]) -> d
         results_for_trajectory = [r for r in results if r.get("id") == trajectory_id]
         results_for_trajectory.sort(key=lambda r: r["metadata"]["subsequence_end"])
         for r in results_for_trajectory:
-            pred = r.get("progress_pred_A")
+            pred = r.get("progress_pred")
             tgt = r.get("target_progress")
             r.get("metadata", {})
             if pred and len(pred) > 0 and tgt and len(tgt) > 0:
@@ -225,8 +228,8 @@ def run_policy_ranking_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
     for r in results:
         # Get task and quality label from metadata
         meta = r.get("metadata", {}) or {}
-        task = meta.get("task")
-        quality_label = meta.get("quality_label")
+        task = r.get("task", {})
+        quality_label = r.get("quality_label", {})
 
         if task is None or quality_label is None:
             continue
@@ -236,7 +239,7 @@ def run_policy_ranking_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
             continue
 
         # Get final reward (last value of progress_pred_A)
-        progress_pred = r.get("progress_pred_A", [])
+        progress_pred = r.get("progress_pred", [])
         if not progress_pred or len(progress_pred) == 0:
             continue
 
@@ -245,6 +248,7 @@ def run_policy_ranking_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
         # Group by task
         if task not in task_groups:
             task_groups[task] = []
+
         task_groups[task].append({
             "quality_label": quality_label,
             "final_reward": final_reward,
@@ -325,24 +329,14 @@ def run_policy_ranking_eval_per_ranked_set(results: list[dict[str, Any]]) -> dic
     task_groups = {}
 
     for r in results:
-        meta = r.get("metadata", {}) or {}
-        task = meta.get("task")
-        quality_label = meta.get("quality_label")
-
-        if task is None or quality_label is None:
-            continue
-
-        if quality_label not in ["failure", "successful", "suboptimal"]:
-            continue
-
-        progress_pred = r.get("progress_pred_A", [])
-        if not progress_pred or len(progress_pred) == 0:
-            continue
-
+        task = r["task"]
+        quality_label = r["quality_label"]
+        progress_pred = r["progress_pred"]
         final_reward = float(progress_pred[-1])
 
         if task not in task_groups:
             task_groups[task] = []
+
         task_groups[task].append({
             "quality_label": quality_label,
             "final_reward": final_reward,
@@ -365,6 +359,7 @@ def run_policy_ranking_eval_per_ranked_set(results: list[dict[str, Any]]) -> dic
             quality_to_rewards[t["quality_label"]].append(t["final_reward"])
 
         present_labels = [q for q in all_labels if quality_to_rewards[q]]
+
         if len(present_labels) < 2:
             continue
 
@@ -414,18 +409,12 @@ def run_policy_ranking_eval_per_ranked_set(results: list[dict[str, Any]]) -> dic
 
 
 def main():
-    import yaml
-
-    from rfm.configs.eval_configs import EvaluationConfig
-    from rfm.configs.experiment_configs import DataConfig
-
     parser = argparse.ArgumentParser(description="Compile evaluation results and create visualizations")
     parser.add_argument(
         "--config", type=str, default="rfm/configs/eval_config.yaml", help="Path to evaluation configuration file"
     )
     parser.add_argument("--results_dir", type=str, default=None, help="Directory containing multiple results JSONs")
     parser.add_argument("--eval_logs_dir", type=str, default=None, help="Root directory containing eval_logs structure")
-    parser.add_argument("--max_samples", type=int, default=5, help="Maximum number of samples to visualize")
     args = parser.parse_args()
 
     # Load evaluation config manually
@@ -521,85 +510,25 @@ def main():
         print("\nDone!")
         return
 
-    # Directory mode: process known files with tailored analyses (legacy mode)
     if args.results_dir is not None:
-        dir_path = Path(args.results_dir)
-        if not dir_path.exists() or not dir_path.is_dir():
-            raise FileNotFoundError(f"results_dir not found or not a directory: {dir_path}")
+        results_dir = Path(args.results_dir)
+        if not results_dir.exists():
+            print(f"results_dir not found: {results_dir}")
+            return
+        
+        print(f"Loading results from: {results_dir}")
+        eval_files = list(results_dir.glob("*.json"))
+        print(f"Found evaluation files: {[f.stem for f in eval_files]}")
 
-        print(f"Scanning results directory: {dir_path}")
-        available = {p.name: p for p in dir_path.glob("*.json")}
-        print(f"Found JSON files: {sorted(available.keys())}")
-
-        # Helper to safely load a file
-        def _load_if_exists(name: str) -> list[dict[str, Any]]:
-            if name in available:
-                print(f"Loading {name}...")
-                return load_results(str(available[name]))
-            print(f"Skipping {name}: file not found")
-            return []
-
-        # success_failure.json: compute Pearson/Spearman for success trajectory + preference accuracy
-        sf_results = _load_if_exists("success_failure_preference.json")
-        if sf_results:
-            print("Running analyses for success_failure_preference.json:")
-            metrics = run_success_failure_eval(sf_results)
-            for metric_name, value in metrics.items():
-                if isinstance(value, float):
-                    print(f"  - {metric_name}: {value:.4f}")
-                else:
-                    print(f"  - {metric_name}: {value}")
-
-        # reward_alignment_progress.json: reuse compute_metrics and summaries
-        ra_results = _load_if_exists("reward_alignment_progress.json")
-        if ra_results:
-            print("Running analyses for reward_alignment_progress.json:")
-            metrics = run_reward_alignment_eval(ra_results)
-            for metric_name, value in metrics.items():
-                if isinstance(value, float):
-                    print(f"  - {metric_name}: {value:.4f}")
-                else:
-                    print(f"  - {metric_name}: {value}")
-        else:
-            print("No analyses run for reward_alignment_progress.json")
-
-        # confusion_matrix.json: create confusion matrix analysis
-        cm_results = _load_if_exists("confusion_matrix.json")
-        if cm_results:
-            print("Running analyses for confusion_matrix.json:")
-            metrics = run_confusion_matrix_eval(cm_results)
-            for metric_name, value in metrics.items():
-                if isinstance(value, float):
-                    print(f"  - {metric_name}: {value:.4f}")
-                elif isinstance(value, dict):
-                    print(f"  - {metric_name}:")
-                    for sub_metric, sub_value in value.items():
-                        if isinstance(sub_value, float):
-                            print(f"    {sub_metric}: {sub_value:.4f}")
-                        else:
-                            print(f"    {sub_metric}: {sub_value}")
-                else:
-                    print(f"  - {metric_name}: {value}")
-        else:
-            print("No analyses run for confusion_matrix.json")
-
-        # policy_ranking_progress.json: create policy ranking analysis
-        pr_results = _load_if_exists("policy_ranking_progress.json")
-        if pr_results:
-            print("Running analyses for policy_ranking_progress.json:")
-            metrics = run_policy_ranking_eval_per_ranked_set(pr_results)
-            for metric_name, value in metrics.items():
-                if isinstance(value, float):
-                    print(f"  - {metric_name}: {value:.4f}")
-                else:
-                    print(f"  - {metric_name}: {value}")
-        else:
-            print("No analyses run for policy_ranking_progress.json")
-
-        print("Directory processing complete.")
+        for eval_file in eval_files:
+            eval_type = eval_file.stem  # filename without extension
+            print(f"    Analyzing {eval_type}...")
+            results = load_results(str(eval_file))
+            metrics = analyze_evaluation_type(eval_type, results)
+            print(f"      ✓ Completed {eval_type} analysis")
+            print(f"      ✓ Metrics: {metrics}")
         print("Done!")
         return
-
 
 if __name__ == "__main__":
     main()

@@ -25,7 +25,6 @@ from rfm.utils.setup_utils import (
     setup_peft_model,
 )
 
-# Suppress FSDP ShardedTensor deprecation warning
 warnings.filterwarnings("ignore", message="Please use DTensor instead and we are deprecating ShardedTensor")
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -101,7 +100,7 @@ def train(cfg: ExperimentConfig):
     # Use the shared utilities for batch collator and dataset
     with _timer("time/setup_data", timing_raw=timing_raw):
         batch_collator = setup_batch_collator(processor, tokenizer, cfg)
-        train_dataset = setup_dataset(cfg.data)
+        train_dataset = setup_dataset(cfg.data, batch_size=cfg.training.per_device_train_batch_size)
 
     # Set up evaluation dataset if evaluation is enabled
     eval_dataset = None

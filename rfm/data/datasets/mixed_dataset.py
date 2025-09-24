@@ -10,7 +10,7 @@ from rfm.utils.distributed import rank_0_print
 class MixedDataset(RFMBaseDataset):
     """Dataset that combines preference, similarity, and progress generation."""
 
-    def __init__(self, config, is_evaluation=False, max_samples=None, **kwargs):
+    def __init__(self, config, is_evaluation=False, max_samples=None, batch_size=None, **kwargs):
         super().__init__(config, is_evaluation, **kwargs)
 
         # Initialize the individual datasets
@@ -21,10 +21,12 @@ class MixedDataset(RFMBaseDataset):
         # Set the ratio for sampling between preference, similarity, and progress
         self.sample_type_ratio = config.sample_type_ratio
         self.max_samples = max_samples
+        self.batch_size = batch_size
+        self.data_len = max(len(self.pref_dataset), len(self.similarity_dataset), len(self.progress_dataset))
 
     def __len__(self):
         if self.max_samples is None:
-            return max(len(self.pref_dataset), len(self.similarity_dataset), len(self.progress_dataset))
+            return max(self.data_len, self.batch_size)
         else:
             return self.max_samples
 
@@ -34,6 +36,8 @@ class MixedDataset(RFMBaseDataset):
         Uses the same normalization and rebalancing approach as PrefDataset and ProgressDataset
         to handle cases where some sample types have zero probability or datasets are unavailable.
         """
+        idx = idx % self.data_len
+        
         # Available dataset types with their probabilities
         datasets = [
             ("pref", self.sample_type_ratio[0], self.pref_dataset),

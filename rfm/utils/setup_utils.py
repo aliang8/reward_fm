@@ -25,6 +25,7 @@ from rfm.data.datasets import (
     PairedSuccessFailureDataset,
     ProgressDataset,
     RewardAlignmentDataset,
+    ProgressDefaultDataset,
     RFMBaseDataset, 
     WrongTaskDataset,
 )
@@ -53,16 +54,16 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
                 torch_dtype=torch.bfloat16,
                 # _attn_implementation="flash_attention_2",
             )
-            rfm_model_cls = RFM  
+            model_cls = RFM  
         
     
         elif "Qwen" in cfg.base_model_id:
             if cfg.model_type == "default":
                 qwen_model_cls = Qwen2_5_VLModel
-                rfm_model_cls = RFM
+                model_cls = RFM
             elif cfg.model_type == "vqa":
                 qwen_model_cls = Qwen2_5_VLForConditionalGeneration
-                rfm_model_cls = RFMVQA
+                model_cls = RFMVQA
 
             base_model = qwen_model_cls.from_pretrained(cfg.base_model_id)
             
@@ -106,15 +107,15 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
 
         # Initialize RFM model wrapper with the pre-loaded base model
         rank_0_print("Initializing RFM model...")
-        rfm_model = rfm_model_cls(config=base_model.config, processor=processor, base_model=base_model, base_model_id=cfg.base_model_id)
+        model = model_cls(config=base_model.config, processor=processor, base_model=base_model, base_model_id=cfg.base_model_id)
 
         if hf_model_id:
             rank_0_print(f"Loading model from {hf_model_id}")
 
-            # before = rfm_model.model.visual.blocks[0].mlp.down_proj.weight
-            # before = rfm_model.preference_head.weight
+            # before = model.model.visual.blocks[0].mlp.down_proj.weight
+            # before = model.preference_head.weight
             # load the model from the evaluation path
-            rfm_model = rfm_model_cls.from_pretrained(hf_model_id, processor=processor, base_model=base_model)
+            model = model_cls.from_pretrained(hf_model_id, processor=processor, base_model=base_model)
 
         tokenizer = processor.tokenizer
 
@@ -129,7 +130,7 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
         if hf_model_id:
             # Load from Hugging Face Hub
             rank_0_print(f"Loading ReWiND model from {hf_model_id}")
-            rfm_model = ReWiNDTransformer.from_pretrained(hf_model_id, image_encoder=image_encoder, text_encoder=text_encoder, tokenizer=tokenizer)
+            model = ReWiNDTransformer.from_pretrained(hf_model_id, image_encoder=image_encoder, text_encoder=text_encoder, tokenizer=tokenizer)
         else:
             train_img = cfg.train_vision_encoder
             train_text = cfg.train_language_model
@@ -142,13 +143,13 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
 
             rank_0_print("Initializing ReWiND model...")
             rewind_config = cfg.rewind if cfg.rewind is not None else ReWINDTransformerConfig()
-            rfm_model = ReWiNDTransformer(config=rewind_config, image_encoder=image_encoder, text_encoder=text_encoder, tokenizer=tokenizer)
+            model = ReWiNDTransformer(config=rewind_config, image_encoder=image_encoder, text_encoder=text_encoder, tokenizer=tokenizer)
 
     rank_0_print("Model architecture initialized")
-    rank_0_print(f"Model architecture: {rfm_model}")
+    rank_0_print(f"Model architecture: {model}")
 
     # Configure which parts of the model to train based on config
-    for name, param in rfm_model.named_parameters():
+    for name, param in model.named_parameters():
         # Train prediction heads based on individual settings
         if "progress_head" in name:
             param.requires_grad = cfg.train_progress_head
@@ -178,7 +179,16 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
     rank_0_print(f"  - Progress head: {cfg.train_progress_head}")
     rank_0_print(f"  - Preference head: {cfg.train_preference_head}")
     rank_0_print(f"  - Similarity head: {cfg.train_similarity_head}")
-    return tokenizer, processor, rfm_model
+
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            rank_0_print(f"{name:60} | {param.shape}")
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    all_params = sum(p.numel() for p in model.parameters())
+    rank_0_print(
+        f"trainable params: {trainable_params:,} || all params: {all_params:,} || trainable%: {100 * trainable_params / all_params:.4f}"
+    )
+    return tokenizer, processor, model
 
 
 def setup_peft_model(rfm_model: RFM, cfg: PEFTConfig) -> RFM:
@@ -201,7 +211,7 @@ def setup_peft_model(rfm_model: RFM, cfg: PEFTConfig) -> RFM:
     trainable_params = sum(p.numel() for p in rfm_model.parameters() if p.requires_grad)
     all_params = sum(p.numel() for p in rfm_model.parameters())
     rank_0_print(
-        f"trainable params: {trainable_params:,} || all params: {all_params:,} || trainable%: {100 * trainable_params / all_params:.4f}"
+        f"AFTER PEFT: trainable params: {trainable_params:,} || all params: {all_params:,} || trainable%: {100 * trainable_params / all_params:.4f}"
     )
     return rfm_model
 
@@ -285,7 +295,7 @@ def setup_dataset(cfg: DataConfig, is_eval: bool = False, **kwargs) -> RFMBaseDa
     dataset_cls = {
         "reward_alignment": RewardAlignmentDataset,
         "success_failure": PairedSuccessFailureDataset,
-        "policy_ranking": ProgressDataset,
+        "policy_ranking": ProgressDefaultDataset,
         "confusion_matrix": ConfusionMatrixDataset,
         "wrong_task": WrongTaskDataset,
         "default": MixedDataset,
@@ -313,7 +323,9 @@ def setup_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg
         elif cfg.model.model_type == "vqa":
             batch_collator = VQABatchCollator(**collator_kwargs, inference=cfg.mode == "eval")
     elif "rewind_transformer" in cfg.model.base_model_id:
-        batch_collator = ReWiNDBatchCollator(**collator_kwargs, tokenizer=tokenizer)
+        # Add load_embeddings parameter if available in config
+        load_embeddings = getattr(cfg.data, 'load_embeddings', False)
+        batch_collator = ReWiNDBatchCollator(**collator_kwargs, tokenizer=tokenizer, load_embeddings=load_embeddings)
 
     rank_0_print("Batch collator created successfully")
     return batch_collator

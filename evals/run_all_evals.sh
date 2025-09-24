@@ -30,10 +30,10 @@ uv run python evals/run_model_eval.py \
 echo "Running MetaWorld reward alignment evaluation"
 uv run python evals/run_model_eval.py \
       --config rfm/configs/eval_config.yaml \
-      --set num_batches=-1 \
+      --set num_batches=5 \
       --set data.batch_size=16 \
-      --set data.eval_datasets=[\"HenryZhang/metaworld_rewind_rfm_eval\"] \
-      --set data.eval_subsets=[\"metaworld_rewind_eval\"] \
+      --set data.eval_datasets=[\"HenryZhang/metaworld_rewind_rfm_train\"] \
+      --set data.eval_subsets=[\"metaworld_rewind_train\"] \
       --set data.dataset_type=reward_alignment \
       --use-async \
       --max_concurrent=4 2>&1 

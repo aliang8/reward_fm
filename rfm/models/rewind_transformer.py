@@ -83,7 +83,6 @@ class ReWiNDTransformer(PreTrainedModel):
         # Prediction tokens
         self.preference_token = nn.Parameter(torch.randn(1, 1, config.hidden_dim))
         self.similarity_token = nn.Parameter(torch.randn(1, 1, config.hidden_dim))
-        self.progress_token = nn.Parameter(torch.randn(1, 1, config.hidden_dim))
 
         # self.progress_head = nn.Linear(config.hidden_dim, 1, bias=False)
         self.progress_head = nn.Sequential(
@@ -113,6 +112,8 @@ class ReWiNDTransformer(PreTrainedModel):
         attention_mask=None,
         pixel_values=None,
         pixel_values_videos=None,
+        video_embeddings=None,
+        text_embeddings=None,
         image_grid_thw=None,
         video_grid_thw=None,
         sample_type=None,  # "preference", "similarity", "progress"
@@ -124,25 +125,38 @@ class ReWiNDTransformer(PreTrainedModel):
         if timing_raw is None:
             timing_raw = {}
 
-        if pixel_values_videos is None:
-            raise ValueError("pixel_values_videos is required")
+        # Check if we're using precomputed embeddings or raw inputs
+        use_precomputed = video_embeddings is not None and text_embeddings is not None
+        
+        if use_precomputed:
+            # Use precomputed embeddings directly
+            B, T, D_video = video_embeddings.shape
+            D_text = text_embeddings.shape[1]
+            
+            # Project embeddings to hidden dimension
+            video_embeddings = self.video_proj(video_embeddings.view(-1, D_video)).view(B, T, -1)  # [B, T, hidden_dim]
+            text_embeddings = self.text_proj(text_embeddings)  # [B, hidden_dim]
+        else:
+            # Use raw inputs with encoders
+            if pixel_values_videos is None:
+                raise ValueError("pixel_values_videos is required when not using precomputed embeddings")
 
-        B, T, C, H, W = pixel_values_videos.shape
+            B, T, C, H, W = pixel_values_videos.shape
 
-        # processing text inputs
-        with torch.no_grad():
-            text_embeddings = self.text_encoder(input_ids=input_ids, attention_mask=attention_mask)
-            text_embeddings = mean_pooling(text_embeddings, attention_mask)  # [B, text_hidden_dim]
-            text_embeddings = self.text_proj(text_embeddings)  # [B, D]
+            # processing text inputs
+            with torch.no_grad():
+                text_embeddings = self.text_encoder(input_ids=input_ids, attention_mask=attention_mask)
+                text_embeddings = mean_pooling(text_embeddings, attention_mask)  # [B, text_hidden_dim]
+                text_embeddings = self.text_proj(text_embeddings)  # [B, D]
 
-        # processing video inputs
-        # T should contain both chosen and rejected trajectories concatenated together
-        pixel_values_videos = pixel_values_videos.view(B * T, C, H, W)
-        video_embeddings = self.image_encoder(
-            pixel_values=pixel_values_videos
-        ).pooler_output  # [B, vision_hidden_dim]
-        video_embeddings = self.video_proj(video_embeddings)  # [B * T, D]
-        video_embeddings = video_embeddings.view(B, T, -1)  # [B, T, D]
+            # processing video inputs
+            # T should contain both chosen and rejected trajectories concatenated together
+            pixel_values_videos = pixel_values_videos.view(B * T, C, H, W)
+            video_embeddings = self.image_encoder(
+                pixel_values=pixel_values_videos
+            ).pooler_output  # [B, vision_hidden_dim]
+            video_embeddings = self.video_proj(video_embeddings)  # [B * T, D]
+            video_embeddings = video_embeddings.view(B, T, -1)  # [B, T, D]
 
         if sample_type == "preference" or sample_type == "similarity":
             video_embeddings_A = video_embeddings[:, : T // 2]

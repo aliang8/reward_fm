@@ -33,7 +33,7 @@ class ProgressDataset(RFMBaseDataset):
         """Create a progress sample using normalized and rebalanced strategy selection.
         
         Implements three strategies:
-        1. Default: Use original trajectory as-is
+        1. Successful: Use original trajectory as-is
         2. Rewind Same Task: Create rewound trajectory from same task
         3. Different Task: Use trajectory from different task (progress set to 0.0)
         """
@@ -44,7 +44,7 @@ class ProgressDataset(RFMBaseDataset):
         
         # Strategy setup with rebalancing on failure
         strategies = [
-            ("default", self.progress_strategy_ratio[0]),
+            ("successful", self.progress_strategy_ratio[0]),
             (DataGenStrat.REWIND_SAME_TASK, self.progress_strategy_ratio[1]),
             (DataGenStrat.DIFFERENT_TASK, self.progress_strategy_ratio[2]),
         ]
@@ -61,9 +61,9 @@ class ProgressDataset(RFMBaseDataset):
             # Rebalance probabilities based on remaining strategies
             total_prob = sum(prob for _, prob in strategies)
             if total_prob == 0:
-                # All strategies have zero probability, fallback to default
+                # All strategies have zero probability, fallback to successful
                 processed_traj = traj
-                strategy_used = "default"
+                strategy_used = "successful"
                 break
             
             # Normalize probabilities
@@ -81,9 +81,9 @@ class ProgressDataset(RFMBaseDataset):
                     break
             
             # Execute selected strategy
-            if selected_strategy == "default":
+            if selected_strategy == "successful":
                 processed_traj = traj
-                strategy_used = "default"
+                strategy_used = "successful"
                 
             elif selected_strategy == DataGenStrat.REWIND_SAME_TASK:
                 processed_traj = create_rewind_trajectory(traj, max_frames=self.config.max_frames)
@@ -98,10 +98,10 @@ class ProgressDataset(RFMBaseDataset):
                     # Strategy failed, remove it from future attempts
                     strategies = [(strat, prob) for strat, prob in strategies if strat != DataGenStrat.DIFFERENT_TASK]
         
-        # Final fallback: If all strategies failed, use default
+        # Final fallback: If all strategies failed, use successful
         if processed_traj is None:
             processed_traj = traj
-            strategy_used = "default"
+            strategy_used = "successful"
         
         # Process frames and progress based on strategy used
         if strategy_used == DataGenStrat.REWIND_SAME_TASK:
@@ -113,7 +113,7 @@ class ProgressDataset(RFMBaseDataset):
             
             # subsample frames and progress
             frames, progress, metadata = subsample_frames_and_progress(frames, self.config.max_frames)
-            
+        
         # pad frames and progress to max_frames
         frames, progress = pad_trajectory_to_max_frames(frames, progress, self.config.max_frames)
 

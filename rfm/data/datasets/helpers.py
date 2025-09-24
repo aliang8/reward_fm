@@ -4,7 +4,7 @@ from enum import Enum
 
 import numpy as np
 
-from rfm.utils.logging import rank_0_print
+from rfm.utils.distributed import rank_0_print
 
 
 class DataGenStrat(Enum):

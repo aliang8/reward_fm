@@ -7,7 +7,7 @@ import torch
 
 from datasets import Dataset, concatenate_datasets
 from .helpers import load_frames_from_npz
-from rfm.utils.logging import rank_0_print
+from rfm.utils.distributed import rank_0_print
 
 
 class RFMBaseDataset(torch.utils.data.Dataset):

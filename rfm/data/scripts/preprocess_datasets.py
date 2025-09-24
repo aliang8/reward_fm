@@ -16,7 +16,7 @@ from pyrallis import wrap
 from tqdm import tqdm
 
 from datasets import Dataset, DatasetDict, Video, load_dataset
-from rfm.utils.logging import rank_0_print
+from rfm.utils.distributed import rank_0_print
 
 
 @dataclass

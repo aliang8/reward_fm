@@ -7,7 +7,7 @@ import random
 
 from rfm.data.dataset_types import SimilaritySample, Trajectory
 from .base import RFMBaseDataset
-from rfm.utils.logging import rank_0_print
+from rfm.utils.distributed import rank_0_print
 
 
 class SimilarityDataset(RFMBaseDataset):

@@ -8,7 +8,7 @@ from tqdm import tqdm
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, Trajectory
 from .base import RFMBaseDataset
 from .pref import DataGenStrat
-from rfm.utils.logging import rank_0_print
+from rfm.utils.distributed import rank_0_print
 
 
 class ConfusionMatrixDataset(RFMBaseDataset):

@@ -14,7 +14,8 @@ import wandb
 # Import shared configs and utilities
 from rfm.configs.experiment_configs import ExperimentConfig
 from rfm.trainers import ReWiNDTrainer, RFMHeadsTrainer, RFMVQATrainer
-from rfm.utils.logging import _timer, is_rank_0, rank_0_print
+from rfm.utils.distributed import is_rank_0, rank_0_print
+from rfm.utils.timer import _timer
 from rfm.utils.parser import parse_multiple
 from rfm.utils.setup_utils import (
     create_training_arguments,

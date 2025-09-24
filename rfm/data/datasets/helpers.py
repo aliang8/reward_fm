@@ -228,52 +228,53 @@ def randomly_subsample_frames(
 def subsample_frames_and_progress(frames: np.ndarray, max_frames: int) -> tuple[np.ndarray, list[float]]:
     """Linear subsample frames and progress to max_frames
     """
-    subsampled_frames, indices = linspace_subsample_frames(frames, max_frames)
+    # subsampled_frames, indices = linspace_subsample_frames(frames, max_frames)
     
-    progress = [(idx + 1) / len(frames) for idx in indices]
-
-    metadata = {
-        "subsampled_indices": indices,
-    }
-    
-    return subsampled_frames, progress, metadata
-
-    # num_frames_total = len(frames)
-
-    # # Select start and end indices for the chosen trajectory segment
-    # # Start index is in the first half of the trajectory
-    # start_idx = random.randint(0, num_frames_total // 2 - 1)
-    # # End index is in the latter 1/3 of the trajectory
-    # end = (2 * num_frames_total) // 3
-    # end_idx = random.randint(end, num_frames_total)
-
-    # # Ensure we have enough frames between start and end
-    # while end_idx - start_idx < 5:
-    #     start_idx = random.randint(0, num_frames_total // 2 - 1)
-    #     end_idx = random.randint(end, num_frames_total)
-
-    # # Extract the chosen segment
-    # segment_frames = frames[start_idx:end_idx]
-    # segment_indices = list(range(start_idx, end_idx))
-
-    # # Calculate progress for the full segment first
-    # segment_progress = []
-    # for i in range(len(segment_indices)):
-    #     segment_progress.append((i + 1) / (num_frames_total - start_idx))
-
-    # # Randomly subsample the chosen trajectory segment to num_frames
-    # frames, indices = randomly_subsample_frames(segment_frames, max_frames)
-
-    # # Map the subsampled indices to the corresponding progress values from the full segment
-    # # The chosen_indices tell us which frames from the segment we're using
-    # progress = [segment_progress[idx] for idx in indices]
+    # progress = [(idx + 1) / len(frames) for idx in indices]
 
     # metadata = {
-    #     "start_idx": start_idx,
-    #     "end_idx": end_idx,
     #     "subsampled_indices": indices,
     # }
-    # return frames, progress, metadata
+    
+    # return subsampled_frames, progress, metadata
+
+    num_frames_total = len(frames)
+
+    # Select start and end indices for the chosen trajectory segment
+    # Start index is in the first half of the trajectory
+    start_idx = random.randint(0, num_frames_total // 2 - 1)
+    # End index is in the latter 1/3 of the trajectory
+    end = (2 * num_frames_total) // 3
+    end_idx = random.randint(end, num_frames_total)
+
+    # Ensure we have enough frames between start and end
+    while end_idx - start_idx < 5:
+        start_idx = random.randint(0, num_frames_total // 2 - 1)
+        end_idx = random.randint(end, num_frames_total)
+
+    # Extract the chosen segment
+    segment_frames = frames[start_idx:end_idx]
+    segment_indices = list(range(start_idx, end_idx))
+
+    # Calculate progress for the full segment first
+    segment_progress = []
+    for i in range(len(segment_indices)):
+        segment_progress.append((i + 1) / (num_frames_total - start_idx))
+
+    # Randomly subsample the chosen trajectory segment to num_frames
+    # frames, indices = randomly_subsample_frames(segment_frames, max_frames)
+    frames, indices = linspace_subsample_frames(segment_frames, max_frames)
+
+    # Map the subsampled indices to the corresponding progress values from the full segment
+    # The chosen_indices tell us which frames from the segment we're using
+    progress = [segment_progress[idx] for idx in indices]
+
+    metadata = {
+        "start_idx": start_idx,
+        "end_idx": end_idx,
+        "subsampled_indices": indices,
+    }
+    return frames, progress, metadata
 
 
 def create_rewind_trajectory(original_traj: dict, rewind_length: int | None = None, max_frames: int = 8) -> dict:

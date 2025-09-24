@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Batch collator for processing Sample objects through the processor and returning processed tensors.
-This collator handles the conversion from PreferenceSample and SimilaritySample objects to processed tensors.
+Batch collator for processing list of samples.
 """
 
 import tempfile

@@ -60,7 +60,11 @@ def train(cfg: ExperimentConfig):
         tokenizer, processor, rfm_model = setup_model_and_processor(cfg.model)
 
     # Apply PEFT if enabled
-    peft_rfm_model = setup_peft_model(rfm_model, cfg)
+    if cfg.model.use_peft:
+        peft_rfm_model = setup_peft_model(rfm_model, cfg.peft)
+    else:
+        peft_rfm_model = rfm_model
+        rank_0_print("PEFT not enabled, using full model")
 
     # Create training arguments from config
     if cfg.debug:

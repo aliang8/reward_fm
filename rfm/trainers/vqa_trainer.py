@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 from evals.eval_utils import extract_answer_from_text
 from .rfm_heads_trainer import RFMHeadsTrainer
-from rfm.utils.logging import _timer
+from rfm.utils.timer import _timer
 
 
 # copied because the original function forces the metric reduction

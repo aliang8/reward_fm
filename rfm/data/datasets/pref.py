@@ -14,7 +14,8 @@ from .helpers import (
     pad_trajectory_to_max_frames,
     subsample_frames_and_progress,
 )
-from rfm.utils.distributed import rank_0_print, timer
+from rfm.utils.distributed import rank_0_print
+from rfm.utils.timer import timer
 
 
 class PrefDataset(RFMBaseDataset):

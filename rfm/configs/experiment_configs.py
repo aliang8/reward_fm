@@ -6,23 +6,8 @@ across different training scripts.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
-
+from typing import Optional, Dict, Any
 from transformers import PretrainedConfig
-
-
-@dataclass
-class ReWINDTransformerConfig(PretrainedConfig):
-    model_type = "rewind_transformer"
-
-    video_feature_dim: int = 768
-    text_feature_dim: int = 384
-    hidden_dim: int = 512
-    num_layers: int = 4
-    num_attention_heads: int = 8
-    dropout: float = 0.1
-    max_len: int = 16
-
 
 @dataclass
 class ModelConfig(PretrainedConfig):
@@ -42,15 +27,22 @@ class ModelConfig(PretrainedConfig):
     )
     train_similarity_head: bool = field(default=True, metadata={"help": "Whether to train the similarity scoring head"})
 
+    use_peft: bool = field(default=False, metadata={"help": "Whether to use PEFT/LoRA or train full model"})
+    peft_vision_encoder: bool = field(default=False, metadata={"help": "Whether to attach LoRA to the vision encoder"})
+
     # rewind sub-config
-    rewind: Optional[ReWINDTransformerConfig] = field(default=None)
+    rewind: Optional[Dict[str, Any]] = field(default=None)
+    
+    def __post_init__(self):
+        from rfm.models.rewind_transformer import ReWINDTransformerConfig
+        
+        if self.rewind is not None and isinstance(self.rewind, dict):
+            self.rewind = ReWINDTransformerConfig(**self.rewind)
 
 
 @dataclass
 class PEFTConfig:
     """Config for PEFT/LoRA settings"""
-
-    use_peft: bool = field(default=False, metadata={"help": "Whether to use PEFT/LoRA or train full model"})
     r: int = field(default=32)
     lora_alpha: int = field(default=64)
     lora_dropout: float = field(default=0.05)
@@ -58,7 +50,6 @@ class PEFTConfig:
     target_modules: list[str] = field(
         default_factory=lambda: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
     )
-    peft_vision_encoder: bool = field(default=False, metadata={"help": "Whether to attach LoRA to the vision encoder"})
 
 
 @dataclass
@@ -185,7 +176,6 @@ class TrainingConfig:
 class LoggingConfig:
     """Config for logging settings"""
 
-    print_trainable_parameters: bool = field(default=True)
     save_model: bool = field(default=True)
     save_processor: bool = field(default=True)
     # Wandb configuration
@@ -209,3 +199,19 @@ class ExperimentConfig:
     data: DataConfig = field(default_factory=DataConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    
+    def __post_init__(self):        
+        if isinstance(self.model, dict):
+            self.model = ModelConfig(**self.model)
+        
+        if isinstance(self.peft, dict):
+            self.peft = PEFTConfig(**self.peft)
+            
+        if isinstance(self.data, dict):
+            self.data = DataConfig(**self.data)
+            
+        if isinstance(self.training, dict):
+            self.training = TrainingConfig(**self.training)
+            
+        if isinstance(self.logging, dict):
+            self.logging = LoggingConfig(**self.logging)

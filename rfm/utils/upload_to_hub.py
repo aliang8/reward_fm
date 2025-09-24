@@ -61,7 +61,7 @@ def create_model_card(model_dir: Path, base_model: str, model_name: str):
         model_type = "unknown"
 
     # Try to read wandb info if available
-    wandb_info_path = model_dir / "wandb_info.json"
+    wandb_info_path = model_dir.parent / "wandb_info.json"
     wandb_section = ""
     if wandb_info_path.exists():
         try:

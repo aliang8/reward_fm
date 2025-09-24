@@ -82,7 +82,7 @@ class ReWiNDBatchCollator(RFMBatchCollator):
         return batch_inputs
 
     def _process_progress_batch(self, progress_samples: list[ProgressSample]) -> dict[str, torch.Tensor]:
-        """Process a batch of progress samples with VQA-style question."""
+        """Process a batch of progress samples."""
         all_frames = []
         for sample in progress_samples:
             frames = convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)

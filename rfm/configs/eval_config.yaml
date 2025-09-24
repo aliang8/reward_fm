@@ -2,10 +2,11 @@
 # This config is used specifically for evaluation runs
 
 # Model path to load training config from
-model_path: "aliangdw/rfm_prefprog_v4"  # Path to the trained model checkpoint (will load training_config.yaml from here)
+# model_path: "aliangdw/rfm_prefprog_v4"  # Path to the trained model checkpoint (will load training_config.yaml from here)
+model_path: "aliangdw/rewind_progress"
 
 # GPU Pool settings
-num_gpus: 4  # Number of GPUs to use (null for all available)
+num_gpus: 1  # Number of GPUs to use (null for all available)
 max_workers: null  # Max worker threads (null for auto, typically same as num_gpus)
 
 # Evaluation parameters
@@ -33,9 +34,6 @@ data:
   eval_subsets: ["metaworld"]
   
   eval_subset_size: 1000  # Number of evaluation examples
-  
-  # For preprocessing
-  max_frames_for_preprocessing: 64
 
   # Video processing settings
   max_frames: 16

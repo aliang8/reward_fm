@@ -17,7 +17,7 @@ from transformers import (
     TrainingArguments,
 )
 
-from rfm.configs.experiment_configs import DataConfig, ExperimentConfig, ModelConfig
+from rfm.configs.experiment_configs import DataConfig, ExperimentConfig, ModelConfig, PEFTConfig
 from rfm.data.collators import BaseCollator, ReWiNDBatchCollator, RFMBatchCollator, VQABatchCollator
 from rfm.data.datasets import (
     ConfusionMatrixDataset,
@@ -25,10 +25,11 @@ from rfm.data.datasets import (
     PairedSuccessFailureDataset,
     ProgressDataset,
     RewardAlignmentDataset,
-    RFMBaseDataset,
+    RFMBaseDataset, 
     WrongTaskDataset,
 )
 from rfm.models import RFM, RFMVQA, ReWiNDTransformer
+from rfm.models.rewind_transformer import ReWINDTransformerConfig
 from rfm.utils.distributed import rank_0_print
 
 
@@ -118,84 +119,90 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
         tokenizer = processor.tokenizer
 
     elif "rewind_transformer" in cfg.base_model_id:
+        # Initialize new model with encoders
         # Pretrained image and text encoders
         image_encoder = AutoModel.from_pretrained("facebook/dinov2-base")
         text_encoder = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L12-v2")
         processor = AutoImageProcessor.from_pretrained("facebook/dinov2-base", use_fast=True)
         tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L12-v2")
 
-        train_img = cfg.train_vision_encoder
-        train_text = cfg.train_language_model
+        if hf_model_id:
+            # Load from Hugging Face Hub
+            rank_0_print(f"Loading ReWiND model from {hf_model_id}")
+            rfm_model = ReWiNDTransformer.from_pretrained(hf_model_id, image_encoder=image_encoder, text_encoder=text_encoder, tokenizer=tokenizer)
+        else:
+            train_img = cfg.train_vision_encoder
+            train_text = cfg.train_language_model
 
-        for p in image_encoder.parameters():
-            p.requires_grad = train_img
+            for p in image_encoder.parameters():
+                p.requires_grad = train_img
 
-        for p in text_encoder.parameters():
-            p.requires_grad = train_text
+            for p in text_encoder.parameters():
+                p.requires_grad = train_text
 
-        rank_0_print("Initializing ReWiND model...")
-        rfm_model = ReWiNDTransformer(config=cfg, image_encoder=image_encoder, text_encoder=text_encoder)
+            rank_0_print("Initializing ReWiND model...")
+            rewind_config = cfg.rewind if cfg.rewind is not None else ReWINDTransformerConfig()
+            rfm_model = ReWiNDTransformer(config=rewind_config, image_encoder=image_encoder, text_encoder=text_encoder, tokenizer=tokenizer)
 
     rank_0_print("Model architecture initialized")
     rank_0_print(f"Model architecture: {rfm_model}")
-
-    return tokenizer, processor, rfm_model
-
-
-def setup_peft_model(rfm_model: RFM, cfg: ExperimentConfig) -> RFM:
-    """Shared function to apply PEFT configuration to the model"""
-
-    if cfg.peft.use_peft:
-        rank_0_print("Using PEFT/LoRA training...")
-        lora_config = LoraConfig(
-            r=cfg.peft.r,
-            lora_alpha=cfg.peft.lora_alpha,
-            target_modules=cfg.peft.target_modules,
-            lora_dropout=cfg.peft.lora_dropout,
-            bias=cfg.peft.bias,
-        )
-        if cfg.peft.peft_vision_encoder:
-            # vision backbone is frozen, but we can still train the LoRA parameters
-            rank_0_print("Attaching LoRA to only the vision encoder...")
-            rfm_model.base_model.model.visual = get_peft_model(rfm_model.base_model.model.visual, lora_config)
-    else:
-        rank_0_print("Using full model training (no PEFT)...")
 
     # Configure which parts of the model to train based on config
     for name, param in rfm_model.named_parameters():
         # Train prediction heads based on individual settings
         if "progress_head" in name:
-            param.requires_grad = cfg.model.train_progress_head
+            param.requires_grad = cfg.train_progress_head
         elif "preference_head" in name:
-            param.requires_grad = cfg.model.train_preference_head
+            param.requires_grad = cfg.train_preference_head
         elif "similarity_head" in name:
-            param.requires_grad = cfg.model.train_similarity_head
+            param.requires_grad = cfg.train_similarity_head
         # Train vision encoder if specified
         elif "visual" in name or "vision" in name:
             # if PEFT enabled, we don't need to do anything
-            if cfg.peft.use_peft and cfg.peft.peft_vision_encoder:
+            if cfg.use_peft and cfg.peft_vision_encoder:
                 pass
             else:
-                param.requires_grad = cfg.model.train_vision_encoder
+                param.requires_grad = cfg.train_vision_encoder
         elif "language_model" in name:
-            param.requires_grad = cfg.model.train_language_model
+            param.requires_grad = cfg.train_language_model
+        elif "text_encoder" in name:
+            param.requires_grad = cfg.train_language_model
+        elif "image_encoder" in name:
+            param.requires_grad = cfg.train_vision_encoder
         else:
             param.requires_grad = True
 
-    if cfg.logging.print_trainable_parameters:
-        # Count trainable parameters manually - defer printing until after FSDP setup
-        trainable_params = sum(p.numel() for p in rfm_model.parameters() if p.requires_grad)
-        all_params = sum(p.numel() for p in rfm_model.parameters())
-        rank_0_print(
-            f"trainable params: {trainable_params:,} || all params: {all_params:,} || trainable%: {100 * trainable_params / all_params:.4f}"
-        )
-        rank_0_print("Training configuration:")
-        rank_0_print(f"  - Vision encoder: {cfg.model.train_vision_encoder}")
-        rank_0_print(f"  - Language model: {cfg.model.train_language_model}")
-        rank_0_print(f"  - Progress head: {cfg.model.train_progress_head}")
-        rank_0_print(f"  - Preference head: {cfg.model.train_preference_head}")
-        rank_0_print(f"  - Similarity head: {cfg.model.train_similarity_head}")
+    rank_0_print("Training configuration:")
+    rank_0_print(f"  - Vision encoder: {cfg.train_vision_encoder}")
+    rank_0_print(f"  - Language model: {cfg.train_language_model}")
+    rank_0_print(f"  - Progress head: {cfg.train_progress_head}")
+    rank_0_print(f"  - Preference head: {cfg.train_preference_head}")
+    rank_0_print(f"  - Similarity head: {cfg.train_similarity_head}")
+    return tokenizer, processor, rfm_model
 
+
+def setup_peft_model(rfm_model: RFM, cfg: PEFTConfig) -> RFM:
+    """Shared function to apply PEFT configuration to the model"""
+
+    rank_0_print("Using PEFT/LoRA training...")
+    lora_config = LoraConfig(
+        r=cfg.r,
+        lora_alpha=cfg.lora_alpha,
+        target_modules=cfg.target_modules,
+        lora_dropout=cfg.lora_dropout,
+        bias=cfg.bias,
+    )
+    if cfg.peft_vision_encoder:
+        # vision backbone is frozen, but we can still train the LoRA parameters
+        rank_0_print("Attaching LoRA to only the vision encoder...")
+        rfm_model.base_model.model.visual = get_peft_model(rfm_model.base_model.model.visual, lora_config)
+
+    # Count trainable parameters manually - defer printing until after FSDP setup
+    trainable_params = sum(p.numel() for p in rfm_model.parameters() if p.requires_grad)
+    all_params = sum(p.numel() for p in rfm_model.parameters())
+    rank_0_print(
+        f"trainable params: {trainable_params:,} || all params: {all_params:,} || trainable%: {100 * trainable_params / all_params:.4f}"
+    )
     return rfm_model
 
 

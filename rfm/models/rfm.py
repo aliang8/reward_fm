@@ -13,7 +13,7 @@ from transformers import PreTrainedModel, Qwen2_5_VLModel
 from transformers import SmolVLMModel
 from transformers.modeling_outputs import SequenceClassifierOutputWithPast
 
-from rfm.utils.logging import _timer
+from rfm.utils.timer import _timer
 
 
 class RFM(PreTrainedModel):

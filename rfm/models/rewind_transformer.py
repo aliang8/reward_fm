@@ -10,56 +10,99 @@ heads or there will be some problems with FSDP sharding.
 import einops
 import torch
 import torch.nn as nn
-from transformers import PreTrainedModel
+from transformers import PreTrainedModel, AutoConfig, AutoModel
 from transformers.modeling_outputs import SequenceClassifierOutputWithPast
-
+from transformers import PretrainedConfig
 
 def mean_pooling(model_output, attention_mask):
     token_embeddings = model_output[0]  # First element of model_output contains all token embeddings
     input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
     return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
 
+class ReWINDTransformerConfig(PretrainedConfig):
+    model_type = "rewind_transformer"
+
+    def __init__(
+        self,
+        video_feature_dim: int = 768,
+        text_feature_dim: int = 384,
+        hidden_dim: int = 512,
+        num_layers: int = 4,
+        num_attention_heads: int = 8,
+        dropout: float = 0.1,
+        max_len: int = 16,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+        self.video_feature_dim = video_feature_dim
+        self.text_feature_dim = text_feature_dim
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
+        self.num_attention_heads = num_attention_heads
+        self.dropout = dropout
+        self.max_len = max_len
+
 
 class ReWiNDTransformer(PreTrainedModel):
     """ReWiND Transformer with three prediction heads for different objectives."""
+    
+    config_class = ReWINDTransformerConfig
 
-    def __init__(self, config, image_encoder=None, text_encoder=None):
+    def __init__(self, config, image_encoder=None, text_encoder=None, tokenizer=None):
         super().__init__(config)
-        rewind_tfm_config = config.rewind
 
         self.image_encoder = image_encoder
         self.text_encoder = text_encoder
-        self.video_proj = nn.Linear(image_encoder.config.hidden_size, rewind_tfm_config.hidden_dim)
-        self.text_proj = nn.Linear(text_encoder.config.hidden_size, rewind_tfm_config.hidden_dim)
+        self.tokenizer = tokenizer
+        
+        video_feature_dim = config.video_feature_dim
+        text_feature_dim = config.text_feature_dim
+        hidden_dim = config.hidden_dim
 
-        self.first_embedding_A = nn.Parameter(torch.randn(1, 1, rewind_tfm_config.hidden_dim))
-        self.first_embedding_B = nn.Parameter(torch.randn(1, 1, rewind_tfm_config.hidden_dim))
+
+        if image_encoder is not None:
+            video_feature_dim = image_encoder.config.hidden_size
+        if text_encoder is not None:
+            text_feature_dim = text_encoder.config.hidden_size
+            
+        self.video_proj = nn.Linear(video_feature_dim, hidden_dim)
+        self.text_proj = nn.Linear(text_feature_dim, hidden_dim)
+
+        self.first_embedding_A = nn.Parameter(torch.randn(1, 1, hidden_dim))
+        self.first_embedding_B = nn.Parameter(torch.randn(1, 1, hidden_dim))
 
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=rewind_tfm_config.hidden_dim,
-            nhead=rewind_tfm_config.num_attention_heads,
-            dim_feedforward=rewind_tfm_config.hidden_dim * 4,
-            dropout=rewind_tfm_config.dropout,
+            d_model=hidden_dim,
+            nhead=config.num_attention_heads,
+            dim_feedforward=config.hidden_dim * 4,
+            dropout=config.dropout,
             batch_first=True,
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=rewind_tfm_config.num_layers)
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=config.num_layers)
 
-        # Class token
-        self.preference_token = nn.Parameter(torch.randn(1, 1, rewind_tfm_config.hidden_dim))
-        self.similarity_token = nn.Parameter(torch.randn(1, 1, rewind_tfm_config.hidden_dim))
-        self.progress_token = nn.Parameter(torch.randn(1, 1, rewind_tfm_config.hidden_dim))
+        # Prediction tokens
+        self.preference_token = nn.Parameter(torch.randn(1, 1, config.hidden_dim))
+        self.similarity_token = nn.Parameter(torch.randn(1, 1, config.hidden_dim))
+        self.progress_token = nn.Parameter(torch.randn(1, 1, config.hidden_dim))
 
-        # Positional embeddings (for vision sequence length)
-        self.pos_embed = nn.Parameter(torch.randn(1, rewind_tfm_config.max_len, rewind_tfm_config.hidden_dim))
-
-        self.progress_head = nn.Linear(rewind_tfm_config.hidden_dim, 1, bias=False)
-        self.preference_head = nn.Linear(rewind_tfm_config.hidden_dim, 1, bias=False)
-        self.similarity_head = nn.Linear(rewind_tfm_config.hidden_dim, 1, bias=False)
+        # self.progress_head = nn.Linear(config.hidden_dim, 1, bias=False)
+        self.progress_head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.LayerNorm(hidden_dim // 2),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim // 2, 1),
+            nn.Sigmoid()
+        )
+        
+        self.preference_head = nn.Linear(hidden_dim, 1, bias=False)
+        self.similarity_head = nn.Linear(hidden_dim, 1, bias=False)
 
         # Ensure all heads have the same dtype as the base model
         self.model_dtype = next(self.video_proj.parameters()).dtype
         self.transformer = self.transformer.to(dtype=self.model_dtype)
         self.text_proj = self.text_proj.to(dtype=self.model_dtype)
+
         self.progress_head = self.progress_head.to(dtype=self.model_dtype)
         self.preference_head = self.preference_head.to(dtype=self.model_dtype)
         self.similarity_head = self.similarity_head.to(dtype=self.model_dtype)
@@ -159,3 +202,8 @@ class ReWiNDTransformer(PreTrainedModel):
             progress_logits = {"A": progress_logits, "B": None}
 
         return SequenceClassifierOutputWithPast(logits=logits), progress_logits, timing_raw
+
+
+# Register the model and config with transformers
+AutoConfig.register("rewind_transformer", ReWINDTransformerConfig)
+AutoModel.register(ReWINDTransformerConfig, ReWiNDTransformer)

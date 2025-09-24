@@ -31,10 +31,11 @@ import yaml
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from huggingface_hub import hf_hub_download
+from rich.console import Console
 
 from evals.eval_utils import extract_answer_from_text
 from rfm.configs.eval_configs import EvaluationConfig
-from rfm.configs.experiment_configs import ModelConfig
+from rfm.configs.experiment_configs import ModelConfig, ExperimentConfig
 from rfm.data.dataset_types import PreferenceSample, ProgressSample
 from rfm.utils.parser import deep_merge
 from rfm.utils.setup_utils import setup_model_and_processor, setup_batch_collator
@@ -45,12 +46,12 @@ class AsyncGPUPool:
 
     def __init__(
         self,
-        model_config: ModelConfig,
+        exp_config: ExperimentConfig,
         model_path: str,
         num_gpus: int | None = None,
         max_workers: int | None = None,
     ):
-        self.model_config = model_config
+        self.exp_config = exp_config
         self.model_path = model_path
         self.num_gpus = num_gpus or torch.cuda.device_count()
         self.max_workers = max_workers or self.num_gpus
@@ -77,7 +78,7 @@ class AsyncGPUPool:
             print(f"Loading model on GPU {gpu_id} ({device})")
 
             # Load model on specific GPU
-            _tokenizer, processor, model = setup_model_and_processor(self.model_config, self.model_path)
+            tokenizer, processor, model = setup_model_and_processor(self.exp_config.model, self.model_path)
 
             model = model.to(device)
             model.eval()
@@ -94,6 +95,7 @@ class AsyncGPUPool:
             self.gpu_pool.put({
                 "model": model,
                 "processor": processor,
+                "tokenizer": tokenizer,
                 "device": device,
                 "gpu_id": gpu_id,
                 "created_at": time.time(),
@@ -149,7 +151,7 @@ class AsyncGPUPool:
 
         print(f"Processing {len(samples)} samples on GPU {gpu_info['gpu_id']}")
 
-        batch_collator = setup_batch_collator(gpu_info["processor"], gpu_info["model"].config.tokenizer, self.model_config)
+        batch_collator = setup_batch_collator(gpu_info["processor"], gpu_info["tokenizer"], self.exp_config)
         input_samples = []
         for sample in samples:
             if sample["sample_type"] == "preference":
@@ -169,30 +171,30 @@ class AsyncGPUPool:
                 batch_inputs["progress_inputs"][key] = value.to(device)
 
         if batch_inputs["num_preferences"] > 0:
-            if self.model_config.model_type == "vqa":
+            if self.exp_config.model.model_type == "vqa":
                 outputs_preference = compute_batch_outputs_vqa(
                     gpu_info["model"],
-                    gpu_info["processor"].tokenizer,
+                    gpu_info["tokenizer"],
                     batch_inputs["preference_inputs"],
                     mode="preference",
                 )
             else:
                 # Run inference for preference samples
                 outputs_preference = compute_batch_outputs(
-                    gpu_info["model"], gpu_info["processor"].tokenizer, batch_inputs["preference_inputs"]
+                    gpu_info["model"], gpu_info["tokenizer"], batch_inputs["preference_inputs"]
                 )
         else:
             outputs_preference = None
 
         if batch_inputs["num_progress"] > 0:
-            if self.model_config.model_type == "vqa":
+            if self.exp_config.model.model_type == "vqa":
                 outputs_progress = compute_batch_outputs_vqa(
-                    gpu_info["model"], gpu_info["processor"].tokenizer, batch_inputs["progress_inputs"], mode="progress"
+                    gpu_info["model"], gpu_info["tokenizer"], batch_inputs["progress_inputs"], mode="progress"
                 )
             else:
                 # Run inference for progress samples - only compute progress for trajectory A
                 outputs_progress = compute_batch_outputs_progress_only(
-                    gpu_info["model"], gpu_info["processor"].tokenizer, batch_inputs["progress_inputs"]
+                    gpu_info["model"], gpu_info["tokenizer"], batch_inputs["progress_inputs"]
                 )
         else:
             outputs_progress = None
@@ -405,7 +407,7 @@ def compute_batch_outputs_vqa(
         raise ValueError(f"Mode {mode} not supported")
 
 
-def create_app(cfg: EvaluationConfig, model_config: ModelConfig):
+def create_app(cfg: EvaluationConfig, exp_config: ExperimentConfig):
     app = FastAPI(title="RFM Multi-GPU Evaluation Server")
 
     app.add_middleware(
@@ -420,7 +422,7 @@ def create_app(cfg: EvaluationConfig, model_config: ModelConfig):
     num_gpus = getattr(cfg, "num_gpus", None)
     max_workers = getattr(cfg, "max_workers", None)
 
-    gpu_pool = AsyncGPUPool(model_config, cfg.model_path, num_gpus, max_workers)
+    gpu_pool = AsyncGPUPool(exp_config, cfg.model_path, num_gpus, max_workers)
     print(f"GPU pool initialized with {gpu_pool.num_gpus} GPUs")
 
     @app.post("/evaluate_batch")
@@ -567,15 +569,17 @@ def main():
     if args.max_workers is not None:
         cfg.max_workers = args.max_workers
 
-    print(f"Evaluation config: {cfg}")
+    console = Console()
+    console.print(cfg)
 
+    # Loading experiment config from prtrained model
     if cfg.model_path != "":
         # Download model config from Hugging Face
         model_config_path = hf_hub_download(repo_id=cfg.model_path, filename="config.yaml")
         with open(model_config_path) as f:
             model_config_dict = yaml.safe_load(f)
 
-        model_config = ModelConfig(**model_config_dict["model"])
+        exp_config = ExperimentConfig(**model_config_dict)
     else:
         print("Saved checkpoint is not found, initializing base model")
         print(f"Loading model configs from local paths: {args.model_config_paths}")
@@ -587,9 +591,11 @@ def main():
             with open(path) as f:
                 doc = yaml.safe_load(f) or {}
             deep_merge(merged, doc)
-        model_config = ModelConfig(**merged["model"])
+        exp_config = ExperimentConfig(**merged)
 
-    app = create_app(cfg, model_config)
+    console.print(exp_config)
+
+    app = create_app(cfg, exp_config)
     print(f"Running async multi-GPU server on {args.host}:{args.port}")
     print(f"Using {cfg.num_gpus or torch.cuda.device_count()} GPUs")
     uvicorn.run(app, host=args.host, port=args.port)

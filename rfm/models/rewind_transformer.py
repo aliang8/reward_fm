@@ -121,11 +121,9 @@ class ReWiNDTransformer(PreTrainedModel):
         if timing_raw is None:
             timing_raw = {}
 
-        # Check if we're using precomputed embeddings or raw inputs
         use_precomputed = video_embeddings is not None and text_embeddings is not None
         
         if use_precomputed:
-            # Use precomputed embeddings directly
             B, T, D_video = video_embeddings.shape
             D_text = text_embeddings.shape[1]
             

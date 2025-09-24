@@ -13,6 +13,7 @@ class BaseCollator:
         resized_height: int = 128,
         resized_width: int = 128,
         base_model_id: str = None,
+        load_embeddings: bool = False,
         **kwargs,
     ):
         self.processor = processor
@@ -22,6 +23,7 @@ class BaseCollator:
         self.resized_width = resized_width
         self.tokenizer = tokenizer
         self.base_model_id = base_model_id
+        self.load_embeddings = load_embeddings
 
         # Update processor based on base model id
         # if "SmolVLM" in self.base_model_id:

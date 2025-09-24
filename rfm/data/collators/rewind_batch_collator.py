@@ -21,7 +21,7 @@ class ReWiNDBatchCollator(RFMBatchCollator):
         Initialize the batch collator.
 
         Args:
-            load_embeddings: Whether to load precomputed embeddings instead of processing frames
+            load_embeddings: Whether to use precomputed embeddings from trajectories instead of processing frames
             processor: HuggingFace processor for text and vision processing
             max_length: Maximum sequence length for text
             resized_height: Height to resize images/videos to (default: 128)
@@ -30,24 +30,6 @@ class ReWiNDBatchCollator(RFMBatchCollator):
         super().__init__(**kwargs)
         self.load_embeddings = load_embeddings
     
-    def _load_precomputed_embeddings(self, trajectory) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Load precomputed video and text embeddings from .pt file.
-        
-        Args:
-            trajectory: Trajectory object containing embeddings_path
-            
-        Returns:
-            Tuple of (video_embeddings, text_embedding)
-        """
-        if not hasattr(trajectory, 'embeddings_path') or not trajectory.embeddings_path:
-            raise ValueError("Trajectory does not have embeddings_path. Make sure embeddings were precomputed.")
-            
-        if not os.path.exists(trajectory.embeddings_path):
-            raise FileNotFoundError(f"Embeddings file not found: {trajectory.embeddings_path}")
-            
-        embeddings_data = torch.load(trajectory.embeddings_path, map_location='cpu')
-        return embeddings_data['video_embeddings'], embeddings_data['text_embedding']
 
     def _process_preference_batch(self, preference_samples: list[PreferenceSample]) -> dict[str, torch.Tensor]:
         """Process a batch of preference samples."""
@@ -55,20 +37,24 @@ class ReWiNDBatchCollator(RFMBatchCollator):
         preference_labels = np.random.randint(0, 2, len(preference_samples))
 
         if self.load_embeddings:
-            # Load precomputed embeddings
+            # Use embeddings directly from trajectories (already loaded by dataset)
             all_chosen_video_embeddings = []
             all_rejected_video_embeddings = []
             all_chosen_text_embeddings = []
             all_rejected_text_embeddings = []
             
             for sample in preference_samples:
-                # Load embeddings for chosen trajectory
-                chosen_video_emb, chosen_text_emb = self._load_precomputed_embeddings(sample.chosen_trajectory)
+                # Get embeddings directly from trajectories
+                chosen_video_emb = sample.chosen_trajectory.video_embeddings
+                chosen_text_emb = sample.chosen_trajectory.text_embeddings
+                rejected_video_emb = sample.rejected_trajectory.video_embeddings
+                rejected_text_emb = sample.rejected_trajectory.text_embeddings
+                
+                if any(emb is None for emb in [chosen_video_emb, chosen_text_emb, rejected_video_emb, rejected_text_emb]):
+                    raise ValueError("Sample trajectories are missing embeddings")
+                
                 all_chosen_video_embeddings.append(chosen_video_emb)
                 all_chosen_text_embeddings.append(chosen_text_emb)
-                
-                # Load embeddings for rejected trajectory  
-                rejected_video_emb, rejected_text_emb = self._load_precomputed_embeddings(sample.rejected_trajectory)
                 all_rejected_video_embeddings.append(rejected_video_emb)
                 all_rejected_text_embeddings.append(rejected_text_emb)
             
@@ -148,12 +134,18 @@ class ReWiNDBatchCollator(RFMBatchCollator):
     def _process_progress_batch(self, progress_samples: list[ProgressSample]) -> dict[str, torch.Tensor]:
         """Process a batch of progress samples."""
         if self.load_embeddings:
-            # Load precomputed embeddings
+            # Use embeddings directly from trajectory (already loaded by dataset)
             all_video_embeddings = []
             all_text_embeddings = []
             
             for sample in progress_samples:
-                video_emb, text_emb = self._load_precomputed_embeddings(sample.trajectory)
+                # Get embeddings directly from the trajectory
+                video_emb = sample.trajectory.video_embeddings
+                text_emb = sample.trajectory.text_embedding
+                
+                if video_emb is None or text_emb is None:
+                    raise ValueError(f"Sample trajectory is missing embeddings. video_embeddings: {video_emb is not None}, text_embeddings: {text_emb is not None}")
+                
                 all_video_embeddings.append(video_emb)
                 all_text_embeddings.append(text_emb)
             

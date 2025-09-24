@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from rfm.data.dataset_types import PreferenceSample, Trajectory
 from .base import RFMBaseDataset
-from .helpers import linspace_subsample_frames, pad_trajectory_to_max_frames
+from .helpers import linspace_subsample_frames, pad_trajectory_to_max_frames_np
 from rfm.utils.distributed import rank_0_print
 
 
@@ -117,8 +117,8 @@ class WrongTaskDataset(RFMBaseDataset):
         rejected_frames, _ = linspace_subsample_frames(rejected_frames, max_frames)
 
         # Use the existing helper function to pad/subsample frames
-        chosen_padded_frames, _ = pad_trajectory_to_max_frames(chosen_frames, [0], max_frames)
-        rejected_padded_frames, _ = pad_trajectory_to_max_frames(rejected_frames, [0], max_frames)
+        chosen_padded_frames, _ = pad_trajectory_to_max_frames_np(chosen_frames, [0], max_frames)
+        rejected_padded_frames, _ = pad_trajectory_to_max_frames_np(rejected_frames, [0], max_frames)
 
         # Create metadata for the wrong task preference analysis
         metadata = {

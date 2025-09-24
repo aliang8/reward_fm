@@ -149,9 +149,16 @@ class RFMBatchCollator(BaseCollator):
         # Pad target progress tensors to max length in last dimension
         batch_inputs["target_progress"] = pad_target_progress(target_progress_list)
         batch_inputs["quality_labels"] = torch.tensor(quality_labels, dtype=torch.float32)
-        batch_inputs["frame_shapes"] = torch.tensor(
-            [sample.trajectory.frames_shape for sample in progress_samples], dtype=torch.int32
-        )
+        
+        if not self.load_embeddings:
+            batch_inputs["frame_shapes"] = torch.tensor(
+                [sample.trajectory.frames_shape for sample in progress_samples], dtype=torch.int32
+            )
+        else:
+            batch_inputs["frame_shapes"] = torch.tensor(
+                [sample.trajectory.video_embeddings.shape for sample in progress_samples], dtype=torch.int32
+            )
+
         batch_inputs["data_source"] = [
             sample.trajectory.data_source for sample in progress_samples
         ]

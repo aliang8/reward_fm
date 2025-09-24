@@ -7,15 +7,10 @@ This script is for models that are already in the standard format with safetenso
 
 import argparse
 import json
-import logging
 import os
 from pathlib import Path
 
 from huggingface_hub import HfApi, login
-
-# Set up logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
 
 
 def validate_model_directory(model_dir: Path) -> bool:
@@ -25,7 +20,7 @@ def validate_model_directory(model_dir: Path) -> bool:
     # Check for required files
     for file in required_files:
         if not (model_dir / file).exists():
-            logger.error(f"Required file {file} not found in {model_dir}")
+            print(f"❌ ERROR: Required file {file} not found in {model_dir}")
             return False
 
     # Check for model files (either single or sharded)
@@ -35,19 +30,19 @@ def validate_model_directory(model_dir: Path) -> bool:
     safetensors_files = list(model_dir.glob("*.safetensors"))
     if safetensors_files:
         has_model_files = True
-        logger.info(f"Found {len(safetensors_files)} safetensors files")
+        print(f"Found {len(safetensors_files)} safetensors files")
 
     # Check for pytorch files
     pytorch_files = list(model_dir.glob("pytorch_model*.bin"))
     if pytorch_files:
         has_model_files = True
-        logger.info(f"Found {len(pytorch_files)} pytorch files")
+        print(f"Found {len(pytorch_files)} pytorch files")
 
     if not has_model_files:
-        logger.error("No model files found (*.safetensors or pytorch_model*.bin)")
+        print("❌ ERROR: No model files found (*.safetensors or pytorch_model*.bin)")
         return False
 
-    logger.info("✅ Model directory validation passed")
+    print("✅ Model directory validation passed")
     return True
 
 
@@ -80,7 +75,7 @@ def create_model_card(model_dir: Path, base_model: str, model_name: str):
 - **Project**: {wandb_info.get("wandb_project", "N/A")}
 """
         except Exception as e:
-            logger.warning(f"Could not read wandb info: {e}")
+            print(f"⚠️ WARNING: Could not read wandb info: {e}")
             wandb_section = ""
 
     model_card_content = f"""---
@@ -108,7 +103,7 @@ If you use this model, please cite:
     with open(readme_path, "w") as f:
         f.write(model_card_content)
 
-    logger.info("Created/updated model card (README.md)")
+    print("Created/updated model card (README.md)")
 
 
 def upload_model_to_hub(
@@ -146,17 +141,17 @@ def upload_model_to_hub(
     # Login to HuggingFace
     if token:
         login(token=token)
-        logger.info("Logged in to HuggingFace Hub")
+        print("Logged in to HuggingFace Hub")
     elif os.getenv("HF_TOKEN"):
         login(token=os.getenv("HF_TOKEN"))
-        logger.info("Logged in using HF_TOKEN environment variable")
+        print("Logged in using HF_TOKEN environment variable")
     else:
-        logger.warning("No HuggingFace token provided. You may need to login manually.")
+        print("⚠️ WARNING: No HuggingFace token provided. You may need to login manually.")
 
     # Upload to Hub
-    logger.info(f"Uploading model to: {hub_model_id}")
-    logger.info(f"Private: {private}")
-    logger.info(f"Model directory: {model_path}")
+    print(f"Uploading model to: {hub_model_id}")
+    print(f"Private: {private}")
+    print(f"Model directory: {model_path}")
 
     api = HfApi()
 
@@ -164,20 +159,20 @@ def upload_model_to_hub(
     if not api.repo_exists(repo_id=hub_model_id):
         try:
             api.create_repo(repo_id=hub_model_id, repo_type="model", private=private, exist_ok=True)
-            logger.info(f"Repository {hub_model_id} created/verified")
+            print(f"Repository {hub_model_id} created/verified")
         except Exception as e:
-            logger.warning(f"Could not create repository (may already exist): {e}")
+            print(f"⚠️ WARNING: Could not create repository (may already exist): {e}")
 
         # Upload the entire directory
         api.upload_folder(
             folder_path=str(model_path), repo_id=hub_model_id, commit_message=commit_message, repo_type="model"
         )
 
-        logger.info(f"✅ Successfully uploaded model to: https://huggingface.co/{hub_model_id}")
+        print(f"✅ Successfully uploaded model to: https://huggingface.co/{hub_model_id}")
 
     # Also upload the config.yaml which is in the directory above
-    logger.info(f"Uploading config.yaml to: {hub_model_id}")
-    logger.info(f"Model directory: {model_path.parent}")
+    print(f"Uploading config.yaml to: {hub_model_id}")
+    print(f"Model directory: {model_path.parent}")
     api.upload_file(
         path_or_fileobj=str(model_path.parent / "config.yaml"),
         path_in_repo="config.yaml",
@@ -212,11 +207,11 @@ def main():
             base_model=args.base_model,
         )
 
-        logger.info("\n🎉 Upload completed successfully!")
-        logger.info(f"Model URL: {url}")
+        print("\n🎉 Upload completed successfully!")
+        print(f"Model URL: {url}")
 
     except Exception as e:
-        logger.error(f"Upload failed: {e}")
+        print(f"❌ ERROR: Upload failed: {e}")
         raise
 
 

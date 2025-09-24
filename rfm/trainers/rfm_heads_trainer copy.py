@@ -7,7 +7,8 @@ from tqdm import tqdm
 from transformers import Trainer
 
 import wandb
-from rfm.utils.logging import _timer, is_rank_0, rank_0_print
+from rfm.utils.distributed import is_rank_0, rank_0_print
+from rfm.utils.timer import _timer
 from rfm.utils.metrics import compute_spearman_correlation
 
 

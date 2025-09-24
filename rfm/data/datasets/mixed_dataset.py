@@ -4,7 +4,7 @@ from .base import RFMBaseDataset
 from .pref import PrefDataset
 from .sim import SimilarityDataset
 from .progress import ProgressDataset
-from rfm.utils.logging import rank_0_print
+from rfm.utils.distributed import rank_0_print
 
 
 class MixedDataset(RFMBaseDataset):

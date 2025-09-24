@@ -3,7 +3,7 @@ import numpy as np
 from rfm.data.dataset_types import ProgressSample, Trajectory
 from .base import RFMBaseDataset
 from .helpers import linspace_subsample_frames, pad_trajectory_to_max_frames
-from rfm.utils.logging import rank_0_print
+from rfm.utils.distributed import rank_0_print
 
 
 class ProgressDefaultDataset(RFMBaseDataset):

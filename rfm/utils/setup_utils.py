@@ -29,7 +29,7 @@ from rfm.data.datasets import (
     WrongTaskDataset,
 )
 from rfm.models import RFM, RFMVQA, ReWiNDTransformer
-from rfm.utils.logging import rank_0_print
+from rfm.utils.distributed import rank_0_print
 
 
 def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[AutoProcessor, RFM]:

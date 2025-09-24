@@ -4,7 +4,7 @@ from tqdm import tqdm
 from rfm.data.dataset_types import PreferenceSample, Trajectory
 from .base import RFMBaseDataset
 from .helpers import subsample_frames_and_progress
-from rfm.utils.logging import rank_0_print
+from rfm.utils.distributed import rank_0_print
 
 
 class PairedSuccessFailureDataset(RFMBaseDataset):

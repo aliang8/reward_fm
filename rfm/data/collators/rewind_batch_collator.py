@@ -14,23 +14,6 @@ from rfm.data.dataset_types import PreferenceSample, ProgressSample
 
 
 class ReWiNDBatchCollator(RFMBatchCollator):
-    """Batch collator that processes Sample objects through the processor."""
-
-    def __init__(self, load_embeddings: bool = False, **kwargs):
-        """
-        Initialize the batch collator.
-
-        Args:
-            load_embeddings: Whether to use precomputed embeddings from trajectories instead of processing frames
-            processor: HuggingFace processor for text and vision processing
-            max_length: Maximum sequence length for text
-            resized_height: Height to resize images/videos to (default: 128)
-            resized_width: Width to resize images/videos to (default: 128)
-        """
-        super().__init__(**kwargs)
-        self.load_embeddings = load_embeddings
-    
-
     def _process_preference_batch(self, preference_samples: list[PreferenceSample]) -> dict[str, torch.Tensor]:
         """Process a batch of preference samples."""
         # Randomly decide whether chosen trajectory goes first or second
@@ -46,9 +29,9 @@ class ReWiNDBatchCollator(RFMBatchCollator):
             for sample in preference_samples:
                 # Get embeddings directly from trajectories
                 chosen_video_emb = sample.chosen_trajectory.video_embeddings
-                chosen_text_emb = sample.chosen_trajectory.text_embeddings
+                chosen_text_emb = sample.chosen_trajectory.text_embedding
                 rejected_video_emb = sample.rejected_trajectory.video_embeddings
-                rejected_text_emb = sample.rejected_trajectory.text_embeddings
+                rejected_text_emb = sample.rejected_trajectory.text_embedding
                 
                 if any(emb is None for emb in [chosen_video_emb, chosen_text_emb, rejected_video_emb, rejected_text_emb]):
                     raise ValueError("Sample trajectories are missing embeddings")
@@ -132,24 +115,9 @@ class ReWiNDBatchCollator(RFMBatchCollator):
         return batch_inputs
 
     def _process_progress_batch(self, progress_samples: list[ProgressSample]) -> dict[str, torch.Tensor]:
-        """Process a batch of progress samples."""
         if self.load_embeddings:
-            # Use embeddings directly from trajectory (already loaded by dataset)
-            all_video_embeddings = []
-            all_text_embeddings = []
-            
-            for sample in progress_samples:
-                # Get embeddings directly from the trajectory
-                video_emb = sample.trajectory.video_embeddings
-                text_emb = sample.trajectory.text_embedding
-                
-                if video_emb is None or text_emb is None:
-                    raise ValueError(f"Sample trajectory is missing embeddings. video_embeddings: {video_emb is not None}, text_embeddings: {text_emb is not None}")
-                
-                all_video_embeddings.append(video_emb)
-                all_text_embeddings.append(text_emb)
-            
-            # Stack embeddings into batches
+            all_video_embeddings = [sample.trajectory.video_embeddings for sample in progress_samples]
+            all_text_embeddings = [sample.trajectory.text_embedding for sample in progress_samples]
             video_embeddings = torch.stack(all_video_embeddings)  # [B, T, D]
             text_embeddings = torch.stack(all_text_embeddings)    # [B, D]
             
@@ -158,10 +126,7 @@ class ReWiNDBatchCollator(RFMBatchCollator):
                 "text_embeddings": text_embeddings,    # [B, D]
             }
         else:
-            all_frames = []
-            for sample in progress_samples:
-                frames = convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
-                all_frames.append(frames)
+            all_frames = [convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape) for sample in progress_samples]
 
             # here we directly use dino processor process the images and videos to tensors
             video_inputs = self.processor(images=all_frames, return_tensors="pt")["pixel_values"]

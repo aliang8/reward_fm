@@ -17,20 +17,6 @@ from typing import List, Dict
 
 
 class RFMBatchCollator(BaseCollator):
-    """Batch collator that processes Sample objects through the processor."""
-
-    def __init__(self, **kwargs):
-        """
-        Initialize the batch collator.
-
-        Args:
-            processor: HuggingFace processor for text and vision processing
-            max_length: Maximum sequence length for text
-            resized_height: Height to resize images/videos to (default: 128)
-            resized_width: Width to resize images/videos to (default: 128)
-        """
-        super().__init__(**kwargs)
-
     def __process_conversation(self, conversations: List[List[Dict]]) -> Dict[str, torch.Tensor]:
         """
         Process a list of conversations into a batch of inputs.

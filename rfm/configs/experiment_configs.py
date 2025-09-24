@@ -125,6 +125,11 @@ class DataConfig:
     n_wrong_tasks: int = field(
         default=5, metadata={"help": "Number of wrong tasks to use for wrong task preference dataset"}
     )
+    
+    # Embedding loading parameters
+    load_embeddings: bool = field(
+        default=False, metadata={"help": "Whether to load precomputed embeddings instead of processing frames (ReWiND only)"}
+    )
 
 
 @dataclass

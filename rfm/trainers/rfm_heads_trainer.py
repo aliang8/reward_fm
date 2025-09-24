@@ -419,7 +419,7 @@ class RFMHeadsTrainer(Trainer):
                 spearman_correlations = torch.stack(spearman_correlations) * target_progress_mask
                 return progress_losses, spearman_correlations
 
-        return 0.0, 0.0
+        raise ValueError("No progress losses found")
 
     def _compute_progress_loss(self, model, inputs, return_outputs=False, training=True):
         """Compute progress prediction loss."""

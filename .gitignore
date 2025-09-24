@@ -38,3 +38,4 @@ test.py
 rfm/metaworld/*
 *.mp4
 *.gif
+*.json

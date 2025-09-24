@@ -102,6 +102,8 @@ def _save_result_as_json(
                 "data_source": sample.trajectory.data_source,
                 "data_gen_strategy": sample.trajectory.data_gen_strategy,
                 "target_progress": sample.trajectory.target_progress,
+                "task": sample.trajectory.task,
+                "quality_label": sample.trajectory.quality_label,
                 "metadata": sample.trajectory.metadata,
                 "progress_pred": progress_pred[i] if i < len(progress_pred) else [],
             }

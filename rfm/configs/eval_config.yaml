@@ -3,7 +3,7 @@
 
 # Model path to load training config from
 # model_path: "aliangdw/rfm_prefprog_v4"  # Path to the trained model checkpoint (will load training_config.yaml from here)
-model_path: "aliangdw/rewind_progress"
+model_path: "aliangdw/rewind_progress_2"
 
 # GPU Pool settings
 num_gpus: 1  # Number of GPUs to use (null for all available)

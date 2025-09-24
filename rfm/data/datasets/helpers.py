@@ -6,6 +6,11 @@ import numpy as np
 
 from rfm.utils.distributed import rank_0_print
 
+try:
+    import torch
+except ImportError:
+    torch = None
+
 
 class DataGenStrat(Enum):
     """Enum for different data generation strategies used in preference generation."""
@@ -53,8 +58,15 @@ def load_frames_from_npz(npz_filepath: str) -> np.ndarray:
         rank_0_print(f"Error loading frames from {npz_filepath}: {e}")
         raise RuntimeError(f"Failed to load frames from {npz_filepath}: {e}")
 
+def load_embeddings_from_path(embeddings_path: str, embedding_type: str = "video_embeddings") -> torch.Tensor:
+    """Load video embeddings from .pt file and return just the video embeddings."""
+    if not embeddings_path:
+        raise ValueError("embeddings_path is None or empty")
+    
+    embeddings_data = torch.load(embeddings_path, map_location='cpu')
+    return embeddings_data[embedding_type]
 
-def pad_trajectory_to_max_frames(
+def pad_trajectory_to_max_frames_np(
     frames: np.ndarray, progress: list[float], max_frames: int
 ) -> tuple[np.ndarray, list[float]]:
     """Pad trajectory frames and progress to max_frames by repeating the first frame/progress if needed.
@@ -88,6 +100,41 @@ def pad_trajectory_to_max_frames(
 
     return padded_frames, padded_progress
 
+
+def pad_trajectory_to_max_frames_torch(
+    frames, progress: list[float], max_frames: int
+) -> tuple:
+    """Pad trajectory frames and progress to max_frames by repeating the first frame/progress if needed.
+
+    Args:
+        frames: PyTorch tensor
+        progress: Progress values (list of floats)
+        max_frames: Target number of frames
+
+    Returns:
+        Tuple[torch.Tensor, List[float]: (padded_frames, padded_progress)
+    """
+    current_frames = frames.shape[0]
+
+    if current_frames >= max_frames:
+        # No padding needed
+        return frames, progress
+
+    # Need to pad - repeat the first frame and first progress
+    first_frame = frames[0:1]  # Keep the batch dimension
+    first_progress = progress[0]
+
+    # Calculate how many frames to pad
+    frames_to_pad = max_frames - current_frames
+
+    # Pad frames by repeating the first frame
+    padding = first_frame.repeat(frames_to_pad, 1)
+    padded_frames = torch.cat([padding, frames], dim=0)
+
+    # Pad progress by repeating the first progress value
+    padded_progress = [first_progress] * frames_to_pad + progress
+
+    return padded_frames, padded_progress
 
 def linspace_subsample_frames(frames: np.ndarray, num_frames: int = 8) -> tuple[np.ndarray, list[int]]:
     """Uniformly subsample frames from a trajectory and return the indices.
@@ -242,6 +289,8 @@ def create_rewind_trajectory(original_traj: dict, rewind_length: int | None = No
     7. Applies uniform subsampling to get the final num_frames
     8. Calculates progress relative to start index but out of total 64 frames
 
+    Works with both frames and embeddings automatically.
+
     Example:
     Original frames: [0, 1, 2, ... 63]
     Start index: 10
@@ -264,8 +313,15 @@ def create_rewind_trajectory(original_traj: dict, rewind_length: int | None = No
         original_traj: Original trajectory dictionary
         rewind_length: Number of frames to rewind (default: random 1 to max_frames)
     """
-    # Load frames from npz file
-    frames_data = load_frames_from_npz(original_traj["frames"])
+    # Check if we should use embeddings
+    use_embeddings = original_traj.get("embeddings_path") is not None
+    
+    if use_embeddings:
+        # Load embeddings from .pt file
+        frames_data = load_embeddings_from_path(original_traj["embeddings_path"])
+    else:
+        # Load frames from npz file
+        frames_data = load_frames_from_npz(original_traj["frames"])
 
     # Get the number of frames
     if hasattr(frames_data, "shape"):
@@ -316,10 +372,16 @@ def create_rewind_trajectory(original_traj: dict, rewind_length: int | None = No
 
     # start from end-2 because we don't want to include the last frame of forward segment
     # end at rewind_point-1 because we want to include the first frame of rewind segment
-    reverse_frames = frames_data[end_idx - 2 : rewind_point - 1 : -1]
+    reverse_frames = frames_data[rewind_point: end_idx - 1]
+    if use_embeddings and torch is not None:
+        reverse_frames = torch.flip(reverse_frames, dims=[0])
+    else:
+        reverse_frames = reverse_frames[::-1]
 
     # Step 5: Combine forward and reverse segments
-    if isinstance(forward_frames, np.ndarray):
+    if use_embeddings and torch is not None:
+        combined_frames = torch.cat([forward_frames, reverse_frames], dim=0)
+    elif isinstance(forward_frames, np.ndarray):
         # If frames are numpy arrays, use concatenate
         combined_frames = np.concatenate([forward_frames, reverse_frames], axis=0)
     else:
@@ -355,10 +417,19 @@ def create_rewind_trajectory(original_traj: dict, rewind_length: int | None = No
         "subsampled_indices": subsampled_indices,
     }
 
-    # Create new trajectory with rewind frames
+    # Create new trajectory with rewind frames/embeddings
     rewind_traj = original_traj.copy()
-    rewind_traj["frames"] = subsampled_frames
-    rewind_traj["frames_shape"] = subsampled_frames.shape
+    
+    if use_embeddings:
+        # Store embeddings instead of frames
+        rewind_traj["frames"] = subsampled_frames  # Store embeddings in frames field for rewind
+        rewind_traj["frames_shape"] = subsampled_frames.shape
+        # Keep the original embeddings_path for reference
+    else:
+        # Store frames normally
+        rewind_traj["frames"] = subsampled_frames
+        rewind_traj["frames_shape"] = subsampled_frames.shape
+    
     rewind_traj["target_progress"] = subsampled_progress
     rewind_traj["metadata"] = metadata
     rewind_traj["quality_label"] = "rewound"

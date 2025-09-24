@@ -110,14 +110,10 @@ class ReWiNDTransformer(PreTrainedModel):
         self,
         input_ids=None,
         attention_mask=None,
-        pixel_values=None,
         pixel_values_videos=None,
         video_embeddings=None,
         text_embeddings=None,
-        image_grid_thw=None,
-        video_grid_thw=None,
         sample_type=None,  # "preference", "similarity", "progress"
-        second_per_grid_ts=None,
         timing_raw=None,
         **kwargs,
     ):

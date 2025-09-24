@@ -421,9 +421,9 @@ class RFMHeadsTrainer(Trainer):
 
         raise ValueError("No progress losses found")
 
-    def _compute_progress_loss(self, model, inputs, return_outputs=False, training=True):
-        """Compute progress prediction loss."""
-        with _timer("time/prog_forward", timing_raw=self.timing_raw):
+    def forward_model(self, model, inputs, sample_type="progress"):
+        """Forward pass for the model."""
+        with _timer("time/forward", timing_raw=self.timing_raw):
             model_outputs, progress_logits, model_timing_raw = model(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
@@ -432,11 +432,15 @@ class RFMHeadsTrainer(Trainer):
                 image_grid_thw=inputs.get("image_grid_thw", None),
                 video_grid_thw=inputs.get("video_grid_thw", None),
                 second_per_grid_ts=inputs.get("second_per_grid_ts", None),
-                sample_type="progress",
+                sample_type=sample_type,
                 timing_raw=self.timing_raw,
             )
             self.timing_raw.update(model_timing_raw)
+            return model_outputs, progress_logits, model_timing_raw
 
+    def _compute_progress_loss(self, model, inputs, return_outputs=False, training=True):
+        """Compute progress prediction loss."""
+        _ , progress_logits, model_timing_raw = self.forward_model(model, inputs, sample_type="progress")
         progress_pred = progress_logits["A"]
         progress_target = inputs["target_progress"]
         frame_shapes = inputs["frame_shapes"]
@@ -497,21 +501,7 @@ class RFMHeadsTrainer(Trainer):
 
     def _compute_preference_loss(self, model, inputs, return_outputs=False, training=True):
         """Compute preference prediction loss using Bradley-Terry model."""
-        # Single forward pass with both trajectories concatenated
-        # The model should handle the preference prediction at the end
-        with _timer("time/pref_forward", timing_raw=self.timing_raw):
-            model_outputs, progress_logits, model_timing_raw = model(
-                input_ids=inputs["input_ids"],
-                attention_mask=inputs["attention_mask"],
-                pixel_values=inputs.get("pixel_values", None),
-                pixel_values_videos=inputs.get("pixel_values_videos", None),
-                image_grid_thw=inputs.get("image_grid_thw", None),
-                video_grid_thw=inputs.get("video_grid_thw", None),
-                second_per_grid_ts=inputs.get("second_per_grid_ts", None),
-                sample_type="preference",
-                timing_raw=self.timing_raw,
-            )
-            self.timing_raw.update(model_timing_raw)
+        model_outputs, progress_logits, model_timing_raw = self.forward_model(model, inputs, sample_type="preference")
 
         inputs.get("chosen_data_gen_strategy", None)
         rejected_data_gen_strategy = inputs.get("rejected_data_gen_strategy", None)

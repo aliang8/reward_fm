@@ -2,7 +2,7 @@ import numpy as np
 
 from rfm.data.dataset_types import ProgressSample, Trajectory
 from .base import RFMBaseDataset
-from .helpers import linspace_subsample_frames, pad_trajectory_to_max_frames
+from .helpers import linspace_subsample_frames, pad_trajectory_to_max_frames_np
 from rfm.utils.distributed import rank_0_print
 
 
@@ -31,7 +31,7 @@ class ProgressDefaultDataset(RFMBaseDataset):
         progress = [(idx + 1) / total_frames for idx in frame_indices]
 
         # Pad frames and progress if needed
-        frames, progress = pad_trajectory_to_max_frames(frames, progress, max_frames)
+        frames, progress = pad_trajectory_to_max_frames_np(frames, progress, max_frames)
 
         metadata = {
             "quality_label": traj["quality_label"],

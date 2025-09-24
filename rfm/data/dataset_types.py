@@ -8,6 +8,7 @@ from typing import Any, Union
 
 import numpy as np
 from pydantic import BaseModel
+import torch
 
 
 class Trajectory(BaseModel):
@@ -16,6 +17,12 @@ class Trajectory(BaseModel):
     # Core trajectory fields
     frames: list[str] | np.ndarray | None = None
     frames_shape: tuple | None = None
+    
+    # If embeddings are precomputed
+    embeddings_path: str | None = None
+    video_embeddings: torch.Tensor | None = None
+    text_embedding: torch.Tensor | None = None
+
     id: str | None = None
     task: str | None = None
     lang_vector: np.ndarray | list[float] | None = None

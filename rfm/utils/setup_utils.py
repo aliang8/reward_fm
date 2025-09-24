@@ -323,9 +323,7 @@ def setup_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg
         elif cfg.model.model_type == "vqa":
             batch_collator = VQABatchCollator(**collator_kwargs, inference=cfg.mode == "eval")
     elif "rewind_transformer" in cfg.model.base_model_id:
-        # Add load_embeddings parameter if available in config
-        load_embeddings = getattr(cfg.data, 'load_embeddings', False)
-        batch_collator = ReWiNDBatchCollator(**collator_kwargs, tokenizer=tokenizer, load_embeddings=load_embeddings)
+        batch_collator = ReWiNDBatchCollator(**collator_kwargs, tokenizer=tokenizer, load_embeddings=cfg.data.load_embeddings)
 
     rank_0_print("Batch collator created successfully")
     return batch_collator

@@ -34,7 +34,9 @@ training:
 data:
   sample_type_ratio: [0, 1, 0] # only progress samples 
   progress_strategy_ratio: [1, 1, 1] # default success, rewind, different task
- 
+  
+  load_embeddings: true
+
 # =====================================================================================
 # Logging and Output Configuration
 # =====================================================================================

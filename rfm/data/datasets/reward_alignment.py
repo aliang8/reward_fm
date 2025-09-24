@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 from rfm.data.dataset_types import ProgressSample, Trajectory
 from .base import RFMBaseDataset
-from .helpers import linspace_subsample_frames, pad_trajectory_to_max_frames
+from .helpers import linspace_subsample_frames, pad_trajectory_to_max_frames_np
 from rfm.utils.distributed import rank_0_print
 
 
@@ -91,7 +91,7 @@ class RewardAlignmentDataset(RFMBaseDataset):
         subsequence_frames, _ = linspace_subsample_frames(subsequence_frames, max_frames)
 
         # Use the existing helper function to pad/subsample frames
-        padded_frames, _ = pad_trajectory_to_max_frames(subsequence_frames, [0], max_frames)
+        padded_frames, _ = pad_trajectory_to_max_frames_np(subsequence_frames, [0], max_frames)
 
         # Ground truth progress: linear from 0 to 1
         gt_progress = end_idx / num_frames

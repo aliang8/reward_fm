@@ -11,7 +11,8 @@ from .helpers import (
     DataGenStrat,
     create_rewind_trajectory,
     load_frames_from_npz,
-    pad_trajectory_to_max_frames,
+    pad_trajectory_to_max_frames_np,
+    pad_trajectory_to_max_frames_torch,
     subsample_frames_and_progress,
 )
 from rfm.utils.distributed import rank_0_print

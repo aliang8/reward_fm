@@ -6,7 +6,9 @@ from .helpers import (
     DataGenStrat,
     create_rewind_trajectory,
     load_frames_from_npz,
-    pad_trajectory_to_max_frames,
+    load_embeddings_from_path,
+    pad_trajectory_to_max_frames_torch,
+    pad_trajectory_to_max_frames_np,
     subsample_frames_and_progress,
 )
 
@@ -17,7 +19,6 @@ class ProgressDataset(RFMBaseDataset):
     def __init__(self, config, is_evaluation=False, verbose=True):
         super().__init__(config, is_evaluation, verbose=verbose)
         self.iter_dataset = self.dataset.filter(lambda x: x["quality_label"] not in ["failure", "suboptimal"])
-        self.progress_strategy_ratio = config.progress_strategy_ratio
 
     def __len__(self):
         return len(self.iter_dataset)
@@ -44,9 +45,9 @@ class ProgressDataset(RFMBaseDataset):
         
         # Strategy setup with rebalancing on failure
         strategies = [
-            ("successful", self.progress_strategy_ratio[0]),
-            (DataGenStrat.REWIND_SAME_TASK, self.progress_strategy_ratio[1]),
-            (DataGenStrat.DIFFERENT_TASK, self.progress_strategy_ratio[2]),
+            ("successful", self.config.progress_strategy_ratio[0]),
+            (DataGenStrat.REWIND_SAME_TASK, self.config.progress_strategy_ratio[1]),
+            (DataGenStrat.DIFFERENT_TASK, self.config.progress_strategy_ratio[2]),
         ]
         
         # Remove strategies with zero probability
@@ -103,19 +104,33 @@ class ProgressDataset(RFMBaseDataset):
             processed_traj = traj
             strategy_used = "successful"
         
-        # Process frames and progress based on strategy used
-        if strategy_used == DataGenStrat.REWIND_SAME_TASK:
-            frames = processed_traj["frames"]
-            progress = processed_traj["target_progress"]
-            metadata = processed_traj["metadata"]
-        else:
-            frames = load_frames_from_npz(processed_traj["frames"])
-            
-            # subsample frames and progress
-            frames, progress, metadata = subsample_frames_and_progress(frames, self.config.max_frames)
+        frames = None
+        video_embeddings = None
+        text_embedding = None
         
-        # pad frames and progress to max_frames
-        frames, progress = pad_trajectory_to_max_frames(frames, progress, self.config.max_frames)
+        # Process frames/embeddings and progress based on strategy used
+        if self.config.load_embeddings and processed_traj.get("embeddings_path"):
+            if strategy_used == DataGenStrat.REWIND_SAME_TASK:
+                video_embeddings = processed_traj["frames"]  # For rewind, "frames" contains embeddings
+                progress = processed_traj["target_progress"]
+                metadata = processed_traj["metadata"]
+            else:
+                video_embeddings = load_embeddings_from_path(processed_traj["embeddings_path"], "video_embeddings")
+                video_embeddings, progress, metadata = subsample_frames_and_progress(video_embeddings, self.config.max_frames)
+            
+            text_embedding = load_embeddings_from_path(processed_traj["embeddings_path"], "text_embedding")
+            video_embeddings, progress = pad_trajectory_to_max_frames_torch(video_embeddings, progress, self.config.max_frames)
+        else:
+            if strategy_used == DataGenStrat.REWIND_SAME_TASK:
+                frames = processed_traj["frames"]
+                progress = processed_traj["target_progress"]
+                metadata = processed_traj["metadata"]
+            else:
+                frames = load_frames_from_npz(processed_traj["frames"])
+                
+                frames, progress, metadata = subsample_frames_and_progress(frames, self.config.max_frames)
+            
+            frames, progress = pad_trajectory_to_max_frames_np(frames, progress, self.config.max_frames)
 
         if strategy_used == DataGenStrat.DIFFERENT_TASK:
             progress = [0.0] * len(progress)
@@ -123,13 +138,16 @@ class ProgressDataset(RFMBaseDataset):
         progress_traj = Trajectory(
             frames=frames,
             target_progress=progress,
-            frames_shape=frames.shape,
+            frames_shape=frames.shape if frames is not None else None,
+            video_embeddings=video_embeddings,
+            text_embedding=text_embedding,
             id=processed_traj["id"],
             task=processed_traj["task"],
             lang_vector=processed_traj["lang_vector"],
             data_source=processed_traj["data_source"],
             quality_label=processed_traj["quality_label"],
             is_robot=processed_traj["is_robot"],
+            embeddings_path=processed_traj.get("embeddings_path"),
             data_gen_strategy=strategy_used,
             metadata=metadata,
         )
@@ -169,3 +187,5 @@ class ProgressDataset(RFMBaseDataset):
             return None
 
         return None
+    
+

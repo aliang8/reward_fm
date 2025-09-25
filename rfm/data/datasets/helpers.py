@@ -263,7 +263,7 @@ def subsample_frames_and_progress(frames: np.ndarray, max_frames: int) -> tuple[
 
     # Randomly subsample the chosen trajectory segment to num_frames
     # frames, indices = randomly_subsample_frames(segment_frames, max_frames)
-    frames, indices = linspace_subsample_frames(segment_frames, max_frames)
+    subsampled_frames, indices = linspace_subsample_frames(segment_frames, max_frames)
 
     # Map the subsampled indices to the corresponding progress values from the full segment
     # The chosen_indices tell us which frames from the segment we're using
@@ -274,7 +274,7 @@ def subsample_frames_and_progress(frames: np.ndarray, max_frames: int) -> tuple[
         "end_idx": end_idx,
         "subsampled_indices": indices,
     }
-    return frames, progress, metadata
+    return subsampled_frames, progress, metadata
 
 
 def create_rewind_trajectory(original_traj: dict, rewind_length: int | None = None, max_frames: int = 8) -> dict:

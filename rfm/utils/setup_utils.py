@@ -77,7 +77,6 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
                 padding_side="left",
                 attn_implementation="flash_attention_2",
             )
-
             rank_0_print(f"Qwen Processor: {processor}")
         else:
             raise ValueError(f"Invalid base model id: {cfg.base_model_id}")
@@ -105,8 +104,14 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
 
         # Initialize RFM model wrapper with the pre-loaded base model
         rank_0_print("Initializing RFM model...")
+        tokenizer = processor.tokenizer
+
         model = model_cls(
-            config=base_model.config, processor=processor, base_model=base_model, base_model_id=cfg.base_model_id
+            config=base_model.config,
+            processor=processor,
+            tokenizer=tokenizer,
+            base_model=base_model,
+            base_model_id=cfg.base_model_id,
         )
 
         if hf_model_id:
@@ -116,9 +121,6 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
             # before = model.preference_head.weight
             # load the model from the evaluation path
             model = model_cls.from_pretrained(hf_model_id, processor=processor, base_model=base_model)
-
-        tokenizer = processor.tokenizer
-
     elif "rewind_transformer" in cfg.base_model_id:
         # Initialize new model with encoders
         # Pretrained image and text encoders
@@ -131,7 +133,11 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
             # Load from Hugging Face Hub
             rank_0_print(f"Loading ReWiND model from {hf_model_id}")
             model = ReWiNDTransformer.from_pretrained(
-                hf_model_id, image_encoder=image_encoder, text_encoder=text_encoder, tokenizer=tokenizer
+                hf_model_id,
+                processor=processor,
+                image_encoder=image_encoder,
+                text_encoder=text_encoder,
+                tokenizer=tokenizer,
             )
         else:
             train_img = cfg.train_vision_encoder
@@ -146,7 +152,11 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
             rank_0_print("Initializing ReWiND model...")
             rewind_config = cfg.rewind if cfg.rewind is not None else ReWINDTransformerConfig()
             model = ReWiNDTransformer(
-                config=rewind_config, image_encoder=image_encoder, text_encoder=text_encoder, tokenizer=tokenizer
+                config=rewind_config,
+                processor=processor,
+                tokenizer=tokenizer,
+                image_encoder=image_encoder,
+                text_encoder=text_encoder,
             )
 
     rank_0_print("Model architecture initialized")

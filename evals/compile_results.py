@@ -25,17 +25,16 @@ def load_results(results_path: str) -> list[dict[str, Any]]:
         return json.load(f)
 
 
-def analyze_evaluation_type(eval_type: str, results: list[dict[str, Any]]) -> dict[str, Any]:
-    """Analyze results based on evaluation type."""
-    if eval_type == "success_failure_preference":
+def compute_eval_metrics(eval_type: str, results: list[dict[str, Any]]) -> dict[str, Any]:
+    if eval_type == "success_failure_preference" or eval_type == "success_failure":
         return run_success_failure_eval(results)
-    elif eval_type == "reward_alignment_progress":
+    elif eval_type == "reward_alignment_progress" or eval_type == "reward_alignment":
         return run_reward_alignment_eval(results)
-    elif eval_type == "confusion_matrix_progress":
+    elif eval_type == "confusion_matrix_progress" or eval_type == "confusion_matrix":
         return run_confusion_matrix_eval(results)
-    elif eval_type == "wrong_task_preference":
+    elif eval_type == "wrong_task_preference" or eval_type == "wrong_task":
         return run_success_failure_eval(results)
-    elif eval_type == "policy_ranking_progress":
+    elif eval_type == "policy_ranking_progress" or eval_type == "policy_ranking":
         return run_policy_ranking_eval_per_ranked_set(results)
 
 
@@ -73,22 +72,20 @@ def run_reward_alignment_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
     for r in results:
         pred = r.get("progress_pred")
         tgt = r.get("target_progress")
-        r.get("metadata", {})
-        if pred and len(pred) > 0 and tgt and len(tgt) > 0:
-            last_preds.append(float(pred[-1]))
-            last_targets.append(float(tgt[-1]))
+        last_preds.append(float(pred[-1]))
+        last_targets.append(float(tgt[-1]))
 
     if not last_preds or not last_targets:
         return {"error": "No valid predictions or targets found"}
 
     mse = np.mean((np.array(last_targets) - np.array(last_preds)) ** 2)
-    pearson_last = compute_pearson(last_targets, last_preds)
-    spearman_last = compute_spearman(last_targets, last_preds)
+    pearson = compute_pearson(last_targets, last_preds)
+    spearman = compute_spearman(last_targets, last_preds)
 
     return {
-        "mse": mse,
-        "pearson_correlation": pearson_last if not np.isnan(pearson_last) else None,
-        "spearman_correlation": spearman_last if not np.isnan(spearman_last) else None,
+        "mse": mse.item(),
+        "pearson":  pearson.item() if not np.isnan(pearson) else 0.0,
+        "spearman": spearman.item() if not np.isnan(spearman) else 0.0,
         "num_samples": len(last_preds),
     }
 
@@ -127,329 +124,78 @@ def run_reward_alignment_eval_per_trajectory(results: list[dict[str, Any]]) -> d
         if not np.isnan(spearman):
             spearman_trajectories.append(spearman)
 
-    # import pdb; pdb.set_trace()
     mse_per_trajectory = mse_per_trajectory / len(unique_trajectory_ids)
     pearson_per_trajectory = np.mean(pearson_trajectories)
     spearman_per_trajectory = np.mean(spearman_trajectories)
 
     return {
-        "mse": mse_per_trajectory,
-        "pearson_correlation": pearson_per_trajectory,
-        "spearman_correlation": spearman_per_trajectory,
+        "mse": mse_per_trajectory.item(),
+        "pearson": pearson_per_trajectory.item(),
+        "spearman": spearman_per_trajectory.item(),
         "num_samples": len(unique_trajectory_ids),
     }
 
+def run_confusion_matrix_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Run confusion_matrix evaluation analysis."""
+    # Group results by confusion matrix task
+    uniq_tasks = set()
 
-def create_confusion_matrix_plot(results: list[dict[str, Any]], output_dir: str = "./eval_plots") -> str:
-    """Create a confusion matrix heatmap from confusion matrix evaluation results.
-    
-    Args:
-        results: List of evaluation results with metadata
-        output_dir: Directory to save the plot
-        
-    Returns:
-        Path to the saved plot
-    """
-    # Create output directory if it doesn't exist
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
-    
-    # Group results to get true vs predicted tasks
-    trajectory_data = {}
-    
     for r in results:
-        meta = r.get("metadata", {}) or {}
-        cm_task = meta.get("confusion_matrix_task")  # The task we tested with
-        trajectory_original_task = meta.get("trajectory_original_task")  # Ground truth task
-        trajectory_id = meta.get("id", "unknown")
-        
-        if cm_task is None or trajectory_original_task is None:
-            continue
-            
-        # Get the final progress prediction as the reward
-        progress_pred = r.get("progress_pred", [])
-        if not progress_pred or len(progress_pred) == 0:
-            continue
-            
-        final_reward = float(progress_pred[-1])
-        
-        # Store data for each trajectory
-        if trajectory_id not in trajectory_data:
-            trajectory_data[trajectory_id] = {
-                "true_task": trajectory_original_task,
-                "task_rewards": {}
-            }
-        
-        trajectory_data[trajectory_id]["task_rewards"][cm_task] = final_reward
-    
-    # Get all unique tasks
-    all_tasks = set()
-    for traj_data in trajectory_data.values():
-        all_tasks.add(traj_data["true_task"])
-        all_tasks.update(traj_data["task_rewards"].keys())
-    all_tasks = sorted(list(all_tasks))
-    
-    if len(all_tasks) < 2:
-        print(f"Warning: Only {len(all_tasks)} tasks found, skipping confusion matrix plot")
-        return None
-    
-    # Create confusion matrix: rows are trajectory tasks (video), columns are cm tasks (language)
-    # Each cell will contain the average final reward for that (cm_task, traj_task) pair
-    confusion_matrix = np.zeros((len(all_tasks), len(all_tasks)))
-    count_matrix = np.zeros((len(all_tasks), len(all_tasks)))  # To track number of samples
-    
-    # Collect all results and group by (cm_task, trajectory_original_task) pairs
+        meta = r["metadata"]
+        lang_task = meta["lang_task"]
+        video_task = meta["video_task"]
+        uniq_tasks.add(lang_task)
+        uniq_tasks.add(video_task)
+
+    task_to_idx = {task: idx for idx, task in enumerate(uniq_tasks)}
+
+    num_tasks = len(uniq_tasks)
+    confusion_matrix = np.zeros((num_tasks, num_tasks))
+    count_matrix = np.zeros((num_tasks, num_tasks))  
+
     for r in results:
-        meta = r.get("metadata", {}) or {}
-        cm_task = meta.get("confusion_matrix_task")  # Task language
-        trajectory_original_task = meta.get("trajectory_original_task")  # Task video (true task)
-        
-        if cm_task is None or trajectory_original_task is None:
-            continue
-            
+        meta = r["metadata"]
+        lang_task = meta["lang_task"]
+        video_task = meta["video_task"]
+
         # Get the final progress prediction as the reward
-        progress_pred = r.get("progress_pred", [])
-        if not progress_pred or len(progress_pred) == 0:
-            continue
-            
+        progress_pred = r["progress_pred"]
         final_reward = float(progress_pred[-1])
-        
-        # Get indices
-        video_idx = all_tasks.index(trajectory_original_task)  # Row (trajectory task)
-        language_idx = all_tasks.index(cm_task)  # Column (cm task)
-        
-        # Accumulate rewards and counts
-        confusion_matrix[video_idx, language_idx] += final_reward
-        count_matrix[video_idx, language_idx] += 1
-    
+
+        lang_task_idx = task_to_idx[lang_task]
+        video_task_idx = task_to_idx[video_task]
+        confusion_matrix[lang_task_idx, video_task_idx] += final_reward
+        count_matrix[lang_task_idx, video_task_idx] += 1
+
     # Calculate average rewards (avoid division by zero)
-    with np.errstate(divide='ignore', invalid='ignore'):
-        confusion_matrix = np.divide(confusion_matrix, count_matrix, 
-                                   out=np.zeros_like(confusion_matrix), 
-                                   where=count_matrix!=0)
-    
+    with np.errstate(divide="ignore", invalid="ignore"):
+        confusion_matrix = np.divide(
+            confusion_matrix, count_matrix, out=np.zeros_like(confusion_matrix), where=count_matrix != 0
+        )
+
     # Create the plot
-    plt.figure(figsize=(10, 8))
-    
+    fig = plt.figure(figsize=(10, 8))
+
     # Create heatmap showing average final rewards
     sns.heatmap(
         confusion_matrix,
         # annot=True,
         # fmt='.3f',
-        cmap='RdYlBu_r',  # Red-Yellow-Blue colormap (red=low, blue=high)
-        xticklabels=all_tasks,
-        yticklabels=all_tasks,
-        cbar_kws={'label': 'Average Final Reward'},
-        center=0.5  # Center colormap around 0.5 (middle reward value)
+        cmap="Blues",  # White to dark blue colormap
+        xticklabels=list(uniq_tasks),
+        yticklabels=list(uniq_tasks),
+        cbar_kws={"label": "Average Final Reward"},
     )
-    
-    plt.title('Task Confusion Matrix: Average Final Rewards\n(Rows: Trajectory Task (Video), Cols: CM Task (Language))', fontsize=14, pad=20)
-    plt.xlabel('CM Task (Language)', fontsize=12)
-    plt.ylabel('Trajectory Task (Video)', fontsize=12)
-    plt.xticks(rotation=45, ha='right')
+    plt.xlabel("Language Task", fontsize=12)
+    plt.ylabel("Video Task", fontsize=12)
+    plt.xticks(rotation=45, ha="right")
     plt.yticks(rotation=0)
     plt.tight_layout()
-    
-    # Save the plot
-    output_path = Path(output_dir) / "confusion_matrix.png"
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    print(f"Confusion matrix plot saved to: {output_path}")
-    return str(output_path)
 
-
-def run_confusion_matrix_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
-    """Run confusion_matrix evaluation analysis."""
-    # Group results by confusion matrix task
-    task_groups = {}
-    trajectory_rewards = {}
-
-    for r in results:
-        # Get the confusion matrix task (the task we're testing with)
-        meta = r.get("metadata", {}) or {}
-        cm_task = meta.get("confusion_matrix_task")
-        trajectory_original_task = meta.get("trajectory_original_task")
-        trajectory_id = meta.get("id", "unknown")
-
-        if cm_task is None:
-            continue
-
-        # Get the final progress prediction as the reward
-        progress_pred = r.get("progress_pred", [])
-        if not progress_pred or len(progress_pred) == 0:
-            continue
-
-        final_reward = float(progress_pred[-1])
-
-        # Group by confusion matrix task
-        if cm_task not in task_groups:
-            task_groups[cm_task] = []
-        task_groups[cm_task].append({
-            "trajectory_id": trajectory_id,
-            "trajectory_original_task": trajectory_original_task,
-            "final_reward": final_reward,
-            "is_matching": cm_task == trajectory_original_task,
-        })
-
-        # Track trajectory rewards across all tasks
-        if trajectory_id not in trajectory_rewards:
-            trajectory_rewards[trajectory_id] = {}
-        trajectory_rewards[trajectory_id][cm_task] = final_reward
-
-    if not task_groups:
-        return {"error": "No valid confusion matrix data found"}
-
-    # Calculate task discrimination metrics
-    task_discrimination = {}
-    overall_discrimination_scores = []
-
-    for task in task_groups:
-        matching_rewards = [r["final_reward"] for r in task_groups[task] if r["is_matching"]]
-        non_matching_rewards = [r["final_reward"] for r in task_groups[task] if not r["is_matching"]]
-
-        if matching_rewards and non_matching_rewards:
-            avg_matching = np.mean(matching_rewards)
-            avg_non_matching = np.mean(non_matching_rewards)
-            discrimination_score = avg_matching - avg_non_matching
-
-            task_discrimination[task] = {
-                "avg_matching_reward": avg_matching,
-                "avg_non_matching_reward": avg_non_matching,
-                "discrimination_score": discrimination_score,
-                "num_matching": len(matching_rewards),
-                "num_non_matching": len(non_matching_rewards),
-            }
-            overall_discrimination_scores.append(discrimination_score)
-
-    # Overall metrics
-    overall_metrics = {}
-    if overall_discrimination_scores:
-        overall_metrics = {
-            "mean_discrimination_score": np.mean(overall_discrimination_scores),
-            "std_discrimination_score": np.std(overall_discrimination_scores),
-            "min_discrimination_score": np.min(overall_discrimination_scores),
-            "max_discrimination_score": np.max(overall_discrimination_scores),
-        }
-
-    # Create confusion matrix visualization
-    confusion_matrix_path = create_confusion_matrix_plot(results, output_dir="./eval_plots")
-
-    return {
-        "num_tasks": len(task_groups),
-        "num_trajectories": len(trajectory_rewards),
-        "num_samples": len(results),
-        "task_discrimination": task_discrimination,
-        "overall_metrics": overall_metrics,
-        "confusion_matrix_plot": confusion_matrix_path,
-    }
-
-
-def run_policy_ranking_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
-    """Run policy_ranking evaluation analysis."""
-    # Group results by task
-    task_groups = {}
-
-    for r in results:
-        # Get task and quality label from metadata
-        meta = r.get("metadata", {}) or {}
-        task = r.get("task", {})
-        quality_label = r.get("quality_label", {})
-
-        if task is None or quality_label is None:
-            continue
-
-        # Only consider failure, successful, suboptimal
-        if quality_label not in ["failure", "successful", "suboptimal"]:
-            continue
-
-        # Get final reward (last value of progress_pred_A)
-        progress_pred = r.get("progress_pred", [])
-        if not progress_pred or len(progress_pred) == 0:
-            continue
-
-        final_reward = float(progress_pred[-1])
-
-        # Group by task
-        if task not in task_groups:
-            task_groups[task] = []
-
-        task_groups[task].append({
-            "quality_label": quality_label,
-            "final_reward": final_reward,
-        })
-
-    if not task_groups:
-        return {"error": "No valid policy ranking data found"}
-
-    # For each task, compute ranking correlation
-    task_correlations = []
-    task_details = {}
-
-    for task, trajectories in task_groups.items():
-        # Create gold ranking: failure=1, suboptimal=2, successful=3
-        gold_ranks = []
-        predicted_ranks = []
-
-        for traj in trajectories:
-            quality = traj["quality_label"]
-            reward = traj["final_reward"]
-
-            # Gold ranking
-            if quality == "failure":
-                gold_rank = 1
-            elif quality == "suboptimal":
-                gold_rank = 2
-            elif quality == "successful":
-                gold_rank = 3
-            else:
-                continue  # Skip unknown quality labels
-
-            gold_ranks.append(gold_rank)
-            predicted_ranks.append(reward)
-
-        # Skip if we don't have at least 2 different quality levels
-        unique_qualities = {traj["quality_label"] for traj in trajectories}
-        if len(unique_qualities) < 2:
-            continue
-
-        # Compute Spearman correlation
-        if len(gold_ranks) >= 2:
-            spearman_corr = compute_spearman(gold_ranks, predicted_ranks)
-            if not np.isnan(spearman_corr):
-                task_correlations.append(spearman_corr)
-                task_details[task] = {
-                    "spearman_correlation": spearman_corr,
-                    "num_trajectories": len(trajectories),
-                    "quality_distribution": {
-                        q: sum(1 for t in trajectories if t["quality_label"] == q) for q in unique_qualities
-                    },
-                    "gold_ranks": gold_ranks,
-                    "predicted_rewards": predicted_ranks,
-                }
-
-    # Overall metrics
-    overall_metrics = {}
-    if task_correlations:
-        overall_metrics = {
-            "mean_spearman_correlation": np.mean(task_correlations),
-            "std_spearman_correlation": np.std(task_correlations),
-            "min_spearman_correlation": np.min(task_correlations),
-            "max_spearman_correlation": np.max(task_correlations),
-            "num_tasks_with_valid_correlation": len(task_correlations),
-        }
-
-    return {
-        "num_tasks": len(task_groups),
-        "num_samples": len(results),
-        "num_tasks_with_valid_correlation": len(task_correlations),
-        "task_details": task_details,
-        "overall_metrics": overall_metrics,
-    }
-
+    return fig
 
 def run_policy_ranking_eval_per_ranked_set(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Run policy_ranking evaluation analysis per ranked set."""
-    # Group results by task
     task_groups = {}
 
     for r in results:
@@ -467,10 +213,9 @@ def run_policy_ranking_eval_per_ranked_set(results: list[dict[str, Any]]) -> dic
         })
 
     if not task_groups:
+        import ipdb; ipdb.set_trace()
         return {"error": "No valid policy ranking data found"}
 
-    # For each task, compute ranking correlation
-    task_correlations = []
     task_details = {}
 
     quality_order = {"failure": 1, "suboptimal": 2, "successful": 3}
@@ -490,46 +235,30 @@ def run_policy_ranking_eval_per_ranked_set(results: list[dict[str, Any]]) -> dic
         # Use triplets if all three present, else pairs
         k = len(present_labels)
 
-        spearman_corrs = []
+        spearman = []
 
         for labels_combo in combinations(present_labels, k):
             gold_ranks = [quality_order[q] for q in labels_combo]
+
             # All ways to pick one reward per selected quality
             for rewards_tuple in product(*(quality_to_rewards[q] for q in labels_combo)):
                 spearman_corr = compute_spearman(gold_ranks, list(rewards_tuple))
                 if not np.isnan(spearman_corr):
-                    spearman_corrs.append(spearman_corr)
+                    spearman.append(spearman_corr)
 
-        if spearman_corrs:
-            avg_spearman_corr = np.mean(spearman_corrs)
-            task_correlations.append(avg_spearman_corr)
-            task_details[task] = {
-                "average_spearman_correlation": avg_spearman_corr,
-                "num_triplets/tuples": len(spearman_corrs),
-                "quality_distribution": {
-                    "failure": len(quality_to_rewards["failure"]),
-                    "suboptimal": len(quality_to_rewards["suboptimal"]),
-                    "successful": len(quality_to_rewards["successful"]),
-                },
-            }
-
-    overall_metrics = {}
-    if task_correlations:
-        overall_metrics = {
-            "mean_spearman_correlation": np.mean(task_correlations),
-            "std_spearman_correlation": np.std(task_correlations),
-            "min_spearman_correlation": np.min(task_correlations),
-            "max_spearman_correlation": np.max(task_correlations),
-            "num_tasks_with_valid_correlation": len(task_correlations),
+        avg_spearman_corr = np.mean(spearman)
+        task_details[task] = {
+            "spearman": avg_spearman_corr,
+            "num_triplets": len(spearman)
         }
 
-    return {
-        "num_tasks": len(task_groups),
-        "num_samples": len(results),
-        "num_tasks_with_valid_correlation": len(task_correlations),
-        "task_details": task_details,
-        "overall_metrics": overall_metrics,
+    # average metrics across all task details
+    policy_ranking_metrics = {
+        "spearman": np.mean([t["spearman"] for t in task_details.values()]).item(),
+        "num_triplets": np.mean([t["num_triplets"] for t in task_details.values()]).item(),
     }
+
+    return policy_ranking_metrics
 
 
 def main():
@@ -591,7 +320,7 @@ def main():
 
                     try:
                         results = load_results(str(eval_file))
-                        metrics = analyze_evaluation_type(eval_type, results)
+                        metrics = compute_eval_metrics(eval_type, results)
                         dataset_results[eval_type] = metrics
                         print(f"      ✓ Completed {eval_type} analysis")
                     except Exception as e:
@@ -648,7 +377,7 @@ def main():
             eval_type = eval_file.stem  # filename without extension
             print(f"    Analyzing {eval_type}...")
             results = load_results(str(eval_file))
-            metrics = analyze_evaluation_type(eval_type, results)
+            metrics = compute_eval_metrics(eval_type, results)
             print(f"      ✓ Completed {eval_type} analysis")
             print(f"      ✓ Metrics: {metrics}")
         print("Done!")

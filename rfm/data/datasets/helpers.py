@@ -277,7 +277,9 @@ def subsample_frames_and_progress(frames: np.ndarray, max_frames: int) -> tuple[
     return subsampled_frames, progress, metadata
 
 
-def create_rewind_trajectory(original_traj: dict, rewind_length: int | None = None, max_frames: int = 8) -> dict:
+def create_rewind_trajectory(
+    original_traj: dict, rewind_length: int | None = None, max_frames: int = 8, use_embeddings: bool = False
+) -> dict:
     """Create a suboptimal trajectory by rewinding the original trajectory.
 
     This method creates a trajectory that goes forward then rewinds back:
@@ -314,9 +316,6 @@ def create_rewind_trajectory(original_traj: dict, rewind_length: int | None = No
         original_traj: Original trajectory dictionary
         rewind_length: Number of frames to rewind (default: random 1 to max_frames)
     """
-    # Check if we should use embeddings
-    use_embeddings = original_traj.get("embeddings_path") is not None
-
     if use_embeddings:
         # Load embeddings from .pt file
         frames_data = load_embeddings_from_path(original_traj["embeddings_path"])

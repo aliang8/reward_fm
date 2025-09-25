@@ -6,10 +6,14 @@ import torch.nn.functional as F
 from tqdm import tqdm
 from transformers import Trainer
 
+import copy
 import wandb
 from rfm.utils.distributed import is_rank_0, rank_0_print
 from rfm.utils.timer import _timer
 from rfm.utils.metrics import compute_spearman_correlation
+from rfm.utils.setup_utils import setup_dataset, setup_batch_collator
+from torch.utils.data import DataLoader
+from evals.compile_results import compute_eval_metrics
 
 
 def reduce_metrics_with_accelerate(metrics: dict, accelerator, aggregate_method="sum"):
@@ -238,6 +242,94 @@ class RFMHeadsTrainer(Trainer):
             rounded_times = {k: round(v, 2) for k, v in self.timing_raw.items()}
             rank_0_print(f"Timing raw: {rounded_times}")
 
+    def _run_custom_evaluations(self):
+        metrics = {}
+        eval_types = self.config.custom_eval.eval_types
+
+        for eval_type in eval_types:
+            rank_0_print(f"Running evaluation for: {eval_type}")
+
+            eval_cfg = copy.deepcopy(self.config.data)
+            eval_cfg.dataset_type = eval_type
+            datasets = getattr(self.config.custom_eval, eval_type)
+            eval_cfg.eval_datasets = [d[0] for d in datasets]
+            eval_cfg.eval_subsets = [d[1] for d in datasets]
+
+            dataset = setup_dataset(eval_cfg, is_eval=True, verbose=False)
+            collator = setup_batch_collator(self.model.processor, self.model.tokenizer, self.config)
+
+            dataloader = DataLoader(
+                dataset,
+                batch_size=self.config.training.per_device_eval_batch_size,
+                collate_fn=collator,
+                shuffle=False,
+                num_workers=0,
+            )
+
+            self.model.eval()
+            eval_results = []
+
+            with torch.no_grad():
+                for batch in tqdm(dataloader, desc=f"Evaluating {eval_type}"):
+                    batch = self._prepare_inputs(batch)
+
+                    if eval_type in ["reward_alignment", "policy_ranking", "confusion_matrix"]:
+                        progress_samples = batch["progress_inputs"]
+                        outputs, progress_logits, _ = self.forward_model(
+                            self.model, progress_samples, sample_type="progress"
+                        )
+                        progress_pred = progress_logits["A"]
+
+                        for i in range(len(progress_pred)):
+                            sample_result = {
+                                "task": progress_samples["task"][i],
+                                "target_progress": progress_samples["target_progress"][i].cpu().numpy(),
+                                "progress_pred": progress_pred[i].cpu().numpy(),
+                                "data_source": progress_samples["data_source"][i],
+                                "data_gen_strategy": progress_samples["data_gen_strategy"][i],
+                                "quality_label": progress_samples["quality_labels"][i],
+                                "metadata": progress_samples["metadata"][i],
+                            }
+                            eval_results.append(sample_result)
+
+                    elif eval_type == "success_failure":
+                        preference_samples = batch["preference_inputs"]
+                        outputs, _, _ = self.forward_model(self.model, preference_samples, sample_type="preference")
+                        pref_logits = outputs.logits
+
+                        for i in range(len(pref_logits)):
+                            sample_result = {
+                                "task": preference_samples["task"][i],
+                                "preference_pred": pref_logits[i].cpu().numpy(),
+                                "preference_labels": preference_samples["preference_labels"][i].item(),
+                                "data_source": preference_samples["data_source"][i],
+                                "chosen_data_gen_strategy": preference_samples["chosen_data_gen_strategy"][i],
+                                "rejected_data_gen_strategy": preference_samples["rejected_data_gen_strategy"][i],
+                                # "quality_label": int(preference_samples["quality_labels"][i].item()),
+                                "metadata": preference_samples["metadata"][i],
+                            }
+                            eval_results.append(sample_result)
+
+            # Compute metrics
+            metrics[eval_type] = compute_eval_metrics(eval_type, eval_results)
+            rank_0_print(f"Completed {eval_type} evaluation: {len(eval_results)} samples")
+            rank_0_print(f"Metrics: {metrics[eval_type]}")
+            rank_0_print("=" * 50)
+
+        if self.args.report_to and "wandb" in self.args.report_to and is_rank_0():
+            wandb_metrics = {}
+            for eval_type, metric in metrics.items():
+                if eval_type == "confusion_matrix":
+                    # plot confusion matrix
+                    wandb_metrics.update({
+                        f"custom_eval/{eval_type}_confusion_matrix": wandb.Image(metric),
+                    })
+                else:
+                    wandb_metrics.update({
+                        f"custom_eval/{eval_type}_{k}": v for k, v in metric.items() if isinstance(v, (int, float))
+                    })
+            wandb.log(wandb_metrics)
+
     def evaluate(self, eval_dataset=None, ignore_keys=None) -> dict[str, float]:
         """
         Override evaluate method to implement custom RFM evaluation metrics.
@@ -286,6 +378,9 @@ class RFMHeadsTrainer(Trainer):
         if self.args.report_to and "wandb" in self.args.report_to and is_rank_0():
             if wandb.run is not None:
                 wandb.log(metrics)
+
+        # Run the custom evaluations
+        self._run_custom_evaluations()
 
         return metrics
 
@@ -365,6 +460,7 @@ class RFMHeadsTrainer(Trainer):
         """
         # Handle case where inputs might be tensors or lists
         if progress_logits is None or target_progress is None:
+            import ipdb; ipdb.set_trace()
             return 0.0, 0.0
 
         # Ensure we have the same number of samples

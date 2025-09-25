@@ -87,7 +87,9 @@ class ProgressDataset(RFMBaseDataset):
                 strategy_used = "successful"
 
             elif selected_strategy == DataGenStrat.REWIND_SAME_TASK:
-                processed_traj = create_rewind_trajectory(traj, max_frames=self.config.max_frames)
+                processed_traj = create_rewind_trajectory(
+                    traj, max_frames=self.config.max_frames, use_embeddings=self.config.load_embeddings
+                )
                 strategy_used = DataGenStrat.REWIND_SAME_TASK
 
             elif selected_strategy == DataGenStrat.DIFFERENT_TASK:

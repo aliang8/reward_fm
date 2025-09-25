@@ -42,7 +42,9 @@ from rfm.utils.setup_utils import setup_model_and_processor, setup_batch_collato
 from rfm.models.rewind_transformer import ReWiNDTransformer
 
 
-def rewind_forward(model, batch_inputs: Dict[str, Any], device: str, sample_type: str = "progress") -> tuple[torch.Tensor, Dict[str, Any]]:
+def rewind_forward(
+    model, batch_inputs: Dict[str, Any], device: str, sample_type: str = "progress"
+) -> tuple[torch.Tensor, Dict[str, Any]]:
     """Forward pass for ReWiND Transformer."""
     with torch.no_grad():
         model_outputs, progress_logits, _ = model(
@@ -52,7 +54,10 @@ def rewind_forward(model, batch_inputs: Dict[str, Any], device: str, sample_type
         )
     return model_outputs, progress_logits
 
-def rfm_forward(model, batch_inputs: Dict[str, Any], device: str, sample_type: str = "progress") -> tuple[torch.Tensor, Dict[str, Any]]:
+
+def rfm_forward(
+    model, batch_inputs: Dict[str, Any], device: str, sample_type: str = "progress"
+) -> tuple[torch.Tensor, Dict[str, Any]]:
     """Forward pass for RFM."""
     with torch.no_grad():
         model_outputs, progress_logits, _ = model(

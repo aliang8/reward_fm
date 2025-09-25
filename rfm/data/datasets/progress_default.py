@@ -41,7 +41,7 @@ class ProgressDefaultDataset(RFMBaseDataset):
             video_embeddings, frame_indices = linspace_subsample_frames(video_embeddings, max_frames)
 
             # Calculate progress based on the sampled frame indices
-            total_frames = video_embeddings.shape[0] if hasattr(video_embeddings, 'shape') else len(video_embeddings)
+            total_frames = video_embeddings.shape[0] if hasattr(video_embeddings, "shape") else len(video_embeddings)
             progress = [(idx + 1) / total_frames for idx in frame_indices]
 
             # Pad embeddings and progress if needed

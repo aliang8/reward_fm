@@ -85,7 +85,7 @@ class RewardAlignmentDataset(RFMBaseDataset):
         frames = None
         video_embeddings = None
         text_embedding = None
-        
+
         # Ground truth progress: linear from 0 to 1
         gt_progress = end_idx / num_frames
 

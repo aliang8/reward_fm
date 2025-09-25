@@ -10,8 +10,8 @@ class ReWiNDTrainer(RFMHeadsTrainer):
         """Forward pass for the model."""
         with _timer("time/forward", timing_raw=self.timing_raw):
             model_outputs, progress_logits, model_timing_raw = model(
-                video_embeddings=inputs.get("video_embeddings", None),
-                text_embeddings=inputs.get("text_embeddings", None),
+                video_embeddings=inputs["video_embeddings"],
+                text_embeddings=inputs["text_embeddings"],
                 sample_type=sample_type,
                 timing_raw=self.timing_raw,
             )

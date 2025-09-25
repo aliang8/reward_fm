@@ -14,6 +14,7 @@ import wandb
 # Import shared configs and utilities
 from rfm.configs.experiment_configs import ExperimentConfig
 from rfm.trainers import ReWiNDTrainer, RFMHeadsTrainer, RFMVQATrainer
+from rfm.data.datasets.helpers import show_available_datasets
 from rfm.utils.distributed import is_rank_0, rank_0_print
 from rfm.utils.timer import _timer
 from rfm.utils.parser import parse_multiple
@@ -24,6 +25,8 @@ from rfm.utils.setup_utils import (
     setup_model_and_processor,
     setup_peft_model,
 )
+import datasets
+datasets.logging.set_verbosity_error()
 
 warnings.filterwarnings("ignore", message="Please use DTensor instead and we are deprecating ShardedTensor")
 
@@ -98,6 +101,10 @@ def train(cfg: ExperimentConfig):
         rank_0_print(f"Wandb ID: {wandb.run.id}")
 
     # Use the shared utilities for batch collator and dataset
+
+    if is_rank_0():
+        show_available_datasets()
+
     with _timer("time/setup_data", timing_raw=timing_raw):
         batch_collator = setup_batch_collator(processor, tokenizer, cfg)
         train_dataset = setup_dataset(cfg.data, batch_size=cfg.training.per_device_train_batch_size)

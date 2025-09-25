@@ -3,6 +3,7 @@ import random
 from enum import Enum
 
 import numpy as np
+import json
 
 from rfm.utils.distributed import rank_0_print
 
@@ -434,3 +435,35 @@ def create_rewind_trajectory(
     rewind_traj["metadata"] = metadata
     rewind_traj["quality_label"] = "rewound"
     return rewind_traj
+
+def show_available_datasets():
+    """Show which datasets are available in the cache."""
+    # The preprocessing script now creates individual cache directories for each dataset/subset pair
+    cache_dir = os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
+    if not cache_dir:
+        raise ValueError(
+            "RFM_PROCESSED_DATASETS_PATH environment variable not set. Please set it to the directory containing your processed datasets."
+        )
+
+    print("=" * 100)
+    print("Available datasets:")
+
+    # List all subdirectories (individual dataset caches)
+    if os.path.exists(cache_dir):
+        subdirs = [d for d in os.listdir(cache_dir) if os.path.isdir(os.path.join(cache_dir, d))]
+        if subdirs:
+            for subdir in sorted(subdirs):
+                # Try to load dataset info
+                info_file = os.path.join(cache_dir, subdir, "dataset_info.json")
+                if os.path.exists(info_file):
+                    with open(info_file) as f:
+                        info = json.load(f)
+                    dataset_path = info.get("dataset_path", "unknown")
+                    subset = info.get("subset", "unknown")
+                    trajectories = info.get("total_trajectories", 0)
+                    print(f"   {dataset_path}/{subset}: {trajectories} trajectories")
+        else:
+            print("  ❌ No dataset caches found")
+    else:
+        print("  ❌ Cache directory does not exist")
+    print("=" * 100)

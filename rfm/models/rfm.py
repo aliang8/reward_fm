@@ -24,7 +24,7 @@ class RFM(PreTrainedModel):
     - SmolVLM (AutoModelForImageTextToText)
     """
 
-    def __init__(self, config, processor, base_model=None, base_model_id=None):
+    def __init__(self, config, processor, tokenizer, base_model=None, base_model_id=None):
         super().__init__(config)
 
         if "SmolVLM" in base_model_id:
@@ -55,6 +55,7 @@ class RFM(PreTrainedModel):
         self.similarity_head = self.similarity_head.to(dtype=self.model_dtype)
 
         self.processor = processor
+        self.tokenizer = tokenizer
 
     def gradient_checkpointing_enable(self, **kwargs):
         """Delegates gradient checkpointing enabling to the base model."""

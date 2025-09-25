@@ -75,6 +75,8 @@ class RFMBatchCollator(BaseCollator):
         """Add metadata to the batch inputs."""
         batch_inputs["data_source"] = [sample.chosen_trajectory.data_source for sample in preference_samples]
         batch_inputs["sample_type"] = ["preference"] * len(preference_samples)
+        batch_inputs["task"] = [sample.chosen_trajectory.task for sample in preference_samples]
+
         batch_inputs["chosen_data_gen_strategy"] = [
             sample.chosen_trajectory.data_gen_strategy for sample in preference_samples
         ]
@@ -127,21 +129,16 @@ class RFMBatchCollator(BaseCollator):
         self, batch_inputs: dict[str, torch.Tensor], progress_samples: list[ProgressSample]
     ) -> dict[str, torch.Tensor]:
         """Add metadata to the batch inputs."""
-        # Add target progress and quality labels
-        target_progress_list = []
-        quality_labels = []
-
-        for sample in progress_samples:
-            if sample.trajectory.target_progress is not None:
-                target_progress_list.append(sample.trajectory.target_progress)
-            quality_labels.append(1.0 if sample.trajectory.quality_label == "successful" else 0.0)
-
+    
         # Add metadata
         batch_inputs["sample_type"] = ["progress"] * len(progress_samples)
+        batch_inputs["task"] = [sample.trajectory.task for sample in progress_samples]
+        batch_inputs["metadata"] = [sample.trajectory.metadata for sample in progress_samples]
 
         # Pad target progress tensors to max length in last dimension
+        target_progress_list = [sample.trajectory.target_progress for sample in progress_samples]
         batch_inputs["target_progress"] = pad_target_progress(target_progress_list)
-        batch_inputs["quality_labels"] = torch.tensor(quality_labels, dtype=torch.float32)
+        batch_inputs["quality_labels"] = [sample.trajectory.quality_label for sample in progress_samples]
 
         if not self.load_embeddings:
             batch_inputs["frame_shapes"] = torch.tensor(

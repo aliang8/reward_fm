@@ -24,6 +24,8 @@ class RFMBaseDataset(torch.utils.data.Dataset):
             self.datasets = config.train_datasets
             self.subsets = config.train_subsets
 
+        self.verbose = verbose
+
         # Initialize dataset and index mappings
         self.dataset = None
         self.robot_trajectories = []
@@ -62,9 +64,11 @@ class RFMBaseDataset(torch.utils.data.Dataset):
         if os.path.exists(cache_dir):
             rank_0_print(f"Found preprocessed cache at {cache_dir}, loading {cache_type} datasets...")
             self._load_preprocessed_cache(cache_dir, is_training=not self.is_evaluation)
-            rank_0_print(
-                f"Successfully loaded preprocessed {cache_type} datasets with {len(self.dataset)} trajectory indices"
-            )
+
+            if self.verbose:
+                rank_0_print(
+                    f"Successfully loaded preprocessed {cache_type} datasets with {len(self.dataset)} trajectory indices"
+                )
         else:
             # If no cache exists, we need to run the preprocessor first
             rank_0_print("No preprocessed cache found. Please run preprocess_datasets.py first to create the cache.")
@@ -155,7 +159,8 @@ class RFMBaseDataset(torch.utils.data.Dataset):
         offset = 0
 
         for dataset_path, subset, individual_cache_dir in available_datasets:
-            rank_0_print(f"📂 Loading {dataset_path}/{subset} from {individual_cache_dir}")
+            if self.verbose:
+                rank_0_print(f"📂 Loading {dataset_path}/{subset} from {individual_cache_dir}")
 
             # Load the processed dataset
             dataset_cache_dir = os.path.join(individual_cache_dir, "processed_dataset")
@@ -209,9 +214,10 @@ class RFMBaseDataset(torch.utils.data.Dataset):
 
         dataset_type = "training" if is_training else "evaluation"
         rank_0_print(f"✅ Loaded {len(self.dataset)} total trajectories from preprocessed {dataset_type} datasets")
-        rank_0_print(
-            f"  📊 Available dataset/subset pairs: {len(available_datasets)}/{len(missing_datasets) + len(available_datasets)}"
-        )
+        if self.verbose:
+            rank_0_print(
+                f"  📊 Available dataset/subset pairs: {len(available_datasets)}/{len(missing_datasets) + len(available_datasets)}"
+            )
         rank_0_print(f"  📊 Missing dataset/subset pairs: {len(missing_datasets)}")
 
     def show_available_datasets(self):

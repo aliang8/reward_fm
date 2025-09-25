@@ -50,12 +50,13 @@ class ReWiNDTransformer(PreTrainedModel):
 
     config_class = ReWINDTransformerConfig
 
-    def __init__(self, config, image_encoder=None, text_encoder=None, tokenizer=None):
+    def __init__(self, config, processor=None, tokenizer=None, image_encoder=None, text_encoder=None):
         super().__init__(config)
 
         self.image_encoder = image_encoder
         self.text_encoder = text_encoder
         self.tokenizer = tokenizer
+        self.processor = processor
 
         video_feature_dim = config.video_feature_dim
         text_feature_dim = config.text_feature_dim

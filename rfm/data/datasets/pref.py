@@ -307,7 +307,9 @@ class PrefDataset(RFMBaseDataset):
             total_prob = sum(prob for _, prob in strategies)
             if total_prob == 0:
                 # All strategies have zero probability, fallback to rewind
-                rejected_traj = create_rewind_trajectory(chosen_traj, max_frames=self.config.max_frames)
+                rejected_traj = create_rewind_trajectory(
+                    chosen_traj, max_frames=self.config.max_frames, use_embeddings=self.config.load_embeddings
+                )
                 strategy_used = DataGenStrat.REWIND_SAME_TASK
                 break
 
@@ -327,7 +329,9 @@ class PrefDataset(RFMBaseDataset):
 
             # Execute selected strategy
             if selected_strategy == DataGenStrat.REWIND_SAME_TASK:
-                rejected_traj = create_rewind_trajectory(chosen_traj, max_frames=self.config.max_frames)
+                rejected_traj = create_rewind_trajectory(
+                    chosen_traj, max_frames=self.config.max_frames, use_embeddings=self.config.load_embeddings
+                )
                 strategy_used = DataGenStrat.REWIND_SAME_TASK
 
             elif selected_strategy == DataGenStrat.SUBOPTIMAL_SAME_TASK:
@@ -361,7 +365,9 @@ class PrefDataset(RFMBaseDataset):
 
         # Final fallback: If all strategies failed, use rewind
         if rejected_traj is None:
-            rejected_traj = create_rewind_trajectory(chosen_traj, max_frames=self.config.max_frames)
+            rejected_traj = create_rewind_trajectory(
+                chosen_traj, max_frames=self.config.max_frames, use_embeddings=self.config.load_embeddings
+            )
             strategy_used = DataGenStrat.REWIND_SAME_TASK
 
         # ===============================================================
@@ -414,6 +420,8 @@ class PrefDataset(RFMBaseDataset):
         else:
             if isinstance(rejected_traj["frames"], str):
                 rejected_frames = load_frames_from_npz(rejected_traj["frames"])
+            else:
+                rejected_frames = rejected_traj["frames"]
 
             rejected_frames, rejected_progress, rejected_metadata = subsample_frames_and_progress(
                 rejected_frames, self.config.max_frames
@@ -421,7 +429,7 @@ class PrefDataset(RFMBaseDataset):
             if strategy_used != DataGenStrat.REWIND_SAME_TASK:
                 # try subsampling the rejected trajectory
                 rejected_frames, rejected_progress, rejected_metadata = subsample_frames_and_progress(
-                    rejected_traj["frames"], self.config.max_frames
+                    rejected_frames, self.config.max_frames
                 )
 
             else:

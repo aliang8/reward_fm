@@ -6,7 +6,7 @@ across different training scripts.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from transformers import PretrainedConfig
 
 
@@ -49,7 +49,7 @@ class PEFTConfig:
     lora_alpha: int = field(default=64)
     lora_dropout: float = field(default=0.05)
     bias: str = field(default="none")
-    target_modules: list[str] = field(
+    target_modules: List[str] = field(
         default_factory=lambda: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
     )
 
@@ -59,16 +59,16 @@ class DataConfig:
     """Configuration for data loading and processing."""
 
     # Dataset paths and subsets
-    train_datasets: list[str] = field(
+    train_datasets: List[str] = field(
         default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of training dataset names"}
     )
-    train_subsets: list[list[str]] = field(
+    train_subsets: List[List[str]] = field(
         default_factory=lambda: [["libero_90"]], metadata={"help": "List of training dataset subsets"}
     )
-    eval_datasets: list[str] = field(
+    eval_datasets: List[str] = field(
         default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of evaluation dataset names"}
     )
-    eval_subsets: list[list[str]] = field(
+    eval_subsets: List[List[str]] = field(
         default_factory=lambda: [["libero_10"]], metadata={"help": "List of evaluation dataset subsets"}
     )
 
@@ -84,7 +84,7 @@ class DataConfig:
     # rewind_lengths: [1, 2, 4, 8]  # Generate rewinds of 1, 2, 4, and 8 frames
     # samples_per_trajectory: 2  # Generate 2 preference samples per trajectory
     # Note: Original trajectories are preferred over rewound versions
-    rewind_lengths: Optional[list[int]] = field(
+    rewind_lengths: Optional[List[int]] = field(
         default=None, metadata={"help": "List of rewind lengths for rewound dataset (default: 1 to max_frames)"}
     )
     samples_per_trajectory: int = field(
@@ -96,16 +96,16 @@ class DataConfig:
     resized_width: int = field(default=224, metadata={"help": "Width to resize video frames to"})
 
     # Data generation parameters
-    sample_type_ratio: list[float] = field(
+    sample_type_ratio: List[float] = field(
         default_factory=lambda: [1, 1, 1], metadata={"help": "Ratio of pref, progress and similarity samples"}
     )
     dataset_preference_ratio: float = field(
         default=0.8, metadata={"help": "Ratio of dataset preference samples to generated preference samples"}
     )
     # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, video_binned]
-    preference_strategy_ratio: list[float] = field(default_factory=lambda: [1, 1, 1, 1])
+    preference_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 1])
     # Tunable strategy ratios for progress generation: [default, rewind_same_task, different_task]
-    progress_strategy_ratio: list[float] = field(default_factory=lambda: [1, 1, 1])
+    progress_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1])
 
     # Processing parameters
     shuffle: bool = field(default=True, metadata={"help": "Whether to shuffle the dataset"})
@@ -131,6 +131,18 @@ class DataConfig:
     load_embeddings: bool = field(
         default=False,
         metadata={"help": "Whether to load precomputed embeddings instead of processing frames (ReWiND only)"},
+    )
+
+
+@dataclass
+class CustomEvaluationConfig:
+    """Config for custom evaluation settings"""
+
+    eval_types: List[str] = field(default_factory=lambda: ["policy_ranking", "confusion_matrix", "reward_alignment"])
+    policy_ranking: List[List[str]] = field(default_factory=lambda: [["aliangdw/metaworld_rfm", "metaworld"]])
+    confusion_matrix: List[List[str]] = field(default_factory=lambda: [["aliangdw/metaworld_rfm", "metaworld"]])
+    reward_alignment: List[List[str]] = field(
+        default_factory=lambda: [["HenryZhang/metaworld_rewind_rfm_eval", "metaworld_rewind_eval"]]
     )
 
 
@@ -211,6 +223,7 @@ class ExperimentConfig:
     data: DataConfig = field(default_factory=DataConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    custom_eval: CustomEvaluationConfig = field(default_factory=CustomEvaluationConfig)
 
     def __post_init__(self):
         if isinstance(self.model, dict):
@@ -227,3 +240,6 @@ class ExperimentConfig:
 
         if isinstance(self.logging, dict):
             self.logging = LoggingConfig(**self.logging)
+
+        if isinstance(self.custom_eval, dict):
+            self.custom_eval = CustomEvaluationConfig(**self.custom_eval)

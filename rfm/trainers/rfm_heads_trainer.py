@@ -269,46 +269,47 @@ class RFMHeadsTrainer(Trainer):
             self.model.eval()
             eval_results = []
 
-            with torch.no_grad():
-                for batch in tqdm(dataloader, desc=f"Evaluating {eval_type}"):
-                    batch = self._prepare_inputs(batch)
+            for batch in tqdm(dataloader, desc=f"Evaluating {eval_type}"):
+                batch = self._prepare_inputs(batch)
 
-                    if eval_type in ["reward_alignment", "policy_ranking", "confusion_matrix"]:
-                        progress_samples = batch["progress_inputs"]
+                if eval_type in ["reward_alignment", "policy_ranking", "confusion_matrix"]:
+                    progress_samples = batch["progress_inputs"]
+                    with torch.no_grad():
                         outputs, progress_logits, _ = self.forward_model(
                             self.model, progress_samples, sample_type="progress"
                         )
-                        progress_pred = progress_logits["A"]
+                    progress_pred = progress_logits["A"]
 
-                        for i in range(len(progress_pred)):
-                            sample_result = {
-                                "task": progress_samples["task"][i],
-                                "target_progress": progress_samples["target_progress"][i].cpu().numpy(),
-                                "progress_pred": progress_pred[i].cpu().numpy(),
-                                "data_source": progress_samples["data_source"][i],
-                                "data_gen_strategy": progress_samples["data_gen_strategy"][i],
-                                "quality_label": progress_samples["quality_labels"][i],
-                                "metadata": progress_samples["metadata"][i],
-                            }
-                            eval_results.append(sample_result)
+                    for i in range(len(progress_pred)):
+                        sample_result = {
+                            "task": progress_samples["task"][i],
+                            "target_progress": progress_samples["target_progress"][i].cpu().numpy(),
+                            "progress_pred": progress_pred[i].cpu().numpy(),
+                            "data_source": progress_samples["data_source"][i],
+                            "data_gen_strategy": progress_samples["data_gen_strategy"][i],
+                            "quality_label": progress_samples["quality_labels"][i],
+                            "metadata": progress_samples["metadata"][i],
+                        }
+                        eval_results.append(sample_result)
 
-                    elif eval_type == "success_failure":
-                        preference_samples = batch["preference_inputs"]
+                elif eval_type == "success_failure":
+                    preference_samples = batch["preference_inputs"]
+                    with torch.no_grad():
                         outputs, _, _ = self.forward_model(self.model, preference_samples, sample_type="preference")
-                        pref_logits = outputs.logits
+                    pref_logits = outputs.logits
 
-                        for i in range(len(pref_logits)):
-                            sample_result = {
-                                "task": preference_samples["task"][i],
-                                "preference_pred": pref_logits[i].cpu().numpy(),
-                                "preference_labels": preference_samples["preference_labels"][i].item(),
-                                "data_source": preference_samples["data_source"][i],
-                                "chosen_data_gen_strategy": preference_samples["chosen_data_gen_strategy"][i],
-                                "rejected_data_gen_strategy": preference_samples["rejected_data_gen_strategy"][i],
-                                # "quality_label": int(preference_samples["quality_labels"][i].item()),
-                                "metadata": preference_samples["metadata"][i],
-                            }
-                            eval_results.append(sample_result)
+                    for i in range(len(pref_logits)):
+                        sample_result = {
+                            "task": preference_samples["task"][i],
+                            "preference_pred": pref_logits[i].cpu().numpy(),
+                            "preference_labels": preference_samples["preference_labels"][i].item(),
+                            "data_source": preference_samples["data_source"][i],
+                            "chosen_data_gen_strategy": preference_samples["chosen_data_gen_strategy"][i],
+                            "rejected_data_gen_strategy": preference_samples["rejected_data_gen_strategy"][i],
+                            # "quality_label": int(preference_samples["quality_labels"][i].item()),
+                            "metadata": preference_samples["metadata"][i],
+                        }
+                        eval_results.append(sample_result)
 
             # Compute metrics
             metrics[eval_type] = compute_eval_metrics(eval_type, eval_results)
@@ -380,7 +381,8 @@ class RFMHeadsTrainer(Trainer):
                 wandb.log(metrics)
 
         # Run the custom evaluations
-        self._run_custom_evaluations()
+        if self.args.custom_eval_steps and self.state.global_step % self.args.custom_eval_steps == 0:
+            self._run_custom_evaluations()
 
         return metrics
 

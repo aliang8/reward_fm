@@ -36,7 +36,8 @@ data:
   # sample_type_ratio: [0, 1, 0] # only progress samples 
   # progress_strategy_ratio: [1, 1, 1] # default success, rewind, different task
   sample_type_ratio: [1, 1, 0] 
-  progress_strategy_ratio: [1, 1, 1] # default success, rewind, different task
+  preference_strategy_ratio: [5, 1, 1, 0] # rewind, suboptimal_same_task, different_task, video_binned 
+  progress_strategy_ratio: [1, 5, 1] # default success, rewind, different task
   
   load_embeddings: true
 

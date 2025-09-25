@@ -23,7 +23,7 @@ import json
 import queue
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, Dict
 
 import numpy as np
 import torch
@@ -39,6 +39,43 @@ from rfm.configs.experiment_configs import ModelConfig, ExperimentConfig
 from rfm.data.dataset_types import PreferenceSample, ProgressSample
 from rfm.utils.parser import deep_merge
 from rfm.utils.setup_utils import setup_model_and_processor, setup_batch_collator
+from rfm.models.rewind_transformer import ReWiNDTransformer
+
+
+def rewind_forward(model, batch_inputs: Dict[str, Any], device: str, sample_type: str = "progress") -> tuple[torch.Tensor, Dict[str, Any]]:
+    """Forward pass for ReWiND Transformer."""
+    with torch.no_grad():
+        model_outputs, progress_logits, _ = model(
+            video_embeddings=batch_inputs["video_embeddings"].to(device),
+            text_embeddings=batch_inputs["text_embeddings"].to(device),
+            sample_type=sample_type,
+        )
+    return model_outputs, progress_logits
+
+def rfm_forward(model, batch_inputs: Dict[str, Any], device: str, sample_type: str = "progress") -> tuple[torch.Tensor, Dict[str, Any]]:
+    """Forward pass for RFM."""
+    with torch.no_grad():
+        model_outputs, progress_logits, _ = model(
+            input_ids=batch_inputs["input_ids"].to(device),
+            attention_mask=batch_inputs["attention_mask"].to(device),
+            pixel_values=batch_inputs.get("pixel_values", None).to(device)
+            if batch_inputs.get("pixel_values") is not None
+            else None,
+            pixel_values_videos=batch_inputs.get("pixel_values_videos", None).to(device)
+            if batch_inputs.get("pixel_values_videos") is not None
+            else None,
+            image_grid_thw=batch_inputs.get("image_grid_thw", None).to(device)
+            if batch_inputs.get("image_grid_thw") is not None
+            else None,
+            video_grid_thw=batch_inputs.get("video_grid_thw", None).to(device)
+            if batch_inputs.get("video_grid_thw") is not None
+            else None,
+            second_per_grid_ts=batch_inputs.get("second_per_grid_ts", None).to(device)
+            if batch_inputs.get("second_per_grid_ts") is not None
+            else None,
+            sample_type=sample_type,
+        )
+    return model_outputs, progress_logits
 
 
 class AsyncGPUPool:
@@ -227,26 +264,10 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: dict[str, torch.Tensor
     device = next(model.parameters()).device
 
     with torch.no_grad():
-        outputs, progress_logits, _ = model(
-            input_ids=batch_inputs["input_ids"].to(device),
-            attention_mask=batch_inputs["attention_mask"].to(device),
-            pixel_values=batch_inputs.get("pixel_values", None).to(device)
-            if batch_inputs.get("pixel_values") is not None
-            else None,
-            pixel_values_videos=batch_inputs.get("pixel_values_videos", None).to(device)
-            if batch_inputs.get("pixel_values_videos") is not None
-            else None,
-            image_grid_thw=batch_inputs.get("image_grid_thw", None).to(device)
-            if batch_inputs.get("image_grid_thw") is not None
-            else None,
-            video_grid_thw=batch_inputs.get("video_grid_thw", None).to(device)
-            if batch_inputs.get("video_grid_thw") is not None
-            else None,
-            second_per_grid_ts=batch_inputs.get("second_per_grid_ts", None).to(device)
-            if batch_inputs.get("second_per_grid_ts") is not None
-            else None,
-            sample_type="preference",
-        )
+        if isinstance(model, ReWiNDTransformer):
+            outputs, progress_logits = rewind_forward(model, batch_inputs, device, sample_type="progress")
+        else:
+            outputs, progress_logits = rfm_forward(model, batch_inputs, device, sample_type="progress")
 
         logits = outputs.logits.squeeze(-1)  # [B]
         probs = torch.sigmoid(logits)  # [B]
@@ -303,42 +324,25 @@ def compute_batch_outputs_progress_only(model, tokenizer, batch_inputs: dict[str
     device = next(model.parameters()).device
 
     with torch.no_grad():
-        _outputs, progress_logits, _ = model(
-            input_ids=batch_inputs["input_ids"].to(device),
-            attention_mask=batch_inputs["attention_mask"].to(device),
-            pixel_values=batch_inputs.get("pixel_values", None).to(device)
-            if batch_inputs.get("pixel_values") is not None
-            else None,
-            pixel_values_videos=batch_inputs.get("pixel_values_videos", None).to(device)
-            if batch_inputs.get("pixel_values_videos") is not None
-            else None,
-            image_grid_thw=batch_inputs.get("image_grid_thw", None).to(device)
-            if batch_inputs.get("image_grid_thw") is not None
-            else None,
-            video_grid_thw=batch_inputs.get("video_grid_thw", None).to(device)
-            if batch_inputs.get("video_grid_thw") is not None
-            else None,
-            second_per_grid_ts=batch_inputs.get("second_per_grid_ts", None).to(device)
-            if batch_inputs.get("second_per_grid_ts") is not None
-            else None,
-            sample_type="progress",
-        )
+        if isinstance(model, ReWiNDTransformer):
+            outputs, progress_logits = rewind_forward(model, batch_inputs, device, sample_type="progress")
+        else:
+            outputs, progress_logits = rfm_forward(model, batch_inputs, device, sample_type="progress")
 
-    # For progress-only samples, we only care about trajectory A progress
-    progress_pred_A = []
+    progress_pred = []
 
     if isinstance(progress_logits, dict) and "A" in progress_logits:
         for seq_A in progress_logits["A"]:
             if seq_A is None:
-                progress_pred_A.append([])
+                progress_pred.append([])
             else:
-                progress_pred_A.append(seq_A.detach().cpu().flatten().tolist())
+                progress_pred.append(seq_A.detach().cpu().flatten().tolist())
     else:
         # If no progress logits, create empty lists
-        progress_pred_A = [[] for _ in range(len(batch_inputs["input_ids"]))]
+        progress_pred = [[] for _ in range(len(batch_inputs["input_ids"]))]
 
     return {
-        "progress_pred_A": progress_pred_A,
+        "progress_pred": progress_pred,
     }
 
 
@@ -513,6 +517,10 @@ def create_app(cfg: EvaluationConfig, exp_config: ExperimentConfig):
                                     file_key = traj_value["__numpy_file__"]
                                     if file_key in numpy_arrays:
                                         value[traj_key] = numpy_arrays[file_key]
+
+                                if traj_key in ["video_embeddings", "text_embedding"]:
+                                    # convert to tensor
+                                    value[traj_key] = torch.tensor(value[traj_key])
 
                 samples.append(sample_data)
 

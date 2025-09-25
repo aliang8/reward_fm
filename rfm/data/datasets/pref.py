@@ -288,18 +288,21 @@ class PrefDataset(RFMBaseDataset):
             (DataGenStrat.REWIND_SAME_TASK, self.preference_strategy_ratio[0]),
             (DataGenStrat.SUBOPTIMAL_SAME_TASK, self.preference_strategy_ratio[1]),
             (DataGenStrat.DIFFERENT_TASK, self.preference_strategy_ratio[2]),
-            (DataGenStrat.VIDEO_BINNED, self.preference_strategy_ratio[3] if len(self.preference_strategy_ratio) > 3 else 0.0),
+            (
+                DataGenStrat.VIDEO_BINNED,
+                self.preference_strategy_ratio[3] if len(self.preference_strategy_ratio) > 3 else 0.0,
+            ),
         ]
-        
+
         # Remove strategies with zero probability
         strategies = [(strat, prob) for strat, prob in strategies if prob > 0]
-        
+
         max_attempts = 3  # Limit retry attempts to prevent infinite loops
         attempt = 0
-        
+
         while rejected_traj is None and attempt < max_attempts:
             attempt += 1
-            
+
             # Rebalance probabilities based on remaining strategies
             total_prob = sum(prob for _, prob in strategies)
             if total_prob == 0:
@@ -307,34 +310,36 @@ class PrefDataset(RFMBaseDataset):
                 rejected_traj = create_rewind_trajectory(chosen_traj, max_frames=self.config.max_frames)
                 strategy_used = DataGenStrat.REWIND_SAME_TASK
                 break
-            
+
             # Normalize probabilities
             normalized_strategies = [(strat, prob / total_prob) for strat, prob in strategies]
-            
+
             # Select strategy based on rebalanced probabilities
             prob = random.random()
             cumulative_prob = 0.0
             selected_strategy = None
-            
+
             for strat, normalized_prob in normalized_strategies:
                 cumulative_prob += normalized_prob
                 if prob <= cumulative_prob:
                     selected_strategy = strat
                     break
-            
+
             # Execute selected strategy
             if selected_strategy == DataGenStrat.REWIND_SAME_TASK:
                 rejected_traj = create_rewind_trajectory(chosen_traj, max_frames=self.config.max_frames)
                 strategy_used = DataGenStrat.REWIND_SAME_TASK
-                
+
             elif selected_strategy == DataGenStrat.SUBOPTIMAL_SAME_TASK:
                 rejected_traj = self._create_same_task_suboptimal_trajectory(chosen_traj)
                 if rejected_traj is not None:
                     strategy_used = DataGenStrat.SUBOPTIMAL_SAME_TASK
                 else:
                     # Strategy failed, remove it from future attempts
-                    strategies = [(strat, prob) for strat, prob in strategies if strat != DataGenStrat.SUBOPTIMAL_SAME_TASK]
-                    
+                    strategies = [
+                        (strat, prob) for strat, prob in strategies if strat != DataGenStrat.SUBOPTIMAL_SAME_TASK
+                    ]
+
             elif selected_strategy == DataGenStrat.DIFFERENT_TASK:
                 rejected_traj = self._create_different_task_trajectory(chosen_traj)
                 if rejected_traj is not None:
@@ -342,7 +347,7 @@ class PrefDataset(RFMBaseDataset):
                 else:
                     # Strategy failed, remove it from future attempts
                     strategies = [(strat, prob) for strat, prob in strategies if strat != DataGenStrat.DIFFERENT_TASK]
-                    
+
             elif selected_strategy == DataGenStrat.VIDEO_BINNED:
                 try:
                     chosen_traj, rejected_traj = self._create_video_binned_trajectory(
@@ -353,7 +358,7 @@ class PrefDataset(RFMBaseDataset):
                     rank_0_print(f"Video binning failed: {e}, removing from available strategies")
                     # Strategy failed, remove it from future attempts
                     strategies = [(strat, prob) for strat, prob in strategies if strat != DataGenStrat.VIDEO_BINNED]
-        
+
         # Final fallback: If all strategies failed, use rewind
         if rejected_traj is None:
             rejected_traj = create_rewind_trajectory(chosen_traj, max_frames=self.config.max_frames)
@@ -370,11 +375,10 @@ class PrefDataset(RFMBaseDataset):
         rejected_video_embeddings = None
         rejected_text_embedding = None
 
-
         if self.config.load_embeddings and chosen_traj.get("embeddings_path"):
             chosen_video_embeddings = load_embeddings_from_path(chosen_traj["embeddings_path"], "video_embeddings")
             chosen_text_embedding = load_embeddings_from_path(chosen_traj["embeddings_path"], "text_embedding")
-            
+
             chosen_video_embeddings, chosen_progress, chosen_metadata = subsample_frames_and_progress(
                 chosen_video_embeddings, self.config.max_frames
             )
@@ -424,7 +428,7 @@ class PrefDataset(RFMBaseDataset):
                 rejected_frames = rejected_traj["frames"]
                 rejected_progress = rejected_traj["target_progress"]
                 rejected_metadata = rejected_traj["metadata"]
-        
+
         if "metadata" in rejected_traj:
             rejected_metadata.update(rejected_traj["metadata"])
 

@@ -8,6 +8,12 @@ from tqdm import tqdm
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, Trajectory
 from .base import RFMBaseDataset
 from .pref import DataGenStrat
+from .helpers import (
+    linspace_subsample_frames,
+    pad_trajectory_to_max_frames_np,
+    pad_trajectory_to_max_frames_torch,
+    load_embeddings_from_path,
+)
 from rfm.utils.distributed import rank_0_print
 
 
@@ -74,33 +80,50 @@ class ConfusionMatrixDataset(RFMBaseDataset):
         # Get the original trajectory
         original_traj = self.dataset[traj_idx]
 
-        # Get frames and create sample
-        frames = self._get_trajectory_frames(traj_idx)
-        if frames is None or len(frames) == 0:
-            return None
+        # Initialize variables
+        frames = None
+        video_embeddings = None
+        text_embedding = None
 
         # Get max_frames from config
         max_frames = self.config.max_frames
 
-        # Uniform subsample to max_frames
-        frames, _ = self._linspace_subsample_frames(frames, max_frames)
+        if self.config.load_embeddings and original_traj.get("embeddings_path"):
+            # Load embeddings from path
+            video_embeddings = load_embeddings_from_path(original_traj["embeddings_path"], "video_embeddings")
+            text_embedding = load_embeddings_from_path(original_traj["embeddings_path"], "text_embedding")
 
-        # Use the existing helper function to pad/subsample frames
-        padded_frames, _ = self._pad_trajectory_to_max_frames(frames, [0], max_frames)
+            # Uniform subsample to max_frames
+            video_embeddings, _ = linspace_subsample_frames(video_embeddings, max_frames)
+
+            # Use the torch padding function for embeddings
+            video_embeddings, _ = pad_trajectory_to_max_frames_torch(video_embeddings, [0], max_frames)
+        else:
+            # Get frames and create sample
+            frames = self._get_trajectory_frames(traj_idx)
+            if frames is None or len(frames) == 0:
+                return None
+
+            # Uniform subsample to max_frames
+            frames, _ = linspace_subsample_frames(frames, max_frames)
+
+            # Use the existing helper function to pad/subsample frames
+            frames, _ = pad_trajectory_to_max_frames_np(frames, [0], max_frames)
 
         # Create metadata for the confusion matrix analysis
         metadata = {
             "confusion_matrix_task": task,
             "trajectory_original_task": trajectory_task,  # Original task of the trajectory
-            "is_matching_task": task == trajectory_task,  # Whether task matches trajectory
         }
 
         # Create trajectory for the sample (using the original trajectory data but with new task)
         sample_trajectory = Trajectory(
             id=original_traj["id"],
             task=task,  # Use the confusion matrix task, not the original trajectory task
-            frames=padded_frames,
-            frames_shape=padded_frames.shape,
+            frames=frames,
+            frames_shape=frames.shape if frames is not None and hasattr(frames, "shape") else None,
+            video_embeddings=video_embeddings,
+            text_embedding=text_embedding,
             data_source=original_traj["data_source"],
             lang_vector=original_traj["lang_vector"],  # Keep original language vector
             is_robot=original_traj["is_robot"],

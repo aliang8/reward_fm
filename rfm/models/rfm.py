@@ -18,15 +18,15 @@ from rfm.utils.timer import _timer
 
 class RFM(PreTrainedModel):
     """Reward Foundation Model with three prediction heads for different objectives.
-    
+
     Supports multiple base model architectures:
     - Qwen2.5-VL (Qwen2_5_VLModel)
     - SmolVLM (AutoModelForImageTextToText)
     """
-    
+
     def __init__(self, config, processor, base_model=None, base_model_id=None):
         super().__init__(config)
-        
+
         if "SmolVLM" in base_model_id:
             # hidden_size = config.vision_config.hidden_size
             hidden_size = 960
@@ -34,7 +34,7 @@ class RFM(PreTrainedModel):
         else:
             hidden_size = config.hidden_size
             self.model_cls = Qwen2_5_VLModel
-        
+
         if base_model is not None:
             self.model = base_model
         else:
@@ -161,14 +161,14 @@ class RFM(PreTrainedModel):
 
         # Always compute progress for all timesteps if target_progress is provided
         progress_logits = None
-        
+
         if "SmolVLM" in self.base_model_id:
             with _timer("time/rfm_forward", timing_raw=timing_raw):
                 outputs = self.model(**model_kwargs, output_hidden_states=True, return_dict=True)
-            
+
             B = input_ids.shape[0]
-            V = 2 
-            T = 16 # TODO: fix this hardcoding 
+            V = 2
+            T = 16  # TODO: fix this hardcoding
             D = outputs.image_hidden_states.shape[-1]
 
             # from the last layer of the text transformer
@@ -176,7 +176,7 @@ class RFM(PreTrainedModel):
             vision_hidden_states = outputs.image_hidden_states
             vision_hidden_states = vision_hidden_states.reshape(B, V, T, -1, D)
 
-            # per frame hidden state 
+            # per frame hidden state
             # [B, V, T, D]
             per_frame_hidden_states = vision_hidden_states.mean(dim=3)
 
@@ -193,10 +193,10 @@ class RFM(PreTrainedModel):
         else:
             with _timer("time/rfm_forward", timing_raw=timing_raw):
                 outputs = self.model(**model_kwargs)
-                
+
             # [batch_size, seq_len, hidden_size]
             hidden_state = outputs.last_hidden_state
-            
+
             # Original Qwen2.5-VL progress computation logic
             # Find vision_start_token and split_token for trajectory separation
             vision_start_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|vision_start|>")

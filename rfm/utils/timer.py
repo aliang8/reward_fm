@@ -3,7 +3,7 @@ from contextlib import contextmanager
 
 from codetiming import Timer
 
- 
+
 @contextmanager
 def timer(name: str, verbose: bool = False):
     """Context manager for timing operations."""

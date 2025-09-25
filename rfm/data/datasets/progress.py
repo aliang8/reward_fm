@@ -32,33 +32,33 @@ class ProgressDataset(RFMBaseDataset):
 
     def _create_progress_sample(self, traj: dict):
         """Create a progress sample using normalized and rebalanced strategy selection.
-        
+
         Implements three strategies:
         1. Successful: Use original trajectory as-is
         2. Rewind Same Task: Create rewound trajectory from same task
         3. Different Task: Use trajectory from different task (progress set to 0.0)
         """
-        
+
         # Initialize variables for strategy selection
         processed_traj = None
         strategy_used = None
-        
+
         # Strategy setup with rebalancing on failure
         strategies = [
             ("successful", self.config.progress_strategy_ratio[0]),
             (DataGenStrat.REWIND_SAME_TASK, self.config.progress_strategy_ratio[1]),
             (DataGenStrat.DIFFERENT_TASK, self.config.progress_strategy_ratio[2]),
         ]
-        
+
         # Remove strategies with zero probability
         strategies = [(strat, prob) for strat, prob in strategies if prob > 0]
-        
+
         max_attempts = 3  # Limit retry attempts to prevent infinite loops
         attempt = 0
-        
+
         while processed_traj is None and attempt < max_attempts:
             attempt += 1
-            
+
             # Rebalance probabilities based on remaining strategies
             total_prob = sum(prob for _, prob in strategies)
             if total_prob == 0:
@@ -66,30 +66,30 @@ class ProgressDataset(RFMBaseDataset):
                 processed_traj = traj.copy()
                 strategy_used = "successful"
                 break
-            
+
             # Normalize probabilities
             normalized_strategies = [(strat, prob / total_prob) for strat, prob in strategies]
-            
+
             # Select strategy based on rebalanced probabilities
             prob = random.random()
             cumulative_prob = 0.0
             selected_strategy = None
-            
+
             for strat, normalized_prob in normalized_strategies:
                 cumulative_prob += normalized_prob
                 if prob <= cumulative_prob:
                     selected_strategy = strat
                     break
-            
+
             # Execute selected strategy
             if selected_strategy == "successful":
                 processed_traj = traj.copy()
                 strategy_used = "successful"
-                
+
             elif selected_strategy == DataGenStrat.REWIND_SAME_TASK:
                 processed_traj = create_rewind_trajectory(traj, max_frames=self.config.max_frames)
                 strategy_used = DataGenStrat.REWIND_SAME_TASK
-                
+
             elif selected_strategy == DataGenStrat.DIFFERENT_TASK:
                 other_traj = self._create_different_task_trajectory(traj)
                 if other_traj is not None:
@@ -98,18 +98,18 @@ class ProgressDataset(RFMBaseDataset):
                 else:
                     # Strategy failed, remove it from future attempts
                     strategies = [(strat, prob) for strat, prob in strategies if strat != DataGenStrat.DIFFERENT_TASK]
-        
+
         # Final fallback: If all strategies failed, use successful
         if processed_traj is None:
             processed_traj = traj.copy()
             strategy_used = "successful"
-        
+
         frames = None
         video_embeddings = None
         text_embedding = None
         task = processed_traj["task"]
         lang_vector = processed_traj["lang_vector"]
-        
+
         if self.config.load_embeddings and processed_traj.get("embeddings_path"):
             # We are loading precomputed image/text embeddings
             if strategy_used == DataGenStrat.REWIND_SAME_TASK:
@@ -118,8 +118,10 @@ class ProgressDataset(RFMBaseDataset):
                 metadata = processed_traj["metadata"]
             else:
                 video_embeddings = load_embeddings_from_path(processed_traj["embeddings_path"], "video_embeddings")
-                video_embeddings, progress, metadata = subsample_frames_and_progress(video_embeddings, self.config.max_frames)
-            
+                video_embeddings, progress, metadata = subsample_frames_and_progress(
+                    video_embeddings, self.config.max_frames
+                )
+
             text_embedding = load_embeddings_from_path(processed_traj["embeddings_path"], "text_embedding")
             if strategy_used == DataGenStrat.DIFFERENT_TASK:
                 # we need to use the original task embeddings instead of the different task embeddings
@@ -127,7 +129,9 @@ class ProgressDataset(RFMBaseDataset):
                 lang_vector = traj["lang_vector"]
                 task = traj["task"]
 
-            video_embeddings, progress = pad_trajectory_to_max_frames_torch(video_embeddings, progress, self.config.max_frames)
+            video_embeddings, progress = pad_trajectory_to_max_frames_torch(
+                video_embeddings, progress, self.config.max_frames
+            )
         else:
             # We are using the image frames
             if strategy_used == DataGenStrat.REWIND_SAME_TASK:
@@ -137,9 +141,9 @@ class ProgressDataset(RFMBaseDataset):
             else:
                 frames = load_frames_from_npz(processed_traj["frames"])
                 frames, progress, metadata = subsample_frames_and_progress(frames, self.config.max_frames)
-            
+
             if strategy_used == DataGenStrat.DIFFERENT_TASK:
-                # for different task, we use original language instruction, but 
+                # for different task, we use original language instruction, but
                 # the video is from a different task
                 lang_vector = traj["lang_vector"]
                 task = traj["task"]
@@ -200,5 +204,3 @@ class ProgressDataset(RFMBaseDataset):
             return None
 
         return None
-    
-

@@ -32,39 +32,39 @@ class MixedDataset(RFMBaseDataset):
 
     def __getitem__(self, idx):
         """Create a sample based on the configured ratios using normalized and rebalanced selection.
-        
+
         Uses the same normalization and rebalancing approach as PrefDataset and ProgressDataset
         to handle cases where some sample types have zero probability or datasets are unavailable.
         """
         idx = idx % self.data_len
-        
+
         # Available dataset types with their probabilities
         datasets = [
             ("pref", self.sample_type_ratio[0], self.pref_dataset),
             ("progress", self.sample_type_ratio[1], self.progress_dataset),
             ("similarity", self.sample_type_ratio[2], self.similarity_dataset),
         ]
-        
+
         # Remove datasets with zero probability
         available_datasets = [(name, prob, dataset) for name, prob, dataset in datasets if prob > 0]
-        
+
         # Fallback to progress dataset if no datasets have positive probability
         if not available_datasets:
             return self.progress_dataset[idx]
-        
+
         # Normalize probabilities
         total_prob = sum(prob for _, prob, _ in available_datasets)
         normalized_datasets = [(name, prob / total_prob, dataset) for name, prob, dataset in available_datasets]
-        
+
         # Select dataset based on normalized probabilities
         prob = random.random()
         cumulative_prob = 0.0
-        
+
         for name, normalized_prob, dataset in normalized_datasets:
             cumulative_prob += normalized_prob
             if prob <= cumulative_prob:
                 return dataset[idx]
-        
+
         # Final fallback (should not reach here, but safety net)
         return self.progress_dataset[idx]
 

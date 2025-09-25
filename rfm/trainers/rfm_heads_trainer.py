@@ -158,7 +158,7 @@ class RFMHeadsTrainer(Trainer):
             if data_sources is not None:
                 for ds in data_sources:
                     self.global_metadata[f"total_{ds}"] += 1.0
-        
+
         # Count data generation strategies from the progress samples
         if num_progress > 0 and progress_inputs:
             data_gen_strategy = progress_inputs.get("data_gen_strategy", [])
@@ -440,7 +440,7 @@ class RFMHeadsTrainer(Trainer):
 
     def _compute_progress_loss(self, model, inputs, return_outputs=False, training=True):
         """Compute progress prediction loss."""
-        _ , progress_logits, model_timing_raw = self.forward_model(model, inputs, sample_type="progress")
+        _, progress_logits, model_timing_raw = self.forward_model(model, inputs, sample_type="progress")
         progress_pred = progress_logits["A"]
         progress_target = inputs["target_progress"]
         frame_shapes = inputs["frame_shapes"]

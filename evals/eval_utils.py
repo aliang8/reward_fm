@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import torch
 import io
 import json
 import re
@@ -10,7 +11,7 @@ import aiohttp
 import numpy as np
 import requests
 
-from rfm.data.dataset_types import PreferenceSample, SimilaritySample
+from rfm.data.dataset_types import PreferenceSample, SimilaritySample, ProgressSample
 
 
 def extract_answer_from_text(text):
@@ -31,7 +32,7 @@ def post_batch(url: str, payload: dict[str, Any], timeout_s: float = 120.0) -> d
 
 
 def build_payload(
-    samples: list[PreferenceSample | SimilaritySample],
+    samples: list[PreferenceSample | SimilaritySample | ProgressSample],
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Build a payload with numpy array handling.
 
@@ -61,23 +62,26 @@ def build_payload(
         ]:
             if key in processed_sample and isinstance(processed_sample[key], dict):
                 trajectory = processed_sample[key]
-                if "frames" in trajectory and isinstance(trajectory["frames"], np.ndarray):
-                    # Convert frames to .npy file
-                    buf = io.BytesIO()
-                    np.save(buf, trajectory["frames"])
-                    buf.seek(0)
-                    file_key = f"sample_{sample_idx}_{key}_frames"
-                    files[file_key] = (f"sample_{sample_idx}_{key}_frames.npy", buf, "application/octet-stream")
-                    trajectory["frames"] = {"__numpy_file__": file_key}
 
-                if "lang_vector" in trajectory and isinstance(trajectory["lang_vector"], np.ndarray):
-                    # Convert lang_vector to .npy file
-                    buf = io.BytesIO()
-                    np.save(buf, trajectory["lang_vector"])
-                    buf.seek(0)
-                    file_key = f"sample_{sample_idx}_{key}_lang_vector"
-                    files[file_key] = (f"sample_{sample_idx}_{key}_lang_vector.npy", buf, "application/octet-stream")
-                    trajectory["lang_vector"] = {"__numpy_file__": file_key}
+                # Convert numpy arrays to .npy files
+                numpy_fields = ["frames", "lang_vector", "video_embeddings", "text_embedding"]
+                for field_name in numpy_fields:
+                    # if it is a tensor, first convert it to a numpy array
+                    if field_name in trajectory and isinstance(trajectory[field_name], torch.Tensor):
+                        trajectory[field_name] = trajectory[field_name].numpy()
+
+                    if field_name in trajectory and isinstance(trajectory[field_name], np.ndarray):
+                        # Convert numpy array to .npy file
+                        buf = io.BytesIO()
+                        np.save(buf, trajectory[field_name])
+                        buf.seek(0)
+                        file_key = f"sample_{sample_idx}_{key}_{field_name}"
+                        files[file_key] = (
+                            f"sample_{sample_idx}_{key}_{field_name}.npy",
+                            buf,
+                            "application/octet-stream",
+                        )
+                        trajectory[field_name] = {"__numpy_file__": file_key}
 
         sample_data.append(processed_sample)
 

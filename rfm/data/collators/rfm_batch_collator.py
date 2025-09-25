@@ -26,7 +26,7 @@ class RFMBatchCollator(BaseCollator):
         Returns:
             Batch of inputs
         """
-        
+
         if "Qwen" in self.base_model_id:
             # Process all messages in one batch
             texts = [
@@ -62,7 +62,7 @@ class RFMBatchCollator(BaseCollator):
                 max_length=self.max_length,
                 return_dict=True,
                 return_tensors="pt",
-                fps=4, # this should be same as fps for write_mp4
+                fps=4,  # this should be same as fps for write_mp4
             )
         else:
             raise ValueError(f"Invalid base model id: {self.base_model_id}")
@@ -142,7 +142,7 @@ class RFMBatchCollator(BaseCollator):
         # Pad target progress tensors to max length in last dimension
         batch_inputs["target_progress"] = pad_target_progress(target_progress_list)
         batch_inputs["quality_labels"] = torch.tensor(quality_labels, dtype=torch.float32)
-        
+
         if not self.load_embeddings:
             batch_inputs["frame_shapes"] = torch.tensor(
                 [sample.trajectory.frames_shape for sample in progress_samples], dtype=torch.int32
@@ -152,12 +152,8 @@ class RFMBatchCollator(BaseCollator):
                 [sample.trajectory.video_embeddings.shape for sample in progress_samples], dtype=torch.int32
             )
 
-        batch_inputs["data_source"] = [
-            sample.trajectory.data_source for sample in progress_samples
-        ]
-        batch_inputs["data_gen_strategy"] = [
-            sample.trajectory.data_gen_strategy for sample in progress_samples
-        ]
+        batch_inputs["data_source"] = [sample.trajectory.data_source for sample in progress_samples]
+        batch_inputs["data_gen_strategy"] = [sample.trajectory.data_gen_strategy for sample in progress_samples]
         target_progress_mask = [
             1.0
             if sample.trajectory.quality_label == "successful"
@@ -165,7 +161,7 @@ class RFMBatchCollator(BaseCollator):
             else 0.0
             for sample in progress_samples
         ]
-        batch_inputs["target_progress_mask"] = torch.tensor(target_progress_mask, dtype=torch.float32)  
+        batch_inputs["target_progress_mask"] = torch.tensor(target_progress_mask, dtype=torch.float32)
         return batch_inputs
 
     def _process_preference_batch(self, preference_samples: list[PreferenceSample]) -> dict[str, torch.Tensor]:

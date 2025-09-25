@@ -26,7 +26,7 @@ from rfm.data.datasets import (
     ProgressDataset,
     RewardAlignmentDataset,
     ProgressDefaultDataset,
-    RFMBaseDataset, 
+    RFMBaseDataset,
     WrongTaskDataset,
 )
 from rfm.models import RFM, RFMVQA, ReWiNDTransformer
@@ -45,18 +45,17 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
                 trust_remote_code=cfg.trust_remote_code,
                 padding_side="left",
                 size={"longest_edge": 512},
-                max_image_size={"longest_edge": 512}
+                max_image_size={"longest_edge": 512},
             )
-            
+
             rank_0_print(f"SmolVLM Processor: {processor}")
             base_model = AutoModelForImageTextToText.from_pretrained(
                 cfg.base_model_id,
                 torch_dtype=torch.bfloat16,
                 # _attn_implementation="flash_attention_2",
             )
-            model_cls = RFM  
-        
-    
+            model_cls = RFM
+
         elif "Qwen" in cfg.base_model_id:
             if cfg.model_type == "default":
                 qwen_model_cls = Qwen2_5_VLModel
@@ -66,7 +65,7 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
                 model_cls = RFMVQA
 
             base_model = qwen_model_cls.from_pretrained(cfg.base_model_id)
-            
+
             processor = AutoProcessor.from_pretrained(
                 cfg.base_model_id,
                 trust_remote_code=cfg.trust_remote_code,
@@ -82,10 +81,9 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
             rank_0_print(f"Qwen Processor: {processor}")
         else:
             raise ValueError(f"Invalid base model id: {cfg.base_model_id}")
-        
+
         if processor.tokenizer.pad_token is None:
             processor.tokenizer.pad_token = processor.tokenizer.eos_token
-
 
         # Add RFM special tokens if they don't exist
         if cfg.model_type == "default":
@@ -107,7 +105,9 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
 
         # Initialize RFM model wrapper with the pre-loaded base model
         rank_0_print("Initializing RFM model...")
-        model = model_cls(config=base_model.config, processor=processor, base_model=base_model, base_model_id=cfg.base_model_id)
+        model = model_cls(
+            config=base_model.config, processor=processor, base_model=base_model, base_model_id=cfg.base_model_id
+        )
 
         if hf_model_id:
             rank_0_print(f"Loading model from {hf_model_id}")
@@ -130,7 +130,9 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
         if hf_model_id:
             # Load from Hugging Face Hub
             rank_0_print(f"Loading ReWiND model from {hf_model_id}")
-            model = ReWiNDTransformer.from_pretrained(hf_model_id, image_encoder=image_encoder, text_encoder=text_encoder, tokenizer=tokenizer)
+            model = ReWiNDTransformer.from_pretrained(
+                hf_model_id, image_encoder=image_encoder, text_encoder=text_encoder, tokenizer=tokenizer
+            )
         else:
             train_img = cfg.train_vision_encoder
             train_text = cfg.train_language_model
@@ -143,7 +145,9 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
 
             rank_0_print("Initializing ReWiND model...")
             rewind_config = cfg.rewind if cfg.rewind is not None else ReWINDTransformerConfig()
-            model = ReWiNDTransformer(config=rewind_config, image_encoder=image_encoder, text_encoder=text_encoder, tokenizer=tokenizer)
+            model = ReWiNDTransformer(
+                config=rewind_config, image_encoder=image_encoder, text_encoder=text_encoder, tokenizer=tokenizer
+            )
 
     rank_0_print("Model architecture initialized")
     rank_0_print(f"Model architecture: {model}")
@@ -323,7 +327,9 @@ def setup_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg
         elif cfg.model.model_type == "vqa":
             batch_collator = VQABatchCollator(**collator_kwargs, inference=cfg.mode == "eval")
     elif "rewind_transformer" in cfg.model.base_model_id:
-        batch_collator = ReWiNDBatchCollator(**collator_kwargs, tokenizer=tokenizer, load_embeddings=cfg.data.load_embeddings)
+        batch_collator = ReWiNDBatchCollator(
+            **collator_kwargs, tokenizer=tokenizer, load_embeddings=cfg.data.load_embeddings
+        )
 
     rank_0_print("Batch collator created successfully")
     return batch_collator

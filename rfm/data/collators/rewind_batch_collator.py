@@ -20,33 +20,35 @@ class ReWiNDBatchCollator(RFMBatchCollator):
             all_rejected_video_embeddings = []
             all_chosen_text_embeddings = []
             all_rejected_text_embeddings = []
-            
+
             for sample in preference_samples:
                 # Get embeddings directly from trajectories
                 chosen_video_emb = sample.chosen_trajectory.video_embeddings
                 chosen_text_emb = sample.chosen_trajectory.text_embedding
                 rejected_video_emb = sample.rejected_trajectory.video_embeddings
                 rejected_text_emb = sample.rejected_trajectory.text_embedding
-                
-                if any(emb is None for emb in [chosen_video_emb, chosen_text_emb, rejected_video_emb, rejected_text_emb]):
+
+                if any(
+                    emb is None for emb in [chosen_video_emb, chosen_text_emb, rejected_video_emb, rejected_text_emb]
+                ):
                     raise ValueError("Sample trajectories are missing embeddings")
-                
+
                 all_chosen_video_embeddings.append(chosen_video_emb)
                 all_chosen_text_embeddings.append(chosen_text_emb)
                 all_rejected_video_embeddings.append(rejected_video_emb)
                 all_rejected_text_embeddings.append(rejected_text_emb)
-            
+
             # Stack embeddings into batches
             chosen_video_embeddings = torch.stack(all_chosen_video_embeddings)  # [B, T, D]
             rejected_video_embeddings = torch.stack(all_rejected_video_embeddings)  # [B, T, D]
             chosen_text_embeddings = torch.stack(all_chosen_text_embeddings)  # [B, D]
             rejected_text_embeddings = torch.stack(all_rejected_text_embeddings)  # [B, D]
-            
+
             # Interleave embeddings based on preference_labels
             frame_len = chosen_video_embeddings.shape[1]
             video_embeddings = torch.empty(len(preference_samples), frame_len * 2, chosen_video_embeddings.shape[2])
             text_embeddings = torch.empty(len(preference_samples), chosen_text_embeddings.shape[1])
-            
+
             for i in range(len(preference_samples)):
                 if preference_labels[i] == 1:  # chosen first
                     video_embeddings[i] = torch.cat([chosen_video_embeddings[i], rejected_video_embeddings[i]], dim=0)
@@ -54,10 +56,10 @@ class ReWiNDBatchCollator(RFMBatchCollator):
                 else:
                     video_embeddings[i] = torch.cat([rejected_video_embeddings[i], chosen_video_embeddings[i]], dim=0)
                     text_embeddings[i] = chosen_text_embeddings[i]  # Use chosen text embedding
-            
+
             batch_inputs = {
                 "video_embeddings": video_embeddings,  # [B, T*2, D]
-                "text_embeddings": text_embeddings,    # [B, D]
+                "text_embeddings": text_embeddings,  # [B, D]
             }
         else:
             all_chosen_frames = []
@@ -114,14 +116,17 @@ class ReWiNDBatchCollator(RFMBatchCollator):
             all_video_embeddings = [sample.trajectory.video_embeddings for sample in progress_samples]
             all_text_embeddings = [sample.trajectory.text_embedding for sample in progress_samples]
             video_embeddings = torch.stack(all_video_embeddings)  # [B, T, D]
-            text_embeddings = torch.stack(all_text_embeddings)    # [B, D]
-            
+            text_embeddings = torch.stack(all_text_embeddings)  # [B, D]
+
             batch_inputs = {
                 "video_embeddings": video_embeddings,  # [B, T, D]
-                "text_embeddings": text_embeddings,    # [B, D]
+                "text_embeddings": text_embeddings,  # [B, D]
             }
         else:
-            all_frames = [convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape) for sample in progress_samples]
+            all_frames = [
+                convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
+                for sample in progress_samples
+            ]
 
             # here we directly use dino processor process the images and videos to tensors
             video_inputs = self.processor(images=all_frames, return_tensors="pt")["pixel_values"]

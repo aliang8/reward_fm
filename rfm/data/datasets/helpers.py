@@ -58,13 +58,15 @@ def load_frames_from_npz(npz_filepath: str) -> np.ndarray:
         rank_0_print(f"Error loading frames from {npz_filepath}: {e}")
         raise RuntimeError(f"Failed to load frames from {npz_filepath}: {e}")
 
+
 def load_embeddings_from_path(embeddings_path: str, embedding_type: str = "video_embeddings") -> torch.Tensor:
     """Load video embeddings from .pt file and return just the video embeddings."""
     if not embeddings_path:
         raise ValueError("embeddings_path is None or empty")
-    
-    embeddings_data = torch.load(embeddings_path, map_location='cpu')
+
+    embeddings_data = torch.load(embeddings_path, map_location="cpu")
     return embeddings_data[embedding_type]
+
 
 def pad_trajectory_to_max_frames_np(
     frames: np.ndarray, progress: list[float], max_frames: int
@@ -101,9 +103,7 @@ def pad_trajectory_to_max_frames_np(
     return padded_frames, padded_progress
 
 
-def pad_trajectory_to_max_frames_torch(
-    frames, progress: list[float], max_frames: int
-) -> tuple:
+def pad_trajectory_to_max_frames_torch(frames, progress: list[float], max_frames: int) -> tuple:
     """Pad trajectory frames and progress to max_frames by repeating the first frame/progress if needed.
 
     Args:
@@ -135,6 +135,7 @@ def pad_trajectory_to_max_frames_torch(
     padded_progress = [first_progress] * frames_to_pad + progress
 
     return padded_frames, padded_progress
+
 
 def linspace_subsample_frames(frames: np.ndarray, num_frames: int = 8) -> tuple[np.ndarray, list[int]]:
     """Uniformly subsample frames from a trajectory and return the indices.
@@ -226,16 +227,15 @@ def randomly_subsample_frames(
 
 
 def subsample_frames_and_progress(frames: np.ndarray, max_frames: int) -> tuple[np.ndarray, list[float]]:
-    """Linear subsample frames and progress to max_frames
-    """
+    """Linear subsample frames and progress to max_frames"""
     # subsampled_frames, indices = linspace_subsample_frames(frames, max_frames)
-    
+
     # progress = [(idx + 1) / len(frames) for idx in indices]
 
     # metadata = {
     #     "subsampled_indices": indices,
     # }
-    
+
     # return subsampled_frames, progress, metadata
 
     num_frames_total = len(frames)
@@ -316,7 +316,7 @@ def create_rewind_trajectory(original_traj: dict, rewind_length: int | None = No
     """
     # Check if we should use embeddings
     use_embeddings = original_traj.get("embeddings_path") is not None
-    
+
     if use_embeddings:
         # Load embeddings from .pt file
         frames_data = load_embeddings_from_path(original_traj["embeddings_path"])
@@ -373,7 +373,7 @@ def create_rewind_trajectory(original_traj: dict, rewind_length: int | None = No
 
     # start from end-2 because we don't want to include the last frame of forward segment
     # end at rewind_point-1 because we want to include the first frame of rewind segment
-    reverse_frames = frames_data[rewind_point: end_idx - 1]
+    reverse_frames = frames_data[rewind_point : end_idx - 1]
     if use_embeddings and torch is not None:
         reverse_frames = torch.flip(reverse_frames, dims=[0])
     else:
@@ -420,7 +420,7 @@ def create_rewind_trajectory(original_traj: dict, rewind_length: int | None = No
 
     # Create new trajectory with rewind frames/embeddings
     rewind_traj = original_traj.copy()
-    
+
     if use_embeddings:
         # Store embeddings instead of frames
         rewind_traj["frames"] = subsampled_frames  # Store embeddings in frames field for rewind
@@ -430,7 +430,7 @@ def create_rewind_trajectory(original_traj: dict, rewind_length: int | None = No
         # Store frames normally
         rewind_traj["frames"] = subsampled_frames
         rewind_traj["frames_shape"] = subsampled_frames.shape
-    
+
     rewind_traj["target_progress"] = subsampled_progress
     rewind_traj["metadata"] = metadata
     rewind_traj["quality_label"] = "rewound"

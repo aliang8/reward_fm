@@ -17,7 +17,7 @@ class Trajectory(BaseModel):
     # Core trajectory fields
     frames: list[str] | np.ndarray | None = None
     frames_shape: tuple | None = None
-    
+
     # If embeddings are precomputed
     embeddings_path: str | None = None
     video_embeddings: torch.Tensor | None = None

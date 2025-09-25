@@ -2,7 +2,12 @@ import numpy as np
 
 from rfm.data.dataset_types import ProgressSample, Trajectory
 from .base import RFMBaseDataset
-from .helpers import linspace_subsample_frames, pad_trajectory_to_max_frames_np
+from .helpers import (
+    linspace_subsample_frames,
+    pad_trajectory_to_max_frames_np,
+    pad_trajectory_to_max_frames_torch,
+    load_embeddings_from_path,
+)
 from rfm.utils.distributed import rank_0_print
 
 
@@ -19,19 +24,41 @@ class ProgressDefaultDataset(RFMBaseDataset):
         # Get the trajectory
         traj = self.dataset[idx]
 
-        # Get frames
-        frames = self._get_trajectory_frames(idx)
+        # Initialize variables
+        frames = None
+        video_embeddings = None
+        text_embedding = None
 
         # Use linspace sampling to get max_frames
         max_frames = self.config.max_frames
-        frames, frame_indices = linspace_subsample_frames(frames, max_frames)
 
-        # Calculate progress based on the sampled frame indices
-        total_frames = len(self._get_trajectory_frames(idx))
-        progress = [(idx + 1) / total_frames for idx in frame_indices]
+        if self.config.load_embeddings and traj.get("embeddings_path"):
+            # Load embeddings from path
+            video_embeddings = load_embeddings_from_path(traj["embeddings_path"], "video_embeddings")
+            text_embedding = load_embeddings_from_path(traj["embeddings_path"], "text_embedding")
 
-        # Pad frames and progress if needed
-        frames, progress = pad_trajectory_to_max_frames_np(frames, progress, max_frames)
+            # Subsample video embeddings
+            video_embeddings, frame_indices = linspace_subsample_frames(video_embeddings, max_frames)
+
+            # Calculate progress based on the sampled frame indices
+            total_frames = video_embeddings.shape[0] if hasattr(video_embeddings, 'shape') else len(video_embeddings)
+            progress = [(idx + 1) / total_frames for idx in frame_indices]
+
+            # Pad embeddings and progress if needed
+            video_embeddings, progress = pad_trajectory_to_max_frames_torch(video_embeddings, progress, max_frames)
+        else:
+            # Get frames
+            frames = self._get_trajectory_frames(idx)
+
+            # Subsample frames
+            frames, frame_indices = linspace_subsample_frames(frames, max_frames)
+
+            # Calculate progress based on the sampled frame indices
+            total_frames = len(self._get_trajectory_frames(idx))
+            progress = [(idx + 1) / total_frames for idx in frame_indices]
+
+            # Pad frames and progress if needed
+            frames, progress = pad_trajectory_to_max_frames_np(frames, progress, max_frames)
 
         metadata = {
             "quality_label": traj["quality_label"],
@@ -42,7 +69,9 @@ class ProgressDefaultDataset(RFMBaseDataset):
         # Create trajectory for the progress sample
         trajectory = Trajectory(
             frames=frames,
-            frames_shape=frames.shape if hasattr(frames, "shape") else (len(frames),),
+            frames_shape=frames.shape if frames is not None and hasattr(frames, "shape") else None,
+            video_embeddings=video_embeddings,
+            text_embedding=text_embedding,
             id=traj["id"],
             task=traj["task"],
             lang_vector=np.array(traj["lang_vector"]),

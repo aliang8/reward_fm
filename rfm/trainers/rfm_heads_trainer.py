@@ -164,13 +164,13 @@ class RFMHeadsTrainer(Trainer):
             data_gen_strategy = progress_inputs.get("data_gen_strategy", [])
             if isinstance(data_gen_strategy, list) and len(data_gen_strategy) > 0:
                 strat_counts = {
-                    "num_trajs_default": 0,
+                    "num_trajs_successful": 0,
                     "num_trajs_rewind_same_task": 0,
                     "num_trajs_different_task": 0,
                 }
                 for s in data_gen_strategy:
-                    if s == "default":
-                        strat_counts["num_trajs_default"] += 1
+                    if s == "successful":
+                        strat_counts["num_trajs_successful"] += 1
                     elif s == "rewind_same_task":
                         strat_counts["num_trajs_rewind_same_task"] += 1
                     elif s == "different_task":

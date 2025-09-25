@@ -63,7 +63,7 @@ class ProgressDataset(RFMBaseDataset):
             total_prob = sum(prob for _, prob in strategies)
             if total_prob == 0:
                 # All strategies have zero probability, fallback to successful
-                processed_traj = traj
+                processed_traj = traj.copy()
                 strategy_used = "successful"
                 break
             
@@ -83,7 +83,7 @@ class ProgressDataset(RFMBaseDataset):
             
             # Execute selected strategy
             if selected_strategy == "successful":
-                processed_traj = traj
+                processed_traj = traj.copy()
                 strategy_used = "successful"
                 
             elif selected_strategy == DataGenStrat.REWIND_SAME_TASK:
@@ -93,7 +93,7 @@ class ProgressDataset(RFMBaseDataset):
             elif selected_strategy == DataGenStrat.DIFFERENT_TASK:
                 other_traj = self._create_different_task_trajectory(traj)
                 if other_traj is not None:
-                    processed_traj = other_traj
+                    processed_traj = other_traj.copy()
                     strategy_used = DataGenStrat.DIFFERENT_TASK
                 else:
                     # Strategy failed, remove it from future attempts
@@ -101,15 +101,17 @@ class ProgressDataset(RFMBaseDataset):
         
         # Final fallback: If all strategies failed, use successful
         if processed_traj is None:
-            processed_traj = traj
+            processed_traj = traj.copy()
             strategy_used = "successful"
         
         frames = None
         video_embeddings = None
         text_embedding = None
+        task = processed_traj["task"]
+        lang_vector = processed_traj["lang_vector"]
         
-        # Process frames/embeddings and progress based on strategy used
         if self.config.load_embeddings and processed_traj.get("embeddings_path"):
+            # We are loading precomputed image/text embeddings
             if strategy_used == DataGenStrat.REWIND_SAME_TASK:
                 video_embeddings = processed_traj["frames"]  # For rewind, "frames" contains embeddings
                 progress = processed_traj["target_progress"]
@@ -119,17 +121,29 @@ class ProgressDataset(RFMBaseDataset):
                 video_embeddings, progress, metadata = subsample_frames_and_progress(video_embeddings, self.config.max_frames)
             
             text_embedding = load_embeddings_from_path(processed_traj["embeddings_path"], "text_embedding")
+            if strategy_used == DataGenStrat.DIFFERENT_TASK:
+                # we need to use the original task embeddings instead of the different task embeddings
+                text_embedding = load_embeddings_from_path(traj["embeddings_path"], "text_embedding")
+                lang_vector = traj["lang_vector"]
+                task = traj["task"]
+
             video_embeddings, progress = pad_trajectory_to_max_frames_torch(video_embeddings, progress, self.config.max_frames)
         else:
+            # We are using the image frames
             if strategy_used == DataGenStrat.REWIND_SAME_TASK:
                 frames = processed_traj["frames"]
                 progress = processed_traj["target_progress"]
                 metadata = processed_traj["metadata"]
             else:
                 frames = load_frames_from_npz(processed_traj["frames"])
-                
                 frames, progress, metadata = subsample_frames_and_progress(frames, self.config.max_frames)
             
+            if strategy_used == DataGenStrat.DIFFERENT_TASK:
+                # for different task, we use original language instruction, but 
+                # the video is from a different task
+                lang_vector = traj["lang_vector"]
+                task = traj["task"]
+
             frames, progress = pad_trajectory_to_max_frames_np(frames, progress, self.config.max_frames)
 
         if strategy_used == DataGenStrat.DIFFERENT_TASK:
@@ -142,12 +156,11 @@ class ProgressDataset(RFMBaseDataset):
             video_embeddings=video_embeddings,
             text_embedding=text_embedding,
             id=processed_traj["id"],
-            task=processed_traj["task"],
-            lang_vector=processed_traj["lang_vector"],
+            task=task,
+            lang_vector=lang_vector,
             data_source=processed_traj["data_source"],
             quality_label=processed_traj["quality_label"],
             is_robot=processed_traj["is_robot"],
-            embeddings_path=processed_traj.get("embeddings_path"),
             data_gen_strategy=strategy_used,
             metadata=metadata,
         )

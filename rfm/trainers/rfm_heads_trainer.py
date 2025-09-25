@@ -234,7 +234,7 @@ class RFMHeadsTrainer(Trainer):
 
         # Log to console on rank 0
         if is_rank_0():
-            rank_0_print(f"Step {self.state.global_step} Custom Losses (Aggregated):")
+            rank_0_print(f"Step {self.state.global_step}:")
             rank_0_print("-" * 50)
             for key in log_global:
                 rank_0_print(f"  {key}: {log_global[key]}")
@@ -264,6 +264,7 @@ class RFMHeadsTrainer(Trainer):
                 collate_fn=collator,
                 shuffle=False,
                 num_workers=0,
+                drop_last=False,
             )
 
             self.model.eval()
@@ -381,7 +382,7 @@ class RFMHeadsTrainer(Trainer):
                 wandb.log(metrics)
 
         # Run the custom evaluations
-        if self.args.custom_eval_steps and self.state.global_step % self.args.custom_eval_steps == 0:
+        if self.config.training.custom_eval_steps and self.state.global_step % self.config.training.custom_eval_steps == 0:
             self._run_custom_evaluations()
 
         return metrics

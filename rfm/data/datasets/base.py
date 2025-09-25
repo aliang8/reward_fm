@@ -36,15 +36,11 @@ class RFMBaseDataset(torch.utils.data.Dataset):
         self.task_indices = {}
         self.source_indices = {}
 
-        # Show available datasets for debugging
-        if verbose:
-            self.show_available_datasets()
-
         # Load trajectory dataset
         self._load_trajectory_dataset()
 
         if verbose:
-            rank_0_print(f"DataGenerator initialized with {len(self.dataset)} total trajectories")
+            rank_0_print(f"Dataset initialized with {len(self.dataset)} total trajectories")
             rank_0_print(f"  Robot trajectories: {len(self.robot_trajectories)}")
             rank_0_print(f"  Human trajectories: {len(self.human_trajectories)}")
             rank_0_print(f"  Tasks: {len(self.task_indices)}")
@@ -88,23 +84,7 @@ class RFMBaseDataset(torch.utils.data.Dataset):
         available_datasets = []
         missing_datasets = []
 
-        rank_0_print(f"🔍 Checking cache for {len(self.datasets)} dataset(s) with subsets:")
         for i, (dataset_path, dataset_subsets) in enumerate(zip(self.datasets, self.subsets, strict=False)):
-            rank_0_print(f"  📁 Dataset {i + 1}: {dataset_path}")
-
-            # Handle both single subset (string) and multiple subsets (list)
-            if isinstance(dataset_subsets, str):
-                dataset_subsets = [dataset_subsets]
-                rank_0_print(f"    📂 Single subset: {dataset_subsets[0]}")
-            elif isinstance(dataset_subsets, list):
-                rank_0_print(f"    📂 Multiple subsets: {len(dataset_subsets)} subset(s)")
-                for j, subset in enumerate(dataset_subsets):
-                    rank_0_print(f"      📋 Subset {j + 1}: {subset}")
-            else:
-                raise ValueError(
-                    f"Invalid subset format for {dataset_path}: {type(dataset_subsets)}. Expected str or List[str]"
-                )
-
             for subset in dataset_subsets:
                 cache_key = f"{dataset_path}/{subset}"
                 # The preprocessing script creates individual cache directories for each dataset/subset pair
@@ -118,12 +98,12 @@ class RFMBaseDataset(torch.utils.data.Dataset):
                                 json.load(f)
 
                             available_datasets.append((dataset_path, subset, individual_cache_dir))
-                            rank_0_print(f"      ✅ Found cache: {individual_cache_dir}")
+                            rank_0_print(f"       Found cache: {individual_cache_dir}")
                         except:
-                            rank_0_print(f"      ⚠️  Cache info file corrupted, skipping: {individual_cache_dir}")
+                            rank_0_print(f"       Cache info file corrupted, skipping: {individual_cache_dir}")
                             continue
                     else:
-                        rank_0_print(f"      ⚠️  No info file found, skipping: {individual_cache_dir}")
+                        rank_0_print(f"       No info file found, skipping: {individual_cache_dir}")
                         continue
                 else:
                     missing_datasets.append((dataset_path, subset))
@@ -142,7 +122,7 @@ class RFMBaseDataset(torch.utils.data.Dataset):
                 f"Please run preprocess_datasets.py to create the cache for: {self.datasets}"
             )
 
-        rank_0_print(f"\n📊 Summary: {len(available_datasets)} available, {len(missing_datasets)} missing")
+        rank_0_print(f"\nSummary: {len(available_datasets)} available, {len(missing_datasets)} missing")
 
         # Load available datasets
         loaded_datasets = []
@@ -159,13 +139,10 @@ class RFMBaseDataset(torch.utils.data.Dataset):
         offset = 0
 
         for dataset_path, subset, individual_cache_dir in available_datasets:
-            if self.verbose:
-                rank_0_print(f"📂 Loading {dataset_path}/{subset} from {individual_cache_dir}")
-
             # Load the processed dataset
             dataset_cache_dir = os.path.join(individual_cache_dir, "processed_dataset")
             if not os.path.exists(dataset_cache_dir):
-                rank_0_print(f"  ⚠️  Warning: Processed dataset not found at {dataset_cache_dir}, skipping...")
+                rank_0_print(f"   Warning: Processed dataset not found at {dataset_cache_dir}, skipping...")
                 continue
 
             dataset = Dataset.load_from_disk(dataset_cache_dir, keep_in_memory=True)
@@ -200,7 +177,6 @@ class RFMBaseDataset(torch.utils.data.Dataset):
         if len(loaded_datasets) == 1:
             self.dataset = loaded_datasets[0]
         else:
-            rank_0_print(f"🔗 Concatenating {len(loaded_datasets)} loaded datasets...")
             self.dataset = concatenate_datasets(loaded_datasets)
 
         # Store the combined index mappings
@@ -219,64 +195,6 @@ class RFMBaseDataset(torch.utils.data.Dataset):
                 f"  📊 Available dataset/subset pairs: {len(available_datasets)}/{len(missing_datasets) + len(available_datasets)}"
             )
         rank_0_print(f"  📊 Missing dataset/subset pairs: {len(missing_datasets)}")
-
-    def show_available_datasets(self):
-        """Show which datasets are available in the cache."""
-        # The preprocessing script now creates individual cache directories for each dataset/subset pair
-        cache_dir = os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
-        if not cache_dir:
-            raise ValueError(
-                "RFM_PROCESSED_DATASETS_PATH environment variable not set. Please set it to the directory containing your processed datasets."
-            )
-
-        rank_0_print("=" * 100)
-        rank_0_print(f"\n🔍 Available datasets in {cache_dir}:")
-
-        # List all subdirectories (individual dataset caches)
-        if os.path.exists(cache_dir):
-            subdirs = [d for d in os.listdir(cache_dir) if os.path.isdir(os.path.join(cache_dir, d))]
-            if subdirs:
-                for subdir in sorted(subdirs):
-                    # Try to load dataset info
-                    info_file = os.path.join(cache_dir, subdir, "dataset_info.json")
-                    if os.path.exists(info_file):
-                        try:
-                            with open(info_file) as f:
-                                info = json.load(f)
-                            dataset_path = info.get("dataset_path", "unknown")
-                            subset = info.get("subset", "unknown")
-                            trajectories = info.get("total_trajectories", 0)
-                            rank_0_print(f"  ✅ {dataset_path}/{subset}: {trajectories} trajectories")
-                        except:
-                            rank_0_print(f"  📁 {subdir}: (info file corrupted)")
-                    else:
-                        rank_0_print(f"  📁 {subdir}: (no info file)")
-            else:
-                rank_0_print("  ❌ No dataset caches found")
-        else:
-            rank_0_print("  ❌ Cache directory does not exist")
-        rank_0_print("=" * 100)
-
-        # Show configured datasets with better formatting for the new format
-        rank_0_print("\n⚙️  Configured datasets:")
-        for i, (dataset_path, dataset_subsets) in enumerate(zip(self.datasets, self.subsets, strict=False)):
-            rank_0_print(f"  📋 Dataset {i + 1}: {dataset_path}")
-
-            # Handle both single subset (string) and multiple subsets (list)
-            if isinstance(dataset_subsets, str):
-                dataset_subsets = [dataset_subsets]
-                rank_0_print(f"    📂 Single subset: {dataset_subsets[0]}")
-            elif isinstance(dataset_subsets, list):
-                rank_0_print(f"    📂 Multiple subsets: {len(dataset_subsets)} subset(s)")
-                for j, subset in enumerate(dataset_subsets):
-                    rank_0_print(f"      📋 Subset {j + 1}: {subset}")
-            else:
-                rank_0_print(f"    ⚠️  Invalid format: {type(dataset_subsets)}")
-
-        # Show summary
-        total_subsets = sum(len(subsets) if isinstance(subsets, list) else 1 for subsets in self.subsets)
-        rank_0_print(f"\n📊 Total: {len(self.datasets)} dataset(s), {total_subsets} subset(s)")
-        rank_0_print("=" * 100)
 
     def _get_trajectory_frames(self, trajectory_idx: int) -> np.ndarray:
         """Get frames for a trajectory by index, loading from npz if needed.

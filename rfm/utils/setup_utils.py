@@ -302,10 +302,6 @@ def setup_dataset(cfg: DataConfig, is_eval: bool = False, **kwargs) -> RFMBaseDa
             f"datasets and subsets must have the same length. Got {len(datasets)} datasets and {len(subsets)} subsets"
         )
 
-    rank_0_print(f"Loading {len(datasets)} datasets with corresponding subsets")
-    for i, (dataset, subset) in enumerate(zip(datasets, subsets, strict=False)):
-        rank_0_print(f"  Dataset {i + 1}: {dataset} -> {subset}")
-
     dataset_cls = {
         "reward_alignment": RewardAlignmentDataset,
         "success_failure": PairedSuccessFailureDataset,
@@ -316,14 +312,11 @@ def setup_dataset(cfg: DataConfig, is_eval: bool = False, **kwargs) -> RFMBaseDa
     }
 
     dataset = dataset_cls[cfg.dataset_type](config=cfg, is_evaluation=is_eval, **kwargs)
-    rank_0_print("Dataset initialized")
     return dataset
 
 
 def setup_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg: ExperimentConfig) -> BaseCollator:
     """Shared function to create BatchCollator"""
-
-    rank_0_print("Setting up batch collator...")
     collator_kwargs = {
         "processor": processor,
         "max_length": cfg.training.max_seq_length,
@@ -340,6 +333,4 @@ def setup_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg
         batch_collator = ReWiNDBatchCollator(
             **collator_kwargs, tokenizer=tokenizer, load_embeddings=cfg.data.load_embeddings
         )
-
-    rank_0_print("Batch collator created successfully")
     return batch_collator

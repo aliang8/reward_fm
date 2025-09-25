@@ -17,6 +17,7 @@ from .helpers import (
 )
 from rfm.utils.distributed import rank_0_print
 from rfm.utils.timer import timer
+from .helpers import load_embeddings_from_path
 
 
 class PrefDataset(RFMBaseDataset):
@@ -361,42 +362,87 @@ class PrefDataset(RFMBaseDataset):
         # ===============================================================
         # Subsample the chosen trajectory to max_frames
         # ===============================================================
-        if isinstance(chosen_traj["frames"], str):
-            chosen_traj["frames"] = load_frames_from_npz(chosen_traj["frames"])
+        chosen_frames = None
+        chosen_video_embeddings = None
+        chosen_text_embedding = None
 
-        chosen_frames, chosen_progress, chosen_metadata = subsample_frames_and_progress(
-            chosen_traj["frames"], self.config.max_frames
-        )
+        rejected_frames = None
+        rejected_video_embeddings = None
+        rejected_text_embedding = None
+
+
+        if self.config.load_embeddings and chosen_traj.get("embeddings_path"):
+            chosen_video_embeddings = load_embeddings_from_path(chosen_traj["embeddings_path"], "video_embeddings")
+            chosen_text_embedding = load_embeddings_from_path(chosen_traj["embeddings_path"], "text_embedding")
+            
+            chosen_video_embeddings, chosen_progress, chosen_metadata = subsample_frames_and_progress(
+                chosen_video_embeddings, self.config.max_frames
+            )
+        else:
+            if isinstance(chosen_traj["frames"], str):
+                chosen_frames = load_frames_from_npz(chosen_traj["frames"])
+
+            chosen_frames, chosen_progress, chosen_metadata = subsample_frames_and_progress(
+                chosen_frames, self.config.max_frames
+            )
         if "metadata" in chosen_traj:
             chosen_metadata.update(chosen_traj["metadata"])
 
         # ===============================================================
         # Subsample the rejected trajectory to max_frames
         # ===============================================================
+        if self.config.load_embeddings and rejected_traj.get("embeddings_path"):
+            rejected_video_embeddings = load_embeddings_from_path(rejected_traj["embeddings_path"], "video_embeddings")
+            rejected_text_embedding = load_embeddings_from_path(rejected_traj["embeddings_path"], "text_embedding")
 
-        if isinstance(rejected_traj["frames"], str):
-            rejected_traj["frames"] = load_frames_from_npz(rejected_traj["frames"])
-
-        if strategy_used != DataGenStrat.REWIND_SAME_TASK:
-            # try subsampling the rejected trajectory
-            rejected_frames, rejected_progress, rejected_metadata = subsample_frames_and_progress(
-                rejected_traj["frames"], self.config.max_frames
+            rejected_video_embeddings, rejected_progress, rejected_metadata = subsample_frames_and_progress(
+                rejected_video_embeddings, self.config.max_frames
             )
-            if "metadata" in rejected_traj:
-                rejected_metadata.update(rejected_traj["metadata"])
-
+            if strategy_used != DataGenStrat.REWIND_SAME_TASK:
+                # try subsampling the rejected trajectory
+                rejected_video_embeddings, rejected_progress, rejected_metadata = subsample_frames_and_progress(
+                    rejected_video_embeddings, self.config.max_frames
+                )
+            else:
+                rejected_video_embeddings = rejected_traj["frames"]
+                rejected_progress = rejected_traj["target_progress"]
+                rejected_metadata = rejected_traj["metadata"]
         else:
-            rejected_frames = rejected_traj["frames"]
-            rejected_progress = rejected_traj["target_progress"]
-            rejected_metadata = rejected_traj["metadata"]
+            if isinstance(rejected_traj["frames"], str):
+                rejected_frames = load_frames_from_npz(rejected_traj["frames"])
+
+            rejected_frames, rejected_progress, rejected_metadata = subsample_frames_and_progress(
+                rejected_frames, self.config.max_frames
+            )
+            if strategy_used != DataGenStrat.REWIND_SAME_TASK:
+                # try subsampling the rejected trajectory
+                rejected_frames, rejected_progress, rejected_metadata = subsample_frames_and_progress(
+                    rejected_traj["frames"], self.config.max_frames
+                )
+
+            else:
+                rejected_frames = rejected_traj["frames"]
+                rejected_progress = rejected_traj["target_progress"]
+                rejected_metadata = rejected_traj["metadata"]
+        
+        if "metadata" in rejected_traj:
+            rejected_metadata.update(rejected_traj["metadata"])
 
         # Let's make sure to pad both trajectories to max_frames
-        chosen_frames, chosen_progress = pad_trajectory_to_max_frames(
-            chosen_frames, chosen_progress, self.config.max_frames
-        )
-        rejected_frames, rejected_progress = pad_trajectory_to_max_frames(
-            rejected_frames, rejected_progress, self.config.max_frames
-        )
+        if self.config.load_embeddings:
+            chosen_video_embeddings, chosen_progress = pad_trajectory_to_max_frames_torch(
+                chosen_video_embeddings, chosen_progress, self.config.max_frames
+            )
+            rejected_video_embeddings, rejected_progress = pad_trajectory_to_max_frames_torch(
+                rejected_video_embeddings, rejected_progress, self.config.max_frames
+            )
+        else:
+            chosen_frames, chosen_progress = pad_trajectory_to_max_frames_np(
+                chosen_frames, chosen_progress, self.config.max_frames
+            )
+            rejected_frames, rejected_progress = pad_trajectory_to_max_frames_np(
+                rejected_frames, rejected_progress, self.config.max_frames
+            )
 
         # If our strategy is different task, make sure the rejected trajectory has 0 progress
         if strategy_used == DataGenStrat.DIFFERENT_TASK:
@@ -407,7 +453,9 @@ class PrefDataset(RFMBaseDataset):
             # Create Trajectory objects for chosen and rejected
             chosen_trajectory=Trajectory(
                 frames=chosen_frames,
-                frames_shape=chosen_frames.shape,
+                frames_shape=chosen_frames.shape if chosen_frames is not None else None,
+                video_embeddings=chosen_video_embeddings,
+                text_embedding=chosen_text_embedding,
                 id=chosen_traj["id"],
                 task=chosen_traj["task"],
                 lang_vector=chosen_traj["lang_vector"],
@@ -420,7 +468,9 @@ class PrefDataset(RFMBaseDataset):
             ),
             rejected_trajectory=Trajectory(
                 frames=rejected_frames,
-                frames_shape=rejected_frames.shape,
+                frames_shape=rejected_frames.shape if rejected_frames is not None else None,
+                video_embeddings=rejected_video_embeddings,
+                text_embedding=rejected_text_embedding,
                 id=rejected_traj["id"],
                 task=rejected_traj["task"],
                 lang_vector=rejected_traj["lang_vector"],

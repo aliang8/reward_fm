@@ -107,12 +107,20 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["target_progress_rejected_mask"] = torch.tensor(target_progress_rejected_mask, dtype=torch.float32)
 
         # Also add the frame_shapes
-        batch_inputs["chosen_frames_shape"] = torch.tensor(
-            [sample.chosen_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
-        )
-        batch_inputs["rejected_frames_shape"] = torch.tensor(
-            [sample.rejected_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
-        )
+        if not self.load_embeddings:
+            batch_inputs["chosen_frames_shape"] = torch.tensor(
+                [sample.chosen_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
+            )
+            batch_inputs["rejected_frames_shape"] = torch.tensor(
+                [sample.rejected_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
+            )
+        else:
+            batch_inputs["chosen_frames_shape"] = torch.tensor(
+                [sample.chosen_trajectory.video_embeddings.shape for sample in preference_samples], dtype=torch.int32
+            )
+            batch_inputs["rejected_frames_shape"] = torch.tensor(
+                [sample.rejected_trajectory.video_embeddings.shape for sample in preference_samples], dtype=torch.int32
+            )
         return batch_inputs
 
     def _add_progress_meta(

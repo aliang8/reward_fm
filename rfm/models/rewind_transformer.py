@@ -163,18 +163,20 @@ class ReWiNDTransformer(PreTrainedModel):
             video_embeddings_A[:, 0:1] += first_frame_emb_A
             video_embeddings_B[:, 0:1] += first_frame_emb_B
             
-            pref_token = einops.repeat(self.preference_token, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
-            sim_token = einops.repeat(self.similarity_token, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
-
+            if sample_type == "preference":
+                pred_token = einops.repeat(self.preference_token, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
+            else:
+                pred_token = einops.repeat(self.similarity_token, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
+            
             token_sequence = torch.cat(
-                [text_embeddings.unsqueeze(1), video_embeddings_A, video_embeddings_B, pref_token, sim_token], dim=1
-            )  # shape: [B, 2*T + 2, D]
+                [text_embeddings.unsqueeze(1), video_embeddings_A, video_embeddings_B, pred_token], dim=1
+            )  # shape: [B, 2*T + 1, D]
 
             token_embeddings = self.transformer(token_sequence)
             D = token_embeddings.shape[-1]
 
             final_embeddings_A = token_embeddings[:, 1 : 1 + T // 2, :]  # avoid the text embedding
-            final_embeddings_B = token_embeddings[:, 1 + T // 2 : -2, :]  # avoid the text embedding
+            final_embeddings_B = token_embeddings[:, 1 + T // 2 : -1, :]  # avoid the text embedding
 
             progress_A_logits = self.progress_head(final_embeddings_A.reshape(-1, D))
             progress_A_logits = einops.rearrange(progress_A_logits, "(b t) 1 -> b t", b=B)
@@ -184,11 +186,11 @@ class ReWiNDTransformer(PreTrainedModel):
 
             progress_logits = {"A": progress_A_logits, "B": progress_B_logits}
 
-            preference_class_token = token_embeddings[:, -2, :]  # [B, D]
+            pred_class_token = token_embeddings[:, -1, :]  # [B, D]
 
             logits = None
             if sample_type == "preference":
-                logits = self.preference_head(preference_class_token)
+                logits = self.preference_head(pred_class_token)
             else:  # similarity
                 pass
         elif sample_type == "progress":

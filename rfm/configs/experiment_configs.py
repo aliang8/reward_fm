@@ -176,6 +176,9 @@ class TrainingConfig:
     warmup_ratio: float = field(default=0.1)
     max_grad_norm: float = field(default=1.0)
 
+    # RFM specific settings
+    predict_pref_progress: bool = field(default=False, metadata={"help": "Whether to predict progress for preference samples"})
+
 
 @dataclass
 class LoggingConfig:

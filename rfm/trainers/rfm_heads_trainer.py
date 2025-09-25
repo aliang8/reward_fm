@@ -140,17 +140,17 @@ class RFMHeadsTrainer(Trainer):
             if isinstance(rejected_data_gen_strategy, list) and len(rejected_data_gen_strategy) > 0:
                 # Normalize keys we care about
                 strat_counts = {
-                    "num_trajs_rewind": 0,
-                    "num_trajs_same_task": 0,
-                    "num_trajs_different_task": 0,
+                    "pref_num_trajs_rewind": 0,
+                    "pref_num_trajs_same_task": 0,
+                    "pref_num_trajs_different_task": 0,
                 }
                 for s in rejected_data_gen_strategy:
                     if s == "rewind_same_task":
-                        strat_counts["num_trajs_rewind"] += 1
+                        strat_counts["pref_num_trajs_rewind"] += 1
                     elif s == "suboptimal_same_task":
-                        strat_counts["num_trajs_same_task"] += 1
+                        strat_counts["pref_num_trajs_same_task"] += 1
                     elif s == "different_task":
-                        strat_counts["num_trajs_different_task"] += 1
+                        strat_counts["pref_num_trajs_different_task"] += 1
 
                 self.log_metadata.update(strat_counts)
 
@@ -164,17 +164,17 @@ class RFMHeadsTrainer(Trainer):
             data_gen_strategy = progress_inputs.get("data_gen_strategy", [])
             if isinstance(data_gen_strategy, list) and len(data_gen_strategy) > 0:
                 strat_counts = {
-                    "num_trajs_successful": 0,
-                    "num_trajs_rewind_same_task": 0,
-                    "num_trajs_different_task": 0,
+                    "prog_num_trajs_successful": 0,
+                    "prog_num_trajs_rewind_same_task": 0,
+                    "prog_num_trajs_different_task": 0,
                 }
                 for s in data_gen_strategy:
                     if s == "successful":
-                        strat_counts["num_trajs_successful"] += 1
+                        strat_counts["prog_num_trajs_successful"] += 1
                     elif s == "rewind_same_task":
-                        strat_counts["num_trajs_rewind_same_task"] += 1
+                        strat_counts["prog_num_trajs_rewind_same_task"] += 1
                     elif s == "different_task":
-                        strat_counts["num_trajs_different_task"] += 1
+                        strat_counts["prog_num_trajs_different_task"] += 1
 
                 self.log_metadata.update(strat_counts)
 
@@ -522,6 +522,66 @@ class RFMHeadsTrainer(Trainer):
             )
             preference_loss = preference_loss_all.mean()
 
+        final_loss = preference_loss
+
+        # If we are predicting progress for preferences samples
+        if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
+            # Compute progress for both trajectories
+            chosen_frames_shape = inputs.get("chosen_frames_shape", None)
+            rejected_frames_shape = inputs.get("rejected_frames_shape", None)
+            batch_size = len(preference_labels)
+            chosen_traj_shapes = []
+            rejected_traj_shapes = []
+            chosen_traj_progress_pred = []
+            rejected_traj_progress_pred = []
+            chosen_traj_progress_target = []
+            rejected_traj_progress_target = []
+            chosen_traj_progress_target_mask = []
+            rejected_traj_progress_target_mask = []
+
+            for i in range(batch_size):
+                # First trajectory is preferred (chosen)
+                chosen_traj_shapes.append(chosen_frames_shape[i])
+                rejected_traj_shapes.append(rejected_frames_shape[i])
+
+                chosen_traj_progress_target.append(inputs["target_progress_chosen"][i])
+                rejected_traj_progress_target.append(inputs["target_progress_rejected"][i])
+                chosen_traj_progress_target_mask.append(inputs["target_progress_chosen_mask"][i])
+                rejected_traj_progress_target_mask.append(inputs["target_progress_rejected_mask"][i])
+
+                if preference_labels[i] == 1.0:
+                    chosen_traj_progress_pred.append(progress_logits["A"][i])
+                    rejected_traj_progress_pred.append(progress_logits["B"][i])
+                else:
+                    # Second trajectory is preferred
+                    chosen_traj_progress_pred.append(progress_logits["B"][i])
+                    rejected_traj_progress_pred.append(progress_logits["A"][i])
+
+            # Convert to tensors for the helper function
+            chosen_traj_shapes = torch.stack(chosen_traj_shapes)
+            rejected_traj_shapes = torch.stack(rejected_traj_shapes)
+            chosen_traj_progress_target_mask = torch.stack(chosen_traj_progress_target_mask)
+            rejected_traj_progress_target_mask = torch.stack(rejected_traj_progress_target_mask)
+
+            # Compute progress loss for both trajectories using the helper function
+            # Now we know which shape corresponds to which trajectory based on preference labels
+            progress_loss_chosen, spearman_corr_chosen = self._compute_progress_loss_helper(
+                chosen_traj_progress_pred,
+                chosen_traj_progress_target,
+                chosen_traj_shapes,
+                chosen_traj_progress_target_mask,
+                aggregate=False,
+            )
+            progress_loss_rejected, spearman_corr_rejected = self._compute_progress_loss_helper(
+                rejected_traj_progress_pred,
+                rejected_traj_progress_target,
+                rejected_traj_shapes,
+                rejected_traj_progress_target_mask,
+                aggregate=False,
+            )
+            progress_loss = progress_loss_chosen.mean() + progress_loss_rejected.mean()
+            final_loss = preference_loss + progress_loss
+
         if return_outputs:
             outputs_dict = {}
 
@@ -561,7 +621,7 @@ class RFMHeadsTrainer(Trainer):
                     f"{prefix}/preference_accuracy": preference_accuracy.mean().item(),
                 })
 
-        return preference_loss, outputs_dict
+        return final_loss, outputs_dict
 
     def _compute_similarity_loss(self, model, inputs, return_outputs=False):
         """Compute similarity scoring loss (DPO-style)."""

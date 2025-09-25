@@ -13,6 +13,8 @@ import yaml
 from rfm.configs.eval_configs import EvaluationConfig
 from rfm.configs.experiment_configs import DataConfig
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 from evals.eval_metrics_utils import compute_pearson, compute_preference_accuracy, compute_spearman
 
@@ -29,7 +31,7 @@ def analyze_evaluation_type(eval_type: str, results: list[dict[str, Any]]) -> di
         return run_success_failure_eval(results)
     elif eval_type == "reward_alignment_progress":
         return run_reward_alignment_eval(results)
-    elif eval_type == "confusion_matrix":
+    elif eval_type == "confusion_matrix_progress":
         return run_confusion_matrix_eval(results)
     elif eval_type == "wrong_task_preference":
         return run_success_failure_eval(results)
@@ -138,6 +140,124 @@ def run_reward_alignment_eval_per_trajectory(results: list[dict[str, Any]]) -> d
     }
 
 
+def create_confusion_matrix_plot(results: list[dict[str, Any]], output_dir: str = "./eval_plots") -> str:
+    """Create a confusion matrix heatmap from confusion matrix evaluation results.
+    
+    Args:
+        results: List of evaluation results with metadata
+        output_dir: Directory to save the plot
+        
+    Returns:
+        Path to the saved plot
+    """
+    # Create output directory if it doesn't exist
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    
+    # Group results to get true vs predicted tasks
+    trajectory_data = {}
+    
+    for r in results:
+        meta = r.get("metadata", {}) or {}
+        cm_task = meta.get("confusion_matrix_task")  # The task we tested with
+        trajectory_original_task = meta.get("trajectory_original_task")  # Ground truth task
+        trajectory_id = meta.get("id", "unknown")
+        
+        if cm_task is None or trajectory_original_task is None:
+            continue
+            
+        # Get the final progress prediction as the reward
+        progress_pred = r.get("progress_pred", [])
+        if not progress_pred or len(progress_pred) == 0:
+            continue
+            
+        final_reward = float(progress_pred[-1])
+        
+        # Store data for each trajectory
+        if trajectory_id not in trajectory_data:
+            trajectory_data[trajectory_id] = {
+                "true_task": trajectory_original_task,
+                "task_rewards": {}
+            }
+        
+        trajectory_data[trajectory_id]["task_rewards"][cm_task] = final_reward
+    
+    # Get all unique tasks
+    all_tasks = set()
+    for traj_data in trajectory_data.values():
+        all_tasks.add(traj_data["true_task"])
+        all_tasks.update(traj_data["task_rewards"].keys())
+    all_tasks = sorted(list(all_tasks))
+    
+    if len(all_tasks) < 2:
+        print(f"Warning: Only {len(all_tasks)} tasks found, skipping confusion matrix plot")
+        return None
+    
+    # Create confusion matrix: rows are trajectory tasks (video), columns are cm tasks (language)
+    # Each cell will contain the average final reward for that (cm_task, traj_task) pair
+    confusion_matrix = np.zeros((len(all_tasks), len(all_tasks)))
+    count_matrix = np.zeros((len(all_tasks), len(all_tasks)))  # To track number of samples
+    
+    # Collect all results and group by (cm_task, trajectory_original_task) pairs
+    for r in results:
+        meta = r.get("metadata", {}) or {}
+        cm_task = meta.get("confusion_matrix_task")  # Task language
+        trajectory_original_task = meta.get("trajectory_original_task")  # Task video (true task)
+        
+        if cm_task is None or trajectory_original_task is None:
+            continue
+            
+        # Get the final progress prediction as the reward
+        progress_pred = r.get("progress_pred", [])
+        if not progress_pred or len(progress_pred) == 0:
+            continue
+            
+        final_reward = float(progress_pred[-1])
+        
+        # Get indices
+        video_idx = all_tasks.index(trajectory_original_task)  # Row (trajectory task)
+        language_idx = all_tasks.index(cm_task)  # Column (cm task)
+        
+        # Accumulate rewards and counts
+        confusion_matrix[video_idx, language_idx] += final_reward
+        count_matrix[video_idx, language_idx] += 1
+    
+    # Calculate average rewards (avoid division by zero)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        confusion_matrix = np.divide(confusion_matrix, count_matrix, 
+                                   out=np.zeros_like(confusion_matrix), 
+                                   where=count_matrix!=0)
+    
+    # Create the plot
+    plt.figure(figsize=(10, 8))
+    
+    # Create heatmap showing average final rewards
+    sns.heatmap(
+        confusion_matrix,
+        # annot=True,
+        # fmt='.3f',
+        cmap='RdYlBu_r',  # Red-Yellow-Blue colormap (red=low, blue=high)
+        xticklabels=all_tasks,
+        yticklabels=all_tasks,
+        cbar_kws={'label': 'Average Final Reward'},
+        center=0.5  # Center colormap around 0.5 (middle reward value)
+    )
+    
+    plt.title('Task Confusion Matrix: Average Final Rewards\n(Rows: Trajectory Task (Video), Cols: CM Task (Language))', fontsize=14, pad=20)
+    plt.xlabel('CM Task (Language)', fontsize=12)
+    plt.ylabel('Trajectory Task (Video)', fontsize=12)
+    plt.xticks(rotation=45, ha='right')
+    plt.yticks(rotation=0)
+    plt.tight_layout()
+    
+    # Save the plot
+    output_path = Path(output_dir) / "confusion_matrix.png"
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"Confusion matrix plot saved to: {output_path}")
+    return str(output_path)
+
+
 def run_confusion_matrix_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Run confusion_matrix evaluation analysis."""
     # Group results by confusion matrix task
@@ -146,16 +266,16 @@ def run_confusion_matrix_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
 
     for r in results:
         # Get the confusion matrix task (the task we're testing with)
-        chosen_meta = r.get("chosen_meta", {}) or {}
-        cm_task = chosen_meta.get("confusion_matrix_task")
-        trajectory_original_task = chosen_meta.get("trajectory_original_task")
-        trajectory_id = chosen_meta.get("id", "unknown")
+        meta = r.get("metadata", {}) or {}
+        cm_task = meta.get("confusion_matrix_task")
+        trajectory_original_task = meta.get("trajectory_original_task")
+        trajectory_id = meta.get("id", "unknown")
 
         if cm_task is None:
             continue
 
         # Get the final progress prediction as the reward
-        progress_pred = r.get("progress_pred_chosen", [])
+        progress_pred = r.get("progress_pred", [])
         if not progress_pred or len(progress_pred) == 0:
             continue
 
@@ -211,12 +331,16 @@ def run_confusion_matrix_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
             "max_discrimination_score": np.max(overall_discrimination_scores),
         }
 
+    # Create confusion matrix visualization
+    confusion_matrix_path = create_confusion_matrix_plot(results, output_dir="./eval_plots")
+
     return {
         "num_tasks": len(task_groups),
         "num_trajectories": len(trajectory_rewards),
         "num_samples": len(results),
         "task_discrimination": task_discrimination,
         "overall_metrics": overall_metrics,
+        "confusion_matrix_plot": confusion_matrix_path,
     }
 
 
@@ -515,7 +639,7 @@ def main():
         if not results_dir.exists():
             print(f"results_dir not found: {results_dir}")
             return
-        
+
         print(f"Loading results from: {results_dir}")
         eval_files = list(results_dir.glob("*.json"))
         print(f"Found evaluation files: {[f.stem for f in eval_files]}")
@@ -529,6 +653,7 @@ def main():
             print(f"      ✓ Metrics: {metrics}")
         print("Done!")
         return
+
 
 if __name__ == "__main__":
     main()

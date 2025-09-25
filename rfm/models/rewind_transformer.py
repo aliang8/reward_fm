@@ -14,10 +14,12 @@ from transformers import PreTrainedModel, AutoConfig, AutoModel
 from transformers.modeling_outputs import SequenceClassifierOutputWithPast
 from transformers import PretrainedConfig
 
+
 def mean_pooling(model_output, attention_mask):
     token_embeddings = model_output[0]  # First element of model_output contains all token embeddings
     input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
     return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+
 
 class ReWINDTransformerConfig(PretrainedConfig):
     model_type = "rewind_transformer"
@@ -31,7 +33,7 @@ class ReWINDTransformerConfig(PretrainedConfig):
         num_attention_heads: int = 8,
         dropout: float = 0.1,
         max_len: int = 16,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(**kwargs)
         self.video_feature_dim = video_feature_dim
@@ -45,7 +47,7 @@ class ReWINDTransformerConfig(PretrainedConfig):
 
 class ReWiNDTransformer(PreTrainedModel):
     """ReWiND Transformer with three prediction heads for different objectives."""
-    
+
     config_class = ReWINDTransformerConfig
 
     def __init__(self, config, image_encoder=None, text_encoder=None, tokenizer=None):
@@ -54,17 +56,16 @@ class ReWiNDTransformer(PreTrainedModel):
         self.image_encoder = image_encoder
         self.text_encoder = text_encoder
         self.tokenizer = tokenizer
-        
+
         video_feature_dim = config.video_feature_dim
         text_feature_dim = config.text_feature_dim
         hidden_dim = config.hidden_dim
-
 
         if image_encoder is not None:
             video_feature_dim = image_encoder.config.hidden_size
         if text_encoder is not None:
             text_feature_dim = text_encoder.config.hidden_size
-            
+
         self.video_proj = nn.Linear(video_feature_dim, hidden_dim)
         self.text_proj = nn.Linear(text_feature_dim, hidden_dim)
 
@@ -91,9 +92,9 @@ class ReWiNDTransformer(PreTrainedModel):
             nn.GELU(),
             nn.Dropout(0.1),
             nn.Linear(hidden_dim // 2, 1),
-            nn.Sigmoid()
+            nn.Sigmoid(),
         )
-        
+
         self.preference_head = nn.Linear(hidden_dim, 1, bias=False)
         self.similarity_head = nn.Linear(hidden_dim, 1, bias=False)
 
@@ -122,11 +123,11 @@ class ReWiNDTransformer(PreTrainedModel):
             timing_raw = {}
 
         use_precomputed = video_embeddings is not None and text_embeddings is not None
-        
+
         if use_precomputed:
             B, T, D_video = video_embeddings.shape
             D_text = text_embeddings.shape[1]
-            
+
             # Project embeddings to hidden dimension
             video_embeddings = self.video_proj(video_embeddings.view(-1, D_video)).view(B, T, -1)  # [B, T, hidden_dim]
             text_embeddings = self.text_proj(text_embeddings)  # [B, hidden_dim]
@@ -162,12 +163,12 @@ class ReWiNDTransformer(PreTrainedModel):
 
             video_embeddings_A[:, 0:1] += first_frame_emb_A
             video_embeddings_B[:, 0:1] += first_frame_emb_B
-            
+
             if sample_type == "preference":
                 pred_token = einops.repeat(self.preference_token, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
             else:
                 pred_token = einops.repeat(self.similarity_token, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
-            
+
             token_sequence = torch.cat(
                 [text_embeddings.unsqueeze(1), video_embeddings_A, video_embeddings_B, pred_token], dim=1
             )  # shape: [B, 2*T + 1, D]
@@ -195,16 +196,14 @@ class ReWiNDTransformer(PreTrainedModel):
                 pass
         elif sample_type == "progress":
             first_frame_emb = einops.repeat(self.first_embedding_A, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
-            
+
             # [B, T, D]
             video_embeddings[:, 0:1] += first_frame_emb
-            
-            token_sequence = torch.cat(
-                [text_embeddings.unsqueeze(1), video_embeddings], dim=1
-            )  # shape: [B, T, D]
+
+            token_sequence = torch.cat([text_embeddings.unsqueeze(1), video_embeddings], dim=1)  # shape: [B, T, D]
             token_embeddings = self.transformer(token_sequence)
             D = token_embeddings.shape[-1]
-            final_embeddings = token_embeddings[:, 1 :, :]  # avoid the text embedding
+            final_embeddings = token_embeddings[:, 1:, :]  # avoid the text embedding
             progress_logits = self.progress_head(final_embeddings)
             progress_logits = progress_logits.squeeze(-1)
 

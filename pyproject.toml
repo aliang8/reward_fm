@@ -63,6 +63,7 @@ dependencies = [
     "opencv-contrib-python-headless>=4.8.0",  # Additional OpenCV modules
     "einops>=0.8.0",
     "num2words", 
+    "seaborn"
 ]
 
 [project.urls]

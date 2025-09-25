@@ -11,7 +11,12 @@ from tqdm import tqdm
 
 from rfm.data.dataset_types import ProgressSample, Trajectory
 from .base import RFMBaseDataset
-from .helpers import linspace_subsample_frames, pad_trajectory_to_max_frames_np
+from .helpers import (
+    linspace_subsample_frames,
+    pad_trajectory_to_max_frames_np,
+    pad_trajectory_to_max_frames_torch,
+    load_embeddings_from_path,
+)
 from rfm.utils.distributed import rank_0_print
 
 
@@ -77,24 +82,39 @@ class RewardAlignmentDataset(RFMBaseDataset):
         original_traj = self.dataset[traj_idx]
 
         # Get frames and create subsequence
-        frames = self._get_trajectory_frames(traj_idx)
-        if frames is None or len(frames) == 0:
-            return None
-
-        # Create subsequence frames
-        subsequence_frames = frames[:end_idx]
-
-        # Get max_frames from config
-        max_frames = self.config.max_frames
-
-        # Uniform subsample to max_frames
-        subsequence_frames, _ = linspace_subsample_frames(subsequence_frames, max_frames)
-
-        # Use the existing helper function to pad/subsample frames
-        padded_frames, _ = pad_trajectory_to_max_frames_np(subsequence_frames, [0], max_frames)
-
+        frames = None
+        video_embeddings = None
+        text_embedding = None
+        
         # Ground truth progress: linear from 0 to 1
         gt_progress = end_idx / num_frames
+
+        if self.config.load_embeddings and original_traj.get("embeddings_path"):
+            video_embeddings = load_embeddings_from_path(original_traj["embeddings_path"], "video_embeddings")
+            text_embedding = load_embeddings_from_path(original_traj["embeddings_path"], "text_embedding")
+
+            video_embeddings = video_embeddings[:end_idx]
+
+            subsequence_video_embeddings, _ = linspace_subsample_frames(video_embeddings, self.config.max_frames)
+            video_embeddings, _ = pad_trajectory_to_max_frames_torch(
+                subsequence_video_embeddings, [gt_progress], self.config.max_frames
+            )
+        else:
+            frames = self._get_trajectory_frames(traj_idx)
+            if frames is None or len(frames) == 0:
+                return None
+
+            # Create subsequence frames
+            subsequence_frames = frames[:end_idx]
+
+            # Get max_frames from config
+            max_frames = self.config.max_frames
+
+            # Uniform subsample to max_frames
+            subsequence_frames, _ = linspace_subsample_frames(subsequence_frames, max_frames)
+
+            # Use the existing helper function to pad/subsample frames
+            frames, _ = pad_trajectory_to_max_frames_np(subsequence_frames, [0], max_frames)
 
         # Create metadata for the subsequence
         metadata = {
@@ -107,8 +127,10 @@ class RewardAlignmentDataset(RFMBaseDataset):
         subsequence_trajectory = Trajectory(
             id=original_traj["id"],
             task=original_traj["task"],
-            frames=padded_frames,
-            frames_shape=padded_frames.shape,
+            frames=frames,
+            frames_shape=frames.shape if frames is not None else None,
+            video_embeddings=video_embeddings,
+            text_embedding=text_embedding,
             data_source=original_traj["data_source"],
             lang_vector=original_traj["lang_vector"],
             is_robot=original_traj["is_robot"],

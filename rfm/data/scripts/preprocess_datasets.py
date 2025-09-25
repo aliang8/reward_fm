@@ -54,7 +54,7 @@ class DataPreprocessConfig:
     )
     num_threads: int = field(default=36, metadata={"help": "Number of threads for dataset processing"})
     cache_dir: str = field(default="", metadata={"help": "Directory to store processed dataset caches"})
-    
+
     # Embedding preprocessing parameters
     precompute_embeddings: bool = field(
         default=False, metadata={"help": "Whether to precompute DINOv2 and sentence transformer embeddings"}
@@ -62,15 +62,12 @@ class DataPreprocessConfig:
     embeddings_cache_dir: str = field(
         default="embeddings_cache", metadata={"help": "Directory to save precomputed embeddings"}
     )
-    dinov2_model: str = field(
-        default="facebook/dinov2-base", metadata={"help": "DINOv2 model for video embeddings"}
-    )
+    dinov2_model: str = field(default="facebook/dinov2-base", metadata={"help": "DINOv2 model for video embeddings"})
     sentence_model: str = field(
-        default="sentence-transformers/all-MiniLM-L12-v2", metadata={"help": "Sentence transformer model for text embeddings"}
+        default="sentence-transformers/all-MiniLM-L12-v2",
+        metadata={"help": "Sentence transformer model for text embeddings"},
     )
-    embedding_batch_size: int = field(
-        default=32, metadata={"help": "Batch size for embedding computation"}
-    )
+    embedding_batch_size: int = field(default=32, metadata={"help": "Batch size for embedding computation"})
 
 
 class DatasetPreprocessor:
@@ -82,28 +79,28 @@ class DatasetPreprocessor:
         # Dataset storage - store individual datasets
         self.datasets: dict[str, Dataset] = {}  # key: "dataset_path/subset"
         self.dataset_indices: dict[str, dict] = {}  # key: "dataset_path/subset", value: index mappings
-        
+
         # Initialize embedding models if precompute_embeddings is enabled
         self.dinov2_model = None
         self.dinov2_processor = None
         self.sentence_model = None
-        
+
         if config.precompute_embeddings:
             rank_0_print("🚀 Initializing embedding models...")
-            
+
             # Initialize DINOv2 for video embeddings
             self.dinov2_model = AutoModel.from_pretrained(config.dinov2_model)
             self.dinov2_processor = AutoImageProcessor.from_pretrained(config.dinov2_model)
             self.dinov2_model.eval()
-            
+
             # Initialize Sentence Transformer for text embeddings
             self.sentence_model = SentenceTransformer(config.sentence_model)
-            
+
             # Move to GPU if available
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             self.dinov2_model = self.dinov2_model.to(device)
             self.sentence_model = self.sentence_model.to(device)
-            
+
             rank_0_print(f"✅ Embedding models initialized on {device}")
 
     def preprocess_datasets(self):
@@ -286,32 +283,32 @@ class DatasetPreprocessor:
                     frames.reader.close()
             except Exception:
                 pass
-    
+
     def _compute_video_embeddings(self, frames_array: np.ndarray) -> torch.Tensor:
         """
         Compute DINOv2 embeddings for video frames.
-        
+
         Args:
             frames_array: Video frames as numpy array (T, H, W, C)
-            
+
         Returns:
             Video embeddings as torch tensor (T, D) where D is embedding dimension
         """
         if self.dinov2_model is None or self.dinov2_processor is None:
             raise ValueError("DINOv2 model not initialized. Set precompute_embeddings=True in config.")
-        
+
         device = next(self.dinov2_model.parameters()).device
         embeddings = []
-        
+
         # Process frames in batches
         batch_size = self.config.embedding_batch_size
         num_frames = frames_array.shape[0]
-        
+
         with torch.no_grad():
             for i in range(0, num_frames, batch_size):
                 end_idx = min(i + batch_size, num_frames)
                 batch_frames = frames_array[i:end_idx]
-                
+
                 # Convert numpy frames to PIL images for processing
                 pil_images = []
                 for frame in batch_frames:
@@ -319,90 +316,90 @@ class DatasetPreprocessor:
                     if frame.dtype != np.uint8:
                         frame = (frame * 255).astype(np.uint8)
                     pil_images.append(Image.fromarray(frame))
-                
+
                 # Process with DINOv2
                 inputs = self.dinov2_processor(images=pil_images, return_tensors="pt")
                 inputs = {k: v.to(device) for k, v in inputs.items()}
-                
+
                 outputs = self.dinov2_model(**inputs)
                 # Use pooler_output for global representation
                 batch_embeddings = outputs.pooler_output  # (batch_size, embedding_dim)
                 embeddings.append(batch_embeddings.cpu())
-        
+
         # Concatenate all embeddings
         video_embeddings = torch.cat(embeddings, dim=0)  # (T, embedding_dim)
         return video_embeddings
-    
+
     def _compute_text_embeddings(self, text: str) -> torch.Tensor:
         """
         Compute sentence transformer embeddings for text.
-        
+
         Args:
             text: Text description
-            
+
         Returns:
             Text embedding as torch tensor (D,) where D is embedding dimension
         """
         if self.sentence_model is None:
             raise ValueError("Sentence model not initialized. Set precompute_embeddings=True in config.")
-        
+
         with torch.no_grad():
             embedding = self.sentence_model.encode(text, convert_to_tensor=True)
             return embedding.cpu()
-    
-    def _save_embeddings(self, video_embeddings: torch.Tensor, text_embedding: torch.Tensor, 
-                        embeddings_path: str):
+
+    def _save_embeddings(self, video_embeddings: torch.Tensor, text_embedding: torch.Tensor, embeddings_path: str):
         """
         Save video and text embeddings to a .pt file.
-        
+
         Args:
             video_embeddings: Video embeddings tensor (T, D)
             text_embedding: Text embedding tensor (D,)
             embeddings_path: Path to save the .pt file
         """
         os.makedirs(os.path.dirname(embeddings_path), exist_ok=True)
-        
+
         embeddings_data = {
-            'video_embeddings': video_embeddings,
-            'text_embedding': text_embedding,
-            'video_shape': video_embeddings.shape,
-            'text_shape': text_embedding.shape
+            "video_embeddings": video_embeddings,
+            "text_embedding": text_embedding,
+            "video_shape": video_embeddings.shape,
+            "text_shape": text_embedding.shape,
         }
-        
+
         torch.save(embeddings_data, embeddings_path)
-    
-    def _process_embeddings_for_example(self, frames_array: np.ndarray, task_text: str, 
-                                       idx: int, example_id: str, embeddings_dir: str) -> tuple[str, tuple, tuple]:
+
+    def _process_embeddings_for_example(
+        self, frames_array: np.ndarray, task_text: str, idx: int, example_id: str, embeddings_dir: str
+    ) -> tuple[str, tuple, tuple]:
         """
         Process embeddings for a single example.
-        
+
         Args:
             frames_array: Video frames as numpy array
             task_text: Task description text
             idx: Example index
             example_id: Example ID
             embeddings_dir: Directory to save embeddings
-            
+
         Returns:
             Tuple of (embeddings_filepath, video_embedding_shape, text_embedding_shape)
         """
         if not self.config.precompute_embeddings:
             return None, None, None
-            
+
         # Create embeddings directory
         os.makedirs(embeddings_dir, exist_ok=True)
-        
+
         # Compute video embeddings
         video_embeddings = self._compute_video_embeddings(frames_array)
-        
+
         # Compute text embeddings
         text_embedding = self._compute_text_embeddings(task_text)
-        
+
         # Save embeddings
         embeddings_filename = f"trajectory_{idx:06d}_{example_id}_embeddings.pt"
         embeddings_filepath = os.path.join(embeddings_dir, embeddings_filename)
         self._save_embeddings(video_embeddings, text_embedding, embeddings_filepath)
-        
+
         return embeddings_filepath, video_embeddings.shape, text_embedding.shape
 
     def _process_dataset_videos_map(self, dataset, cache_key: str):
@@ -446,7 +443,7 @@ class DatasetPreprocessor:
         # Create frames directory for npz files
         frames_dir = os.path.join(self.config.cache_dir, "frames")
         os.makedirs(frames_dir, exist_ok=True)
-        
+
         # Create embeddings directory if needed
         embeddings_dir = os.path.join(self.config.cache_dir, self.config.embeddings_cache_dir)
 
@@ -486,13 +483,13 @@ class DatasetPreprocessor:
             example["frames_shape"] = frames_array.shape
             example["num_frames"] = frames_array.shape[0] if len(frames_array.shape) > 0 else 0
             example["frames_processed"] = True
-            
+
             # Compute and save embeddings if enabled
             embeddings_dir = os.path.join(self.config.cache_dir, self.config.embeddings_cache_dir)
             embeddings_filepath, video_emb_shape, text_emb_shape = self._process_embeddings_for_example(
-                frames_array, example.get("task", ""), idx, example['id'], embeddings_dir
+                frames_array, example.get("task", ""), idx, example["id"], embeddings_dir
             )
-            
+
             if embeddings_filepath is not None:
                 # Store embeddings path in dataset
                 example["embeddings_path"] = embeddings_filepath
@@ -597,7 +594,7 @@ class DatasetPreprocessor:
             frames_src = example.get("frames_video")
             if frames_src is None:
                 return idx, None, None, None, None, None
-            
+
             # Define embeddings directory for this worker
             embeddings_dir = os.path.join(self.config.cache_dir, self.config.embeddings_cache_dir)
 
@@ -693,7 +690,7 @@ class DatasetPreprocessor:
 
             # Process embeddings if enabled
             embeddings_filepath, video_emb_shape, text_emb_shape = self._process_embeddings_for_example(
-                frames_array, example.get("task", ""), idx, example['id'], embeddings_dir
+                frames_array, example.get("task", ""), idx, example["id"], embeddings_dir
             )
 
             # Return minimal info to update record and indices
@@ -712,7 +709,7 @@ class DatasetPreprocessor:
                 as_completed(futures), total=len(futures), desc=f"Processing {cache_key}", unit="traj", leave=False
             ):
                 idx, frames_path, shape, embeddings_path, video_emb_shape, text_emb_shape = fut.result()
-                
+
                 if frames_path is not None:
                     idx_to_data[idx] = (frames_path, shape, embeddings_path, video_emb_shape, text_emb_shape)
 
@@ -727,7 +724,7 @@ class DatasetPreprocessor:
                 ex["frames_shape"] = shape
                 ex["num_frames"] = shape[0] if len(shape) > 0 else 0
                 ex["frames_processed"] = True
-                
+
                 # Add embedding information if available
                 if embeddings_path is not None:
                     ex["embeddings_path"] = embeddings_path

@@ -1,25 +1,26 @@
 train_datasets:
   # - "abraranwar/libero_rfm"
   # - "ykorkmaz/libero_failure_rfm"
-  - "HenryZhang/metaworld_rewind_rfm_train"
-  # - "aliangdw/metaworld_rfm"
+  # - "HenryZhang/metaworld_rewind_rfm_train"
+  - "aliangdw/metaworld_rfm"
 
 train_subsets:
   # - ["libero256_90"]
   # - ["libero_90_failure"]
-  - ["metaworld_rewind_train"]
-  # - ["metaworld"]
+  # - ["metaworld_rewind_train"]
+  - ["metaworld"]
 
 eval_datasets:
   # - "abraranwar/libero_rfm"
   # - "ykorkmaz/libero_failure_rfm"
-  - "HenryZhang/metaworld_rewind_rfm_eval"
-  # - "aliangdw/metaworld_rfm"
+  # - "HenryZhang/metaworld_rewind_rfm_eval"
+  - "aliangdw/metaworld_rfm"
 
 eval_subsets:
   # - ["libero256_10"]
   # - ["libero_10_failure"]
-  - ["metaworld_rewind_eval"]
+  # - ["metaworld_rewind_eval"]
+  - ["metaworld"]
 
 max_frames_for_preprocessing: 64
 video_frame_sampling: "uniform"

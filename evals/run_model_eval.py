@@ -25,7 +25,12 @@ import os
 import time
 from pathlib import Path
 from typing import Any
+from rich.console import Console
+import argparse
 
+import yaml
+
+from rfm.configs.experiment_configs import DataConfig
 import aiohttp
 
 from evals.eval_utils import build_payload, post_batch, post_batch_npy, post_batch_npy_async
@@ -61,7 +66,7 @@ def _save_result_as_json(
 
     # Extract progress data
     if progress_response:
-        progress_pred = progress_response.get("progress_pred_A", [])
+        progress_pred = progress_response.get("progress_pred", [])
 
     batch_results = []
 
@@ -267,12 +272,6 @@ def iter_eval_batches_sync(
 
 def main():
     """Main evaluation function using simple argparse for config loading."""
-    import argparse
-
-    import yaml
-
-    from rfm.configs.experiment_configs import DataConfig
-
     parser = argparse.ArgumentParser(description="Evaluate RFM model")
     parser.add_argument(
         "--config", type=str, default="rfm/configs/eval_config.yaml", help="Path to evaluation configuration file"
@@ -294,6 +293,10 @@ def main():
     print(f"Loading evaluation config from: {args.config}")
     with open(args.config) as f:
         config_dict = yaml.safe_load(f)
+
+    console = Console()
+    console.print(f"Loading evaluation config from: {args.config}")
+    console.print(config_dict)
 
     cfg = EvaluationConfig(**config_dict)
     cfg.data = DataConfig(**config_dict["data"])

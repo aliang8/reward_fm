@@ -3,7 +3,7 @@
 
 # Model path to load training config from
 # model_path: "aliangdw/rfm_prefprog_v4"  # Path to the trained model checkpoint (will load training_config.yaml from here)
-model_path: "aliangdw/rewind_progress_2"
+model_path: "aliangdw/rewind_linspace"
 
 # GPU Pool settings
 num_gpus: 1  # Number of GPUs to use (null for all available)
@@ -30,6 +30,7 @@ data:
   # eval_datasets: ["abraranwar/libero_rfm"]
   # eval_subsets: ["libero256_10"]
   # policy ranking
+  load_embeddings: true
   eval_datasets: ["aliangdw/metaworld_rfm"]
   eval_subsets: ["metaworld"]
   

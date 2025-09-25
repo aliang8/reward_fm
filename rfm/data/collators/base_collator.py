@@ -31,7 +31,7 @@ class BaseCollator:
         #     self.processor.image_processor.max_image_size = {"longest_edge": self.resized_height}
         #     self.processor.image_processor.size = {"longest_edge": self.resized_height}
         #     self.processor.image_processor.video_sampling["video_size"] = {"longest_edge": self.resized_height}
-    
+
         #     # for video processor
         #     self.processor.video_processor.max_image_size = {"longest_edge": self.resized_height}
         #     self.processor.video_processor.size = {"longest_edge": self.resized_height}

@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict, Any
 from transformers import PretrainedConfig
 
+
 @dataclass
 class ModelConfig(PretrainedConfig):
     """Config for model settings"""
@@ -32,10 +33,10 @@ class ModelConfig(PretrainedConfig):
 
     # rewind sub-config
     rewind: Optional[Dict[str, Any]] = field(default=None)
-    
+
     def __post_init__(self):
         from rfm.models.rewind_transformer import ReWINDTransformerConfig
-        
+
         if self.rewind is not None and isinstance(self.rewind, dict):
             self.rewind = ReWINDTransformerConfig(**self.rewind)
 
@@ -43,6 +44,7 @@ class ModelConfig(PretrainedConfig):
 @dataclass
 class PEFTConfig:
     """Config for PEFT/LoRA settings"""
+
     r: int = field(default=32)
     lora_alpha: int = field(default=64)
     lora_dropout: float = field(default=0.05)
@@ -105,7 +107,6 @@ class DataConfig:
     # Tunable strategy ratios for progress generation: [default, rewind_same_task, different_task]
     progress_strategy_ratio: list[float] = field(default_factory=lambda: [1, 1, 1])
 
-
     # Processing parameters
     shuffle: bool = field(default=True, metadata={"help": "Whether to shuffle the dataset"})
     seed: int = field(default=42, metadata={"help": "Random seed for reproducibility"})
@@ -125,10 +126,11 @@ class DataConfig:
     n_wrong_tasks: int = field(
         default=5, metadata={"help": "Number of wrong tasks to use for wrong task preference dataset"}
     )
-    
+
     # Embedding loading parameters
     load_embeddings: bool = field(
-        default=False, metadata={"help": "Whether to load precomputed embeddings instead of processing frames (ReWiND only)"}
+        default=False,
+        metadata={"help": "Whether to load precomputed embeddings instead of processing frames (ReWiND only)"},
     )
 
 
@@ -177,7 +179,9 @@ class TrainingConfig:
     max_grad_norm: float = field(default=1.0)
 
     # RFM specific settings
-    predict_pref_progress: bool = field(default=False, metadata={"help": "Whether to predict progress for preference samples"})
+    predict_pref_progress: bool = field(
+        default=False, metadata={"help": "Whether to predict progress for preference samples"}
+    )
 
 
 @dataclass
@@ -207,19 +211,19 @@ class ExperimentConfig:
     data: DataConfig = field(default_factory=DataConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
-    
-    def __post_init__(self):        
+
+    def __post_init__(self):
         if isinstance(self.model, dict):
             self.model = ModelConfig(**self.model)
-        
+
         if isinstance(self.peft, dict):
             self.peft = PEFTConfig(**self.peft)
-            
+
         if isinstance(self.data, dict):
             self.data = DataConfig(**self.data)
-            
+
         if isinstance(self.training, dict):
             self.training = TrainingConfig(**self.training)
-            
+
         if isinstance(self.logging, dict):
             self.logging = LoggingConfig(**self.logging)

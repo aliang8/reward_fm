@@ -1,6 +1,7 @@
 from .rfm_heads_trainer import RFMHeadsTrainer
 from rfm.utils.timer import _timer
 
+
 class ReWiNDTrainer(RFMHeadsTrainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

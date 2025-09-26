@@ -2,6 +2,7 @@ import json
 import os
 import warnings
 from dataclasses import asdict
+import shutil
 
 import torch
 import yaml
@@ -26,6 +27,7 @@ from rfm.utils.setup_utils import (
     setup_peft_model,
 )
 import datasets
+
 datasets.logging.set_verbosity_error()
 
 warnings.filterwarnings("ignore", message="Please use DTensor instead and we are deprecating ShardedTensor")
@@ -74,10 +76,21 @@ def train(cfg: ExperimentConfig):
         cfg.training.logging_steps = 2
         cfg.training.eval_steps = 2
         cfg.data.eval_subset_size = 10
+        cfg.training.custom_eval_steps = 2
 
     training_args = create_training_arguments(cfg, cfg.training.output_dir)
 
     # Save config to output directory
+
+    if os.path.exists(cfg.training.output_dir):
+        # confirm with user
+        confirm = input(
+            f"Output directory {cfg.training.output_dir} already exists. Do you want to overwrite it? (y/n)"
+        )
+        if confirm != "y":
+            raise ValueError("Output directory already exists. Please delete it or use a different output directory.")
+
+        shutil.rmtree(cfg.training.output_dir)
     os.makedirs(cfg.training.output_dir, exist_ok=True)
     config_save_path = os.path.join(cfg.training.output_dir, "config.yaml")
     config_dict = asdict(cfg)

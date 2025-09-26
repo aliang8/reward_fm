@@ -5,6 +5,7 @@ Data generator for confusion matrix analysis.
 
 from tqdm import tqdm
 import torch
+from collections import Counter
 
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, Trajectory
 from .base import RFMBaseDataset
@@ -58,16 +59,24 @@ class ConfusionMatrixDataset(RFMBaseDataset):
 
         rank_0_print(f"Processing {len(trajectories_to_process)} trajectories for confusion matrix analysis")
 
+        video_task_count = Counter()
+
         # Create all task-trajectory pairs
         for lang_task in tqdm(unique_tasks, desc="Generating task-trajectory pairs"):
             for traj_idx in trajectories_to_process:
                 traj = self.dataset[traj_idx]
-                
+                video_task = traj["task"]
+
+                # Limit the number of video trajectories for each task to 5
+                if video_task_count[video_task] >= 5:
+                    continue
+
                 sample_indices.append({
                     "traj_idx": traj_idx,
                     "lang_task": lang_task,
-                    "video_task": traj["task"], 
+                    "video_task": video_task,
                 })
+                video_task_count[video_task] += 1
 
         rank_0_print(f"Generated {len(sample_indices)} task-trajectory pairs")
         return sample_indices

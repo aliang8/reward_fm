@@ -13,6 +13,7 @@ from rfm.utils.timer import _timer
 from rfm.utils.metrics import compute_spearman_correlation
 from rfm.utils.setup_utils import setup_dataset, setup_batch_collator
 from torch.utils.data import DataLoader
+from rfm.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
 from evals.compile_results import compute_eval_metrics
 
 
@@ -243,93 +244,116 @@ class RFMHeadsTrainer(Trainer):
             rank_0_print(f"Timing raw: {rounded_times}")
 
     def _run_custom_evaluations(self):
-        metrics = {}
+        metrics = collections.defaultdict(dict)
         eval_types = self.config.custom_eval.eval_types
+
+        EVAL_TYPE_SHORT = {
+            "reward_alignment": "rew_align",
+            "confusion_matrix": "cm",
+            "policy_ranking": "p_rank",
+            "success_failure": "succ_fail",
+            "wrong_task": "wrong_task",
+        }
 
         for eval_type in eval_types:
             rank_0_print(f"Running evaluation for: {eval_type}")
 
-            eval_cfg = copy.deepcopy(self.config.data)
-            eval_cfg.dataset_type = eval_type
             datasets = getattr(self.config.custom_eval, eval_type)
-            eval_cfg.eval_datasets = [d[0] for d in datasets]
-            eval_cfg.eval_subsets = [d[1] for d in datasets]
+            eval_datasets_name = [d[0] for d in datasets]
+            eval_subsets_name = [[d[1] for d in datasets]]
 
-            dataset = setup_dataset(eval_cfg, is_eval=True, verbose=False)
-            collator = setup_batch_collator(self.model.processor, self.model.tokenizer, self.config)
+            if eval_type == "confusion_matrix":
+                eval_datasets_name = eval_datasets_name + self.config.data.train_datasets
+                eval_subsets_name = eval_subsets_name + self.config.data.train_subsets
 
-            dataloader = DataLoader(
-                dataset,
-                batch_size=self.config.training.per_device_eval_batch_size,
-                collate_fn=collator,
-                shuffle=False,
-                num_workers=0,
-                drop_last=False,
-            )
+            # Pair up each dataset with the corresponding subsets
+            for eval_dataset, eval_subset in zip(eval_datasets_name, eval_subsets_name):
+                eval_cfg = copy.deepcopy(self.config.data)
+                eval_cfg.dataset_type = eval_type
 
-            self.model.eval()
-            eval_results = []
+                eval_cfg.eval_datasets = [eval_dataset]
+                eval_cfg.eval_subsets = [eval_subset]
 
-            for batch in tqdm(dataloader, desc=f"Evaluating {eval_type}"):
-                batch = self._prepare_inputs(batch)
+                dataset = setup_dataset(eval_cfg, is_eval=True, verbose=False)
+                collator = setup_batch_collator(self.model.processor, self.model.tokenizer, self.config)
 
-                if eval_type in ["reward_alignment", "policy_ranking", "confusion_matrix"]:
-                    progress_samples = batch["progress_inputs"]
-                    with torch.no_grad():
-                        outputs, progress_logits, _ = self.forward_model(
-                            self.model, progress_samples, sample_type="progress"
-                        )
-                    progress_pred = progress_logits["A"]
+                dataloader = DataLoader(
+                    dataset,
+                    batch_size=self.config.training.per_device_eval_batch_size,
+                    collate_fn=collator,
+                    shuffle=False,
+                    num_workers=0,
+                    drop_last=False,
+                )
 
-                    for i in range(len(progress_pred)):
-                        sample_result = {
-                            "task": progress_samples["task"][i],
-                            "target_progress": progress_samples["target_progress"][i].cpu().numpy(),
-                            "progress_pred": progress_pred[i].cpu().numpy(),
-                            "data_source": progress_samples["data_source"][i],
-                            "data_gen_strategy": progress_samples["data_gen_strategy"][i],
-                            "quality_label": progress_samples["quality_labels"][i],
-                            "metadata": progress_samples["metadata"][i],
-                        }
-                        eval_results.append(sample_result)
+                self.model.eval()
+                eval_results = []
 
-                elif eval_type == "success_failure":
-                    preference_samples = batch["preference_inputs"]
-                    with torch.no_grad():
-                        outputs, _, _ = self.forward_model(self.model, preference_samples, sample_type="preference")
-                    pref_logits = outputs.logits
+                for batch in tqdm(dataloader, desc=f"Evaluating {eval_type}"):
+                    batch = self._prepare_inputs(batch)
 
-                    for i in range(len(pref_logits)):
-                        sample_result = {
-                            "task": preference_samples["task"][i],
-                            "preference_pred": pref_logits[i].cpu().numpy(),
-                            "preference_labels": preference_samples["preference_labels"][i].item(),
-                            "data_source": preference_samples["data_source"][i],
-                            "chosen_data_gen_strategy": preference_samples["chosen_data_gen_strategy"][i],
-                            "rejected_data_gen_strategy": preference_samples["rejected_data_gen_strategy"][i],
-                            # "quality_label": int(preference_samples["quality_labels"][i].item()),
-                            "metadata": preference_samples["metadata"][i],
-                        }
-                        eval_results.append(sample_result)
+                    if eval_type in ["reward_alignment", "policy_ranking", "confusion_matrix"]:
+                        progress_samples = batch["progress_inputs"]
+                        with torch.no_grad():
+                            outputs, progress_logits, _ = self.forward_model(
+                                self.model, progress_samples, sample_type="progress"
+                            )
+                        progress_pred = progress_logits["A"]
 
-            # Compute metrics
-            metrics[eval_type] = compute_eval_metrics(eval_type, eval_results)
-            rank_0_print(f"Completed {eval_type} evaluation: {len(eval_results)} samples")
-            rank_0_print(f"Metrics: {metrics[eval_type]}")
-            rank_0_print("=" * 50)
+                        for i in range(len(progress_pred)):
+                            sample_result = {
+                                "task": progress_samples["task"][i],
+                                "target_progress": progress_samples["target_progress"][i].cpu().numpy(),
+                                "progress_pred": progress_pred[i].cpu().numpy(),
+                                "data_source": progress_samples["data_source"][i],
+                                "data_gen_strategy": progress_samples["data_gen_strategy"][i],
+                                "quality_label": progress_samples["quality_labels"][i],
+                                "metadata": progress_samples["metadata"][i],
+                            }
+                            eval_results.append(sample_result)
+
+                    elif eval_type == "success_failure":
+                        preference_samples = batch["preference_inputs"]
+                        with torch.no_grad():
+                            outputs, _, _ = self.forward_model(self.model, preference_samples, sample_type="preference")
+                        pref_logits = outputs.logits
+
+                        for i in range(len(pref_logits)):
+                            sample_result = {
+                                "task": preference_samples["task"][i],
+                                "preference_pred": pref_logits[i].cpu().numpy(),
+                                "preference_labels": preference_samples["preference_labels"][i].item(),
+                                "data_source": preference_samples["data_source"][i],
+                                "chosen_data_gen_strategy": preference_samples["chosen_data_gen_strategy"][i],
+                                "rejected_data_gen_strategy": preference_samples["rejected_data_gen_strategy"][i],
+                                # "quality_label": int(preference_samples["quality_labels"][i].item()),
+                                "metadata": preference_samples["metadata"][i],
+                            }
+                            eval_results.append(sample_result)
+
+                # Compute metrics
+                ds_name = DS_SHORT_NAME_MAPPING[eval_dataset + "/" + eval_subset[0]]
+                metrics[ds_name][eval_type] = compute_eval_metrics(eval_type, eval_results)
+                rank_0_print(f"Completed {eval_type} evaluation: {len(eval_results)} samples")
+                rank_0_print(f"Metrics: {metrics[ds_name][eval_type]}")
+                rank_0_print("=" * 50)
 
         if self.args.report_to and "wandb" in self.args.report_to and is_rank_0():
             wandb_metrics = {}
-            for eval_type, metric in metrics.items():
-                if eval_type == "confusion_matrix":
-                    # plot confusion matrix
-                    wandb_metrics.update({
-                        f"custom_eval/{eval_type}_confusion_matrix": wandb.Image(metric),
-                    })
-                else:
-                    wandb_metrics.update({
-                        f"custom_eval/{eval_type}_{k}": v for k, v in metric.items() if isinstance(v, (int, float))
-                    })
+            for ds_name, eval_type_metric in metrics.items():
+                for eval_type, metric in eval_type_metric.items():
+                    eval_type_short = EVAL_TYPE_SHORT[eval_type]
+                    if eval_type == "confusion_matrix":
+                        # plot confusion matrix
+                        wandb_metrics.update({
+                            f"custom_eval/{eval_type_short}_{ds_name}": wandb.Image(metric),
+                        })
+                    else:
+                        wandb_metrics.update({
+                            f"custom_eval/{eval_type_short}_{k}_{ds_name}": v
+                            for k, v in metric.items()
+                            if isinstance(v, (int, float))
+                        })
             wandb.log(wandb_metrics)
 
     def evaluate(self, eval_dataset=None, ignore_keys=None) -> dict[str, float]:
@@ -382,7 +406,10 @@ class RFMHeadsTrainer(Trainer):
                 wandb.log(metrics)
 
         # Run the custom evaluations
-        if self.config.training.custom_eval_steps and self.state.global_step % self.config.training.custom_eval_steps == 0:
+        if (
+            self.config.training.custom_eval_steps
+            and self.state.global_step % self.config.training.custom_eval_steps == 0
+        ):
             self._run_custom_evaluations()
 
         return metrics
@@ -463,7 +490,9 @@ class RFMHeadsTrainer(Trainer):
         """
         # Handle case where inputs might be tensors or lists
         if progress_logits is None or target_progress is None:
-            import ipdb; ipdb.set_trace()
+            import ipdb
+
+            ipdb.set_trace()
             return 0.0, 0.0
 
         # Ensure we have the same number of samples

@@ -20,6 +20,7 @@ from transformers import (
 from rfm.configs.experiment_configs import DataConfig, ExperimentConfig, ModelConfig, PEFTConfig
 from rfm.data.collators import BaseCollator, ReWiNDBatchCollator, RFMBatchCollator, VQABatchCollator
 from rfm.data.datasets import (
+    BalancedMixedDataset,
     ConfusionMatrixDataset,
     MixedDataset,
     PairedSuccessFailureDataset,
@@ -309,6 +310,7 @@ def setup_dataset(cfg: DataConfig, is_eval: bool = False, **kwargs) -> RFMBaseDa
         "confusion_matrix": ConfusionMatrixDataset,
         "wrong_task": WrongTaskDataset,
         "default": MixedDataset,
+        "balanced_mixed": BalancedMixedDataset,
     }
 
     dataset = dataset_cls[cfg.dataset_type](config=cfg, is_evaluation=is_eval, **kwargs)

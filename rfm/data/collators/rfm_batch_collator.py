@@ -129,7 +129,7 @@ class RFMBatchCollator(BaseCollator):
         self, batch_inputs: dict[str, torch.Tensor], progress_samples: list[ProgressSample]
     ) -> dict[str, torch.Tensor]:
         """Add metadata to the batch inputs."""
-    
+
         # Add metadata
         batch_inputs["sample_type"] = ["progress"] * len(progress_samples)
         batch_inputs["task"] = [sample.trajectory.task for sample in progress_samples]

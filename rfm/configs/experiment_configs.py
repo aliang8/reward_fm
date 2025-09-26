@@ -132,6 +132,12 @@ class DataConfig:
         default=False,
         metadata={"help": "Whether to load precomputed embeddings instead of processing frames (ReWiND only)"},
     )
+    
+    # Data source weighting parameters
+    data_source_weights: Optional[Dict[str, float]] = field(
+        default=None, 
+        metadata={"help": "Dictionary mapping data source names to sampling weights (e.g., {'metaworld': 0.2, 'libero': 0.8})"}
+    )
 
 
 @dataclass
@@ -181,7 +187,8 @@ class TrainingConfig:
         default=None, metadata={"help": "Number of steps between evaluations (required if evaluation_strategy='steps')"}
     )
     custom_eval_steps: Optional[int] = field(
-        default=None, metadata={"help": "Number of steps between custom evaluations (required if evaluation_strategy='steps')"}
+        default=None,
+        metadata={"help": "Number of steps between custom evaluations (required if evaluation_strategy='steps')"},
     )
     per_device_eval_batch_size: int = field(default=1, metadata={"help": "Batch size for evaluation"})
     do_eval: bool = field(default=False, metadata={"help": "Whether to run evaluation during training"})

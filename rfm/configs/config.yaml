@@ -119,12 +119,12 @@ training:
   save_strategy: "steps"
   logging_steps: 1
   save_steps: 200
-  max_steps: 10000  # -1 means no limit, use num_train_epochs instead
+  max_steps: 15000  # -1 means no limit, use num_train_epochs instead
   
   # Evaluation settings
   evaluation_strategy: "steps"  # Options: "no", "steps", "epoch"
   eval_steps: 100  
-  custom_eval_steps: 500  
+  custom_eval_steps: 200  
   per_device_eval_batch_size: 16  # Evaluation batch size per device
   do_eval: true  # Enable evaluation during training
   prediction_loss_only: true # Only compute loss for the prediction head

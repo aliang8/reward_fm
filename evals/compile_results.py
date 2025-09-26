@@ -84,7 +84,7 @@ def run_reward_alignment_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
 
     return {
         "mse": mse.item(),
-        "pearson":  pearson.item() if not np.isnan(pearson) else 0.0,
+        "pearson": pearson.item() if not np.isnan(pearson) else 0.0,
         "spearman": spearman.item() if not np.isnan(spearman) else 0.0,
         "num_samples": len(last_preds),
     }
@@ -135,6 +135,7 @@ def run_reward_alignment_eval_per_trajectory(results: list[dict[str, Any]]) -> d
         "num_samples": len(unique_trajectory_ids),
     }
 
+
 def run_confusion_matrix_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Run confusion_matrix evaluation analysis."""
     # Group results by confusion matrix task
@@ -151,7 +152,7 @@ def run_confusion_matrix_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
 
     num_tasks = len(uniq_tasks)
     confusion_matrix = np.zeros((num_tasks, num_tasks))
-    count_matrix = np.zeros((num_tasks, num_tasks))  
+    count_matrix = np.zeros((num_tasks, num_tasks))
 
     for r in results:
         meta = r["metadata"]
@@ -182,17 +183,25 @@ def run_confusion_matrix_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
         # annot=True,
         # fmt='.3f',
         cmap="Blues",  # White to dark blue colormap
-        xticklabels=list(uniq_tasks),
-        yticklabels=list(uniq_tasks),
-        cbar_kws={"label": "Average Final Reward"},
+        # xticklabels=list(uniq_tasks),
+        # yticklabels=list(uniq_tasks),
+        # cbar_kws={"label": "Average Final Reward (5 trajs)"},
     )
     plt.xlabel("Language Task", fontsize=12)
     plt.ylabel("Video Task", fontsize=12)
-    plt.xticks(rotation=45, ha="right")
-    plt.yticks(rotation=0)
+    # plt.xticks(rotation=45, ha="right")
+    # plt.yticks(rotation=0)
+    # Remove xticks and yticks
+    plt.xticks([])
+    plt.yticks([])
+
+    # Remove the legend
+    plt.legend([])
+
     plt.tight_layout()
 
     return fig
+
 
 def run_policy_ranking_eval_per_ranked_set(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Run policy_ranking evaluation analysis per ranked set."""
@@ -213,7 +222,9 @@ def run_policy_ranking_eval_per_ranked_set(results: list[dict[str, Any]]) -> dic
         })
 
     if not task_groups:
-        import ipdb; ipdb.set_trace()
+        import ipdb
+
+        ipdb.set_trace()
         return {"error": "No valid policy ranking data found"}
 
     task_details = {}
@@ -247,10 +258,7 @@ def run_policy_ranking_eval_per_ranked_set(results: list[dict[str, Any]]) -> dic
                     spearman.append(spearman_corr)
 
         avg_spearman_corr = np.mean(spearman)
-        task_details[task] = {
-            "spearman": avg_spearman_corr,
-            "num_triplets": len(spearman)
-        }
+        task_details[task] = {"spearman": avg_spearman_corr, "num_triplets": len(spearman)}
 
     # average metrics across all task details
     policy_ranking_metrics = {

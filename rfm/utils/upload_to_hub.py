@@ -109,7 +109,7 @@ def upload_model_to_hub(
     hub_model_id: str,
     private: bool = False,
     token: str | None = None,
-    commit_message: str = "Upload RFM model",
+    commit_message: str = "Upload model",
     base_model: str = "Qwen/Qwen2.5-VL-3B-Instruct",
     tag_name: str | None = None,
 ):
@@ -185,7 +185,6 @@ def upload_model_to_hub(
             path_or_fileobj=str(config_path),
             path_in_repo="config.yaml",
             repo_id=hub_model_id,
-            commit_message=f"{commit_message} (config)",
             repo_type="model",
         )
 

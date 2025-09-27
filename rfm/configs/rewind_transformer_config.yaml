@@ -35,10 +35,19 @@ training:
 data:
   # sample_type_ratio: [0, 1, 0] # only progress samples 
   # progress_strategy_ratio: [1, 1, 1] # default success, rewind, different task
-  sample_type_ratio: [0, 1, 0] # preference, progress, similarity 
+  sample_type_ratio: [1, 1, 0] # preference, progress, similarity 
   preference_strategy_ratio: [5, 1, 1, 0] # rewind, suboptimal_same_task, different_task, video_binned 
   progress_strategy_ratio: [1, 5, 1] # default success, rewind, different task
   
+  dataset_type: balanced_mixed
+  # dataset_type: default
+  data_source_weights:
+    metaworld: 5
+    metaworld_rewind_train: 5
+    metaworld_rewind_eval: 5
+    libero256_10: 1
+    libero_10_failure: 1
+
   load_embeddings: true
 
 # =====================================================================================

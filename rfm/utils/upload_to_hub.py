@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """
-Simple script to upload an already consolidated model to HuggingFace Hub.
-
-This script is for models that are already in the standard format with safetensors files.
+Simple script to upload a trained model to HuggingFace Hub.
 """
 
 import argparse
@@ -113,6 +111,7 @@ def upload_model_to_hub(
     token: str | None = None,
     commit_message: str = "Upload RFM model",
     base_model: str = "Qwen/Qwen2.5-VL-3B-Instruct",
+    tag_name: str | None = None,
 ):
     """
     Upload model directory to HuggingFace Hub.
@@ -124,6 +123,10 @@ def upload_model_to_hub(
         token: HuggingFace token
         commit_message: Commit message for the upload
         base_model: Base model name for the model card
+        tag_name: Optional tag name to create after upload
+    
+    Returns:
+        tuple: (hub_url, commit_id) - URL of the uploaded model and the commit ID
     """
 
     model_path = Path(model_dir)
@@ -156,32 +159,49 @@ def upload_model_to_hub(
     api = HfApi()
 
     # Create the repository if it doesn't exist
-    if not api.repo_exists(repo_id=hub_model_id):
-        try:
-            api.create_repo(repo_id=hub_model_id, repo_type="model", private=private, exist_ok=True)
-            print(f"Repository {hub_model_id} created/verified")
-        except Exception as e:
-            print(f"⚠️ WARNING: Could not create repository (may already exist): {e}")
+    try:
+        api.create_repo(repo_id=hub_model_id, repo_type="model", private=private, exist_ok=True)
+        print(f"Repository {hub_model_id} created/verified")
+    except Exception as e:
+        print(f"⚠️ WARNING: Could not create repository (may already exist): {e}")
 
-        # Upload the entire directory
-        api.upload_folder(
-            folder_path=str(model_path), repo_id=hub_model_id, commit_message=commit_message, repo_type="model"
-        )
-
-        print(f"✅ Successfully uploaded model to: https://huggingface.co/{hub_model_id}")
+    # Upload the entire directory
+    commit_info = api.upload_folder(
+        folder_path=str(model_path), 
+        repo_id=hub_model_id, 
+        commit_message=commit_message, 
+        repo_type="model"
+    )
+    
+    commit_id = commit_info.oid
+    print(f"✅ Successfully uploaded model to: https://huggingface.co/{hub_model_id}")
+    print(f"📋 Commit ID: {commit_id}")
 
     # Also upload the config.yaml which is in the directory above
-    print(f"Uploading config.yaml to: {hub_model_id}")
-    print(f"Model directory: {model_path.parent}")
-    api.upload_file(
-        path_or_fileobj=str(model_path.parent / "config.yaml"),
-        path_in_repo="config.yaml",
-        repo_id=hub_model_id,
-        commit_message=commit_message,
-        repo_type="model",
-    )
+    config_path = model_path.parent / "config.yaml"
+    if config_path.exists():
+        print(f"Uploading config.yaml to: {hub_model_id}")
+        api.upload_file(
+            path_or_fileobj=str(config_path),
+            path_in_repo="config.yaml",
+            repo_id=hub_model_id,
+            commit_message=f"{commit_message} (config)",
+            repo_type="model",
+        )
 
-    return f"https://huggingface.co/{hub_model_id}"
+    # Create tag if requested
+    if tag_name:
+        api.create_tag(
+            repo_id=hub_model_id,
+            repo_type="model", 
+            tag=tag_name,
+            revision=commit_id,
+            tag_message=commit_message
+        )
+        print(f"🏷️ Created tag: {tag_name}")
+
+    hub_url = f"https://huggingface.co/{hub_model_id}"
+    return hub_url, commit_id
 
 
 def main():
@@ -198,7 +218,7 @@ def main():
     args = parser.parse_args()
 
     try:
-        url = upload_model_to_hub(
+        url, commit_id = upload_model_to_hub(
             model_dir=args.model_dir,
             hub_model_id=args.hub_model_id,
             private=args.private,
@@ -209,6 +229,7 @@ def main():
 
         print("\n🎉 Upload completed successfully!")
         print(f"Model URL: {url}")
+        print(f"Commit ID: {commit_id}")
 
     except Exception as e:
         print(f"❌ ERROR: Upload failed: {e}")

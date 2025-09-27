@@ -164,3 +164,15 @@ logging:
   wandb_project: "rfm"
   wandb_entity: clvr
   wandb_run_name: "rfm"
+  
+  # SaveBestCallback configuration
+  save_best:
+    # Metric monitoring
+    metric_name: "custom_eval/p_rank_spearman_mw"  # Metric to monitor
+    greater_is_better: true  # Whether higher values are better
+    keep_top_k: 1  # Number of best checkpoints and uploads to keep
+    
+    # Hub upload configuration (optional)
+    upload_to_hub: true   # Whether to upload best models to HuggingFace Hub
+    hub_token: null       # Set to your HF token or use HF_TOKEN environment variable
+    hub_private: false    # Whether to make the uploaded model private

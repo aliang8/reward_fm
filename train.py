@@ -141,7 +141,7 @@ def train(cfg: ExperimentConfig):
     # Add SaveBestCallback to automatically save and upload best models
     save_best_cfg = cfg.logging.save_best
     save_callback = SaveBestCallback(
-        metric_name=save_best_cfg.metric_name,
+        metric_names=save_best_cfg.metric_names,
         greater_is_better=save_best_cfg.greater_is_better,
         keep_top_k=save_best_cfg.keep_top_k,
         upload_to_hub=save_best_cfg.upload_to_hub,
@@ -166,7 +166,12 @@ def train(cfg: ExperimentConfig):
     # Debug: Check if callback was added
     print(f"🔧 DEBUG: Trainer callbacks: {[type(cb).__name__ for cb in trainer.callback_handler.callbacks]}")
     
-    rank_0_print(f"💾 SaveBest monitoring: {save_best_cfg.metric_name} ({'higher' if save_best_cfg.greater_is_better else '↘️ lower'} is better)")
+    metrics_info = []
+    for name, is_better in zip(save_best_cfg.metric_names, save_best_cfg.greater_is_better):
+        direction = "↗️ higher" if is_better else "↘️ lower"
+        metrics_info.append(f"{name} ({direction})")
+    
+    rank_0_print(f"💾 SaveBest monitoring: {', '.join(metrics_info)}")
     rank_0_print(f"📁 Keeping top {save_best_cfg.keep_top_k} checkpoint(s) and upload(s)")
 
     if is_rank_0():

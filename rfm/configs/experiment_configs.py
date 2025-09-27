@@ -215,15 +215,20 @@ class SaveBestConfig:
     """Configuration for SaveBestCallback"""
     
     # Metric monitoring
-    metric_name: str = field(default="custom_eval/p_rank_spearman_mw", metadata={"help": "Metric name to monitor for saving best models"})
-    greater_is_better: bool = field(default=True, metadata={"help": "Whether higher values are better for the metric"})
-    keep_top_k: int = field(default=5, metadata={"help": "Number of best checkpoints/uploads to keep"})
+    metric_names: List[str] = field(default_factory=lambda: ["custom_eval/p_rank_spearman_mw"], metadata={"help": "List of metric names to monitor for saving best models (will be averaged)"})
+    greater_is_better: List[bool] = field(default_factory=lambda: [True], metadata={"help": "Whether higher values are better for each metric (must match length of metric_names)"})
+    keep_top_k: int = field(default=1, metadata={"help": "Number of best checkpoints/uploads to keep"})
     
     # Hub upload configuration
     upload_to_hub: bool = field(default=False, metadata={"help": "Whether to upload best models to HuggingFace Hub"})
     hub_model_id: Optional[str] = field(default=None, metadata={"help": "HuggingFace model ID (username/model-name)"})
     hub_token: Optional[str] = field(default=None, metadata={"help": "HuggingFace token (or set HF_TOKEN env var)"})
     hub_private: bool = field(default=False, metadata={"help": "Whether to make the Hub model private"})
+    
+    def __post_init__(self):
+        """Validate that metric_names and greater_is_better have the same length"""
+        if len(self.metric_names) != len(self.greater_is_better):
+            raise ValueError(f"metric_names ({len(self.metric_names)}) and greater_is_better ({len(self.greater_is_better)}) must have the same length")
 
 
 @dataclass

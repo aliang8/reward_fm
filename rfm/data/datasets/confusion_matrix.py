@@ -59,10 +59,10 @@ class ConfusionMatrixDataset(RFMBaseDataset):
 
         rank_0_print(f"Processing {len(trajectories_to_process)} trajectories for confusion matrix analysis")
 
-        video_task_count = Counter()
-
         # Create all task-trajectory pairs
         for lang_task in tqdm(unique_tasks, desc="Generating task-trajectory pairs"):
+            video_task_count = Counter()
+
             for traj_idx in trajectories_to_process:
                 traj = self.dataset[traj_idx]
                 video_task = traj["task"]

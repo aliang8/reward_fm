@@ -106,6 +106,10 @@ class DataConfig:
     preference_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 1])
     # Tunable strategy ratios for progress generation: [default, rewind_same_task, different_task]
     progress_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1])
+    data_source_weights: Optional[Dict[str, float]] = field(
+        default=None, 
+        metadata={"help": "Dictionary mapping data source names to sampling weights (e.g., {'metaworld': 0.2, 'libero': 0.8})"}
+    )
 
     # Processing parameters
     shuffle: bool = field(default=True, metadata={"help": "Whether to shuffle the dataset"})

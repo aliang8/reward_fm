@@ -43,24 +43,24 @@ peft:
 data:
   # Dataset paths and sources
   train_datasets: 
-    # - "abraranwar/libero_rfm"
+    - "abraranwar/libero_rfm"
     # - "ykorkmaz/libero_failure_rfm"
     - "HenryZhang/metaworld_rewind_rfm_train"
     # - "jesbu1/oxe_rfm"
   train_subsets:
-    # - ["libero256_90"]
+    - ["libero256_90"]
     # - ["libero_90_failure"]
     - ["metaworld_rewind_train"]
     # - ["oxe_bridge_v2"]
   # Evaluation dataset settings
   eval_datasets:
-    # - "abraranwar/libero_rfm"
+    - "abraranwar/libero_rfm"
     # - "ykorkmaz/libero_failure_rfm"
     - "HenryZhang/metaworld_rewind_rfm_eval"
     # - "aliangdw/metaworld_rfm"
   eval_subsets:
     # - ["libero256_10", "libero256_object", "libero256_spatial", "libero256_goal"]
-    # - ["libero256_10"]
+    - ["libero256_10"]
     # - ["libero_10_failure"]
     - ["metaworld_rewind_eval"]
     # - ["metaworld"]
@@ -82,6 +82,8 @@ data:
   progress_strategy_ratio: [1, 1, 1]
   shuffle: true
   seed: 42
+
+  dataset_type: default
 
   # Data loading settings
   dataloader_pin_memory: false

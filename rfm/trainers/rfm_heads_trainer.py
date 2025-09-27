@@ -262,9 +262,9 @@ class RFMHeadsTrainer(Trainer):
             eval_datasets_name = [d[0] for d in datasets]
             eval_subsets_name = [[d[1] for d in datasets]]
 
-            if eval_type == "confusion_matrix":
-                eval_datasets_name = eval_datasets_name + self.config.data.train_datasets
-                eval_subsets_name = eval_subsets_name + self.config.data.train_subsets
+            # if eval_type == "confusion_matrix":
+            #     eval_datasets_name = eval_datasets_name + self.config.data.train_datasets
+            #     eval_subsets_name = eval_subsets_name + self.config.data.train_subsets
 
             # Pair up each dataset with the corresponding subsets
             for eval_dataset, eval_subset in zip(eval_datasets_name, eval_subsets_name):
@@ -338,28 +338,37 @@ class RFMHeadsTrainer(Trainer):
                 rank_0_print(f"Metrics: {metrics[ds_name][eval_type]}")
                 rank_0_print("=" * 50)
 
+        # Prepare metrics for both wandb and callback return
+        wandb_metrics = {}
+        callback_metrics = {}
+        
+        for ds_name, eval_type_metric in metrics.items():
+            for eval_type, metric in eval_type_metric.items():
+                eval_type_short = EVAL_TYPE_SHORT[eval_type]
+                if eval_type == "confusion_matrix":
+                    # plot confusion matrix
+                    wandb_metrics.update({
+                        f"custom_eval/{eval_type_short}_{ds_name}": wandb.Image(metric),
+                    })
+                else:
+                    # Add to both wandb and callback metrics
+                    for k, v in metric.items():
+                        if isinstance(v, (int, float)):
+                            metric_name = f"custom_eval/{eval_type_short}_{k}_{ds_name}"
+                            wandb_metrics[metric_name] = v
+                            callback_metrics[metric_name] = v
+        
+        # Log to wandb
         if self.args.report_to and "wandb" in self.args.report_to and is_rank_0():
-            wandb_metrics = {}
-            for ds_name, eval_type_metric in metrics.items():
-                for eval_type, metric in eval_type_metric.items():
-                    eval_type_short = EVAL_TYPE_SHORT[eval_type]
-                    if eval_type == "confusion_matrix":
-                        # plot confusion matrix
-                        wandb_metrics.update({
-                            f"custom_eval/{eval_type_short}_{ds_name}": wandb.Image(metric),
-                        })
-                    else:
-                        wandb_metrics.update({
-                            f"custom_eval/{eval_type_short}_{k}_{ds_name}": v
-                            for k, v in metric.items()
-                            if isinstance(v, (int, float))
-                        })
             wandb.log(wandb_metrics)
+            
+        # Return metrics for callbacks
+        return callback_metrics
 
     def evaluate(self, eval_dataset=None, ignore_keys=None) -> dict[str, float]:
         """
         Override evaluate method to implement custom RFM evaluation metrics.
-        """
+        """        
         # Get the evaluation dataset
         eval_dataloader = self.get_eval_dataloader(eval_dataset)
 
@@ -406,12 +415,17 @@ class RFMHeadsTrainer(Trainer):
                 wandb.log(metrics)
 
         # Run the custom evaluations
-        if (
+        custom_eval_should_run = (
             self.config.training.custom_eval_steps
             and self.state.global_step % self.config.training.custom_eval_steps == 0
-        ):
-            self._run_custom_evaluations()
-
+        )        
+        if custom_eval_should_run:
+            custom_metrics = self._run_custom_evaluations()
+            metrics.update(custom_metrics)
+         
+            # to trigger the callback handler
+            # self.log(metrics)
+            self.control = self.callback_handler.on_evaluate(self.args, self.state, self.control, metrics)
         return metrics
 
     def compute_loss(self, model, inputs, return_outputs=False, training=True, **kwargs):

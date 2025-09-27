@@ -211,6 +211,22 @@ class TrainingConfig:
 
 
 @dataclass
+class SaveBestConfig:
+    """Configuration for SaveBestCallback"""
+    
+    # Metric monitoring
+    metric_name: str = field(default="custom_eval/p_rank_spearman_mw", metadata={"help": "Metric name to monitor for saving best models"})
+    greater_is_better: bool = field(default=True, metadata={"help": "Whether higher values are better for the metric"})
+    keep_top_k: int = field(default=5, metadata={"help": "Number of best checkpoints/uploads to keep"})
+    
+    # Hub upload configuration
+    upload_to_hub: bool = field(default=False, metadata={"help": "Whether to upload best models to HuggingFace Hub"})
+    hub_model_id: Optional[str] = field(default=None, metadata={"help": "HuggingFace model ID (username/model-name)"})
+    hub_token: Optional[str] = field(default=None, metadata={"help": "HuggingFace token (or set HF_TOKEN env var)"})
+    hub_private: bool = field(default=False, metadata={"help": "Whether to make the Hub model private"})
+
+
+@dataclass
 class LoggingConfig:
     """Config for logging settings"""
 
@@ -221,6 +237,9 @@ class LoggingConfig:
     wandb_project: str = field(default="rfm-model", metadata={"help": "Wandb project name"})
     wandb_entity: Optional[str] = field(default=None, metadata={"help": "Wandb entity/username"})
     wandb_run_name: Optional[str] = field(default=None, metadata={"help": "Wandb run name"})
+    
+    # SaveBest configuration
+    save_best: Optional[SaveBestConfig] = field(default=None, metadata={"help": "SaveBestCallback configuration"})
 
 
 @dataclass
@@ -254,6 +273,13 @@ class ExperimentConfig:
 
         if isinstance(self.logging, dict):
             self.logging = LoggingConfig(**self.logging)
+            
+        # Handle nested SaveBestConfig in LoggingConfig
+        if hasattr(self.logging, 'save_best') and isinstance(self.logging.save_best, dict):
+            self.logging.save_best = SaveBestConfig(**self.logging.save_best)
+        elif self.logging.save_best is None:
+            # Set default SaveBestConfig if not provided
+            self.logging.save_best = SaveBestConfig()
 
         if isinstance(self.custom_eval, dict):
             self.custom_eval = CustomEvaluationConfig(**self.custom_eval)

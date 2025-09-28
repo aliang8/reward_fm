@@ -8,12 +8,12 @@ from rfm.utils.distributed import rank_0_print
 class BalancedMixedDataset(MixedDataset):
     """Dataset that extends MixedDataset with configurable sampling weights per data source."""
 
-    def __init__(self, config, is_evaluation=False, max_samples=None, batch_size=None, **kwargs):        
+    def __init__(self, config, is_evaluation=False, max_samples=None, batch_size=None, **kwargs):
         super().__init__(config, is_evaluation, max_samples, batch_size, **kwargs)
-        
+
         self.data_source_weights = config.data_source_weights
         self.data_len = 100000
-        
+
         rank_0_print("Building source indices for BalancedMixedDataset...")
         self.source_indices = {}
         for i, traj in enumerate(self.dataset):
@@ -34,33 +34,27 @@ class BalancedMixedDataset(MixedDataset):
     def _normalize_data_source_weights(self):
         """Normalize data source weights across all available sources."""
         available_sources = list(self.source_indices.keys())
-        
+
         if not available_sources:
             self.normalized_weights = {}
             return
-        
+
         # Get weights for available sources
         weights = {}
         total_weight = 0.0
-        
+
         for source in available_sources:
             weight = self.data_source_weights.get(source, 1.0)  # Default weight of 1.0
             weights[source] = weight
             total_weight += weight
-        
+
         # Normalize weights
         if total_weight > 0:
-            self.normalized_weights = {
-                source: weight / total_weight 
-                for source, weight in weights.items()
-            }
+            self.normalized_weights = {source: weight / total_weight for source, weight in weights.items()}
         else:
             # Equal weights fallback
             equal_weight = 1.0 / len(available_sources)
-            self.normalized_weights = {
-                source: equal_weight 
-                for source in available_sources
-            }
+            self.normalized_weights = {source: equal_weight for source in available_sources}
 
     def __getitem__(self, idx):
         """Create a sample with balanced data source sampling and configured sample type ratios."""
@@ -87,19 +81,21 @@ class BalancedMixedDataset(MixedDataset):
             if prob <= cumulative_prob:
                 return self._get_balanced_sample(name)
 
-        import ipdb; ipdb.set_trace()
+        import ipdb
+
+        ipdb.set_trace()
 
     def _get_balanced_sample(self, sample_type: str):
         """Get a sample of the specified type with weighted data source sampling."""
         # Select data source based on unified normalized weights
         selected_source = self._select_weighted_source()
-        
+
         # Get available trajectory indices for this source
         source_indices = self.source_indices[selected_source]
-        
-        # Select trajectory index randomly within the source  
+
+        # Select trajectory index randomly within the source
         selected_traj_idx = random.choice(source_indices)
-        
+
         # Generate sample using the appropriate dataset
         if sample_type == "pref":
             return self.pref_dataset[selected_traj_idx]
@@ -111,21 +107,23 @@ class BalancedMixedDataset(MixedDataset):
     def _select_weighted_source(self) -> str:
         """Select a data source based on normalized weights."""
         available_sources = list(self.source_indices.keys())
-        
+
         if len(available_sources) == 1:
             return available_sources[0]
-        
+
         # Select based on weighted random sampling
         prob = random.random()
         cumulative_prob = 0.0
-        
+
         for source in available_sources:
             weight = self.normalized_weights[source]
             cumulative_prob += weight
             if prob <= cumulative_prob:
                 return source
-        
-        import ipdb; ipdb.set_trace()
+
+        import ipdb
+
+        ipdb.set_trace()
 
 
 def test():
@@ -178,7 +176,7 @@ def test():
         max_frames=8,
         force_reprocess=False,
         model_type="default",
-        load_embeddings=True
+        load_embeddings=True,
     )
 
     MockConfig(data=mock_data_config, debug=False)
@@ -194,13 +192,13 @@ def test():
 
     for i in range(100):
         sample = generator[i]
-        
+
         # Determine sample type
-        if hasattr(sample, 'chosen_trajectory'):
+        if hasattr(sample, "chosen_trajectory"):
             sample_type_counts["pref"] += 1
             source_counts[sample.chosen_trajectory.data_source] += 1
-        elif hasattr(sample, 'trajectory'):
-            if hasattr(sample, 'reference_trajectory'):
+        elif hasattr(sample, "trajectory"):
+            if hasattr(sample, "reference_trajectory"):
                 sample_type_counts["similarity"] += 1
                 source_counts[sample.trajectory.data_source] += 1
             else:

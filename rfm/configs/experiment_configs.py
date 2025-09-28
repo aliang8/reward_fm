@@ -31,6 +31,9 @@ class ModelConfig(PretrainedConfig):
     use_peft: bool = field(default=False, metadata={"help": "Whether to use PEFT/LoRA or train full model"})
     peft_vision_encoder: bool = field(default=False, metadata={"help": "Whether to attach LoRA to the vision encoder"})
 
+    # use bitsandbytes for quantization
+    quantization: bool = field(default=False, metadata={"help": "Whether to use bitsandbytes for quantization"})
+
     # rewind sub-config
     rewind: Optional[Dict[str, Any]] = field(default=None)
 
@@ -107,8 +110,10 @@ class DataConfig:
     # Tunable strategy ratios for progress generation: [default, rewind_same_task, different_task]
     progress_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1])
     data_source_weights: Optional[Dict[str, float]] = field(
-        default=None, 
-        metadata={"help": "Dictionary mapping data source names to sampling weights (e.g., {'metaworld': 0.2, 'libero': 0.8})"}
+        default=None,
+        metadata={
+            "help": "Dictionary mapping data source names to sampling weights (e.g., {'metaworld': 0.2, 'libero': 0.8})"
+        },
     )
 
     # Processing parameters
@@ -136,11 +141,13 @@ class DataConfig:
         default=False,
         metadata={"help": "Whether to load precomputed embeddings instead of processing frames (ReWiND only)"},
     )
-    
+
     # Data source weighting parameters
     data_source_weights: Optional[Dict[str, float]] = field(
-        default=None, 
-        metadata={"help": "Dictionary mapping data source names to sampling weights (e.g., {'metaworld': 0.2, 'libero': 0.8})"}
+        default=None,
+        metadata={
+            "help": "Dictionary mapping data source names to sampling weights (e.g., {'metaworld': 0.2, 'libero': 0.8})"
+        },
     )
 
 
@@ -213,22 +220,30 @@ class TrainingConfig:
 @dataclass
 class SaveBestConfig:
     """Configuration for SaveBestCallback"""
-    
+
     # Metric monitoring
-    metric_names: List[str] = field(default_factory=lambda: ["custom_eval/p_rank_spearman_mw"], metadata={"help": "List of metric names to monitor for saving best models (will be averaged)"})
-    greater_is_better: List[bool] = field(default_factory=lambda: [True], metadata={"help": "Whether higher values are better for each metric (must match length of metric_names)"})
+    metric_names: List[str] = field(
+        default_factory=lambda: ["custom_eval/p_rank_spearman_mw"],
+        metadata={"help": "List of metric names to monitor for saving best models (will be averaged)"},
+    )
+    greater_is_better: List[bool] = field(
+        default_factory=lambda: [True],
+        metadata={"help": "Whether higher values are better for each metric (must match length of metric_names)"},
+    )
     keep_top_k: int = field(default=1, metadata={"help": "Number of best checkpoints/uploads to keep"})
-    
+
     # Hub upload configuration
     upload_to_hub: bool = field(default=False, metadata={"help": "Whether to upload best models to HuggingFace Hub"})
     hub_model_id: Optional[str] = field(default=None, metadata={"help": "HuggingFace model ID (username/model-name)"})
     hub_token: Optional[str] = field(default=None, metadata={"help": "HuggingFace token (or set HF_TOKEN env var)"})
     hub_private: bool = field(default=False, metadata={"help": "Whether to make the Hub model private"})
-    
+
     def __post_init__(self):
         """Validate that metric_names and greater_is_better have the same length"""
         if len(self.metric_names) != len(self.greater_is_better):
-            raise ValueError(f"metric_names ({len(self.metric_names)}) and greater_is_better ({len(self.greater_is_better)}) must have the same length")
+            raise ValueError(
+                f"metric_names ({len(self.metric_names)}) and greater_is_better ({len(self.greater_is_better)}) must have the same length"
+            )
 
 
 @dataclass
@@ -242,7 +257,7 @@ class LoggingConfig:
     wandb_project: str = field(default="rfm-model", metadata={"help": "Wandb project name"})
     wandb_entity: Optional[str] = field(default=None, metadata={"help": "Wandb entity/username"})
     wandb_run_name: Optional[str] = field(default=None, metadata={"help": "Wandb run name"})
-    
+
     # SaveBest configuration
     save_best: Optional[SaveBestConfig] = field(default=None, metadata={"help": "SaveBestCallback configuration"})
 
@@ -278,9 +293,9 @@ class ExperimentConfig:
 
         if isinstance(self.logging, dict):
             self.logging = LoggingConfig(**self.logging)
-            
+
         # Handle nested SaveBestConfig in LoggingConfig
-        if hasattr(self.logging, 'save_best') and isinstance(self.logging.save_best, dict):
+        if hasattr(self.logging, "save_best") and isinstance(self.logging.save_best, dict):
             self.logging.save_best = SaveBestConfig(**self.logging.save_best)
         elif self.logging.save_best is None:
             # Set default SaveBestConfig if not provided

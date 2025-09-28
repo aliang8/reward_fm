@@ -200,7 +200,7 @@ def run_confusion_matrix_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
 
     plt.tight_layout()
 
-    return fig
+    return fig, confusion_matrix
 
 
 def run_policy_ranking_eval_per_ranked_set(results: list[dict[str, Any]]) -> dict[str, Any]:
@@ -324,16 +324,18 @@ def main():
 
                 for eval_file in eval_files:
                     eval_type = eval_file.stem  # filename without extension
-                    print(f"    Analyzing {eval_type}...")
 
-                    try:
-                        results = load_results(str(eval_file))
-                        metrics = compute_eval_metrics(eval_type, results)
+                    results = load_results(str(eval_file))
+                    metrics = compute_eval_metrics(eval_type, results)
+
+                    if eval_type == "confusion_matrix_progress" or eval_type == "confusion_matrix":
+                        # save the figure
+                        fig, confusion_matrix = metrics
+                        fig.savefig(eval_file.with_suffix(".png"))
+                        # save the confusion matrix
+                        np.save(eval_file.with_suffix(".npy"), confusion_matrix)
+                    else:
                         dataset_results[eval_type] = metrics
-                        print(f"      ✓ Completed {eval_type} analysis")
-                    except Exception as e:
-                        print(f"      ✗ Failed to analyze {eval_type}: {e}")
-                        dataset_results[eval_type] = {"error": str(e)}
 
                 model_results[dataset_name] = dataset_results
 
@@ -341,6 +343,7 @@ def main():
 
         # Save comprehensive results
         results_summary_path = eval_logs_path / "evaluation_summary.json"
+
         with open(results_summary_path, "w") as f:
             json.dump(all_results, f, indent=2)
         print(f"\nSaved comprehensive evaluation summary to: {results_summary_path}")

@@ -124,7 +124,7 @@ def upload_model_to_hub(
         commit_message: Commit message for the upload
         base_model: Base model name for the model card
         tag_name: Optional tag name to create after upload
-    
+
     Returns:
         tuple: (hub_url, commit_id) - URL of the uploaded model and the commit ID
     """
@@ -167,12 +167,9 @@ def upload_model_to_hub(
 
     # Upload the entire directory
     commit_info = api.upload_folder(
-        folder_path=str(model_path), 
-        repo_id=hub_model_id, 
-        commit_message=commit_message, 
-        repo_type="model"
+        folder_path=str(model_path), repo_id=hub_model_id, commit_message=commit_message, repo_type="model"
     )
-    
+
     commit_id = commit_info.oid
     print(f"✅ Successfully uploaded model to: https://huggingface.co/{hub_model_id}")
     print(f"📋 Commit ID: {commit_id}")
@@ -191,11 +188,7 @@ def upload_model_to_hub(
     # Create tag if requested
     if tag_name:
         api.create_tag(
-            repo_id=hub_model_id,
-            repo_type="model", 
-            tag=tag_name,
-            revision=commit_id,
-            tag_message=commit_message
+            repo_id=hub_model_id, repo_type="model", tag=tag_name, revision=commit_id, tag_message=commit_message
         )
         print(f"🏷️ Created tag: {tag_name}")
 

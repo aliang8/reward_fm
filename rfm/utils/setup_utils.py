@@ -4,8 +4,12 @@ Shared setup utilities for RFM training.
 This file contains setup functions that can be reused across different training scripts.
 """
 
+import re
+from typing import Tuple, Optional
 import torch
 from peft import LoraConfig, get_peft_model
+import bitsandbytes as bnb
+from huggingface_hub import HfApi
 from transformers import (
     AutoImageProcessor,
     AutoModel,
@@ -15,6 +19,7 @@ from transformers import (
     Qwen2_5_VLForConditionalGeneration,
     Qwen2_5_VLModel,
     TrainingArguments,
+    BitsAndBytesConfig
 )
 
 from rfm.configs.experiment_configs import DataConfig, ExperimentConfig, ModelConfig, PEFTConfig
@@ -35,8 +40,86 @@ from rfm.models.rewind_transformer import ReWINDTransformerConfig
 from rfm.utils.distributed import rank_0_print
 
 
+def find_best_model_tag(hf_model_id: str, hub_token: Optional[str] = None) -> Tuple[Optional[str], Optional[float]]:
+    """
+    Find the best model tag from HuggingFace Hub by parsing tag names and extracting scores.
+    
+    Expected tag format: "best-{metric_short}-{score:.4f}-step-{step}"
+    Example: "best-p-rank-spearman-mw-0.8500-step-123" or "best-avg-3metrics-0.7234-step-456"
+    
+    Args:
+        hf_model_id: HuggingFace model ID (e.g., "aliangdw/rewind-debug")
+        hub_token: Optional HuggingFace token for private repos
+        
+    Returns:
+        tuple: (best_tag_name, best_score) or (None, None) if no valid tags found
+    """
+    try:
+        api = HfApi(token=hub_token)
+        
+        # Check if repository exists
+        if not api.repo_exists(repo_id=hf_model_id, repo_type="model"):
+            rank_0_print(f"Repository {hf_model_id} does not exist")
+            return None, None
+            
+        # Get all tags for the repository
+        tags = api.list_repo_refs(repo_id=hf_model_id, repo_type="model").tags
+        
+        if not tags:
+            rank_0_print(f"No tags found in repository {hf_model_id}")
+            return None, None
+            
+        rank_0_print(f"Found {len(tags)} tags in {hf_model_id}: {[tag.name for tag in tags]}")
+        
+        best_tag = None
+        best_score = float('-inf')
+        
+        # Parse each tag to extract score
+        for tag in tags:
+            tag_name = tag.name
+            
+            # Match our tag pattern: "best-{metric_short}-{score}-step-{step}"
+            # Examples: "best-p-rank-spearman-mw-0.8500-step-123" or "best-avg-3metrics-0.7234-step-456"
+            # Score can be positive or negative (e.g., 0.8500 or -1.2300)
+            pattern = r"best-.*?-(-?\d+\.\d+)-step-\d+"
+            match = re.search(pattern, tag_name)
+            
+            if match:
+                try:
+                    score = float(match.group(1))
+                    rank_0_print(f"Parsed tag '{tag_name}': score = {score}")
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_tag = tag_name
+                        
+                except ValueError:
+                    rank_0_print(f"Could not parse score from tag '{tag_name}'")
+                    continue
+            else:
+                rank_0_print(f"Tag '{tag_name}' does not match expected pattern")
+                
+        if best_tag:
+            rank_0_print(f"Best tag found: '{best_tag}' with score {best_score}")
+        else:
+            rank_0_print("No valid tags found matching the expected pattern")
+            
+        return best_tag, best_score
+        
+    except Exception as e:
+        rank_0_print(f"Error finding best tag for {hf_model_id}: {e}")
+        return None, None
+
+
 def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[AutoProcessor, RFM]:
     """Shared function to set up model, processor, and tokenizer for both training and evaluation"""
+
+    # If quantization is enabled, use bitsandbytes
+    if cfg.quantization:
+        bnb = BitsAndBytesConfig(
+            load_in_8bit=True,
+            llm_int8_enable_fp32_cpu_offload=True,
+        )
 
     # Load processor and tokenizer
     if "SmolVLM" in cfg.base_model_id or "Qwen" in cfg.base_model_id:
@@ -53,8 +136,10 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
             base_model = AutoModelForImageTextToText.from_pretrained(
                 cfg.base_model_id,
                 torch_dtype=torch.bfloat16,
-                # _attn_implementation="flash_attention_2",
+                # attn_implementation="flash_attention_2",
+                quantization_config=bnb,
             )
+
             model_cls = RFM
 
         elif "Qwen" in cfg.base_model_id:
@@ -76,7 +161,7 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
                 do_sample_frames=False,  # disable frame sampling here since we do this in the data generator
                 # max_frames=cfg.data.max_frames,
                 padding_side="left",
-                attn_implementation="flash_attention_2",
+                # attn_implementation="flash_attention_2",
             )
             rank_0_print(f"Qwen Processor: {processor}")
         else:
@@ -116,7 +201,13 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
         )
 
         if hf_model_id:
-            rank_0_print(f"Loading model from {hf_model_id}")
+            # Check if this is a HuggingFace repo (not a local path) and find best tag
+            if "/" in hf_model_id and not hf_model_id.startswith("/") and not "@" in hf_model_id:
+                best_tag, best_score = find_best_model_tag(hf_model_id)
+                if best_tag:
+                    rank_0_print(f"Loading model from best tag: {hf_model_id} (score: {best_score})")
+            else:
+                rank_0_print(f"Loading model from {hf_model_id}")
 
             # before = model.model.visual.blocks[0].mlp.down_proj.weight
             # before = model.preference_head.weight
@@ -131,14 +222,21 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
         tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L12-v2")
 
         if hf_model_id:
-            # Load from Hugging Face Hub
-            rank_0_print(f"Loading ReWiND model from {hf_model_id}")
+            # Check if this is a HuggingFace repo (not a local path) and find best tag
+            if "/" in hf_model_id and not hf_model_id.startswith("/") and not "@" in hf_model_id:
+                best_tag, best_score = find_best_model_tag(hf_model_id)
+                if best_tag:
+                    rank_0_print(f"Loading ReWiND model from best tag: {hf_model_id} (score: {best_score})")
+            else:
+                rank_0_print(f"Loading ReWiND model from {hf_model_id}")
+            
             model = ReWiNDTransformer.from_pretrained(
                 hf_model_id,
                 processor=processor,
                 image_encoder=image_encoder,
                 text_encoder=text_encoder,
                 tokenizer=tokenizer,
+                revision=best_tag,
             )
         else:
             train_img = cfg.train_vision_encoder
@@ -182,6 +280,8 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
         elif "language_model" in name:
             param.requires_grad = cfg.train_language_model
         elif "text_encoder" in name:
+            param.requires_grad = cfg.train_language_model
+        elif "text_model" in name:
             param.requires_grad = cfg.train_language_model
         elif "image_encoder" in name:
             param.requires_grad = cfg.train_vision_encoder
@@ -260,6 +360,10 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
         "warmup_steps": cfg.training.warmup_steps,
         "warmup_ratio": cfg.training.warmup_ratio,
         "max_grad_norm": cfg.training.max_grad_norm,
+        # Compile settings
+        "torch_compile": True,
+        "torch_compile_mode": "max-autotune",
+        "torch_compile_backend": "inductor",
     }
 
     # Add eval_steps if evaluation_strategy is "steps"

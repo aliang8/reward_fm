@@ -10,6 +10,8 @@ from rich import print as rprint
 from rich.console import Console
 from rich.panel import Panel
 
+from peft import prepare_model_for_kbit_training
+
 import wandb
 
 # Import shared configs and utilities
@@ -70,6 +72,9 @@ def train(cfg: ExperimentConfig):
     else:
         peft_rfm_model = rfm_model
         rank_0_print("PEFT not enabled, using full model")
+
+    if cfg.model.quantization:
+        peft_rfm_model = prepare_model_for_kbit_training(peft_rfm_model)
 
     # Create training arguments from config
     if cfg.debug:
@@ -147,7 +152,7 @@ def train(cfg: ExperimentConfig):
         upload_to_hub=save_best_cfg.upload_to_hub,
         hub_token=save_best_cfg.hub_token,
         hub_private=save_best_cfg.hub_private,
-        base_model=cfg.model.base_model_id
+        base_model=cfg.model.base_model_id,
     )
 
     trainer = trainer_cls(
@@ -157,20 +162,20 @@ def train(cfg: ExperimentConfig):
         eval_dataset=eval_dataset,
         data_collator=batch_collator,
         config=cfg,
-        callbacks=[save_callback]
+        callbacks=[save_callback],
     )
-    
+
     # Set trainer reference in the callback so it can access trainer methods
     save_callback.setup_trainer_reference(trainer)
-    
+
     # Debug: Check if callback was added
     print(f"🔧 DEBUG: Trainer callbacks: {[type(cb).__name__ for cb in trainer.callback_handler.callbacks]}")
-    
+
     metrics_info = []
     for name, is_better in zip(save_best_cfg.metric_names, save_best_cfg.greater_is_better):
         direction = "↗️ higher" if is_better else "↘️ lower"
         metrics_info.append(f"{name} ({direction})")
-    
+
     rank_0_print(f"💾 SaveBest monitoring: {', '.join(metrics_info)}")
     rank_0_print(f"📁 Keeping top {save_best_cfg.keep_top_k} checkpoint(s) and upload(s)")
 
@@ -197,10 +202,10 @@ def train(cfg: ExperimentConfig):
 
     rank_0_print(f"Timing raw: {timing_raw}")
     rank_0_print(f"Training from checkpoint: {cfg.training.resume_from_checkpoint}")
-    
+
     if cfg.debug:
         rank_0_print("🐛 DEBUG MODE: eval_steps=2, custom_eval_steps=2, eval_subset_size=10")
-    
+
     trainer.train(resume_from_checkpoint=cfg.training.resume_from_checkpoint)
     trainer.save_model(cfg.training.output_dir)
     rank_0_print(f"Training complete! Check {cfg.training.output_dir} for checkpoints and final model.")

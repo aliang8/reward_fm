@@ -168,7 +168,10 @@ class RFM(PreTrainedModel):
                 outputs = self.model(**model_kwargs, output_hidden_states=True, return_dict=True)
 
             B = input_ids.shape[0]
-            V = 2
+            if sample_type == "progress":
+                V = 1
+            else:
+                V = 2
             T = 16  # TODO: fix this hardcoding
             D = outputs.image_hidden_states.shape[-1]
 

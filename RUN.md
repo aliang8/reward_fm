@@ -12,6 +12,12 @@ source $HOME/.local/bin/env
 # install dependencies
 uv pip install huggingface_hub
 
+# # also install flash-attention-2, this works on snoopy A6000
+# # this might take a while to run
+# uv run pip uninstall -y flash-attn
+# export TORCH_CUDA_ARCH_LIST="8.6"     # (or "8.0;8.6" if you also run on A100)
+# MAX_JOB=4 uv run pip install --no-build-isolation --no-cache-dir flash-attn -v
+
 export RFM_DATASET_PATH=/scr/shared/reward_fm/rfm_dataset
 export RFM_PROCESSED_DATASETS_PATH=/scr/shared/reward_fm/processed_dataset
 export OMP_NUM_THREADS=1

@@ -6,7 +6,7 @@ CUDA_VISIBLE_DEVICES=0 uv run accelerate launch \
     --config_paths rfm/configs/config.yaml rfm/configs/rewind_transformer_config.yaml \
     --logging.use_wandb true \
     --debug false \
-    --model.train_preference_head true \
+    --model.train_preference_head false \
     --model.train_progress_head true \
-    --training.output_dir ./logs/rewind_libero_mw_pp_balanced \
+    --training.output_dir ./logs/rewind_base_mw_only \
     --training.predict_pref_progress false

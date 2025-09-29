@@ -13,8 +13,8 @@ trainer_cls: "rfm_heads" # "rewind_transformer", "rfm_vqa"
 # =====================================================================================
 model:
   model_type: "default" # "default" or "vqa"
-  base_model_id: "Qwen/Qwen2.5-VL-3B-Instruct"
-  # base_model_id: "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
+  # base_model_id: "Qwen/Qwen2.5-VL-3B-Instruct"
+  base_model_id: "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
   torch_dtype: "bfloat16"
   trust_remote_code: true
   # Additional options for more comprehensive training (when use_peft: false)
@@ -25,7 +25,7 @@ model:
   train_similarity_head: false   # Whether to train the similarity scoring head
   use_peft: false
   peft_vision_encoder: false
-  quantization: true
+  quantization: false
 
 # =====================================================================================
 # PEFT Configuration
@@ -44,24 +44,24 @@ peft:
 data:
   # Dataset paths and sources
   train_datasets: 
-    - "abraranwar/libero_rfm"
+    # - "abraranwar/libero_rfm"
     # - "ykorkmaz/libero_failure_rfm"
     - "HenryZhang/metaworld_rewind_rfm_train"
     # - "jesbu1/oxe_rfm"
   train_subsets:
-    - ["libero256_90"]
+    # - ["libero256_90"]
     # - ["libero_90_failure"]
     - ["metaworld_rewind_train"]
     # - ["oxe_bridge_v2"]
   # Evaluation dataset settings
   eval_datasets:
-    - "abraranwar/libero_rfm"
+    # - "abraranwar/libero_rfm"
     # - "ykorkmaz/libero_failure_rfm"
     - "HenryZhang/metaworld_rewind_rfm_eval"
     # - "aliangdw/metaworld_rfm"
   eval_subsets:
     # - ["libero256_10", "libero256_object", "libero256_spatial", "libero256_goal"]
-    - ["libero256_10"]
+    # - ["libero256_10"]
     # - ["libero_10_failure"]
     - ["metaworld_rewind_eval"]
     # - ["metaworld"]

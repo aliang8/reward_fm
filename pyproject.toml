@@ -32,7 +32,6 @@ dependencies = [
     "pyrallis>=0.3.0",
     "safetensors>=0.6.0rc0",
     "sentence-transformers>=2.0.0",
-    "torch>=2.4.0", # A more recent version of torch is generally recommended
     "transformers==4.53.2", # Pinning to a specific version you use
     "tqdm>=4.67.1",
     "wandb>=0.20.1",
@@ -46,14 +45,9 @@ dependencies = [
     "ffmpeg",
     "termcolor>=3.1.0",
     "qwen-vl-utils>=0.0.11",
-    "torchvision>=0.23.0",
     "fastapi>=0.116.1",
     "uvicorn>=0.35.0",
     "requests>=2.32.4",
-    "torchcodec>=0.6.0",
-    "tensorflow-datasets>=4.9.9",
-    "tensorflow>=2.19.0",
-    "tf-keras>=2.19.0",
     "scipy>=1.15.3",
     "codetiming>=1.4.0",
     "robosuite==1.4.0",
@@ -64,7 +58,8 @@ dependencies = [
     "einops>=0.8.0",
     "num2words", 
     "seaborn",
-    "bitsandbytes"
+    "bitsandbytes",
+    "torchvision"
 ]
 
 [project.urls]

@@ -39,3 +39,9 @@ rfm/metaworld/*
 *.mp4
 *.gif
 *.json
+.local/*
+.cache/*
+old/*
+.ipython/*
+.triton/*
+test_*.py

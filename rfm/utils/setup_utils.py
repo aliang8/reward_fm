@@ -120,7 +120,22 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
             load_in_8bit=True,
             llm_int8_enable_fp32_cpu_offload=True,
         )
+    else:
+        bnb = None
 
+    try:
+        import flash_attn 
+        rank_0_print("Flash Attention 2 CUDA is available")
+        has_flash_attn = True
+    except:
+        rank_0_print("Flash Attention 2 CUDA is not available")
+        has_flash_attn = False
+
+    if has_flash_attn:
+        extra_kwargs = {"attn_implementation": "flash_attention_2"}
+    else:
+        extra_kwargs = {}
+        
     # Load processor and tokenizer
     if "SmolVLM" in cfg.base_model_id or "Qwen" in cfg.base_model_id:
         if "SmolVLM" in cfg.base_model_id:
@@ -133,10 +148,11 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
             )
 
             rank_0_print(f"SmolVLM Processor: {processor}")
+
             base_model = AutoModelForImageTextToText.from_pretrained(
                 cfg.base_model_id,
                 torch_dtype=torch.bfloat16,
-                # attn_implementation="flash_attention_2",
+                **extra_kwargs,
                 quantization_config=bnb,
             )
 
@@ -150,7 +166,7 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
                 qwen_model_cls = Qwen2_5_VLForConditionalGeneration
                 model_cls = RFMVQA
 
-            base_model = qwen_model_cls.from_pretrained(cfg.base_model_id)
+            base_model = qwen_model_cls.from_pretrained(cfg.base_model_id, **extra_kwargs)
 
             processor = AutoProcessor.from_pretrained(
                 cfg.base_model_id,
@@ -161,7 +177,6 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
                 do_sample_frames=False,  # disable frame sampling here since we do this in the data generator
                 # max_frames=cfg.data.max_frames,
                 padding_side="left",
-                # attn_implementation="flash_attention_2",
             )
             rank_0_print(f"Qwen Processor: {processor}")
         else:
@@ -360,10 +375,10 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
         "warmup_steps": cfg.training.warmup_steps,
         "warmup_ratio": cfg.training.warmup_ratio,
         "max_grad_norm": cfg.training.max_grad_norm,
-        # Compile settings
-        "torch_compile": True,
-        "torch_compile_mode": "max-autotune",
-        "torch_compile_backend": "inductor",
+        # # Compile settings
+        # "torch_compile": True,
+        # "torch_compile_mode": "max-autotune",
+        # "torch_compile_backend": "inductor",
     }
 
     # Add eval_steps if evaluation_strategy is "steps"

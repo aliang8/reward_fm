@@ -55,3 +55,21 @@ uv run python3 evals/run_model_eval.py
 # visualize results 
 uv run python3 evals/compile_results.py {insert json file from eval}
 ```
+
+
+```
+# Docker setup
+
+docker build -t rfm-dev:latest .
+
+docker run --rm -it --gpus all --ipc=host \
+  --user $(id -u):$(id -g) \
+  -v /scr/aliang80/reward_fm:/workspace \
+  -v /scr/shared/reward_fm/rfm_dataset:/scr/shared/reward_fm/rfm_dataset:ro \
+  -v /scr/shared/reward_fm/processed_datasets:/scr/shared/reward_fm/processed_datasets:ro \
+  -e RFM_DATASET_PATH=/scr/shared/reward_fm/rfm_dataset \
+  -e RFM_PROCESSED_DATASETS_PATH=/scr/shared/reward_fm/processed_datasets \
+  rfm-dev:latest
+
+
+```

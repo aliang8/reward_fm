@@ -262,9 +262,9 @@ class RFMHeadsTrainer(Trainer):
             eval_datasets_name = [d[0] for d in datasets]
             eval_subsets_name = [[d[1] for d in datasets]]
 
-            # if eval_type == "confusion_matrix":
-            #     eval_datasets_name = eval_datasets_name + self.config.data.train_datasets
-            #     eval_subsets_name = eval_subsets_name + self.config.data.train_subsets
+            if eval_type == "confusion_matrix":
+                eval_datasets_name = eval_datasets_name + self.config.data.train_datasets
+                eval_subsets_name = eval_subsets_name + self.config.data.train_subsets
 
             # Pair up each dataset with the corresponding subsets
             for eval_dataset, eval_subset in zip(eval_datasets_name, eval_subsets_name):
@@ -346,9 +346,10 @@ class RFMHeadsTrainer(Trainer):
             for eval_type, metric in eval_type_metric.items():
                 eval_type_short = EVAL_TYPE_SHORT[eval_type]
                 if eval_type == "confusion_matrix":
+                    fig, confusion_matrix = metric
                     # plot confusion matrix
                     wandb_metrics.update({
-                        f"custom_eval/{eval_type_short}_{ds_name}": wandb.Image(metric),
+                        f"custom_eval/{eval_type_short}_{ds_name}": wandb.Image(fig),
                     })
                 else:
                     # Add to both wandb and callback metrics
@@ -445,7 +446,6 @@ class RFMHeadsTrainer(Trainer):
         log_metadata = {}
 
         # Compute preference loss if we have preference samples
-
         if num_preferences > 0 and preference_inputs and self.config.model.train_preference_head:
             with _timer("time/compute_preference_loss", timing_raw=self.timing_raw):
                 preference_loss, loss_dict = self._compute_preference_loss(

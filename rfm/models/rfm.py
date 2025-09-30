@@ -164,7 +164,6 @@ class RFM(PreTrainedModel):
         progress_logits = None
 
         if "SmolVLM" in self.base_model_id:
-            import ipdb; ipdb.set_trace()
             with _timer("time/rfm_forward", timing_raw=timing_raw):
                 outputs = self.model(**model_kwargs, output_hidden_states=True, return_dict=True)
 

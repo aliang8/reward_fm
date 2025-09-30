@@ -303,6 +303,11 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
         else:
             param.requires_grad = True
 
+        if "SmolVLM" in cfg.base_model_id:
+            if "lm_head" in name:
+                param.requires_grad = cfg.train_language_model
+            # i think we want to train the connector head
+
     rank_0_print("Training configuration:")
     rank_0_print(f"  - Vision encoder: {cfg.train_vision_encoder}")
     rank_0_print(f"  - Language model: {cfg.train_language_model}")

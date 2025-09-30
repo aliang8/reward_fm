@@ -45,12 +45,12 @@ uv run python3 rfm/data/scripts/preprocess_datasets.py \
 uv run python3 rfm/utils/upload_to_hub.py --model_dir=logs/rfm_v3/checkpoint-900/ --hub_model_id=aliangdw/rfm_v3
 
 # start eval server in one terminal
-uv run python3 evals/eval_server.py --num_gpus=2
+PYTHONPATH=. uv run python3 evals/eval_server.py
 
 # run eval in another terminal
 # look at rfm/configs/eval_config.yaml for eval parameters
 # NOTE: remember to change model_path in eval_configs
-uv run python3 evals/run_model_eval.py
+PYTHONPATH=. uv run python3 evals/run_model_eval.py
 
 # visualize results 
 uv run python3 evals/compile_results.py {insert json file from eval}

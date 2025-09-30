@@ -197,6 +197,7 @@ class TrainingConfig:
     eval_steps: Optional[int] = field(
         default=None, metadata={"help": "Number of steps between evaluations (required if evaluation_strategy='steps')"}
     )
+    run_default_eval: bool = field(default=False, metadata={"help": "Whether to run default evaluation during training"})
     custom_eval_steps: Optional[int] = field(
         default=None,
         metadata={"help": "Number of steps between custom evaluations (required if evaluation_strategy='steps')"},

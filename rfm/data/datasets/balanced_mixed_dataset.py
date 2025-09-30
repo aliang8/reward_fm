@@ -12,7 +12,7 @@ class BalancedMixedDataset(MixedDataset):
         super().__init__(config, is_evaluation, max_samples, batch_size, **kwargs)
 
         self.data_source_weights = config.data_source_weights
-        self.data_len = 100000
+        self.data_len = 10000000
 
         rank_0_print("Building source indices for BalancedMixedDataset...")
         self.source_indices = {}

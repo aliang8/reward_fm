@@ -16,7 +16,7 @@ from typing import List, Dict
 
 
 class RFMBatchCollator(BaseCollator):
-    def __process_conversation(self, conversations: List[List[Dict]]) -> Dict[str, torch.Tensor]:
+    def _process_conversation(self, conversations: List[List[Dict]]) -> Dict[str, torch.Tensor]:
         """
         Process a list of conversations into a batch of inputs.
 
@@ -243,7 +243,7 @@ class RFMBatchCollator(BaseCollator):
 
             all_messages.append(conversation)
 
-        batch_inputs = self.__process_conversation(all_messages)
+        batch_inputs = self._process_conversation(all_messages)
         # Use the dynamically generated preference labels based on trajectory order
         batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
         batch_inputs = self._add_preference_meta(batch_inputs, preference_samples)
@@ -442,6 +442,6 @@ class RFMBatchCollator(BaseCollator):
 
             all_messages.append(conversation)
 
-        batch_inputs = self.__process_conversation(all_messages)
+        batch_inputs = self._process_conversation(all_messages)
         batch_inputs = self._add_progress_meta(batch_inputs, progress_samples)
         return batch_inputs

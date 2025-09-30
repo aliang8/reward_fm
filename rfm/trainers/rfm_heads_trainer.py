@@ -370,50 +370,51 @@ class RFMHeadsTrainer(Trainer):
         """
         Override evaluate method to implement custom RFM evaluation metrics.
         """
-        # Get the evaluation dataset
-        eval_dataloader = self.get_eval_dataloader(eval_dataset)
-
         # Set model to eval mode
         self.model.eval()
 
         # Run evaluation
-        outputs = []
-        with _timer("time/evaluate", timing_raw=self.timing_raw):
-            with torch.no_grad():
-                for _step, inputs in tqdm(
-                    enumerate(eval_dataloader),
-                    total=len(eval_dataloader),
-                    desc="Evaluating",
-                ):
-                    # Move inputs to device
-                    inputs = self._prepare_inputs(inputs)
+        if self.config.training.run_default_eval:
+            # Get the evaluation dataset
+            eval_dataloader = self.get_eval_dataloader(eval_dataset)
 
-                    _, loss_dicts = self.compute_loss(self.model, inputs, return_outputs=True, training=False)
-                    outputs.append(loss_dicts)
+            outputs = []
+            with _timer("time/evaluate", timing_raw=self.timing_raw):
+                with torch.no_grad():
+                    for _step, inputs in tqdm(
+                        enumerate(eval_dataloader),
+                        total=len(eval_dataloader),
+                        desc="Evaluating",
+                    ):
+                        # Move inputs to device
+                        inputs = self._prepare_inputs(inputs)
 
-        # Aggregate outputs
-        metrics = {}
+                        _, loss_dicts = self.compute_loss(self.model, inputs, return_outputs=True, training=False)
+                        outputs.append(loss_dicts)
 
-        # assume that we already called .item() on the outputs
-        keys = list(outputs[0].keys())
-        for key in keys:
-            metrics[key] = [output[key] for output in outputs if key in output]
-            metrics[key] = np.array(metrics[key]).mean()
+            # Aggregate outputs
+            metrics = {}
 
-        # Aggregate metrics across all processes using accelerator
-        metrics = reduce_metrics_with_accelerate(metrics, self.accelerator, aggregate_method="mean")
+            # assume that we already called .item() on the outputs
+            keys = list(outputs[0].keys())
+            for key in keys:
+                metrics[key] = [output[key] for output in outputs if key in output]
+                metrics[key] = np.array(metrics[key]).mean()
 
-        # Log metrics
-        if is_rank_0():
-            rank_0_print("\n=== Custom RFM Evaluation Results (Aggregated) ===")
-            for key, value in metrics.items():
-                rank_0_print(f"{key}: {value:.6f}")
-            rank_0_print("=" * 50)
+            # Aggregate metrics across all processes using accelerator
+            metrics = reduce_metrics_with_accelerate(metrics, self.accelerator, aggregate_method="mean")
 
-        # Also log to wandb if available and configured (only on rank 0)
-        if self.args.report_to and "wandb" in self.args.report_to and is_rank_0():
-            if wandb.run is not None:
-                wandb.log(metrics)
+            # Log metrics
+            if is_rank_0():
+                rank_0_print("\n=== Custom RFM Evaluation Results (Aggregated) ===")
+                for key, value in metrics.items():
+                    rank_0_print(f"{key}: {value:.6f}")
+                rank_0_print("=" * 50)
+
+            # Also log to wandb if available and configured (only on rank 0)
+            if self.args.report_to and "wandb" in self.args.report_to and is_rank_0():
+                if wandb.run is not None:
+                    wandb.log(metrics)
 
         # Run the custom evaluations
         custom_eval_should_run = (
@@ -728,6 +729,11 @@ class RFMHeadsTrainer(Trainer):
             outputs_dict = {}
 
             prefix = "train" if training else "eval"
+
+            if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
+                outputs_dict.update({
+                    f"{prefix}/pref_progress_loss": progress_loss.item(),
+                })
 
             if preference_loss is not None:
                 # Compute preference accuracy for training monitoring

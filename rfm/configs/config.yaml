@@ -44,12 +44,12 @@ peft:
 data:
   # Dataset paths and sources
   train_datasets: 
-    # - "abraranwar/libero_rfm"
+    - "abraranwar/libero_rfm"
     # - "ykorkmaz/libero_failure_rfm"
     - "HenryZhang/metaworld_rewind_rfm_train"
     # - "jesbu1/oxe_rfm"
   train_subsets:
-    # - ["libero256_90"]
+    - ["libero256_90"]
     # - ["libero_90_failure"]
     - ["metaworld_rewind_train"]
     # - ["oxe_bridge_v2"]
@@ -75,16 +75,20 @@ data:
   resized_width: 128   # Width to resize images/videos to
   
   # Data generation settings
-  sample_type_ratio: [1, 2, 0]  # Ratio of preference, progress, and similarity samples
+  sample_type_ratio: [1, 1, 0]  # Ratio of preference, progress, and similarity samples
   dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
   # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, video_binned]
-  preference_strategy_ratio: [1, 1, 1, 0]
+  preference_strategy_ratio: [5, 1, 1, 0]
   # Tunable strategy ratios for progress generation: [default, rewind_same_task, different_task]
-  progress_strategy_ratio: [1, 1, 1]
+  progress_strategy_ratio: [1, 5, 1]
   shuffle: true
   seed: 42
 
-  dataset_type: default
+  dataset_type: balanced_mixed
+  data_source_weights:
+    metaworld_rewind_train: 5
+    libero256_90: 1
+    libero_90_failure: 1
 
   # Data loading settings
   dataloader_pin_memory: false
@@ -123,11 +127,12 @@ training:
   logging_steps: 1
   save_steps: 200
   max_steps: 15000  # -1 means no limit, use num_train_epochs instead
+  run_default_eval: false
   
   # Evaluation settings
   evaluation_strategy: "steps"  # Options: "no", "steps", "epoch"
-  eval_steps: 100  
-  custom_eval_steps: 200  
+  eval_steps: 200  
+  custom_eval_steps: 500  
   per_device_eval_batch_size: 16  # Evaluation batch size per device
   do_eval: true  # Enable evaluation during training
   prediction_loss_only: true # Only compute loss for the prediction head

@@ -71,6 +71,8 @@ def run_reward_alignment_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
     last_targets = []
     for r in results:
         pred = r.get("progress_pred")
+        if len(pred) == 0:
+            continue
         tgt = r.get("target_progress")
         last_preds.append(float(pred[-1]))
         last_targets.append(float(tgt[-1]))
@@ -100,6 +102,7 @@ def run_reward_alignment_eval_per_trajectory(results: list[dict[str, Any]]) -> d
         trajectory_id = r.get("id")
         if trajectory_id:
             unique_trajectory_ids.add(trajectory_id)
+
     for trajectory_id in unique_trajectory_ids:
         last_preds = []
         last_targets = []
@@ -161,12 +164,17 @@ def run_confusion_matrix_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
 
         # Get the final progress prediction as the reward
         progress_pred = r["progress_pred"]
+        if len(progress_pred) == 0:
+            continue
         final_reward = float(progress_pred[-1])
 
         lang_task_idx = task_to_idx[lang_task]
         video_task_idx = task_to_idx[video_task]
         confusion_matrix[lang_task_idx, video_task_idx] += final_reward
         count_matrix[lang_task_idx, video_task_idx] += 1
+
+    if np.sum(count_matrix) == 0:
+        return {"error": "No valid confusion matrix data found"}, np.zeros((num_tasks, num_tasks))
 
     # Calculate average rewards (avoid division by zero)
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -211,6 +219,8 @@ def run_policy_ranking_eval_per_ranked_set(results: list[dict[str, Any]]) -> dic
         task = r["task"]
         quality_label = r["quality_label"]
         progress_pred = r["progress_pred"]
+        if len(progress_pred) == 0:
+            continue
         final_reward = float(progress_pred[-1])
 
         if task not in task_groups:
@@ -219,12 +229,10 @@ def run_policy_ranking_eval_per_ranked_set(results: list[dict[str, Any]]) -> dic
         task_groups[task].append({
             "quality_label": quality_label,
             "final_reward": final_reward,
+            "video_path": r["video_path"] if "video_path" in r else None,
         })
 
     if not task_groups:
-        import ipdb
-
-        ipdb.set_trace()
         return {"error": "No valid policy ranking data found"}
 
     task_details = {}
@@ -266,7 +274,7 @@ def run_policy_ranking_eval_per_ranked_set(results: list[dict[str, Any]]) -> dic
         "num_triplets": np.mean([t["num_triplets"] for t in task_details.values()]).item(),
     }
 
-    return policy_ranking_metrics
+    return policy_ranking_metrics, task_groups, task_details
 
 
 def main():

@@ -24,10 +24,11 @@ import time
 import os
 import tempfile
 from pathlib import Path
- 
+
 
 import torch
 import numpy as np
+
 try:
     import psutil  # optional, for CPU RSS
 except Exception:
@@ -53,7 +54,7 @@ def percentile(values: list[float], p: float) -> float:
 
 
 def bytes_to_gb(num_bytes: int) -> float:
-    return float(num_bytes) / (1024 ** 3)
+    return float(num_bytes) / (1024**3)
 
 
 def get_cpu_memory_gb() -> float:
@@ -127,6 +128,7 @@ def main() -> None:
 
     print(f"Loading model: {args.model_id} on {device} ({torch_dtype})")
     from transformers import Qwen2_5_VLModel, Qwen2_5_VLForConditionalGeneration
+
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
         args.model_id,
         torch_dtype=torch_dtype,
@@ -267,9 +269,9 @@ def main() -> None:
                         do_sample=args.do_sampling,
                     )
                     end = time.perf_counter()
-                lat_s = (end - start)
+                lat_s = end - start
                 latencies_s.append(lat_s)
-                print(f"Run {i+1}/{args.runs}: {lat_s:.3f} s")
+                print(f"Run {i + 1}/{args.runs}: {lat_s:.3f} s")
 
         mean_s = statistics.mean(latencies_s) if latencies_s else float("nan")
         p50_s = percentile(latencies_s, 50)
@@ -306,5 +308,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

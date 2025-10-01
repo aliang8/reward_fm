@@ -68,7 +68,12 @@ class RewardAlignmentDataset(RFMBaseDataset):
 
             # Create subsequence indices: 0:2, 0:4, 0:6, etc.
             for end_idx in range(self.frame_step, num_frames + 1, self.frame_step):
-                sample_indices.append({"traj_idx": traj_idx, "end_idx": end_idx, "num_frames": num_frames})
+                sample_indices.append({
+                    "traj_idx": traj_idx,
+                    "end_idx": end_idx,
+                    "num_frames": num_frames,
+                    "video_path": traj["frames"],
+                })
 
         return sample_indices
 

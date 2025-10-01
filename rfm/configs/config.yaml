@@ -13,8 +13,8 @@ trainer_cls: "rfm_heads" # "rewind_transformer", "rfm_vqa"
 # =====================================================================================
 model:
   model_type: "default" # "default" or "vqa"
-  # base_model_id: "Qwen/Qwen2.5-VL-3B-Instruct"
-  base_model_id: "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
+  base_model_id: "Qwen/Qwen2.5-VL-3B-Instruct"
+  # base_model_id: "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
   torch_dtype: "bfloat16"
   trust_remote_code: true
   # Additional options for more comprehensive training (when use_peft: false)
@@ -44,12 +44,12 @@ peft:
 data:
   # Dataset paths and sources
   train_datasets: 
-    - "abraranwar/libero_rfm"
+    # - "abraranwar/libero_rfm"
     # - "ykorkmaz/libero_failure_rfm"
     - "HenryZhang/metaworld_rewind_rfm_train"
     # - "jesbu1/oxe_rfm"
   train_subsets:
-    - ["libero256_90"]
+    # - ["libero256_90"]
     # - ["libero_90_failure"]
     - ["metaworld_rewind_train"]
     # - ["oxe_bridge_v2"]
@@ -103,7 +103,8 @@ data:
 custom_eval:
   # this section is for adding additional evals like policy ranking, confusion matrix, and alignment etc
   # during training 
-  eval_types: ["policy_ranking", "confusion_matrix", "reward_alignment"]
+  # eval_types: ["policy_ranking", "confusion_matrix", "reward_alignment"]
+  eval_types: ["reward_alignment", "policy_ranking"]
   policy_ranking: 
     - ["aliangdw/metaworld_rfm", "metaworld"]
   confusion_matrix: 
@@ -126,13 +127,13 @@ training:
   save_strategy: "steps"
   logging_steps: 1
   save_steps: 200
-  max_steps: 15000  # -1 means no limit, use num_train_epochs instead
+  max_steps: 5000  # -1 means no limit, use num_train_epochs instead
   run_default_eval: false
   
   # Evaluation settings
   evaluation_strategy: "steps"  # Options: "no", "steps", "epoch"
   eval_steps: 200  
-  custom_eval_steps: 500  
+  custom_eval_steps: 200  
   per_device_eval_batch_size: 16  # Evaluation batch size per device
   do_eval: true  # Enable evaluation during training
   prediction_loss_only: true # Only compute loss for the prediction head

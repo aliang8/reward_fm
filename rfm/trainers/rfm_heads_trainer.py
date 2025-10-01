@@ -5,6 +5,8 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 from transformers import Trainer
+import matplotlib.pyplot as plt
+import cv2
 
 import copy
 import wandb
@@ -15,6 +17,7 @@ from rfm.utils.setup_utils import setup_dataset, setup_batch_collator
 from torch.utils.data import DataLoader
 from rfm.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
 from evals.compile_results import compute_eval_metrics
+from rfm.data.datasets.helpers import load_frames_from_npz
 
 
 def reduce_metrics_with_accelerate(metrics: dict, accelerator, aggregate_method="sum"):
@@ -289,6 +292,8 @@ class RFMHeadsTrainer(Trainer):
                 self.model.eval()
                 eval_results = []
 
+                example_count = 0
+
                 for batch in tqdm(dataloader, desc=f"Evaluating {eval_type}"):
                     batch = self._prepare_inputs(batch)
 
@@ -299,18 +304,23 @@ class RFMHeadsTrainer(Trainer):
                                 self.model, progress_samples, sample_type="progress"
                             )
                         progress_pred = progress_logits["A"]
+                        if isinstance(progress_pred, torch.Tensor):
+                            progress_pred = progress_pred.cpu().numpy()
 
                         for i in range(len(progress_pred)):
                             sample_result = {
                                 "task": progress_samples["task"][i],
                                 "target_progress": progress_samples["target_progress"][i].cpu().numpy(),
-                                "progress_pred": progress_pred[i].cpu().numpy(),
+                                "progress_pred": progress_pred[i],
                                 "data_source": progress_samples["data_source"][i],
                                 "data_gen_strategy": progress_samples["data_gen_strategy"][i],
                                 "quality_label": progress_samples["quality_labels"][i],
                                 "metadata": progress_samples["metadata"][i],
                             }
+                            if eval_type == "policy_ranking":
+                                sample_result["video_path"] = dataset.sample_indices[i]["video_path"]
                             eval_results.append(sample_result)
+                            example_count += 1
 
                     elif eval_type == "success_failure":
                         preference_samples = batch["preference_inputs"]
@@ -330,10 +340,84 @@ class RFMHeadsTrainer(Trainer):
                                 "metadata": preference_samples["metadata"][i],
                             }
                             eval_results.append(sample_result)
+                            example_count += 1
+
+                # Create a wandb table to visualize the samples
+                # Log the frames and the progress predictions
+
+                # if the eval_type is reward_alignment, let's visualize frames and progress predictions
+                if eval_type == "reward_alignment":
+                    traj_len = 32
+
+                    data = []
+                    count = 0
+                    for i in range(0, len(eval_results), traj_len):
+                        eval_results_traj_i = eval_results[i : i + traj_len]
+                        video = dataset.sample_indices[i]["video_path"]
+                        frames = load_frames_from_npz(video)
+                        frames = frames.transpose(0, 3, 1, 2)
+
+                        # Resize frames to make them smaller for wandb table display
+                        resized_frames = []
+                        for frame in frames:
+                            frame_resized = cv2.resize(frame.transpose(1, 2, 0), (64, 64))
+                            resized_frames.append(frame_resized.transpose(2, 0, 1))
+                        frames = np.array(resized_frames)
+
+                        eval_metrics = compute_eval_metrics(eval_type, eval_results)
+                        task = eval_results_traj_i[0]["task"]
+                        progress_preds = []
+                        for j in range(len(eval_results_traj_i)):
+                            progress_pred = eval_results_traj_i[j]["progress_pred"]
+                            if progress_pred is not None:
+                                progress_preds.append(round(progress_pred[-1].item(), 2))
+                            else:
+                                progress_preds.append(0.0)
+
+                        # Create a wandb plot for progress predictions
+                        fig, ax = plt.subplots(figsize=(8, 4))
+                        ax.plot(progress_preds, marker="o", linewidth=2, markersize=4)
+                        ax.set_xlabel("Frame")
+                        ax.set_ylabel("Progress Prediction")
+                        ax.set_title(f"Progress Predictions - {task}")
+                        ax.grid(True, alpha=0.3)
+                        ax.set_ylim(0, 1)
+
+                        # Convert to wandb image
+                        progress_plot = wandb.Image(fig)
+                        plt.close(fig)  # Close to free memory
+
+                        data.append([task, wandb.Video(frames, fps=2, format="gif"), progress_plot])
+                        count += 1
+
+                    columns = ["video", "task", "progress_plot"]
+                    wandb.log({
+                        "reward_alignment_samples": wandb.Table(data=data, columns=columns),
+                    })
+
+                elif eval_type == "policy_ranking":
+                    # create task groups from eval_results
+                    eval_metrics, task_groups, task_details = compute_eval_metrics(eval_type, eval_results)
+
+                    data = []
+                    for task, group in task_groups.items():
+                        quality_and_rews = [(t["quality_label"], t["final_reward"]) for t in group]
+                        quality_and_rews = ",".join([f"{q}:{r:.2f}" for q, r in quality_and_rews])
+                        data.append([task, quality_and_rews])
+
+                    columns = ["task", "quality_and_rews"]
+                    wandb.log({
+                        "policy_ranking_samples": wandb.Table(data=data, columns=columns),
+                    })
+
+                elif eval_type == "confusion_matrix":
+                    eval_metrics = compute_eval_metrics(eval_type, eval_results)
+                else:
+                    raise ValueError(f"Unsupported eval type: {eval_type}")
 
                 # Compute metrics
                 ds_name = DS_SHORT_NAME_MAPPING[eval_dataset + "/" + eval_subset[0]]
-                metrics[ds_name][eval_type] = compute_eval_metrics(eval_type, eval_results)
+                metrics[ds_name][eval_type] = eval_metrics
                 rank_0_print(f"Completed {eval_type} evaluation: {len(eval_results)} samples")
                 rank_0_print(f"Metrics: {metrics[ds_name][eval_type]}")
                 rank_0_print("=" * 50)
@@ -372,6 +456,7 @@ class RFMHeadsTrainer(Trainer):
         """
         # Set model to eval mode
         self.model.eval()
+        metrics = {}
 
         # Run evaluation
         if self.config.training.run_default_eval:
@@ -391,9 +476,6 @@ class RFMHeadsTrainer(Trainer):
 
                         _, loss_dicts = self.compute_loss(self.model, inputs, return_outputs=True, training=False)
                         outputs.append(loss_dicts)
-
-            # Aggregate outputs
-            metrics = {}
 
             # assume that we already called .item() on the outputs
             keys = list(outputs[0].keys())

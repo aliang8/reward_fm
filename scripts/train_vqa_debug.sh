@@ -1,7 +1,6 @@
 #!/bin/bash
 
-CUDA_VISIBLE_DEVICES=0 uv run accelerate launch \
-    --num_processes=1 \
+CUDA_VISIBLE_DEVICES=0 python3 \
     train.py \
     --config_paths rfm/configs/config.yaml rfm/configs/vqa_config.yaml \
     --logging.use_wandb false \

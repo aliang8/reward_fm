@@ -405,37 +405,28 @@ class PrefDataset(RFMBaseDataset):
             rejected_video_embeddings = load_embeddings_from_path(rejected_traj["embeddings_path"], "video_embeddings")
             rejected_text_embedding = load_embeddings_from_path(rejected_traj["embeddings_path"], "text_embedding")
 
-            rejected_video_embeddings, rejected_progress, rejected_metadata = subsample_frames_and_progress(
-                rejected_video_embeddings, self.config.max_frames
-            )
-            if strategy_used != DataGenStrat.REWIND_SAME_TASK:
-                # try subsampling the rejected trajectory
-                rejected_video_embeddings, rejected_progress, rejected_metadata = subsample_frames_and_progress(
-                    rejected_video_embeddings, self.config.max_frames
-                )
-            else:
+            if strategy_used == DataGenStrat.REWIND_SAME_TASK:
                 rejected_video_embeddings = rejected_traj["frames"]
                 rejected_progress = rejected_traj["target_progress"]
                 rejected_metadata = rejected_traj["metadata"]
+            else:
+                rejected_video_embeddings, rejected_progress, rejected_metadata = subsample_frames_and_progress(
+                    rejected_video_embeddings, self.config.max_frames
+                )
         else:
             if isinstance(rejected_traj["frames"], str):
                 rejected_frames = load_frames_from_npz(rejected_traj["frames"])
             else:
                 rejected_frames = rejected_traj["frames"]
 
-            rejected_frames, rejected_progress, rejected_metadata = subsample_frames_and_progress(
-                rejected_frames, self.config.max_frames
-            )
-            if strategy_used != DataGenStrat.REWIND_SAME_TASK:
-                # try subsampling the rejected trajectory
-                rejected_frames, rejected_progress, rejected_metadata = subsample_frames_and_progress(
-                    rejected_frames, self.config.max_frames
-                )
-
-            else:
+            if strategy_used == DataGenStrat.REWIND_SAME_TASK:
                 rejected_frames = rejected_traj["frames"]
                 rejected_progress = rejected_traj["target_progress"]
                 rejected_metadata = rejected_traj["metadata"]
+            else:
+                rejected_frames, rejected_progress, rejected_metadata = subsample_frames_and_progress(
+                    rejected_frames, self.config.max_frames
+                )
 
         if "metadata" in rejected_traj:
             rejected_metadata.update(rejected_traj["metadata"])

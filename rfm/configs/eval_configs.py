@@ -35,7 +35,8 @@ class EvaluationConfig:
     log_dir: str = field(default="./eval_logs", metadata={"help": "Directory to save evaluation results"})
 
     custom_eval: CustomEvaluationConfig = field(
-        default_factory=CustomEvaluationConfig, metadata={"help": "Custom evaluation configuration (reused from experiment_configs)"}
+        default_factory=CustomEvaluationConfig,
+        metadata={"help": "Custom evaluation configuration (reused from experiment_configs)"},
     )
 
     data: DataConfig = field(

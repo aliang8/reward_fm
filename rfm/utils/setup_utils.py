@@ -19,7 +19,7 @@ from transformers import (
     Qwen2_5_VLForConditionalGeneration,
     Qwen2_5_VLModel,
     TrainingArguments,
-    BitsAndBytesConfig
+    BitsAndBytesConfig,
 )
 
 from rfm.configs.experiment_configs import DataConfig, ExperimentConfig, ModelConfig, PEFTConfig
@@ -43,69 +43,69 @@ from rfm.utils.distributed import rank_0_print
 def find_best_model_tag(hf_model_id: str, hub_token: Optional[str] = None) -> Tuple[Optional[str], Optional[float]]:
     """
     Find the best model tag from HuggingFace Hub by parsing tag names and extracting scores.
-    
+
     Expected tag format: "best-{metric_short}-{score:.4f}-step-{step}"
     Example: "best-p-rank-spearman-mw-0.8500-step-123" or "best-avg-3metrics-0.7234-step-456"
-    
+
     Args:
         hf_model_id: HuggingFace model ID (e.g., "aliangdw/rewind-debug")
         hub_token: Optional HuggingFace token for private repos
-        
+
     Returns:
         tuple: (best_tag_name, best_score) or (None, None) if no valid tags found
     """
     try:
         api = HfApi(token=hub_token)
-        
+
         # Check if repository exists
         if not api.repo_exists(repo_id=hf_model_id, repo_type="model"):
             rank_0_print(f"Repository {hf_model_id} does not exist")
             return None, None
-            
+
         # Get all tags for the repository
         tags = api.list_repo_refs(repo_id=hf_model_id, repo_type="model").tags
-        
+
         if not tags:
             rank_0_print(f"No tags found in repository {hf_model_id}")
             return None, None
-            
+
         rank_0_print(f"Found {len(tags)} tags in {hf_model_id}: {[tag.name for tag in tags]}")
-        
+
         best_tag = None
-        best_score = float('-inf')
-        
+        best_score = float("-inf")
+
         # Parse each tag to extract score
         for tag in tags:
             tag_name = tag.name
-            
+
             # Match our tag pattern: "best-{metric_short}-{score}-step-{step}"
             # Examples: "best-p-rank-spearman-mw-0.8500-step-123" or "best-avg-3metrics-0.7234-step-456"
             # Score can be positive or negative (e.g., 0.8500 or -1.2300)
             pattern = r"best-.*?-(-?\d+\.\d+)-step-\d+"
             match = re.search(pattern, tag_name)
-            
+
             if match:
                 try:
                     score = float(match.group(1))
                     rank_0_print(f"Parsed tag '{tag_name}': score = {score}")
-                    
+
                     if score > best_score:
                         best_score = score
                         best_tag = tag_name
-                        
+
                 except ValueError:
                     rank_0_print(f"Could not parse score from tag '{tag_name}'")
                     continue
             else:
                 rank_0_print(f"Tag '{tag_name}' does not match expected pattern")
-                
+
         if best_tag:
             rank_0_print(f"Best tag found: '{best_tag}' with score {best_score}")
         else:
             rank_0_print("No valid tags found matching the expected pattern")
-            
+
         return best_tag, best_score
-        
+
     except Exception as e:
         rank_0_print(f"Error finding best tag for {hf_model_id}: {e}")
         return None, None
@@ -124,7 +124,8 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
         bnb = None
 
     try:
-        import flash_attn 
+        import flash_attn
+
         rank_0_print("Flash Attention 2 CUDA is available")
         has_flash_attn = True
     except:
@@ -135,7 +136,7 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
         extra_kwargs = {"attn_implementation": "flash_attention_2"}
     else:
         extra_kwargs = {}
-        
+
     # Load processor and tokenizer
     if "SmolVLM" in cfg.base_model_id or "Qwen" in cfg.base_model_id:
         if "SmolVLM" in cfg.base_model_id:
@@ -166,7 +167,12 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
                 qwen_model_cls = Qwen2_5_VLForConditionalGeneration
                 model_cls = RFMVQA
 
-            base_model = qwen_model_cls.from_pretrained(cfg.base_model_id, **extra_kwargs)
+            base_model = qwen_model_cls.from_pretrained(
+                cfg.base_model_id,
+                torch_dtype=torch.bfloat16,
+                **extra_kwargs,
+                quantization_config=bnb,
+            )
 
             processor = AutoProcessor.from_pretrained(
                 cfg.base_model_id,
@@ -244,7 +250,7 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
                     rank_0_print(f"Loading ReWiND model from best tag: {hf_model_id} (score: {best_score})")
             else:
                 rank_0_print(f"Loading ReWiND model from {hf_model_id}")
-            
+
             model = ReWiNDTransformer.from_pretrained(
                 hf_model_id,
                 processor=processor,

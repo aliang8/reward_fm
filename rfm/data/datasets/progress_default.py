@@ -18,11 +18,19 @@ class ProgressDefaultDataset(RFMBaseDataset):
         super().__init__(config, is_evaluation, verbose=verbose)
         self.current_idx = 0
         rank_0_print(f"ProgressDataset initialized with {len(self.robot_trajectories)} trajectories")
+        self.sample_indices = self._generate_all_sample_indices()
+        rank_0_print(f"Generated {len(self.sample_indices)} sample indices")
+
+    def _generate_all_sample_indices(self) -> list[dict]:
+        """Generate all possible sample indices."""
+        return [{"idx": i, "video_path": self.dataset[i]["frames"]} for i in range(len(self.robot_trajectories))]
 
     def _create_progress_sample(self, idx: int) -> ProgressSample:
         """Generate a single progress sample from trajectory index."""
+        sample_idx = self.sample_indices[idx]["idx"]
+
         # Get the trajectory
-        traj = self.dataset[idx]
+        traj = self.dataset[sample_idx]
 
         # Initialize variables
         frames = None
@@ -88,7 +96,7 @@ class ProgressDefaultDataset(RFMBaseDataset):
         return sample
 
     def __len__(self):
-        return len(self.robot_trajectories)
+        return len(self.sample_indices)
 
     def __getitem__(self, idx):
         return self._create_progress_sample(idx)

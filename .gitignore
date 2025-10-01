@@ -41,7 +41,10 @@ rfm/metaworld/*
 *.json
 .local/*
 .cache/*
-old/*
+*.out
+*.bash_history
+.netrc
+.pdbhistory
+test*
 .ipython/*
 .triton/*
-test_*.py

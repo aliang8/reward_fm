@@ -66,7 +66,9 @@ class VQABatchCollator(RFMBatchCollator):
                 rejected_frames = str(tmp)
                 content_extras = {}
 
-                import ipdb; ipdb.set_trace()
+                import ipdb
+
+                ipdb.set_trace()
             else:
                 content_extras = {}
 

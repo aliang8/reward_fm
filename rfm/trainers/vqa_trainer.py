@@ -57,6 +57,35 @@ class RFMVQATrainer(RFMHeadsTrainer):
     def __init__(self, config, *args, **kwargs):
         super().__init__(config, *args, **kwargs)
 
+    def forward_model(self, model, inputs, sample_type="progress"):
+        with _timer("time/forward_vqa", timing_raw=self.timing_raw):
+            outputs = model(
+                input_ids=inputs["input_ids"],
+                attention_mask=inputs["attention_mask"],
+                pixel_values=inputs.get("pixel_values"),
+                pixel_values_videos=inputs.get("pixel_values_videos"),
+                image_grid_thw=inputs.get("image_grid_thw"),
+                video_grid_thw=inputs.get("video_grid_thw"),
+                second_per_grid_ts=inputs.get("second_per_grid_ts"),
+            )
+
+        if sample_type == "progress":
+            pred_ids = outputs.logits.argmax(dim=-1)
+            tokenizer = self.model.base_model.processor.tokenizer
+            pred_texts = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
+            predictions = [extract_answer_from_text(text) for text in pred_texts]
+            progress_logits = []
+            for prediction in predictions:
+                try:
+                    progress_logits.append(ast.literal_eval(prediction))
+                except:
+                    progress_logits.append(None)
+            progress_logits = {"A": progress_logits, "B": None}
+        else:
+            progress_logits = None
+
+        return outputs, progress_logits, self.timing_raw
+
     def compute_loss(self, model, inputs, return_outputs=False, training=True, **kwargs):
         """Compute loss for VQA tasks."""
 

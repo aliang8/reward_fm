@@ -268,16 +268,16 @@ def run_single_evaluation(
     args,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Run evaluation for a single eval_type/dataset/subset combination."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Running evaluation: {eval_type} on {eval_dataset}/{eval_subset}")
-    print(f"{'='*60}")
-    
+    print(f"{'=' * 60}")
+
     # Create a copy of the config for this evaluation
     eval_cfg = copy.deepcopy(cfg)
     eval_cfg.data.dataset_type = eval_type
     eval_cfg.data.eval_datasets = [eval_dataset]
     eval_cfg.data.eval_subsets = [[eval_subset]]
-    
+
     # Run evaluation and get results
     if args.use_async:
         print(f"Using ASYNC evaluation with max {args.max_concurrent} concurrent requests")
@@ -302,8 +302,10 @@ def run_single_evaluation(
     # Filter out None entries
     preference_results = [result for result in preference_results if result is not None]
     progress_results = [result for result in progress_results if result is not None]
-    
-    print(f"Completed {eval_type}: {len(preference_results)} preference samples, {len(progress_results)} progress samples")
+
+    print(
+        f"Completed {eval_type}: {len(preference_results)} preference samples, {len(progress_results)} progress samples"
+    )
     return preference_results, progress_results
 
 
@@ -364,25 +366,25 @@ def main():
 
     # Run evaluations for each eval type
     all_results = {}
-    
+
     for eval_type in eval_types_to_run:
         print(f"\nProcessing evaluation type: {eval_type}")
-        
+
         # Get datasets for this eval type
         datasets = getattr(cfg.custom_eval, eval_type, [])
         if not datasets:
             print(f"No datasets configured for {eval_type}, skipping...")
             continue
-            
+
         eval_datasets_name = [d[0] for d in datasets]
         eval_subsets_name = [d[1] for d in datasets]
-        
+
         # Run evaluation for each dataset/subset combination
         for eval_dataset, eval_subset in zip(eval_datasets_name, eval_subsets_name):
             preference_results, progress_results = run_single_evaluation(
                 cfg, eval_type, eval_dataset, eval_subset, args
             )
-            
+
             # Create results directory structure
             dataset_name = f"{eval_dataset.replace('/', '_')}_{eval_subset}"
             model_name = cfg.model_path.replace("/", "_") if cfg.model_path else "base_model"
@@ -402,7 +404,7 @@ def main():
                 with open(progress_file, "w") as f:
                     json.dump(progress_results, f, indent=2)
                 print(f"Progress results saved to: {progress_file}")
-            
+
             # Store results for summary
             key = f"{eval_type}_{dataset_name}"
             all_results[key] = {
@@ -413,15 +415,15 @@ def main():
             }
 
     # Print summary
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("EVALUATION SUMMARY")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     total_preference = sum(r["preference_count"] for r in all_results.values())
     total_progress = sum(r["progress_count"] for r in all_results.values())
-    
+
     for key, result in all_results.items():
         print(f"{key}: {result['preference_count']} preference, {result['progress_count']} progress samples")
-    
+
     print(f"\nTotal samples processed:")
     print(f"  Preference: {total_preference}")
     print(f"  Progress: {total_progress}")

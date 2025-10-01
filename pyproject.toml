@@ -59,7 +59,9 @@ dependencies = [
     "num2words", 
     "seaborn",
     "bitsandbytes",
-    "torchvision"
+    "torchvision",
+    "moviepy",
+    "wandb[media]"
 ]
 
 [project.urls]

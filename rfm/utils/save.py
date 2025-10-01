@@ -151,13 +151,13 @@ class SaveBestCallback(TrainerCallback):
             if self.upload_to_hub:
                 base_name = args.output_dir.split("/")[-1].replace("_", "-")
                 # Clean base_name too
-                base_name = re.sub(r'-+', '-', base_name)  # Replace multiple hyphens with single hyphen
-                base_name = base_name.strip('-')  # Remove leading/trailing hyphens
+                base_name = re.sub(r"-+", "-", base_name)  # Replace multiple hyphens with single hyphen
+                base_name = base_name.strip("-")  # Remove leading/trailing hyphens
                 # Clean the tag name for HuggingFace repo naming requirements
                 tag_name = f"best-{metric_short}-{score:.4f}-step-{step}".replace("_", "-").replace(",", "")
                 # Remove consecutive hyphens and ensure valid naming
-                tag_name = re.sub(r'-+', '-', tag_name)  # Replace multiple hyphens with single hyphen
-                tag_name = tag_name.strip('-')  # Remove leading/trailing hyphens
+                tag_name = re.sub(r"-+", "-", tag_name)  # Replace multiple hyphens with single hyphen
+                tag_name = tag_name.strip("-")  # Remove leading/trailing hyphens
                 hub_model_id = f"aliangdw/{base_name}"
 
                 # Build detailed commit message with individual metric scores

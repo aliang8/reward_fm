@@ -16,12 +16,8 @@ from rfm.data.dataset_types import PreferenceSample, SimilaritySample, ProgressS
 
 def extract_answer_from_text(text):
     m = re.search(r"<ans>(.*?)</ans>", text, re.DOTALL)
-    return m.group(1).strip() if m else ""
-
-
-def extract_answer_from_text(text):
-    m = re.search(r"<ans>(.*?)</ans>", text, re.DOTALL)
-    return m.group(1).strip() if m else ""
+    ans = m.group(1).strip() if m else ""
+    return ans
 
 
 def post_batch(url: str, payload: dict[str, Any], timeout_s: float = 120.0) -> dict[str, Any]:

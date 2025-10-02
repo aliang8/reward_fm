@@ -171,7 +171,8 @@ class TrainingConfig:
     num_gpus: int = field(default=2, metadata={"help": "Number of GPUs to use for training"})
 
     # Output and logging
-    output_dir: str = field(default="./rfm_model_output")
+    output_dir: str = field(default="./logs")
+    exp_name: str = field(default="rfm")
     max_seq_length: int = field(default=1024)
     beta: float = field(default=0.1)
     resume_from_checkpoint: Optional[str] = field(default=None)

@@ -23,14 +23,17 @@ class ProgressDefaultDataset(RFMBaseDataset):
 
     def _generate_all_sample_indices(self) -> list[dict]:
         """Generate all possible sample indices."""
-        return [{"idx": i, "video_path": self.dataset[i]["frames"]} for i in range(len(self.robot_trajectories))]
+        return [
+            {"idx": i, "video_path": self.dataset[i]["frames"], "id": self.dataset[i]["id"]}
+            for i in range(len(self.robot_trajectories))
+        ]
 
     def _create_progress_sample(self, idx: int) -> ProgressSample:
         """Generate a single progress sample from trajectory index."""
-        sample_idx = self.sample_indices[idx]["idx"]
+        sample_info = self.sample_indices[idx]
 
         # Get the trajectory
-        traj = self.dataset[sample_idx]
+        traj = self.dataset[sample_info["idx"]]
 
         # Initialize variables
         frames = None
@@ -72,6 +75,8 @@ class ProgressDefaultDataset(RFMBaseDataset):
             "quality_label": traj["quality_label"],
             "data_source": traj["data_source"],
             "task": traj["task"],
+            "id": sample_info["id"],
+            "video_path": sample_info["video_path"],
         }
 
         # Create trajectory for the progress sample

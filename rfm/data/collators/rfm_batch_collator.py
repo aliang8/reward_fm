@@ -1,44 +1,82 @@
 #!/usr/bin/env python3
 """
-Batch collator for processing Sample objects through the processor and returning processed tensors.
-This collator handles the conversion from PreferenceSample and SimilaritySample objects to processed tensors.
+Batch collator for processing list of samples.
 """
 
-import base64
-import torch
-from typing import List, Dict, Optional, Union, Any
-from dataclasses import dataclass, field
-from transformers import AutoProcessor
-from qwen_vl_utils import process_vision_info
+import tempfile
+from pathlib import Path
 import numpy as np
-import random
+import torch
+from qwen_vl_utils import process_vision_info
 
-from rfm.data.dataset_types import PreferenceSample, SimilaritySample, ProgressSample
-from rfm.data.collators import BaseCollator
-from rfm.data.collators.utils import convert_frames_to_pil_images, pad_target_progress
+from .base_collator import BaseCollator
+from .utils import convert_frames_to_pil_images, pad_target_progress, write_mp4
+from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample
+from typing import List, Dict
 
 
 class RFMBatchCollator(BaseCollator):
-    """Batch collator that processes Sample objects through the processor."""
-
-    def __init__(self, **kwargs):
+    def _process_conversation(self, conversations: List[List[Dict]]) -> Dict[str, torch.Tensor]:
         """
-        Initialize the batch collator.
+        Process a list of conversations into a batch of inputs.
 
         Args:
-            processor: HuggingFace processor for text and vision processing
-            max_length: Maximum sequence length for text
-            resized_height: Height to resize images/videos to (default: 128)
-            resized_width: Width to resize images/videos to (default: 128)
+            conversations: List of conversations
+
+        Returns:
+            Batch of inputs
         """
-        super().__init__(**kwargs)
+
+        if "Qwen" in self.base_model_id:
+            # Process all messages in one batch
+            texts = [
+                self.processor.apply_chat_template(
+                    msg,
+                    tokenize=False,
+                    add_generation_prompt=False,
+                    add_vision_id=True,
+                    fps=1,
+                )
+                for msg in conversations
+            ]
+
+            image_inputs, video_inputs, _video_kwargs = process_vision_info(conversations, return_video_kwargs=True)
+
+            # Process through the processor in one batch
+            batch_inputs = self.processor(
+                text=texts,
+                images=image_inputs,
+                videos=video_inputs,
+                padding=True,
+                truncation=False,
+                max_length=self.max_length,
+                return_tensors="pt",
+            )
+        elif "SmolVLM" in self.base_model_id:
+            batch_inputs = self.processor.apply_chat_template(
+                conversations,
+                add_generation_prompt=False,
+                tokenize=True,
+                padding=True,
+                truncation=False,
+                max_length=self.max_length,
+                return_dict=True,
+                return_tensors="pt",
+                fps=4,  # this should be same as fps for write_mp4
+            )
+        else:
+            raise ValueError(f"Invalid base model id: {self.base_model_id}")
+
+        return batch_inputs
 
     def _add_preference_meta(
-        self, batch_inputs: Dict[str, torch.Tensor], preference_samples: List[PreferenceSample]
-    ) -> Dict[str, torch.Tensor]:
+        self, batch_inputs: dict[str, torch.Tensor], preference_samples: list[PreferenceSample]
+    ) -> dict[str, torch.Tensor]:
         """Add metadata to the batch inputs."""
         batch_inputs["data_source"] = [sample.chosen_trajectory.data_source for sample in preference_samples]
         batch_inputs["sample_type"] = ["preference"] * len(preference_samples)
+        batch_inputs["task"] = [sample.chosen_trajectory.task for sample in preference_samples]
+
         batch_inputs["chosen_data_gen_strategy"] = [
             sample.chosen_trajectory.data_gen_strategy for sample in preference_samples
         ]
@@ -71,37 +109,59 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["target_progress_rejected_mask"] = torch.tensor(target_progress_rejected_mask, dtype=torch.float32)
 
         # Also add the frame_shapes
-        batch_inputs["chosen_frames_shape"] = torch.tensor(
-            [sample.chosen_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
-        )
-        batch_inputs["rejected_frames_shape"] = torch.tensor(
-            [sample.rejected_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
-        )
+        if not self.load_embeddings:
+            batch_inputs["chosen_frames_shape"] = torch.tensor(
+                [sample.chosen_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
+            )
+            batch_inputs["rejected_frames_shape"] = torch.tensor(
+                [sample.rejected_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
+            )
+        else:
+            batch_inputs["chosen_frames_shape"] = torch.tensor(
+                [sample.chosen_trajectory.video_embeddings.shape for sample in preference_samples], dtype=torch.int32
+            )
+            batch_inputs["rejected_frames_shape"] = torch.tensor(
+                [sample.rejected_trajectory.video_embeddings.shape for sample in preference_samples], dtype=torch.int32
+            )
         return batch_inputs
 
     def _add_progress_meta(
-        self, batch_inputs: Dict[str, torch.Tensor], progress_samples: List[ProgressSample]
-    ) -> Dict[str, torch.Tensor]:
+        self, batch_inputs: dict[str, torch.Tensor], progress_samples: list[ProgressSample]
+    ) -> dict[str, torch.Tensor]:
         """Add metadata to the batch inputs."""
-        # Add target progress and quality labels
-        target_progress_list = []
-        quality_labels = []
-
-        for sample in progress_samples:
-            if sample.trajectory.target_progress is not None:
-                target_progress_list.append(sample.trajectory.target_progress)
-            quality_labels.append(1.0 if sample.trajectory.quality_label == "successful" else 0.0)
 
         # Add metadata
         batch_inputs["sample_type"] = ["progress"] * len(progress_samples)
+        batch_inputs["task"] = [sample.trajectory.task for sample in progress_samples]
+        batch_inputs["metadata"] = [sample.trajectory.metadata for sample in progress_samples]
 
         # Pad target progress tensors to max length in last dimension
+        target_progress_list = [sample.trajectory.target_progress for sample in progress_samples]
         batch_inputs["target_progress"] = pad_target_progress(target_progress_list)
-        batch_inputs["quality_labels"] = torch.tensor(quality_labels, dtype=torch.float32)
+        batch_inputs["quality_labels"] = [sample.trajectory.quality_label for sample in progress_samples]
 
+        if not self.load_embeddings:
+            batch_inputs["frame_shapes"] = torch.tensor(
+                [sample.trajectory.frames_shape for sample in progress_samples], dtype=torch.int32
+            )
+        else:
+            batch_inputs["frame_shapes"] = torch.tensor(
+                [sample.trajectory.video_embeddings.shape for sample in progress_samples], dtype=torch.int32
+            )
+
+        batch_inputs["data_source"] = [sample.trajectory.data_source for sample in progress_samples]
+        batch_inputs["data_gen_strategy"] = [sample.trajectory.data_gen_strategy for sample in progress_samples]
+        target_progress_mask = [
+            1.0
+            if sample.trajectory.quality_label == "successful"
+            or sample.trajectory.data_gen_strategy == "rewind_same_task"
+            else 0.0
+            for sample in progress_samples
+        ]
+        batch_inputs["target_progress_mask"] = torch.tensor(target_progress_mask, dtype=torch.float32)
         return batch_inputs
 
-    def _process_preference_batch(self, preference_samples: List[PreferenceSample]) -> Dict[str, torch.Tensor]:
+    def _process_preference_batch(self, preference_samples: list[PreferenceSample]) -> dict[str, torch.Tensor]:
         """Process a batch of preference samples."""
         # Collect all messages for batch processing
         all_messages = []
@@ -109,6 +169,7 @@ class RFMBatchCollator(BaseCollator):
         # Randomly decide whether chosen trajectory goes first or second
         preference_labels = np.random.randint(0, 2, len(preference_samples))
 
+        # Build batch of conversations
         for i, sample in enumerate(preference_samples):
             # Convert frames to appropriate format using stored shapes
             chosen_frames = convert_frames_to_pil_images(
@@ -117,6 +178,23 @@ class RFMBatchCollator(BaseCollator):
             rejected_frames = convert_frames_to_pil_images(
                 sample.rejected_trajectory.frames, sample.rejected_trajectory.frames_shape
             )
+
+            if "Qwen" in self.base_model_id:
+                content_extras = {
+                    "resized_height": self.resized_height,
+                    "resized_width": self.resized_width,
+                }
+            elif "SmolVLM" in self.base_model_id:
+                # we need to write the frames to a temporary file
+                tmp = Path(tempfile.gettempdir()) / f"tmp_chosen.mp4"
+                write_mp4(chosen_frames, tmp)
+                chosen_frames = str(tmp)
+                tmp = Path(tempfile.gettempdir()) / f"tmp_rejected.mp4"
+                write_mp4(rejected_frames, tmp)
+                rejected_frames = str(tmp)
+                content_extras = {}
+            else:
+                content_extras = {}
 
             if preference_labels[i] == 1.0:
                 # Chosen trajectory first: task + video A (chosen) + <|split_token|> + video B (rejected) + <|pref_token|>
@@ -128,15 +206,13 @@ class RFMBatchCollator(BaseCollator):
                             {
                                 "type": "video",
                                 "video": chosen_frames,
-                                "resized_height": self.resized_height,
-                                "resized_width": self.resized_width,
+                                **content_extras,
                             },
                             {"type": "text", "text": "<|split_token|>"},
                             {
                                 "type": "video",
                                 "video": rejected_frames,
-                                "resized_height": self.resized_height,
-                                "resized_width": self.resized_width,
+                                **content_extras,
                             },
                             {"type": "text", "text": "<|pref_token|>"},
                         ],
@@ -152,15 +228,13 @@ class RFMBatchCollator(BaseCollator):
                             {
                                 "type": "video",
                                 "video": rejected_frames,
-                                "resized_height": self.resized_height,
-                                "resized_width": self.resized_width,
+                                **content_extras,
                             },
                             {"type": "text", "text": "<|split_token|>"},
                             {
                                 "type": "video",
                                 "video": chosen_frames,
-                                "resized_height": self.resized_height,
-                                "resized_width": self.resized_width,
+                                **content_extras,
                             },
                             {"type": "text", "text": "<|pref_token|>"},
                         ],
@@ -169,36 +243,13 @@ class RFMBatchCollator(BaseCollator):
 
             all_messages.append(conversation)
 
-        # Process all messages in one batch
-        texts = [
-            self.processor.apply_chat_template(
-                msg,
-                tokenize=False,
-                add_generation_prompt=False,
-                add_vision_id=True,
-                fps=1,
-            )
-            for msg in all_messages
-        ]
-
-        image_inputs, video_inputs, video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
-
-        # Process through the processor in one batch
-        batch_inputs = self.processor(
-            text=texts,
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            truncation=False,
-            max_length=self.max_length,
-            return_tensors="pt",
-        )
+        batch_inputs = self._process_conversation(all_messages)
         # Use the dynamically generated preference labels based on trajectory order
         batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
         batch_inputs = self._add_preference_meta(batch_inputs, preference_samples)
         return batch_inputs
 
-    def _process_similarity_batch(self, similarity_samples: List[SimilaritySample]) -> Dict[str, torch.Tensor]:
+    def _process_similarity_batch(self, similarity_samples: list[SimilaritySample]) -> dict[str, torch.Tensor]:
         """Process a batch of similarity samples."""
         # Collect all messages for batch processing (ref and traj_sim for each sample)
         all_messages = []
@@ -277,7 +328,7 @@ class RFMBatchCollator(BaseCollator):
             for msg in all_messages
         ]
 
-        image_inputs, video_inputs, video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
+        image_inputs, video_inputs, _video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
 
         # Process through the processor in one batch
         batch_inputs = self.processor(
@@ -348,7 +399,7 @@ class RFMBatchCollator(BaseCollator):
         )
         return combined_inputs
 
-    def _process_progress_batch(self, progress_samples: List[ProgressSample]) -> Dict[str, torch.Tensor]:
+    def _process_progress_batch(self, progress_samples: list[ProgressSample]) -> dict[str, torch.Tensor]:
         """Process a batch of progress samples with VQA-style question."""
         # Collect all messages for batch processing
         all_messages = []
@@ -356,6 +407,20 @@ class RFMBatchCollator(BaseCollator):
         for sample in progress_samples:
             # Convert frames to appropriate format using stored shapes
             frames = convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
+
+            if "Qwen" in self.base_model_id:
+                content_extras = {
+                    "resized_height": self.resized_height,
+                    "resized_width": self.resized_width,
+                }
+            elif "SmolVLM" in self.base_model_id:
+                # we need to write the frames to a temporary file
+                tmp = Path(tempfile.gettempdir()) / f"tmp_progress.mp4"
+                write_mp4(frames, tmp)
+                frames = str(tmp)
+                content_extras = {}
+            else:
+                content_extras = {}
 
             # Create conversation for progress evaluation
             conversation = [
@@ -369,8 +434,7 @@ class RFMBatchCollator(BaseCollator):
                         {
                             "type": "video",
                             "video": frames,
-                            "resized_height": self.resized_height,
-                            "resized_width": self.resized_width,
+                            **content_extras,
                         },
                     ],
                 }
@@ -378,29 +442,6 @@ class RFMBatchCollator(BaseCollator):
 
             all_messages.append(conversation)
 
-        texts = [
-            self.processor.apply_chat_template(
-                msg,
-                tokenize=False,
-                add_generation_prompt=False,
-                add_vision_id=True,
-                fps=1,
-            )
-            for msg in all_messages
-        ]
-
-        image_inputs, video_inputs, video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
-
-        # Process through the processor in one batch
-        batch_inputs = self.processor(
-            text=texts,
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            truncation=False,
-            max_length=self.max_length,
-            return_tensors="pt",
-            **video_kwargs,
-        )
+        batch_inputs = self._process_conversation(all_messages)
         batch_inputs = self._add_progress_meta(batch_inputs, progress_samples)
         return batch_inputs

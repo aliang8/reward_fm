@@ -4,12 +4,7 @@ RFM (Reward Foundation Model) VQA version implementation.
 Contains the RFM class by using the standard Qwen2.5-VL model, training it with VQA data.
 """
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from transformers import PreTrainedModel, Qwen2_5_VLForConditionalGeneration
-from transformers.modeling_outputs import CausalLMOutputWithPast
-from transformers.generation.utils import GenerationMixin
 
 
 class RFMVQA(PreTrainedModel):
@@ -17,7 +12,7 @@ class RFMVQA(PreTrainedModel):
 
     config_class = Qwen2_5_VLForConditionalGeneration.config_class
 
-    def __init__(self, config, processor, base_model=None):
+    def __init__(self, config, processor, tokenizer, base_model=None, base_model_id=None):
         super().__init__(config)
         # Use Qwen2_5_VLForConditionalGeneration for VQA (language generation)
         if base_model is not None:
@@ -26,6 +21,8 @@ class RFMVQA(PreTrainedModel):
             self.model = Qwen2_5_VLForConditionalGeneration(config)
 
         self.processor = processor
+        self.tokenizer = tokenizer
+        self.base_model_id = base_model_id
 
     def gradient_checkpointing_enable(self, **kwargs):
         """Delegates gradient checkpointing enabling to the base model."""

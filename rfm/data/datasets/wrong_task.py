@@ -3,14 +3,14 @@
 Data generator for wrong task accuracy analysis.
 """
 
-from rfm.data.dataset_types import PreferenceSample, Trajectory
-from rfm.utils.logging import rank_0_print
-from typing import Dict, List, Optional, Union
-from rfm.data.datasets.base import RFMBaseDataset
-from tqdm import tqdm
-import numpy as np
 import random
-from rfm.data.datasets.helpers import linspace_subsample_frames, pad_trajectory_to_max_frames
+
+from tqdm import tqdm
+
+from rfm.data.dataset_types import PreferenceSample, Trajectory
+from .base import RFMBaseDataset
+from .helpers import linspace_subsample_frames, pad_trajectory_to_max_frames_np
+from rfm.utils.distributed import rank_0_print
 
 
 class WrongTaskDataset(RFMBaseDataset):
@@ -22,7 +22,7 @@ class WrongTaskDataset(RFMBaseDataset):
     model should prefer the original trajectory over wrong task trajectories.
     """
 
-    def __init__(self, config, is_evaluation=False, verbose=True, max_trajectories: Optional[int] = None):
+    def __init__(self, config, is_evaluation=False, verbose=True, max_trajectories: int | None = None):
         super().__init__(config, is_evaluation, verbose=verbose)
 
         self.max_trajectories = max_trajectories
@@ -32,7 +32,7 @@ class WrongTaskDataset(RFMBaseDataset):
             f"Generated {len(self.sample_indices)} wrong task preference sample indices from {min(len(self.robot_trajectories), self.max_trajectories) if self.max_trajectories else len(self.robot_trajectories)} trajectories"
         )
 
-    def _generate_all_sample_indices(self) -> List[Dict]:
+    def _generate_all_sample_indices(self) -> list[dict]:
         """Generate all possible wrong task preference sample indices."""
         sample_indices = []
 
@@ -79,19 +79,17 @@ class WrongTaskDataset(RFMBaseDataset):
 
             # Create preference samples
             for wrong_traj_idx in sampled_wrong_trajectories:
-                sample_indices.append(
-                    {
-                        "chosen_traj_idx": traj_idx,  # Original trajectory (should be preferred)
-                        "rejected_traj_idx": wrong_traj_idx,  # Wrong task trajectory (should be rejected)
-                        "original_task": original_task,
-                        "wrong_task": self.dataset[wrong_traj_idx].get("task", "unknown"),
-                    }
-                )
+                sample_indices.append({
+                    "chosen_traj_idx": traj_idx,  # Original trajectory (should be preferred)
+                    "rejected_traj_idx": wrong_traj_idx,  # Wrong task trajectory (should be rejected)
+                    "original_task": original_task,
+                    "wrong_task": self.dataset[wrong_traj_idx].get("task", "unknown"),
+                })
 
         rank_0_print(f"Generated {len(sample_indices)} wrong task preference pairs")
         return sample_indices
 
-    def _generate_sample_from_indices(self, sample_idx_info: Dict) -> PreferenceSample:
+    def _generate_sample_from_indices(self, sample_idx_info: dict) -> PreferenceSample:
         """Generate a single wrong task preference sample from stored indices."""
         chosen_traj_idx = sample_idx_info["chosen_traj_idx"]
         rejected_traj_idx = sample_idx_info["rejected_traj_idx"]
@@ -119,8 +117,8 @@ class WrongTaskDataset(RFMBaseDataset):
         rejected_frames, _ = linspace_subsample_frames(rejected_frames, max_frames)
 
         # Use the existing helper function to pad/subsample frames
-        chosen_padded_frames, _ = pad_trajectory_to_max_frames(chosen_frames, [0], max_frames)
-        rejected_padded_frames, _ = pad_trajectory_to_max_frames(rejected_frames, [0], max_frames)
+        chosen_padded_frames, _ = pad_trajectory_to_max_frames_np(chosen_frames, [0], max_frames)
+        rejected_padded_frames, _ = pad_trajectory_to_max_frames_np(rejected_frames, [0], max_frames)
 
         # Create metadata for the wrong task preference analysis
         metadata = {

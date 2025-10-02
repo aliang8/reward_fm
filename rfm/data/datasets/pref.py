@@ -4,20 +4,20 @@ PrefDataset class for producing batches of preference prediction data.
 """
 
 import random
-import numpy as np
-from typing import List, Dict, Tuple, Optional, Iterator, Union
-from rfm.data.dataset_types import PreferenceSample, ProgressSample, Trajectory
-from rfm.data.datasets.base import RFMBaseDataset
-from rfm.utils.logging import rank_0_print, timer
-from rfm.data.datasets.helpers import (
-    linspace_subsample_frames,
-    randomly_subsample_frames,
-    pad_trajectory_to_max_frames,
-    subsample_frames_and_progress,
+
+from rfm.data.dataset_types import PreferenceSample, Trajectory
+from .base import RFMBaseDataset
+from .helpers import (
+    DataGenStrat,
     create_rewind_trajectory,
     load_frames_from_npz,
-    DataGenStrat,
+    pad_trajectory_to_max_frames_np,
+    pad_trajectory_to_max_frames_torch,
+    subsample_frames_and_progress,
 )
+from rfm.utils.distributed import rank_0_print
+from rfm.utils.timer import timer
+from .helpers import load_embeddings_from_path
 
 
 class PrefDataset(RFMBaseDataset):
@@ -27,7 +27,7 @@ class PrefDataset(RFMBaseDataset):
         super().__init__(config, is_evaluation, verbose=verbose, **kwargs)
 
         self.dataset_preference_ratio = config.dataset_preference_ratio
-        self.preference_strategy_ratio: List[float] = config.preference_strategy_ratio
+        self.preference_strategy_ratio: list[float] = config.preference_strategy_ratio
 
         # Initialize preference dataset
         self._load_preference_dataset()
@@ -47,7 +47,7 @@ class PrefDataset(RFMBaseDataset):
         sample = self._create_pref_sample(chosen_traj)
         return sample
 
-    def _create_video_binned_trajectory(self, original_traj: Dict, num_bins: int = 10) -> Tuple[Dict, Dict]:
+    def _create_video_binned_trajectory(self, original_traj: dict, num_bins: int = 10) -> tuple[dict, dict]:
         """Create a preference sample by splitting a video into temporal bins and sampling from different bins.
 
         This strategy creates preference samples by:
@@ -175,7 +175,7 @@ class PrefDataset(RFMBaseDataset):
 
         # For now, return a simple preference sample
         # This can be enhanced later when we have actual preference data
-        preference = random.choice(self.preferences)
+        random.choice(self.preferences)
 
         # This is a placeholder - would need to be implemented based on actual preference data structure
         raise NotImplementedError("Preference sample creation from dataset not yet implemented")
@@ -215,7 +215,7 @@ class PrefDataset(RFMBaseDataset):
             else:
                 return self._create_pref_sample()
 
-    def _create_pref_sample(self, chosen_traj: Optional[Dict] = None) -> PreferenceSample:
+    def _create_pref_sample(self, chosen_traj: dict | None = None) -> PreferenceSample:
         """Create a preference prediction sample using various rejected trajectory generation strategies.
 
         This method implements four different strategies for generating rejected trajectories
@@ -283,81 +283,169 @@ class PrefDataset(RFMBaseDataset):
         rejected_traj = None
         strategy_used = None
 
-        prob = random.random()
-        if prob < self.preference_strategy_ratio[0]:
-            # Strategy 1: Use rewind-generated suboptimal trajectory from same task
-            rejected_traj = create_rewind_trajectory(chosen_traj, max_frames=self.config.max_frames)
-            strategy_used = DataGenStrat.REWIND_SAME_TASK
+        # Strategy selection with rebalancing on failure
+        strategies = [
+            (DataGenStrat.REWIND_SAME_TASK, self.preference_strategy_ratio[0]),
+            (DataGenStrat.SUBOPTIMAL_SAME_TASK, self.preference_strategy_ratio[1]),
+            (DataGenStrat.DIFFERENT_TASK, self.preference_strategy_ratio[2]),
+            (
+                DataGenStrat.VIDEO_BINNED,
+                self.preference_strategy_ratio[3] if len(self.preference_strategy_ratio) > 3 else 0.0,
+            ),
+        ]
 
-        elif prob < self.preference_strategy_ratio[0] + self.preference_strategy_ratio[1]:
-            # Strategy 2: Use random suboptimal trajectory from same task
-            rejected_traj = self._create_same_task_suboptimal_trajectory(chosen_traj)
-            if rejected_traj is not None:
-                strategy_used = DataGenStrat.SUBOPTIMAL_SAME_TASK
+        # Remove strategies with zero probability
+        strategies = [(strat, prob) for strat, prob in strategies if prob > 0]
 
-        elif (
-            prob
-            < self.preference_strategy_ratio[0] + self.preference_strategy_ratio[1] + self.preference_strategy_ratio[2]
-        ):
-            # Strategy 3: Use trajectory from different task (can be chosen or suboptimal)
-            rejected_traj = self._create_different_task_trajectory(chosen_traj)
-            if rejected_traj is not None:
-                strategy_used = DataGenStrat.DIFFERENT_TASK
+        max_attempts = 3  # Limit retry attempts to prevent infinite loops
+        attempt = 0
 
-        else:
-            # Strategy 4: Create preference sample from different bins of the same video
-            try:
-                chosen_traj, rejected_traj = self._create_video_binned_trajectory(
-                    chosen_traj, num_bins=self.config.num_bins
+        while rejected_traj is None and attempt < max_attempts:
+            attempt += 1
+
+            # Rebalance probabilities based on remaining strategies
+            total_prob = sum(prob for _, prob in strategies)
+            if total_prob == 0:
+                # All strategies have zero probability, fallback to rewind
+                rejected_traj = create_rewind_trajectory(
+                    chosen_traj, max_frames=self.config.max_frames, use_embeddings=self.config.load_embeddings
                 )
-                strategy_used = DataGenStrat.VIDEO_BINNED
-            except Exception as e:
-                rank_0_print(f"Video binning failed: {e}, will fall back to rewind")
+                strategy_used = DataGenStrat.REWIND_SAME_TASK
+                break
 
-        # Fallback: If any strategy failed to produce a rejected trajectory, use rewind
+            # Normalize probabilities
+            normalized_strategies = [(strat, prob / total_prob) for strat, prob in strategies]
+
+            # Select strategy based on rebalanced probabilities
+            prob = random.random()
+            cumulative_prob = 0.0
+            selected_strategy = None
+
+            for strat, normalized_prob in normalized_strategies:
+                cumulative_prob += normalized_prob
+                if prob <= cumulative_prob:
+                    selected_strategy = strat
+                    break
+
+            # Execute selected strategy
+            if selected_strategy == DataGenStrat.REWIND_SAME_TASK:
+                rejected_traj = create_rewind_trajectory(
+                    chosen_traj, max_frames=self.config.max_frames, use_embeddings=self.config.load_embeddings
+                )
+                strategy_used = DataGenStrat.REWIND_SAME_TASK
+
+            elif selected_strategy == DataGenStrat.SUBOPTIMAL_SAME_TASK:
+                rejected_traj = self._create_same_task_suboptimal_trajectory(chosen_traj)
+                if rejected_traj is not None:
+                    strategy_used = DataGenStrat.SUBOPTIMAL_SAME_TASK
+                else:
+                    # Strategy failed, remove it from future attempts
+                    strategies = [
+                        (strat, prob) for strat, prob in strategies if strat != DataGenStrat.SUBOPTIMAL_SAME_TASK
+                    ]
+
+            elif selected_strategy == DataGenStrat.DIFFERENT_TASK:
+                rejected_traj = self._create_different_task_trajectory(chosen_traj)
+                if rejected_traj is not None:
+                    strategy_used = DataGenStrat.DIFFERENT_TASK
+                else:
+                    # Strategy failed, remove it from future attempts
+                    strategies = [(strat, prob) for strat, prob in strategies if strat != DataGenStrat.DIFFERENT_TASK]
+
+            elif selected_strategy == DataGenStrat.VIDEO_BINNED:
+                try:
+                    chosen_traj, rejected_traj = self._create_video_binned_trajectory(
+                        chosen_traj, num_bins=self.config.num_bins
+                    )
+                    strategy_used = DataGenStrat.VIDEO_BINNED
+                except Exception as e:
+                    rank_0_print(f"Video binning failed: {e}, removing from available strategies")
+                    # Strategy failed, remove it from future attempts
+                    strategies = [(strat, prob) for strat, prob in strategies if strat != DataGenStrat.VIDEO_BINNED]
+
+        # Final fallback: If all strategies failed, use rewind
         if rejected_traj is None:
-            rejected_traj = create_rewind_trajectory(chosen_traj, max_frames=self.config.max_frames)
+            rejected_traj = create_rewind_trajectory(
+                chosen_traj, max_frames=self.config.max_frames, use_embeddings=self.config.load_embeddings
+            )
             strategy_used = DataGenStrat.REWIND_SAME_TASK
 
         # ===============================================================
         # Subsample the chosen trajectory to max_frames
         # ===============================================================
-        if isinstance(chosen_traj["frames"], str):
-            chosen_traj["frames"] = load_frames_from_npz(chosen_traj["frames"])
+        chosen_frames = None
+        chosen_video_embeddings = None
+        chosen_text_embedding = None
 
-        chosen_frames, chosen_progress, chosen_metadata = subsample_frames_and_progress(
-            chosen_traj["frames"], self.config.max_frames
-        )
+        rejected_frames = None
+        rejected_video_embeddings = None
+        rejected_text_embedding = None
+
+        if self.config.load_embeddings and chosen_traj.get("embeddings_path"):
+            chosen_video_embeddings = load_embeddings_from_path(chosen_traj["embeddings_path"], "video_embeddings")
+            chosen_text_embedding = load_embeddings_from_path(chosen_traj["embeddings_path"], "text_embedding")
+
+            chosen_video_embeddings, chosen_progress, chosen_metadata = subsample_frames_and_progress(
+                chosen_video_embeddings, self.config.max_frames
+            )
+        else:
+            if isinstance(chosen_traj["frames"], str):
+                chosen_frames = load_frames_from_npz(chosen_traj["frames"])
+
+            chosen_frames, chosen_progress, chosen_metadata = subsample_frames_and_progress(
+                chosen_frames, self.config.max_frames
+            )
         if "metadata" in chosen_traj:
             chosen_metadata.update(chosen_traj["metadata"])
 
         # ===============================================================
         # Subsample the rejected trajectory to max_frames
         # ===============================================================
+        if self.config.load_embeddings and rejected_traj.get("embeddings_path"):
+            rejected_video_embeddings = load_embeddings_from_path(rejected_traj["embeddings_path"], "video_embeddings")
+            rejected_text_embedding = load_embeddings_from_path(rejected_traj["embeddings_path"], "text_embedding")
 
-        if isinstance(rejected_traj["frames"], str):
-            rejected_traj["frames"] = load_frames_from_npz(rejected_traj["frames"])
-
-        if strategy_used != DataGenStrat.REWIND_SAME_TASK:
-            # try subsampling the rejected trajectory
-            rejected_frames, rejected_progress, rejected_metadata = subsample_frames_and_progress(
-                rejected_traj["frames"], self.config.max_frames
-            )
-            if "metadata" in rejected_traj:
-                rejected_metadata.update(rejected_traj["metadata"])
-
+            if strategy_used == DataGenStrat.REWIND_SAME_TASK:
+                rejected_video_embeddings = rejected_traj["frames"]
+                rejected_progress = rejected_traj["target_progress"]
+                rejected_metadata = rejected_traj["metadata"]
+            else:
+                rejected_video_embeddings, rejected_progress, rejected_metadata = subsample_frames_and_progress(
+                    rejected_video_embeddings, self.config.max_frames
+                )
         else:
-            rejected_frames = rejected_traj["frames"]
-            rejected_progress = rejected_traj["target_progress"]
-            rejected_metadata = rejected_traj["metadata"]
+            if isinstance(rejected_traj["frames"], str):
+                rejected_frames = load_frames_from_npz(rejected_traj["frames"])
+            else:
+                rejected_frames = rejected_traj["frames"]
+
+            if strategy_used == DataGenStrat.REWIND_SAME_TASK:
+                rejected_frames = rejected_traj["frames"]
+                rejected_progress = rejected_traj["target_progress"]
+                rejected_metadata = rejected_traj["metadata"]
+            else:
+                rejected_frames, rejected_progress, rejected_metadata = subsample_frames_and_progress(
+                    rejected_frames, self.config.max_frames
+                )
+
+        if "metadata" in rejected_traj:
+            rejected_metadata.update(rejected_traj["metadata"])
 
         # Let's make sure to pad both trajectories to max_frames
-        chosen_frames, chosen_progress = pad_trajectory_to_max_frames(
-            chosen_frames, chosen_progress, self.config.max_frames
-        )
-        rejected_frames, rejected_progress = pad_trajectory_to_max_frames(
-            rejected_frames, rejected_progress, self.config.max_frames
-        )
+        if self.config.load_embeddings:
+            chosen_video_embeddings, chosen_progress = pad_trajectory_to_max_frames_torch(
+                chosen_video_embeddings, chosen_progress, self.config.max_frames
+            )
+            rejected_video_embeddings, rejected_progress = pad_trajectory_to_max_frames_torch(
+                rejected_video_embeddings, rejected_progress, self.config.max_frames
+            )
+        else:
+            chosen_frames, chosen_progress = pad_trajectory_to_max_frames_np(
+                chosen_frames, chosen_progress, self.config.max_frames
+            )
+            rejected_frames, rejected_progress = pad_trajectory_to_max_frames_np(
+                rejected_frames, rejected_progress, self.config.max_frames
+            )
 
         # If our strategy is different task, make sure the rejected trajectory has 0 progress
         if strategy_used == DataGenStrat.DIFFERENT_TASK:
@@ -368,7 +456,9 @@ class PrefDataset(RFMBaseDataset):
             # Create Trajectory objects for chosen and rejected
             chosen_trajectory=Trajectory(
                 frames=chosen_frames,
-                frames_shape=chosen_frames.shape,
+                frames_shape=chosen_frames.shape if chosen_frames is not None else None,
+                video_embeddings=chosen_video_embeddings,
+                text_embedding=chosen_text_embedding,
                 id=chosen_traj["id"],
                 task=chosen_traj["task"],
                 lang_vector=chosen_traj["lang_vector"],
@@ -381,7 +471,9 @@ class PrefDataset(RFMBaseDataset):
             ),
             rejected_trajectory=Trajectory(
                 frames=rejected_frames,
-                frames_shape=rejected_frames.shape,
+                frames_shape=rejected_frames.shape if rejected_frames is not None else None,
+                video_embeddings=rejected_video_embeddings,
+                text_embedding=rejected_text_embedding,
                 id=rejected_traj["id"],
                 task=rejected_traj["task"],
                 lang_vector=rejected_traj["lang_vector"],
@@ -395,7 +487,7 @@ class PrefDataset(RFMBaseDataset):
         )
         return sample
 
-    def _create_same_task_suboptimal_trajectory(self, chosen_traj: Dict) -> Optional[Dict]:
+    def _create_same_task_suboptimal_trajectory(self, chosen_traj: dict) -> dict | None:
         """Create a suboptimal trajectory from the same task as the chosen trajectory.
 
         This function tries to find an existing suboptimal/failure trajectory from the same task.
@@ -420,7 +512,7 @@ class PrefDataset(RFMBaseDataset):
         else:
             return None
 
-    def _create_different_task_trajectory(self, chosen_traj: Dict) -> Optional[Dict]:
+    def _create_different_task_trajectory(self, chosen_traj: dict) -> dict | None:
         """Create a trajectory from a different task than the chosen trajectory.
 
         This function tries to find trajectories from different tasks.

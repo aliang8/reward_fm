@@ -17,12 +17,40 @@ model:
     dropout: 0.1  
     max_len: 16
 
+  train_vision_encoder: false
+  train_language_model: false
+
 training:
   output_dir: "./logs/rfm_rewind"
   gradient_checkpointing: false
 
   bf16: false
   fp16: true
+
+  per_device_train_batch_size: 1024
+  per_device_eval_batch_size: 128
+  learning_rate: 1e-4
+  warmup_ratio: 0.01
+  
+  eval_steps: 200
+  custom_eval_steps: 200
+  max_steps: 15000
+
+data:
+  # sample_type_ratio: [0, 1, 0] # only progress samples 
+  # progress_strategy_ratio: [1, 1, 1] # default success, rewind, different task
+  sample_type_ratio: [0, 1, 0] # preference, progress, similarity 
+  preference_strategy_ratio: [5, 1, 1, 0] # rewind, suboptimal_same_task, different_task, video_binned 
+  progress_strategy_ratio: [1, 5, 1] # default success, rewind, different task
+  
+  dataset_type: balanced_mixed
+  # dataset_type: default
+  data_source_weights:
+    metaworld_rewind_train: 5
+    libero256_90: 1
+    libero_90_failure: 1
+
+  load_embeddings: true
 
 # =====================================================================================
 # Logging and Output Configuration

@@ -5,18 +5,14 @@ This collator handles the conversion from PreferenceSample, SimilaritySample, an
 for VQA-based reward modeling with different question types.
 """
 
-import torch
-from typing import List, Dict, Optional, Union, Any
-from dataclasses import dataclass, field
-from transformers import AutoProcessor
-from qwen_vl_utils import process_vision_info
 import numpy as np
-import random
-from pydantic import BaseModel, field_serializer
+import torch
+import tempfile
+from pathlib import Path
 
-from rfm.data.dataset_types import PreferenceSample, SimilaritySample, ProgressSample
-from rfm.data.collators import RFMBatchCollator
-from rfm.data.collators.utils import convert_frames_to_pil_images
+from .rfm_batch_collator import RFMBatchCollator
+from .utils import convert_frames_to_pil_images, write_mp4
+from rfm.data.dataset_types import PreferenceSample, ProgressSample
 
 
 class VQABatchCollator(RFMBatchCollator):
@@ -37,7 +33,7 @@ class VQABatchCollator(RFMBatchCollator):
         self.inference = inference
         super().__init__(**kwargs)
 
-    def _process_preference_batch(self, preference_samples: List[PreferenceSample]) -> Dict[str, torch.Tensor]:
+    def _process_preference_batch(self, preference_samples: list[PreferenceSample]) -> dict[str, torch.Tensor]:
         """Process a batch of preference samples with VQA-style question."""
         # Collect all messages for batch processing
         all_messages = []
@@ -55,6 +51,27 @@ class VQABatchCollator(RFMBatchCollator):
             )
             prompt = f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', which one best corresponds to solving the task? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags. For example, if you prefer trajectory A, your answer should be <ans>A</ans>."
 
+            if "Qwen" in self.base_model_id:
+                content_extras = {
+                    "resized_height": self.resized_height,
+                    "resized_width": self.resized_width,
+                }
+            elif "SmolVLM" in self.base_model_id:
+                # we need to write the frames to a temporary file
+                tmp = Path(tempfile.gettempdir()) / f"tmp_chosen.mp4"
+                write_mp4(chosen_frames, tmp)
+                chosen_frames = str(tmp)
+                tmp = Path(tempfile.gettempdir()) / f"tmp_rejected.mp4"
+                write_mp4(rejected_frames, tmp)
+                rejected_frames = str(tmp)
+                content_extras = {}
+
+                import ipdb
+
+                ipdb.set_trace()
+            else:
+                content_extras = {}
+
             if preference_labels[i] == 1.0:
                 # Chosen trajectory first: Trajectory A (chosen) + Trajectory B (rejected)
                 conversation = [
@@ -62,19 +79,17 @@ class VQABatchCollator(RFMBatchCollator):
                         "role": "user",
                         "content": [
                             {"type": "text", "text": prompt},
-                            {"type": "text", "text": "Trajectory A. "},
+                            {"type": "text", "text": "This is Trajectory A. "},
                             {
                                 "type": "video",
                                 "video": chosen_frames,
-                                "resized_height": self.resized_height,
-                                "resized_width": self.resized_width,
+                                **content_extras,
                             },
-                            {"type": "text", "text": "Trajectory B. "},
+                            {"type": "text", "text": "This is Trajectory B. "},
                             {
                                 "type": "video",
                                 "video": rejected_frames,
-                                "resized_height": self.resized_height,
-                                "resized_width": self.resized_width,
+                                **content_extras,
                             },
                         ],
                     },
@@ -89,19 +104,17 @@ class VQABatchCollator(RFMBatchCollator):
                         "role": "user",
                         "content": [
                             {"type": "text", "text": prompt},
-                            {"type": "text", "text": "Trajectory A. "},
+                            {"type": "text", "text": "This is Trajectory A. "},
                             {
                                 "type": "video",
                                 "video": rejected_frames,
-                                "resized_height": self.resized_height,
-                                "resized_width": self.resized_width,
+                                **content_extras,
                             },
-                            {"type": "text", "text": "Trajectory B. "},
+                            {"type": "text", "text": "This is Trajectory B. "},
                             {
                                 "type": "video",
                                 "video": chosen_frames,
-                                "resized_height": self.resized_height,
-                                "resized_width": self.resized_width,
+                                **content_extras,
                             },
                         ],
                     }
@@ -111,30 +124,7 @@ class VQABatchCollator(RFMBatchCollator):
 
             all_messages.append(conversation)
 
-        # Create input with generation prompt and answer for proper label setting, if it is evaluation, we don't need to set the labels
-        texts = [
-            self.processor.apply_chat_template(
-                conv,
-                tokenize=False,
-                add_generation_prompt=self.inference,  # include assistant prefix tokens
-                add_vision_id=True,
-                fps=1,
-            )
-            for conv in all_messages
-        ]
-
-        image_inputs, video_inputs, video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
-
-        batch_inputs = self.processor(
-            text=texts,
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,  # pad so we can batch
-            truncation=False,  # keep everything; truncate only at the "full" step if you must
-            max_length=self.max_length,
-            return_tensors="pt",
-        )
-
+        batch_inputs = self._process_conversation(all_messages)
         if not self.inference:
             labels = batch_inputs["input_ids"].clone()
 
@@ -153,7 +143,7 @@ class VQABatchCollator(RFMBatchCollator):
 
         return batch_inputs
 
-    def _process_progress_batch(self, progress_samples: List[ProgressSample]) -> Dict[str, torch.Tensor]:
+    def _process_progress_batch(self, progress_samples: list[ProgressSample]) -> dict[str, torch.Tensor]:
         """Process a batch of progress samples with VQA-style question."""
         # Collect all messages for batch processing
         all_messages = []
@@ -168,6 +158,21 @@ class VQABatchCollator(RFMBatchCollator):
             frames = convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
 
             prompt = f"For the task '{sample.trajectory.task}', estimate the progress at each frame in the trajectory. Give a list of numbers between 0 and 1 where 0 means no progress and 1 means successful completion of the task. Format your answer enclosed by <ans> and </ans> tags. For example, if you think the progress at each frame is [0.0, 0.1, 0.2, 0.3, 0.4, 0.5], your answer should be <ans>[0.0, 0.1, 0.2, 0.3, 0.4, 0.5]</ans>."
+
+            if "Qwen" in self.base_model_id:
+                content_extras = {
+                    "resized_height": self.resized_height,
+                    "resized_width": self.resized_width,
+                }
+            elif "SmolVLM" in self.base_model_id:
+                # we need to write the frames to a temporary file
+                tmp = Path(tempfile.gettempdir()) / f"tmp_progress.mp4"
+                write_mp4(frames, tmp)
+                frames = str(tmp)
+                content_extras = {}
+            else:
+                content_extras = {}
+
             # Create conversation for progress evaluation
             conversation = [
                 {
@@ -177,8 +182,7 @@ class VQABatchCollator(RFMBatchCollator):
                         {
                             "type": "video",
                             "video": frames,
-                            "resized_height": self.resized_height,
-                            "resized_width": self.resized_width,
+                            **content_extras,
                         },
                     ],
                 }
@@ -188,29 +192,7 @@ class VQABatchCollator(RFMBatchCollator):
 
             all_messages.append(conversation)
 
-        # Create input with generation prompt and answer for proper label setting, if it is evaluation, we don't need to set the labels
-        texts = [
-            self.processor.apply_chat_template(
-                conv,
-                tokenize=False,
-                add_generation_prompt=self.inference,  # include assistant prefix tokens
-                add_vision_id=True,
-                fps=1,
-            )
-            for conv in all_messages
-        ]
-
-        image_inputs, video_inputs, video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
-
-        batch_inputs = self.processor(
-            text=texts,
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            truncation=False,
-            max_length=self.max_length,
-            return_tensors="pt",
-        )
+        batch_inputs = self._process_conversation(all_messages)
 
         if not self.inference:
             labels = batch_inputs["input_ids"].clone()

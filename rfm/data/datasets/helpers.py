@@ -1,11 +1,16 @@
-import random
-import numpy as np
-from typing import List, Tuple, Optional, Dict
 import os
-from rfm.data.dataset_types import Trajectory
-from rfm.utils.logging import rank_0_print
-
+import random
 from enum import Enum
+
+import numpy as np
+import json
+
+from rfm.utils.distributed import rank_0_print
+
+try:
+    import torch
+except ImportError:
+    torch = None
 
 
 class DataGenStrat(Enum):
@@ -55,9 +60,18 @@ def load_frames_from_npz(npz_filepath: str) -> np.ndarray:
         raise RuntimeError(f"Failed to load frames from {npz_filepath}: {e}")
 
 
-def pad_trajectory_to_max_frames(
-    frames: np.ndarray, progress: List[float], max_frames: int
-) -> Tuple[np.ndarray, List[float]]:
+def load_embeddings_from_path(embeddings_path: str, embedding_type: str = "video_embeddings") -> torch.Tensor:
+    """Load video embeddings from .pt file and return just the video embeddings."""
+    if not embeddings_path:
+        raise ValueError("embeddings_path is None or empty")
+
+    embeddings_data = torch.load(embeddings_path, map_location="cpu")
+    return embeddings_data[embedding_type]
+
+
+def pad_trajectory_to_max_frames_np(
+    frames: np.ndarray, progress: list[float], max_frames: int
+) -> tuple[np.ndarray, list[float]]:
     """Pad trajectory frames and progress to max_frames by repeating the first frame/progress if needed.
 
     Args:
@@ -90,7 +104,41 @@ def pad_trajectory_to_max_frames(
     return padded_frames, padded_progress
 
 
-def linspace_subsample_frames(frames: np.ndarray, num_frames: int = 8) -> Tuple[np.ndarray, List[int]]:
+def pad_trajectory_to_max_frames_torch(frames, progress: list[float], max_frames: int) -> tuple:
+    """Pad trajectory frames and progress to max_frames by repeating the first frame/progress if needed.
+
+    Args:
+        frames: PyTorch tensor
+        progress: Progress values (list of floats)
+        max_frames: Target number of frames
+
+    Returns:
+        Tuple[torch.Tensor, List[float]: (padded_frames, padded_progress)
+    """
+    current_frames = frames.shape[0]
+
+    if current_frames >= max_frames:
+        # No padding needed
+        return frames, progress
+
+    # Need to pad - repeat the first frame and first progress
+    first_frame = frames[0:1]  # Keep the batch dimension
+    first_progress = progress[0]
+
+    # Calculate how many frames to pad
+    frames_to_pad = max_frames - current_frames
+
+    # Pad frames by repeating the first frame
+    padding = first_frame.repeat(frames_to_pad, 1)
+    padded_frames = torch.cat([padding, frames], dim=0)
+
+    # Pad progress by repeating the first progress value
+    padded_progress = [first_progress] * frames_to_pad + progress
+
+    return padded_frames, padded_progress
+
+
+def linspace_subsample_frames(frames: np.ndarray, num_frames: int = 8) -> tuple[np.ndarray, list[int]]:
     """Uniformly subsample frames from a trajectory and return the indices.
 
     This method takes the full trajectory (e.g., 64 frames) and uniformly subsamples
@@ -139,8 +187,8 @@ def linspace_subsample_frames(frames: np.ndarray, num_frames: int = 8) -> Tuple[
 
 
 def randomly_subsample_frames(
-    frames: np.ndarray, num_frames: int = 8, seed: Optional[int] = None
-) -> Tuple[np.ndarray, List[int]]:
+    frames: np.ndarray, num_frames: int = 8, seed: int | None = None
+) -> tuple[np.ndarray, list[int]]:
     """Randomly subsample frames from a trajectory and return the indices.
 
     This method takes the full trajectory and randomly selects num_frames from it.
@@ -154,11 +202,6 @@ def randomly_subsample_frames(
 
     Returns:
         Tuple[np.ndarray, List[int]: (subsampled_frames, subsampled_indices)
-
-    Example:
-        If we have 64 frames and want 8 frames:
-        - Random indices: [7, 23, 41, 12, 58, 3, 35, 49] (example)
-        - Subsampled frames: frames[7], frames[23], frames[41], etc.
     """
     if hasattr(frames, "shape"):
         total_frames = frames.shape[0]
@@ -184,11 +227,18 @@ def randomly_subsample_frames(
     return subsampled_frames, indices
 
 
-def subsample_frames_and_progress(frames: np.ndarray, max_frames: int) -> Tuple[np.ndarray, List[float]]:
-    """For trajectory, sample start and end indices to create a segment.
+def subsample_frames_and_progress(frames: np.ndarray, max_frames: int) -> tuple[np.ndarray, list[float]]:
+    """Linear subsample frames and progress to max_frames"""
+    # subsampled_frames, indices = linspace_subsample_frames(frames, max_frames)
 
-    This makes the progress calculation consistent with rewind trajectories.
-    """
+    # progress = [(idx + 1) / len(frames) for idx in indices]
+
+    # metadata = {
+    #     "subsampled_indices": indices,
+    # }
+
+    # return subsampled_frames, progress, metadata
+
     num_frames_total = len(frames)
 
     # Select start and end indices for the chosen trajectory segment
@@ -213,25 +263,24 @@ def subsample_frames_and_progress(frames: np.ndarray, max_frames: int) -> Tuple[
         segment_progress.append((i + 1) / (num_frames_total - start_idx))
 
     # Randomly subsample the chosen trajectory segment to num_frames
-    frames, indices = randomly_subsample_frames(segment_frames, max_frames)
+    # frames, indices = randomly_subsample_frames(segment_frames, max_frames)
+    subsampled_frames, indices = linspace_subsample_frames(segment_frames, max_frames)
 
     # Map the subsampled indices to the corresponding progress values from the full segment
     # The chosen_indices tell us which frames from the segment we're using
     progress = [segment_progress[idx] for idx in indices]
-
-    # Ensure both trajectories have exactly max_frames by padding if needed
-    # Pad by repeating the first frame and first progress value
-    frames, progress = pad_trajectory_to_max_frames(frames, progress, max_frames)
 
     metadata = {
         "start_idx": start_idx,
         "end_idx": end_idx,
         "subsampled_indices": indices,
     }
-    return frames, progress, metadata
+    return subsampled_frames, progress, metadata
 
 
-def create_rewind_trajectory(original_traj: Dict, rewind_length: Optional[int] = None, max_frames: int = 8) -> Dict:
+def create_rewind_trajectory(
+    original_traj: dict, rewind_length: int | None = None, max_frames: int = 8, use_embeddings: bool = False
+) -> dict:
     """Create a suboptimal trajectory by rewinding the original trajectory.
 
     This method creates a trajectory that goes forward then rewinds back:
@@ -243,6 +292,8 @@ def create_rewind_trajectory(original_traj: Dict, rewind_length: Optional[int] =
     6. Concatenates forward + rewind to create the full trajectory
     7. Applies uniform subsampling to get the final num_frames
     8. Calculates progress relative to start index but out of total 64 frames
+
+    Works with both frames and embeddings automatically.
 
     Example:
     Original frames: [0, 1, 2, ... 63]
@@ -266,8 +317,12 @@ def create_rewind_trajectory(original_traj: Dict, rewind_length: Optional[int] =
         original_traj: Original trajectory dictionary
         rewind_length: Number of frames to rewind (default: random 1 to max_frames)
     """
-    # Load frames from npz file
-    frames_data = load_frames_from_npz(original_traj["frames"])
+    if use_embeddings:
+        # Load embeddings from .pt file
+        frames_data = load_embeddings_from_path(original_traj["embeddings_path"])
+    else:
+        # Load frames from npz file
+        frames_data = load_frames_from_npz(original_traj["frames"])
 
     # Get the number of frames
     if hasattr(frames_data, "shape"):
@@ -318,10 +373,16 @@ def create_rewind_trajectory(original_traj: Dict, rewind_length: Optional[int] =
 
     # start from end-2 because we don't want to include the last frame of forward segment
     # end at rewind_point-1 because we want to include the first frame of rewind segment
-    reverse_frames = frames_data[end_idx - 2 : rewind_point - 1 : -1]
+    reverse_frames = frames_data[rewind_point : end_idx - 1]
+    if use_embeddings and torch is not None:
+        reverse_frames = torch.flip(reverse_frames, dims=[0])
+    else:
+        reverse_frames = reverse_frames[::-1]
 
     # Step 5: Combine forward and reverse segments
-    if isinstance(forward_frames, np.ndarray):
+    if use_embeddings and torch is not None:
+        combined_frames = torch.cat([forward_frames, reverse_frames], dim=0)
+    elif isinstance(forward_frames, np.ndarray):
         # If frames are numpy arrays, use concatenate
         combined_frames = np.concatenate([forward_frames, reverse_frames], axis=0)
     else:
@@ -357,11 +418,53 @@ def create_rewind_trajectory(original_traj: Dict, rewind_length: Optional[int] =
         "subsampled_indices": subsampled_indices,
     }
 
-    # Create new trajectory with rewind frames
+    # Create new trajectory with rewind frames/embeddings
     rewind_traj = original_traj.copy()
-    rewind_traj["frames"] = subsampled_frames
-    rewind_traj["frames_shape"] = subsampled_frames.shape
+
+    if use_embeddings:
+        # Store embeddings instead of frames
+        rewind_traj["frames"] = subsampled_frames  # Store embeddings in frames field for rewind
+        rewind_traj["frames_shape"] = subsampled_frames.shape
+        # Keep the original embeddings_path for reference
+    else:
+        # Store frames normally
+        rewind_traj["frames"] = subsampled_frames
+        rewind_traj["frames_shape"] = subsampled_frames.shape
+
     rewind_traj["target_progress"] = subsampled_progress
     rewind_traj["metadata"] = metadata
     rewind_traj["quality_label"] = "rewound"
     return rewind_traj
+
+
+def show_available_datasets():
+    """Show which datasets are available in the cache."""
+    # The preprocessing script now creates individual cache directories for each dataset/subset pair
+    cache_dir = os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
+    if not cache_dir:
+        raise ValueError(
+            "RFM_PROCESSED_DATASETS_PATH environment variable not set. Please set it to the directory containing your processed datasets."
+        )
+
+    print("=" * 100)
+    print("Available datasets:")
+
+    # List all subdirectories (individual dataset caches)
+    if os.path.exists(cache_dir):
+        subdirs = [d for d in os.listdir(cache_dir) if os.path.isdir(os.path.join(cache_dir, d))]
+        if subdirs:
+            for subdir in sorted(subdirs):
+                # Try to load dataset info
+                info_file = os.path.join(cache_dir, subdir, "dataset_info.json")
+                if os.path.exists(info_file):
+                    with open(info_file) as f:
+                        info = json.load(f)
+                    dataset_path = info.get("dataset_path", "unknown")
+                    subset = info.get("subset", "unknown")
+                    trajectories = info.get("total_trajectories", 0)
+                    print(f"   {dataset_path}/{subset}: {trajectories} trajectories")
+        else:
+            print("  ❌ No dataset caches found")
+    else:
+        print("  ❌ Cache directory does not exist")
+    print("=" * 100)

@@ -68,8 +68,9 @@ BASE_FEATURES = {
     "frames": None,  # Will be set based on use_video parameter
     "is_robot": datasets.Value("bool"),
     "quality_label": datasets.Value("string"),
-    "preference_group_id": datasets.Value("string"),
-    "preference_rank": datasets.Value("int32"),
+    #"preference_group_id": datasets.Value("string"),
+    #"preference_rank": datasets.Value("int32"),
+    "partial_success": None,# in [0, 1]
 }
 
 
@@ -542,6 +543,13 @@ def main(cfg: GenerateConfig):
         # Load the trajectories using the loader with max_trajectories limit
         print(f"Loading RoboArena dataset from: {cfg.dataset.dataset_path}")
         task_data = load_roboarena_dataset(cfg.dataset.dataset_path)
+        trajectories = flatten_task_data(task_data)
+    elif "egocot" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.egocot_loader import load_egocot_dataset
+
+        # Load the trajectories using the loader
+        print(f"Loading EgoCoT dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_egocot_dataset(cfg.dataset.dataset_path, )
         trajectories = flatten_task_data(task_data)
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")

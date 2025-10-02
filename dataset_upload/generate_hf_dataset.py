@@ -544,6 +544,13 @@ def main(cfg: GenerateConfig):
         print(f"Loading RoboArena dataset from: {cfg.dataset.dataset_path}")
         task_data = load_roboarena_dataset(cfg.dataset.dataset_path)
         trajectories = flatten_task_data(task_data)
+    elif "egocot" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.egocot_loader import load_egocot_dataset
+
+        # Load the trajectories using the loader
+        print(f"Loading EgoCoT dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_egocot_dataset(cfg.dataset.dataset_path, )
+        trajectories = flatten_task_data(task_data)
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")
 

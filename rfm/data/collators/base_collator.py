@@ -1,9 +1,7 @@
-from rfm.data.dataset_types import SampleType, PreferenceSample, SimilaritySample, ProgressSample
-from transformers import AutoProcessor, AutoTokenizer
-from typing import List, Dict
 import torch
-from rfm.data.dataset_types import SampleType
-import numpy as np
+from transformers import AutoProcessor, AutoTokenizer
+
+from rfm.data.dataset_types import PreferenceSample, ProgressSample, SampleType, SimilaritySample
 
 
 class BaseCollator:
@@ -14,6 +12,8 @@ class BaseCollator:
         max_length: int = 1024,
         resized_height: int = 128,
         resized_width: int = 128,
+        base_model_id: str = None,
+        load_embeddings: bool = False,
         **kwargs,
     ):
         self.processor = processor
@@ -22,11 +22,25 @@ class BaseCollator:
         self.resized_height = resized_height
         self.resized_width = resized_width
         self.tokenizer = tokenizer
+        self.base_model_id = base_model_id
+        self.load_embeddings = load_embeddings
+
+        # Update processor based on base model id
+        # if "SmolVLM" in self.base_model_id:
+        #     # For image processor
+        #     self.processor.image_processor.max_image_size = {"longest_edge": self.resized_height}
+        #     self.processor.image_processor.size = {"longest_edge": self.resized_height}
+        #     self.processor.image_processor.video_sampling["video_size"] = {"longest_edge": self.resized_height}
+
+        #     # for video processor
+        #     self.processor.video_processor.max_image_size = {"longest_edge": self.resized_height}
+        #     self.processor.video_processor.size = {"longest_edge": self.resized_height}
+        #     self.processor.video_processor.video_sampling["video_size"] = {"longest_edge": self.resized_height}
 
     def __call__(
         self,
-        samples: List[SampleType],
-    ) -> Dict[str, torch.Tensor]:
+        samples: list[SampleType],
+    ) -> dict[str, torch.Tensor]:
         """
         Collate a list of samples into separate batches for preferences, progress, and similarities.
         For VQA-based reward modeling, everything goes through language generation.

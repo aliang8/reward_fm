@@ -5,7 +5,8 @@ This file contains the EvaluationConfig dataclass for evaluation-specific parame
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+
+from rfm.configs.experiment_configs import CustomEvaluationConfig
 from rfm.configs.experiment_configs import DataConfig
 
 
@@ -33,7 +34,11 @@ class EvaluationConfig:
     server_port: int = field(default=8000, metadata={"help": "Evaluation server port"})
     log_dir: str = field(default="./eval_logs", metadata={"help": "Directory to save evaluation results"})
 
-    # Reuse DataConfig for data settings
+    custom_eval: CustomEvaluationConfig = field(
+        default_factory=CustomEvaluationConfig,
+        metadata={"help": "Custom evaluation configuration (reused from experiment_configs)"},
+    )
+
     data: DataConfig = field(
         default_factory=DataConfig, metadata={"help": "Data configuration (reused from experiment_configs)"}
     )

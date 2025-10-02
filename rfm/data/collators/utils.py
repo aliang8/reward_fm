@@ -1,7 +1,27 @@
-import torch
 import numpy as np
-from PIL import Image
-from typing import List, Optional, Tuple, Union, Any
+import torch
+import av
+
+
+def write_mp4(frames, out_path, fps=4):
+    w, h = frames[0].size
+    c = av.open(str(out_path), mode="w")
+    s = c.add_stream("libx264", rate=fps)
+    s.width, s.height = w, h
+    s.pix_fmt = "yuv420p"
+    s.options = {
+        "preset": "ultrafast",
+        "tune": "zerolatency",
+        "crf": "28",
+        "x264-params": "keyint=1:min-keyint=1:scenecut=0",
+    }
+    for img in frames:
+        frame = av.VideoFrame.from_ndarray(np.array(img), format="rgb24")
+        for pkt in s.encode(frame):
+            c.mux(pkt)
+    for pkt in s.encode(None):
+        c.mux(pkt)
+    c.close()
 
 
 def pad_target_progress(progress_list):

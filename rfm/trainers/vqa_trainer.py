@@ -1,30 +1,19 @@
 import ast
-from re import M, S
-import wandb
-import warnings
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import Trainer
-from typing import List, Dict, Optional, Union, Any, Tuple
-import numpy as np
-from tqdm import tqdm
-import torch.distributed as dist
-from transformers.trainer_utils import EvalPrediction
-from transformers.trainer import PredictionOutput
 
-from rfm.utils.logging import is_rank_0, rank_0_print
-from rfm.utils.metrics import compute_auc, compute_spearman_correlation
-from rfm.utils.logging import _timer
-from rfm.trainers import RFMHeadsTrainer
 from evals.eval_utils import extract_answer_from_text
+from .rfm_heads_trainer import RFMHeadsTrainer
+from rfm.utils.timer import _timer
 
 
 # copied because the original function forces the metric reduction
 def fixed_cross_entropy(
     source: torch.Tensor,
     target: torch.Tensor,
-    num_items_in_batch: Optional[torch.Tensor] = None,
+    num_items_in_batch: torch.Tensor | None = None,
     ignore_index: int = -100,
     reduction: str = "mean",
     **kwargs,
@@ -42,9 +31,9 @@ def ForCausalLMLoss(
     logits,
     labels,
     vocab_size: int,
-    num_items_in_batch: Optional[torch.Tensor] = None,
+    num_items_in_batch: torch.Tensor | None = None,
     ignore_index: int = -100,
-    shift_labels: Optional[torch.Tensor] = None,
+    shift_labels: torch.Tensor | None = None,
     **kwargs,
 ) -> torch.Tensor:
     # Upcast to float if we need to compute the loss to avoid potential precision issues
@@ -67,6 +56,35 @@ def ForCausalLMLoss(
 class RFMVQATrainer(RFMHeadsTrainer):
     def __init__(self, config, *args, **kwargs):
         super().__init__(config, *args, **kwargs)
+
+    def forward_model(self, model, inputs, sample_type="progress"):
+        with _timer("time/forward_vqa", timing_raw=self.timing_raw):
+            outputs = model(
+                input_ids=inputs["input_ids"],
+                attention_mask=inputs["attention_mask"],
+                pixel_values=inputs.get("pixel_values"),
+                pixel_values_videos=inputs.get("pixel_values_videos"),
+                image_grid_thw=inputs.get("image_grid_thw"),
+                video_grid_thw=inputs.get("video_grid_thw"),
+                second_per_grid_ts=inputs.get("second_per_grid_ts"),
+            )
+
+        if sample_type == "progress":
+            pred_ids = outputs.logits.argmax(dim=-1)
+            tokenizer = self.model.base_model.processor.tokenizer
+            pred_texts = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
+            predictions = [extract_answer_from_text(text) for text in pred_texts]
+            progress_logits = []
+            for prediction in predictions:
+                try:
+                    progress_logits.append(ast.literal_eval(prediction))
+                except:
+                    progress_logits.append(None)
+            progress_logits = {"A": progress_logits, "B": None}
+        else:
+            progress_logits = None
+
+        return outputs, progress_logits, self.timing_raw
 
     def compute_loss(self, model, inputs, return_outputs=False, training=True, **kwargs):
         """Compute loss for VQA tasks."""
@@ -149,6 +167,8 @@ class RFMVQATrainer(RFMHeadsTrainer):
         prefix = "train" if training else "eval"
         loss_dict = {f"{prefix}/{mode}_loss": loss.item()}
 
+        mode_name = "pref" if mode == "preference" else "prog" if mode == "progress" else "sim"
+
         # compute accuracy
         pred_ids = outputs.logits.argmax(dim=-1)
         tokenizer = self.model.base_model.processor.tokenizer
@@ -169,7 +189,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
             gt_labels = inputs["preference_labels"]
 
             preference_correct = (predictions_num_labels == gt_labels).float()
-            loss_dict.update({f"{prefix}/{mode}_accuracy": preference_correct.mean().item()})
+            loss_dict.update({f"{prefix}/{mode}_acc": preference_correct.mean().item()})
         elif mode == "progress":
             predictions = [extract_answer_from_text(text) for text in pred_texts]
             gt_labels = inputs["target_progress"]
@@ -191,10 +211,12 @@ class RFMVQATrainer(RFMHeadsTrainer):
             for strat in set(rejected_data_gen_strategy):
                 mask = [1 if s == strat else 0 for s in rejected_data_gen_strategy]
                 mask = torch.tensor(mask, device=self.accelerator.device)
-                loss_dict.update({f"{prefix}_strat/{mode}_loss_{strat}": (loss_per_example[mask == 1]).mean().item()})
-                loss_dict.update(
-                    {f"{prefix}_strat/{mode}_accuracy_{strat}": (preference_correct[mask == 1]).mean().item()}
-                )
+                loss_dict.update({
+                    f"{prefix}_strat/{mode_name}_loss_{strat}": (loss_per_example[mask == 1]).mean().item()
+                })
+                loss_dict.update({
+                    f"{prefix}_strat/{mode_name}_acc_{strat}": (preference_correct[mask == 1]).mean().item()
+                })
 
         elif mode == "progress":
             data_gen_strategy = inputs["data_gen_strategy"]
@@ -202,18 +224,22 @@ class RFMVQATrainer(RFMHeadsTrainer):
             for strat in set(data_gen_strategy):
                 mask = [1 if s == strat else 0 for s in data_gen_strategy]
                 mask = torch.tensor(mask, device=self.accelerator.device)
-                loss_dict.update({f"{prefix}_strat/{mode}_loss_{strat}": (loss_per_example[mask == 1]).mean().item()})
+                loss_dict.update({
+                    f"{prefix}_strat/{mode_name}_loss_{strat}": (loss_per_example[mask == 1]).mean().item()
+                })
 
         data_source = inputs.get("data_source", [])
 
         for data_source in set(data_source):
             mask = [1 if s == data_source else 0 for s in inputs["data_source"]]
             mask = torch.tensor(mask, device=self.accelerator.device)
-            loss_dict.update({f"{prefix}_ds/{mode}_loss_{data_source}": (loss_per_example[mask == 1]).mean().item()})
+            loss_dict.update({
+                f"{prefix}_ds/{mode_name}_loss_{data_source}": (loss_per_example[mask == 1]).mean().item()
+            })
 
             if mode == "preference":
-                loss_dict.update(
-                    {f"{prefix}_ds/{mode}_accuracy_{data_source}": (preference_correct[mask == 1]).mean().item()}
-                )
+                loss_dict.update({
+                    f"{prefix}_ds/{mode_name}_acc_{data_source}": (preference_correct[mask == 1]).mean().item()
+                })
 
         return (loss, loss_dict) if return_outputs else loss

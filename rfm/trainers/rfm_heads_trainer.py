@@ -1,44 +1,117 @@
 import collections
-import ast
-from re import M, S
-import wandb
-import warnings
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from transformers import Trainer
-from typing import List, Dict, Optional, Union, Any
+
 import numpy as np
+import torch
+import torch.nn.functional as F
 from tqdm import tqdm
-import torch.distributed as dist
+from transformers import Trainer
+import matplotlib.pyplot as plt
+import cv2
 
-from rfm.utils.logging import is_rank_0, rank_0_print
+import copy
+import wandb
+from rfm.utils.distributed import is_rank_0, rank_0_print
+from rfm.utils.timer import _timer
 from rfm.utils.metrics import compute_spearman_correlation
-from rfm.utils.logging import _timer
+from rfm.utils.setup_utils import setup_dataset, setup_batch_collator
+from torch.utils.data import DataLoader
+from rfm.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
+from evals.compile_results import compute_eval_metrics
+from rfm.data.datasets.helpers import load_frames_from_npz
 
-def all_reduce_metrics(metrics: dict):
+
+def reduce_metrics_with_accelerate(metrics: dict, accelerator, aggregate_method="sum"):
     """
-    All-reduce multiple scalar metrics at once.
+    Reduce multiple scalar metrics using Accelerate's built-in methods.
+    Handles cases where different processes have different metric keys.
     metrics: dict of {name: float or tensor}
     Returns dict with averaged metrics across all ranks.
     """
-    if not dist.is_initialized():
+    if not metrics:
         return metrics
 
-    # Convert values to tensor (on CUDA) and stack
-    values = [torch.tensor(v, dtype=torch.float32, device="cuda") 
-              if not torch.is_tensor(v) else v.to("cuda", torch.float32)
-              for v in metrics.values()]
-    stacked = torch.stack(values)  # shape [num_metrics]
+    try:
+        # Step 1: Gather all metric keys from all processes
+        local_keys = list(metrics.keys())
+        all_keys_gathered = accelerator.gather_for_metrics(local_keys)
 
-    # All-reduce (sum over all ranks)
-    dist.all_reduce(stacked, op=dist.ReduceOp.SUM)
+        # Step 2: Create union of all keys across all processes
+        all_unique_keys = set()
+        for keys_from_process in all_keys_gathered:
+            if isinstance(keys_from_process, list):
+                all_unique_keys.update(keys_from_process)
+            else:
+                # Handle single key case
+                all_unique_keys.add(keys_from_process)
 
-    # Average across world size
-    stacked /= dist.get_world_size()
+        all_unique_keys = sorted(all_unique_keys)
 
-    # Return dict again
-    return {k: stacked[i].item() for i, k in enumerate(metrics.keys())}
+        # Step 3: Create synchronized metrics dict with 0.0 for missing keys
+        synchronized_metrics = {}
+        for key in all_unique_keys:
+            if key in metrics:
+                synchronized_metrics[key] = metrics[key]
+            else:
+                # This process doesn't have this metric, use 0.0
+                synchronized_metrics[key] = 0.0
+
+        # Step 4: Now reduce all metrics (all processes have same keys)
+        result_metrics = {}
+
+        for key, value in synchronized_metrics.items():
+            try:
+                # Convert to tensor on accelerator device
+                if torch.is_tensor(value):
+                    tensor_val = value.to(accelerator.device, dtype=torch.float32)
+                else:
+                    tensor_val = torch.tensor(float(value), dtype=torch.float32, device=accelerator.device)
+
+                # Check for NaN values before reduction
+                if torch.isnan(tensor_val).any():
+                    rank_0_print(f"Warning: NaN detected in metric '{key}', using 0.0")
+                    tensor_val = torch.tensor(0.0, dtype=torch.float32, device=accelerator.device)
+
+                # Check for infinity values
+                if torch.isinf(tensor_val).any():
+                    rank_0_print(f"Warning: Infinity detected in metric '{key}', using 0.0")
+                    tensor_val = torch.tensor(0.0, dtype=torch.float32, device=accelerator.device)
+
+                # Use accelerator's reduce method - all processes participate
+                reduced_val = accelerator.reduce(tensor_val, reduction=aggregate_method)
+
+                # Final check for NaN in reduced result
+                if torch.isnan(reduced_val).any():
+                    rank_0_print(f"Warning: NaN in reduced result for metric '{key}', using fallback")
+                    result_metrics[key] = 0.0
+                else:
+                    result_metrics[key] = reduced_val.item()
+
+            except Exception as metric_error:
+                # If individual metric fails, keep original value (or 0.0 if missing)
+                rank_0_print(f"Warning: Failed to reduce metric '{key}': {metric_error}")
+                if key in metrics:
+                    original_val = float(metrics[key]) if not torch.is_tensor(metrics[key]) else metrics[key].item()
+                    result_metrics[key] = 0.0 if np.isnan(original_val) else original_val
+                else:
+                    result_metrics[key] = 0.0
+
+        # Step 5: Only return metrics that were originally present in this process
+        final_metrics = {}
+        for key in metrics.keys():
+            final_metrics[key] = result_metrics[key]
+
+        return final_metrics
+
+    except Exception as e:
+        # Fallback: return original metrics if reduction fails
+        rank_0_print(f"Warning: reduce_metrics_with_accelerate failed with error: {e}. Returning original metrics.")
+        fallback_metrics = {}
+        for k, v in metrics.items():
+            val = float(v) if not torch.is_tensor(v) else v.item()
+            # Replace NaN with 0.0 in fallback
+            fallback_metrics[k] = 0.0 if np.isnan(val) else val
+        return fallback_metrics
+
 
 class RFMHeadsTrainer(Trainer):
     def __init__(self, config, *args, **kwargs):
@@ -63,11 +136,11 @@ class RFMHeadsTrainer(Trainer):
 
         # Extract the separate batches
         preference_inputs = inputs.get("preference_inputs", {})
-        similarity_inputs = inputs.get("similarity_inputs", {})
         progress_inputs = inputs.get("progress_inputs", {})
+        similarity_inputs = inputs.get("similarity_inputs", {})
         num_preferences = inputs.get("num_preferences", 0)
-        num_similarities = inputs.get("num_similarities", 0)
         num_progress = inputs.get("num_progress", 0)
+        num_similarities = inputs.get("num_similarities", 0)
 
         if num_preferences > 0 and preference_inputs:
             # Count data generation strategies from the rejected trajectories
@@ -75,21 +148,45 @@ class RFMHeadsTrainer(Trainer):
             if isinstance(rejected_data_gen_strategy, list) and len(rejected_data_gen_strategy) > 0:
                 # Normalize keys we care about
                 strat_counts = {
-                    "num_trajs_rewind": 0,
-                    "num_trajs_same_task": 0,
-                    "num_trajs_different_task": 0,
+                    "pref_num_trajs_rewind": 0,
+                    "pref_num_trajs_same_task": 0,
+                    "pref_num_trajs_different_task": 0,
                 }
                 for s in rejected_data_gen_strategy:
                     if s == "rewind_same_task":
-                        strat_counts["num_trajs_rewind"] += 1
+                        strat_counts["pref_num_trajs_rewind"] += 1
                     elif s == "suboptimal_same_task":
-                        strat_counts["num_trajs_same_task"] += 1
+                        strat_counts["pref_num_trajs_same_task"] += 1
                     elif s == "different_task":
-                        strat_counts["num_trajs_different_task"] += 1
+                        strat_counts["pref_num_trajs_different_task"] += 1
 
                 self.log_metadata.update(strat_counts)
 
             data_sources = preference_inputs.get("data_source", None)
+            if data_sources is not None:
+                for ds in data_sources:
+                    self.global_metadata[f"total_{ds}"] += 1.0
+
+        # Count data generation strategies from the progress samples
+        if num_progress > 0 and progress_inputs:
+            data_gen_strategy = progress_inputs.get("data_gen_strategy", [])
+            if isinstance(data_gen_strategy, list) and len(data_gen_strategy) > 0:
+                strat_counts = {
+                    "prog_num_trajs_successful": 0,
+                    "prog_num_trajs_rewind_same_task": 0,
+                    "prog_num_trajs_different_task": 0,
+                }
+                for s in data_gen_strategy:
+                    if s == "successful":
+                        strat_counts["prog_num_trajs_successful"] += 1
+                    elif s == "rewind_same_task":
+                        strat_counts["prog_num_trajs_rewind_same_task"] += 1
+                    elif s == "different_task":
+                        strat_counts["prog_num_trajs_different_task"] += 1
+
+                self.log_metadata.update(strat_counts)
+
+            data_sources = progress_inputs.get("data_source", None)
             if data_sources is not None:
                 for ds in data_sources:
                     self.global_metadata[f"total_{ds}"] += 1.0
@@ -100,8 +197,6 @@ class RFMHeadsTrainer(Trainer):
         self.global_metadata["total_preferences"] += num_preferences
         self.global_metadata["total_similarities"] += num_similarities
         self.global_metadata["total_progress"] += num_progress
-
-        # self.global_metadata = all_reduce_metrics(self.global_metadata)
 
         # Log custom losses at specified intervals
         if self.state.global_step % self.args.logging_steps == 0:
@@ -114,10 +209,8 @@ class RFMHeadsTrainer(Trainer):
         if not self.log_metadata:
             return
 
-        # Aggregate custom losses across all processes if using distributed training
-        # log_metadata = all_reduce_metrics(self.log_metadata)
-
-        log_metadata = self.log_metadata
+        # Use local metrics (no aggregation needed for individual GPU metrics)
+        log_metadata = reduce_metrics_with_accelerate(self.log_metadata, self.accelerator, aggregate_method="mean")
 
         # Prepare logging data using aggregated losses
         log_data = {
@@ -126,8 +219,9 @@ class RFMHeadsTrainer(Trainer):
             **log_metadata,
         }
 
-        # also log the global metadata
-        log_global = {f"counts/{key}": self.global_metadata[key] for key in self.global_metadata}
+        # Log global metadata
+        global_metadata = reduce_metrics_with_accelerate(self.global_metadata, self.accelerator, aggregate_method="sum")
+        log_global = {f"counts/{key}": global_metadata[key] for key in global_metadata}
         log_data.update(log_global)
         # make sure values are floats so they are loggable into wandb reports
         log_data = {k: float(v) for k, v in log_data.items()}
@@ -144,7 +238,7 @@ class RFMHeadsTrainer(Trainer):
 
         # Log to console on rank 0
         if is_rank_0():
-            rank_0_print(f"Step {self.state.global_step} Custom Losses (Aggregated):")
+            rank_0_print(f"Step {self.state.global_step}:")
             rank_0_print("-" * 50)
             for key in log_global:
                 rank_0_print(f"  {key}: {log_global[key]}")
@@ -152,52 +246,270 @@ class RFMHeadsTrainer(Trainer):
             rounded_times = {k: round(v, 2) for k, v in self.timing_raw.items()}
             rank_0_print(f"Timing raw: {rounded_times}")
 
-    def evaluate(self, eval_dataset=None, ignore_keys=None) -> Dict[str, float]:
+    def _run_custom_evaluations(self):
+        metrics = collections.defaultdict(dict)
+        eval_types = self.config.custom_eval.eval_types
+
+        EVAL_TYPE_SHORT = {
+            "reward_alignment": "rew_align",
+            "confusion_matrix": "cm",
+            "policy_ranking": "p_rank",
+            "success_failure": "succ_fail",
+            "wrong_task": "wrong_task",
+        }
+
+        for eval_type in eval_types:
+            rank_0_print(f"Running evaluation for: {eval_type}")
+
+            datasets = getattr(self.config.custom_eval, eval_type)
+            eval_datasets_name = [d[0] for d in datasets]
+            eval_subsets_name = [[d[1] for d in datasets]]
+
+            if eval_type == "confusion_matrix":
+                eval_datasets_name = eval_datasets_name + self.config.data.train_datasets
+                eval_subsets_name = eval_subsets_name + self.config.data.train_subsets
+
+            # Pair up each dataset with the corresponding subsets
+            for eval_dataset, eval_subset in zip(eval_datasets_name, eval_subsets_name):
+                eval_cfg = copy.deepcopy(self.config.data)
+                eval_cfg.dataset_type = eval_type
+
+                eval_cfg.eval_datasets = [eval_dataset]
+                eval_cfg.eval_subsets = [eval_subset]
+
+                dataset = setup_dataset(eval_cfg, is_eval=True, verbose=False)
+                collator = setup_batch_collator(self.model.processor, self.model.tokenizer, self.config)
+
+                dataloader = DataLoader(
+                    dataset,
+                    batch_size=self.config.training.per_device_eval_batch_size,
+                    collate_fn=collator,
+                    shuffle=False,
+                    num_workers=0,
+                    drop_last=False,
+                )
+
+                self.model.eval()
+                eval_results = []
+
+                example_count = 0
+
+                for batch in tqdm(dataloader, desc=f"Evaluating {eval_type}"):
+                    batch = self._prepare_inputs(batch)
+
+                    if eval_type in ["reward_alignment", "policy_ranking", "confusion_matrix"]:
+                        progress_samples = batch["progress_inputs"]
+                        with torch.no_grad():
+                            outputs, progress_logits, _ = self.forward_model(
+                                self.model, progress_samples, sample_type="progress"
+                            )
+                        progress_pred = progress_logits["A"]
+                        if isinstance(progress_pred, torch.Tensor):
+                            progress_pred = progress_pred.cpu().numpy()
+
+                        for i in range(len(progress_pred)):
+                            sample_result = {
+                                "task": progress_samples["task"][i],
+                                "target_progress": progress_samples["target_progress"][i].cpu().numpy(),
+                                "progress_pred": progress_pred[i],
+                                "data_source": progress_samples["data_source"][i],
+                                "data_gen_strategy": progress_samples["data_gen_strategy"][i],
+                                "quality_label": progress_samples["quality_labels"][i],
+                                "metadata": progress_samples["metadata"][i],
+                            }
+                            if eval_type == "policy_ranking":
+                                sample_result["video_path"] = dataset.sample_indices[i]["video_path"]
+                            eval_results.append(sample_result)
+                            example_count += 1
+
+                    elif eval_type == "success_failure":
+                        preference_samples = batch["preference_inputs"]
+                        with torch.no_grad():
+                            outputs, _, _ = self.forward_model(self.model, preference_samples, sample_type="preference")
+                        pref_logits = outputs.logits
+
+                        for i in range(len(pref_logits)):
+                            sample_result = {
+                                "task": preference_samples["task"][i],
+                                "preference_pred": pref_logits[i].cpu().numpy(),
+                                "preference_labels": preference_samples["preference_labels"][i].item(),
+                                "data_source": preference_samples["data_source"][i],
+                                "chosen_data_gen_strategy": preference_samples["chosen_data_gen_strategy"][i],
+                                "rejected_data_gen_strategy": preference_samples["rejected_data_gen_strategy"][i],
+                                # "quality_label": int(preference_samples["quality_labels"][i].item()),
+                                "metadata": preference_samples["metadata"][i],
+                            }
+                            eval_results.append(sample_result)
+                            example_count += 1
+
+                # Create a wandb table to visualize the samples
+                # Log the frames and the progress predictions
+
+                # if the eval_type is reward_alignment, let's visualize frames and progress predictions
+                if eval_type == "reward_alignment":
+                    traj_len = 32
+
+                    data = []
+                    count = 0
+                    for i in range(0, len(eval_results), traj_len):
+                        eval_results_traj_i = eval_results[i : i + traj_len]
+                        video = dataset.sample_indices[i]["video_path"]
+                        frames = load_frames_from_npz(video)
+                        frames = frames.transpose(0, 3, 1, 2)
+
+                        # Resize frames to make them smaller for wandb table display
+                        resized_frames = []
+                        for frame in frames:
+                            frame_resized = cv2.resize(frame.transpose(1, 2, 0), (64, 64))
+                            resized_frames.append(frame_resized.transpose(2, 0, 1))
+                        frames = np.array(resized_frames)
+
+                        eval_metrics = compute_eval_metrics(eval_type, eval_results)
+                        task = eval_results_traj_i[0]["task"]
+                        progress_preds = []
+                        for j in range(len(eval_results_traj_i)):
+                            progress_pred = eval_results_traj_i[j]["progress_pred"]
+                            if progress_pred is not None:
+                                progress_preds.append(round(progress_pred[-1].item(), 2))
+                            else:
+                                progress_preds.append(0.0)
+
+                        # Create a wandb plot for progress predictions
+                        fig, ax = plt.subplots(figsize=(8, 4))
+                        ax.plot(progress_preds, marker="o", linewidth=2, markersize=4)
+                        ax.set_xlabel("Frame")
+                        ax.set_ylabel("Progress Prediction")
+                        ax.set_title(f"Progress Predictions - {task}")
+                        ax.grid(True, alpha=0.3)
+                        ax.set_ylim(0, 1)
+
+                        # Convert to wandb image
+                        progress_plot = wandb.Image(fig)
+                        plt.close(fig)  # Close to free memory
+
+                        data.append([task, wandb.Video(frames, fps=2, format="gif"), progress_plot])
+                        count += 1
+
+                    columns = ["video", "task", "progress_plot"]
+                    wandb.log({
+                        "reward_alignment_samples": wandb.Table(data=data, columns=columns),
+                    })
+
+                elif eval_type == "policy_ranking":
+                    # create task groups from eval_results
+                    eval_metrics, task_groups, task_details = compute_eval_metrics(eval_type, eval_results)
+
+                    data = []
+                    for task, group in task_groups.items():
+                        quality_and_rews = [(t["quality_label"], t["final_reward"]) for t in group]
+                        quality_and_rews = ",".join([f"{q}:{r:.2f}" for q, r in quality_and_rews])
+                        data.append([task, quality_and_rews])
+
+                    columns = ["task", "quality_and_rews"]
+                    wandb.log({
+                        "policy_ranking_samples": wandb.Table(data=data, columns=columns),
+                    })
+
+                elif eval_type == "confusion_matrix":
+                    eval_metrics = compute_eval_metrics(eval_type, eval_results)
+                else:
+                    raise ValueError(f"Unsupported eval type: {eval_type}")
+
+                # Compute metrics
+                ds_name = DS_SHORT_NAME_MAPPING[eval_dataset + "/" + eval_subset[0]]
+                metrics[ds_name][eval_type] = eval_metrics
+                rank_0_print(f"Completed {eval_type} evaluation: {len(eval_results)} samples")
+                rank_0_print(f"Metrics: {metrics[ds_name][eval_type]}")
+                rank_0_print("=" * 50)
+
+        # Prepare metrics for both wandb and callback return
+        wandb_metrics = {}
+        callback_metrics = {}
+
+        for ds_name, eval_type_metric in metrics.items():
+            for eval_type, metric in eval_type_metric.items():
+                eval_type_short = EVAL_TYPE_SHORT[eval_type]
+                if eval_type == "confusion_matrix":
+                    fig, confusion_matrix = metric
+                    # plot confusion matrix
+                    wandb_metrics.update({
+                        f"custom_eval/{eval_type_short}_{ds_name}": wandb.Image(fig),
+                    })
+                else:
+                    # Add to both wandb and callback metrics
+                    for k, v in metric.items():
+                        if isinstance(v, (int, float)):
+                            metric_name = f"custom_eval/{eval_type_short}_{k}_{ds_name}"
+                            wandb_metrics[metric_name] = v
+                            callback_metrics[metric_name] = v
+
+        # Log to wandb
+        if self.args.report_to and "wandb" in self.args.report_to and is_rank_0():
+            wandb.log(wandb_metrics)
+
+        # Return metrics for callbacks
+        return callback_metrics
+
+    def evaluate(self, eval_dataset=None, ignore_keys=None) -> dict[str, float]:
         """
         Override evaluate method to implement custom RFM evaluation metrics.
         """
-        # Get the evaluation dataset
-        eval_dataloader = self.get_eval_dataloader(eval_dataset)
-
         # Set model to eval mode
         self.model.eval()
-
-        # Run evaluation
-        outputs = []
-        with _timer("time/evaluate", timing_raw=self.timing_raw):
-            with torch.no_grad():
-                for step, inputs in tqdm(
-                    enumerate(eval_dataloader),
-                    total=len(eval_dataloader),
-                    desc="Evaluating",
-                ):
-                    # Move inputs to device
-                    inputs = self._prepare_inputs(inputs)
-
-                    _, loss_dicts = self.compute_loss(self.model, inputs, return_outputs=True, training=False)
-                    outputs.append(loss_dicts)
-
-        # Aggregate outputs
         metrics = {}
 
-        # assume that we already called .item() on the outputs
-        keys = list(outputs[0].keys())
-        for key in keys:
-            metrics[key] = [output[key] for output in outputs if key in output]
-            metrics[key] = np.array(metrics[key]).mean()
+        # Run evaluation
+        if self.config.training.run_default_eval:
+            # Get the evaluation dataset
+            eval_dataloader = self.get_eval_dataloader(eval_dataset)
 
-        # Log metrics
-        if is_rank_0():
-            rank_0_print(f"\n=== Custom RFM Evaluation Results ===")
-            for key, value in metrics.items():
-                rank_0_print(f"{key}: {value:.6f}")
-            rank_0_print("=" * 50)
+            outputs = []
+            with _timer("time/evaluate", timing_raw=self.timing_raw):
+                with torch.no_grad():
+                    for _step, inputs in tqdm(
+                        enumerate(eval_dataloader),
+                        total=len(eval_dataloader),
+                        desc="Evaluating",
+                    ):
+                        # Move inputs to device
+                        inputs = self._prepare_inputs(inputs)
 
-        # Also log to wandb if available and configured (only on rank 0)
-        if self.args.report_to and "wandb" in self.args.report_to and is_rank_0():
-            if wandb.run is not None:
-                wandb.log(metrics)
+                        _, loss_dicts = self.compute_loss(self.model, inputs, return_outputs=True, training=False)
+                        outputs.append(loss_dicts)
 
+            # assume that we already called .item() on the outputs
+            keys = list(outputs[0].keys())
+            for key in keys:
+                metrics[key] = [output[key] for output in outputs if key in output]
+                metrics[key] = np.array(metrics[key]).mean()
+
+            # Aggregate metrics across all processes using accelerator
+            metrics = reduce_metrics_with_accelerate(metrics, self.accelerator, aggregate_method="mean")
+
+            # Log metrics
+            if is_rank_0():
+                rank_0_print("\n=== Custom RFM Evaluation Results (Aggregated) ===")
+                for key, value in metrics.items():
+                    rank_0_print(f"{key}: {value:.6f}")
+                rank_0_print("=" * 50)
+
+            # Also log to wandb if available and configured (only on rank 0)
+            if self.args.report_to and "wandb" in self.args.report_to and is_rank_0():
+                if wandb.run is not None:
+                    wandb.log(metrics)
+
+        # Run the custom evaluations
+        custom_eval_should_run = (
+            self.config.training.custom_eval_steps
+            and self.state.global_step % self.config.training.custom_eval_steps == 0
+        )
+        if custom_eval_should_run:
+            custom_metrics = self._run_custom_evaluations()
+            metrics.update(custom_metrics)
+
+            # to trigger the callback handler
+            # self.log(metrics)
+            self.control = self.callback_handler.on_evaluate(self.args, self.state, self.control, metrics)
         return metrics
 
     def compute_loss(self, model, inputs, return_outputs=False, training=True, **kwargs):
@@ -205,38 +517,42 @@ class RFMHeadsTrainer(Trainer):
 
         # Extract the separate batches
         preference_inputs = inputs.get("preference_inputs", {})
+        progress_inputs = inputs.get("progress_inputs", {})
         similarity_inputs = inputs.get("similarity_inputs", {})
+
         num_preferences = inputs.get("num_preferences", 0)
         num_similarities = inputs.get("num_similarities", 0)
+        num_progress = inputs.get("num_progress", 0)
 
         # Initialize loss components and metadata
         total_loss = 0.0
         log_metadata = {}
 
         # Compute preference loss if we have preference samples
-
-        if num_preferences > 0 and preference_inputs:
+        if num_preferences > 0 and preference_inputs and self.config.model.train_preference_head:
             with _timer("time/compute_preference_loss", timing_raw=self.timing_raw):
-                preference_loss, progress_loss, loss_dict = self._compute_preference_loss(
+                preference_loss, loss_dict = self._compute_preference_loss(
                     model, preference_inputs, return_outputs=True, training=training
                 )
-            if self.config.model.train_preference_head:
                 total_loss += preference_loss
-            if self.config.model.train_progress_head:
-                total_loss += progress_loss
+                log_metadata.update(loss_dict)
 
+        # Compute progress loss if we have progress samples
+        if num_progress > 0 and progress_inputs and self.config.model.train_progress_head:
+            with _timer("time/compute_progress_loss", timing_raw=self.timing_raw):
+                progress_loss, loss_dict = self._compute_progress_loss(
+                    model, progress_inputs, return_outputs=True, training=training
+                )
+                total_loss += progress_loss
             log_metadata.update(loss_dict)
 
         # Compute similarity loss if we have similarity samples
-        if num_similarities > 0 and similarity_inputs:
+        if num_similarities > 0 and similarity_inputs and self.config.model.train_similarity_head:
             with _timer("time/compute_similarity_loss", timing_raw=self.timing_raw):
-                similarity_loss, progress_loss, loss_dict = self._compute_similarity_loss(
+                similarity_loss, loss_dict = self._compute_similarity_loss(
                     model, similarity_inputs, return_outputs=True, training=training
                 )
-            if self.config.model.train_similarity_head:
                 total_loss += similarity_loss
-            if self.config.model.train_progress_head:
-                total_loss += progress_loss
             log_metadata.update(loss_dict)
 
         # Always store custom losses for logging (even when return_outputs=False)
@@ -249,13 +565,12 @@ class RFMHeadsTrainer(Trainer):
 
         return total_loss
 
-    def _compute_progress_loss(
+    def _compute_progress_loss_helper(
         self,
         progress_logits,
         target_progress,
         frame_shape,
         target_progress_mask,
-        trajectory_name="trajectory",
         aggregate: bool = False,
     ):
         """
@@ -265,7 +580,6 @@ class RFMHeadsTrainer(Trainer):
             progress_logits: Progress prediction tensors (can be tensor or list of tensors)
             target_progress: Target progress tensors (can be tensor or list of tensors)
             frame_shape: List of frame shapes for splicing
-            trajectory_name: Name of trajectory for logging/debugging
             aggregate: Whether to return the mean of the losses and correlations
 
         Returns:
@@ -273,18 +587,21 @@ class RFMHeadsTrainer(Trainer):
         """
         # Handle case where inputs might be tensors or lists
         if progress_logits is None or target_progress is None:
+            import ipdb
+
+            ipdb.set_trace()
             return 0.0, 0.0
 
         # Ensure we have the same number of samples
         assert len(progress_logits) == len(target_progress), (
-            f"{trajectory_name}: Progress logits and target progress have different batch sizes"
+            f"Progress logits and target progress have different batch sizes"
         )
 
         # Splice both predicted and target logits based on frame shapes
         spliced_progress_logits = []
         spliced_target_progress = []
 
-        for i, (pred, target, shape) in enumerate(zip(progress_logits, target_progress, frame_shape)):
+        for _i, (pred, target, shape) in enumerate(zip(progress_logits, target_progress, frame_shape, strict=False)):
             num_frames = shape[0] if len(shape) > 0 else 0
             if "Qwen" in self.config.model.base_model_id:
                 spliced_target = target[:num_frames][::2]
@@ -298,7 +615,7 @@ class RFMHeadsTrainer(Trainer):
         progress_losses = []
         spearman_correlations = []
 
-        for i, (pred, target) in enumerate(zip(spliced_progress_logits, spliced_target_progress)):
+        for _i, (pred, target) in enumerate(zip(spliced_progress_logits, spliced_target_progress, strict=False)):
             loss = F.mse_loss(pred, target)
             progress_losses.append(loss)
 
@@ -327,13 +644,11 @@ class RFMHeadsTrainer(Trainer):
                 spearman_correlations = torch.stack(spearman_correlations) * target_progress_mask
                 return progress_losses, spearman_correlations
 
-        return 0.0, 0.0
+        raise ValueError("No progress losses found")
 
-    def _compute_preference_loss(self, model, inputs, return_outputs=False, training=True):
-        """Compute preference prediction loss using Bradley-Terry model."""
-        # Single forward pass with both trajectories concatenated
-        # The model should handle the preference prediction at the end
-        with _timer("time/pref_forward", timing_raw=self.timing_raw):
+    def forward_model(self, model, inputs, sample_type="progress"):
+        """Forward pass for the model."""
+        with _timer("time/forward", timing_raw=self.timing_raw):
             model_outputs, progress_logits, model_timing_raw = model(
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
@@ -342,16 +657,82 @@ class RFMHeadsTrainer(Trainer):
                 image_grid_thw=inputs.get("image_grid_thw", None),
                 video_grid_thw=inputs.get("video_grid_thw", None),
                 second_per_grid_ts=inputs.get("second_per_grid_ts", None),
-                sample_type="preference",
+                sample_type=sample_type,
                 timing_raw=self.timing_raw,
             )
             self.timing_raw.update(model_timing_raw)
+            return model_outputs, progress_logits, model_timing_raw
 
-        chosen_data_gen_strategy = inputs.get("chosen_data_gen_strategy", None)
+    def _compute_progress_loss(self, model, inputs, return_outputs=False, training=True):
+        """Compute progress prediction loss."""
+        _, progress_logits, model_timing_raw = self.forward_model(model, inputs, sample_type="progress")
+        progress_pred = progress_logits["A"]
+        progress_target = inputs["target_progress"]
+        frame_shapes = inputs["frame_shapes"]
+        progress_target_mask = inputs["target_progress_mask"]
+
+        progress_loss_all, spearman_corr_all = self._compute_progress_loss_helper(
+            progress_pred,
+            progress_target,
+            frame_shapes,
+            progress_target_mask,
+            aggregate=False,
+        )
+
+        progress_loss = progress_loss_all.mean()
+
+        if return_outputs:
+            outputs_dict = {}
+
+            prefix = "train" if training else "eval"
+
+            # split spearman by data gen strategy
+            strats = set(inputs["data_gen_strategy"])
+            for strat in strats:
+                mask = [1 if s == strat else 0 for s in inputs["data_gen_strategy"]]
+                mask = torch.tensor(mask, device=self.accelerator.device)
+                outputs_dict.update({
+                    f"{prefix}_strat_spearman_corr/{strat}": (spearman_corr_all[mask == 1]).mean().item(),
+                    f"{prefix}_strat_prog_loss/{strat}": (progress_loss_all[mask == 1]).mean().item(),
+                })
+
+            # split spearman by data source
+            data_sources = set(inputs["data_source"])
+            for data_source in data_sources:
+                mask = [1 if s == data_source else 0 for s in inputs["data_source"]]
+                mask = torch.tensor(mask, device=self.accelerator.device)
+                outputs_dict.update({
+                    f"{prefix}_ds_spearman_corr/{data_source}": (spearman_corr_all[mask == 1]).mean().item(),
+                    f"{prefix}_ds_prog_loss/{data_source}": (progress_loss_all[mask == 1]).mean().item(),
+                })
+
+            # Compute average Spearman correlation across trajectories A and B
+            spearman_values = []
+            if isinstance(spearman_corr_all, torch.Tensor):
+                spearman_values.append(spearman_corr_all.mean().item())
+            else:
+                spearman_values.append(spearman_corr_all)
+
+            avg_spearman = np.mean(spearman_values) if spearman_values else 0.0
+
+            outputs_dict.update({
+                f"{prefix}/prog_loss": progress_loss.item(),
+                f"{prefix}/spearman_corr_avg": avg_spearman,
+            })
+
+            return progress_loss, outputs_dict
+
+        return progress_loss
+
+    def _compute_preference_loss(self, model, inputs, return_outputs=False, training=True):
+        """Compute preference prediction loss using Bradley-Terry model."""
+        model_outputs, progress_logits, model_timing_raw = self.forward_model(model, inputs, sample_type="preference")
+
+        inputs.get("chosen_data_gen_strategy", None)
         rejected_data_gen_strategy = inputs.get("rejected_data_gen_strategy", None)
 
         preference_loss = 0.0
-        progress_loss = 0.0
+        # progress_loss = 0.0
 
         # Get preference labels (1 if first trajectory is preferred, 0 if second trajectory is preferred)
         preference_labels = inputs["preference_labels"]
@@ -366,17 +747,13 @@ class RFMHeadsTrainer(Trainer):
             )
             preference_loss = preference_loss_all.mean()
 
-        if self.config.model.train_progress_head:
-            # Get frame shapes for splicing target progress to match predicted lengths
-            # Since the order is randomized, we need to use preference labels to determine which is which
+        final_loss = preference_loss
+
+        # If we are predicting progress for preferences samples
+        if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
+            # Compute progress for both trajectories
             chosen_frames_shape = inputs.get("chosen_frames_shape", None)
             rejected_frames_shape = inputs.get("rejected_frames_shape", None)
-
-            # Determine which frame shape corresponds to which trajectory based on preference labels
-            # preference_labels: 1.0 = first trajectory preferred, 0.0 = second trajectory preferred
-            # We need to map this to chosen vs rejected for progress loss calculation
-
-            # For each sample, determine which trajectory (first or second) is the chosen one
             batch_size = len(preference_labels)
             chosen_traj_shapes = []
             rejected_traj_shapes = []
@@ -413,33 +790,34 @@ class RFMHeadsTrainer(Trainer):
 
             # Compute progress loss for both trajectories using the helper function
             # Now we know which shape corresponds to which trajectory based on preference labels
-            if self.config.model.train_progress_head:
-                progress_loss_chosen, spearman_corr_chosen = self._compute_progress_loss(
-                    chosen_traj_progress_pred,
-                    chosen_traj_progress_target,
-                    chosen_traj_shapes,
-                    chosen_traj_progress_target_mask,
-                    "A",
-                    aggregate=False,
-                )
-                progress_loss_rejected, spearman_corr_rejected = self._compute_progress_loss(
-                    rejected_traj_progress_pred,
-                    rejected_traj_progress_target,
-                    rejected_traj_shapes,
-                    rejected_traj_progress_target_mask,
-                    "B",
-                    aggregate=False,
-                )
-
-                # Combine progress losses
-                progress_loss = progress_loss_chosen.mean() + progress_loss_rejected.mean()
+            progress_loss_chosen, spearman_corr_chosen = self._compute_progress_loss_helper(
+                chosen_traj_progress_pred,
+                chosen_traj_progress_target,
+                chosen_traj_shapes,
+                chosen_traj_progress_target_mask,
+                aggregate=False,
+            )
+            progress_loss_rejected, spearman_corr_rejected = self._compute_progress_loss_helper(
+                rejected_traj_progress_pred,
+                rejected_traj_progress_target,
+                rejected_traj_shapes,
+                rejected_traj_progress_target_mask,
+                aggregate=False,
+            )
+            progress_loss = progress_loss_chosen.mean() + progress_loss_rejected.mean()
+            final_loss = preference_loss + progress_loss
 
         if return_outputs:
             outputs_dict = {}
 
             prefix = "train" if training else "eval"
 
-            if self.config.model.train_preference_head and preference_loss is not None:
+            if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
+                outputs_dict.update({
+                    f"{prefix}/pref_progress_loss": progress_loss.item(),
+                })
+
+            if preference_loss is not None:
                 # Compute preference accuracy for training monitoring
                 preference_probs = torch.sigmoid(preference_scores)
                 preference_predictions = (preference_probs > 0.5).float()
@@ -451,85 +829,29 @@ class RFMHeadsTrainer(Trainer):
                     mask = [1 if s == strat else 0 for s in rejected_data_gen_strategy]
                     mask = torch.tensor(mask, device=self.accelerator.device)
 
-                    outputs_dict.update(
-                        {
-                            f"{prefix}_strat_pref_acc/{strat}": (preference_accuracy[mask == 1]).mean().item(),
-                            f"{prefix}_strat_pref_loss/{strat}": (preference_loss_all[mask == 1]).mean().item(),
-                        }
-                    )
+                    outputs_dict.update({
+                        f"{prefix}_strat_pref_acc/{strat}": (preference_accuracy[mask == 1]).mean().item(),
+                        f"{prefix}_strat_pref_loss/{strat}": (preference_loss_all[mask == 1]).mean().item(),
+                    })
 
                 # split acc by data source
                 data_sources = set(inputs["data_source"])
                 for data_source in data_sources:
                     mask = [1 if s == data_source else 0 for s in inputs["data_source"]]
                     mask = torch.tensor(mask, device=self.accelerator.device)
-                    outputs_dict.update(
-                        {
-                            f"{prefix}_ds/pref_acc_{data_source}": (preference_accuracy[mask == 1]).mean().item(),
-                            f"{prefix}_ds/pref_loss_{data_source}": (preference_loss_all[mask == 1]).mean().item(),
-                        }
-                    )
+                    outputs_dict.update({
+                        f"{prefix}_ds/pref_acc_{data_source}": (preference_accuracy[mask == 1]).mean().item(),
+                        f"{prefix}_ds/pref_loss_{data_source}": (preference_loss_all[mask == 1]).mean().item(),
+                    })
 
-                outputs_dict.update(
-                    {
-                        # "preference_scores": preference_scores,
-                        # "preference_labels": preference_labels,
-                        f"{prefix}/preference_loss": preference_loss.item(),
-                        f"{prefix}/preference_accuracy": preference_accuracy.mean().item(),
-                    }
-                )
+                outputs_dict.update({
+                    # "preference_scores": preference_scores,
+                    # "preference_labels": preference_labels,
+                    f"{prefix}/preference_loss": preference_loss.item(),
+                    f"{prefix}/preference_accuracy": preference_accuracy.mean().item(),
+                })
 
-            if self.config.model.train_progress_head:
-                # split spearman by data gen strategy
-                rejected_strats = set(rejected_data_gen_strategy)
-                for strat in rejected_strats:
-                    mask = [1 if s == strat else 0 for s in rejected_data_gen_strategy]
-                    mask = torch.tensor(mask, device=self.accelerator.device)
-                    outputs_dict.update(
-                        {
-                            f"{prefix}_strat_spearman_corr/{strat}": (spearman_corr_rejected[mask == 1]).mean().item(),
-                            f"{prefix}_strat_prog_loss/{strat}": (progress_loss_rejected[mask == 1]).mean().item(),
-                        }
-                    )
-
-                # split spearman by data source
-                data_sources = set(inputs["data_source"])
-                for data_source in data_sources:
-                    mask = [1 if s == data_source else 0 for s in inputs["data_source"]]
-                    mask = torch.tensor(mask, device=self.accelerator.device)
-                    outputs_dict.update(
-                        {
-                            f"{prefix}_ds_spearman_corr/{data_source}": (spearman_corr_rejected[mask == 1])
-                            .mean()
-                            .item(),
-                            f"{prefix}_ds_prog_loss/{data_source}": (progress_loss_rejected[mask == 1]).mean().item(),
-                        }
-                    )
-
-                # Compute average Spearman correlation across trajectories A and B
-                spearman_values = []
-                if isinstance(spearman_corr_chosen, torch.Tensor):
-                    spearman_values.append(spearman_corr_chosen.mean().item())
-                else:
-                    spearman_values.append(spearman_corr_chosen)
-
-                if isinstance(spearman_corr_rejected, torch.Tensor):
-                    spearman_values.append(spearman_corr_rejected.mean().item())
-                else:
-                    spearman_values.append(spearman_corr_rejected)
-
-                avg_spearman = np.mean(spearman_values) if spearman_values else 0.0
-
-                outputs_dict.update(
-                    {
-                        f"{prefix}/prog_loss_chosen": progress_loss_chosen.mean().item(),
-                        f"{prefix}/prog_loss_rejected": progress_loss_rejected.mean().item(),
-                        f"{prefix}/progress_loss": progress_loss.item(),
-                        f"{prefix}/spearman_corr_avg": avg_spearman,
-                    }
-                )
-            return preference_loss, progress_loss, outputs_dict
-        return preference_loss, progress_loss
+        return final_loss, outputs_dict
 
     def _compute_similarity_loss(self, model, inputs, return_outputs=False):
         """Compute similarity scoring loss (DPO-style)."""

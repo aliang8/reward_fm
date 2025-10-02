@@ -36,3 +36,15 @@ processed_datasets_old/*
 test.py
 *.ipynb
 rfm/metaworld/*
+*.mp4
+*.gif
+*.json
+.local/*
+.cache/*
+*.out
+*.bash_history
+.netrc
+.pdbhistory
+test*
+.ipython/*
+.triton/*

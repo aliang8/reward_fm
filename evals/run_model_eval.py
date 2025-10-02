@@ -19,26 +19,30 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+import asyncio
 import json
 import os
-import asyncio
-import aiohttp
-from datetime import datetime
-from pathlib import Path
 import time
+from pathlib import Path
+from typing import Any
+from rich.console import Console
+import argparse
+import copy
+import yaml
+from tqdm import tqdm
+from rfm.configs.experiment_configs import CustomEvaluationConfig, DataConfig
+import aiohttp
 
+from evals.eval_utils import build_payload, post_batch, post_batch_npy, post_batch_npy_async
 from rfm.configs.eval_configs import EvaluationConfig
-from rfm.utils.setup_utils import setup_dataset
-from evals.eval_utils import post_batch, post_batch_npy, post_batch_npy_async, build_payload
-
-from rfm.utils.logging import _timer, timer
 from rfm.data.dataset_types import SampleType
+from rfm.utils.timer import timer
+from rfm.utils.setup_utils import setup_dataset
 
 
 def _save_result_as_json(
-    samples: List[SampleType], response: Dict[str, Any]
-) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    samples: list[SampleType], response: dict[str, Any]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Save detailed results for each sample in the batch.
 
     Returns:
@@ -62,7 +66,7 @@ def _save_result_as_json(
 
     # Extract progress data
     if progress_response:
-        progress_pred_A = progress_response.get("progress_pred_A", [])
+        progress_pred = progress_response.get("progress_pred", [])
 
     batch_results = []
 
@@ -103,8 +107,10 @@ def _save_result_as_json(
                 "data_source": sample.trajectory.data_source,
                 "data_gen_strategy": sample.trajectory.data_gen_strategy,
                 "target_progress": sample.trajectory.target_progress,
+                "task": sample.trajectory.task,
+                "quality_label": sample.trajectory.quality_label,
                 "metadata": sample.trajectory.metadata,
-                "progress_pred_A": progress_pred_A[i] if i < len(progress_pred_A) else [],
+                "progress_pred": progress_pred[i] if i < len(progress_pred) else [],
             }
         else:
             progress_entry = None
@@ -124,7 +130,7 @@ async def iter_eval_batches_async(
     num_batches: int = 10,
     batch_size: int = 4,
     max_concurrent_requests: int = 4,
-) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Run evaluation batches asynchronously with concurrent requests."""
     # Create eval data generator and dataset-like iterator
     dataset = setup_dataset(eval_cfg.data, is_eval=True)
@@ -139,8 +145,8 @@ async def iter_eval_batches_async(
         actual_num_batches = num_batches
         print(f"\nProcessing {actual_num_batches} batches of size {batch_size} (dataset size: {dataset_size})")
 
-    all_preference_results: List[Dict[str, Any]] = []
-    all_progress_results: List[Dict[str, Any]] = []
+    all_preference_results: list[dict[str, Any]] = []
+    all_progress_results: list[dict[str, Any]] = []
     idx = 0
 
     # Use aiohttp session for concurrent requests
@@ -184,17 +190,13 @@ async def iter_eval_batches_async(
             round_time = time.time() - start_time
 
             # Process results and handle any errors
-            for i, (batch_result, batch_samples) in enumerate(zip(batch_results_list, batch_samples_list)):
+            for _i, (batch_result, batch_samples) in enumerate(
+                zip(batch_results_list, batch_samples_list, strict=False)
+            ):
                 # Process detailed results for this batch
                 preference_results, progress_results = _save_result_as_json(batch_samples, batch_result)
                 all_preference_results.extend(preference_results)
                 all_progress_results.extend(progress_results)
-
-            # Print progress
-            print(f"Completed {len(batch_tasks)} batches in {round_time:.2f}s")
-            print(
-                f"Progress: {min(idx, dataset_size)}/{dataset_size} samples ({min(idx, dataset_size) / dataset_size * 100:.1f}%)"
-            )
 
     print(f"\nTotal samples processed: {len(all_preference_results)}")
     return all_preference_results, all_progress_results
@@ -206,7 +208,7 @@ def iter_eval_batches_sync(
     num_batches: int = 10,
     batch_size: int = 4,
     post_function: callable = post_batch,
-) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Run evaluation batches synchronously (original implementation)."""
     # Create eval data generator and dataset-like iterator
     dataset = setup_dataset(eval_cfg.data, is_eval=True)
@@ -221,11 +223,11 @@ def iter_eval_batches_sync(
         actual_num_batches = num_batches
         print(f"\nProcessing {actual_num_batches} batches of size {batch_size} (dataset size: {dataset_size})")
 
-    all_preference_results: List[Dict[str, Any]] = []
-    all_progress_results: List[Dict[str, Any]] = []
+    all_preference_results: list[dict[str, Any]] = []
+    all_progress_results: list[dict[str, Any]] = []
     idx = 0
 
-    for batch_idx in range(actual_num_batches):
+    for batch_idx in tqdm(range(actual_num_batches), desc="Processing batches"):
         # Check if we've reached the end of the dataset
         if idx >= dataset_size:
             print(f"\nReached end of dataset after {batch_idx} batches")
@@ -250,24 +252,65 @@ def iter_eval_batches_sync(
         preference_results, progress_results = _save_result_as_json(batch_samples, batch_result)
         all_preference_results.extend(preference_results)
         all_progress_results.extend(progress_results)
-        print(f"Processed batch {batch_idx + 1}/{actual_num_batches} ({len(preference_results)} samples)")
 
         # Update index
         idx += len(batch_samples)
-
-        # Print progress
-        print(f"Progress: {idx}/{dataset_size} samples ({idx / dataset_size * 100:.1f}%)")
 
     print(f"\nTotal samples processed: {len(all_preference_results)}")
     return all_preference_results, all_progress_results
 
 
+def run_single_evaluation(
+    cfg: EvaluationConfig,
+    eval_type: str,
+    eval_dataset: str,
+    eval_subset: str,
+    args,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Run evaluation for a single eval_type/dataset/subset combination."""
+    print(f"\n{'=' * 60}")
+    print(f"Running evaluation: {eval_type} on {eval_dataset}/{eval_subset}")
+    print(f"{'=' * 60}")
+
+    # Create a copy of the config for this evaluation
+    eval_cfg = copy.deepcopy(cfg)
+    eval_cfg.data.dataset_type = eval_type
+    eval_cfg.data.eval_datasets = [eval_dataset]
+    eval_cfg.data.eval_subsets = [[eval_subset]]
+
+    # Run evaluation and get results
+    if args.use_async:
+        print(f"Using ASYNC evaluation with max {args.max_concurrent} concurrent requests")
+        preference_results, progress_results = asyncio.run(
+            iter_eval_batches_async(
+                eval_cfg=eval_cfg,
+                server_url=f"http://localhost:{cfg.server_port}",
+                num_batches=cfg.num_batches,
+                batch_size=cfg.batch_size,
+                max_concurrent_requests=args.max_concurrent,
+            )
+        )
+    else:
+        print("Using SYNC evaluation (single request at a time)")
+        preference_results, progress_results = iter_eval_batches_sync(
+            eval_cfg=eval_cfg,
+            server_url=f"http://localhost:{cfg.server_port}",
+            num_batches=cfg.num_batches,
+            batch_size=cfg.batch_size,
+        )
+
+    # Filter out None entries
+    preference_results = [result for result in preference_results if result is not None]
+    progress_results = [result for result in progress_results if result is not None]
+
+    print(
+        f"Completed {eval_type}: {len(preference_results)} preference samples, {len(progress_results)} progress samples"
+    )
+    return preference_results, progress_results
+
+
 def main():
     """Main evaluation function using simple argparse for config loading."""
-    import argparse
-    import yaml
-    from rfm.configs.experiment_configs import DataConfig
-
     parser = argparse.ArgumentParser(description="Evaluate RFM model")
     parser.add_argument(
         "--config", type=str, default="rfm/configs/eval_config.yaml", help="Path to evaluation configuration file"
@@ -275,7 +318,7 @@ def main():
     parser.add_argument(
         "--use-async", action="store_true", help="Use async concurrent evaluation (recommended for multi-GPU server)"
     )
-    parser.add_argument("--max_concurrent", type=int, default=8, help="Maximum concurrent requests (default: 4)")
+    parser.add_argument("--max_concurrent", type=int, default=8, help="Maximum concurrent requests (default: 8)")
     parser.add_argument(
         "--set",
         action="append",
@@ -287,10 +330,15 @@ def main():
 
     # Load evaluation config manually
     print(f"Loading evaluation config from: {args.config}")
-    with open(args.config, "r") as f:
+    with open(args.config) as f:
         config_dict = yaml.safe_load(f)
 
+    console = Console()
+    console.print(f"Loading evaluation config from: {args.config}")
+    console.print(config_dict)
+
     cfg = EvaluationConfig(**config_dict)
+    cfg.custom_eval = CustomEvaluationConfig(**config_dict["custom_eval"])
     cfg.data = DataConfig(**config_dict["data"])
 
     # Apply overrides from --set key=value (dot-path)
@@ -312,53 +360,74 @@ def main():
 
     print(f"Evaluation config: {cfg}")
 
-    # Run evaluation and get results
-    if args.use_async:
-        print(f"Using ASYNC evaluation with max {args.max_concurrent} concurrent requests")
-        preference_results, progress_results = asyncio.run(
-            iter_eval_batches_async(
-                eval_cfg=cfg,
-                server_url=f"http://localhost:{cfg.server_port}",
-                num_batches=cfg.num_batches,
-                batch_size=cfg.batch_size,
-                max_concurrent_requests=args.max_concurrent,
+    # Get evaluation types from config
+    eval_types_to_run = cfg.custom_eval.eval_types
+    print(f"Running configured evaluation types: {eval_types_to_run}")
+
+    # Run evaluations for each eval type
+    all_results = {}
+
+    for eval_type in eval_types_to_run:
+        print(f"\nProcessing evaluation type: {eval_type}")
+
+        # Get datasets for this eval type
+        datasets = getattr(cfg.custom_eval, eval_type, [])
+        if not datasets:
+            print(f"No datasets configured for {eval_type}, skipping...")
+            continue
+
+        eval_datasets_name = [d[0] for d in datasets]
+        eval_subsets_name = [d[1] for d in datasets]
+
+        # Run evaluation for each dataset/subset combination
+        for eval_dataset, eval_subset in zip(eval_datasets_name, eval_subsets_name):
+            preference_results, progress_results = run_single_evaluation(
+                cfg, eval_type, eval_dataset, eval_subset, args
             )
-        )
-    else:
-        print("Using SYNC evaluation (single request at a time)")
-        preference_results, progress_results = iter_eval_batches_sync(
-            eval_cfg=cfg,
-            server_url=f"http://localhost:{cfg.server_port}",
-            num_batches=cfg.num_batches,
-            batch_size=cfg.batch_size,
-        )
 
-    # filter out None entries
-    preference_results = [result for result in preference_results if result is not None]
-    progress_results = [result for result in progress_results if result is not None]
+            # Create results directory structure
+            dataset_name = f"{eval_dataset.replace('/', '_')}_{eval_subset}"
+            model_name = cfg.model_path.replace("/", "_") if cfg.model_path else "base_model"
+            eval_log_dir = Path(cfg.log_dir) / model_name / dataset_name
+            os.makedirs(eval_log_dir, exist_ok=True)
 
-    # Create results directory structure
-    dataset_name = f"{cfg.data.eval_datasets[0].replace('/', '_')}_{cfg.data.eval_subsets[0]}"
-    model_name = cfg.model_path.replace("/", "_") if cfg.model_path else f"base_model"
-    eval_log_dir = Path(cfg.log_dir) / model_name / dataset_name
-    os.makedirs(eval_log_dir, exist_ok=True)
+            # Save preference results to JSON
+            preference_file = eval_log_dir / f"{eval_type}_preference.json"
+            if len(preference_results) > 0:
+                with open(preference_file, "w") as f:
+                    json.dump(preference_results, f, indent=2)
+                print(f"Preference results saved to: {preference_file}")
 
-    # Save preference results to JSON
-    preference_file = eval_log_dir / f"{cfg.data.dataset_type}_preference.json"
-    if len(preference_results) > 0:
-        with open(preference_file, "w") as f:
-            json.dump(preference_results, f, indent=2)
-        print(f"Preference results saved to: {preference_file}")
+            # Save progress results to JSON
+            progress_file = eval_log_dir / f"{eval_type}_progress.json"
+            if len(progress_results) > 0:
+                with open(progress_file, "w") as f:
+                    json.dump(progress_results, f, indent=2)
+                print(f"Progress results saved to: {progress_file}")
 
-    # Save progress results to JSON
-    progress_file = eval_log_dir / f"{cfg.data.dataset_type}_progress.json"
-    if len(progress_results) > 0:
-        with open(progress_file, "w") as f:
-            json.dump(progress_results, f, indent=2)
-        print(f"Progress results saved to: {progress_file}")
+            # Store results for summary
+            key = f"{eval_type}_{dataset_name}"
+            all_results[key] = {
+                "preference_count": len(preference_results),
+                "progress_count": len(progress_results),
+                "preference_file": str(preference_file) if preference_results else None,
+                "progress_file": str(progress_file) if progress_results else None,
+            }
 
+    # Print summary
+    print(f"\n{'=' * 60}")
+    print("EVALUATION SUMMARY")
+    print(f"{'=' * 60}")
+    total_preference = sum(r["preference_count"] for r in all_results.values())
+    total_progress = sum(r["progress_count"] for r in all_results.values())
+
+    for key, result in all_results.items():
+        print(f"{key}: {result['preference_count']} preference, {result['progress_count']} progress samples")
+
+    print(f"\nTotal samples processed:")
+    print(f"  Preference: {total_preference}")
+    print(f"  Progress: {total_progress}")
     print(f"\nEvaluation complete!")
-    print(f"Total samples processed: {len(preference_results)}")
 
 
 if __name__ == "__main__":

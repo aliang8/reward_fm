@@ -6,21 +6,8 @@ across different training scripts.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Union
+from typing import Optional, Dict, Any, List
 from transformers import PretrainedConfig
-
-
-@dataclass
-class ReWINDTransformerConfig(PretrainedConfig):
-    model_type = "rewind_transformer"
-
-    video_feature_dim: int = 768
-    text_feature_dim: int = 384
-    hidden_dim: int = 512
-    num_layers: int = 4
-    num_attention_heads: int = 8
-    dropout: float = 0.1
-    max_len: int = 16
 
 
 @dataclass
@@ -41,15 +28,26 @@ class ModelConfig(PretrainedConfig):
     )
     train_similarity_head: bool = field(default=True, metadata={"help": "Whether to train the similarity scoring head"})
 
+    use_peft: bool = field(default=False, metadata={"help": "Whether to use PEFT/LoRA or train full model"})
+    peft_vision_encoder: bool = field(default=False, metadata={"help": "Whether to attach LoRA to the vision encoder"})
+
+    # use bitsandbytes for quantization
+    quantization: bool = field(default=False, metadata={"help": "Whether to use bitsandbytes for quantization"})
+
     # rewind sub-config
-    rewind: Optional[ReWINDTransformerConfig] = field(default=None)
+    rewind: Optional[Dict[str, Any]] = field(default=None)
+
+    def __post_init__(self):
+        from rfm.models.rewind_transformer import ReWINDTransformerConfig
+
+        if self.rewind is not None and isinstance(self.rewind, dict):
+            self.rewind = ReWINDTransformerConfig(**self.rewind)
 
 
 @dataclass
 class PEFTConfig:
     """Config for PEFT/LoRA settings"""
 
-    use_peft: bool = field(default=False, metadata={"help": "Whether to use PEFT/LoRA or train full model"})
     r: int = field(default=32)
     lora_alpha: int = field(default=64)
     lora_dropout: float = field(default=0.05)
@@ -57,7 +55,6 @@ class PEFTConfig:
     target_modules: List[str] = field(
         default_factory=lambda: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
     )
-    peft_vision_encoder: bool = field(default=False, metadata={"help": "Whether to attach LoRA to the vision encoder"})
 
 
 @dataclass
@@ -97,40 +94,31 @@ class DataConfig:
         default=1, metadata={"help": "Number of preference samples to generate per trajectory for rewound dataset"}
     )
 
-    # Success-failure dataset specific parameters
-    # Example success_failure config:
-    # dataset_type: "success_failure"
-    # Note: Generates ALL possible pairs between successful and failed trajectories for each task
-    # Note: Successful trajectories are preferred over failed versions of the same task
-
-    # Video processing parameters
-    max_frames_for_preprocessing: int = field(
-        default=64, metadata={"help": "Maximum number of frames to extract from videos for preprocessing"}
-    )
     max_frames: int = field(default=8, metadata={"help": "Maximum number of frames to extract from videos"})
-    video_frame_sampling: str = field(
-        default="uniform", metadata={"help": "Frame sampling strategy: 'uniform', 'random', 'start', 'end'"}
-    )
     resized_height: int = field(default=224, metadata={"help": "Height to resize video frames to"})
     resized_width: int = field(default=224, metadata={"help": "Width to resize video frames to"})
 
     # Data generation parameters
     sample_type_ratio: List[float] = field(
-        default_factory=lambda: [1.0, 0.0, 0.0], metadata={"help": "Ratio of pref, sim, and progress samples"}
+        default_factory=lambda: [1, 1, 1], metadata={"help": "Ratio of pref, progress and similarity samples"}
     )
     dataset_preference_ratio: float = field(
         default=0.8, metadata={"help": "Ratio of dataset preference samples to generated preference samples"}
     )
     # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, video_binned]
-    preference_strategy_ratio: List[float] = field(default_factory=lambda: [0.7, 0.1, 0.1, 0.1])
+    preference_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 1])
+    # Tunable strategy ratios for progress generation: [default, rewind_same_task, different_task]
+    progress_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1])
+    data_source_weights: Optional[Dict[str, float]] = field(
+        default=None,
+        metadata={
+            "help": "Dictionary mapping data source names to sampling weights (e.g., {'metaworld': 0.2, 'libero': 0.8})"
+        },
+    )
 
     # Processing parameters
     shuffle: bool = field(default=True, metadata={"help": "Whether to shuffle the dataset"})
     seed: int = field(default=42, metadata={"help": "Random seed for reproducibility"})
-    num_proc: int = field(default=1, metadata={"help": "Number of processes for dataset processing"})
-    force_reprocess: bool = field(
-        default=False, metadata={"help": "Force reprocessing of datasets even if cache exists"}
-    )
 
     # Evaluation parameters
     eval_subset_size: Optional[int] = field(default=100, metadata={"help": "Number of samples to use for evaluation"})
@@ -146,6 +134,32 @@ class DataConfig:
     max_trajectories: int = field(default=-1, metadata={"help": "Maximum number of trajectories to use for dataset"})
     n_wrong_tasks: int = field(
         default=5, metadata={"help": "Number of wrong tasks to use for wrong task preference dataset"}
+    )
+
+    # Embedding loading parameters
+    load_embeddings: bool = field(
+        default=False,
+        metadata={"help": "Whether to load precomputed embeddings instead of processing frames (ReWiND only)"},
+    )
+
+    # Data source weighting parameters
+    data_source_weights: Optional[Dict[str, float]] = field(
+        default=None,
+        metadata={
+            "help": "Dictionary mapping data source names to sampling weights (e.g., {'metaworld': 0.2, 'libero': 0.8})"
+        },
+    )
+
+
+@dataclass
+class CustomEvaluationConfig:
+    """Config for custom evaluation settings"""
+
+    eval_types: List[str] = field(default_factory=lambda: ["policy_ranking", "confusion_matrix", "reward_alignment"])
+    policy_ranking: List[List[str]] = field(default_factory=lambda: [["aliangdw/metaworld_rfm", "metaworld"]])
+    confusion_matrix: List[List[str]] = field(default_factory=lambda: [["aliangdw/metaworld_rfm", "metaworld"]])
+    reward_alignment: List[List[str]] = field(
+        default_factory=lambda: [["HenryZhang/metaworld_rewind_rfm_eval", "metaworld_rewind_eval"]]
     )
 
 
@@ -183,6 +197,13 @@ class TrainingConfig:
     eval_steps: Optional[int] = field(
         default=None, metadata={"help": "Number of steps between evaluations (required if evaluation_strategy='steps')"}
     )
+    run_default_eval: bool = field(
+        default=False, metadata={"help": "Whether to run default evaluation during training"}
+    )
+    custom_eval_steps: Optional[int] = field(
+        default=None,
+        metadata={"help": "Number of steps between custom evaluations (required if evaluation_strategy='steps')"},
+    )
     per_device_eval_batch_size: int = field(default=1, metadata={"help": "Batch size for evaluation"})
     do_eval: bool = field(default=False, metadata={"help": "Whether to run evaluation during training"})
     prediction_loss_only: bool = field(default=True, metadata={"help": "Only compute loss for the prediction head"})
@@ -193,12 +214,45 @@ class TrainingConfig:
     warmup_ratio: float = field(default=0.1)
     max_grad_norm: float = field(default=1.0)
 
+    # RFM specific settings
+    predict_pref_progress: bool = field(
+        default=False, metadata={"help": "Whether to predict progress for preference samples"}
+    )
+
+
+@dataclass
+class SaveBestConfig:
+    """Configuration for SaveBestCallback"""
+
+    # Metric monitoring
+    metric_names: List[str] = field(
+        default_factory=lambda: ["custom_eval/p_rank_spearman_mw"],
+        metadata={"help": "List of metric names to monitor for saving best models (will be averaged)"},
+    )
+    greater_is_better: List[bool] = field(
+        default_factory=lambda: [True],
+        metadata={"help": "Whether higher values are better for each metric (must match length of metric_names)"},
+    )
+    keep_top_k: int = field(default=1, metadata={"help": "Number of best checkpoints/uploads to keep"})
+
+    # Hub upload configuration
+    upload_to_hub: bool = field(default=False, metadata={"help": "Whether to upload best models to HuggingFace Hub"})
+    hub_model_id: Optional[str] = field(default=None, metadata={"help": "HuggingFace model ID (username/model-name)"})
+    hub_token: Optional[str] = field(default=None, metadata={"help": "HuggingFace token (or set HF_TOKEN env var)"})
+    hub_private: bool = field(default=False, metadata={"help": "Whether to make the Hub model private"})
+
+    def __post_init__(self):
+        """Validate that metric_names and greater_is_better have the same length"""
+        if len(self.metric_names) != len(self.greater_is_better):
+            raise ValueError(
+                f"metric_names ({len(self.metric_names)}) and greater_is_better ({len(self.greater_is_better)}) must have the same length"
+            )
+
 
 @dataclass
 class LoggingConfig:
     """Config for logging settings"""
 
-    print_trainable_parameters: bool = field(default=True)
     save_model: bool = field(default=True)
     save_processor: bool = field(default=True)
     # Wandb configuration
@@ -206,6 +260,9 @@ class LoggingConfig:
     wandb_project: str = field(default="rfm-model", metadata={"help": "Wandb project name"})
     wandb_entity: Optional[str] = field(default=None, metadata={"help": "Wandb entity/username"})
     wandb_run_name: Optional[str] = field(default=None, metadata={"help": "Wandb run name"})
+
+    # SaveBest configuration
+    save_best: Optional[SaveBestConfig] = field(default=None, metadata={"help": "SaveBestCallback configuration"})
 
 
 @dataclass
@@ -222,3 +279,30 @@ class ExperimentConfig:
     data: DataConfig = field(default_factory=DataConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    custom_eval: CustomEvaluationConfig = field(default_factory=CustomEvaluationConfig)
+
+    def __post_init__(self):
+        if isinstance(self.model, dict):
+            self.model = ModelConfig(**self.model)
+
+        if isinstance(self.peft, dict):
+            self.peft = PEFTConfig(**self.peft)
+
+        if isinstance(self.data, dict):
+            self.data = DataConfig(**self.data)
+
+        if isinstance(self.training, dict):
+            self.training = TrainingConfig(**self.training)
+
+        if isinstance(self.logging, dict):
+            self.logging = LoggingConfig(**self.logging)
+
+        # Handle nested SaveBestConfig in LoggingConfig
+        if hasattr(self.logging, "save_best") and isinstance(self.logging.save_best, dict):
+            self.logging.save_best = SaveBestConfig(**self.logging.save_best)
+        elif self.logging.save_best is None:
+            # Set default SaveBestConfig if not provided
+            self.logging.save_best = SaveBestConfig()
+
+        if isinstance(self.custom_eval, dict):
+            self.custom_eval = CustomEvaluationConfig(**self.custom_eval)

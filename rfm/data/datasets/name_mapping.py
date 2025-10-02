@@ -1,0 +1,16 @@
+DS_SHORT_NAME_MAPPING = {
+    "HenryZhang/metaworld_rewind_rfm_eval/metaworld_rewind_eval": "mw_eval",
+    "HenryZhang/metaworld_rewind_rfm_train/metaworld_rewind_train": "mw_train",
+    "aliangdw/metaworld_rfm/metaworld": "mw",
+    "ykorkmaz/libero_failure_rfm/libero_10_failure": "libero_10_failure",
+    "abraranwar/libero_rfm/libero256_10": "libero_10",
+    "abraranwar/libero_rfm/libero256_90": "libero_90",
+    "abraranwar/libero_rfm/libero256_object": "libero_object",
+    "abraranwar/libero_rfm/libero256_spatial": "libero_spatial",
+    "abraranwar/libero_rfm/libero256_goal": "libero_goal",
+    "ykorkmaz/libero_failure_rfm/libero_10_failure": "libero_10_failure",
+    "ykorkmaz/libero_failure_rfm/libero_90_failure": "libero_90_failure",
+    "ykorkmaz/libero_failure_rfm/libero_object_failure": "libero_object_failure",
+    "ykorkmaz/libero_failure_rfm/libero_spatial_failure": "libero_spatial_failure",
+    "ykorkmaz/libero_failure_rfm/libero_goal_failure": "libero_goal_failure",
+}

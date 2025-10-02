@@ -1,10 +1,10 @@
-from rfm.data.dataset_types import PreferenceSample, Trajectory
-from rfm.utils.logging import rank_0_print
-from typing import Dict, List
-from rfm.data.datasets.base import RFMBaseDataset
-from tqdm import tqdm
 import numpy as np
-from rfm.data.datasets.helpers import subsample_frames_and_progress
+from tqdm import tqdm
+
+from rfm.data.dataset_types import PreferenceSample, Trajectory
+from .base import RFMBaseDataset
+from .helpers import subsample_frames_and_progress
+from rfm.utils.distributed import rank_0_print
 
 
 class PairedSuccessFailureDataset(RFMBaseDataset):
@@ -17,7 +17,7 @@ class PairedSuccessFailureDataset(RFMBaseDataset):
         self.sample_indices = self._generate_all_sample_indices()
         rank_0_print(f"Generated {len(self.sample_indices)} success-failure sample indices")
 
-    def _generate_all_sample_indices(self) -> List[Dict]:
+    def _generate_all_sample_indices(self) -> list[dict]:
         """Generate all possible success-failure sample indices (not the actual samples)."""
         sample_indices = []
 
@@ -55,13 +55,15 @@ class PairedSuccessFailureDataset(RFMBaseDataset):
             for success_idx in success_indices:
                 for failure_idx in failure_indices:
                     # Store just the indices needed to generate the sample later
-                    sample_indices.append(
-                        {"success_traj_idx": success_idx, "failure_traj_idx": failure_idx, "task": task}
-                    )
+                    sample_indices.append({
+                        "success_traj_idx": success_idx,
+                        "failure_traj_idx": failure_idx,
+                        "task": task,
+                    })
 
         return sample_indices
 
-    def _generate_sample_from_indices(self, sample_idx_info: Dict) -> PreferenceSample:
+    def _generate_sample_from_indices(self, sample_idx_info: dict) -> PreferenceSample:
         """Generate a single sample from stored indices."""
         success_idx = sample_idx_info["success_traj_idx"]
         failure_idx = sample_idx_info["failure_traj_idx"]

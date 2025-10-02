@@ -68,8 +68,9 @@ BASE_FEATURES = {
     "frames": None,  # Will be set based on use_video parameter
     "is_robot": datasets.Value("bool"),
     "quality_label": datasets.Value("string"),
-    "preference_group_id": datasets.Value("string"),
-    "preference_rank": datasets.Value("int32"),
+    #"preference_group_id": datasets.Value("string"),
+    #"preference_rank": datasets.Value("int32"),
+    "partial_success": None,# in [0, 1]
 }
 
 

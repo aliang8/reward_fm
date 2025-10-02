@@ -73,6 +73,7 @@ class RewardAlignmentDataset(RFMBaseDataset):
                     "end_idx": end_idx,
                     "num_frames": num_frames,
                     "video_path": traj["frames"],
+                    "id": traj["id"],
                 })
 
         return sample_indices
@@ -126,6 +127,8 @@ class RewardAlignmentDataset(RFMBaseDataset):
             "subsequence_end": end_idx,
             "ground_truth_progress": gt_progress,
             "data_gen_strategy": "reward_alignment",
+            "id": original_traj["id"],
+            "video_path": sample_idx_info["video_path"],
         }
 
         # Create trajectory for the subsequence

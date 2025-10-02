@@ -41,7 +41,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 def train(cfg: ExperimentConfig):
     timing_raw = {}
 
-    run_name = f"{cfg.logging.wandb_run_name}"
+    run_name = cfg.training.exp_name
     if cfg.debug:
         run_name += "_debug"
 
@@ -53,7 +53,7 @@ def train(cfg: ExperimentConfig):
         wandb.init(
             project=cfg.logging.wandb_project, entity=cfg.logging.wandb_entity, name=run_name, config=config_dict
         )
-        rank_0_print(f"Wandb initialized: {wandb.run.name}")
+        rank_0_print(f"Wandb initialized: {run_name}")
     elif cfg.logging.use_wandb:
         rank_0_print("Wandb logging enabled but skipped on non-rank-0 processes")
 
@@ -84,21 +84,22 @@ def train(cfg: ExperimentConfig):
         cfg.data.eval_subset_size = 10
         cfg.training.custom_eval_steps = 2
 
-    training_args = create_training_arguments(cfg, cfg.training.output_dir)
+    output_dir = os.path.join(cfg.training.output_dir, run_name)
+
+    training_args = create_training_arguments(cfg, output_dir)
 
     # Save config to output directory
 
-    if os.path.exists(cfg.training.output_dir):
+    if is_rank_0() and os.path.exists(output_dir):
         # confirm with user
-        confirm = input(
-            f"Output directory {cfg.training.output_dir} already exists. Do you want to overwrite it? (y/n)"
-        )
+        confirm = input(f"Output directory {output_dir} already exists. Do you want to overwrite it? (y/n)")
         if confirm != "y":
             raise ValueError("Output directory already exists. Please delete it or use a different output directory.")
 
-        shutil.rmtree(cfg.training.output_dir)
-    os.makedirs(cfg.training.output_dir, exist_ok=True)
-    config_save_path = os.path.join(cfg.training.output_dir, "config.yaml")
+        shutil.rmtree(output_dir)
+
+    os.makedirs(output_dir, exist_ok=True)
+    config_save_path = os.path.join(output_dir, "config.yaml")
     config_dict = asdict(cfg)
     with open(config_save_path, "w") as f:
         yaml.dump(config_dict, f, default_flow_style=False, indent=2)
@@ -108,12 +109,12 @@ def train(cfg: ExperimentConfig):
     if cfg.logging.use_wandb and is_rank_0() and wandb.run is not None:
         wandb_info = {
             "wandb_id": wandb.run.id,
-            "wandb_name": wandb.run.name,
+            "wandb_name": run_name,
             "wandb_project": wandb.run.project,
             "wandb_entity": wandb.run.entity,
             "wandb_url": wandb.run.url,
         }
-        wandb_info_path = os.path.join(cfg.training.output_dir, "wandb_info.json")
+        wandb_info_path = os.path.join(output_dir, "wandb_info.json")
         with open(wandb_info_path, "w") as f:
             json.dump(wandb_info, f, indent=2)
         rank_0_print(f"Saved wandb run info to: {wandb_info_path}")
@@ -169,7 +170,7 @@ def train(cfg: ExperimentConfig):
     save_callback.setup_trainer_reference(trainer)
 
     # Debug: Check if callback was added
-    print(f"🔧 DEBUG: Trainer callbacks: {[type(cb).__name__ for cb in trainer.callback_handler.callbacks]}")
+    rank_0_print(f"🔧 DEBUG: Trainer callbacks: {[type(cb).__name__ for cb in trainer.callback_handler.callbacks]}")
 
     metrics_info = []
     for name, is_better in zip(save_best_cfg.metric_names, save_best_cfg.greater_is_better):

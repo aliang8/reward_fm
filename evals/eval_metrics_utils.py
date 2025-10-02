@@ -2,22 +2,21 @@ from typing import Any
 
 import numpy as np
 from scipy.stats import spearmanr
+from scipy.stats import pearsonr
 
 
 def compute_pearson(y_true: list[float], y_pred: list[float]) -> float:
     """Compute Pearson correlation, robust to constant inputs; returns np.nan if undefined."""
-    import numpy as _np
-    from scipy.stats import pearsonr as _pearsonr
 
-    a = _np.asarray(y_true, dtype=float)
-    b = _np.asarray(y_pred, dtype=float)
+    a = np.asarray(y_true, dtype=float)
+    b = np.asarray(y_pred, dtype=float)
     if a.size == 0 or b.size == 0 or a.size != b.size:
-        return _np.nan
+        return np.nan
     # If either vector is constant, pearsonr returns nan; keep that behavior
     try:
-        corr, _ = _pearsonr(a, b)
+        corr, _ = pearsonr(a, b)
     except Exception:
-        corr = _np.nan
+        corr = np.nan
     return corr
 
 

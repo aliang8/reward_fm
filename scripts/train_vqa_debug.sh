@@ -7,4 +7,4 @@ CUDA_VISIBLE_DEVICES=0 python3 \
     --debug true \
     --model.train_preference_head true \
     --model.train_progress_head true \
-    --training.output_dir ./logs/vqa_debug
+    --training.exp_name vqa_debug

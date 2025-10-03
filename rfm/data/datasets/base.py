@@ -46,6 +46,9 @@ class RFMBaseDataset(torch.utils.data.Dataset):
             rank_0_print(f"  Tasks: {len(self.task_indices)}")
             rank_0_print(f"  Quality labels: {len(self.quality_indices)}")
             rank_0_print(f"  Data sources: {len(self.source_indices)}")
+            rank_0_print(f"  Tasks available: {self.task_indices.keys()}")
+            rank_0_print(f"  Quality labels available: {self.quality_indices.keys()}")
+            rank_0_print(f"  Data sources available: {self.source_indices.keys()}")
 
     def _load_trajectory_dataset(self):
         """Load trajectory dataset using preprocessed index-based cache."""

@@ -48,3 +48,4 @@ rfm/metaworld/*
 test*
 .ipython/*
 .triton/*
+.python_history

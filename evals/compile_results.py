@@ -15,7 +15,8 @@ from rfm.configs.experiment_configs import DataConfig
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-
+import cv2
+from rfm.data.datasets.helpers import load_frames_from_npz
 from evals.eval_metrics_utils import compute_pearson, compute_preference_accuracy, compute_spearman
 
 
@@ -25,11 +26,11 @@ def load_results(results_path: str) -> list[dict[str, Any]]:
         return json.load(f)
 
 
-def compute_eval_metrics(eval_type: str, results: list[dict[str, Any]]) -> dict[str, Any]:
+def compute_eval_metrics(eval_type: str, results: list[dict[str, Any]]):
     if eval_type == "success_failure_preference" or eval_type == "success_failure":
         return run_success_failure_eval(results)
     elif eval_type == "reward_alignment_progress" or eval_type == "reward_alignment":
-        return run_reward_alignment_eval(results)
+        return run_reward_alignment_eval_per_trajectory(results)
     elif eval_type == "confusion_matrix_progress" or eval_type == "confusion_matrix":
         return run_confusion_matrix_eval(results)
     elif eval_type == "wrong_task_preference" or eval_type == "wrong_task":
@@ -92,12 +93,15 @@ def run_reward_alignment_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def run_reward_alignment_eval_per_trajectory(results: list[dict[str, Any]]) -> dict[str, Any]:
-    """Run reward_alignment evaluation analysis."""
+def run_reward_alignment_eval_per_trajectory(results: list[dict[str, Any]]) -> tuple[dict[str, Any], list, list]:
+    """Run reward_alignment evaluation analysis and create plots for each trajectory."""
     unique_trajectory_ids = set()
     mse_per_trajectory = 0
     pearson_trajectories = []
     spearman_trajectories = []
+    plots = []
+    video_frames_list = []
+
     for r in results:
         trajectory_id = r.get("id")
         if trajectory_id:
@@ -106,18 +110,78 @@ def run_reward_alignment_eval_per_trajectory(results: list[dict[str, Any]]) -> d
     for trajectory_id in unique_trajectory_ids:
         last_preds = []
         last_targets = []
+        progress_preds = []
         results_for_trajectory = [r for r in results if r.get("id") == trajectory_id]
         results_for_trajectory.sort(key=lambda r: r["metadata"]["subsequence_end"])
+
+        # Get task and quality label from first result
+        task = results_for_trajectory[0].get("task", "unknown")
+        quality_label = results_for_trajectory[0].get("quality_label", "unknown")
+        # Try to get video_path from results, if not available, we'll return None for frames
+        video_path = results_for_trajectory[0].get("video_path", None)
+
         for r in results_for_trajectory:
             pred = r.get("progress_pred")
             tgt = r.get("target_progress")
             r.get("metadata", {})
-            if pred and len(pred) > 0 and tgt and len(tgt) > 0:
+            if pred is not None:
                 last_preds.append(float(pred[-1]))
+                progress_preds.append(round(pred[-1] if hasattr(pred[-1], "item") else pred[-1], 2))
+            else:
+                last_preds.append(0.0)
+                progress_preds.append(0.0)
+            if tgt is not None:
                 last_targets.append(float(tgt[-1]))
-        if not last_preds or not last_targets:
+            else:
+                last_targets.append(0.0)
+
+        if len(last_preds) == 0 or len(last_targets) == 0:
             print("No valid predictions or targets found for trajectory: ", trajectory_id)
             continue
+
+        # Load video frames if video path exists
+        frames = None
+        if video_path:
+            try:
+                frames = load_frames_from_npz(video_path)
+                frames = frames.transpose(0, 3, 1, 2)
+
+                # Resize frames to make them smaller for wandb table display
+                resized_frames = []
+                for frame in frames:
+                    frame_resized = cv2.resize(frame.transpose(1, 2, 0), (64, 64))
+                    resized_frames.append(frame_resized.transpose(2, 0, 1))
+                frames = np.array(resized_frames)
+            except Exception as e:
+                print(f"Error loading video {video_path}: {e}")
+                frames = None
+
+        video_frames_list.append(frames)
+
+        # Calculate metrics for this trajectory
+        traj_mse = np.mean((np.array(last_targets) - np.array(last_preds)) ** 2)
+        traj_pearson = compute_pearson(last_targets, last_preds)
+        traj_spearman = compute_spearman(last_targets, last_preds)
+
+        # Handle NaN values
+        traj_pearson = traj_pearson if not np.isnan(traj_pearson) else 0.0
+        traj_spearman = traj_spearman if not np.isnan(traj_spearman) else 0.0
+
+        # Create a wandb plot for progress predictions similar to the custom eval
+        fig, ax = plt.subplots(figsize=(6, 3.5))
+        ax.plot(progress_preds, linewidth=2)
+        ax.set_ylabel("Progress")
+        ax.set_title(
+            f"Progress Pred - {task} - {quality_label}\nMSE: {traj_mse:.2f}, Pearson: {traj_pearson:.2f}, Spearman: {traj_spearman:.2f}"
+        )
+        ax.set_ylim(0, 1)
+        # remove right and top spines
+        ax.spines["right"].set_visible(False)
+        ax.spines["top"].set_visible(False)
+        # remove y ticks
+        ax.set_yticks([])
+
+        plots.append(fig)
 
         mse_per_trajectory += np.mean((np.array(last_targets) - np.array(last_preds)) ** 2)
         pearson = compute_pearson(last_targets, last_preds)
@@ -131,12 +195,14 @@ def run_reward_alignment_eval_per_trajectory(results: list[dict[str, Any]]) -> d
     pearson_per_trajectory = np.mean(pearson_trajectories)
     spearman_per_trajectory = np.mean(spearman_trajectories)
 
-    return {
+    metrics = {
         "mse": mse_per_trajectory.item(),
         "pearson": pearson_per_trajectory.item(),
         "spearman": spearman_per_trajectory.item(),
         "num_samples": len(unique_trajectory_ids),
     }
+
+    return metrics, plots, video_frames_list
 
 
 def run_confusion_matrix_eval(results: list[dict[str, Any]]) -> dict[str, Any]:

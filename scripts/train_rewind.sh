@@ -8,5 +8,5 @@ CUDA_VISIBLE_DEVICES=0 uv run accelerate launch \
     --debug false \
     --model.train_preference_head false \
     --model.train_progress_head true \
-    --training.output_dir ./logs/rewind_base_libero_mw \
+    --training.exp_name rewind_base_mw_only \
     --training.predict_pref_progress false

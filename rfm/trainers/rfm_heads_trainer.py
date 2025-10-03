@@ -6,7 +6,6 @@ import torch.nn.functional as F
 from tqdm import tqdm
 from transformers import Trainer
 import matplotlib.pyplot as plt
-import cv2
 
 import copy
 import wandb
@@ -18,6 +17,15 @@ from torch.utils.data import DataLoader
 from rfm.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
 from evals.compile_results import compute_eval_metrics
 from rfm.data.datasets.helpers import load_frames_from_npz
+
+
+def seed_worker(worker_id):
+    """Set random seed for dataloader workers."""
+    import random
+
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
 
 def reduce_metrics_with_accelerate(metrics: dict, accelerator, aggregate_method="sum"):
@@ -246,6 +254,24 @@ class RFMHeadsTrainer(Trainer):
             rounded_times = {k: round(v, 2) for k, v in self.timing_raw.items()}
             rank_0_print(f"Timing raw: {rounded_times}")
 
+    def _make_eval_dataloader(self, dataset):
+        """Create a distributed evaluation dataloader with proper sampling."""
+        collator = setup_batch_collator(self.model.processor, self.model.tokenizer, self.config)
+
+        # Create dataloader - Accelerate will handle distributed sampling automatically
+        dl = DataLoader(
+            dataset,
+            batch_size=self.config.training.per_device_eval_batch_size,
+            collate_fn=collator,
+            num_workers=self.args.dataloader_num_workers,
+            pin_memory=self.args.dataloader_pin_memory,
+            drop_last=False,
+            persistent_workers=self.args.dataloader_persistent_workers,
+            worker_init_fn=seed_worker,
+        )
+        # Let Accelerate/FSDP finalize device & wrapping and handle distributed sampling
+        return self.accelerator.prepare(dl)
+
     def _run_custom_evaluations(self):
         metrics = collections.defaultdict(dict)
         eval_types = self.config.custom_eval.eval_types
@@ -263,11 +289,11 @@ class RFMHeadsTrainer(Trainer):
 
             datasets = getattr(self.config.custom_eval, eval_type)
             eval_datasets_name = [d[0] for d in datasets]
-            eval_subsets_name = [[d[1] for d in datasets]]
+            eval_subsets_name = [[d[1]] for d in datasets]
 
-            if eval_type == "confusion_matrix":
-                eval_datasets_name = eval_datasets_name + self.config.data.train_datasets
-                eval_subsets_name = eval_subsets_name + self.config.data.train_subsets
+            # if eval_type == "confusion_matrix":
+            #     eval_datasets_name = eval_datasets_name + self.config.data.train_datasets
+            #     eval_subsets_name = eval_subsets_name + self.config.data.train_subsets
 
             # Pair up each dataset with the corresponding subsets
             for eval_dataset, eval_subset in zip(eval_datasets_name, eval_subsets_name):
@@ -278,21 +304,10 @@ class RFMHeadsTrainer(Trainer):
                 eval_cfg.eval_subsets = [eval_subset]
 
                 dataset = setup_dataset(eval_cfg, is_eval=True, verbose=False)
-                collator = setup_batch_collator(self.model.processor, self.model.tokenizer, self.config)
-
-                dataloader = DataLoader(
-                    dataset,
-                    batch_size=self.config.training.per_device_eval_batch_size,
-                    collate_fn=collator,
-                    shuffle=False,
-                    num_workers=0,
-                    drop_last=False,
-                )
+                dataloader = self._make_eval_dataloader(dataset)
 
                 self.model.eval()
                 eval_results = []
-
-                example_count = 0
 
                 for batch in tqdm(dataloader, desc=f"Evaluating {eval_type}"):
                     batch = self._prepare_inputs(batch)
@@ -304,23 +319,41 @@ class RFMHeadsTrainer(Trainer):
                                 self.model, progress_samples, sample_type="progress"
                             )
                         progress_pred = progress_logits["A"]
-                        if isinstance(progress_pred, torch.Tensor):
-                            progress_pred = progress_pred.cpu().numpy()
+                        if isinstance(progress_pred[0], torch.Tensor):
+                            progress_pred = torch.stack(progress_pred)
+                        else:
+                            progress_pred = torch.tensor(progress_pred)
 
-                        for i in range(len(progress_pred)):
-                            sample_result = {
-                                "task": progress_samples["task"][i],
-                                "target_progress": progress_samples["target_progress"][i].cpu().numpy(),
-                                "progress_pred": progress_pred[i],
-                                "data_source": progress_samples["data_source"][i],
-                                "data_gen_strategy": progress_samples["data_gen_strategy"][i],
-                                "quality_label": progress_samples["quality_labels"][i],
-                                "metadata": progress_samples["metadata"][i],
-                            }
-                            if eval_type == "policy_ranking":
-                                sample_result["video_path"] = dataset.sample_indices[i]["video_path"]
-                            eval_results.append(sample_result)
-                            example_count += 1
+                        # Gather predictions and targets across all ranks
+                        progress_pred = self.accelerator.gather_for_metrics(progress_pred)
+                        target_progress = self.accelerator.gather_for_metrics(progress_samples["target_progress"])
+
+                        # Gather metadata across all ranks
+                        gathered_task = self.accelerator.gather_for_metrics(progress_samples["task"])
+                        gathered_data_source = self.accelerator.gather_for_metrics(progress_samples["data_source"])
+                        gathered_data_gen_strategy = self.accelerator.gather_for_metrics(
+                            progress_samples["data_gen_strategy"]
+                        )
+                        gathered_quality_labels = self.accelerator.gather_for_metrics(
+                            progress_samples["quality_labels"]
+                        )
+                        gathered_metadata = self.accelerator.gather_for_metrics(progress_samples["metadata"])
+
+                        # Build eval_results directly on main process
+                        if self.accelerator.is_main_process:
+                            for i in range(len(progress_pred)):
+                                sample_result = {
+                                    "task": gathered_task[i],
+                                    "target_progress": target_progress[i].cpu().numpy(),
+                                    "progress_pred": progress_pred[i].cpu().numpy(),
+                                    "data_source": gathered_data_source[i],
+                                    "data_gen_strategy": gathered_data_gen_strategy[i],
+                                    "quality_label": gathered_quality_labels[i],
+                                    "metadata": gathered_metadata[i],
+                                    "id": gathered_metadata[i]["id"],
+                                    "video_path": gathered_metadata[i]["video_path"],
+                                }
+                                eval_results.append(sample_result)
 
                     elif eval_type == "success_failure":
                         preference_samples = batch["preference_inputs"]
@@ -328,124 +361,119 @@ class RFMHeadsTrainer(Trainer):
                             outputs, _, _ = self.forward_model(self.model, preference_samples, sample_type="preference")
                         pref_logits = outputs.logits
 
-                        for i in range(len(pref_logits)):
-                            sample_result = {
-                                "task": preference_samples["task"][i],
-                                "preference_pred": pref_logits[i].cpu().numpy(),
-                                "preference_labels": preference_samples["preference_labels"][i].item(),
-                                "data_source": preference_samples["data_source"][i],
-                                "chosen_data_gen_strategy": preference_samples["chosen_data_gen_strategy"][i],
-                                "rejected_data_gen_strategy": preference_samples["rejected_data_gen_strategy"][i],
-                                # "quality_label": int(preference_samples["quality_labels"][i].item()),
-                                "metadata": preference_samples["metadata"][i],
-                            }
-                            eval_results.append(sample_result)
-                            example_count += 1
+                        # Gather predictions and labels across all ranks
+                        pref_logits = self.accelerator.gather_for_metrics(pref_logits)
+                        preference_labels = self.accelerator.gather_for_metrics(preference_samples["preference_labels"])
 
-                # Create a wandb table to visualize the samples
-                # Log the frames and the progress predictions
+                        # Gather metadata across all ranks
+                        gathered_task = self.accelerator.gather_for_metrics(preference_samples["task"])
+                        gathered_data_source = self.accelerator.gather_for_metrics(preference_samples["data_source"])
+                        gathered_chosen_data_gen_strategy = self.accelerator.gather_for_metrics(
+                            preference_samples["chosen_data_gen_strategy"]
+                        )
+                        gathered_rejected_data_gen_strategy = self.accelerator.gather_for_metrics(
+                            preference_samples["rejected_data_gen_strategy"]
+                        )
+                        gathered_metadata = self.accelerator.gather_for_metrics(preference_samples["metadata"])
 
-                # if the eval_type is reward_alignment, let's visualize frames and progress predictions
-                if eval_type == "reward_alignment":
-                    traj_len = 32
+                        # Build eval_results directly on main process
+                        if self.accelerator.is_main_process:
+                            for i in range(len(pref_logits)):
+                                sample_result = {
+                                    "task": gathered_task[i],
+                                    "preference_pred": pref_logits[i].cpu().numpy(),
+                                    "preference_labels": preference_labels[i].cpu().numpy(),
+                                    "data_source": gathered_data_source[i],
+                                    "chosen_data_gen_strategy": gathered_chosen_data_gen_strategy[i],
+                                    "rejected_data_gen_strategy": gathered_rejected_data_gen_strategy[i],
+                                    "metadata": gathered_metadata[i],
+                                }
+                                eval_results.append(sample_result)
 
-                    data = []
-                    count = 0
-                    for i in range(0, len(eval_results), traj_len):
-                        eval_results_traj_i = eval_results[i : i + traj_len]
-                        video = dataset.sample_indices[i]["video_path"]
-                        frames = load_frames_from_npz(video)
-                        frames = frames.transpose(0, 3, 1, 2)
+                # Only compute metrics and log on main process
+                if self.accelerator.is_main_process:
+                    # Create a wandb table to visualize the samples
+                    # Log the frames and the progress predictions
 
-                        # Resize frames to make them smaller for wandb table display
-                        resized_frames = []
-                        for frame in frames:
-                            frame_resized = cv2.resize(frame.transpose(1, 2, 0), (64, 64))
-                            resized_frames.append(frame_resized.transpose(2, 0, 1))
-                        frames = np.array(resized_frames)
+                    # if the eval_type is reward_alignment, let's visualize frames and progress predictions
+                    if eval_type == "reward_alignment":
+                        eval_metrics, plots, video_frames_list = compute_eval_metrics(eval_type, eval_results)
 
-                        eval_metrics = compute_eval_metrics(eval_type, eval_results)
-                        task = eval_results_traj_i[0]["task"]
-                        progress_preds = []
-                        for j in range(len(eval_results_traj_i)):
-                            progress_pred = eval_results_traj_i[j]["progress_pred"]
-                            if progress_pred is not None:
-                                progress_preds.append(round(progress_pred[-1].item(), 2))
-                            else:
-                                progress_preds.append(0.0)
+                        data = []
+                        for plot, frames in zip(plots, video_frames_list):
+                            if frames is not None:
+                                progress_plot = wandb.Image(plot)
+                                plt.close(plot)  # Close to free memory
+                                data.append([wandb.Video(frames, fps=10, format="gif"), progress_plot])
 
-                        # Create a wandb plot for progress predictions
-                        fig, ax = plt.subplots(figsize=(8, 4))
-                        ax.plot(progress_preds, marker="o", linewidth=2, markersize=4)
-                        ax.set_xlabel("Frame")
-                        ax.set_ylabel("Progress Prediction")
-                        ax.set_title(f"Progress Predictions - {task}")
-                        ax.grid(True, alpha=0.3)
-                        ax.set_ylim(0, 1)
+                        columns = ["video", "progress_plot"]
+                        wandb.log({
+                            f"{eval_subset[0]}/reward_alignment_samples": wandb.Table(data=data, columns=columns),
+                        })
 
-                        # Convert to wandb image
-                        progress_plot = wandb.Image(fig)
-                        plt.close(fig)  # Close to free memory
+                    elif eval_type == "policy_ranking":
+                        # create task groups from eval_results
+                        eval_metrics, task_groups, task_details = compute_eval_metrics(eval_type, eval_results)
 
-                        data.append([task, wandb.Video(frames, fps=2, format="gif"), progress_plot])
-                        count += 1
+                        data = []
+                        for task, group in task_groups.items():
+                            quality_to_rews = collections.defaultdict(list)
+                            for t in group:
+                                quality_to_rews[t["quality_label"]].append(round(t["final_reward"], 2))
+                            quality_to_rews = ",".join([f"{q}:{r}" for q, r in quality_to_rews.items()])
+                            data.append([task, quality_to_rews])
 
-                    columns = ["video", "task", "progress_plot"]
-                    wandb.log({
-                        "reward_alignment_samples": wandb.Table(data=data, columns=columns),
-                    })
+                        columns = ["task", "quality_and_rews"]
+                        wandb.log({
+                            f"{eval_subset[0]}/policy_ranking_samples": wandb.Table(data=data, columns=columns),
+                        })
 
-                elif eval_type == "policy_ranking":
-                    # create task groups from eval_results
-                    eval_metrics, task_groups, task_details = compute_eval_metrics(eval_type, eval_results)
+                    elif eval_type == "confusion_matrix":
+                        # confusion_matrix returns (metrics, confusion_matrix)
+                        result = compute_eval_metrics(eval_type, eval_results)
+                        if isinstance(result, tuple):
+                            eval_metrics = result[0]  # Just use the metrics
+                        else:
+                            eval_metrics = result
+                    else:
+                        raise ValueError(f"Unsupported eval type: {eval_type}")
 
-                    data = []
-                    for task, group in task_groups.items():
-                        quality_and_rews = [(t["quality_label"], t["final_reward"]) for t in group]
-                        quality_and_rews = ",".join([f"{q}:{r:.2f}" for q, r in quality_and_rews])
-                        data.append([task, quality_and_rews])
-
-                    columns = ["task", "quality_and_rews"]
-                    wandb.log({
-                        "policy_ranking_samples": wandb.Table(data=data, columns=columns),
-                    })
-
-                elif eval_type == "confusion_matrix":
-                    eval_metrics = compute_eval_metrics(eval_type, eval_results)
+                    # Compute metrics
+                    ds_name = DS_SHORT_NAME_MAPPING[eval_dataset + "/" + eval_subset[0]]
+                    metrics[ds_name][eval_type] = eval_metrics
+                    rank_0_print(f"Completed {eval_type} evaluation: {len(eval_results)} samples")
+                    rank_0_print(f"Metrics: {metrics[ds_name][eval_type]}")
+                    rank_0_print("=" * 50)
                 else:
-                    raise ValueError(f"Unsupported eval type: {eval_type}")
+                    # Non-main processes still need to have some metrics structure
+                    ds_name = DS_SHORT_NAME_MAPPING[eval_dataset + "/" + eval_subset[0]]
+                    metrics[ds_name][eval_type] = {}
 
-                # Compute metrics
-                ds_name = DS_SHORT_NAME_MAPPING[eval_dataset + "/" + eval_subset[0]]
-                metrics[ds_name][eval_type] = eval_metrics
-                rank_0_print(f"Completed {eval_type} evaluation: {len(eval_results)} samples")
-                rank_0_print(f"Metrics: {metrics[ds_name][eval_type]}")
-                rank_0_print("=" * 50)
-
-        # Prepare metrics for both wandb and callback return
+        # Prepare metrics for both wandb and callback return (only on main process)
         wandb_metrics = {}
         callback_metrics = {}
 
-        for ds_name, eval_type_metric in metrics.items():
-            for eval_type, metric in eval_type_metric.items():
-                eval_type_short = EVAL_TYPE_SHORT[eval_type]
-                if eval_type == "confusion_matrix":
-                    fig, confusion_matrix = metric
-                    # plot confusion matrix
-                    wandb_metrics.update({
-                        f"custom_eval/{eval_type_short}_{ds_name}": wandb.Image(fig),
-                    })
-                else:
-                    # Add to both wandb and callback metrics
-                    for k, v in metric.items():
-                        if isinstance(v, (int, float)):
-                            metric_name = f"custom_eval/{eval_type_short}_{k}_{ds_name}"
-                            wandb_metrics[metric_name] = v
-                            callback_metrics[metric_name] = v
+        if self.accelerator.is_main_process:
+            for ds_name, eval_type_metric in metrics.items():
+                for eval_type, metric in eval_type_metric.items():
+                    eval_type_short = EVAL_TYPE_SHORT[eval_type]
+                    if eval_type == "confusion_matrix":
+                        fig, confusion_matrix = metric
+                        # plot confusion matrix
+                        wandb_metrics.update({
+                            f"custom_eval/{eval_type_short}_{ds_name}": wandb.Image(fig),
+                        })
+                    else:
+                        # Add to both wandb and callback metrics
+                        for k, v in metric.items():
+                            if isinstance(v, (int, float)):
+                                metric_name = f"custom_eval/{eval_type_short}_{k}_{ds_name}"
+                                wandb_metrics[metric_name] = v
+                                callback_metrics[metric_name] = v
 
-        # Log to wandb
-        if self.args.report_to and "wandb" in self.args.report_to and is_rank_0():
-            wandb.log(wandb_metrics)
+            # Log to wandb
+            if self.args.report_to and "wandb" in self.args.report_to:
+                wandb.log(wandb_metrics)
 
         # Return metrics for callbacks
         return callback_metrics

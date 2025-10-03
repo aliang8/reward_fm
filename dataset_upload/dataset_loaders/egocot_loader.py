@@ -69,7 +69,7 @@ class EgoCOTFrameloader:
         return frames
 
 
-def create_new_trajectory(frames_path: str, caption: str, planning: str, score: float) -> dict:
+def create_new_trajectory(frames_path: str, caption: str) -> dict:
     """Create a new trajectory from EgoCoT data."""
     trajectory_info = {}
     trajectory_info["id"] = generate_unique_id()
@@ -77,9 +77,8 @@ def create_new_trajectory(frames_path: str, caption: str, planning: str, score: 
     trajectory_info["frames"] = EgoCOTFrameloader(frames_path)
     trajectory_info["is_robot"] = False  # EgoCoT is human egocentric data
     trajectory_info["quality_label"] = "successful" 
-    trajectory_info["partial_success"] = score  # Use the alignment score as success metric
+    trajectory_info["partial_success"] = 1 
     trajectory_info["data_source"] = "egocot"
-    trajectory_info["planning"] = planning  # Store the embodied planning information
     return trajectory_info
 
 
@@ -140,17 +139,8 @@ def load_egocot_dataset(dataset_path: str) -> dict[str, list[dict]]:
         for item in data_items:
             # Extract required fields (handle common variants and typos)
             image_filename = item.get('image')
-            caption = item.get('caption') or item.get('description') or item.get('task') or ""
-            planning = (
-                item.get('planning')
-                or item.get('planing')  # some JSONs use the typo 'planing'
-                or item.get('plan')
-                or item.get('actions')
-                or ""
-            )
-            score = item.get('score') if item.get('score') is not None else (
-                item.get('quality') if item.get('quality') is not None else item.get('alignment', 1.0)
-            )
+            caption = item.get('planing').split("\n")[0][1:]
+            score = item.get('score') 
             
             if not image_filename or not caption:
                 print(f"Skipping item with missing image or caption: {item}")
@@ -180,7 +170,7 @@ def load_egocot_dataset(dataset_path: str) -> dict[str, list[dict]]:
                 continue
             
             # Create trajectory
-            trajectory = create_new_trajectory(frames_path, caption, planning, float(score))
+            trajectory = create_new_trajectory(frames_path, caption)
             
             # Group by task/caption for organization
             task_key = caption[:50] + "..." if len(caption) > 50 else caption

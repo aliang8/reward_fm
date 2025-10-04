@@ -4,9 +4,19 @@ CUDA_VISIBLE_DEVICES=0 uv run accelerate launch \
     --num_processes=1 \
     train.py \
     --config_paths rfm/configs/config.yaml rfm/configs/rewind_transformer_config.yaml \
-    --logging.use_wandb true \
+    --logging.use_wandb false \
     --debug false \
     --model.train_preference_head false \
     --model.train_progress_head true \
-    --training.exp_name rewind_base_mw_only \
+    --training.exp_name debug \
+    --training.predict_pref_progress false
+
+
+python3 train.py \
+    --config_paths rfm/configs/config.yaml rfm/configs/rewind_transformer_config.yaml \
+    --logging.use_wandb false \
+    --debug false \
+    --model.train_preference_head false \
+    --model.train_progress_head true \
+    --training.exp_name debug \
     --training.predict_pref_progress false

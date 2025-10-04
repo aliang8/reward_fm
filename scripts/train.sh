@@ -38,3 +38,15 @@ accelerate launch \
     --model.train_progress_head true \
     --model.train_language_model true \
     --training.exp_name rfm_progress_only_mw_train_all
+
+accelerate launch \
+    --config_file rfm/configs/fsdp.yaml \
+    --num_processes=2 \
+    train.py \
+    --config rfm/configs/config.yaml \
+    --logging.use_wandb false \
+    --debug true \
+    --model.train_preference_head false \
+    --model.train_progress_head true \
+    --model.train_language_model true \
+    --training.exp_name debug

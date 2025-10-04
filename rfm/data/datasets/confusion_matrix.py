@@ -75,6 +75,8 @@ class ConfusionMatrixDataset(RFMBaseDataset):
                     "traj_idx": traj_idx,
                     "lang_task": lang_task,
                     "video_task": video_task,
+                    "video_path": traj["frames"],
+                    "id": traj["id"],
                 })
                 video_task_count[video_task] += 1
 
@@ -86,6 +88,8 @@ class ConfusionMatrixDataset(RFMBaseDataset):
         traj_idx = sample_idx_info["traj_idx"]
         lang_task = sample_idx_info["lang_task"]
         video_task = sample_idx_info["video_task"]
+        video_path = sample_idx_info["video_path"]
+        id = sample_idx_info["id"]
 
         # Get the original trajectory
         video_traj = self.dataset[traj_idx]
@@ -130,6 +134,7 @@ class ConfusionMatrixDataset(RFMBaseDataset):
             "id": video_traj["id"],
             "lang_task": lang_task,
             "video_task": video_task,
+            "video_path": video_path,
         }
 
         # Create trajectory for the sample (using the original trajectory data but with new task)

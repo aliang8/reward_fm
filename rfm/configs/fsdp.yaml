@@ -23,12 +23,13 @@ fsdp_config:
   # Sharding strategy: FULL_SHARD is the most memory-efficient
   fsdp_sharding_strategy: FULL_SHARD # 1 for FULL_SHARD, 2 for SHARD_GRAD_OP
 
-# CPU Offloading: Offload parameters and gradients to CPU RAM to save VRAM.
+  # CPU Offloading: Offload parameters and gradients to CPU RAM to save VRAM.
   # This is crucial for fitting large models.
-  fsdp_offload_params: true
+  fsdp_offload_params: false
 
   # This is essential for FSDP to correctly handle the parameter logic
   fsdp_use_orig_params: true
 
   # Set the state dict type for saving sharded model checkpoints
-  fsdp_state_dict_type: FULL_STATE_DICT 
+  fsdp_state_dict_type: FULL_STATE_DICT
+  # fsdp_state_dict_type: SHARDED_STATE_DICT

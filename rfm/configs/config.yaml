@@ -75,12 +75,12 @@ data:
   resized_width: 128   # Width to resize images/videos to
   
   # Data generation settings
-  sample_type_ratio: [0, 1, 0]  # Ratio of preference, progress, and similarity samples
+  sample_type_ratio: [1, 1, 0]  # Ratio of preference, progress, and similarity samples
   dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
   # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, video_binned]
-  preference_strategy_ratio: [5, 1, 1, 0]
+  preference_strategy_ratio: [8, 1, 1, 0]
   # Tunable strategy ratios for progress generation: [default, rewind_same_task, different_task]
-  progress_strategy_ratio: [1, 5, 1]
+  progress_strategy_ratio: [1, 8, 1]
   shuffle: true
   seed: 42
 
@@ -105,6 +105,7 @@ custom_eval:
   # during training 
   eval_types: ["policy_ranking", "confusion_matrix", "reward_alignment"]
   # eval_types: ["reward_alignment", "policy_ranking"]
+  # eval_types: ["reward_alignment"]
   policy_ranking: 
     - ["aliangdw/metaworld_rfm", "metaworld"]
   confusion_matrix: 
@@ -121,7 +122,7 @@ training:
   output_dir: "./logs"
   
   # Training parameters
-  per_device_train_batch_size: 128
+  per_device_train_batch_size: 32
   gradient_accumulation_steps: 1
   learning_rate: 2e-5
   num_train_epochs: -1  # Number of epochs to train for
@@ -135,7 +136,7 @@ training:
   evaluation_strategy: "steps"  # Options: "no", "steps", "epoch"
   eval_steps: 200  
   custom_eval_steps: 200  
-  per_device_eval_batch_size: 128  # Evaluation batch size per device
+  per_device_eval_batch_size: 32  # Evaluation batch size per device
   do_eval: true  # Enable evaluation during training
   prediction_loss_only: true # Only compute loss for the prediction head
   

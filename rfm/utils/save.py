@@ -88,7 +88,7 @@ class SaveBestCallback(TrainerCallback):
 
     def on_evaluate(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, metrics, **kwargs):
         # Gather metrics across all processes if using distributed training
-        if hasattr(self._trainer, 'accelerator') and self._trainer.accelerator.num_processes > 1:
+        if hasattr(self._trainer, "accelerator") and self._trainer.accelerator.num_processes > 1:
             # Convert metrics to tensors for gathering
             gathered_metrics = {}
             for key, value in metrics.items():

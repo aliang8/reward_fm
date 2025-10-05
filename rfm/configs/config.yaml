@@ -96,6 +96,8 @@ data:
 
   # Video binned dataset parameters
   num_bins: 10
+  progress_pred_type: "absolute" # "absolute" or "relative"
+
 
 # =====================================================================================
 # Custom Evaluation Configuration

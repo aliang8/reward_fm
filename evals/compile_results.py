@@ -26,20 +26,20 @@ def load_results(results_path: str) -> list[dict[str, Any]]:
         return json.load(f)
 
 
-def compute_eval_metrics(eval_type: str, results: list[dict[str, Any]]):
+def compute_eval_metrics(eval_type: str, results: list[dict[str, Any]], progress_pred_type: str):
     if eval_type == "success_failure_preference" or eval_type == "success_failure":
-        return run_success_failure_eval(results)
+        return run_success_failure_eval(results, progress_pred_type)
     elif eval_type == "reward_alignment_progress" or eval_type == "reward_alignment":
-        return run_reward_alignment_eval_per_trajectory(results)
+        return run_reward_alignment_eval_per_trajectory(results, progress_pred_type)
     elif eval_type == "confusion_matrix_progress" or eval_type == "confusion_matrix":
-        return run_confusion_matrix_eval(results)
+        return run_confusion_matrix_eval(results, progress_pred_type)
     elif eval_type == "wrong_task_preference" or eval_type == "wrong_task":
-        return run_success_failure_eval(results)
+        return run_success_failure_eval(results, progress_pred_type)
     elif eval_type == "policy_ranking_progress" or eval_type == "policy_ranking":
-        return run_policy_ranking_eval_per_ranked_set(results)
+        return run_policy_ranking_eval_per_ranked_set(results, progress_pred_type)
 
 
-def run_success_failure_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
+def run_success_failure_eval(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:
     """Run success_failure evaluation analysis."""
 
     def _extract_series(results: list[dict[str, Any]]):
@@ -66,7 +66,7 @@ def run_success_failure_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def run_reward_alignment_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
+def run_reward_alignment_eval(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:
     """Run reward_alignment evaluation analysis."""
     last_preds = []
     last_targets = []
@@ -93,7 +93,9 @@ def run_reward_alignment_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def run_reward_alignment_eval_per_trajectory(results: list[dict[str, Any]]) -> tuple[dict[str, Any], list, list]:
+def run_reward_alignment_eval_per_trajectory(
+    results: list[dict[str, Any]], progress_pred_type: str
+) -> tuple[dict[str, Any], list, list]:
     """Run reward_alignment evaluation analysis and create plots for each trajectory."""
     unique_trajectory_ids = set()
     mse_per_trajectory = 0
@@ -158,6 +160,10 @@ def run_reward_alignment_eval_per_trajectory(results: list[dict[str, Any]]) -> t
 
         video_frames_list.append(frames)
 
+        if progress_pred_type == "relative":
+            last_preds = np.cumsum(last_preds)
+            last_targets = np.cumsum(last_targets)
+
         # Calculate metrics for this trajectory
         traj_mse = np.mean((np.array(last_targets) - np.array(last_preds)) ** 2)
         traj_pearson = compute_pearson(last_targets, last_preds)
@@ -205,7 +211,7 @@ def run_reward_alignment_eval_per_trajectory(results: list[dict[str, Any]]) -> t
     return metrics, plots, video_frames_list
 
 
-def run_confusion_matrix_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
+def run_confusion_matrix_eval(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:
     """Run confusion_matrix evaluation analysis."""
     # Group results by confusion matrix task
     uniq_tasks = set()
@@ -232,6 +238,8 @@ def run_confusion_matrix_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
         progress_pred = r["progress_pred"]
         if len(progress_pred) == 0:
             continue
+        if progress_pred_type == "relative":
+            progress_pred = np.cumsum(progress_pred)
         final_reward = float(progress_pred[-1])
 
         lang_task_idx = task_to_idx[lang_task]
@@ -277,7 +285,7 @@ def run_confusion_matrix_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
     return fig, confusion_matrix
 
 
-def run_policy_ranking_eval_per_ranked_set(results: list[dict[str, Any]]) -> dict[str, Any]:
+def run_policy_ranking_eval_per_ranked_set(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:
     """Run policy_ranking evaluation analysis per ranked set."""
     task_groups = {}
 
@@ -287,6 +295,8 @@ def run_policy_ranking_eval_per_ranked_set(results: list[dict[str, Any]]) -> dic
         progress_pred = r["progress_pred"]
         if len(progress_pred) == 0:
             continue
+        if progress_pred_type == "relative":
+            progress_pred = np.cumsum(progress_pred)
         final_reward = float(progress_pred[-1])
 
         if task not in task_groups:
@@ -400,7 +410,7 @@ def main():
                     eval_type = eval_file.stem  # filename without extension
 
                     results = load_results(str(eval_file))
-                    metrics = compute_eval_metrics(eval_type, results)
+                    metrics = compute_eval_metrics(eval_type, results, cfg.data.progress_pred_type)
 
                     if eval_type == "confusion_matrix_progress" or eval_type == "confusion_matrix":
                         # save the figure
@@ -462,7 +472,7 @@ def main():
             eval_type = eval_file.stem  # filename without extension
             print(f"    Analyzing {eval_type}...")
             results = load_results(str(eval_file))
-            metrics = compute_eval_metrics(eval_type, results)
+            metrics = compute_eval_metrics(eval_type, results, cfg.data.progress_pred_type)
             print(f"      ✓ Completed {eval_type} analysis")
             print(f"      ✓ Metrics: {metrics}")
         print("Done!")

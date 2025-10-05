@@ -321,10 +321,11 @@ class RFMHeadsTrainer(Trainer):
                                 self.model, progress_samples, sample_type="progress"
                             )
                         progress_pred = progress_logits["A"]
-                        if isinstance(progress_pred[0], torch.Tensor):
-                            progress_pred = torch.stack(progress_pred)
-                        else:
-                            progress_pred = torch.tensor(progress_pred)
+                        if isinstance(progress_pred, list):
+                            if isinstance(progress_pred[0], torch.Tensor):
+                                progress_pred = torch.stack(progress_pred)
+                            else:
+                                progress_pred = torch.tensor(progress_pred)
 
                         # Gather predictions and targets across all ranks
                         progress_pred = self.accelerator.gather_for_metrics(progress_pred)
@@ -392,12 +393,18 @@ class RFMHeadsTrainer(Trainer):
 
                 # Compute metrics on all processes
                 if eval_type == "reward_alignment":
-                    eval_metrics, plots, video_frames_list = compute_eval_metrics(eval_type, eval_results)
+                    eval_metrics, plots, video_frames_list = compute_eval_metrics(
+                        eval_type, eval_results, self.config.data.progress_pred_type
+                    )
                 elif eval_type == "policy_ranking":
                     # create task groups from eval_results
-                    eval_metrics, task_groups, task_details = compute_eval_metrics(eval_type, eval_results)
+                    eval_metrics, task_groups, task_details = compute_eval_metrics(
+                        eval_type, eval_results, self.config.data.progress_pred_type
+                    )
                 elif eval_type == "confusion_matrix":
-                    confusion_plot, confusion_matrix = compute_eval_metrics(eval_type, eval_results)
+                    confusion_plot, confusion_matrix = compute_eval_metrics(
+                        eval_type, eval_results, self.config.data.progress_pred_type
+                    )
                 else:
                     raise ValueError(f"Unsupported eval type: {eval_type}")
 
@@ -414,17 +421,20 @@ class RFMHeadsTrainer(Trainer):
                     # Create wandb tables and log visualizations
                     if eval_type == "reward_alignment":
                         data = []
-                        for plot, frames in zip(plots, video_frames_list):
-                            if frames is not None:
-                                progress_plot = wandb.Image(plot)
-                                plt.close(plot)  # Close to free memory
-                                data.append([wandb.Video(frames, fps=10, format="gif"), progress_plot])
-
-                        columns = ["video", "progress_plot"]
                         if self.log_wandb:
+                            for plot, frames in zip(plots, video_frames_list):
+                                if frames is not None:
+                                    progress_plot = wandb.Image(plot)
+                                    plt.close(plot)  # Close to free memory
+                                    data.append([wandb.Video(frames, fps=10, format="gif"), progress_plot])
+
+                            columns = ["video", "progress_plot"]
                             wandb.log({
                                 f"{eval_subset[0]}/reward_alignment_samples": wandb.Table(data=data, columns=columns),
                             })
+                        else:
+                            for plot, frames in zip(plots, video_frames_list):
+                                plt.close(plot)
 
                     elif eval_type == "policy_ranking":
                         data = []
@@ -444,9 +454,7 @@ class RFMHeadsTrainer(Trainer):
                     elif eval_type == "confusion_matrix":
                         # Log confusion matrix figure to wandb
                         if self.log_wandb:
-                            wandb.log({
-                                f"{eval_subset[0]}/confusion_matrix": wandb.Image(confusion_plot)
-                            })
+                            wandb.log({f"{eval_subset[0]}/confusion_matrix": wandb.Image(confusion_plot)})
 
         # Prepare metrics for callbacks (all processes)
         callback_metrics = {}

@@ -65,12 +65,13 @@ def load_embeddings_from_path(embeddings_path: str, embedding_type: str = "video
     if not embeddings_path:
         raise ValueError("embeddings_path is None or empty")
 
-    embeddings_data = torch.load(embeddings_path, map_location="cpu")
+    with open(embeddings_path, "rb") as f:
+        embeddings_data = torch.load(f, map_location="cpu")
     return embeddings_data[embedding_type]
 
 
 def pad_trajectory_to_max_frames_np(
-    frames: np.ndarray, progress: list[float], max_frames: int
+    frames: np.ndarray, progress: list[float], max_frames: int, pad_from: str = "left"
 ) -> tuple[np.ndarray, list[float]]:
     """Pad trajectory frames and progress to max_frames by repeating the first frame/progress if needed.
 
@@ -88,23 +89,28 @@ def pad_trajectory_to_max_frames_np(
         # No padding needed
         return frames, progress
 
-    # Need to pad - repeat the first frame and first progress
-    first_frame = frames[0:1]  # Keep the batch dimension
-    first_progress = progress[0]
+    if pad_from == "left":
+        pad_frame = frames[0:1]  # Keep the batch dimension
+        pad_progress = progress[0]
+    else:
+        pad_frame = frames[-1:]
+        pad_progress = progress[-1]
 
     # Calculate how many frames to pad
     frames_to_pad = max_frames - current_frames
 
     # Pad frames by repeating the first frame
-    padded_frames = np.concatenate([np.repeat(first_frame, frames_to_pad, axis=0), frames], axis=0)
-
-    # Pad progress by repeating the first progress value
-    padded_progress = [first_progress] * frames_to_pad + progress
+    if pad_from == "left":
+        padded_frames = np.concatenate([np.repeat(pad_frame, frames_to_pad, axis=0), frames], axis=0)
+        padded_progress = [pad_progress] * frames_to_pad + progress
+    else:
+        padded_frames = np.concatenate([frames, np.repeat(pad_frame, frames_to_pad, axis=0)], axis=0)
+        padded_progress = progress + [pad_progress] * frames_to_pad
 
     return padded_frames, padded_progress
 
 
-def pad_trajectory_to_max_frames_torch(frames, progress: list[float], max_frames: int) -> tuple:
+def pad_trajectory_to_max_frames_torch(frames, progress: list[float], max_frames: int, pad_from: str = "left") -> tuple:
     """Pad trajectory frames and progress to max_frames by repeating the first frame/progress if needed.
 
     Args:
@@ -122,18 +128,25 @@ def pad_trajectory_to_max_frames_torch(frames, progress: list[float], max_frames
         return frames, progress
 
     # Need to pad - repeat the first frame and first progress
-    first_frame = frames[0:1]  # Keep the batch dimension
-    first_progress = progress[0]
+    if pad_from == "left":
+        pad_frame = frames[0:1]  # Keep the batch dimension
+        pad_progress = progress[0]
+    else:
+        pad_frame = frames[-1:]
+        pad_progress = progress[-1]
 
     # Calculate how many frames to pad
     frames_to_pad = max_frames - current_frames
 
     # Pad frames by repeating the first frame
-    padding = first_frame.repeat(frames_to_pad, 1)
-    padded_frames = torch.cat([padding, frames], dim=0)
+    padding = pad_frame.repeat(frames_to_pad, 1)
 
-    # Pad progress by repeating the first progress value
-    padded_progress = [first_progress] * frames_to_pad + progress
+    if pad_from == "left":
+        padded_frames = torch.cat([padding, frames], dim=0)
+        padded_progress = [pad_progress] * frames_to_pad + progress
+    else:
+        padded_frames = torch.cat([frames, padding], dim=0)
+        padded_progress = progress + [pad_progress] * frames_to_pad
 
     return padded_frames, padded_progress
 
@@ -227,7 +240,9 @@ def randomly_subsample_frames(
     return subsampled_frames, indices
 
 
-def subsample_frames_and_progress(frames: np.ndarray, max_frames: int) -> tuple[np.ndarray, list[float]]:
+def subsample_frames_and_progress(
+    frames: np.ndarray, max_frames: int, progress_pred_type: str = "absolute"
+) -> tuple[np.ndarray, list[float]]:
     """Linear subsample frames and progress to max_frames"""
     # subsampled_frames, indices = linspace_subsample_frames(frames, max_frames)
 
@@ -266,9 +281,18 @@ def subsample_frames_and_progress(frames: np.ndarray, max_frames: int) -> tuple[
     # frames, indices = randomly_subsample_frames(segment_frames, max_frames)
     subsampled_frames, indices = linspace_subsample_frames(segment_frames, max_frames)
 
-    # Map the subsampled indices to the corresponding progress values from the full segment
-    # The chosen_indices tell us which frames from the segment we're using
-    progress = [segment_progress[idx] for idx in indices]
+    if progress_pred_type == "absolute":
+        progress = [segment_progress[idx] for idx in indices]
+    else:
+        # Calculate relative progress as delta between consecutive frames
+        relative_progress = []
+        for i in range(len(indices)):
+            if i == 0:
+                relative_progress.append(0.0)
+            else:
+                delta = indices[i] - indices[i - 1]
+                relative_progress.append(delta / (num_frames_total - start_idx))
+        progress = relative_progress
 
     metadata = {
         "start_idx": start_idx,
@@ -279,7 +303,11 @@ def subsample_frames_and_progress(frames: np.ndarray, max_frames: int) -> tuple[
 
 
 def create_rewind_trajectory(
-    original_traj: dict, rewind_length: int | None = None, max_frames: int = 8, use_embeddings: bool = False
+    original_traj: dict,
+    rewind_length: int | None = None,
+    max_frames: int = 8,
+    use_embeddings: bool = False,
+    progress_pred_type: str = "absolute",
 ) -> dict:
     """Create a suboptimal trajectory by rewinding the original trajectory.
 
@@ -393,10 +421,19 @@ def create_rewind_trajectory(
     # Progress should represent position within the selected segment, starting from 1/64
     forward_progress = []
     for i in range(len(forward_indices)):  # 0 to len(forward_indices)-1
-        # Progress starts at 1/(num_frames - start_idx) for first frame, increments by 1/(num_frames - start_idx) for each frame
-        forward_progress.append((i + 1) / (num_frames - start_idx))  # Progress: 1/64, 2/64, 3/64, ...
+        if progress_pred_type == "absolute":
+            # Progress starts at 1/(num_frames - start_idx) for first frame, increments by 1/(num_frames - start_idx) for each frame
+            forward_progress.append((i + 1) / (num_frames - start_idx))  # Progress: 1/64, 2/64, 3/64, ...
+        else:
+            if i == 0:
+                forward_progress.append(0.0)
+            else:
+                forward_progress.append(1 / (num_frames - start_idx))
 
-    rewind_progress = forward_progress[::-1][1:rewind_length]
+    if progress_pred_type == "absolute":
+        rewind_progress = forward_progress[::-1][1:rewind_length]
+    else:
+        rewind_progress = (np.array(forward_progress[::-1][1:rewind_length]) * -1).tolist()
 
     # Combine progress values
     combined_progress = forward_progress + rewind_progress
@@ -408,7 +445,13 @@ def create_rewind_trajectory(
 
     # Step 8: Map the subsampled indices to the corresponding progress values
     # The subsampled_indices tell us which frames from the combined trajectory we're using
-    subsampled_progress = [combined_progress[idx] for idx in subsampled_indices]
+    if progress_pred_type == "absolute":
+        subsampled_progress = [combined_progress[idx] for idx in subsampled_indices]
+    else:
+        # if relative, we need to sum the progress values between each indices to get relative progress
+        subsampled_progress = [0.0]
+        for start, end in zip(subsampled_indices[:-1], subsampled_indices[1:]):
+            subsampled_progress.append(sum(combined_progress[start:end]))
 
     metadata = {
         "start_idx": start_idx,

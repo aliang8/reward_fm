@@ -150,6 +150,10 @@ class DataConfig:
         },
     )
 
+    progress_pred_type: str = field(
+        default="absolute", metadata={"help": "Type of progress prediction: 'absolute' or 'relative'"}
+    )
+
 
 @dataclass
 class CustomEvaluationConfig:

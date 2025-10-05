@@ -88,7 +88,10 @@ class ProgressDataset(RFMBaseDataset):
 
             elif selected_strategy == DataGenStrat.REWIND_SAME_TASK:
                 processed_traj = create_rewind_trajectory(
-                    traj, max_frames=self.config.max_frames, use_embeddings=self.config.load_embeddings
+                    traj,
+                    max_frames=self.config.max_frames,
+                    use_embeddings=self.config.load_embeddings,
+                    progress_pred_type=self.config.progress_pred_type,
                 )
                 strategy_used = DataGenStrat.REWIND_SAME_TASK
 
@@ -121,7 +124,7 @@ class ProgressDataset(RFMBaseDataset):
             else:
                 video_embeddings = load_embeddings_from_path(processed_traj["embeddings_path"], "video_embeddings")
                 video_embeddings, progress, metadata = subsample_frames_and_progress(
-                    video_embeddings, self.config.max_frames
+                    video_embeddings, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
                 )
 
             text_embedding = load_embeddings_from_path(processed_traj["embeddings_path"], "text_embedding")
@@ -142,7 +145,9 @@ class ProgressDataset(RFMBaseDataset):
                 metadata = processed_traj["metadata"]
             else:
                 frames = load_frames_from_npz(processed_traj["frames"])
-                frames, progress, metadata = subsample_frames_and_progress(frames, self.config.max_frames)
+                frames, progress, metadata = subsample_frames_and_progress(
+                    frames, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
+                )
 
             if strategy_used == DataGenStrat.DIFFERENT_TASK:
                 # for different task, we use original language instruction, but

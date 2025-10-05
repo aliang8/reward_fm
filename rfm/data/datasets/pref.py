@@ -308,7 +308,10 @@ class PrefDataset(RFMBaseDataset):
             if total_prob == 0:
                 # All strategies have zero probability, fallback to rewind
                 rejected_traj = create_rewind_trajectory(
-                    chosen_traj, max_frames=self.config.max_frames, use_embeddings=self.config.load_embeddings
+                    chosen_traj,
+                    max_frames=self.config.max_frames,
+                    use_embeddings=self.config.load_embeddings,
+                    progress_pred_type=self.config.progress_pred_type,
                 )
                 strategy_used = DataGenStrat.REWIND_SAME_TASK
                 break
@@ -330,7 +333,10 @@ class PrefDataset(RFMBaseDataset):
             # Execute selected strategy
             if selected_strategy == DataGenStrat.REWIND_SAME_TASK:
                 rejected_traj = create_rewind_trajectory(
-                    chosen_traj, max_frames=self.config.max_frames, use_embeddings=self.config.load_embeddings
+                    chosen_traj,
+                    max_frames=self.config.max_frames,
+                    use_embeddings=self.config.load_embeddings,
+                    progress_pred_type=self.config.progress_pred_type,
                 )
                 strategy_used = DataGenStrat.REWIND_SAME_TASK
 
@@ -366,7 +372,10 @@ class PrefDataset(RFMBaseDataset):
         # Final fallback: If all strategies failed, use rewind
         if rejected_traj is None:
             rejected_traj = create_rewind_trajectory(
-                chosen_traj, max_frames=self.config.max_frames, use_embeddings=self.config.load_embeddings
+                chosen_traj,
+                max_frames=self.config.max_frames,
+                use_embeddings=self.config.load_embeddings,
+                progress_pred_type=self.config.progress_pred_type,
             )
             strategy_used = DataGenStrat.REWIND_SAME_TASK
 
@@ -411,7 +420,7 @@ class PrefDataset(RFMBaseDataset):
                 rejected_metadata = rejected_traj["metadata"]
             else:
                 rejected_video_embeddings, rejected_progress, rejected_metadata = subsample_frames_and_progress(
-                    rejected_video_embeddings, self.config.max_frames
+                    rejected_video_embeddings, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
                 )
         else:
             if isinstance(rejected_traj["frames"], str):
@@ -425,7 +434,7 @@ class PrefDataset(RFMBaseDataset):
                 rejected_metadata = rejected_traj["metadata"]
             else:
                 rejected_frames, rejected_progress, rejected_metadata = subsample_frames_and_progress(
-                    rejected_frames, self.config.max_frames
+                    rejected_frames, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
                 )
 
         if "metadata" in rejected_traj:

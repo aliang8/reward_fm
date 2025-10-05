@@ -28,20 +28,20 @@ training:
   fp16: true
 
   per_device_train_batch_size: 1024
-  per_device_eval_batch_size: 128
+  per_device_eval_batch_size: 512
   learning_rate: 1e-4
   warmup_ratio: 0.01
   
   eval_steps: 100
   custom_eval_steps: 100
-  max_steps: 15000
+  max_steps: 10000
 
 data:
   # sample_type_ratio: [0, 1, 0] # only progress samples 
   # progress_strategy_ratio: [1, 1, 1] # default success, rewind, different task
   sample_type_ratio: [0, 1, 0] # preference, progress, similarity 
-  preference_strategy_ratio: [5, 1, 1, 0] # rewind, suboptimal_same_task, different_task, video_binned 
-  progress_strategy_ratio: [1, 5, 1] # default success, rewind, different task
+  preference_strategy_ratio: [6, 1, 1, 0] # rewind, suboptimal_same_task, different_task, video_binned 
+  progress_strategy_ratio: [1, 6, 1] # default success, rewind, different task
   
   dataset_type: balanced_mixed
   # dataset_type: default
@@ -53,6 +53,7 @@ data:
     libero_90_failure: 1
 
   load_embeddings: true
+  progress_pred_type: "relative" 
 
 # =====================================================================================
 # Logging and Output Configuration

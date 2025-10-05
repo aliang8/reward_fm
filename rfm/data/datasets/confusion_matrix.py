@@ -150,7 +150,9 @@ class ConfusionMatrixDataset(RFMBaseDataset):
             is_robot=video_traj["is_robot"],
             quality_label=video_traj["quality_label"],
             data_gen_strategy=DataGenStrat.CONFUSION_MATRIX.value,
-            target_progress=[1.0],  # Assume trajectory is complete for confusion matrix
+            target_progress=[
+                1.0
+            ],  # Assume trajectory is complete for confusion matrix, also don't really care about progress here
             metadata=metadata,
         )
 

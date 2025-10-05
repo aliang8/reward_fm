@@ -93,7 +93,10 @@ class RewardAlignmentDataset(RFMBaseDataset):
         text_embedding = None
 
         # Ground truth progress: linear from 0 to 1
-        gt_progress = end_idx / num_frames
+        if self.config.progress_pred_type == "absolute":
+            gt_progress = end_idx / num_frames
+        else:
+            gt_progress = 1 / num_frames
 
         if self.config.load_embeddings and original_traj.get("embeddings_path"):
             video_embeddings = load_embeddings_from_path(original_traj["embeddings_path"], "video_embeddings")

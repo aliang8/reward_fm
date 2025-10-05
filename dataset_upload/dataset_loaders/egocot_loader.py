@@ -34,7 +34,7 @@ class EgoCOTFrameloader:
         """
         # Load the numpy array containing 8 consecutive frames
         frames = np.load(self.frames_path)
-        
+
         # Ensure the frames are in the correct format
         # EgoCoT frames are stored as numpy arrays with 8 consecutive frames
         if frames.ndim == 3:
@@ -51,9 +51,7 @@ class EgoCOTFrameloader:
 
         # Ensure shape and dtype sanity
         if not isinstance(frames, np.ndarray) or frames.ndim != 4 or frames.shape[-1] != 3:
-            raise ValueError(
-                f"Unexpected frames shape for {self.frames_path}: {getattr(frames, 'shape', None)}"
-            )
+            raise ValueError(f"Unexpected frames shape for {self.frames_path}: {getattr(frames, 'shape', None)}")
 
         # Ensure uint8
         if frames.dtype != np.uint8:
@@ -76,8 +74,8 @@ def create_new_trajectory(frames_path: str, caption: str) -> dict:
     trajectory_info["task"] = caption  # Use caption as the task description
     trajectory_info["frames"] = EgoCOTFrameloader(frames_path)
     trajectory_info["is_robot"] = False  # EgoCoT is human egocentric data
-    trajectory_info["quality_label"] = "successful" 
-    trajectory_info["partial_success"] = 1 
+    trajectory_info["quality_label"] = "successful"
+    trajectory_info["partial_success"] = 1
     trajectory_info["data_source"] = "egocot"
     return trajectory_info
 
@@ -102,56 +100,56 @@ def load_egocot_dataset(dataset_path: str) -> dict[str, list[dict]]:
     json_files = []
     for root, dirs, files in os.walk(dataset_path):
         for file in files:
-            if file.lower() == 'results.json':
+            if file.lower() == "results.json":
                 json_files.append(os.path.join(root, file))
 
     if not json_files:
         raise FileNotFoundError(f"No results.json files found in {dataset_path}")
-    
+
     task_data = defaultdict(list)
     total_trajectories = 0
-    
+
     for json_file in json_files:
         print(f"Loading annotations from {json_file}")
-        
-        with open(json_file, 'r') as f:
+
+        with open(json_file, "r") as f:
             annotations = json.load(f)
-        
+
         # Normalize JSON structures
         if isinstance(annotations, list):
             data_items = annotations
         elif isinstance(annotations, dict):
-            if 'data' in annotations:
-                data_items = annotations['data']
-            elif 'results' in annotations:
-                data_items = annotations['results']
-            elif 'annotations' in annotations:
-                data_items = annotations['annotations']
-            elif 'samples' in annotations:
-                data_items = annotations['samples']
-            elif 'image' in annotations:
+            if "data" in annotations:
+                data_items = annotations["data"]
+            elif "results" in annotations:
+                data_items = annotations["results"]
+            elif "annotations" in annotations:
+                data_items = annotations["annotations"]
+            elif "samples" in annotations:
+                data_items = annotations["samples"]
+            elif "image" in annotations:
                 data_items = [annotations]
             else:
                 raise ValueError(f"Unexpected JSON structure in {json_file}: cannot find data list")
         else:
             raise ValueError(f"Unexpected JSON structure in {json_file}")
-        
+
         for item in data_items:
             # Extract required fields (handle common variants and typos)
-            image_filename = item.get('image')
-            caption = item.get('planing').split("\n")[0][1:]
-            score = item.get('score') 
-            
+            image_filename = item.get("image")
+            caption = item.get("planing").split("\n")[0][1:]
+            score = item.get("score")
+
             if not image_filename or not caption:
                 print(f"Skipping item with missing image or caption: {item}")
                 continue
-            
+
             # Construct full path to the .npy file, prioritizing EgoCOT_clear next to results.json
             base_dir = os.path.dirname(json_file)
             candidate_paths = [
-                os.path.join(base_dir, 'EgoCOT_clear', image_filename) if image_filename else None,
+                os.path.join(base_dir, "EgoCOT_clear", image_filename) if image_filename else None,
                 os.path.join(base_dir, image_filename) if image_filename else None,
-                os.path.join(dataset_path, 'EgoCOT_clear', image_filename) if image_filename else None,
+                os.path.join(dataset_path, "EgoCOT_clear", image_filename) if image_filename else None,
                 os.path.join(dataset_path, image_filename) if image_filename else None,
             ]
 
@@ -165,17 +163,17 @@ def load_egocot_dataset(dataset_path: str) -> dict[str, list[dict]]:
                 print(f"Warning: .npy frame file not found for: {image_filename}")
                 continue
 
-            if not frames_path.lower().endswith('.npy'):
+            if not frames_path.lower().endswith(".npy"):
                 print(f"Warning: expected .npy file, got: {frames_path}. Skipping.")
                 continue
-            
+
             # Create trajectory
             trajectory = create_new_trajectory(frames_path, caption)
-            
+
             # Group by task/caption for organization
             task_key = caption[:50] + "..." if len(caption) > 50 else caption
             task_data[task_key].append(trajectory)
             total_trajectories += 1
-    
+
     print(f"Loaded {total_trajectories} trajectories from {len(task_data)} unique tasks")
     return task_data

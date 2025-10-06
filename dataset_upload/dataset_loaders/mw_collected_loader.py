@@ -7,15 +7,16 @@ uv run python dataset_upload/generate_hf_dataset.py \
     --config_path=dataset_upload/configs/data_gen_configs/metaworld.yaml
 """
 
+import collections
 from pathlib import Path
-
+import h5py
 import numpy as np
 from PIL import Image
 from torchvision import transforms
 from tqdm import tqdm
 
 from dataset_upload.video_helpers import load_video_frames
-
+from dataset_upload.dataset_loaders.mw_task_annotations import EVAL_ANN_1, EVAL_ANN_2, EVAL_ANN_3, EVAL_GT_ANN
 
 def apply_center_crop_to_frames(frames: np.ndarray) -> np.ndarray:
     """Apply center crop (224, 224) to video frames using torchvision transforms.
@@ -52,25 +53,7 @@ def map_quality_label(original_label: str) -> str:
 
 def map_task_to_natural_language(task_name: str) -> str:
     """Convert task names to natural language descriptions."""
-    task_mapping = {
-        "window_open": "Open the window",
-        "window_close": "Close the window",
-        "button_press": "Press the button",
-        "button_press_topdown_wall": "Press the button on the top of the wall",
-        "coffee_pull": "Pull the coffee lever",
-        "door_open": "Open the door",
-        "drawer_close": "Close the drawer",
-        "faucet_open": "Open the faucet",
-        "hand_insert": "Insert your hand into the opening",
-        "handle_press_side": "Press the side of the handle",
-        "handle_pull_side": "Pull the side of the handle",
-        "lever_pull": "Pull the lever",
-        "plate_slide_back_side": "Slide the plate back from the side",
-        "push_wall": "Push against the wall",
-        "eval_tasks": "Evaluation tasks",
-        "train_tasks": "Training tasks",
-    }
-    return task_mapping.get(task_name, task_name.replace("_", " ").title())
+    return EVAL_GT_ANN.get(task_name, task_name.replace("_", " ").title())
 
 
 def load_metaworld_dataset(base_path: str) -> dict[str, list[dict]]:
@@ -85,22 +68,45 @@ def load_metaworld_dataset(base_path: str) -> dict[str, list[dict]]:
 
     print(f"Loading metaworld dataset from: {base_path}")
 
-    task_data = {}
+    task_data = collections.defaultdict(list)
     base_path = Path(base_path)
 
     if not base_path.exists():
         raise FileNotFoundError(f"Metaworld dataset path not found: {base_path}")
 
+
     # Find all task directories
     task_dirs = [d for d in base_path.iterdir() if d.is_dir() and not d.name.startswith(".")]
+    eval_tasks = [d.name for d in task_dirs]
+
+    scucessful_trajs_file = "downloaded_data/metaworld_video.h5"
+
+    with h5py.File(scucessful_trajs_file, "r") as f:
+        print("Available tasks: ", f.keys())
+        task_names = list(f.keys())
+
+        for task_name in tqdm(task_names, desc="Loading successful trajectories"):
+            if task_name not in eval_tasks:
+                continue
+
+            for traj_name in ["0", "1", "10", "11", "12"]: # not sure why we use these, but we use these 5
+                traj = f[task_name][traj_name]
+                frames = np.array(traj)
+
+                trajectory = {
+                    "frames": frames,
+                    "task": map_task_to_natural_language(task_name),
+                    "quality_label": "successful",
+                    "is_robot": True,
+                    "partial_success": 0,
+                }
+                task_data[task_name].append(trajectory)
 
     for task_dir in tqdm(task_dirs, desc="Processing tasks"):
         task_name = task_dir.name
 
         if task_name in [".DS_Store"]:
             continue
-
-        task_trajectories = []
 
         # Find all quality label directories within this task
         quality_dirs = [d for d in task_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
@@ -115,33 +121,28 @@ def load_metaworld_dataset(base_path: str) -> dict[str, list[dict]]:
             video_files = list(quality_dir.glob("*.mp4")) + list(quality_dir.glob("*.gif"))
 
             for video_file in video_files:
-                # Extract index from filename (e.g., "1.mp4" -> 1)
-                try:
-                    int(video_file.stem)
-                except ValueError:
-                    print(f"Warning: Could not parse index from filename: {video_file.name}")
+                # # Extract index from filename (e.g., "1.mp4" -> 1)
+                # try:
+                #     int(video_file.stem)
+                # except ValueError:
+                #     print(f"Warning: Could not parse index from filename: {video_file.name}")
 
                 # Load frames and apply center crop
                 original_frames = load_video_frames(video_file)
                 cropped_frames = apply_center_crop_to_frames(original_frames)
 
+                nl_name = map_task_to_natural_language(task_name)
+
                 # Create trajectory entry
                 trajectory = {
                     "frames": cropped_frames,
-                    "task": map_task_to_natural_language(task_name),  # Natural language task
+                    "task": nl_name,  # Natural language task
                     "quality_label": quality_label,  # Mapped quality label
                     "is_robot": True,
-                    "original_quality_label": original_quality_label,  # Keep original for reference
-                    "original_task_name": task_name,  # Keep original task name for reference
+                    "partial_success": 0,
                 }
 
-                task_trajectories.append(trajectory)
-
-        if task_trajectories:
-            task_data[task_name] = task_trajectories
-            print(
-                f"  Task '{task_name}' -> '{map_task_to_natural_language(task_name)}': {len(task_trajectories)} trajectories"
-            )
+                task_data[task_name].append(trajectory)
 
     total_trajectories = sum(len(trajectories) for trajectories in task_data.values())
     print(f"\nLoaded {total_trajectories} trajectories from {len(task_data)} tasks")

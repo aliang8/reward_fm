@@ -320,6 +320,7 @@ class RFMHeadsTrainer(Trainer):
                             outputs, progress_logits, _ = self.forward_model(
                                 self.model, progress_samples, sample_type="progress"
                             )
+
                         progress_pred = progress_logits["A"]
                         if isinstance(progress_pred, list):
                             if isinstance(progress_pred[0], torch.Tensor):

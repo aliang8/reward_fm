@@ -93,7 +93,6 @@ def create_trajectory_video(
     center_crop: bool = False,
 ) -> str:
     """Create a trajectory video from frames and save as MP4 file."""
-
     # Handle numpy array of frames (traditional case)
     if not isinstance(frames, np.ndarray):
         frames = np.array(frames)
@@ -179,9 +178,7 @@ def create_trajectory_video_optimized(
     Returns:
         str: The path to the created video file.
     """
-
     # print(f"Saving optimized video to: {video_path}")
-
     if os.path.exists(video_path):
         # print(f"Video already exists at: {video_path}, skipping video creation")
         return video_path
@@ -196,6 +193,7 @@ def create_trajectory_video_optimized(
         return None
     if len(frames) == 0:
         raise ValueError("No frames provided for video creation")
+
     # Downsample frames by selecting indices, which is memory-cheap
     processed_frames = downsample_frames(frames, max_frames)
 

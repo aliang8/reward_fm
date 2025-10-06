@@ -81,6 +81,10 @@ def run_reward_alignment_eval(results: list[dict[str, Any]], progress_pred_type:
     if not last_preds or not last_targets:
         return {"error": "No valid predictions or targets found"}
 
+    if progress_pred_type == "relative":
+        last_preds = np.cumsum(last_preds)
+        last_targets = np.cumsum(last_targets)
+
     mse = np.mean((np.array(last_targets) - np.array(last_preds)) ** 2)
     pearson = compute_pearson(last_targets, last_preds)
     spearman = compute_spearman(last_targets, last_preds)
@@ -128,10 +132,8 @@ def run_reward_alignment_eval_per_trajectory(
             r.get("metadata", {})
             if pred is not None:
                 last_preds.append(float(pred[-1]))
-                progress_preds.append(round(pred[-1] if hasattr(pred[-1], "item") else pred[-1], 2))
             else:
                 last_preds.append(0.0)
-                progress_preds.append(0.0)
             if tgt is not None:
                 last_targets.append(float(tgt[-1]))
             else:
@@ -175,7 +177,7 @@ def run_reward_alignment_eval_per_trajectory(
 
         # Create a wandb plot for progress predictions similar to the custom eval
         fig, ax = plt.subplots(figsize=(6, 3.5))
-        ax.plot(progress_preds, linewidth=2)
+        ax.plot(last_preds, linewidth=2)
         ax.set_ylabel("Progress")
         ax.set_title(
             f"Progress Pred - {task} - {quality_label}\nMSE: {traj_mse:.2f}, Pearson: {traj_pearson:.2f}, Spearman: {traj_spearman:.2f}"

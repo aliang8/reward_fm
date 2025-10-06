@@ -70,7 +70,7 @@ BASE_FEATURES = {
     "quality_label": datasets.Value("string"),
     # "preference_group_id": datasets.Value("string"),
     # "preference_rank": datasets.Value("int32"),
-    "partial_success": None,  # in [0, 1]
+    "partial_success": datasets.Value("int32"),  # in [0, 1]
 }
 
 
@@ -79,7 +79,7 @@ class DatasetConfig:
     """Config for dataset settings"""
 
     dataset_path: str = field(default="", metadata={"help": "Path to the dataset"})
-    dataset_name: str | None = field(default=None, metadata={"help": "Name of the dataset (defaults to dataset_type)"})
+    dataset_name: str = field(default=None, metadata={"help": "Name of the dataset (defaults to dataset_type)"})
 
 
 @dataclass
@@ -87,7 +87,7 @@ class OutputConfig:
     """Config for output settings"""
 
     output_dir: str = field(default="rfm_dataset", metadata={"help": "Output directory for the dataset"})
-    max_trajectories: int | None = field(
+    max_trajectories: int = field(
         default=None, metadata={"help": "Maximum number of trajectories to process (None for all)"}
     )
     max_frames: int = field(
@@ -95,7 +95,7 @@ class OutputConfig:
     )
     use_video: bool = field(default=True, metadata={"help": "Use MP4 videos instead of individual frame images"})
     shortest_edge_size: int = field(default=240, metadata={"help": "Shortest edge size for video resizing"})
-    center_crop: bool | None = field(
+    center_crop: bool = field(
         default=False,
         metadata={"help": "Center crop the video to the target size. Defaults to False, which means no cropping."},
     )
@@ -110,8 +110,8 @@ class HubConfig:
     """Config for HuggingFace Hub settings"""
 
     push_to_hub: bool = field(default=False, metadata={"help": "Push dataset to HuggingFace Hub"})
-    hub_repo_id: str | None = field(default=None, metadata={"help": "HuggingFace Hub repository ID"})
-    hub_token: str | None = field(
+    hub_repo_id: str = field(default=None, metadata={"help": "HuggingFace Hub repository ID"})
+    hub_token: str = field(
         default=None, metadata={"help": "HuggingFace Hub token (or set HF_TOKEN environment variable)"}
     )
 
@@ -310,8 +310,9 @@ def convert_dataset_to_hf_format(
         "frames": [entry["frames"] for entry in all_entries],
         "is_robot": [entry["is_robot"] for entry in all_entries],
         "quality_label": [entry.get("quality_label") for entry in all_entries],
-        "preference_group_id": [entry.get("preference_group_id") for entry in all_entries],
-        "preference_rank": [entry.get("preference_rank") for entry in all_entries],
+        "partial_success": [entry.get("partial_success") for entry in all_entries],
+        # "preference_group_id": [entry.get("preference_group_id") for entry in all_entries],
+        # "preference_rank": [entry.get("preference_rank") for entry in all_entries],
     }
 
     # Set frames feature based on video mode

@@ -16,16 +16,16 @@ This guide explains how to add new datasets to the Reward Foundation Model (RFM)
 ### Use Existing Datasets
 ```bash
 # AgiBotWorld (streaming)
-uv run python data/generate_hf_dataset.py --config_path=configs/data_gen_configs/agibot_world.yaml
+uv run python dataset_upload/generate_hf_dataset.py --config_path=dataset_upload/configs/data_gen_configs/agibot_world.yaml
 
 # LIBERO (local files)
-uv run python data/generate_hf_dataset.py --config_path=configs/data_gen.yaml
+uv run python dataset_upload/generate_hf_dataset.py --config_path=dataset_upload/configs/data_gen.yaml
 ```
 
 ### Add Custom Dataset
 1. **Read the guide**: [Custom Dataset Guide](dataset_guides/CustomDataset.md)
-2. **Create loader**: `data/{dataset_name}_loader.py`
-3. **Add config**: `configs/data_gen_configs/{dataset_name}.yaml`
+2. **Create loader**: `dataset_upload/{dataset_name}_loader.py`
+3. **Add config**: `dataset_upload/configs/data_gen_configs/{dataset_name}.yaml`
 4. **Test**: Run conversion and training
 
 ## Architecture Overview

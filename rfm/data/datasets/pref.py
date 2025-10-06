@@ -395,14 +395,14 @@ class PrefDataset(RFMBaseDataset):
             chosen_text_embedding = load_embeddings_from_path(chosen_traj["embeddings_path"], "text_embedding")
 
             chosen_video_embeddings, chosen_progress, chosen_metadata = subsample_frames_and_progress(
-                chosen_video_embeddings, self.config.max_frames
+                chosen_video_embeddings, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
             )
         else:
             if isinstance(chosen_traj["frames"], str):
                 chosen_frames = load_frames_from_npz(chosen_traj["frames"])
 
             chosen_frames, chosen_progress, chosen_metadata = subsample_frames_and_progress(
-                chosen_frames, self.config.max_frames
+                chosen_frames, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
             )
         if "metadata" in chosen_traj:
             chosen_metadata.update(chosen_traj["metadata"])

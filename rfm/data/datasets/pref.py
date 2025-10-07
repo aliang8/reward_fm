@@ -191,17 +191,7 @@ class PrefDataset(RFMBaseDataset):
 
     def _create_preference_sample(self) -> PreferenceSample:
         """Create a preference prediction sample: chosen vs rejected where chosen is preferred.
-
-        This method can create preference samples from two sources:
-
-        **Dataset Source:**
-        - Uses pre-existing preference data from the loaded preference dataset
-        - Good for learning from curated, high-quality preference examples
-        - Controlled by config.dataset_preference_ratio
-
-        **Data Augmentation Strategies:**
-        When not using dataset preferences, delegates to _create_pref_sample()
-        which implements various strategies for generating rejected trajectories.
+        Either from dataset or from generated trajectories.
 
         Returns:
             PreferenceSample: A preference sample with chosen (preferred) vs rejected
@@ -218,40 +208,14 @@ class PrefDataset(RFMBaseDataset):
     def _create_pref_sample(self, chosen_traj: dict | None = None) -> PreferenceSample:
         """Create a preference prediction sample using various rejected trajectory generation strategies.
 
-        This method implements four different strategies for generating rejected trajectories
-        to create diverse and robust preference learning data. The strategy is chosen
-        probabilistically according to self.preference_strategy_ratio.
-
-        **Strategy 1: Rewind Same Task**
+        Rewind Same Task
         - Creates a suboptimal trajectory by rewinding the chosen trajectory
-        - Same task, different trajectory ID, artificially generated suboptimal behavior
-        - Good for learning task-specific failure modes and temporal dynamics
-        - Example: Forward progress [0→1→2→3] + rewind [2→1] = [0→1→2→3→2→1]
 
-        **Strategy 2: Suboptimal/Failure Same Task**
+        Suboptimal/Failure Same Task
         - Uses existing suboptimal/failure trajectories from the same task
-        - Same task, different trajectory ID, real failure examples
-        - Good for learning from actual failure patterns and task-specific suboptimal behaviors
-        - Example: Compare successful "open door" vs failed "open door" attempts
 
-        **Strategy 3: Different Task**
+        Different Task
         - Uses trajectories from completely different tasks
-        - Different task, can be chosen or suboptimal
-        - Good for learning cross-task generalization and what makes trajectories "good"
-          across different contexts
-        - Example: Compare "open door" (successful) vs "press button" (successful)
-
-        **Strategy 4: Video Binned**
-        - Splits a single video into temporal bins and compares different bins
-        - Same task, same video, different temporal segments
-        - Good for learning temporal progress within the same task and fine-grained
-          temporal dynamics
-        - Example: Compare early progress [frames 0-7] vs late progress [frames 24-31]
-
-        **Fallback Behavior:**
-        If any strategy fails (e.g., no suboptimal trajectories available, video too short),
-        the system automatically falls back to the rewind strategy to ensure robust
-        data generation.
 
         Returns:
             PreferenceSample: A preference sample with chosen (preferred) vs rejected

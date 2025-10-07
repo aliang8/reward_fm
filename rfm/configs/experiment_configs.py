@@ -108,7 +108,9 @@ class DataConfig:
     # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, video_binned]
     preference_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 1])
     # Tunable strategy ratios for progress generation: [default, rewind_same_task, different_task]
-    progress_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1])
+    progress_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1])    
+    similarity_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1])
+    
     data_source_weights: Optional[Dict[str, float]] = field(
         default=None,
         metadata={
@@ -222,6 +224,9 @@ class TrainingConfig:
     # RFM specific settings
     predict_pref_progress: bool = field(
         default=False, metadata={"help": "Whether to predict progress for preference samples"}
+    )
+    predict_sim_progress: bool = field(
+        default=False, metadata={"help": "Whether to predict progress for similarity samples"}
     )
 
 

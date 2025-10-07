@@ -96,8 +96,21 @@ class ReWiNDTransformer(PreTrainedModel):
             nn.Sigmoid(),
         )
 
-        self.preference_head = nn.Linear(hidden_dim, 1, bias=False)
-        self.similarity_head = nn.Linear(hidden_dim, 1, bias=False)
+        self.preference_head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.LayerNorm(hidden_dim // 2),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim // 2, 1),
+        )
+
+        self.similarity_head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.LayerNorm(hidden_dim // 2),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim // 2, 1),
+        )
 
         # Ensure all heads have the same dtype as the base model
         self.model_dtype = next(self.video_proj.parameters()).dtype
@@ -194,7 +207,7 @@ class ReWiNDTransformer(PreTrainedModel):
             if sample_type == "preference":
                 logits = self.preference_head(pred_class_token)
             else:  # similarity
-                pass
+                logits = self.similarity_head(pred_class_token)
         elif sample_type == "progress":
             first_frame_emb = einops.repeat(self.first_embedding_A, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
 

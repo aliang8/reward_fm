@@ -81,7 +81,6 @@ class DatasetConfig:
     dataset_path: str = field(default="", metadata={"help": "Path to the dataset"})
     dataset_name: str = field(default=None, metadata={"help": "Name of the dataset (defaults to dataset_type)"})
 
-
 @dataclass
 class OutputConfig:
     """Config for output settings"""
@@ -199,7 +198,7 @@ def convert_dataset_to_hf_format(
     print(f"Processing {len(trajectories)} trajectories")
 
     # Limit trajectories if specified
-    if max_trajectories is not None:
+    if max_trajectories != -1:
         trajectories = trajectories[:max_trajectories]
 
     # Determine number of workers
@@ -528,7 +527,7 @@ def main(cfg: GenerateConfig):
         # Load the trajectories using the loader with max_trajectories limit
         print(f"Loading metaworld dataset from: {cfg.dataset.dataset_path}")
         task_data = load_metaworld_dataset(
-            cfg.dataset.dataset_path,
+            cfg.dataset.dataset_path, dataset_name=cfg.dataset.dataset_name,
         )
         trajectories = flatten_task_data(task_data)
     elif "h2r" in cfg.dataset.dataset_name.lower():

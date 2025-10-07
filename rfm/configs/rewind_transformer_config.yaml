@@ -48,12 +48,12 @@ data:
 
   # this is based on the subset name
   data_source_weights:
-    metaworld_rewind_train: 5
+    metaworld_train: 5
     libero256_90: 1
     libero_90_failure: 1
 
   load_embeddings: true
-  progress_pred_type: "relative" 
+  progress_pred_type: "absolute" 
 
 # =====================================================================================
 # Logging and Output Configuration

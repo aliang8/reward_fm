@@ -16,7 +16,7 @@ from torchvision import transforms
 from tqdm import tqdm
 
 from dataset_upload.video_helpers import load_video_frames
-from dataset_upload.dataset_loaders.mw_task_annotations import EVAL_ANN_1, EVAL_ANN_2, EVAL_ANN_3, EVAL_GT_ANN
+from dataset_upload.dataset_loaders.mw_task_annotations import TRAIN_GT_ANN, EVAL_GT_ANN
 
 def apply_center_crop_to_frames(frames: np.ndarray) -> np.ndarray:
     """Apply center crop (224, 224) to video frames using torchvision transforms.
@@ -50,13 +50,7 @@ def map_quality_label(original_label: str) -> str:
     label_mapping = {"GT": "successful", "success": "successful", "all_fail": "failure", "close_succ": "suboptimal"}
     return label_mapping.get(original_label, original_label)
 
-
-def map_task_to_natural_language(task_name: str) -> str:
-    """Convert task names to natural language descriptions."""
-    return EVAL_GT_ANN.get(task_name, task_name.replace("_", " ").title())
-
-
-def load_metaworld_dataset(base_path: str) -> dict[str, list[dict]]:
+def load_metaworld_dataset(base_path: str, dataset_name: str) -> dict[str, list[dict]]:
     """Load metaworld dataset and organize by task.
 
     Args:
@@ -74,75 +68,90 @@ def load_metaworld_dataset(base_path: str) -> dict[str, list[dict]]:
     if not base_path.exists():
         raise FileNotFoundError(f"Metaworld dataset path not found: {base_path}")
 
+    if "train" in dataset_name:
+        tasks = TRAIN_GT_ANN.keys()
+        anns = TRAIN_GT_ANN
+    elif "eval" in dataset_name:
+        tasks = EVAL_GT_ANN.keys()
+        anns = EVAL_GT_ANN
 
-    # Find all task directories
-    task_dirs = [d for d in base_path.iterdir() if d.is_dir() and not d.name.startswith(".")]
-    eval_tasks = [d.name for d in task_dirs]
+    print("number of tasks: ", len(tasks))
 
     scucessful_trajs_file = "downloaded_data/metaworld_video.h5"
 
     with h5py.File(scucessful_trajs_file, "r") as f:
         print("Available tasks: ", f.keys())
+        print("number of tasks: ", len(f.keys()))
         task_names = list(f.keys())
 
         for task_name in tqdm(task_names, desc="Loading successful trajectories"):
-            if task_name not in eval_tasks:
+            if task_name not in tasks:
                 continue
 
             for traj_name in ["0", "1", "10", "11", "12"]: # not sure why we use these, but we use these 5
                 traj = f[task_name][traj_name]
                 frames = np.array(traj)
 
+                cropped_frames = apply_center_crop_to_frames(frames)
+
                 trajectory = {
-                    "frames": frames,
-                    "task": map_task_to_natural_language(task_name),
+                    "frames": cropped_frames,
+                    "task": anns.get(task_name),
                     "quality_label": "successful",
                     "is_robot": True,
                     "partial_success": 0,
                 }
                 task_data[task_name].append(trajectory)
+    
+    if "eval" in dataset_name:
+        task_dirs = [d for d in base_path.iterdir() if d.is_dir() and not d.name.startswith(".")]
+        for task_dir in tqdm(task_dirs, desc="Processing tasks"):
+            task_name = task_dir.name
 
-    for task_dir in tqdm(task_dirs, desc="Processing tasks"):
-        task_name = task_dir.name
+            if task_name in [".DS_Store"]:
+                continue
 
-        if task_name in [".DS_Store"]:
-            continue
+            # Find all quality label directories within this task
+            quality_dirs = [d for d in task_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
 
-        # Find all quality label directories within this task
-        quality_dirs = [d for d in task_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
+            for quality_dir in quality_dirs:
+                original_quality_label = quality_dir.name
 
-        for quality_dir in quality_dirs:
-            original_quality_label = quality_dir.name
+                # Map quality label to standardized format
+                quality_label = map_quality_label(original_quality_label)
 
-            # Map quality label to standardized format
-            quality_label = map_quality_label(original_quality_label)
+                # Find all video files in this quality directory
+                video_files = list(quality_dir.glob("*.mp4")) + list(quality_dir.glob("*.gif"))
 
-            # Find all video files in this quality directory
-            video_files = list(quality_dir.glob("*.mp4")) + list(quality_dir.glob("*.gif"))
+                # if len(video_files) != 2:
+                #     import ipdb; ipdb.set_trace()
 
-            for video_file in video_files:
-                # # Extract index from filename (e.g., "1.mp4" -> 1)
-                # try:
-                #     int(video_file.stem)
-                # except ValueError:
-                #     print(f"Warning: Could not parse index from filename: {video_file.name}")
+                for video_file in video_files:
+                    # # Extract index from filename (e.g., "1.mp4" -> 1)
+                    # try:
+                    #     int(video_file.stem)
+                    # except ValueError:
+                    #     print(f"Warning: Could not parse index from filename: {video_file.name}")
 
-                # Load frames and apply center crop
-                original_frames = load_video_frames(video_file)
-                cropped_frames = apply_center_crop_to_frames(original_frames)
+                    # Load frames and apply center crop
+                    original_frames = load_video_frames(video_file)
+                    cropped_frames = apply_center_crop_to_frames(original_frames)
 
-                nl_name = map_task_to_natural_language(task_name)
+                    nl_name = anns.get(task_name)
 
-                # Create trajectory entry
-                trajectory = {
-                    "frames": cropped_frames,
-                    "task": nl_name,  # Natural language task
-                    "quality_label": quality_label,  # Mapped quality label
-                    "is_robot": True,
-                    "partial_success": 0,
-                }
+                    # Create trajectory entry
+                    trajectory = {
+                        "frames": cropped_frames,
+                        "task": nl_name,  # Natural language task
+                        "quality_label": quality_label,  # Mapped quality label
+                        "is_robot": True,
+                        "partial_success": 0,
+                    }
 
-                task_data[task_name].append(trajectory)
+                    task_data[task_name].append(trajectory)
+
+    for task_name, trajectories in task_data.items():
+        print(f"Task {task_name}: {len(trajectories)} trajectories")
 
     total_trajectories = sum(len(trajectories) for trajectories in task_data.values())
     print(f"\nLoaded {total_trajectories} trajectories from {len(task_data)} tasks")

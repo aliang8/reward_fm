@@ -61,7 +61,8 @@ dependencies = [
     "bitsandbytes",
     "torchvision",
     "moviepy",
-    "wandb[media]"
+    "wandb[media]",
+    "torchcodec"
 ]
 
 [project.urls]

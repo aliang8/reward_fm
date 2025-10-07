@@ -1,25 +1,25 @@
 train_datasets:
-  - "abraranwar/libero_rfm"
-  - "ykorkmaz/libero_failure_rfm"
+  # - "abraranwar/libero_rfm"
+  # - "ykorkmaz/libero_failure_rfm"
   # - "HenryZhang/metaworld_rewind_rfm_train"
-  # - "aliangdw/metaworld_rfm"
+  - "aliangdw/metaworld"
 
 train_subsets:
-  - ["libero256_90"]
-  - ["libero_90_failure"]
+  # - ["libero256_90"]
+  # - ["libero_90_failure"]
   # - ["metaworld_rewind_train"]
-  # - ["metaworld"]
+  - ["metaworld_train"]
 
 eval_datasets:
-  - "abraranwar/libero_rfm"
-  - "ykorkmaz/libero_failure_rfm"
+  # - "abraranwar/libero_rfm"
+  # - "ykorkmaz/libero_failure_rfm"
   # - "HenryZhang/metaworld_rewind_rfm_eval"
-  # - "aliangdw/metaworld_rfm"
+  - "aliangdw/metaworld"
 
 eval_subsets:
-  - ["libero256_10"]
-  - ["libero_10_failure"]
-  # - ["metaworld_rewind_eval"]
+  # - ["libero256_10"]
+  # - ["libero_10_failure"]
+  - ["metaworld_eval"]
   # - ["metaworld"]
 
 max_frames_for_preprocessing: 64
@@ -31,7 +31,7 @@ cache_dir: /scr/shared/reward_fm/processed_datasets
 
 # Embedding preprocessing parameters
 precompute_embeddings: true
-embeddings_cache_dir: "embeddings_cache"
+embeddings_cache_dir: "embeddings"
 dinov2_model: "facebook/dinov2-base"
 sentence_model: "sentence-transformers/all-MiniLM-L12-v2"
 embedding_batch_size: 32

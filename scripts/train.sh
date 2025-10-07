@@ -41,12 +41,12 @@ accelerate launch \
 
 accelerate launch \
     --config_file rfm/configs/fsdp.yaml \
-    --num_processes=2 \
+    --num_processes=4 \
     train.py \
     --config rfm/configs/config.yaml \
-    --logging.use_wandb false \
-    --debug true \
-    --model.train_preference_head false \
+    --logging.use_wandb true \
+    --debug false \
+    --model.train_preference_head true \
     --model.train_progress_head true \
     --model.train_language_model true \
-    --training.exp_name debug
+    --training.exp_name rfm_mw_pp

@@ -123,6 +123,10 @@ def run_reward_alignment_eval_per_trajectory(
         # Get task and quality label from first result
         task = results_for_trajectory[0].get("task", "unknown")
         quality_label = results_for_trajectory[0].get("quality_label", "unknown")
+
+        if quality_label != "successful":
+            continue
+
         # Try to get video_path from results, if not available, we'll return None for frames
         video_path = results_for_trajectory[0].get("video_path", None)
 

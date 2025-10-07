@@ -1,7 +1,8 @@
 DS_SHORT_NAME_MAPPING = {
     "HenryZhang/metaworld_rewind_rfm_eval/metaworld_rewind_eval": "mw_eval",
     "HenryZhang/metaworld_rewind_rfm_train/metaworld_rewind_train": "mw_train",
-    "aliangdw/metaworld_rfm/metaworld": "mw",
+    "aliangdw/metaworld/metaworld_train": "mw_train",
+    "aliangdw/metaworld/metaworld_eval": "mw_eval",
     "ykorkmaz/libero_failure_rfm/libero_10_failure": "libero_10_failure",
     "abraranwar/libero_rfm/libero256_10": "libero_10",
     "abraranwar/libero_rfm/libero256_90": "libero_90",

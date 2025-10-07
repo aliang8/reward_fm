@@ -1,5 +1,5 @@
 dataset:
-  dataset_name: metaworld
+  dataset_name: metaworld_train
   dataset_path: mw_policy_ranking_data
 
 output:
@@ -10,8 +10,8 @@ output:
   center_crop: true  # Don't center crop, maintain aspect ratio
   max_trajectories: -1  # -1 for all trajectories
   max_frames: -1  # -1 for all frames
-  num_workers: 8
+  num_workers: 2
 
 hub:
   push_to_hub: true
-  hub_repo_id: mw_policy_ranking
+  hub_repo_id: metaworld

@@ -251,41 +251,72 @@ class RFMBatchCollator(BaseCollator):
 
     def _process_similarity_batch(self, similarity_samples: list[SimilaritySample]) -> dict[str, torch.Tensor]:
         """Process a batch of similarity samples."""
-        # Collect all messages for batch processing (ref and traj_sim for each sample)
+        # Collect all messages for batch processing (ref_sim and ref_diff for each sample)
         all_messages = []
 
         for sample in similarity_samples:
             # Convert frames to appropriate format using stored shapes
-            reference_frames = self._convert_frames_to_pil_images(
-                sample.reference_trajectory.frames, sample.reference_trajectory.frames_shape
+            reference_frames = convert_frames_to_pil_images(
+                sample.ref_trajectory.frames, sample.ref_trajectory.frames_shape
             )
-            traj_sim_frames = self._convert_frames_to_pil_images(
-                sample.traj_sim_trajectory.frames, sample.traj_sim_trajectory.frames_shape
+            sim_frames = convert_frames_to_pil_images(
+                sample.sim_trajectory.frames, sample.sim_trajectory.frames_shape
             )
-            traj_diff_frames = self._convert_frames_to_pil_images(
-                sample.traj_diff_trajectory.frames, sample.traj_diff_trajectory.frames_shape
+            diff_frames = convert_frames_to_pil_images(
+                sample.diff_trajectory.frames, sample.diff_trajectory.frames_shape
             )
+
+            if "Qwen" in self.base_model_id:
+                content_extras = {
+                    "resized_height": self.resized_height,
+                    "resized_width": self.resized_width,
+                }
+            elif "SmolVLM" in self.base_model_id:
+                # Write frames to temporary files for SmolVLM
+                tmp_ref = Path(tempfile.gettempdir()) / f"tmp_ref.mp4"
+                write_mp4(reference_frames, tmp_ref)
+                reference_frames_video = str(tmp_ref)
+                
+                tmp_sim = Path(tempfile.gettempdir()) / f"tmp_sim.mp4"
+                write_mp4(sim_frames, tmp_sim)
+                sim_frames_video = str(tmp_sim)
+                
+                tmp_diff = Path(tempfile.gettempdir()) / f"tmp_diff.mp4"
+                write_mp4(diff_frames, tmp_diff)
+                diff_frames_video = str(tmp_diff)
+                
+                content_extras = {}
+            else:
+                content_extras = {}
+
+            # For SmolVLM, use the video paths; for Qwen, use the PIL images
+            if "SmolVLM" in self.base_model_id:
+                ref_video = reference_frames_video
+                sim_video = sim_frames_video
+                diff_video = diff_frames_video
+            else:
+                ref_video = reference_frames
+                sim_video = sim_frames
+                diff_video = diff_frames
 
             # Process reference vs trajectory sim
             conversation_ref_sim = [
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": f"Reference task: {sample.reference_trajectory.task}"},
+                        {"type": "text", "text": f"Task: {sample.ref_trajectory.task}"},
                         {
                             "type": "video",
-                            "video": reference_frames,
-                            "resized_height": self.resized_height,
-                            "resized_width": self.resized_width,
+                            "video": ref_video,
+                            **content_extras,
                         },
                         {"type": "text", "text": "<|split_token|>"},
                         {
                             "type": "video",
-                            "video": traj_sim_frames,
-                            "resized_height": self.resized_height,
-                            "resized_width": self.resized_width,
+                            "video": sim_video,
+                            **content_extras,
                         },
-                        {"type": "text", "text": "<|reward_token|>"},
+                        {"type": "text", "text": "<|sim_token|>"},
                     ],
                 }
             ]
@@ -295,52 +326,27 @@ class RFMBatchCollator(BaseCollator):
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": f"Reference task: {sample.reference_trajectory.task}"},
+                        {"type": "text", "text": f"Task: {sample.ref_trajectory.task}"},
                         {
                             "type": "video",
-                            "video": reference_frames,
-                            "resized_height": self.resized_height,
-                            "resized_width": self.resized_width,
+                            "video": ref_video,
+                            **content_extras,
                         },
                         {"type": "text", "text": "<|split_token|>"},
                         {
                             "type": "video",
-                            "video": traj_diff_frames,
-                            "resized_height": self.resized_height,
-                            "resized_width": self.resized_width,
+                            "video": diff_video,
+                            **content_extras,
                         },
-                        {"type": "text", "text": "<|reward_token|>"},
+                        {"type": "text", "text": "<|sim_token|>"},
                     ],
                 }
             ]
 
             all_messages.extend([conversation_ref_sim, conversation_ref_diff])
 
-        # Process all messages in one batch
-        texts = [
-            self.processor.apply_chat_template(
-                msg,
-                tokenize=False,
-                add_generation_prompt=False,
-                add_vision_id=True,
-                fps=1,
-            )
-            for msg in all_messages
-        ]
-
-        image_inputs, video_inputs, _video_kwargs = process_vision_info(all_messages, return_video_kwargs=True)
-
-        # Process through the processor in one batch
-        batch_inputs = self.processor(
-            text=texts,
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            truncation=False,
-            max_length=self.max_length,
-            return_tensors="pt",
-            # **video_kwargs,
-        )
+        # Process all conversations
+        batch_inputs = self._process_conversation(all_messages)
 
         # Split the batch inputs back into ref_A and ref_B
         num_samples = len(similarity_samples)
@@ -367,37 +373,79 @@ class RFMBatchCollator(BaseCollator):
         for key, value in ref_diff_inputs.items():
             combined_inputs[f"{key}_ref_diff"] = value
 
-        # Add target progress for both trajectories
-        target_progress_sim_list = []
-        target_progress_diff_list = []
-        target_progress_ref_list = []
+        # Add similarity-specific metadata
+        combined_inputs = self._add_similarity_meta(combined_inputs, similarity_samples)
+        return combined_inputs
 
-        for sample in similarity_samples:
-            if sample.traj_sim_trajectory.target_progress is not None:
-                target_progress_sim_list.append(sample.traj_sim_trajectory.target_progress)
+    def _add_similarity_meta(
+        self, batch_inputs: dict[str, torch.Tensor], similarity_samples: list[SimilaritySample]
+    ) -> dict[str, torch.Tensor]:
+        """Add metadata to the batch inputs for similarity samples."""
+        batch_inputs["data_source"] = [sample.ref_trajectory.data_source for sample in similarity_samples]
+        batch_inputs["sample_type"] = ["similarity"] * len(similarity_samples)
+        batch_inputs["task"] = [sample.ref_trajectory.task for sample in similarity_samples]
+        batch_inputs["data_gen_strategy"] = [sample.diff_trajectory.data_gen_strategy for sample in similarity_samples]
 
-            if sample.traj_diff_trajectory.target_progress is not None:
-                target_progress_diff_list.append(sample.traj_diff_trajectory.target_progress)
+        # Add target progress for all three trajectories
+        target_progress_ref = [sample.ref_trajectory.target_progress for sample in similarity_samples]
+        target_progress_sim = [sample.sim_trajectory.target_progress for sample in similarity_samples]
+        target_progress_diff = [sample.diff_trajectory.target_progress for sample in similarity_samples]
 
-            if sample.reference_trajectory.target_progress is not None:
-                target_progress_ref_list.append(sample.reference_trajectory.target_progress)
+        # Create masks for progress loss (only compute for successful trajectories or rewinds)
+        target_progress_ref_mask = [
+            1.0
+            if sample.ref_trajectory.quality_label == "successful"
+            or sample.ref_trajectory.data_gen_strategy == "rewind_same_task"
+            else 0.0
+            for sample in similarity_samples
+        ]
+        target_progress_sim_mask = [
+            1.0
+            if sample.sim_trajectory.quality_label == "successful"
+            or sample.sim_trajectory.data_gen_strategy == "rewind_same_task"
+            else 0.0
+            for sample in similarity_samples
+        ]
+        target_progress_diff_mask = [
+            1.0
+            if sample.diff_trajectory.quality_label == "successful"
+            or sample.diff_trajectory.data_gen_strategy == "rewind_same_task"
+            else 0.0
+            for sample in similarity_samples
+        ]
 
         # Pad target progress tensors to max length in last dimension
-        combined_inputs["target_progress_sim"] = self._pad_target_progress(target_progress_sim_list)
-        combined_inputs["target_progress_diff"] = self._pad_target_progress(target_progress_diff_list)
-        combined_inputs["target_progress_ref"] = self._pad_target_progress(target_progress_ref_list)
+        batch_inputs["target_progress_ref"] = pad_target_progress(target_progress_ref)
+        batch_inputs["target_progress_sim"] = pad_target_progress(target_progress_sim)
+        batch_inputs["target_progress_diff"] = pad_target_progress(target_progress_diff)
+        
+        batch_inputs["target_progress_ref_mask"] = torch.tensor(target_progress_ref_mask, dtype=torch.float32)
+        batch_inputs["target_progress_sim_mask"] = torch.tensor(target_progress_sim_mask, dtype=torch.float32)
+        batch_inputs["target_progress_diff_mask"] = torch.tensor(target_progress_diff_mask, dtype=torch.float32)
 
         # Also add the frame_shapes
-        combined_inputs["ref_frames_shape"] = torch.tensor(
-            [sample.reference_trajectory.frames_shape for sample in similarity_samples], dtype=torch.int32
-        )
-        combined_inputs["traj_sim_frames_shape"] = torch.tensor(
-            [sample.traj_sim_trajectory.frames_shape for sample in similarity_samples], dtype=torch.int32
-        )
-        combined_inputs["traj_diff_frames_shape"] = torch.tensor(
-            [sample.traj_diff_trajectory.frames_shape for sample in similarity_samples], dtype=torch.int32
-        )
-        return combined_inputs
+        if not self.load_embeddings:
+            batch_inputs["ref_frames_shape"] = torch.tensor(
+                [sample.ref_trajectory.frames_shape for sample in similarity_samples], dtype=torch.int32
+            )
+            batch_inputs["traj_sim_frames_shape"] = torch.tensor(
+                [sample.sim_trajectory.frames_shape for sample in similarity_samples], dtype=torch.int32
+            )
+            batch_inputs["traj_diff_frames_shape"] = torch.tensor(
+                [sample.diff_trajectory.frames_shape for sample in similarity_samples], dtype=torch.int32
+            )
+        else:
+            batch_inputs["ref_frames_shape"] = torch.tensor(
+                [sample.ref_trajectory.video_embeddings.shape for sample in similarity_samples], dtype=torch.int32
+            )
+            batch_inputs["traj_sim_frames_shape"] = torch.tensor(
+                [sample.sim_trajectory.video_embeddings.shape for sample in similarity_samples], dtype=torch.int32
+            )
+            batch_inputs["traj_diff_frames_shape"] = torch.tensor(
+                [sample.diff_trajectory.video_embeddings.shape for sample in similarity_samples], dtype=torch.int32
+            )
+
+        return batch_inputs
 
     def _process_progress_batch(self, progress_samples: list[ProgressSample]) -> dict[str, torch.Tensor]:
         """Process a batch of progress samples with VQA-style question."""

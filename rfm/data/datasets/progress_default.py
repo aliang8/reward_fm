@@ -12,7 +12,7 @@ from rfm.utils.distributed import rank_0_print
 
 
 class ProgressDefaultDataset(RFMBaseDataset):
-    """Dataset that generates progress samples by iterating through each trajectory in the dataset."""
+    """Dataset that generates progress samples by iterating through each trajectory in the dataset, used in policy ranking."""
 
     def __init__(self, config, is_evaluation=False, verbose=True):
         super().__init__(config, is_evaluation, verbose=verbose)
@@ -47,26 +47,35 @@ class ProgressDefaultDataset(RFMBaseDataset):
             # Load embeddings from path
             video_embeddings = load_embeddings_from_path(traj["embeddings_path"], "video_embeddings")
             text_embedding = load_embeddings_from_path(traj["embeddings_path"], "text_embedding")
+            total_frames = video_embeddings.shape[0] if hasattr(video_embeddings, "shape") else len(video_embeddings)
 
             # Subsample video embeddings
             video_embeddings, frame_indices = linspace_subsample_frames(video_embeddings, max_frames)
 
             # Calculate progress based on the sampled frame indices
-            total_frames = video_embeddings.shape[0] if hasattr(video_embeddings, "shape") else len(video_embeddings)
-            progress = [(idx + 1) / total_frames for idx in frame_indices]
+            if self.config.progress_pred_type == "absolute":
+                progress = [(idx + 1) / total_frames for idx in frame_indices]
+            else:
+                progress = [0.0]
+                for start, end in zip(frame_indices[:-1], frame_indices[1:]):
+                    progress.append(sum(1 / total_frames for _ in range(start, end)))
 
             # Pad embeddings and progress if needed
             video_embeddings, progress = pad_trajectory_to_max_frames_torch(video_embeddings, progress, max_frames)
         else:
             # Get frames
             frames = self._get_trajectory_frames(idx)
+            total_frames = len(frames)
 
             # Subsample frames
             frames, frame_indices = linspace_subsample_frames(frames, max_frames)
 
-            # Calculate progress based on the sampled frame indices
-            total_frames = len(self._get_trajectory_frames(idx))
-            progress = [(idx + 1) / total_frames for idx in frame_indices]
+            if self.config.progress_pred_type == "absolute":
+                progress = [(idx + 1) / total_frames for idx in frame_indices]
+            else:
+                progress = [0.0]
+                for start, end in zip(frame_indices[:-1], frame_indices[1:]):
+                    progress.append(sum(1 / total_frames for _ in range(start, end)))
 
             # Pad frames and progress if needed
             frames, progress = pad_trajectory_to_max_frames_np(frames, progress, max_frames)

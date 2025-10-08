@@ -61,9 +61,9 @@ class SimilaritySample(BaseModel):
     """Sample structure for similarity scoring: traj_sim and traj_diff ranked against o^ref."""
 
     # Trajectories
-    reference_trajectory: Trajectory  # o^ref
-    traj_sim_trajectory: Trajectory  # Similar trajectory
-    traj_diff_trajectory: Trajectory  # Different trajectory
+    ref_trajectory: Trajectory  # o^ref
+    sim_trajectory: Trajectory  # Similar trajectory
+    diff_trajectory: Trajectory  # Different trajectory
 
     sample_type: str = "similarity"
 

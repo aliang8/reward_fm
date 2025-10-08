@@ -10,6 +10,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from typing import Any
+import shutil
 
 import numpy as np
 import torch
@@ -29,16 +30,16 @@ class DataPreprocessConfig:
 
     # Dataset paths and subsets
     train_datasets: list[str] = field(
-        default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of training dataset names"}
+        default_factory=lambda: [], metadata={"help": "List of training dataset names"}
     )
     train_subsets: list[list[str]] = field(
-        default_factory=lambda: [["libero_90"]], metadata={"help": "List of training dataset subsets"}
+        default_factory=lambda: [[]], metadata={"help": "List of training dataset subsets"}
     )
     eval_datasets: list[str] = field(
-        default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of evaluation dataset names"}
+        default_factory=lambda: [], metadata={"help": "List of evaluation dataset names"}
     )
     eval_subsets: list[list[str]] = field(
-        default_factory=lambda: [["libero_10"]], metadata={"help": "List of evaluation dataset subsets"}
+        default_factory=lambda: [[]], metadata={"help": "List of evaluation dataset subsets"}
     )
 
     # Video processing parameters
@@ -141,6 +142,10 @@ class DatasetPreprocessor:
                 self._load_individual_cache(individual_cache_dir, cache_key)
                 continue
 
+            if os.path.exists(individual_cache_dir) and self.config.force_reprocess:
+                rank_0_print(f"    ❌ Force reprocessing enabled, deleting cache at {individual_cache_dir}")
+                shutil.rmtree(individual_cache_dir)
+
             # Load and process individual dataset
             try:
                 dataset = self._load_dataset_from_path(dataset_path, subset)
@@ -192,10 +197,10 @@ class DatasetPreprocessor:
         # Only cast to Video with decode=True for the .map path. The threaded path will
         # open and close readers per-sample to avoid keeping many files open at once.
         if self.config.num_threads > 1:
-            processed_dataset, indices = self._process_dataset_videos_threaded(dataset, cache_key)
+            processed_dataset, indices = self._process_dataset_videos_threaded(dataset, cache_dir, cache_key)
         else:
             dataset = dataset.cast_column("frames_video", Video(decode=True))
-            processed_dataset, indices = self._process_dataset_videos_map(dataset, cache_key)
+            processed_dataset, indices = self._process_dataset_videos_map(dataset, cache_dir, cache_key)
 
         return processed_dataset, indices
 
@@ -402,7 +407,7 @@ class DatasetPreprocessor:
 
         return embeddings_filepath, video_embeddings.shape, text_embedding.shape
 
-    def _process_dataset_videos_map(self, dataset, cache_key: str):
+    def _process_dataset_videos_map(self, dataset, cache_dir: str, cache_key: str):
         """
         Process dataset frames using .map() method for efficient on-the-fly processing.
         Also builds index mappings during the same pass to avoid multiple iterations.
@@ -440,12 +445,10 @@ class DatasetPreprocessor:
         task_indices = {}
         source_indices = {}
 
-        # Create frames directory for npz files
-        frames_dir = os.path.join(self.config.cache_dir, "frames")
+        frames_dir = os.path.join(cache_dir, "frames")
+        embeddings_dir = os.path.join(cache_dir, self.config.embeddings_cache_dir)
         os.makedirs(frames_dir, exist_ok=True)
-
-        # Create embeddings directory if needed
-        embeddings_dir = os.path.join(self.config.cache_dir, self.config.embeddings_cache_dir)
+        os.makedirs(embeddings_dir, exist_ok=True)
 
         def process_videos_and_build_indices(example, idx):
             """Process frames and build index mappings in a single pass."""
@@ -467,7 +470,7 @@ class DatasetPreprocessor:
                 return {"frames": None, "frames_processed": False}
 
             # Save frames as npz file
-            frames_filename = f"trajectory_{idx:06d}_{example['id']}.npz"
+            frames_filename = f"trajectory_{example['id']}.npz"
             frames_filepath = os.path.join(frames_dir, frames_filename)
 
             # Save frames with metadata
@@ -485,7 +488,6 @@ class DatasetPreprocessor:
             example["frames_processed"] = True
 
             # Compute and save embeddings if enabled
-            embeddings_dir = os.path.join(self.config.cache_dir, self.config.embeddings_cache_dir)
             embeddings_filepath, video_emb_shape, text_emb_shape = self._process_embeddings_for_example(
                 frames_array, example.get("task", ""), idx, example["id"], embeddings_dir
             )
@@ -568,7 +570,7 @@ class DatasetPreprocessor:
             "source_indices": source_indices,
         }
 
-    def _process_dataset_videos_threaded(self, dataset, cache_key: str):
+    def _process_dataset_videos_threaded(self, dataset, cache_dir: str, cache_key: str):
         """
         Threaded implementation to process frames and build indices, saving npz files concurrently.
         """
@@ -585,8 +587,10 @@ class DatasetPreprocessor:
         task_indices = {}
         source_indices = {}
 
-        frames_dir = os.path.join(self.config.cache_dir, "frames")
+        frames_dir = os.path.join(cache_dir, "frames")
+        embeddings_dir = os.path.join(cache_dir, self.config.embeddings_cache_dir)
         os.makedirs(frames_dir, exist_ok=True)
+        os.makedirs(embeddings_dir, exist_ok=True)
 
         def process_one(idx: int):
             # Fetch example inside the worker to avoid holding many decoded readers
@@ -594,9 +598,6 @@ class DatasetPreprocessor:
             frames_src = example.get("frames_video")
             if frames_src is None:
                 return idx, None, None, None, None, None
-
-            # Define embeddings directory for this worker
-            embeddings_dir = os.path.join(self.config.cache_dir, self.config.embeddings_cache_dir)
 
             # If the source is a path string, open with a lightweight reader
             if isinstance(frames_src, str):
@@ -679,7 +680,7 @@ class DatasetPreprocessor:
                 return idx, None, None, None, None, None
 
             # Save frames as npz file
-            frames_filename = f"trajectory_{idx:06d}_{example['id']}.npz"
+            frames_filename = f"trajectory_{example['id']}.npz"
             frames_filepath = os.path.join(frames_dir, frames_filename)
             np.savez_compressed(
                 frames_filepath,

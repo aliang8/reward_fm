@@ -17,6 +17,7 @@ from torch.utils.data import DataLoader
 from rfm.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
 from evals.compile_results import compute_eval_metrics
 from rfm.data.datasets.helpers import load_frames_from_npz
+import torch.distributed as dist
 
 
 def seed_worker(worker_id):
@@ -129,6 +130,8 @@ class RFMHeadsTrainer(Trainer):
         self.global_metadata = collections.defaultdict(float)
         self.timing_raw = collections.defaultdict(float)
 
+        self.log_wandb = config.logging.use_wandb
+
     def training_step(self, model, inputs, num_items_in_batch=None):
         """
         Perform a training step and log custom losses.
@@ -150,8 +153,8 @@ class RFMHeadsTrainer(Trainer):
         num_progress = inputs.get("num_progress", 0)
         num_similarities = inputs.get("num_similarities", 0)
 
+        # Adding more granular counting for the data strategies 
         if num_preferences > 0 and preference_inputs:
-            # Count data generation strategies from the rejected trajectories
             rejected_data_gen_strategy = preference_inputs.get("rejected_data_gen_strategy", [])
             if isinstance(rejected_data_gen_strategy, list) and len(rejected_data_gen_strategy) > 0:
                 # Normalize keys we care about
@@ -175,7 +178,6 @@ class RFMHeadsTrainer(Trainer):
                 for ds in data_sources:
                     self.global_metadata[f"total_{ds}"] += 1.0
 
-        # Count data generation strategies from the progress samples
         if num_progress > 0 and progress_inputs:
             data_gen_strategy = progress_inputs.get("data_gen_strategy", [])
             if isinstance(data_gen_strategy, list) and len(data_gen_strategy) > 0:
@@ -195,6 +197,26 @@ class RFMHeadsTrainer(Trainer):
                 self.log_metadata.update(strat_counts)
 
             data_sources = progress_inputs.get("data_source", None)
+            if data_sources is not None:
+                for ds in data_sources:
+                    self.global_metadata[f"total_{ds}"] += 1.0
+
+        if num_similarities > 0 and similarity_inputs:
+            data_gen_strategy = similarity_inputs.get("data_gen_strategy", [])
+            if isinstance(data_gen_strategy, list) and len(data_gen_strategy) > 0:
+                strat_counts = {
+                    "sim_num_trajs_rewind": 0,
+                    "sim_num_trajs_same_task": 0,
+                }
+                for s in data_gen_strategy:
+                    if s == "rewind_same_task":
+                        strat_counts["sim_num_trajs_rewind"] += 1
+                    elif s == "suboptimal_same_task":
+                        strat_counts["sim_num_trajs_same_task"] += 1
+
+                self.log_metadata.update(strat_counts)
+
+            data_sources = similarity_inputs.get("data_source", None)
             if data_sources is not None:
                 for ds in data_sources:
                     self.global_metadata[f"total_{ds}"] += 1.0
@@ -235,7 +257,7 @@ class RFMHeadsTrainer(Trainer):
         log_data = {k: float(v) for k, v in log_data.items()}
 
         # Log to wandb if available and configured (only on rank 0)
-        if self.args.report_to and "wandb" in self.args.report_to and is_rank_0():
+        if self.log_wandb and is_rank_0():
             try:
                 import wandb
 
@@ -318,42 +340,62 @@ class RFMHeadsTrainer(Trainer):
                             outputs, progress_logits, _ = self.forward_model(
                                 self.model, progress_samples, sample_type="progress"
                             )
+
                         progress_pred = progress_logits["A"]
-                        if isinstance(progress_pred[0], torch.Tensor):
-                            progress_pred = torch.stack(progress_pred)
-                        else:
-                            progress_pred = torch.tensor(progress_pred)
+                        if isinstance(progress_pred, list):
+                            if isinstance(progress_pred[0], torch.Tensor):
+                                progress_pred = torch.stack(progress_pred)
+                            else:
+                                progress_pred = torch.tensor(progress_pred)
 
                         # Gather predictions and targets across all ranks
                         progress_pred = self.accelerator.gather_for_metrics(progress_pred)
                         target_progress = self.accelerator.gather_for_metrics(progress_samples["target_progress"])
-
-                        # Gather metadata across all ranks
-                        gathered_task = self.accelerator.gather_for_metrics(progress_samples["task"])
-                        gathered_data_source = self.accelerator.gather_for_metrics(progress_samples["data_source"])
-                        gathered_data_gen_strategy = self.accelerator.gather_for_metrics(
-                            progress_samples["data_gen_strategy"]
-                        )
                         gathered_quality_labels = self.accelerator.gather_for_metrics(
                             progress_samples["quality_labels"]
                         )
-                        gathered_metadata = self.accelerator.gather_for_metrics(progress_samples["metadata"])
 
-                        # Build eval_results directly on main process
-                        if self.accelerator.is_main_process:
-                            for i in range(len(progress_pred)):
-                                sample_result = {
-                                    "task": gathered_task[i],
-                                    "target_progress": target_progress[i].cpu().numpy(),
-                                    "progress_pred": progress_pred[i].cpu().numpy(),
-                                    "data_source": gathered_data_source[i],
-                                    "data_gen_strategy": gathered_data_gen_strategy[i],
-                                    "quality_label": gathered_quality_labels[i],
-                                    "metadata": gathered_metadata[i],
-                                    "id": gathered_metadata[i]["id"],
-                                    "video_path": gathered_metadata[i]["video_path"],
-                                }
-                                eval_results.append(sample_result)
+                        # Gather non-tensor metadata using all_gather_object
+                        if dist.is_initialized():
+                            world_size = dist.get_world_size()
+                            
+                            # Gather each metadata field separately
+                            gathered_task = [None] * world_size
+                            gathered_data_source = [None] * world_size
+                            gathered_data_gen_strategy = [None] * world_size
+                            gathered_metadata = [None] * world_size
+                            
+                            dist.all_gather_object(gathered_task, progress_samples["task"])
+                            dist.all_gather_object(gathered_data_source, progress_samples["data_source"])
+                            dist.all_gather_object(gathered_data_gen_strategy, progress_samples["data_gen_strategy"])
+                            dist.all_gather_object(gathered_metadata, progress_samples["metadata"])
+                            
+                            # Flatten gathered lists (each element is a list from one rank)
+                            gathered_task = [item for sublist in gathered_task for item in sublist]
+                            gathered_data_source = [item for sublist in gathered_data_source for item in sublist]
+                            gathered_data_gen_strategy = [item for sublist in gathered_data_gen_strategy for item in sublist]
+                            gathered_metadata = [item for sublist in gathered_metadata for item in sublist]
+                        else:
+                            # Single process - no gathering needed
+                            gathered_task = progress_samples["task"]
+                            gathered_data_source = progress_samples["data_source"]
+                            gathered_data_gen_strategy = progress_samples["data_gen_strategy"]
+                            gathered_metadata = progress_samples["metadata"]
+
+                        # Build eval_results on all processes for compute_eval_metrics
+                        for i in range(len(progress_pred)):
+                            sample_result = {
+                                "task": gathered_task[i],
+                                "target_progress": target_progress[i].cpu().numpy(),
+                                "progress_pred": progress_pred[i].cpu().numpy(),
+                                "data_source": gathered_data_source[i],
+                                "data_gen_strategy": gathered_data_gen_strategy[i],
+                                "quality_label": gathered_quality_labels[i],
+                                "metadata": gathered_metadata[i],
+                                "id": gathered_metadata[i]["id"],
+                                "video_path": gathered_metadata[i]["video_path"],
+                            }
+                            eval_results.append(sample_result)
 
                     elif eval_type == "success_failure":
                         preference_samples = batch["preference_inputs"]
@@ -365,56 +407,96 @@ class RFMHeadsTrainer(Trainer):
                         pref_logits = self.accelerator.gather_for_metrics(pref_logits)
                         preference_labels = self.accelerator.gather_for_metrics(preference_samples["preference_labels"])
 
-                        # Gather metadata across all ranks
-                        gathered_task = self.accelerator.gather_for_metrics(preference_samples["task"])
-                        gathered_data_source = self.accelerator.gather_for_metrics(preference_samples["data_source"])
-                        gathered_chosen_data_gen_strategy = self.accelerator.gather_for_metrics(
-                            preference_samples["chosen_data_gen_strategy"]
-                        )
-                        gathered_rejected_data_gen_strategy = self.accelerator.gather_for_metrics(
-                            preference_samples["rejected_data_gen_strategy"]
-                        )
-                        gathered_metadata = self.accelerator.gather_for_metrics(preference_samples["metadata"])
+                        # Gather non-tensor metadata using all_gather_object
+                        if dist.is_initialized():
+                            world_size = dist.get_world_size()
+                            
+                            # Gather each metadata field separately
+                            gathered_task = [None] * world_size
+                            gathered_data_source = [None] * world_size
+                            gathered_chosen_data_gen_strategy = [None] * world_size
+                            gathered_rejected_data_gen_strategy = [None] * world_size
+                            gathered_metadata = [None] * world_size
+                            
+                            dist.all_gather_object(gathered_task, preference_samples["task"])
+                            dist.all_gather_object(gathered_data_source, preference_samples["data_source"])
+                            dist.all_gather_object(gathered_chosen_data_gen_strategy, preference_samples["chosen_data_gen_strategy"])
+                            dist.all_gather_object(gathered_rejected_data_gen_strategy, preference_samples["rejected_data_gen_strategy"])
+                            dist.all_gather_object(gathered_metadata, preference_samples["metadata"])
+                            
+                            # Flatten gathered lists (each element is a list from one rank)
+                            gathered_task = [item for sublist in gathered_task for item in sublist]
+                            gathered_data_source = [item for sublist in gathered_data_source for item in sublist]
+                            gathered_chosen_data_gen_strategy = [item for sublist in gathered_chosen_data_gen_strategy for item in sublist]
+                            gathered_rejected_data_gen_strategy = [item for sublist in gathered_rejected_data_gen_strategy for item in sublist]
+                            gathered_metadata = [item for sublist in gathered_metadata for item in sublist]
+                        else:
+                            # Single process - no gathering needed
+                            gathered_task = preference_samples["task"]
+                            gathered_data_source = preference_samples["data_source"]
+                            gathered_chosen_data_gen_strategy = preference_samples["chosen_data_gen_strategy"]
+                            gathered_rejected_data_gen_strategy = preference_samples["rejected_data_gen_strategy"]
+                            gathered_metadata = preference_samples["metadata"]
 
-                        # Build eval_results directly on main process
-                        if self.accelerator.is_main_process:
-                            for i in range(len(pref_logits)):
-                                sample_result = {
-                                    "task": gathered_task[i],
-                                    "preference_pred": pref_logits[i].cpu().numpy(),
-                                    "preference_labels": preference_labels[i].cpu().numpy(),
-                                    "data_source": gathered_data_source[i],
-                                    "chosen_data_gen_strategy": gathered_chosen_data_gen_strategy[i],
-                                    "rejected_data_gen_strategy": gathered_rejected_data_gen_strategy[i],
-                                    "metadata": gathered_metadata[i],
-                                }
-                                eval_results.append(sample_result)
+                        # Build eval_results on all processes for compute_eval_metrics
+                        for i in range(len(pref_logits)):
+                            sample_result = {
+                                "task": gathered_task[i],
+                                "preference_pred": pref_logits[i].cpu().numpy(),
+                                "preference_labels": preference_labels[i].cpu().numpy(),
+                                "data_source": gathered_data_source[i],
+                                "chosen_data_gen_strategy": gathered_chosen_data_gen_strategy[i],
+                                "rejected_data_gen_strategy": gathered_rejected_data_gen_strategy[i],
+                                "metadata": gathered_metadata[i],
+                            }
+                            eval_results.append(sample_result)
 
-                # Only compute metrics and log on main process
+                # Compute metrics on all processes
+                if eval_type == "reward_alignment":
+                    eval_metrics, plots, video_frames_list = compute_eval_metrics(
+                        eval_type, eval_results, self.config.data.progress_pred_type
+                    )
+                elif eval_type == "policy_ranking":
+                    # create task groups from eval_results
+                    eval_metrics, task_groups, task_details = compute_eval_metrics(
+                        eval_type, eval_results, self.config.data.progress_pred_type
+                    )
+                elif eval_type == "confusion_matrix":
+                    confusion_plot, confusion_matrix = compute_eval_metrics(
+                        eval_type, eval_results, self.config.data.progress_pred_type
+                    )
+                else:
+                    raise ValueError(f"Unsupported eval type: {eval_type}")
+
+                # Store metrics for all processes
+                ds_name = DS_SHORT_NAME_MAPPING[eval_dataset + "/" + eval_subset[0]]
+                metrics[ds_name][eval_type] = eval_metrics
+
+                # Only log and visualize on main process
                 if self.accelerator.is_main_process:
-                    # Create a wandb table to visualize the samples
-                    # Log the frames and the progress predictions
+                    rank_0_print(f"Completed {eval_type} evaluation: {len(eval_results)} samples")
+                    rank_0_print(f"Metrics: {metrics[ds_name][eval_type]}")
+                    rank_0_print("=" * 50)
 
-                    # if the eval_type is reward_alignment, let's visualize frames and progress predictions
+                    # Create wandb tables and log visualizations
                     if eval_type == "reward_alignment":
-                        eval_metrics, plots, video_frames_list = compute_eval_metrics(eval_type, eval_results)
-
                         data = []
-                        for plot, frames in zip(plots, video_frames_list):
-                            if frames is not None:
-                                progress_plot = wandb.Image(plot)
-                                plt.close(plot)  # Close to free memory
-                                data.append([wandb.Video(frames, fps=10, format="gif"), progress_plot])
+                        if self.log_wandb:
+                            for plot, frames in zip(plots, video_frames_list):
+                                if frames is not None:
+                                    progress_plot = wandb.Image(plot)
+                                    plt.close(plot)  # Close to free memory
+                                    data.append([wandb.Video(frames, fps=10, format="gif"), progress_plot])
 
-                        columns = ["video", "progress_plot"]
-                        wandb.log({
-                            f"{eval_subset[0]}/reward_alignment_samples": wandb.Table(data=data, columns=columns),
-                        })
+                            columns = ["video", "progress_plot"]
+                            wandb.log({
+                                f"{eval_subset[0]}/reward_alignment_samples": wandb.Table(data=data, columns=columns),
+                            })
+                        else:
+                            for plot, frames in zip(plots, video_frames_list):
+                                plt.close(plot)
 
                     elif eval_type == "policy_ranking":
-                        # create task groups from eval_results
-                        eval_metrics, task_groups, task_details = compute_eval_metrics(eval_type, eval_results)
-
                         data = []
                         for task, group in task_groups.items():
                             quality_to_rews = collections.defaultdict(list)
@@ -424,58 +506,43 @@ class RFMHeadsTrainer(Trainer):
                             data.append([task, quality_to_rews])
 
                         columns = ["task", "quality_and_rews"]
-                        wandb.log({
-                            f"{eval_subset[0]}/policy_ranking_samples": wandb.Table(data=data, columns=columns),
-                        })
+                        if self.log_wandb:
+                            wandb.log({
+                                f"{eval_subset[0]}/policy_ranking_samples": wandb.Table(data=data, columns=columns),
+                            })
 
                     elif eval_type == "confusion_matrix":
-                        # confusion_matrix returns (metrics, confusion_matrix)
-                        result = compute_eval_metrics(eval_type, eval_results)
-                        if isinstance(result, tuple):
-                            eval_metrics = result[0]  # Just use the metrics
-                        else:
-                            eval_metrics = result
-                    else:
-                        raise ValueError(f"Unsupported eval type: {eval_type}")
+                        # Log confusion matrix figure to wandb
+                        if self.log_wandb:
+                            wandb.log({f"{eval_subset[0]}/confusion_matrix": wandb.Image(confusion_plot)})
 
-                    # Compute metrics
-                    ds_name = DS_SHORT_NAME_MAPPING[eval_dataset + "/" + eval_subset[0]]
-                    metrics[ds_name][eval_type] = eval_metrics
-                    rank_0_print(f"Completed {eval_type} evaluation: {len(eval_results)} samples")
-                    rank_0_print(f"Metrics: {metrics[ds_name][eval_type]}")
-                    rank_0_print("=" * 50)
-                else:
-                    # Non-main processes still need to have some metrics structure
-                    ds_name = DS_SHORT_NAME_MAPPING[eval_dataset + "/" + eval_subset[0]]
-                    metrics[ds_name][eval_type] = {}
-
-        # Prepare metrics for both wandb and callback return (only on main process)
-        wandb_metrics = {}
+        # Prepare metrics for callbacks (all processes)
         callback_metrics = {}
+        for ds_name, eval_type_metric in metrics.items():
+            for eval_type, metric in eval_type_metric.items():
+                eval_type_short = EVAL_TYPE_SHORT[eval_type]
+                # Add to callback metrics
+                for k, v in metric.items():
+                    if isinstance(v, (int, float)):
+                        metric_name = f"custom_eval/{eval_type_short}_{k}_{ds_name}"
+                        callback_metrics[metric_name] = v
 
-        if self.accelerator.is_main_process:
+        # Prepare wandb metrics and log (only on main process)
+        if self.accelerator.is_main_process and self.log_wandb:
+            wandb_metrics = {}
             for ds_name, eval_type_metric in metrics.items():
                 for eval_type, metric in eval_type_metric.items():
                     eval_type_short = EVAL_TYPE_SHORT[eval_type]
-                    if eval_type == "confusion_matrix":
-                        fig, confusion_matrix = metric
-                        # plot confusion matrix
-                        wandb_metrics.update({
-                            f"custom_eval/{eval_type_short}_{ds_name}": wandb.Image(fig),
-                        })
-                    else:
-                        # Add to both wandb and callback metrics
-                        for k, v in metric.items():
-                            if isinstance(v, (int, float)):
-                                metric_name = f"custom_eval/{eval_type_short}_{k}_{ds_name}"
-                                wandb_metrics[metric_name] = v
-                                callback_metrics[metric_name] = v
+                    # Add to wandb metrics
+                    for k, v in metric.items():
+                        if isinstance(v, (int, float)):
+                            metric_name = f"custom_eval/{eval_type_short}_{k}_{ds_name}"
+                            wandb_metrics[metric_name] = v
 
             # Log to wandb
-            if self.args.report_to and "wandb" in self.args.report_to:
-                wandb.log(wandb_metrics)
+            wandb.log(wandb_metrics)
 
-        # Return metrics for callbacks
+        # Return metrics for callbacks (all processes)
         return callback_metrics
 
     def evaluate(self, eval_dataset=None, ignore_keys=None) -> dict[str, float]:
@@ -881,99 +948,165 @@ class RFMHeadsTrainer(Trainer):
 
         return final_loss, outputs_dict
 
-    def _compute_similarity_loss(self, model, inputs, return_outputs=False):
+    def _compute_similarity_loss(self, model, inputs, return_outputs=False, training=True):
         """Compute similarity scoring loss (DPO-style)."""
+        # Prepare inputs for reference vs trajectory sim forward pass
+
+        if "Qwen" in self.config.model.base_model_id or "SmolVLM" in self.config.model.base_model_id:
+            ref_sim_inputs = {
+                "input_ids": inputs["input_ids_ref_sim"],
+                "attention_mask": inputs["attention_mask_ref_sim"],
+                "pixel_values": inputs.get("pixel_values_ref_sim"),
+                "pixel_values_videos": inputs.get("pixel_values_videos_ref_sim"),
+                "image_grid_thw": inputs.get("image_grid_thw_ref_sim"),
+                "video_grid_thw": inputs.get("video_grid_thw_ref_sim"),
+            }
+            
+            # Prepare inputs for reference vs trajectory diff forward pass
+            ref_diff_inputs = {
+                "input_ids": inputs["input_ids_ref_diff"],
+                "attention_mask": inputs["attention_mask_ref_diff"],
+                "pixel_values": inputs.get("pixel_values_ref_diff"),
+                "pixel_values_videos": inputs.get("pixel_values_videos_ref_diff"),
+                "image_grid_thw": inputs.get("image_grid_thw_ref_diff"),
+                "video_grid_thw": inputs.get("video_grid_thw_ref_diff"),
+            }
+        elif "rewind" in self.config.model.base_model_id:
+            # use embeddings
+            if self.config.data.load_embeddings:
+                ref_sim_inputs = {
+                    "video_embeddings": inputs["video_embeddings_ref_sim"],
+                    "text_embeddings": inputs["text_embeddings_ref_sim"],
+                }
+                ref_diff_inputs = {
+                    "video_embeddings": inputs["video_embeddings_ref_diff"],
+                    "text_embeddings": inputs["text_embeddings_ref_diff"],
+                }
+
         # Forward pass for reference vs trajectory sim
-        model_outputs_ref_sim, progress_logits_ref_sim = model(
-            input_ids=inputs["input_ids_ref_sim"],
-            attention_mask=inputs["attention_mask_ref_sim"],
-            pixel_values=inputs.get("pixel_values_ref_sim"),
-            pixel_values_videos=inputs.get("pixel_values_videos_ref_sim"),
-            image_grid_thw=inputs.get("image_grid_thw_ref_sim"),
-            video_grid_thw=inputs.get("video_grid_thw_ref_sim"),
-            sample_type="similarity",
+        model_outputs_ref_sim, progress_logits_ref_sim, _ = self.forward_model(
+            model, ref_sim_inputs, sample_type="similarity"
         )
 
         # Forward pass for reference vs trajectory diff
-        model_outputs_ref_diff, progress_logits_ref_diff = model(
-            input_ids=inputs["input_ids_ref_diff"],
-            attention_mask=inputs["attention_mask_ref_diff"],
-            pixel_values=inputs.get("pixel_values_ref_diff"),
-            pixel_values_videos=inputs.get("pixel_values_videos_ref_diff"),
-            image_grid_thw=inputs.get("image_grid_thw_ref_diff"),
-            video_grid_thw=inputs.get("video_grid_thw_ref_diff"),
-            sample_type="similarity",
+        model_outputs_ref_diff, progress_logits_ref_diff, _ = self.forward_model(
+            model, ref_diff_inputs, sample_type="similarity"
         )
 
         # Extract similarity scores
         score_ref_sim = model_outputs_ref_sim.logits.squeeze(-1)
         score_ref_diff = model_outputs_ref_diff.logits.squeeze(-1)
 
-        # Compute DPO-style loss: encourage trajectory A to be more similar to reference than trajectory B
-        # This assumes trajectory A is the "better" trajectory (more similar to reference)
-        similarity_loss = -F.logsigmoid(self.config.training.beta * (score_ref_sim - score_ref_diff)).mean()
+        # Compute DPO-style loss: encourage trajectory sim to be more similar to reference than trajectory diff
+        # This assumes trajectory sim is the "better" trajectory (more similar to reference)
+        similarity_loss_all = -F.logsigmoid(self.config.training.beta * (score_ref_sim - score_ref_diff))
+        similarity_loss = similarity_loss_all.mean()
 
-        # Get frame shapes for splicing target progress to match predicted lengths
-        # For similarity samples, we use traj_sim_frames_shape and traj_diff_frames_shape
-        ref_frames_shape = inputs.get("ref_frames_shape", None)
-        traj_sim_frames_shape = inputs.get("traj_sim_frames_shape", None)
-        traj_diff_frames_shape = inputs.get("traj_diff_frames_shape", None)
+        final_loss = similarity_loss
+        progress_loss = 0.0
 
-        # Compute progress loss for both forward passes
-        # Both forward pass compute for the reference trajectory
-        # A is the reference trajectory and B is the trajectory to compare to
-        progress_loss_ref, spearman_corr_ref = self._compute_progress_loss(
-            progress_logits_ref_sim["A"],
-            inputs["target_progress_ref"],
-            ref_frames_shape,
-            inputs["target_progress_ref_mask"],
-            "A",
-        )
-        progress_loss_sim, spearman_corr_sim = self._compute_progress_loss(
-            progress_logits_ref_sim["B"],
-            inputs["target_progress_A"],
-            traj_sim_frames_shape,
-            inputs["target_progress_sim_mask"],
-            "sim",
-        )
+        # If we are predicting progress for similarity samples
+        if self.config.model.train_progress_head and self.config.training.predict_sim_progress:
+            # Get frame shapes for splicing target progress to match predicted lengths
+            ref_frames_shape = inputs.get("ref_frames_shape", None)
+            traj_sim_frames_shape = inputs.get("traj_sim_frames_shape", None)
+            traj_diff_frames_shape = inputs.get("traj_diff_frames_shape", None)
 
-        progress_loss_diff, spearman_corr_diff = self._compute_progress_loss(
-            progress_logits_ref_diff["B"],
-            inputs["target_progress_B"],
-            traj_diff_frames_shape,
-            inputs["target_progress_diff_mask"],
-            "diff",
-        )
+            # Compute progress loss for both forward passes
+            # A is the reference trajectory and B is the trajectory to compare to
+            progress_loss_ref_sim, spearman_corr_ref_sim = self._compute_progress_loss(
+                progress_logits_ref_sim["A"],
+                inputs["target_progress_ref"],
+                ref_frames_shape,
+                inputs["target_progress_ref_mask"],
+                "ref_sim",
+            )
+            progress_loss_sim, spearman_corr_sim = self._compute_progress_loss(
+                progress_logits_ref_sim["B"],
+                inputs["target_progress_sim"],
+                traj_sim_frames_shape,
+                inputs["target_progress_sim_mask"],
+                "sim",
+            )
 
-        progress_loss = progress_loss_ref + progress_loss_sim + progress_loss_diff
+            # For the ref_diff forward pass, A is still the reference trajectory
+            progress_loss_ref_diff, spearman_corr_ref_diff = self._compute_progress_loss(
+                progress_logits_ref_diff["A"],
+                inputs["target_progress_ref"],
+                ref_frames_shape,
+                inputs["target_progress_ref_mask"],
+                "ref_diff",
+            )
+            progress_loss_diff, spearman_corr_diff = self._compute_progress_loss(
+                progress_logits_ref_diff["B"],
+                inputs["target_progress_diff"],
+                traj_diff_frames_shape,
+                inputs["target_progress_diff_mask"],
+                "diff",
+            )
 
-        # Combine losses
-        total_loss = similarity_loss + progress_loss_ref + progress_loss_sim + progress_loss_diff
+            # Average the ref progress loss from both forward passes
+            progress_loss_ref = (progress_loss_ref_sim + progress_loss_ref_diff) / 2
+            progress_loss = progress_loss_ref + progress_loss_sim + progress_loss_diff
+            final_loss = similarity_loss + progress_loss
 
         if return_outputs:
-            # Compute average Spearman correlation across all trajectories (ref, sim, diff)
-            spearman_values = []
-            for corr in [spearman_corr_ref, spearman_corr_sim, spearman_corr_diff]:
-                if isinstance(corr, torch.Tensor):
-                    spearman_values.append(corr.item())
-                else:
-                    spearman_values.append(corr)
+            outputs_dict = {}
+            prefix = "train" if training else "eval"
 
-            avg_spearman = np.mean(spearman_values) if spearman_values else 0.0
+            # Compute similarity ranking accuracy
+            # If score_ref_sim > score_ref_diff, model correctly ranks sim as more similar
+            similarity_correct = (score_ref_sim > score_ref_diff).float()
+            similarity_accuracy = similarity_correct.mean()
 
-            outputs_dict = {
-                "score_ref_sim": score_ref_sim,
-                "score_ref_diff": score_ref_diff,
-                "similarity_loss": similarity_loss.item(),
-                "progress_loss_ref": progress_loss_ref.item(),
-                "progress_loss_sim": progress_loss_sim.item(),
-                "progress_loss_diff": progress_loss_diff.item(),
-                "progress_loss": progress_loss.item(),
-                "predicted_progress_A": progress_logits_ref_sim["A"],
-                "predicted_progress_B": progress_logits_ref_sim["B"],
-                "target_progress_A": inputs["target_progress_A"],
-                "target_progress_B": inputs["target_progress_B"],
-                "spearman_corr_avg": avg_spearman,
-            }
-            return total_loss, outputs_dict
-        return total_loss
+            # Get data generation strategy for breakdown
+            data_gen_strategy = inputs.get("data_gen_strategy", None)
+
+            # Split metrics by data generation strategy
+            if data_gen_strategy is not None:
+                strats = set(data_gen_strategy)
+                for strat in strats:
+                    mask = [1 if s == strat else 0 for s in data_gen_strategy]
+                    mask = torch.tensor(mask, device=self.accelerator.device)
+
+                    outputs_dict.update({
+                        f"{prefix}_strat_sim_acc/{strat}": (similarity_correct[mask == 1]).mean().item(),
+                        f"{prefix}_strat_sim_loss/{strat}": (similarity_loss_all[mask == 1]).mean().item(),
+                    })
+
+            # Split metrics by data source
+            data_sources = set(inputs["data_source"])
+            for data_source in data_sources:
+                mask = [1 if s == data_source else 0 for s in inputs["data_source"]]
+                mask = torch.tensor(mask, device=self.accelerator.device)
+                outputs_dict.update({
+                    f"{prefix}_ds_sim_acc/{data_source}": (similarity_correct[mask == 1]).mean().item(),
+                    f"{prefix}_ds_sim_loss/{data_source}": (similarity_loss_all[mask == 1]).mean().item(),
+                })
+
+            # Add main metrics
+            outputs_dict.update({
+                f"{prefix}/similarity_loss": similarity_loss.item(),
+                f"{prefix}/similarity_accuracy": similarity_accuracy.item(),
+            })
+
+            # Add progress loss metrics if computed
+            if self.config.model.train_progress_head and self.config.training.predict_sim_progress:
+                # Compute average Spearman correlation across all trajectories
+                spearman_values = []
+                for corr in [spearman_corr_ref_sim, spearman_corr_sim, spearman_corr_ref_diff, spearman_corr_diff]:
+                    if isinstance(corr, torch.Tensor):
+                        spearman_values.append(corr.item())
+                    else:
+                        spearman_values.append(corr)
+
+                avg_spearman = np.mean(spearman_values) if spearman_values else 0.0
+
+                outputs_dict.update({
+                    f"{prefix}/sim_progress_loss": progress_loss.item(),
+                    f"{prefix}/sim_spearman_corr_avg": avg_spearman,
+                })
+
+            return final_loss, outputs_dict
+
+        return final_loss

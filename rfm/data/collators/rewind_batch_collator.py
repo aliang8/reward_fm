@@ -5,7 +5,7 @@ import torch
 
 from .rfm_batch_collator import RFMBatchCollator
 from .utils import convert_frames_to_pil_images
-from rfm.data.dataset_types import PreferenceSample, ProgressSample
+from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample
 
 
 class ReWiNDBatchCollator(RFMBatchCollator):
@@ -150,4 +150,120 @@ class ReWiNDBatchCollator(RFMBatchCollator):
             }
 
         batch_inputs = self._add_progress_meta(batch_inputs, progress_samples)
+        return batch_inputs
+
+    def _process_similarity_batch(self, similarity_samples: list[SimilaritySample]) -> dict[str, torch.Tensor]:
+        """Process a batch of similarity samples."""
+        if self.load_embeddings:
+            # Use embeddings directly from trajectories (already loaded by dataset)
+            all_ref_video_embeddings = []
+            all_ref_text_embeddings = []
+            all_sim_video_embeddings = []
+            all_sim_text_embeddings = []
+            all_diff_video_embeddings = []
+            all_diff_text_embeddings = []
+
+            for sample in similarity_samples:
+                # Get embeddings directly from trajectories
+                ref_video_emb = sample.ref_trajectory.video_embeddings
+                ref_text_emb = sample.ref_trajectory.text_embedding
+                sim_video_emb = sample.sim_trajectory.video_embeddings
+                sim_text_emb = sample.sim_trajectory.text_embedding
+                diff_video_emb = sample.diff_trajectory.video_embeddings
+                diff_text_emb = sample.diff_trajectory.text_embedding
+
+                if any(
+                    emb is None
+                    for emb in [ref_video_emb, ref_text_emb, sim_video_emb, sim_text_emb, diff_video_emb, diff_text_emb]
+                ):
+                    raise ValueError("Sample trajectories are missing embeddings")
+
+                all_ref_video_embeddings.append(ref_video_emb)
+                all_ref_text_embeddings.append(ref_text_emb)
+                all_sim_video_embeddings.append(sim_video_emb)
+                all_sim_text_embeddings.append(sim_text_emb)
+                all_diff_video_embeddings.append(diff_video_emb)
+                all_diff_text_embeddings.append(diff_text_emb)
+
+            # Stack embeddings into batches
+            ref_video_embeddings = torch.stack(all_ref_video_embeddings)  # [B, T, D]
+            ref_text_embeddings = torch.stack(all_ref_text_embeddings)  # [B, D]
+            sim_video_embeddings = torch.stack(all_sim_video_embeddings)  # [B, T, D]
+            sim_text_embeddings = torch.stack(all_sim_text_embeddings)  # [B, D]
+            diff_video_embeddings = torch.stack(all_diff_video_embeddings)  # [B, T, D]
+            diff_text_embeddings = torch.stack(all_diff_text_embeddings)  # [B, D]
+
+            # Create ref_sim inputs (reference vs sim)
+            frame_len = ref_video_embeddings.shape[1]
+            ref_sim_video_embeddings = torch.cat([ref_video_embeddings, sim_video_embeddings], dim=1)  # [B, T*2, D]
+
+            # Create ref_diff inputs (reference vs diff)
+            ref_diff_video_embeddings = torch.cat([ref_video_embeddings, diff_video_embeddings], dim=1)  # [B, T*2, D]
+
+            # Both use the same text embeddings (from reference trajectory)
+            batch_inputs = {
+                "video_embeddings_ref_sim": ref_sim_video_embeddings,  # [B, T*2, D]
+                "text_embeddings_ref_sim": ref_text_embeddings,  # [B, D]
+                "video_embeddings_ref_diff": ref_diff_video_embeddings,  # [B, T*2, D]
+                "text_embeddings_ref_diff": ref_text_embeddings,  # [B, D]
+            }
+        else:
+            # Process frames
+            all_ref_frames = []
+            all_sim_frames = []
+            all_diff_frames = []
+            all_tasks = []
+
+            for sample in similarity_samples:
+                # Convert frames to appropriate format using stored shapes
+                ref_frames = convert_frames_to_pil_images(
+                    sample.ref_trajectory.frames, sample.ref_trajectory.frames_shape
+                )
+                sim_frames = convert_frames_to_pil_images(
+                    sample.sim_trajectory.frames, sample.sim_trajectory.frames_shape
+                )
+                diff_frames = convert_frames_to_pil_images(
+                    sample.diff_trajectory.frames, sample.diff_trajectory.frames_shape
+                )
+
+                all_ref_frames.append(ref_frames)
+                all_sim_frames.append(sim_frames)
+                all_diff_frames.append(diff_frames)
+                all_tasks.append(sample.ref_trajectory.task)
+
+            frame_len = len(all_ref_frames[0])
+
+            # Process all frames through processor
+            ref_video_inputs = self.processor(images=all_ref_frames, return_tensors="pt")["pixel_values"]
+            _, C, H, W = ref_video_inputs.shape
+            ref_video_inputs = ref_video_inputs.view(len(similarity_samples), frame_len, C, H, W)
+
+            sim_video_inputs = self.processor(images=all_sim_frames, return_tensors="pt")["pixel_values"]
+            sim_video_inputs = sim_video_inputs.view(len(similarity_samples), frame_len, C, H, W)
+
+            diff_video_inputs = self.processor(images=all_diff_frames, return_tensors="pt")["pixel_values"]
+            diff_video_inputs = diff_video_inputs.view(len(similarity_samples), frame_len, C, H, W)
+
+            # Concatenate for two forward passes
+            ref_sim_video_inputs = torch.cat([ref_video_inputs, sim_video_inputs], dim=1)  # [B, T*2, C, H, W]
+            ref_diff_video_inputs = torch.cat([ref_video_inputs, diff_video_inputs], dim=1)  # [B, T*2, C, H, W]
+
+            # Process text
+            encodings = self.tokenizer(
+                all_tasks,
+                padding=True,
+                truncation=True,
+                return_tensors="pt",
+            )
+
+            batch_inputs = {
+                "input_ids_ref_sim": encodings["input_ids"],
+                "attention_mask_ref_sim": encodings["attention_mask"],
+                "pixel_values_videos_ref_sim": ref_sim_video_inputs,
+                "input_ids_ref_diff": encodings["input_ids"],
+                "attention_mask_ref_diff": encodings["attention_mask"],
+                "pixel_values_videos_ref_diff": ref_diff_video_inputs,
+            }
+
+        batch_inputs = self._add_similarity_meta(batch_inputs, similarity_samples)
         return batch_inputs

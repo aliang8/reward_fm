@@ -1,0 +1,37 @@
+# Configuration for running ReWiND transformer training on multiple GPUs
+# using FSDP (Fully Sharded Data Parallelism).
+
+# Environment settings
+compute_environment: LOCAL_MACHINE
+distributed_type: FSDP
+num_processes: 1  # The number of GPUs you want to use
+machine_rank: 0
+num_machines: 1
+main_training_function: main
+mixed_precision: 'fp16' 
+use_cpu: false
+
+# # FSDP specific configurations
+# fsdp_config:
+#   # Use transformer-based auto wrap policy with correct class names for ReWiND
+#   fsdp_auto_wrap_policy: "TRANSFORMER_BASED_WRAP"
+#   fsdp_backward_prefetch: BACKWARD_PRE
+#   fsdp_cpu_ram_efficient_loading: true
+#   fsdp_forward_prefetch: false
+#   fsdp_transformer_layer_cls_to_wrap: "TransformerEncoderLayer"
+  
+#   # Sharding strategy: FULL_SHARD is the most memory-efficient
+#   fsdp_sharding_strategy: FULL_SHARD # 1 for FULL_SHARD, 2 for SHARD_GRAD_OP
+
+#   # CPU Offloading: Offload parameters and gradients to CPU RAM to save VRAM.
+#   # This is crucial for fitting large models.
+#   fsdp_offload_params: false
+
+#   # This is essential for FSDP to correctly handle the parameter logic
+#   fsdp_use_orig_params: true
+
+#   # Set the state dict type for saving sharded model checkpoints
+#   fsdp_state_dict_type: FULL_STATE_DICT
+#   # fsdp_state_dict_type: SHARDED_STATE_DICT
+
+

@@ -6,7 +6,7 @@ GIDS=$(id -G)
 
 
 docker run --rm -it --ipc=host \
-  --gpus '"device=0,2"' \
+  --gpus '"device=5,6"' \
   --user "$(id -u):$(id -g)" $(for g in $GIDS; do printf -- "--group-add %s " "$g"; done) \
   -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro \
   -e HOME=/workspace \

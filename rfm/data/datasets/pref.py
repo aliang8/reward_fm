@@ -191,17 +191,7 @@ class PrefDataset(RFMBaseDataset):
 
     def _create_preference_sample(self) -> PreferenceSample:
         """Create a preference prediction sample: chosen vs rejected where chosen is preferred.
-
-        This method can create preference samples from two sources:
-
-        **Dataset Source:**
-        - Uses pre-existing preference data from the loaded preference dataset
-        - Good for learning from curated, high-quality preference examples
-        - Controlled by config.dataset_preference_ratio
-
-        **Data Augmentation Strategies:**
-        When not using dataset preferences, delegates to _create_pref_sample()
-        which implements various strategies for generating rejected trajectories.
+        Either from dataset or from generated trajectories.
 
         Returns:
             PreferenceSample: A preference sample with chosen (preferred) vs rejected
@@ -218,40 +208,14 @@ class PrefDataset(RFMBaseDataset):
     def _create_pref_sample(self, chosen_traj: dict | None = None) -> PreferenceSample:
         """Create a preference prediction sample using various rejected trajectory generation strategies.
 
-        This method implements four different strategies for generating rejected trajectories
-        to create diverse and robust preference learning data. The strategy is chosen
-        probabilistically according to self.preference_strategy_ratio.
-
-        **Strategy 1: Rewind Same Task**
+        Rewind Same Task
         - Creates a suboptimal trajectory by rewinding the chosen trajectory
-        - Same task, different trajectory ID, artificially generated suboptimal behavior
-        - Good for learning task-specific failure modes and temporal dynamics
-        - Example: Forward progress [0→1→2→3] + rewind [2→1] = [0→1→2→3→2→1]
 
-        **Strategy 2: Suboptimal/Failure Same Task**
+        Suboptimal/Failure Same Task
         - Uses existing suboptimal/failure trajectories from the same task
-        - Same task, different trajectory ID, real failure examples
-        - Good for learning from actual failure patterns and task-specific suboptimal behaviors
-        - Example: Compare successful "open door" vs failed "open door" attempts
 
-        **Strategy 3: Different Task**
+        Different Task
         - Uses trajectories from completely different tasks
-        - Different task, can be chosen or suboptimal
-        - Good for learning cross-task generalization and what makes trajectories "good"
-          across different contexts
-        - Example: Compare "open door" (successful) vs "press button" (successful)
-
-        **Strategy 4: Video Binned**
-        - Splits a single video into temporal bins and compares different bins
-        - Same task, same video, different temporal segments
-        - Good for learning temporal progress within the same task and fine-grained
-          temporal dynamics
-        - Example: Compare early progress [frames 0-7] vs late progress [frames 24-31]
-
-        **Fallback Behavior:**
-        If any strategy fails (e.g., no suboptimal trajectories available, video too short),
-        the system automatically falls back to the rewind strategy to ensure robust
-        data generation.
 
         Returns:
             PreferenceSample: A preference sample with chosen (preferred) vs rejected
@@ -308,7 +272,10 @@ class PrefDataset(RFMBaseDataset):
             if total_prob == 0:
                 # All strategies have zero probability, fallback to rewind
                 rejected_traj = create_rewind_trajectory(
-                    chosen_traj, max_frames=self.config.max_frames, use_embeddings=self.config.load_embeddings
+                    chosen_traj,
+                    max_frames=self.config.max_frames,
+                    use_embeddings=self.config.load_embeddings,
+                    progress_pred_type=self.config.progress_pred_type,
                 )
                 strategy_used = DataGenStrat.REWIND_SAME_TASK
                 break
@@ -330,7 +297,10 @@ class PrefDataset(RFMBaseDataset):
             # Execute selected strategy
             if selected_strategy == DataGenStrat.REWIND_SAME_TASK:
                 rejected_traj = create_rewind_trajectory(
-                    chosen_traj, max_frames=self.config.max_frames, use_embeddings=self.config.load_embeddings
+                    chosen_traj,
+                    max_frames=self.config.max_frames,
+                    use_embeddings=self.config.load_embeddings,
+                    progress_pred_type=self.config.progress_pred_type,
                 )
                 strategy_used = DataGenStrat.REWIND_SAME_TASK
 
@@ -366,7 +336,10 @@ class PrefDataset(RFMBaseDataset):
         # Final fallback: If all strategies failed, use rewind
         if rejected_traj is None:
             rejected_traj = create_rewind_trajectory(
-                chosen_traj, max_frames=self.config.max_frames, use_embeddings=self.config.load_embeddings
+                chosen_traj,
+                max_frames=self.config.max_frames,
+                use_embeddings=self.config.load_embeddings,
+                progress_pred_type=self.config.progress_pred_type,
             )
             strategy_used = DataGenStrat.REWIND_SAME_TASK
 
@@ -386,14 +359,14 @@ class PrefDataset(RFMBaseDataset):
             chosen_text_embedding = load_embeddings_from_path(chosen_traj["embeddings_path"], "text_embedding")
 
             chosen_video_embeddings, chosen_progress, chosen_metadata = subsample_frames_and_progress(
-                chosen_video_embeddings, self.config.max_frames
+                chosen_video_embeddings, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
             )
         else:
             if isinstance(chosen_traj["frames"], str):
                 chosen_frames = load_frames_from_npz(chosen_traj["frames"])
 
             chosen_frames, chosen_progress, chosen_metadata = subsample_frames_and_progress(
-                chosen_frames, self.config.max_frames
+                chosen_frames, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
             )
         if "metadata" in chosen_traj:
             chosen_metadata.update(chosen_traj["metadata"])
@@ -411,7 +384,7 @@ class PrefDataset(RFMBaseDataset):
                 rejected_metadata = rejected_traj["metadata"]
             else:
                 rejected_video_embeddings, rejected_progress, rejected_metadata = subsample_frames_and_progress(
-                    rejected_video_embeddings, self.config.max_frames
+                    rejected_video_embeddings, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
                 )
         else:
             if isinstance(rejected_traj["frames"], str):
@@ -425,7 +398,7 @@ class PrefDataset(RFMBaseDataset):
                 rejected_metadata = rejected_traj["metadata"]
             else:
                 rejected_frames, rejected_progress, rejected_metadata = subsample_frames_and_progress(
-                    rejected_frames, self.config.max_frames
+                    rejected_frames, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
                 )
 
         if "metadata" in rejected_traj:

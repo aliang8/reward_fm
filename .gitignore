@@ -49,3 +49,4 @@ test*
 .ipython/*
 .triton/*
 .python_history
+*.h5

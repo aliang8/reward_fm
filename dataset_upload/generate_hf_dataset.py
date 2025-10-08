@@ -14,18 +14,18 @@ from functools import partial
 from multiprocessing import Pool, cpu_count
 from typing import Any
 
-from helpers import (
-    create_hf_trajectory,
-    create_output_directory,
-    flatten_task_data,
-    load_sentence_transformer_model,
-)
 from pyrallis import wrap
 from tqdm import tqdm
 
 import datasets
 from datasets import Dataset
 from rfm.data.dataset_types import Trajectory
+from dataset_upload.helpers import (
+    create_hf_trajectory,
+    create_output_directory,
+    flatten_task_data,
+    load_sentence_transformer_model,
+)
 
 # make sure these come after importing torch. otherwise something breaks...
 try:

@@ -249,7 +249,14 @@ def create_trajectory_video_optimized(
     # Start the FFmpeg subprocess
     process = sp.Popen(command, stdin=sp.PIPE, stdout=sp.PIPE, stderr=sp.PIPE)
 
-    for frame in processed_frames:
+    # Check if process started successfully
+    if process.poll() is not None:
+        stderr = process.stderr.read().decode()
+        print(f"FFmpeg failed to start. Command: {' '.join(command)}")
+        print(f"Error: {stderr}")
+        raise RuntimeError("FFmpeg process failed to start")
+
+    for i, frame in enumerate(processed_frames):
         # Ensure frame is in uint8 format
         if frame.dtype != np.uint8:
             frame = (frame * 255).astype(np.uint8)
@@ -267,7 +274,13 @@ def create_trajectory_video_optimized(
             frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
         # Write the raw frame data to the process's stdin
-        process.stdin.write(frame.tobytes())
+        try:
+            process.stdin.write(frame.tobytes())
+        except BrokenPipeError as e:
+            stderr = process.stderr.read().decode()
+            print(f"BrokenPipeError writing frame. FFmpeg stderr: {stderr}")
+            print(f"Frame shape: {frame.shape}, dtype: {frame.dtype}")
+            raise RuntimeError(f"Failed to write frame to FFmpeg: {e}")
 
     # Close the pipe and finish the process
     process.stdin.close()

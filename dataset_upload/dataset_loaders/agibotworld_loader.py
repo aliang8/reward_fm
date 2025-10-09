@@ -18,7 +18,7 @@ from helpers import (
     create_trajectory_video_optimized,
     load_sentence_transformer_model,
 )
-from rfm.data.helpers import generate_unique_id
+from dataset_upload.helpers import generate_unique_id
 from rfm.data.video_helpers import load_video_frames
 from tqdm import tqdm
 

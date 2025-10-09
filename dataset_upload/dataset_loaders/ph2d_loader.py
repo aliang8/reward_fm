@@ -76,7 +76,7 @@ def load_ph2d_dataset(dataset_path: str) -> dict[str, list[dict]]:
 
     # load metadata.json
     all_task_attributes = json.load(open(os.path.join(dataset_path, "ph2d_metadata.json")))['per_task_attributes']
-    for i, task_name, task_attributes in all_task_attributes.items():
+    for task_name, task_attributes in all_task_attributes.items():
         # load all sequences
         embodiment_type = task_attributes['embodiment_type']
         if "human" in embodiment_type:

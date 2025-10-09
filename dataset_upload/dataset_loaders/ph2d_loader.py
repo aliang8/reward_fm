@@ -8,6 +8,9 @@ import numpy as np
 from dataset_upload.helpers import generate_unique_id
 
 
+DEBUG=False
+
+
 class Ph2dFrameloader:
     """Pickle-able loader to read frames from an HDF5 file on demand.
 
@@ -74,6 +77,7 @@ def load_ph2d_dataset(dataset_path: str) -> dict[str, list[dict]]:
 
     task_data: dict[str, list[dict]] = defaultdict(list)
 
+
     # load metadata.json
     all_task_attributes = json.load(open(os.path.join(dataset_path, "ph2d_metadata.json")))['per_task_attributes']
     for task_name, task_attributes in all_task_attributes.items():
@@ -90,13 +94,15 @@ def load_ph2d_dataset(dataset_path: str) -> dict[str, list[dict]]:
 
             h5_path = os.path.join(dataset_path, task_name, h5_file)
             loaded_data = h5py.File(h5_path, "r")
-            task_description = loaded_data.attrs["task_description"]
+            task_description = loaded_data.attrs["description"]
 
             if "observation.image.right" in loaded_data:
                 task_data[task_name].append(create_new_trajectory(h5_path, is_robot, task_description, camera="right"))
             if "observation.image.left" in loaded_data:
                 task_data[task_name].append(create_new_trajectory(h5_path, is_robot, task_description, camera="left"))
 
+        if DEBUG:
+            break
     print(f"Loaded {sum(len(task_list) for task_list in task_data.values())} trajectories from {len(task_data)} tasks")
     return task_data
 

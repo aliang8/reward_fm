@@ -8,7 +8,7 @@ from pathlib import Path
 
 import h5py
 import numpy as np
-from rfm.data.helpers import generate_unique_id
+from dataset_upload.helpers import generate_unique_id
 from tqdm import tqdm
 
 

@@ -5,7 +5,7 @@ from typing import Any
 
 import numpy as np
 from rfm.data.dataset_helpers.oxe_helper import OXE_DATASET_CONFIGS
-from rfm.data.helpers import (
+from dataset_upload.helpers import (
     create_hf_trajectory,
     generate_unique_id,
     load_sentence_transformer_model,

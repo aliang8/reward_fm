@@ -4,7 +4,7 @@ from collections import defaultdict
 import cv2
 import numpy as np
 import yaml
-from rfm.data.helpers import generate_unique_id
+from dataset_upload.helpers import generate_unique_id
 
 trajectory_info_template = {
     "id": [],

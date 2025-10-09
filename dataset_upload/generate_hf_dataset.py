@@ -544,6 +544,14 @@ def main(cfg: GenerateConfig):
         print(f"Loading RoboArena dataset from: {cfg.dataset.dataset_path}")
         task_data = load_roboarena_dataset(cfg.dataset.dataset_path)
         trajectories = flatten_task_data(task_data)
+    elif "ph2d" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.ph2d_loader import load_ph2d_dataset
+
+        print(
+            f"Loading Ph2d dataset from: {cfg.dataset.dataset_path}"
+        )
+        task_data = load_ph2d_dataset(cfg.dataset.dataset_path)
+        trajectories = flatten_task_data(task_data)
     elif "egocot" in cfg.dataset.dataset_name.lower():
         from dataset_upload.dataset_loaders.egocot_loader import load_egocot_dataset
 

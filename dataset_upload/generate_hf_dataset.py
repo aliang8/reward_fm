@@ -531,12 +531,58 @@ def main(cfg: GenerateConfig):
         )
         trajectories = flatten_task_data(task_data)
     elif "h2r" in cfg.dataset.dataset_name.lower():
-        from dataset_upload.dataset_loaders.h2r_loader import load_h2r_dataset
+        # Stream + convert directly inside the H2R loader (OXE-style)
+        from dataset_upload.dataset_loaders.h2r_loader import convert_h2r_dataset_to_hf
 
-        # Load the trajectories using the loader with max_trajectories limit
-        print(f"Loading H2R dataset from: {cfg.dataset.dataset_path}")
-        task_data = load_h2r_dataset(cfg.dataset.dataset_path)
-        trajectories = flatten_task_data(task_data)
+        print(f"Converting H2R dataset directly to HF from: {cfg.dataset.dataset_path}")
+        dataset = convert_h2r_dataset_to_hf(
+            dataset_path=cfg.dataset.dataset_path,
+            dataset_name=cfg.dataset.dataset_name,
+            output_dir=cfg.output.output_dir,
+            max_trajectories=cfg.output.max_trajectories,
+            max_frames=cfg.output.max_frames,
+            fps=cfg.output.fps,
+            num_workers=cfg.output.num_workers,
+        )
+
+        # Handle pushing/saving consistently
+        if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
+            print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")
+            try:
+                dataset.push_to_hub(
+                    cfg.hub.hub_repo_id,
+                    config_name=(cfg.dataset.dataset_name).lower(),
+                    token=cfg.hub.hub_token,
+                    private=False,
+                    commit_message=f"Add {cfg.dataset.dataset_name} dataset for RFM training",
+                )
+                print(
+                    f"✅ Successfully pushed dataset {cfg.dataset.dataset_name} to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}"
+                )
+
+                # Push the large video folder(s)
+                print("\nPushing video files to HuggingFace Hub...")
+                from huggingface_hub import HfApi
+
+                api = HfApi(token=cfg.hub.hub_token)
+                api.upload_large_folder(
+                    folder_path=cfg.output.output_dir,
+                    repo_id=cfg.hub.hub_repo_id,
+                    repo_type="dataset",
+                    num_workers=min(4, cpu_count()),
+                )
+                print(
+                    f"✅ Successfully pushed video files for {cfg.dataset.dataset_name} to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}"
+                )
+            except Exception as e:
+                print(f"❌ Error pushing to hub: {e}")
+                print("Dataset was created locally but failed to push videos and/or metadata to hub")
+        else:
+            dataset_path = os.path.join(cfg.output.output_dir, (cfg.dataset.dataset_name).lower())
+            dataset.save_to_disk(dataset_path)
+            print(f"Dataset saved locally to: {dataset_path}")
+        print("Dataset conversion complete!")
+        return
     elif "roboarena" in cfg.dataset.dataset_name.lower():
         from dataset_upload.dataset_loaders.roboarena_loader import load_roboarena_dataset
 

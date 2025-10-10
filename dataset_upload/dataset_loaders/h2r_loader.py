@@ -4,14 +4,25 @@ H2R dataset loader for the generic dataset converter for RFM model training.
 https://huggingface.co/datasets/dannyXSC/HumanAndRobot
 Human2Robot: Learning Robot Actions from Paired Human-Robot Videos
 This module contains H2R-specific logic for loading and processing HDF5 files.
+
+Updated to support OXE-style streaming conversion: write videos and build
+HF entries on the fly, and return a ready `datasets.Dataset` to be pushed
+or saved by the caller.
 """
 
+import os
 from pathlib import Path
+from typing import Any
 
 import h5py
 import numpy as np
-from dataset_upload.helpers import generate_unique_id
+from dataset_upload.helpers import (
+    create_hf_trajectory,
+    generate_unique_id,
+    load_sentence_transformer_model,
+)
 from tqdm import tqdm
+from datasets import Dataset
 
 
 class H2RFrameLoader:
@@ -123,71 +134,178 @@ def _discover_h2r_files(dataset_path: Path) -> list[tuple[Path, str]]:
     return trajectory_files
 
 
-def load_h2r_dataset(base_path: str) -> dict[str, list[dict]]:
-    """Load H2R dataset from HDF5 files and organize by task.
+def _stable_shard_for_index(index: int, shard_modulus: int = 1000) -> str:
+    """Deterministically bucket an index into a shard directory name.
 
-    Args:
-        base_path: Path to the H2R dataset directory containing HDF5 files
+    Matches the naming style used in the OXE loader for consistent layout.
+    """
+    try:
+        idx = int(index)
+    except Exception:
+        idx = abs(hash(str(index)))
+    shard_index = idx // shard_modulus
+    return f"shard_{shard_index:04d}"
 
-    Returns:
-        Dictionary mapping task names to lists of trajectory dictionaries
+
+def _build_h2r_video_paths(
+    output_dir: str,
+    dataset_label: str,
+    episode_idx: int,
+    role: str,
+) -> tuple[str, str]:
+    shard_dir = _stable_shard_for_index(episode_idx)
+    episode_dir = os.path.join(output_dir, dataset_label.lower(), shard_dir, f"episode_{episode_idx:06d}")
+    os.makedirs(episode_dir, exist_ok=True)
+    filename = f"clip@{role}.mp4"
+    full_path = os.path.join(episode_dir, filename)
+    rel_path = os.path.join(dataset_label.lower(), shard_dir, f"episode_{episode_idx:06d}", filename)
+    return full_path, rel_path
+
+
+def convert_h2r_dataset_to_hf(
+    dataset_path: str,
+    dataset_name: str,
+    output_dir: str,
+    max_trajectories: int | None = None,
+    max_frames: int = 64,
+    fps: int = 10,
+    num_workers: int = -1,
+) -> Dataset:
+    """Convert the H2R dataset to HF format by writing videos directly.
+
+    This mirrors the OXE loader's streaming approach: iterate files, write videos,
+    assemble entries, and return a Dataset at the end.
     """
 
-    print(f"Loading H2R dataset from: {base_path}")
+    if dataset_name is None:
+        raise ValueError("dataset_name is required")
 
-    task_data = {}
-
-    # Find all HDF5 files in the base path
-    base_path = Path(base_path)
+    base_path = Path(dataset_path)
     if not base_path.exists():
         raise FileNotFoundError(f"H2R dataset path not found: {base_path}")
 
-    hdf5_files = _discover_h2r_files(base_path)
-    print("=" * 100)
-    print("LOADING H2R DATASET")
-    print("=" * 100)
+    discovered = _discover_h2r_files(base_path)
+    if len(discovered) == 0:
+        # Return an empty dataset with expected columns
+        return Dataset.from_dict(
+            {
+                "id": [],
+                "task": [],
+                "lang_vector": [],
+                "data_source": [],
+                "frames": [],
+                "is_robot": [],
+                "quality_label": [],
+                # keep schema compatible with helpers/create_hf_trajectory usage
+                "preference_group_id": [],
+                "preference_rank": [],
+            }
+        )
 
-    print(f"Found {len(hdf5_files)} HDF5 files")
+    # Language model and cache (avoid recomputing for identical tasks)
+    lang_model = load_sentence_transformer_model()
+    lang_cache: dict[str, Any] = {}
 
-    for file_path, folder_name in tqdm(hdf5_files, desc=f"Processing H2R dataset, {len(hdf5_files)} files"):
-        trajectory_info_human = {"frames": [], "actions": []}
-        trajectory_info_robot = {"frames": [], "actions": []}
-        human_frames, robot_frames = H2RFrameLoader(file_path)()
+    entries: list[dict[str, Any]] = []
+    produced = 0
+    max_limit = float("inf") if (max_trajectories is None or max_trajectories == -1) else int(max_trajectories)
 
-        trajectory_info_human["frames"] = human_frames
-        trajectory_info_robot["frames"] = robot_frames
+    print(f"Found {len(discovered)} HDF5 files; converting to HF entries...")
 
-        # TODO: add actions
+    for ep_idx, (file_path, folder_name) in enumerate(
+        tqdm(discovered, desc="Processing H2R episodes")
+    ):
+        # Map folder name to human-readable task
+        task = _get_task_name_from_folder(folder_name)
 
-        trajectory_info_human["is_robot"] = False
-        trajectory_info_robot["is_robot"] = True
+        # Precompute embedding
+        if task not in lang_cache:
+            lang_cache[task] = lang_model.encode(task)
+        lang_vec = lang_cache[task]
 
-        trajectory_info_human["quality_label"] = "successful"
-        trajectory_info_robot["quality_label"] = "successful"
-        
-        trajectory_info_human["partial_success"] = 1
-        trajectory_info_robot["partial_success"] = 1
+        # Load frames for this file (human and robot)
+        human_frames, robot_frames = H2RFrameLoader(str(file_path))()
 
-        trajectory_info_human["preference_group_id"] = None
-        trajectory_info_robot["preference_group_id"] = None
+        # HUMAN entry
+        full_h_path, rel_h_path = _build_h2r_video_paths(
+            output_dir=output_dir,
+            dataset_label=dataset_name,
+            episode_idx=ep_idx,
+            role="human",
+        )
+        human_traj = {
+            "id": generate_unique_id(),
+            "frames": human_frames,
+            "task": task,
+            "is_robot": False,
+            "quality_label": "successful",
+            "preference_group_id": None,
+            "preference_rank": None,
+        }
+        human_entry = create_hf_trajectory(
+            traj_dict=human_traj,
+            video_path=full_h_path,
+            lang_vector=lang_vec,
+            max_frames=max_frames,
+            dataset_name=dataset_name,
+            use_video=True,
+            fps=fps,
+        )
+        if human_entry:
+            human_entry["frames"] = rel_h_path
+            entries.append(human_entry)
+            produced += 1
 
-        trajectory_info_human["preference_rank"] = None
-        trajectory_info_robot["preference_rank"] = None
+        if produced >= max_limit:
+            break
 
-        task_name = _get_task_name_from_folder(folder_name)
-        trajectory_info_human["task"] = task_name
-        trajectory_info_robot["task"] = task_name
+        # ROBOT entry
+        full_r_path, rel_r_path = _build_h2r_video_paths(
+            output_dir=output_dir,
+            dataset_label=dataset_name,
+            episode_idx=ep_idx,
+            role="robot",
+        )
+        robot_traj = {
+            "id": generate_unique_id(),
+            "frames": robot_frames,
+            "task": task,
+            "is_robot": True,
+            "quality_label": "successful",
+            "preference_group_id": None,
+            "preference_rank": None,
+        }
+        robot_entry = create_hf_trajectory(
+            traj_dict=robot_traj,
+            video_path=full_r_path,
+            lang_vector=lang_vec,
+            max_frames=max_frames,
+            dataset_name=dataset_name,
+            use_video=True,
+            fps=fps,
+        )
+        if robot_entry:
+            robot_entry["frames"] = rel_r_path
+            entries.append(robot_entry)
+            produced += 1
 
-        trajectory_info_human["id"] = generate_unique_id()
-        trajectory_info_robot["id"] = generate_unique_id()
+        if produced >= max_limit:
+            break
 
-        if folder_name not in task_data:
-            task_data[folder_name] = []
+    if not entries:
+        return Dataset.from_dict(
+            {
+                "id": [],
+                "task": [],
+                "lang_vector": [],
+                "data_source": [],
+                "frames": [],
+                "is_robot": [],
+                "quality_label": [],
+                "preference_group_id": [],
+                "preference_rank": [],
+            }
+        )
 
-        task_data[folder_name].append(trajectory_info_human)
-        task_data[folder_name].append(trajectory_info_robot)
+    return Dataset.from_list(entries)
 
-    print(
-        f"Loaded {sum(len(trajectories) for trajectories in task_data.values())} trajectories from {len(task_data)} tasks"
-    )
-    return task_data

@@ -1,6 +1,6 @@
 # config.yaml
 dataset:
-  dataset_path: /scr/ykorkmaz/rfm/h2r_dataset
+  dataset_path: ./humanandrobot
   dataset_name: h2r  # This will be the dataset name / data source
 
 output:

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
-LIBERO dataset loader for the generic dataset converter for RFM model training.
-This module contains LIBERO-specific logic for loading and processing HDF5 files.
+H2R dataset loader for the generic dataset converter for RFM model training.
+https://huggingface.co/datasets/dannyXSC/HumanAndRobot
+Human2Robot: Learning Robot Actions from Paired Human-Robot Videos
+This module contains H2R-specific logic for loading and processing HDF5 files.
 """
 
 from pathlib import Path
@@ -13,7 +15,7 @@ from tqdm import tqdm
 
 
 class H2RFrameLoader:
-    """Pickle-able loader that reads LIBERO frames from an HDF5 dataset on demand.
+    """Pickle-able loader that reads H2R frames from an HDF5 dataset on demand.
 
     Stores only simple fields so it can be safely passed across processes.
     """
@@ -54,9 +56,25 @@ class H2RFrameLoader:
 
 # Task mapping from folder names to task descriptions
 FOLDER_TO_TASK_NAME = {
-    "grab_both_cubes_v1": "pick up each cube individually and place them onto the plate.",
+    "grab_both_cubes_v1": "pick up each cube individually and place them onto the plate",
+    "grab_cube2_v1": "pick up the cube and place it onto the plate",
     "grab_cup_v1": "pick up the cup and place it in another location",
-    "pull_plate_v1": "pull the plate from bottom to top.",
+    "grab_pencil1_v1": "pick up the pencil and place it on the plate",
+    "grab_pencil2_v1": "pick up the pencil and place it on the plate",
+    "grab_pencil_v1": "pick up the pencil and place it on the plate",
+    "grab_to_plate1_and_back_v1": "pick up the object and place it onto the plate, then pick it up and put it back where it was",
+    "grab_to_plate1_v1": "pick up the object and place it onto the plate",
+    "grab_to_plate2_v1": "pick up the object and place it onto the plate",
+    "grab_to_plate2_and_back_v1": "pick up the non-plate object and place it onto the plate, then pick it up and put it back where it was",
+    "grab_to_plate2_and_pull_v1": "put the cube on the plate, then pull the plate from bottom to top",
+    "pull_plate_grab_cube": "pull the plate from bottom to top, then pick up the cube and place it onto the plate",
+    "pull_plate_v1": "pull the plate from bottom to top",
+    "push_box_common_v1": "push the box from left to right",
+    "push_box_random_v1": "push one of the boxes from left to right",
+    "push_box_two_v1": "push one of the boxes from left to right",
+    "push_plate_v1": "push the plate from top to bottom",
+    "roll": "idk, roll? TODO",
+    "writing": "write aimlessly on the desk",
 }
 
 
@@ -146,6 +164,9 @@ def load_h2r_dataset(base_path: str) -> dict[str, list[dict]]:
 
         trajectory_info_human["quality_label"] = "successful"
         trajectory_info_robot["quality_label"] = "successful"
+        
+        trajectory_info_human["partial_success"] = 1
+        trajectory_info_robot["partial_success"] = 1
 
         trajectory_info_human["preference_group_id"] = None
         trajectory_info_robot["preference_group_id"] = None

@@ -162,6 +162,89 @@ def _build_h2r_video_paths(
     return full_path, rel_path
 
 
+def _process_single_h2r_file(args):
+    """Worker to process a single H2R HDF5 file into up to two entries.
+
+    Returns a list of entries (human and/or robot), each with relative frame paths.
+    """
+    (
+        file_path,
+        folder_name,
+        ep_idx,
+        dataset_name,
+        output_dir,
+        max_frames,
+        fps,
+        task,
+        lang_vec,
+    ) = args
+
+    entries: list[dict[str, Any]] = []
+
+    # Load frames for this file (human and robot)
+    human_frames, robot_frames = H2RFrameLoader(str(file_path))()
+
+    # HUMAN entry
+    full_h_path, rel_h_path = _build_h2r_video_paths(
+        output_dir=output_dir,
+        dataset_label=dataset_name,
+        episode_idx=ep_idx,
+        role="human",
+    )
+    human_traj = {
+        "id": generate_unique_id(),
+        "frames": human_frames,
+        "task": task,
+        "is_robot": False,
+        "quality_label": "successful",
+        "preference_group_id": None,
+        "preference_rank": None,
+    }
+    human_entry = create_hf_trajectory(
+        traj_dict=human_traj,
+        video_path=full_h_path,
+        lang_vector=lang_vec,
+        max_frames=max_frames,
+        dataset_name=dataset_name,
+        use_video=True,
+        fps=fps,
+    )
+    if human_entry:
+        human_entry["frames"] = rel_h_path
+        entries.append(human_entry)
+
+    # ROBOT entry
+    full_r_path, rel_r_path = _build_h2r_video_paths(
+        output_dir=output_dir,
+        dataset_label=dataset_name,
+        episode_idx=ep_idx,
+        role="robot",
+    )
+    robot_traj = {
+        "id": generate_unique_id(),
+        "frames": robot_frames,
+        "task": task,
+        "is_robot": True,
+        "quality_label": "successful",
+        "preference_group_id": None,
+        "preference_rank": None,
+    }
+    robot_entry = create_hf_trajectory(
+        traj_dict=robot_traj,
+        video_path=full_r_path,
+        lang_vector=lang_vec,
+        max_frames=max_frames,
+        dataset_name=dataset_name,
+        use_video=True,
+        fps=fps,
+    )
+    if robot_entry:
+        robot_entry["frames"] = rel_r_path
+        entries.append(robot_entry)
+
+    return entries
+
+
 def convert_h2r_dataset_to_hf(
     dataset_path: str,
     dataset_name: str,
@@ -206,91 +289,85 @@ def convert_h2r_dataset_to_hf(
     lang_model = load_sentence_transformer_model()
     lang_cache: dict[str, Any] = {}
 
+    # Determine workers and batching (match OXE approach to control memory)
+    if num_workers == -1:
+        try:
+            from multiprocessing import cpu_count as _cpu_count
+
+            num_workers = min(_cpu_count(), 8)
+        except Exception:
+            num_workers = 1
+    elif num_workers == 0:
+        num_workers = 1
+
+    batch_size = 64
+
     entries: list[dict[str, Any]] = []
-    produced = 0
+    produced_pairs = 0  # count by file; each file can produce up to 2 entries
     max_limit = float("inf") if (max_trajectories is None or max_trajectories == -1) else int(max_trajectories)
 
-    print(f"Found {len(discovered)} HDF5 files; converting to HF entries...")
+    print(f"Found {len(discovered)} HDF5 files; processing in batches of {batch_size} with {num_workers} workers...")
 
-    for ep_idx, (file_path, folder_name) in enumerate(
-        tqdm(discovered, desc="Processing H2R episodes")
-    ):
-        # Map folder name to human-readable task
+    # Process files in batches
+    file_batch: list[tuple[Path, str]] = []
+    info_batch: list[tuple[int, str, Any]] = []  # (ep_idx, task, lang_vec)
+
+    for ep_idx, (file_path, folder_name) in enumerate(tqdm(discovered, desc="Queuing H2R files")):
+        if produced_pairs >= max_limit:
+            break
+
         task = _get_task_name_from_folder(folder_name)
-
-        # Precompute embedding
         if task not in lang_cache:
             lang_cache[task] = lang_model.encode(task)
         lang_vec = lang_cache[task]
 
-        # Load frames for this file (human and robot)
-        human_frames, robot_frames = H2RFrameLoader(str(file_path))()
+        file_batch.append((file_path, folder_name))
+        info_batch.append((ep_idx, task, lang_vec))
 
-        # HUMAN entry
-        full_h_path, rel_h_path = _build_h2r_video_paths(
-            output_dir=output_dir,
-            dataset_label=dataset_name,
-            episode_idx=ep_idx,
-            role="human",
-        )
-        human_traj = {
-            "id": generate_unique_id(),
-            "frames": human_frames,
-            "task": task,
-            "is_robot": False,
-            "quality_label": "successful",
-            "preference_group_id": None,
-            "preference_rank": None,
-        }
-        human_entry = create_hf_trajectory(
-            traj_dict=human_traj,
-            video_path=full_h_path,
-            lang_vector=lang_vec,
-            max_frames=max_frames,
-            dataset_name=dataset_name,
-            use_video=True,
-            fps=fps,
-        )
-        if human_entry:
-            human_entry["frames"] = rel_h_path
-            entries.append(human_entry)
-            produced += 1
+        if len(file_batch) >= batch_size or ep_idx + 1 == len(discovered):
+            # Build worker args
+            worker_args = list(
+                zip(
+                    [f for (f, _) in file_batch],
+                    [fn for (_, fn) in file_batch],
+                    [i for (i, _, _) in info_batch],
+                    [dataset_name] * len(file_batch),
+                    [output_dir] * len(file_batch),
+                    [max_frames] * len(file_batch),
+                    [fps] * len(file_batch),
+                    [t for (_, t, _) in info_batch],
+                    [lv for (_, _, lv) in info_batch],
+                    strict=False,
+                )
+            )
 
-        if produced >= max_limit:
-            break
+            if num_workers == 1:
+                # Sequential processing
+                for args in worker_args:
+                    entries.extend(_process_single_h2r_file(args))
+                    produced_pairs += 1
+                    if produced_pairs >= max_limit:
+                        break
+            else:
+                from multiprocessing import Pool
 
-        # ROBOT entry
-        full_r_path, rel_r_path = _build_h2r_video_paths(
-            output_dir=output_dir,
-            dataset_label=dataset_name,
-            episode_idx=ep_idx,
-            role="robot",
-        )
-        robot_traj = {
-            "id": generate_unique_id(),
-            "frames": robot_frames,
-            "task": task,
-            "is_robot": True,
-            "quality_label": "successful",
-            "preference_group_id": None,
-            "preference_rank": None,
-        }
-        robot_entry = create_hf_trajectory(
-            traj_dict=robot_traj,
-            video_path=full_r_path,
-            lang_vector=lang_vec,
-            max_frames=max_frames,
-            dataset_name=dataset_name,
-            use_video=True,
-            fps=fps,
-        )
-        if robot_entry:
-            robot_entry["frames"] = rel_r_path
-            entries.append(robot_entry)
-            produced += 1
+                with Pool(processes=num_workers) as pool:
+                    results = list(
+                        tqdm(
+                            pool.imap_unordered(_process_single_h2r_file, worker_args),
+                            total=len(worker_args),
+                            desc=f"Processing batch (workers={num_workers})",
+                        )
+                    )
+                for res in results:
+                    entries.extend(res)
+                    produced_pairs += 1
+                    if produced_pairs >= max_limit:
+                        break
 
-        if produced >= max_limit:
-            break
+            # Clear batch
+            file_batch = []
+            info_batch = []
 
     if not entries:
         return Dataset.from_dict(

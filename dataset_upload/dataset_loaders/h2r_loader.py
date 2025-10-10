@@ -69,14 +69,14 @@ class H2RFrameLoader:
 FOLDER_TO_TASK_NAME = {
     "grab_both_cubes_v1": "pick up each cube individually and place them onto the plate",
     "grab_cube2_v1": "pick up the cube and place it onto the plate",
-    "grab_cup_v1": "pick up the cup and place it in another location",
+    "grab_cup_v1": "move the cup from left to right",
     "grab_pencil1_v1": "pick up the marker and place it on the plate",
     "grab_pencil2_v1": "pick up the marker and place it on the plate",
     "grab_pencil_v1": "pick up the marker and place it on the plate",
     "grab_two_cubes2_v1": "pick up the green cube and place it onto the plate",
     "grab_to_plate1_and_back_v1": "put the red cube on the darker plate",
-    "grab_to_plate1_v1": "pick up the red cube and place it onto the yellow plate",
-    "grab_to_plate2_v1": "pick up the red cube and place it onto the darker plate",
+    "grab_to_plate1_v1": "pick up the red cube and place it onto the darker plate",
+    "grab_to_plate2_v1": "pick up the red cube and place it onto the lighter plate",
     "grab_to_plate2_and_back_v1": "put the red cube on the yellow plate",
     "grab_to_plate2_and_pull_v1": "put the cube on the plate, then pull the plate from bottom to top",
     "pull_plate_grab_cube": "pull the plate from bottom to top, then pick up the cube and place it onto the plate",
@@ -85,8 +85,8 @@ FOLDER_TO_TASK_NAME = {
     "push_box_random_v1": "push the box from left to right",
     "push_box_two_v1": "push the tissues from left to right",
     "push_plate_v1": "push the plate from top to bottom",
-    "roll": "pick up the brush and write on the table",
-    "writing": "write aimlessly on the desk",
+    #"roll": "pick up the brush and write on the table", # skipped because it's weird
+    #"writing": "write aimlessly on the desk", # skipped because writing aimlessly is not helpful for reward modeling
 }
 
 
@@ -95,15 +95,8 @@ def _get_task_name_from_folder(folder_name: str) -> str:
     # First try to find exact match
     if folder_name in FOLDER_TO_TASK_NAME:
         return FOLDER_TO_TASK_NAME[folder_name]
-
-    # If no exact match, try partial matching
-    for folder_key, task_name in FOLDER_TO_TASK_NAME.items():
-        if folder_key in folder_name or folder_name in folder_key:
-            return task_name
-
-    # If no mapping found, convert folder name to readable task
-    task = folder_name.replace("_", " ").replace("-", " ")
-    return task.strip()
+    else: 
+        return None
 
 
 def _discover_h2r_files(dataset_path: Path) -> list[tuple[Path, str]]:
@@ -318,6 +311,9 @@ def convert_h2r_dataset_to_hf(
             break
 
         task = _get_task_name_from_folder(folder_name)
+        if task is None:
+            print("Skipping file: ", file_path)
+            continue
         if task not in lang_cache:
             lang_cache[task] = lang_model.encode(task)
         lang_vec = lang_cache[task]

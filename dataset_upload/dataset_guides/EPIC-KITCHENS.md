@@ -4,12 +4,14 @@ This guide explains how to integrate and use the EPIC-KITCHENS dataset with the 
 
 Source: `https://epic-kitchens.github.io/`, Lerobot dataset sourced from `https://huggingface.co/datasets/awsaf49/epic_kitchens_100`, (a subset of the original), and `csv` annotations sourced from `https://github.com/epic-kitchens/epic-kitchens-100-annotations/blob/master/EPIC_100_train.csv`.
 
+This only loads the Epic-kitchens-100 added data, not any of the original epic-kitchens-55 data as that's difficult to download without a HF link (very slow).
+
 ## Assumptions
 
 - The dataset root contains participant folders `P01`, `P02`, ...
 - Each participant folder contains a `videos/` directory with `.MP4` files
 - The dataset root contains `EPIC_100_train.csv` with at least columns:
-  - `narration_id` (maps to the video filename without `.MP4`)
+  - `video_id` (maps to the video filename without `.MP4`)
   - `participant_id` (e.g., `P01`)
   - `start_frame` (start frame index)
   - `stop_frame` (end frame index)

@@ -1,6 +1,6 @@
 # config.yaml
 dataset:
-  dataset_path: ./datasets/epic_kitchens
+  dataset_path: ../epic_kitchens_100
   dataset_name: epic
 
 output:
@@ -8,10 +8,10 @@ output:
   max_trajectories: -1
   max_frames: 64
   use_video: true
-  fps: 30
+  fps: 10
   shortest_edge_size: 240
   center_crop: false
-  num_workers: 4
+  num_workers: 4 # less workers because cv2/ffmpeg loads are multiprocessed
 
 hub:
   push_to_hub: true

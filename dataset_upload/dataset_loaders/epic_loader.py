@@ -1,3 +1,4 @@
+# Epic kitchens 100
 import csv
 import os
 from dataclasses import dataclass
@@ -19,7 +20,7 @@ from dataset_upload.helpers import (
 @dataclass
 class EpicClip:
     participant_id: str
-    narration_id: str
+    video_id: str
     start_frame: int
     stop_frame: int
     narration: str
@@ -34,7 +35,7 @@ def _read_epic_csv(csv_path: Path) -> list[EpicClip]:
                 clips.append(
                     EpicClip(
                         participant_id=row["participant_id"].strip(),
-                        narration_id=row["narration_id"].strip(),
+                        video_id=row["video_id"].strip(),
                         start_frame=int(row["start_frame"]),
                         stop_frame=int(row["stop_frame"]),
                         narration=row["narration"].strip(),
@@ -46,9 +47,9 @@ def _read_epic_csv(csv_path: Path) -> list[EpicClip]:
 
 
 def _video_path_for_clip(dataset_path: Path, clip: EpicClip) -> Path:
-    # narration_id maps to video basename (without .MP4). Participant folder contains videos/ with .MP4
-    # Example: <dataset_path>/P01/videos/<narration_id>.MP4
-    return dataset_path / clip.participant_id / "videos" / f"{clip.narration_id}.MP4"
+    # video_id maps to video basename (without .MP4). Participant folder contains videos/ with .MP4
+    # Example: <dataset_path>/P01/videos/<video_id>.MP4
+    return dataset_path / clip.participant_id / "videos" / f"{clip.video_id}.MP4"
 
 
 def _read_video_segment(video_path: Path, start_frame: int, stop_frame: int) -> np.ndarray:
@@ -81,6 +82,7 @@ def _process_single_epic_clip(args: tuple[Any, ...]) -> dict | None:
     (
         clip,
         dataset_name,
+        root,
         output_dir,
         max_frames,
         fps,
@@ -89,7 +91,8 @@ def _process_single_epic_clip(args: tuple[Any, ...]) -> dict | None:
         lang_vec,
     ) = args
 
-    video_path = _video_path_for_clip(Path(output_dir).parent.parent, clip)  # derive from output_dir -> dataset root
+    video_path = _video_path_for_clip(root, clip)  # derive from output_dir -> dataset root
+
     if not video_path.exists():
         return None
 
@@ -107,7 +110,7 @@ def _process_single_epic_clip(args: tuple[Any, ...]) -> dict | None:
         "preference_rank": None,
     }
 
-    out_dir = os.path.join(output_dir, dataset_name.lower(), clip.participant_id, clip.narration_id)
+    out_dir = os.path.join(output_dir, dataset_name.lower(), clip.participant_id, clip.video_id)
     os.makedirs(out_dir, exist_ok=True)
     out_video = os.path.join(out_dir, "clip.mp4")
 
@@ -133,7 +136,7 @@ def convert_epic_dataset_to_hf(
     output_dir: str,
     max_trajectories: int | None = None,
     max_frames: int = 64,
-    fps: int = 30,
+    fps: int = 10,
     num_workers: int = -1,
     shortest_edge_size: int = 240,
     center_crop: bool = False,
@@ -192,6 +195,7 @@ def convert_epic_dataset_to_hf(
                 (
                     clip,
                     dataset_name,
+                    root,
                     output_dir,
                     max_frames,
                     fps,

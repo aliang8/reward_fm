@@ -116,7 +116,7 @@ def _process_single_epic_clip(args: tuple[Any, ...]) -> dict | None:
         "preference_rank": None,
     }
 
-    out_dir = os.path.join(output_dir, dataset_name.lower())
+    out_dir = os.path.join(output_dir, dataset_name.lower(), clip.participant_id)
     os.makedirs(out_dir, exist_ok=True)
     out_video = os.path.join(out_dir, f"{clip.narration_id}.mp4")
 

@@ -96,6 +96,10 @@ def _process_single_epic_clip(args: tuple[Any, ...]) -> dict | None:
     if not video_path.exists():
         return None
 
+    # skip anything > 1000
+    if clip.stop_frame - clip.start_frame > 1000:
+        print("Skipping clip because it's too long, length is", clip.stop_frame - clip.start_frame)
+        return None
     frames = _read_video_segment(video_path, clip.start_frame, clip.stop_frame)
     if frames.size == 0:
         return None
@@ -170,15 +174,16 @@ def convert_epic_dataset_to_hf(
     elif num_workers == 0:
         num_workers = 1
 
-    batch_size = 128
+    batch_size = 16
     entries: list[dict] = []
     produced = 0
     max_limit = float("inf") if (max_trajectories is None or max_trajectories == -1) else int(max_trajectories)
 
     file_batch: list[EpicClip] = []
     vec_batch: list[np.ndarray] = []
-
-    for idx, clip in enumerate(clips):
+    
+    from tqdm import tqdm
+    for idx, clip in tqdm(enumerate(clips), desc="iterating through EPIC-KITCHENS Clips", total=len(clips)):
         if produced >= max_limit:
             break
 

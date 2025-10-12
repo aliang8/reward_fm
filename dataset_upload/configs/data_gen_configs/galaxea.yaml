@@ -1,0 +1,21 @@
+# config.yaml
+dataset:
+  dataset_path: ./datasets/galaxea   # Root containing 'rlds/'
+  dataset_name: galaxea
+  rlds_datasets: ["sample_r1_lite"]  # List of RLDS builders under 'rlds/'
+
+output:
+  output_dir: ./rfm_dataset/galaxea_rfm
+  max_trajectories: -1
+  max_frames: 64
+  use_video: true
+  fps: 10
+  shortest_edge_size: 240
+  center_crop: false
+  num_workers: 4
+
+hub:
+  push_to_hub: true
+  hub_repo_id: galaxea_rfm
+
+

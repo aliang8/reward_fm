@@ -98,6 +98,10 @@ def _process_single_galaxea_episode(args):
         )
         
         # Pass frames as list instead of stacking to avoid doubling memory
+        if frames[0].dtype != np.uint8:
+            print(f"Warning: Frames for ep {ep_idx} are not uint8, converting to uint8")
+            frames = [frame.astype(np.uint8) for frame in frames]
+
         traj_dict = {
             "id": generate_unique_id(),
             "frames": frames,  # Pass as list, let create_hf_trajectory handle it

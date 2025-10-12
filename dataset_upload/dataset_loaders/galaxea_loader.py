@@ -1,4 +1,5 @@
 import os
+import gc
 from multiprocessing import cpu_count
 from pathlib import Path
 from typing import Any
@@ -70,16 +71,23 @@ def _process_single_galaxea_episode(args):
     episode, ep_idx, task, lang_vec, output_dir, dataset_name, rlds_name, max_frames, fps, valid_img_keys = args
 
     episode_entries = []
+    first_step = next(episode)
+    assert len(valid_img_keys) == 1, "Galaxea only has one valid image key for now. No support for multiple because of the way we iterate over the episode."
     for img_key in valid_img_keys:
         # Validate key presence
-        if img_key not in episode[0]["observation"]:
+        if img_key not in first_step["observation"]:
             continue
         # Prune trivial black frames
-        if np.all(episode[0]["observation"][img_key] == 0):
+        if np.all(first_step["observation"][img_key] == 0):
             continue
 
-        frames = [s["observation"][img_key] for s in episode if img_key in s["observation"]]
+        frames = [first_step["observation"][img_key]] + [s["observation"][img_key] for s in episode if img_key in s["observation"]]
         if not frames:
+            continue
+        # skip anything > 1000
+        elif len(frames) > 1000:
+            print(f"Skipping episode {ep_idx} because it's too long, length is {len(frames)}")
+            del frames
             continue
 
         full_path, rel_path = _build_galaxea_video_paths(
@@ -88,9 +96,11 @@ def _process_single_galaxea_episode(args):
             episode_idx=ep_idx,
             view_key=img_key,
         )
+        
+        # Pass frames as list instead of stacking to avoid doubling memory
         traj_dict = {
             "id": generate_unique_id(),
-            "frames": np.stack(frames) if isinstance(frames[0], np.ndarray) else frames,
+            "frames": frames,  # Pass as list, let create_hf_trajectory handle it
             "task": task,
             "is_robot": True,
             "quality_label": "successful",
@@ -110,6 +120,7 @@ def _process_single_galaxea_episode(args):
         if entry:
             entry["frames"] = rel_path
             episode_entries.append(entry)
+        del frames
 
     return episode_entries
 
@@ -216,7 +227,8 @@ def convert_galaxea_dataset_to_hf(
 
             # Convert episode to numpy (list of steps)
             try:
-                episode_np = list(tfds.as_numpy(episode["steps"]))
+                #episode_np = list(tfds.as_numpy(episode["steps"]))
+                episode_np = iter(tfds.as_numpy(episode["steps"]))
             except Exception as e:
                 print(f"Warning: Failed to convert episode {ep_idx} to numpy: {e}")
                 continue
@@ -245,37 +257,38 @@ def convert_galaxea_dataset_to_hf(
                         if produced >= max_limit:
                             break
                 else:
-                    from multiprocessing import Pool
+                    raise ValueError("num_workers > 1 not supported for Galaxea due to the way the frame loader works.")
+                    #from multiprocessing import Pool
 
-                    worker_args = list(
-                        zip(
-                            episode_batch,
-                            [i for (i, _, _) in info_batch],
-                            [t for (_, t, _) in info_batch],
-                            [v for (_, _, v) in info_batch],
-                            [output_dir] * len(episode_batch),
-                            [dataset_name] * len(episode_batch),
-                            [rlds_name] * len(episode_batch),
-                            [max_frames] * len(episode_batch),
-                            [fps] * len(episode_batch),
-                            [valid_img_keys] * len(episode_batch),
-                            strict=False,
-                        )
-                    )
+                    #worker_args = list(
+                    #    zip(
+                    #        episode_batch,
+                    #        [i for (i, _, _) in info_batch],
+                    #        [t for (_, t, _) in info_batch],
+                    #        [v for (_, _, v) in info_batch],
+                    #        [output_dir] * len(episode_batch),
+                    #        [dataset_name] * len(episode_batch),
+                    #        [rlds_name] * len(episode_batch),
+                    #        [max_frames] * len(episode_batch),
+                    #        [fps] * len(episode_batch),
+                    #        [valid_img_keys] * len(episode_batch),
+                    #        strict=False,
+                    #    )
+                    #)
 
-                    with Pool(processes=num_workers) as pool:
-                        results = list(
-                            tqdm(
-                                pool.imap_unordered(_process_single_galaxea_episode, worker_args),
-                                total=len(worker_args),
-                                desc=f"Processing batch (workers={num_workers})",
-                            )
-                        )
-                    for res in results:
-                        entries.extend(res)
-                        produced += len(res)
-                        if produced >= max_limit:
-                            break
+                    #with Pool(processes=num_workers) as pool:
+                    #    results = list(
+                    #        tqdm(
+                    #            pool.imap_unordered(_process_single_galaxea_episode, worker_args),
+                    #            total=len(worker_args),
+                    #            desc=f"Processing batch (workers={num_workers})",
+                    #        )
+                    #    )
+                    #for res in results:
+                    #    entries.extend(res)
+                    #    produced += len(res)
+                    #    if produced >= max_limit:
+                    #        break
 
                 episode_batch = []
                 info_batch = []

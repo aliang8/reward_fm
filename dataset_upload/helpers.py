@@ -25,7 +25,7 @@ def save_frame_as_image(frame_data: np.ndarray, output_path: str) -> str:
     return output_path
 
 
-def downsample_frames(frames: np.ndarray, max_frames: int = 32) -> np.ndarray:
+def downsample_frames(frames: np.ndarray | list, max_frames: int = 32) -> np.ndarray | list:
     """Downsample frames to at most max_frames using linear interpolation."""
     # If max_frames is -1, don't downsample
     if max_frames == -1:
@@ -39,7 +39,12 @@ def downsample_frames(frames: np.ndarray, max_frames: int = 32) -> np.ndarray:
 
     # keep unique frames
     unique_indices = np.unique(indices)
-    return frames[unique_indices]
+    
+    # Handle both list and numpy array inputs
+    if isinstance(frames, list):
+        return [frames[i] for i in unique_indices]
+    else:
+        return frames[unique_indices]
 
 
 def motion_aware_downsample(frames: np.ndarray, max_frames: int = 32) -> np.ndarray:

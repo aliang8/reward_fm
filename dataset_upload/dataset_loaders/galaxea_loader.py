@@ -18,7 +18,12 @@ os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
 # which rlds datasets to load
 DATASETS_TO_LOAD = [
-    "sample_r1_lite",
+    #"sample_r1_lite",
+    "part1_r1_lite",
+    "part2_r1_lite",
+    "part3_r1_lite",
+    "part4_r1_lite",
+    "part5_r1_lite",
 ]
 
 import tensorflow_datasets as tfds
@@ -62,7 +67,7 @@ def _parse_low_level_english(instruction: bytes | str) -> str | None:
 
 
 def _process_single_galaxea_episode(args):
-    episode, ep_idx, task, lang_vec, output_dir, dataset_name, max_frames, fps, valid_img_keys = args
+    episode, ep_idx, task, lang_vec, output_dir, dataset_name, rlds_name, max_frames, fps, valid_img_keys = args
 
     episode_entries = []
     for img_key in valid_img_keys:
@@ -79,7 +84,7 @@ def _process_single_galaxea_episode(args):
 
         full_path, rel_path = _build_galaxea_video_paths(
             output_dir=output_dir,
-            dataset_label=dataset_name,
+            dataset_label=rlds_name,
             episode_idx=ep_idx,
             view_key=img_key,
         )
@@ -227,6 +232,7 @@ def convert_galaxea_dataset_to_hf(
                         [v for (_, _, v) in info_batch],
                         [output_dir] * len(episode_batch),
                         [dataset_name] * len(episode_batch),
+                        [rlds_name] * len(episode_batch),
                         [max_frames] * len(episode_batch),
                         [fps] * len(episode_batch),
                         [valid_img_keys] * len(episode_batch),
@@ -248,6 +254,7 @@ def convert_galaxea_dataset_to_hf(
                             [v for (_, _, v) in info_batch],
                             [output_dir] * len(episode_batch),
                             [dataset_name] * len(episode_batch),
+                            [rlds_name] * len(episode_batch),
                             [max_frames] * len(episode_batch),
                             [fps] * len(episode_batch),
                             [valid_img_keys] * len(episode_batch),

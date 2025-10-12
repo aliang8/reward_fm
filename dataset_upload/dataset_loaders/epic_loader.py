@@ -176,7 +176,7 @@ def convert_epic_dataset_to_hf(
     elif num_workers == 0:
         num_workers = 1
 
-    batch_size = 16
+    batch_size = 6
     entries: list[dict] = []
     produced = 0
     max_limit = float("inf") if (max_trajectories is None or max_trajectories == -1) else int(max_trajectories)

@@ -80,15 +80,12 @@ def _process_single_galaxea_episode(args):
         # Prune trivial black frames
         if np.all(first_step["observation"][img_key] == 0):
             continue
-        elif first_step["observation"][img_key].dtype != np.uint8:
-            print(f"Warning: Frames for ep {ep_idx} are not uint8, dropping just in case this traj has an issue.")
-            continue
 
         frames = [first_step["observation"][img_key]] + [s["observation"][img_key] for s in episode if img_key in s["observation"]]
         if not frames:
             continue
-        # skip anything > 1000
-        elif len(frames) > 1000:
+        # skip anything > 640 frames (max frames 64 * 10)
+        elif len(frames) > 640:
             print(f"Skipping episode {ep_idx} because it's too long, length is {len(frames)}")
             del frames
             continue

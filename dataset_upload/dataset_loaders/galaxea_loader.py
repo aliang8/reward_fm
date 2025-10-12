@@ -110,16 +110,19 @@ def _process_single_galaxea_episode(args):
             "preference_group_id": None,
             "preference_rank": None,
         }
-
-        entry = create_hf_trajectory(
-            traj_dict=traj_dict,
-            video_path=full_path,
-            lang_vector=lang_vec,
-            max_frames=max_frames,
-            dataset_name=dataset_name,
-            use_video=True,
-            fps=fps,
-        )
+        try:
+            entry = create_hf_trajectory(
+                traj_dict=traj_dict,
+                video_path=full_path,
+                lang_vector=lang_vec,
+                max_frames=max_frames,
+                dataset_name=dataset_name,
+                use_video=True,
+                fps=fps,
+            )
+        except Exception as e:
+            print(f"Warning: Failed to create HF trajectory for ep {ep_idx}: {e}")
+            continue
         if entry:
             entry["frames"] = rel_path
             episode_entries.append(entry)

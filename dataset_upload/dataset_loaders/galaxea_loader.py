@@ -80,6 +80,9 @@ def _process_single_galaxea_episode(args):
         # Prune trivial black frames
         if np.all(first_step["observation"][img_key] == 0):
             continue
+        elif first_step["observation"][img_key].dtype != np.uint8:
+            print(f"Warning: Frames for ep {ep_idx} are not uint8, dropping just in case this traj has an issue.")
+            continue
 
         frames = [first_step["observation"][img_key]] + [s["observation"][img_key] for s in episode if img_key in s["observation"]]
         if not frames:
@@ -96,12 +99,8 @@ def _process_single_galaxea_episode(args):
             episode_idx=ep_idx,
             view_key=img_key,
         )
-        
-        # Pass frames as list instead of stacking to avoid doubling memory
-        if frames[0].dtype != np.uint8:
-            print(f"Warning: Frames for ep {ep_idx} are not uint8, converting to uint8")
-            frames = [frame.astype(np.uint8) for frame in frames]
 
+        # Pass frames as list avoid doubling memory from np.stack
         traj_dict = {
             "id": generate_unique_id(),
             "frames": frames,  # Pass as list, let create_hf_trajectory handle it

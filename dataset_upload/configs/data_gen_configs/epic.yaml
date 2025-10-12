@@ -8,10 +8,10 @@ output:
   max_trajectories: -1
   max_frames: 64
   use_video: true
-  fps: 10
+  fps: 30
   shortest_edge_size: 240
   center_crop: false
-  num_workers: 2 # less workers because cv2/ffmpeg loads are multiprocessed
+  num_workers: 3 # less workers because cv2/ffmpeg loads are multiprocessed
 
 hub:
   push_to_hub: true

@@ -16,6 +16,11 @@ from tqdm import tqdm
 # Disable GPUs for TensorFlow in this loader to avoid CUDA context issues in workers
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
+# which rlds datasets to load
+DATASETS_TO_LOAD = [
+    "sample_r1_lite",
+]
+
 import tensorflow_datasets as tfds
 
 
@@ -46,8 +51,7 @@ def _build_galaxea_video_paths(
 def _parse_low_level_english(instruction: bytes | str) -> str | None:
     """Galaxea's language_instruction format: "high@low_cn@low_en". Return low_en."""
     try:
-        if isinstance(instruction, bytes):
-            instruction = instruction.decode()
+        instruction = instruction.decode('utf-8')
         parts = instruction.split("@")
         if len(parts) >= 3:
             return parts[2].strip()
@@ -61,7 +65,6 @@ def _process_single_galaxea_episode(args):
     episode, ep_idx, task, lang_vec, output_dir, dataset_name, max_frames, fps, valid_img_keys = args
 
     episode_entries = []
-
     for img_key in valid_img_keys:
         # Validate key presence
         if img_key not in episode[0]["observation"]:
@@ -80,7 +83,6 @@ def _process_single_galaxea_episode(args):
             episode_idx=ep_idx,
             view_key=img_key,
         )
-
         traj_dict = {
             "id": generate_unique_id(),
             "frames": np.stack(frames) if isinstance(frames[0], np.ndarray) else frames,
@@ -111,7 +113,6 @@ def convert_galaxea_dataset_to_hf(
     dataset_path: str,
     dataset_name: str,
     output_dir: str,
-    rlds_datasets: list[str],
     max_trajectories: int | None = None,
     max_frames: int = 64,
     fps: int = 10,
@@ -123,7 +124,6 @@ def convert_galaxea_dataset_to_hf(
         dataset_path: Root path that contains an 'rlds' directory with builders.
         dataset_name: Name to tag the resulting dataset (e.g., 'galaxea').
         output_dir: Where to write video files and dataset.
-        rlds_datasets: List of RLDS dataset names under 'rlds' to load (e.g., ['sample_r1_lite']).
         max_trajectories: Limit number of produced trajectories (None/-1 for all).
         max_frames: Max frames per video.
         fps: Video fps.
@@ -149,7 +149,7 @@ def convert_galaxea_dataset_to_hf(
 
     datasets_out: list[Dataset] = []
 
-    for rlds_name in rlds_datasets:
+    for rlds_name in DATASETS_TO_LOAD:
         # Find builder directory/version: root/rlds_name/<version>
         ds_root = root / rlds_name
         versions = os.listdir(str(ds_root)) if ds_root.exists() else []
@@ -175,12 +175,10 @@ def convert_galaxea_dataset_to_hf(
         # Determine valid image observation keys for Galaxea (head and both wrists)
         valid_img_keys = [
             "image_camera_head",
-            "image_camera_wrist_left",
-            "image_camera_wrist_right",
         ]
 
         # Batch/process episodes
-        batch_size = 64
+        batch_size = 32
         entries: list[dict[str, Any]] = []
         produced = 0
         max_limit = float("inf") if (max_trajectories is None or max_trajectories == -1) else int(max_trajectories)

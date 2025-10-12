@@ -6,6 +6,13 @@ Source: `https://huggingface.co/datasets/OpenGalaxea/Galaxea-Open-World-Dataset`
 
 Can download it with `hf download OpenGalaxea/Galaxea-Open-World-Dataset --repo-type dataset --include "*rlds*" --local-dir ./datasets/galaxea`
 
+Also, need to install some extra dependencies:
+```bash
+uv pip install tensorflow-datasets
+uv pip install tensorflow
+uv pip install tf-keras
+```
+
 ## Overview
 
 - 500+ hours of real-world mobile manipulation data in RLDS and LeRobot formats.
@@ -43,7 +50,6 @@ We extract the low-level English (the third part) and use it as the task string 
 dataset:
   dataset_path: ./datasets/galaxea
   dataset_name: galaxea
-  rlds_datasets: ["sample_r1_lite"]
 
 output:
   output_dir: ./rfm_dataset/galaxea_rfm

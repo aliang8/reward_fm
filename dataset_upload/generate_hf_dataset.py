@@ -661,7 +661,6 @@ def main(cfg: GenerateConfig):
             dataset_path=cfg.dataset.dataset_path,
             dataset_name=cfg.dataset.dataset_name,
             output_dir=cfg.output.output_dir,
-            rlds_datasets=rlds_datasets,
             max_trajectories=cfg.output.max_trajectories,
             max_frames=cfg.output.max_frames,
             fps=cfg.output.fps,
@@ -682,6 +681,15 @@ def main(cfg: GenerateConfig):
                 print(
                     f"✅ Successfully pushed dataset {cfg.dataset.dataset_name} to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}"
                 )
+                from huggingface_hub import HfApi
+                api = HfApi(token=cfg.hub.hub_token)
+                api.upload_large_folder(
+                    folder_path=cfg.output.output_dir,
+                    repo_id=cfg.hub.hub_repo_id,
+                    repo_type="dataset",
+                    num_workers=min(4, cpu_count()),
+                )
+                print(f"✅ Successfully pushed video files for {cfg.dataset.dataset_name} to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}")
             except Exception as e:
                 print(f"❌ Error pushing to hub: {e}")
                 print("Dataset was created locally but failed to push metadata to hub")

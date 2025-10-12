@@ -21,6 +21,7 @@ from dataset_upload.helpers import (
 class EpicClip:
     participant_id: str
     video_id: str
+    narration_id: str
     start_frame: int
     stop_frame: int
     narration: str
@@ -39,6 +40,7 @@ def _read_epic_csv(csv_path: Path) -> list[EpicClip]:
                         start_frame=int(row["start_frame"]),
                         stop_frame=int(row["stop_frame"]),
                         narration=row["narration"].strip(),
+                        narration_id=row["narration_id"].strip(),
                     )
                 )
             except Exception:
@@ -114,9 +116,9 @@ def _process_single_epic_clip(args: tuple[Any, ...]) -> dict | None:
         "preference_rank": None,
     }
 
-    out_dir = os.path.join(output_dir, dataset_name.lower(), clip.participant_id, clip.video_id)
+    out_dir = os.path.join(output_dir, dataset_name.lower())
     os.makedirs(out_dir, exist_ok=True)
-    out_video = os.path.join(out_dir, "clip.mp4")
+    out_video = os.path.join(out_dir, f"{clip.narration_id}.mp4")
 
     entry = create_hf_trajectory(
         traj_dict=traj,

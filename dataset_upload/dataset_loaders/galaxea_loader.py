@@ -178,7 +178,8 @@ def convert_galaxea_dataset_to_hf(
     if builder is None:
         raise ValueError(f"No valid builder found for {rlds_name} in {ds_root}")
 
-    dataset = builder.as_dataset(split="train", shuffle_files=False)
+    # to keep memory usage low, use 1 worker for decoding and interleave files
+    dataset = builder.as_dataset(split="train", shuffle_files=False, read_config=tfds.ReadConfig(num_parallel_calls_for_decode=1, num_parallel_calls_for_interleave_files=1))
 
     # Determine valid image observation keys for Galaxea (head and both wrists)
     valid_img_keys = [

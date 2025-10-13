@@ -186,7 +186,7 @@ def convert_galaxea_dataset_to_hf(
     ]
 
     # Batch/process episodes
-    batch_size = 4
+    batch_size = 1
     num_workers = min(num_workers, 4)
     entries: list[dict[str, Any]] = []
     produced = 0

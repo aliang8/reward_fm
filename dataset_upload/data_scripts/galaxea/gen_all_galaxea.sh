@@ -12,7 +12,7 @@ for dataset_name in ${galaxea_valid_datasets[@]}; do
     echo "=" * 100
     uv run python -m dataset_upload.generate_hf_dataset \
         --config_path=dataset_upload/configs/data_gen_configs/galaxea.yaml \
-        --output.output_dir ~/scratch_data/galaxea_rfm \
+        --output.output_dir ./rfm_dataset/galaxea_rfm \
         --dataset.dataset_name galaxea_$dataset_name \
 
     echo "Done generating dataset: $dataset_name"

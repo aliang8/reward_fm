@@ -1,6 +1,6 @@
 # config.yaml
 dataset:
-  dataset_path: ~/scratch_data/Galaxea-Open-World-Dataset/ # Root containing 'rlds/'
+  dataset_path: ./datasets/galaxea # Root containing 'rlds/'
   dataset_name: galaxea_part1_r1_lite
 
 output:

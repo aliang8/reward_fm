@@ -49,7 +49,7 @@ We extract the low-level English (the third part) and use it as the task string 
 
 dataset:
   dataset_path: ./datasets/galaxea
-  dataset_name: galaxea
+  dataset_name: galaxea_part1_r1_lite # choose from part1_r1_lite, part2_r1_lite, part3_r1_lite, part4_r1_lite, part5_r1_lite, ...
 
 output:
   output_dir: ./rfm_dataset/galaxea_rfm
@@ -69,7 +69,7 @@ hub:
 ## Usage
 
 ```bash
-uv run python -m dataset_upload.generate_hf_dataset --config_path=dataset_upload/configs/data_gen_configs/galaxea.yaml
+bash dataset_upload/data_scripts/galaxea/gen_all_galaxea.sh
 ```
 
 This will:

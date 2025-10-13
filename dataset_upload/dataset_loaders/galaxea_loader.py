@@ -17,16 +17,6 @@ from tqdm import tqdm
 # Disable GPUs for TensorFlow in this loader to avoid CUDA context issues in workers
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
-# which rlds datasets to load
-DATASETS_TO_LOAD = [
-    #"sample_r1_lite",
-    "part1_r1_lite",
-    "part2_r1_lite",
-    "part3_r1_lite",
-    "part4_r1_lite",
-    "part5_r1_lite",
-]
-
 import tensorflow_datasets as tfds
 
 
@@ -168,133 +158,132 @@ def convert_galaxea_dataset_to_hf(
 
     datasets_out: list[Dataset] = []
 
-    for rlds_name in DATASETS_TO_LOAD:
-        # Find builder directory/version: root/rlds_name/<version>
-        ds_root = root / rlds_name
-        versions = os.listdir(str(ds_root)) if ds_root.exists() else []
-        if len(versions) == 0:
-            print(f"Warning: No versions found for {rlds_name} in {root}")
+    rlds_name = dataset_name.replace("galaxea_", "")
+
+    # Find builder directory/version: root/rlds_name/<version>
+    ds_root = root / rlds_name
+    versions = os.listdir(str(ds_root)) if ds_root.exists() else []
+    if len(versions) == 0:
+        raise ValueError(f"No versions found for {rlds_name} in {ds_root}")
+
+    builder = None
+    for version in versions:
+        if "incomplete" in version:
+            continue
+        try:
+            builder = tfds.builder_from_directory(f"{ds_root}/{version}")
+            break
+        except Exception:
+            continue
+    if builder is None:
+        raise ValueError(f"No valid builder found for {rlds_name} in {ds_root}")
+
+    dataset = builder.as_dataset(split="train", shuffle_files=False)
+
+    # Determine valid image observation keys for Galaxea (head and both wrists)
+    valid_img_keys = [
+        "image_camera_head",
+    ]
+
+    # Batch/process episodes
+    batch_size = 4
+    num_workers = min(num_workers, 4)
+    entries: list[dict[str, Any]] = []
+    produced = 0
+    max_limit = float("inf") if (max_trajectories is None or max_trajectories == -1) else int(max_trajectories)
+
+    episode_batch = []
+    info_batch = []
+
+    for ep_idx, episode in enumerate(tqdm(dataset, desc=f"Processing {rlds_name} episodes")):
+        if produced >= max_limit:
+            break
+
+        # Materialize first step for language instruction
+        try:
+            first_step = next(iter(tfds.as_numpy(episode["steps"])))
+        except StopIteration:
             continue
 
-        builder = None
-        for version in versions:
-            if "incomplete" in version:
-                continue
-            try:
-                builder = tfds.builder_from_directory(f"{ds_root}/{version}")
-                break
-            except Exception:
-                continue
-        if builder is None:
-            print(f"Warning: No valid builder found for {rlds_name} in {root}")
+        # Galaxea stores 'language_instruction' at step-level; parse low-level English
+        task = None
+        if "language_instruction" in first_step:
+            task = _parse_low_level_english(first_step["language_instruction"])  # type: ignore[index]
+        if not task:
             continue
 
-        dataset = builder.as_dataset(split="train", shuffle_files=False)
+        # Precompute embedding
+        if task not in lang_cache:
+            lang_cache[task] = lang_model.encode(task)
+        lang_vec = lang_cache[task]
 
-        # Determine valid image observation keys for Galaxea (head and both wrists)
-        valid_img_keys = [
-            "image_camera_head",
-        ]
+        # Convert episode to numpy (list of steps)
+        try:
+            #episode_np = list(tfds.as_numpy(episode["steps"]))
+            episode_np = iter(tfds.as_numpy(episode["steps"]))
+        except Exception as e:
+            print(f"Warning: Failed to convert episode {ep_idx} to numpy: {e}")
+            continue
 
-        # Batch/process episodes
-        batch_size = 4
-        num_workers = min(num_workers, 4)
-        entries: list[dict[str, Any]] = []
-        produced = 0
-        max_limit = float("inf") if (max_trajectories is None or max_trajectories == -1) else int(max_trajectories)
+        episode_batch.append(episode_np)
+        info_batch.append((ep_idx, task, lang_vec))
 
-        episode_batch = []
-        info_batch = []
+        if len(episode_batch) >= batch_size or ep_idx + 1 == len(dataset):
+            if num_workers == 1:
+                for args in zip(
+                    episode_batch,
+                    [i for (i, _, _) in info_batch],
+                    [t for (_, t, _) in info_batch],
+                    [v for (_, _, v) in info_batch],
+                    [output_dir] * len(episode_batch),
+                    [dataset_name] * len(episode_batch),
+                    [rlds_name] * len(episode_batch),
+                    [max_frames] * len(episode_batch),
+                    [fps] * len(episode_batch),
+                    [valid_img_keys] * len(episode_batch),
+                    strict=False,
+                ):
+                    episode_entries = _process_single_galaxea_episode(args)
+                    entries.extend(episode_entries)
+                    produced += len(episode_entries)
+                    if produced >= max_limit:
+                        break
+            else:
+                raise ValueError("num_workers > 1 not supported for Galaxea due to the way the frame loader works.")
+                #from multiprocessing import Pool
 
-        for ep_idx, episode in enumerate(tqdm(dataset, desc=f"Processing {rlds_name} episodes")):
-            if produced >= max_limit:
-                break
+                #worker_args = list(
+                #    zip(
+                #        episode_batch,
+                #        [i for (i, _, _) in info_batch],
+                #        [t for (_, t, _) in info_batch],
+                #        [v for (_, _, v) in info_batch],
+                #        [output_dir] * len(episode_batch),
+                #        [dataset_name] * len(episode_batch),
+                #        [rlds_name] * len(episode_batch),
+                #        [max_frames] * len(episode_batch),
+                #        [fps] * len(episode_batch),
+                #        [valid_img_keys] * len(episode_batch),
+                #        strict=False,
+                #    )
+                #)
 
-            # Materialize first step for language instruction
-            try:
-                first_step = next(iter(tfds.as_numpy(episode["steps"])))
-            except StopIteration:
-                continue
+                #with Pool(processes=num_workers) as pool:
+                #    results = list(
+                #        tqdm(
+                #            pool.imap_unordered(_process_single_galaxea_episode, worker_args),
+                #            total=len(worker_args),
+                #            desc=f"Processing batch (workers={num_workers})",
+                #        )
+                #    )
+                #for res in results:
+                #    entries.extend(res)
+                #    produced += len(res)
+                #    if produced >= max_limit:
+                #        break
 
-            # Galaxea stores 'language_instruction' at step-level; parse low-level English
-            task = None
-            if "language_instruction" in first_step:
-                task = _parse_low_level_english(first_step["language_instruction"])  # type: ignore[index]
-            if not task:
-                continue
-
-            # Precompute embedding
-            if task not in lang_cache:
-                lang_cache[task] = lang_model.encode(task)
-            lang_vec = lang_cache[task]
-
-            # Convert episode to numpy (list of steps)
-            try:
-                #episode_np = list(tfds.as_numpy(episode["steps"]))
-                episode_np = iter(tfds.as_numpy(episode["steps"]))
-            except Exception as e:
-                print(f"Warning: Failed to convert episode {ep_idx} to numpy: {e}")
-                continue
-
-            episode_batch.append(episode_np)
-            info_batch.append((ep_idx, task, lang_vec))
-
-            if len(episode_batch) >= batch_size or ep_idx + 1 == len(dataset):
-                if num_workers == 1:
-                    for args in zip(
-                        episode_batch,
-                        [i for (i, _, _) in info_batch],
-                        [t for (_, t, _) in info_batch],
-                        [v for (_, _, v) in info_batch],
-                        [output_dir] * len(episode_batch),
-                        [dataset_name] * len(episode_batch),
-                        [rlds_name] * len(episode_batch),
-                        [max_frames] * len(episode_batch),
-                        [fps] * len(episode_batch),
-                        [valid_img_keys] * len(episode_batch),
-                        strict=False,
-                    ):
-                        episode_entries = _process_single_galaxea_episode(args)
-                        entries.extend(episode_entries)
-                        produced += len(episode_entries)
-                        if produced >= max_limit:
-                            break
-                else:
-                    raise ValueError("num_workers > 1 not supported for Galaxea due to the way the frame loader works.")
-                    #from multiprocessing import Pool
-
-                    #worker_args = list(
-                    #    zip(
-                    #        episode_batch,
-                    #        [i for (i, _, _) in info_batch],
-                    #        [t for (_, t, _) in info_batch],
-                    #        [v for (_, _, v) in info_batch],
-                    #        [output_dir] * len(episode_batch),
-                    #        [dataset_name] * len(episode_batch),
-                    #        [rlds_name] * len(episode_batch),
-                    #        [max_frames] * len(episode_batch),
-                    #        [fps] * len(episode_batch),
-                    #        [valid_img_keys] * len(episode_batch),
-                    #        strict=False,
-                    #    )
-                    #)
-
-                    #with Pool(processes=num_workers) as pool:
-                    #    results = list(
-                    #        tqdm(
-                    #            pool.imap_unordered(_process_single_galaxea_episode, worker_args),
-                    #            total=len(worker_args),
-                    #            desc=f"Processing batch (workers={num_workers})",
-                    #        )
-                    #    )
-                    #for res in results:
-                    #    entries.extend(res)
-                    #    produced += len(res)
-                    #    if produced >= max_limit:
-                    #        break
-
-                episode_batch = []
-                info_batch = []
+            episode_batch = []
+            info_batch = []
 
         if not entries:
             ds_out = Dataset.from_dict(

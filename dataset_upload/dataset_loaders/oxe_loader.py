@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from rfm.data.dataset_helpers.oxe_helper import OXE_DATASET_CONFIGS
+from dataset_upload.dataset_helpers.oxe_helper import OXE_DATASET_CONFIGS
 from dataset_upload.helpers import (
     create_hf_trajectory,
     generate_unique_id,
@@ -40,6 +40,16 @@ OXE_VALID_DATASETS = [
     "ucsd_kitchen_dataset_converted_externally_to_rlds",
     "utaustin_mutex",
     "viola",
+    # not in original
+    "robo_set",
+    "aloha_mobile",
+    "tidybot",
+    "imperialcollege_sawyer_wrist_cam",
+    "kaist_nonprehensile_converted_externally_to_rlds",
+    "berkeley_mvp_converted_externally_to_rlds",
+    "berkeley_rpt_converted_externally_to_rlds",
+    "nyu_rot_dataset_converted_externally_to_rlds",
+    "tokyo_u_lsmo_converted_externally_to_rlds",
 ]
 POSSIBLE_LANG_INSTRUCTION_KEYS = [  # valid keys for language instruction in OXE
     "natural_language_instruction",

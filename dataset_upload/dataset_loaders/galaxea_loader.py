@@ -74,8 +74,8 @@ def _process_single_galaxea_episode(args):
         frames = [first_step["observation"][img_key]] + [s["observation"][img_key] for s in episode if img_key in s["observation"]]
         if not frames:
             continue
-        # skip anything > 640 frames (max frames 64 * 10)
-        elif len(frames) > 640:
+        # skip anything > 1000 frames 
+        elif len(frames) > 1000:
             print(f"Skipping episode {ep_idx} because it's too long, length is {len(frames)}")
             del frames
             continue

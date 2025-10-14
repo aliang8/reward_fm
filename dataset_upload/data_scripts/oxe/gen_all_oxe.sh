@@ -20,14 +20,25 @@ OXE_VALID_DATASETS=(
     "language_table"
     "bridge_v2"
     "droid"
+    # new datasets
+    "robo_set"
+    "aloha_mobile"
+    "tidybot"
+    "imperialcollege_sawyer_wrist_cam"
+    "kaist_nonprehensile_converted_externally_to_rlds"
+    "berkeley_mvp_converted_externally_to_rlds"
+    "berkeley_rpt_converted_externally_to_rlds"
+    "nyu_rot_dataset_converted_externally_to_rlds"
+    "tokyo_u_lsmo_converted_externally_to_rlds"
 )
 
 for dataset_name in ${OXE_VALID_DATASETS[@]}; do
     echo "Generating dataset: $dataset_name"
     echo "=" * 100
-    uv run rfm/data/generate_hf_dataset.py \
-        --config_path=rfm/configs/data_gen_configs/oxe.yaml \
-        --output.output_dir ~/scratch_data/oxe_rfm \
+    uv run python -m dataset_upload.generate_hf_dataset \
+        --config_path=dataset_upload/configs/data_gen_configs/oxe.yaml \
+        --output.output_dir ./rfm_dataset/oxe_rfm \
+        --dataset.dataset_path ~/tensorflow_datasets/openx_datasets/ \
         --dataset.dataset_name oxe_$dataset_name \
 
     echo "Done generating dataset: $dataset_name"

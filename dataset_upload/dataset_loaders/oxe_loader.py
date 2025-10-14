@@ -43,7 +43,6 @@ OXE_VALID_DATASETS = [
     # not in original
     "robo_set",
     "aloha_mobile",
-    "tidybot",
     "imperialcollege_sawyer_wrist_cam",
     "kaist_nonprehensile_converted_externally_to_rlds",
     "berkeley_mvp_converted_externally_to_rlds",
@@ -229,7 +228,7 @@ def convert_oxe_dataset_to_hf(
 
     # Determine number of workers
     if num_workers == -1:
-        num_workers = min(cpu_count(), 8)  # or else ram usage will blow up
+        num_workers = min(cpu_count(), 4)  # or else ram usage will blow up
     elif num_workers == 0:
         num_workers = 1
 
@@ -245,7 +244,7 @@ def convert_oxe_dataset_to_hf(
         max_limit = MAX_LANGTABLE_EPISODES
 
         # Process episodes in batches to avoid OOM
-    batch_size = 64  # Process episodes in smaller batches
+    batch_size = 8  # Process episodes in smaller batches
     entries = []
     produced = 0
 

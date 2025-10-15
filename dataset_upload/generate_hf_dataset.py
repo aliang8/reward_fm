@@ -699,6 +699,42 @@ def main(cfg: GenerateConfig):
             print(f"Dataset saved locally to: {dataset_path_local}")
         print("Dataset conversion complete!")
         return
+    elif "molmoact" in cfg.dataset.dataset_name.lower():
+        # Stream + convert directly (LeRobot parquet)
+        from dataset_upload.dataset_loaders.molmoact_loader import convert_molmoact_dataset_to_hf
+
+        print(f"Converting MolmoAct dataset directly to HF from: {cfg.dataset.dataset_path}")
+        dataset = convert_molmoact_dataset_to_hf(
+            dataset_path=cfg.dataset.dataset_path,
+            dataset_name=cfg.dataset.dataset_name,
+            output_dir=cfg.output.output_dir,
+            max_trajectories=cfg.output.max_trajectories,
+            max_frames=cfg.output.max_frames,
+            fps=cfg.output.fps,
+        )
+
+        if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
+            print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")
+            try:
+                dataset.push_to_hub(
+                    cfg.hub.hub_repo_id,
+                    config_name=(cfg.dataset.dataset_name).lower(),
+                    token=cfg.hub.hub_token,
+                    private=False,
+                    commit_message=f"Add {cfg.dataset.dataset_name} dataset for RFM training",
+                )
+                print(
+                    f"✅ Successfully pushed dataset {cfg.dataset.dataset_name} to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}"
+                )
+            except Exception as e:
+                print(f"❌ Error pushing to hub: {e}")
+                print("Dataset was created locally but failed to push metadata to hub")
+        else:
+            dataset_path_local = os.path.join(cfg.output.output_dir, (cfg.dataset.dataset_name).lower())
+            dataset.save_to_disk(dataset_path_local)
+            print(f"Dataset saved locally to: {dataset_path_local}")
+        print("Dataset conversion complete!")
+        return
     elif "egocot" in cfg.dataset.dataset_name.lower():
         from dataset_upload.dataset_loaders.egocot_loader import load_egocot_dataset
 

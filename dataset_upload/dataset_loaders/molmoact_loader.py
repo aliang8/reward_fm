@@ -127,12 +127,8 @@ def convert_molmoact_dataset_to_hf(
                     if ep_idx is None:
                         continue
                     text = (
-                        obj.get("task")
-                        or obj.get("instruction")
-                        or obj.get("description")
-                        or obj.get("caption")
-                        or obj.get("goal")
-                    )
+                        obj.get("tasks")
+                    )[0]
                     if isinstance(text, str) and text.strip():
                         mapping[int(ep_idx)] = text.strip()
         except Exception:
@@ -218,6 +214,7 @@ def convert_molmoact_dataset_to_hf(
                 frames_by_view = {"first_view": [], "second_view": []}
             elif ep_idx != current_ep:
                 task_text = ep_text_map.get(current_ep) 
+                print(f"{task_text} episode loaded")
                 flush_episode(current_ep, task_text, label, frames_by_view)
                 current_ep = ep_idx
                 frames_by_view = {"first_view": [], "second_view": []}
@@ -230,6 +227,7 @@ def convert_molmoact_dataset_to_hf(
 
         if current_ep is not None and produced < max_limit:
             task_text = ep_text_map.get(current_ep)
+            print(f"{task_text} episode loaded")
             flush_episode(current_ep, task_text, label, frames_by_view)
 
         if produced >= max_limit:

@@ -92,9 +92,9 @@ def convert_molmoact_dataset_to_hf(
         raise FileNotFoundError(f"MolmoAct dataset path not found: {root}")
 
     # Discover dataset subdirectories that have episodes.jsonl; if none, fallback to root
-    candidate_dirs: list[Path] = [p for p in root.iterdir() if p.is_dir() and (p / "episodes.jsonl").exists()]
+    candidate_dirs: list[Path] = [p for p in root.iterdir() if p.is_dir() and (p / "train" / "meta" / "episodes.jsonl").exists()]
     if not candidate_dirs:
-        candidate_dirs = [root]
+        raise ValueError("No candidate directories found, falling back to root")
 
     # Language model and cache
     lang_model = load_sentence_transformer_model()
@@ -106,7 +106,7 @@ def convert_molmoact_dataset_to_hf(
 
     def load_episode_text_map(ds_dir: Path) -> dict[int, str]:
         mapping: dict[int, str] = {}
-        jsonl_path = ds_dir / "episodes.jsonl"
+        jsonl_path = ds_dir / "train" / "meta" / "episodes.jsonl"
         if not jsonl_path.exists():
             return mapping
         try:
@@ -217,9 +217,7 @@ def convert_molmoact_dataset_to_hf(
                 current_ep = ep_idx
                 frames_by_view = {"first_view": [], "second_view": []}
             elif ep_idx != current_ep:
-                task_text = ep_text_map.get(current_ep) or (
-                    f"MolmoAct task {row.get('task_index', 0)}" if row.get("task_index") is not None else "MolmoAct"
-                )
+                task_text = ep_text_map.get(current_ep) 
                 flush_episode(current_ep, task_text, label, frames_by_view)
                 current_ep = ep_idx
                 frames_by_view = {"first_view": [], "second_view": []}
@@ -231,7 +229,7 @@ def convert_molmoact_dataset_to_hf(
                     frames_by_view[view_key].append(img)
 
         if current_ep is not None and produced < max_limit:
-            task_text = ep_text_map.get(current_ep) or "MolmoAct"
+            task_text = ep_text_map.get(current_ep)
             flush_episode(current_ep, task_text, label, frames_by_view)
 
         if produced >= max_limit:

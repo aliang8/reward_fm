@@ -26,6 +26,7 @@ from dataset_upload.helpers import (
     flatten_task_data,
     load_sentence_transformer_model,
 )
+from huggingface_hub import HfApi
 
 # make sure these come after importing torch. otherwise something breaks...
 try:
@@ -42,6 +43,19 @@ except Exception:
     pass
 
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
+
+def push_hf_dataset_and_video_files_to_hub(dataset, hub_repo_id, hub_token, dataset_name, output_dir):
+    print(f"Pushing dataset to HuggingFace Hub: {hub_repo_id}")
+    dataset.push_to_hub(hub_repo_id, config_name=dataset_name.lower(), token=hub_token, private=False, commit_message=f"Add {dataset_name} dataset for RFM training")
+    print(f"✅ Successfully pushed dataset to: https://huggingface.co/datasets/{hub_repo_id}")
+    api = HfApi(token=hub_token)
+    api.upload_large_folder(
+        folder_path=output_dir,
+        repo_id=hub_repo_id,
+        repo_type="dataset",
+        num_workers=min(4, cpu_count()),
+    )
+    print(f"✅ Successfully pushed video files for {dataset_name} to: https://huggingface.co/datasets/{hub_repo_id}")
 
 
 def get_trajectory_subdir_path(trajectory_idx: int, files_per_subdir: int = 1000) -> str:
@@ -477,31 +491,7 @@ def main(cfg: GenerateConfig):
         if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
             print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")
             try:
-                dataset.push_to_hub(
-                    cfg.hub.hub_repo_id,
-                    config_name=(cfg.dataset.dataset_name).lower(),
-                    token=cfg.hub.hub_token,
-                    private=False,
-                    commit_message=f"Add {cfg.dataset.dataset_name} dataset for RFM training",
-                )
-                print(
-                    f"✅ Successfully pushed dataset {cfg.dataset.dataset_name} to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}"
-                )
-
-                # Push the large video folder(s)
-                print("\nPushing video files to HuggingFace Hub...")
-                from huggingface_hub import HfApi
-
-                api = HfApi(token=cfg.hub.hub_token)
-                api.upload_large_folder(
-                    folder_path=cfg.output.output_dir,
-                    repo_id=cfg.hub.hub_repo_id,
-                    repo_type="dataset",
-                    num_workers=min(4, cpu_count()),  # low number of workers to avoid running into upload limits
-                )
-                print(
-                    f"✅ Successfully pushed video files for {cfg.dataset.dataset_name} to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}"
-                )
+                push_hf_dataset_and_video_files_to_hub(dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir)
             except Exception as e:
                 print(f"❌ Error pushing to hub: {e}")
                 print("Dataset was created locally but failed to push videos and/or metadata to hub")
@@ -549,31 +539,7 @@ def main(cfg: GenerateConfig):
         if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
             print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")
             try:
-                dataset.push_to_hub(
-                    cfg.hub.hub_repo_id,
-                    config_name=(cfg.dataset.dataset_name).lower(),
-                    token=cfg.hub.hub_token,
-                    private=False,
-                    commit_message=f"Add {cfg.dataset.dataset_name} dataset for RFM training",
-                )
-                print(
-                    f"✅ Successfully pushed dataset {cfg.dataset.dataset_name} to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}"
-                )
-
-                # Push the large video folder(s)
-                print("\nPushing video files to HuggingFace Hub...")
-                from huggingface_hub import HfApi
-
-                api = HfApi(token=cfg.hub.hub_token)
-                api.upload_large_folder(
-                    folder_path=cfg.output.output_dir,
-                    repo_id=cfg.hub.hub_repo_id,
-                    repo_type="dataset",
-                    num_workers=min(4, cpu_count()),
-                )
-                print(
-                    f"✅ Successfully pushed video files for {cfg.dataset.dataset_name} to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}"
-                )
+                push_hf_dataset_and_video_files_to_hub(dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir)
             except Exception as e:
                 print(f"❌ Error pushing to hub: {e}")
                 print("Dataset was created locally but failed to push videos and/or metadata to hub")
@@ -604,27 +570,7 @@ def main(cfg: GenerateConfig):
         if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
             print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")
             try:
-                dataset.push_to_hub(
-                    cfg.hub.hub_repo_id,
-                    config_name=(cfg.dataset.dataset_name).lower(),
-                    token=cfg.hub.hub_token,
-                    private=False,
-                    commit_message=f"Add {cfg.dataset.dataset_name} dataset for RFM training",
-                )
-                print(
-                    f"✅ Successfully pushed dataset {cfg.dataset.dataset_name} to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}"
-                )
-                from huggingface_hub import HfApi
-                api = HfApi(token=cfg.hub.hub_token)
-                api.upload_large_folder(
-                    folder_path=cfg.output.output_dir,
-                    repo_id=cfg.hub.hub_repo_id,
-                    repo_type="dataset",
-                    num_workers=min(4, cpu_count()),
-                )
-                print(
-                    f"✅ Successfully pushed video files for {cfg.dataset.dataset_name} to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}"
-                )
+                push_hf_dataset_and_video_files_to_hub(dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir)
             except Exception as e:
                 print(f"❌ Error pushing to hub: {e}")
                 print("Dataset was created locally but failed to push videos and/or metadata to hub")
@@ -671,25 +617,7 @@ def main(cfg: GenerateConfig):
         if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
             print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")
             try:
-                dataset.push_to_hub(
-                    cfg.hub.hub_repo_id,
-                    config_name=(cfg.dataset.dataset_name).lower(),
-                    token=cfg.hub.hub_token,
-                    private=False,
-                    commit_message=f"Add {cfg.dataset.dataset_name} dataset for RFM training",
-                )
-                print(
-                    f"✅ Successfully pushed dataset {cfg.dataset.dataset_name} to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}"
-                )
-                from huggingface_hub import HfApi
-                api = HfApi(token=cfg.hub.hub_token)
-                api.upload_large_folder(
-                    folder_path=cfg.output.output_dir,
-                    repo_id=cfg.hub.hub_repo_id,
-                    repo_type="dataset",
-                    num_workers=min(4, cpu_count()),
-                )
-                print(f"✅ Successfully pushed video files for {cfg.dataset.dataset_name} to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}")
+                push_hf_dataset_and_video_files_to_hub(dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir)
             except Exception as e:
                 print(f"❌ Error pushing to hub: {e}")
                 print("Dataset was created locally but failed to push metadata to hub")
@@ -714,18 +642,8 @@ def main(cfg: GenerateConfig):
         )
 
         if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
-            print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")
             try:
-                dataset.push_to_hub(
-                    cfg.hub.hub_repo_id,
-                    config_name=(cfg.dataset.dataset_name).lower(),
-                    token=cfg.hub.hub_token,
-                    private=False,
-                    commit_message=f"Add {cfg.dataset.dataset_name} dataset for RFM training",
-                )
-                print(
-                    f"✅ Successfully pushed dataset {cfg.dataset.dataset_name} to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}"
-                )
+                push_hf_dataset_and_video_files_to_hub(dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir)
             except Exception as e:
                 print(f"❌ Error pushing to hub: {e}")
                 print("Dataset was created locally but failed to push metadata to hub")

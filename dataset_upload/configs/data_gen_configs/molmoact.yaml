@@ -1,7 +1,7 @@
 # config.yaml
 dataset:
   dataset_path: ./datasets/molmoact   # Root containing parquet files
-  dataset_name: molmoact
+  dataset_name: molmoact_dataset_household
 
 output:
   output_dir: ./rfm_dataset/molmoact_rfm

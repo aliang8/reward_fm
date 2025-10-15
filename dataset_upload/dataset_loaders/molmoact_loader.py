@@ -80,63 +80,89 @@ def convert_molmoact_dataset_to_hf(
     max_frames: int = 64,
     fps: int = 10,
 ) -> Dataset:
-    """Stream the MolmoAct LeRobot (parquet) dataset and convert to HF by writing videos directly.
+    """Stream MolmoAct LeRobot (parquet) and convert to HF, using episodes.jsonl for task text.
 
-    Assumes dataset_path points to a folder containing the MolmoAct parquet files (can include multiple subfolders).
-    Groups rows by `episode_index` and writes videos per view: `first_view`, `second_view`.
+    Assumes dataset_path contains one or more subdirectories, each with parquet files and an
+    associated episodes.jsonl. We iterate per subdirectory to avoid episode_index collisions,
+    grouping rows by `episode_index` and writing videos for `first_view` and `second_view`.
     """
 
-    # Discover parquet files
     root = Path(os.path.expanduser(dataset_path))
     if not root.exists():
         raise FileNotFoundError(f"MolmoAct dataset path not found: {root}")
 
-    patterns = ["**/*.parquet", "*.parquet"]
-    data_files: list[str] = []
-    for pat in patterns:
-        data_files.extend([str(p) for p in root.glob(pat)])
-    if not data_files:
-        raise ValueError(f"No parquet files found under {root}")
+    # Discover dataset subdirectories that have episodes.jsonl; if none, fallback to root
+    candidate_dirs: list[Path] = [p for p in root.iterdir() if p.is_dir() and (p / "episodes.jsonl").exists()]
+    if not candidate_dirs:
+        candidate_dirs = [root]
 
-    # Stream the dataset
-    ds_iter = load_dataset(
-        "parquet",
-        data_files={"train": data_files},
-        split="train",
-        streaming=True,
-    )
-
-    # Language model (use a simple constant description or task_index if present)
+    # Language model and cache
     lang_model = load_sentence_transformer_model()
+    lang_cache: dict[str, Any] = {}
 
-    current_ep: Optional[int] = None
-    frames_by_view: dict[str, list[np.ndarray]] = {}
     entries: list[dict] = []
     produced = 0
     max_limit = float("inf") if (max_trajectories is None or max_trajectories == -1) else int(max_trajectories)
 
-    def flush_episode(ep_idx: int, task_text: str) -> None:
+    def load_episode_text_map(ds_dir: Path) -> dict[int, str]:
+        mapping: dict[int, str] = {}
+        jsonl_path = ds_dir / "episodes.jsonl"
+        if not jsonl_path.exists():
+            return mapping
+        try:
+            import json
+
+            with open(jsonl_path, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except Exception:
+                        continue
+                    ep_idx = obj.get("episode_index")
+                    if ep_idx is None:
+                        ep_idx = obj.get("index")
+                    if ep_idx is None:
+                        continue
+                    text = (
+                        obj.get("task")
+                        or obj.get("instruction")
+                        or obj.get("description")
+                        or obj.get("caption")
+                        or obj.get("goal")
+                    )
+                    if isinstance(text, str) and text.strip():
+                        mapping[int(ep_idx)] = text.strip()
+        except Exception:
+            pass
+        return mapping
+
+    def flush_episode(ep_idx: int, task_text: str, label: str, frames_by_view: dict[str, list[np.ndarray]]) -> None:
         nonlocal produced, entries
         if not frames_by_view:
             return
-        lang_vec = lang_model.encode(task_text)
+        if task_text not in lang_cache:
+            lang_cache[task_text] = lang_model.encode(task_text)
+        lang_vec = lang_cache[task_text]
+
         for view_key, frames in frames_by_view.items():
             if not frames:
                 continue
-            # Skip empty/black sequences heuristically
             if isinstance(frames[0], np.ndarray) and np.all(frames[0] == 0):
                 continue
 
             full_path, rel_path = _build_molmo_video_paths(
                 output_dir=output_dir,
-                dataset_label=dataset_name,
+                dataset_label=label,
                 episode_idx=ep_idx,
                 view_key=view_key,
             )
 
             traj_dict = {
                 "id": generate_unique_id(),
-                "frames": frames,  # pass list to avoid extra copies
+                "frames": frames,
                 "task": task_text,
                 "is_robot": True,
                 "quality_label": "successful",
@@ -158,43 +184,58 @@ def convert_molmoact_dataset_to_hf(
                 entries.append(entry)
                 produced += 1
 
-    # Iterate streaming rows and group by episode_index
-    print("Streaming MolmoAct rows and grouping by episode_index...")
-    for row in tqdm(ds_iter, desc="MolmoAct rows"):
-        ep_idx = int(row.get("episode_index", -1))
-        if ep_idx < 0:
-            # Skip rows without episode index
+    # Process each dataset directory independently to avoid ep-index collisions
+    for ds_dir in candidate_dirs:
+        ep_text_map = load_episode_text_map(ds_dir)
+
+        # Discover parquet files in ds_dir
+        data_files: list[str] = []
+        for pat in ("**/*.parquet", "*.parquet"):
+            data_files.extend([str(p) for p in ds_dir.glob(pat)])
+        if not data_files:
             continue
 
-        # If new episode starts, flush previous
-        if current_ep is None:
-            current_ep = ep_idx
-            frames_by_view = {"first_view": [], "second_view": []}
-        elif ep_idx != current_ep:
-            # Use task_index if present; otherwise a constant label
-            task_text = (
-                f"MolmoAct task {row.get('task_index', 0)}"
-                if row.get("task_index") is not None
-                else "MolmoAct"
-            )
-            flush_episode(current_ep, task_text)
-            print(f"Produced {produced} trajectories")
+        ds_iter = load_dataset(
+            "parquet",
+            data_files={"train": data_files},
+            split="train",
+            streaming=True,
+        )
+
+        current_ep: Optional[int] = None
+        frames_by_view: dict[str, list[np.ndarray]] = {}
+        label = f"{dataset_name}_{ds_dir.name}"
+
+        for row in tqdm(ds_iter, desc=f"MolmoAct rows ({ds_dir.name})"):
             if produced >= max_limit:
                 break
-            current_ep = ep_idx
-            frames_by_view = {"first_view": [], "second_view": []}
+            ep_idx = int(row.get("episode_index", -1))
+            if ep_idx < 0:
+                continue
 
-        # Append frames for available views
-        for view_key in ("first_view", "second_view"):
-            cell = row.get(view_key)
-            img = _to_rgb_numpy(cell)
-            if img is not None:
-                frames_by_view[view_key].append(img)
+            if current_ep is None:
+                current_ep = ep_idx
+                frames_by_view = {"first_view": [], "second_view": []}
+            elif ep_idx != current_ep:
+                task_text = ep_text_map.get(current_ep) or (
+                    f"MolmoAct task {row.get('task_index', 0)}" if row.get("task_index") is not None else "MolmoAct"
+                )
+                flush_episode(current_ep, task_text, label, frames_by_view)
+                current_ep = ep_idx
+                frames_by_view = {"first_view": [], "second_view": []}
 
-    # Flush last episode
-    if current_ep is not None and produced < max_limit:
-        task_text = "MolmoAct"
-        flush_episode(current_ep, task_text)
+            for view_key in ("first_view", "second_view"):
+                cell = row.get(view_key)
+                img = _to_rgb_numpy(cell)
+                if img is not None:
+                    frames_by_view[view_key].append(img)
+
+        if current_ep is not None and produced < max_limit:
+            task_text = ep_text_map.get(current_ep) or "MolmoAct"
+            flush_episode(current_ep, task_text, label, frames_by_view)
+
+        if produced >= max_limit:
+            break
 
     if not entries:
         return Dataset.from_dict(

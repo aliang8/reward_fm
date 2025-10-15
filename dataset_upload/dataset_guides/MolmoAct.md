@@ -26,7 +26,7 @@ Source: `https://huggingface.co/datasets/allenai/MolmoAct-Dataset`
 
 dataset:
   dataset_path: ./datasets/molmoact
-  dataset_name: molmoact
+  dataset_name: molmoact_dataset_tabletop
 
 output:
   output_dir: ./rfm_dataset/molmoact_rfm
@@ -46,7 +46,7 @@ hub:
 ## Usage
 
 ```bash
-uv run python -m dataset_upload.generate_hf_dataset --config_path=dataset_upload/configs/data_gen_configs/molmoact.yaml
+bash dataset_upload/data_scripts/molmoact/gen_all_molmoact.sh
 ```
 
 This will:

@@ -178,6 +178,7 @@ def convert_molmoact_dataset_to_hf(
                 else "MolmoAct"
             )
             flush_episode(current_ep, task_text)
+            print(f"Produced {produced} trajectories")
             if produced >= max_limit:
                 break
             current_ep = ep_idx

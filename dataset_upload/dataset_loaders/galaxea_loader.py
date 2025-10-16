@@ -58,7 +58,7 @@ def _parse_low_level_english(instruction: bytes | str) -> str | None:
 
 
 def _process_single_galaxea_episode(args):
-    episode, ep_idx, task, lang_vec, output_dir, dataset_name, rlds_name, max_frames, fps, valid_img_keys = args
+    episode, ep_idx, task, lang_vec, output_dir, dataset_name, max_frames, fps, valid_img_keys = args
 
     episode_entries = []
     first_step = next(episode)
@@ -82,7 +82,7 @@ def _process_single_galaxea_episode(args):
 
         full_path, rel_path = _build_galaxea_video_paths(
             output_dir=output_dir,
-            dataset_label=rlds_name,
+            dataset_label=dataset_name,
             episode_idx=ep_idx,
             view_key=img_key,
         )
@@ -238,7 +238,6 @@ def convert_galaxea_dataset_to_hf(
                     [v for (_, _, v) in info_batch],
                     [output_dir] * len(episode_batch),
                     [dataset_name] * len(episode_batch),
-                    [rlds_name] * len(episode_batch),
                     [max_frames] * len(episode_batch),
                     [fps] * len(episode_batch),
                     [valid_img_keys] * len(episode_batch),

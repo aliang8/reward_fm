@@ -363,6 +363,53 @@ def convert_oxe_dataset_to_hf(
             if produced >= max_limit:
                 break
 
+        # at end
+        if num_workers == 1:
+            # Sequential processing
+            for args in zip(
+                episode_batch,
+                [info[0] for info in episode_info_batch],
+                [info[1] for info in episode_info_batch],
+                [info[2] for info in episode_info_batch],
+                [output_dir] * len(episode_batch),
+                [dataset_name] * len(episode_batch),
+                [max_frames] * len(episode_batch),
+                [fps] * len(episode_batch),
+                [valid_img_keys] * len(episode_batch),
+                strict=False,
+            ):
+                episode_entries = _process_single_oxe_episode(args)
+                entries.extend(episode_entries)
+                produced += len(episode_entries)
+        else:
+            # Parallel processing
+            from multiprocessing import Pool
+
+            # Prepare arguments for workers
+            worker_args = list(
+                zip(
+                    episode_batch,
+                    [info[0] for info in episode_info_batch],
+                    [info[1] for info in episode_info_batch],
+                    [info[2] for info in episode_info_batch],
+                    [output_dir] * len(episode_batch),
+                    [dataset_name] * len(episode_batch),
+                    [max_frames] * len(episode_batch),
+                    [fps] * len(episode_batch),
+                    [valid_img_keys] * len(episode_batch),
+                    strict=False,
+                )
+            )
+
+            with Pool(processes=num_workers) as pool:
+                results = list(
+                    tqdm(
+                        pool.imap_unordered(_process_single_oxe_episode, worker_args),
+                        total=len(worker_args),
+                        desc=f"Processing batch (workers={num_workers})",
+                    )
+                )
+
         # For language_table, cap the number of episodes considered
         if base_ds_name == "language_table" and ep_idx + 1 >= MAX_LANGTABLE_EPISODES:
             break

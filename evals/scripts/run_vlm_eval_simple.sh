@@ -27,6 +27,9 @@ echo "  Batches: $BATCHES"
 echo "  Batch size: $BATCH_SIZE"
 echo ""
 
+# Set dataset path for the eval system
+export RFM_PROCESSED_DATASETS_PATH="$(pwd)/datasets"
+
 # Start RL-VLM-F server
 echo "Starting RL-VLM-F server on port 8002..."
 cd evals/baselines/rlvlmf_base
@@ -38,7 +41,7 @@ cd ../../..
 echo "Waiting for server to start..."
 sleep 5
 
-# Run evaluation
+# Run evaluation  
 echo "Running evaluation on LIBERO $DATASET..."
 uv run python evals/run_model_eval.py \
     --config rfm/configs/eval_config.yaml \
@@ -46,7 +49,9 @@ uv run python evals/run_model_eval.py \
     --set batch_size=$BATCH_SIZE \
     --set num_batches=$BATCHES \
     --set data.eval_datasets='["datasets/libero_rfm"]' \
-    --set data.eval_subsets='[["'$DATASET'"]]'
+    --set data.eval_subsets='[["'$DATASET'"]]' \
+    --set custom_eval.eval_types='["policy_ranking"]' \
+    --set custom_eval.policy_ranking='[["datasets/libero_rfm","'$DATASET'"]]'
 
 # Cleanup
 echo ""

@@ -31,7 +31,7 @@ class BatchPayload(BaseModel):
     samples: List[SamplePayload]
 
 
-def create_app(task_description: str = "", use_temporal_prompts: bool = False) -> FastAPI:
+def create_app(task_description: str = "", debug: bool = False) -> FastAPI:
     """Create FastAPI app with VLM backend."""
     
     app = FastAPI(title="VLM Evaluation Server")
@@ -43,19 +43,18 @@ def create_app(task_description: str = "", use_temporal_prompts: bool = False) -
         allow_headers=["*"],
     )
     
-    # Initialize VLM - fail fast if API key missing
-    print("Initializing VLM baseline...")
-    print("Frame handling: Using all frames provided by client")
-    if use_temporal_prompts:
-        print("Prompting: Temporal-aware for >4 total frames (EXPERIMENTAL)")
-    else:
-        print("Prompting: RL-VLM-F baseline (DEFAULT)")
+    # Initialize VLM
+    print("🚀 Initializing VLM baseline...")
+    print("📍 Smart frame selection: last frame from each trajectory")
+    print("🔍 RL-VLM-F prompting: 2-frame comparison")
+    if debug:
+        print("🐛 Debug mode enabled")
     
     vlm = VLMPreferenceBaseline(
         vlm_provider="gemini", 
         verbose=True,
-        use_temporal_prompts=use_temporal_prompts,
-        log_dir="vlm_eval_logs"  # Enable detailed logging
+        debug=debug,
+        log_dir="vlm_eval_logs"
     )
     print("VLM ready!")
     
@@ -142,23 +141,17 @@ def main():
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--task", default="", help="Task description for VLM queries")
-    parser.add_argument("--temporal", action="store_true", 
-                       help="Enable temporal-aware prompting for multi-frame trajectories (experimental)")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     args = parser.parse_args()
     
     print(f"\n{'='*50}")
     print(f"VLM Evaluation Server")
     if args.task:
         print(f"Task: {args.task}")
-    print(f"Frame handling: Client-driven (uses all frames sent)")
-    if args.temporal:
-        print(f"Prompting: Temporal-aware (EXPERIMENTAL)")
-    else:
-        print(f"Prompting: RL-VLM-F baseline (DEFAULT)")
-    print(f"Same API as main server.py")
+    print(f"API: Same as main server.py")
     print(f"{'='*50}\n")
     
-    app = create_app(args.task, args.temporal)
+    app = create_app(args.task, args.debug)
     uvicorn.run(app, host=args.host, port=args.port)
 
 

@@ -1,0 +1,921 @@
+{
+  "start_time": "2025-09-01T19:00:20.645620",
+  "api_key_set": true,
+  "temperature": 0.0,
+  "debug_mode": true,
+  "max_frames": 15,
+  "offset": 0.5,
+  "samples": [
+    {
+      "sample_id": 0,
+      "task": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+      "num_chosen_frames": 8,
+      "num_rejected_frames": 8,
+      "prompting_strategy": "gvl_task_completion",
+      "success": true,
+      "error": null,
+      "chosen_completions": [
+        0,
+        10,
+        10,
+        10,
+        40,
+        60,
+        50,
+        50
+      ],
+      "rejected_completions": [
+        0,
+        0,
+        40,
+        60,
+        50,
+        50,
+        50,
+        60
+      ],
+      "preference": "rejected",
+      "comparison_result": {
+        "chosen_final": 50,
+        "rejected_final": 60,
+        "chosen_trajectory": [
+          0,
+          10,
+          10,
+          10,
+          40,
+          60,
+          50,
+          50
+        ],
+        "rejected_trajectory": [
+          0,
+          0,
+          40,
+          60,
+          50,
+          50,
+          50,
+          60
+        ],
+        "completion_diff": -10,
+        "threshold": 5.0
+      },
+      "chosen_is_first": true,
+      "is_correct": false,
+      "processing_time_seconds": 16.548937797546387
+    },
+    {
+      "sample_id": 1,
+      "task": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+      "num_chosen_frames": 8,
+      "num_rejected_frames": 6,
+      "prompting_strategy": "gvl_task_completion",
+      "success": true,
+      "error": null,
+      "chosen_completions": [
+        0,
+        5,
+        5,
+        10,
+        40,
+        50,
+        50,
+        50
+      ],
+      "rejected_completions": [
+        10,
+        40,
+        40,
+        20,
+        40,
+        40
+      ],
+      "preference": "chosen",
+      "comparison_result": {
+        "chosen_final": 50,
+        "rejected_final": 40,
+        "chosen_trajectory": [
+          0,
+          5,
+          5,
+          10,
+          40,
+          50,
+          50,
+          50
+        ],
+        "rejected_trajectory": [
+          10,
+          40,
+          40,
+          20,
+          40,
+          40
+        ],
+        "completion_diff": 10,
+        "threshold": 5.0
+      },
+      "chosen_is_first": true,
+      "is_correct": true,
+      "processing_time_seconds": 5.656341075897217
+    },
+    {
+      "sample_id": 2,
+      "task": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+      "num_chosen_frames": 8,
+      "num_rejected_frames": 9,
+      "prompting_strategy": "gvl_task_completion",
+      "success": true,
+      "error": null,
+      "chosen_completions": [
+        0,
+        10,
+        10,
+        30,
+        50,
+        70,
+        50,
+        50
+      ],
+      "rejected_completions": [
+        0,
+        0,
+        0,
+        33,
+        33,
+        66,
+        33,
+        66,
+        33
+      ],
+      "preference": "chosen",
+      "comparison_result": {
+        "chosen_final": 50,
+        "rejected_final": 33,
+        "chosen_trajectory": [
+          0,
+          10,
+          10,
+          30,
+          50,
+          70,
+          50,
+          50
+        ],
+        "rejected_trajectory": [
+          0,
+          0,
+          0,
+          33,
+          33,
+          66,
+          33,
+          66,
+          33
+        ],
+        "completion_diff": 17,
+        "threshold": 5.0
+      },
+      "chosen_is_first": false,
+      "is_correct": true,
+      "processing_time_seconds": 6.48818826675415
+    },
+    {
+      "sample_id": 3,
+      "task": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+      "num_chosen_frames": 8,
+      "num_rejected_frames": 6,
+      "prompting_strategy": "gvl_task_completion",
+      "success": true,
+      "error": null,
+      "chosen_completions": [
+        0,
+        5,
+        5,
+        10,
+        35,
+        40,
+        40,
+        30
+      ],
+      "rejected_completions": [
+        0,
+        10,
+        50,
+        60,
+        50,
+        10
+      ],
+      "preference": "chosen",
+      "comparison_result": {
+        "chosen_final": 30,
+        "rejected_final": 10,
+        "chosen_trajectory": [
+          0,
+          5,
+          5,
+          10,
+          35,
+          40,
+          40,
+          30
+        ],
+        "rejected_trajectory": [
+          0,
+          10,
+          50,
+          60,
+          50,
+          10
+        ],
+        "completion_diff": 20,
+        "threshold": 5.0
+      },
+      "chosen_is_first": false,
+      "is_correct": true,
+      "processing_time_seconds": 7.150857925415039
+    },
+    {
+      "sample_id": 4,
+      "task": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+      "num_chosen_frames": 8,
+      "num_rejected_frames": 4,
+      "prompting_strategy": "gvl_task_completion",
+      "success": true,
+      "error": null,
+      "chosen_completions": [
+        0,
+        5,
+        5,
+        10,
+        10,
+        55,
+        50,
+        50
+      ],
+      "rejected_completions": [
+        0,
+        40,
+        10,
+        40
+      ],
+      "preference": "chosen",
+      "comparison_result": {
+        "chosen_final": 50,
+        "rejected_final": 40,
+        "chosen_trajectory": [
+          0,
+          5,
+          5,
+          10,
+          10,
+          55,
+          50,
+          50
+        ],
+        "rejected_trajectory": [
+          0,
+          40,
+          10,
+          40
+        ],
+        "completion_diff": 10,
+        "threshold": 5.0
+      },
+      "chosen_is_first": false,
+      "is_correct": true,
+      "processing_time_seconds": 5.559612035751343
+    },
+    {
+      "sample_id": 5,
+      "task": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+      "num_chosen_frames": 8,
+      "num_rejected_frames": 4,
+      "prompting_strategy": "gvl_task_completion",
+      "success": true,
+      "error": null,
+      "chosen_completions": [
+        0,
+        10,
+        10,
+        50,
+        60,
+        50,
+        50,
+        50
+      ],
+      "rejected_completions": [
+        0,
+        30,
+        40,
+        30
+      ],
+      "preference": "chosen",
+      "comparison_result": {
+        "chosen_final": 50,
+        "rejected_final": 30,
+        "chosen_trajectory": [
+          0,
+          10,
+          10,
+          50,
+          60,
+          50,
+          50,
+          50
+        ],
+        "rejected_trajectory": [
+          0,
+          30,
+          40,
+          30
+        ],
+        "completion_diff": 20,
+        "threshold": 5.0
+      },
+      "chosen_is_first": true,
+      "is_correct": true,
+      "processing_time_seconds": 5.212076902389526
+    },
+    {
+      "sample_id": 6,
+      "task": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+      "num_chosen_frames": 8,
+      "num_rejected_frames": 4,
+      "prompting_strategy": "gvl_task_completion",
+      "success": true,
+      "error": null,
+      "chosen_completions": [
+        0,
+        0,
+        0,
+        40,
+        45,
+        50,
+        10,
+        50
+      ],
+      "rejected_completions": [
+        10,
+        20,
+        50,
+        20
+      ],
+      "preference": "chosen",
+      "comparison_result": {
+        "chosen_final": 50,
+        "rejected_final": 20,
+        "chosen_trajectory": [
+          0,
+          0,
+          0,
+          40,
+          45,
+          50,
+          10,
+          50
+        ],
+        "rejected_trajectory": [
+          10,
+          20,
+          50,
+          20
+        ],
+        "completion_diff": 30,
+        "threshold": 5.0
+      },
+      "chosen_is_first": false,
+      "is_correct": true,
+      "processing_time_seconds": 5.620932102203369
+    },
+    {
+      "sample_id": 7,
+      "task": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+      "num_chosen_frames": 8,
+      "num_rejected_frames": 10,
+      "prompting_strategy": "gvl_task_completion",
+      "success": true,
+      "error": null,
+      "chosen_completions": [
+        0,
+        10,
+        10,
+        10,
+        50,
+        50,
+        50,
+        50
+      ],
+      "rejected_completions": [
+        0,
+        0,
+        80,
+        80,
+        40,
+        40,
+        50,
+        40,
+        40,
+        80
+      ],
+      "preference": "rejected",
+      "comparison_result": {
+        "chosen_final": 50,
+        "rejected_final": 80,
+        "chosen_trajectory": [
+          0,
+          10,
+          10,
+          10,
+          50,
+          50,
+          50,
+          50
+        ],
+        "rejected_trajectory": [
+          0,
+          0,
+          80,
+          80,
+          40,
+          40,
+          50,
+          40,
+          40,
+          80
+        ],
+        "completion_diff": -30,
+        "threshold": 5.0
+      },
+      "chosen_is_first": false,
+      "is_correct": false,
+      "processing_time_seconds": 8.29912781715393
+    },
+    {
+      "sample_id": 8,
+      "task": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+      "num_chosen_frames": 8,
+      "num_rejected_frames": 10,
+      "prompting_strategy": "gvl_task_completion",
+      "success": true,
+      "error": null,
+      "chosen_completions": [
+        0,
+        0,
+        10,
+        20,
+        50,
+        40,
+        50,
+        30
+      ],
+      "rejected_completions": [
+        0,
+        0,
+        5,
+        10,
+        45,
+        40,
+        50,
+        40,
+        45,
+        10
+      ],
+      "preference": "chosen",
+      "comparison_result": {
+        "chosen_final": 30,
+        "rejected_final": 10,
+        "chosen_trajectory": [
+          0,
+          0,
+          10,
+          20,
+          50,
+          40,
+          50,
+          30
+        ],
+        "rejected_trajectory": [
+          0,
+          0,
+          5,
+          10,
+          45,
+          40,
+          50,
+          40,
+          45,
+          10
+        ],
+        "completion_diff": 20,
+        "threshold": 5.0
+      },
+      "chosen_is_first": true,
+      "is_correct": true,
+      "processing_time_seconds": 7.535661220550537
+    },
+    {
+      "sample_id": 9,
+      "task": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+      "num_chosen_frames": 8,
+      "num_rejected_frames": 9,
+      "prompting_strategy": "gvl_task_completion",
+      "success": true,
+      "error": null,
+      "chosen_completions": [
+        0,
+        10,
+        10,
+        20,
+        80,
+        50,
+        50,
+        40
+      ],
+      "rejected_completions": [
+        0,
+        5,
+        5,
+        10,
+        50,
+        60,
+        50,
+        10,
+        5
+      ],
+      "preference": "chosen",
+      "comparison_result": {
+        "chosen_final": 40,
+        "rejected_final": 5,
+        "chosen_trajectory": [
+          0,
+          10,
+          10,
+          20,
+          80,
+          50,
+          50,
+          40
+        ],
+        "rejected_trajectory": [
+          0,
+          5,
+          5,
+          10,
+          50,
+          60,
+          50,
+          10,
+          5
+        ],
+        "completion_diff": 35,
+        "threshold": 5.0
+      },
+      "chosen_is_first": false,
+      "is_correct": true,
+      "processing_time_seconds": 6.536433219909668
+    },
+    {
+      "sample_id": 10,
+      "task": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+      "num_chosen_frames": 8,
+      "num_rejected_frames": 6,
+      "prompting_strategy": "gvl_task_completion",
+      "success": true,
+      "error": null,
+      "chosen_completions": [
+        0,
+        10,
+        15,
+        30,
+        20,
+        60,
+        50,
+        45
+      ],
+      "rejected_completions": [
+        0,
+        40,
+        50,
+        20,
+        50,
+        40
+      ],
+      "preference": "chosen",
+      "comparison_result": {
+        "chosen_final": 45,
+        "rejected_final": 40,
+        "chosen_trajectory": [
+          0,
+          10,
+          15,
+          30,
+          20,
+          60,
+          50,
+          45
+        ],
+        "rejected_trajectory": [
+          0,
+          40,
+          50,
+          20,
+          50,
+          40
+        ],
+        "completion_diff": 5,
+        "threshold": 5.0
+      },
+      "chosen_is_first": true,
+      "is_correct": true,
+      "processing_time_seconds": 6.458323955535889
+    },
+    {
+      "sample_id": 11,
+      "task": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+      "num_chosen_frames": 8,
+      "num_rejected_frames": 6,
+      "prompting_strategy": "gvl_task_completion",
+      "success": true,
+      "error": null,
+      "chosen_completions": [
+        0,
+        10,
+        10,
+        15,
+        40,
+        20,
+        60,
+        50
+      ],
+      "rejected_completions": [
+        0,
+        0,
+        5,
+        40,
+        50,
+        30
+      ],
+      "preference": "chosen",
+      "comparison_result": {
+        "chosen_final": 50,
+        "rejected_final": 30,
+        "chosen_trajectory": [
+          0,
+          10,
+          10,
+          15,
+          40,
+          20,
+          60,
+          50
+        ],
+        "rejected_trajectory": [
+          0,
+          0,
+          5,
+          40,
+          50,
+          30
+        ],
+        "completion_diff": 20,
+        "threshold": 5.0
+      },
+      "chosen_is_first": false,
+      "is_correct": true,
+      "processing_time_seconds": 6.00159215927124
+    },
+    {
+      "sample_id": 12,
+      "task": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+      "num_chosen_frames": 8,
+      "num_rejected_frames": 7,
+      "prompting_strategy": "gvl_task_completion",
+      "success": true,
+      "error": null,
+      "chosen_completions": [
+        0,
+        0,
+        0,
+        30,
+        30,
+        20,
+        20,
+        10
+      ],
+      "rejected_completions": [
+        0,
+        0,
+        30,
+        40,
+        50,
+        40,
+        30
+      ],
+      "preference": "rejected",
+      "comparison_result": {
+        "chosen_final": 10,
+        "rejected_final": 30,
+        "chosen_trajectory": [
+          0,
+          0,
+          0,
+          30,
+          30,
+          20,
+          20,
+          10
+        ],
+        "rejected_trajectory": [
+          0,
+          0,
+          30,
+          40,
+          50,
+          40,
+          30
+        ],
+        "completion_diff": -20,
+        "threshold": 5.0
+      },
+      "chosen_is_first": false,
+      "is_correct": false,
+      "processing_time_seconds": 5.9117231369018555
+    },
+    {
+      "sample_id": 13,
+      "task": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+      "num_chosen_frames": 8,
+      "num_rejected_frames": 6,
+      "prompting_strategy": "gvl_task_completion",
+      "success": true,
+      "error": null,
+      "chosen_completions": [
+        0,
+        10,
+        25,
+        40,
+        35,
+        30,
+        45,
+        45
+      ],
+      "rejected_completions": [
+        10,
+        40,
+        10,
+        20,
+        10,
+        40
+      ],
+      "preference": "chosen",
+      "comparison_result": {
+        "chosen_final": 45,
+        "rejected_final": 40,
+        "chosen_trajectory": [
+          0,
+          10,
+          25,
+          40,
+          35,
+          30,
+          45,
+          45
+        ],
+        "rejected_trajectory": [
+          10,
+          40,
+          10,
+          20,
+          10,
+          40
+        ],
+        "completion_diff": 5,
+        "threshold": 5.0
+      },
+      "chosen_is_first": true,
+      "is_correct": true,
+      "processing_time_seconds": 5.595193862915039
+    },
+    {
+      "sample_id": 14,
+      "task": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+      "num_chosen_frames": 8,
+      "num_rejected_frames": 5,
+      "prompting_strategy": "gvl_task_completion",
+      "success": true,
+      "error": null,
+      "chosen_completions": [
+        0,
+        0,
+        10,
+        20,
+        50,
+        35,
+        30,
+        30
+      ],
+      "rejected_completions": [
+        0,
+        25,
+        5,
+        25,
+        5
+      ],
+      "preference": "chosen",
+      "comparison_result": {
+        "chosen_final": 30,
+        "rejected_final": 5,
+        "chosen_trajectory": [
+          0,
+          0,
+          10,
+          20,
+          50,
+          35,
+          30,
+          30
+        ],
+        "rejected_trajectory": [
+          0,
+          25,
+          5,
+          25,
+          5
+        ],
+        "completion_diff": 25,
+        "threshold": 5.0
+      },
+      "chosen_is_first": false,
+      "is_correct": true,
+      "processing_time_seconds": 10.701961040496826
+    },
+    {
+      "sample_id": 15,
+      "task": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+      "num_chosen_frames": 8,
+      "num_rejected_frames": 7,
+      "prompting_strategy": "gvl_task_completion",
+      "success": true,
+      "error": null,
+      "chosen_completions": [
+        0,
+        0,
+        5,
+        10,
+        50,
+        50,
+        50,
+        50
+      ],
+      "rejected_completions": [
+        0,
+        10,
+        50,
+        40,
+        20,
+        20,
+        20
+      ],
+      "preference": "chosen",
+      "comparison_result": {
+        "chosen_final": 50,
+        "rejected_final": 20,
+        "chosen_trajectory": [
+          0,
+          0,
+          5,
+          10,
+          50,
+          50,
+          50,
+          50
+        ],
+        "rejected_trajectory": [
+          0,
+          10,
+          50,
+          40,
+          20,
+          20,
+          20
+        ],
+        "completion_diff": 30,
+        "threshold": 5.0
+      },
+      "chosen_is_first": false,
+      "is_correct": true,
+      "processing_time_seconds": 6.550311803817749
+    }
+  ],
+  "summary": {
+    "total_samples": 16,
+    "successful_samples": 16,
+    "failed_samples": 0,
+    "accuracy": 0.8125,
+    "avg_time": 7.23920464515686,
+    "last_updated": "2025-09-01T19:02:37.373420"
+  },
+  "end_time": "2025-09-01T19:02:37.373404"
+}

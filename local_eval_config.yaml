@@ -1,0 +1,115 @@
+# Temporary config for evaluating local LIBERO datasets
+# Based on the main config but with corrected eval dataset settings
+
+# =====================================================================================
+# Experiment Mode
+# =====================================================================================
+mode: "evaluate"
+debug: false
+
+# =====================================================================================
+# Model Configuration
+# =====================================================================================
+model:
+  base_model_id: "Qwen/Qwen2.5-VL-3B-Instruct"
+  torch_dtype: "bfloat16"
+  trust_remote_code: true
+
+# =====================================================================================
+# Data Configuration
+# =====================================================================================
+data:
+  # For local datasets - will be overridden per dataset
+  eval_datasets:
+    - "datasets/libero_rfm"
+  eval_subsets:
+    - "libero_goal"  # Will be overridden per dataset
+  eval_subset_size: 1000
+  
+  # Video processing settings
+  max_frames: 8
+  video_frame_sampling: "uniform"
+  resized_height: 128
+  resized_width: 128
+  
+  # Data generation settings
+  preference_ratio: 1.0
+  similarity_ratio: 0.0
+  dataset_preference_ratio: 0.7
+  shuffle: true
+  seed: 42
+  num_proc: 1
+  force_reprocess: false
+  
+  # Data loading settings
+  dataloader_pin_memory: false
+  dataloader_num_workers: 0
+
+# =====================================================================================
+# Training Configuration (not used for eval but needed for config)
+# =====================================================================================
+training:  
+  output_dir: "./logs/rfm_2"
+  per_device_train_batch_size: 8
+  gradient_accumulation_steps: 1
+  learning_rate: 2e-5
+  num_train_epochs: -1
+  save_strategy: "steps"
+  logging_steps: 1
+  save_steps: 100
+  max_steps: 1000
+  evaluation_strategy: "steps"
+  eval_steps: 50
+  per_device_eval_batch_size: 4
+  do_eval: true
+  prediction_loss_only: true
+  max_seq_length: 1024
+  beta: 0.1
+  resume_from_checkpoint: null
+  bf16: true
+  fp16: false
+  remove_unused_columns: false
+  gradient_checkpointing: true
+  ddp_find_unused_parameters: true
+  ddp_bucket_cap_mb: 25
+  lr_scheduler_type: "cosine"
+  warmup_steps: 0
+  warmup_ratio: 0.1
+
+# =====================================================================================
+# PEFT Configuration
+# =====================================================================================
+peft:
+  use_peft: false
+  r: 32
+  lora_alpha: 64
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+  lora_dropout: 0.05
+  bias: "none"
+  train_vision_encoder: true
+  train_language_model: false
+  train_progress_head: false
+  train_preference_head: true
+  train_similarity_head: false
+
+# =====================================================================================
+# Evaluation Configuration
+# =====================================================================================
+evaluation:
+  model_path: "./rfm_model_output/checkpoint-200"
+  eval_subset_size: -1
+  eval_dataset_path: "datasets/libero_rfm"
+  eval_dataset_subsets: ["libero_goal"]
+  eval_base_dir: "libero_dpo_dataset"
+
+# =====================================================================================
+# Logging and Output Configuration
+# =====================================================================================
+logging:
+  save_model: true
+  save_processor: true
+  print_trainable_parameters: true
+  use_wandb: false
+  wandb_project: "rfm"
+  wandb_entity: clvr
+  wandb_run_name: "rfm"

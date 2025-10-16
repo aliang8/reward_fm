@@ -1,0 +1,97 @@
+{
+  "sample_id": 1,
+  "task": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+  "gvl_prediction": "tie",
+  "chosen_is_first": false,
+  "correct_answer": "chosen trajectory should have higher completion percentage",
+  "comparison_result": {
+    "chosen_final": 33,
+    "rejected_final": 30,
+    "chosen_trajectory": [
+      0,
+      0,
+      15,
+      40,
+      40,
+      40,
+      33,
+      33
+    ],
+    "rejected_trajectory": [
+      0,
+      20,
+      20,
+      30,
+      60,
+      30
+    ],
+    "completion_diff": 3,
+    "threshold": 5.0
+  },
+  "why_wrong": "GVL preferred tie trajectory over chosen trajectory",
+  "sample_log": {
+    "sample_id": 1,
+    "task": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+    "num_chosen_frames": 8,
+    "num_rejected_frames": 6,
+    "prompting_strategy": "gvl_task_completion",
+    "success": true,
+    "error": null,
+    "chosen_completions": [
+      0,
+      0,
+      15,
+      40,
+      40,
+      40,
+      33,
+      33
+    ],
+    "rejected_completions": [
+      0,
+      20,
+      20,
+      30,
+      60,
+      30
+    ],
+    "preference": "tie",
+    "comparison_result": {
+      "chosen_final": 33,
+      "rejected_final": 30,
+      "chosen_trajectory": [
+        0,
+        0,
+        15,
+        40,
+        40,
+        40,
+        33,
+        33
+      ],
+      "rejected_trajectory": [
+        0,
+        20,
+        20,
+        30,
+        60,
+        30
+      ],
+      "completion_diff": 3,
+      "threshold": 5.0
+    },
+    "chosen_is_first": false,
+    "is_correct": false,
+    "processing_time_seconds": 6.139084815979004
+  },
+  "image_mapping": {
+    "chosen_image1.jpg": "chosen_trajectory (should have higher completion %)",
+    "rejected_image2.jpg": "rejected_trajectory (should have lower completion %)"
+  },
+  "analysis_notes": [
+    "Look at chosen_image1.jpg vs rejected_image2.jpg",
+    "Check completion percentages in comparison_result",
+    "Consider if ground truth labels might be wrong",
+    "GVL said: tie - check if this is reasonable"
+  ]
+}

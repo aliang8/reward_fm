@@ -1,0 +1,100 @@
+{
+  "sample_id": 12,
+  "task": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+  "gvl_prediction": "rejected",
+  "chosen_is_first": false,
+  "correct_answer": "chosen trajectory should have higher completion percentage",
+  "comparison_result": {
+    "chosen_final": 10,
+    "rejected_final": 30,
+    "chosen_trajectory": [
+      0,
+      0,
+      0,
+      30,
+      30,
+      20,
+      20,
+      10
+    ],
+    "rejected_trajectory": [
+      0,
+      0,
+      30,
+      40,
+      50,
+      40,
+      30
+    ],
+    "completion_diff": -20,
+    "threshold": 5.0
+  },
+  "why_wrong": "GVL preferred rejected trajectory over chosen trajectory",
+  "sample_log": {
+    "sample_id": 12,
+    "task": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+    "num_chosen_frames": 8,
+    "num_rejected_frames": 7,
+    "prompting_strategy": "gvl_task_completion",
+    "success": true,
+    "error": null,
+    "chosen_completions": [
+      0,
+      0,
+      0,
+      30,
+      30,
+      20,
+      20,
+      10
+    ],
+    "rejected_completions": [
+      0,
+      0,
+      30,
+      40,
+      50,
+      40,
+      30
+    ],
+    "preference": "rejected",
+    "comparison_result": {
+      "chosen_final": 10,
+      "rejected_final": 30,
+      "chosen_trajectory": [
+        0,
+        0,
+        0,
+        30,
+        30,
+        20,
+        20,
+        10
+      ],
+      "rejected_trajectory": [
+        0,
+        0,
+        30,
+        40,
+        50,
+        40,
+        30
+      ],
+      "completion_diff": -20,
+      "threshold": 5.0
+    },
+    "chosen_is_first": false,
+    "is_correct": false,
+    "processing_time_seconds": 5.9117231369018555
+  },
+  "image_mapping": {
+    "chosen_image1.jpg": "chosen_trajectory (should have higher completion %)",
+    "rejected_image2.jpg": "rejected_trajectory (should have lower completion %)"
+  },
+  "analysis_notes": [
+    "Look at chosen_image1.jpg vs rejected_image2.jpg",
+    "Check completion percentages in comparison_result",
+    "Consider if ground truth labels might be wrong",
+    "GVL said: rejected - check if this is reasonable"
+  ]
+}

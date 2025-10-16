@@ -5,6 +5,7 @@ import os
 import time
 import json
 import base64
+import random
 from io import BytesIO
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
@@ -40,6 +41,11 @@ class VLMPreferenceBaseline:
         self.verbose = verbose
         self.debug = debug
         
+        # Debug failure tracking
+        self.failure_count = 0
+        self.max_failures_to_debug = 3
+        self.debug_failures_dir = None
+        
         # Setup logging
         self._setup_logging(log_dir)
         
@@ -58,6 +64,9 @@ class VLMPreferenceBaseline:
         if self.debug:
             self.sample_dir = os.path.join(log_dir, f"samples_{timestamp}")
             os.makedirs(self.sample_dir, exist_ok=True)
+            # Create debug failures directory
+            self.debug_failures_dir = os.path.join(self.sample_dir, "debug_failures")
+            os.makedirs(self.debug_failures_dir, exist_ok=True)
         else:
             self.sample_dir = None
         
@@ -87,8 +96,8 @@ class VLMPreferenceBaseline:
             
             genai.configure(api_key=api_key)
             # Note: Original RL-VLM-F uses 'gemini-pro-vision' which is deprecated
-            # We use 'gemini-1.5-flash' as the modern equivalent
-            self.model = genai.GenerativeModel('gemini-1.5-flash')
+            # Using 'gemini-1.5-pro' for better reasoning and accuracy
+            self.model = genai.GenerativeModel('gemini-1.5-flash') # gemini-1.5-flash
             
         elif self.vlm_provider == "openai":
             if not OPENAI_AVAILABLE:
@@ -120,8 +129,20 @@ class VLMPreferenceBaseline:
         chosen_frame = chosen_images[-1]
         rejected_frame = rejected_images[-1]
         
+        # Randomize image order to avoid position bias
+        # chosen_is_first = True means chosen goes to Image A, False means chosen goes to Image B
+        chosen_is_first = random.choice([True, False])
+        
+        if chosen_is_first:
+            image_a, image_b = chosen_frame, rejected_frame
+            image_a_label, image_b_label = "chosen", "rejected"
+        else:
+            image_a, image_b = rejected_frame, chosen_frame
+            image_a_label, image_b_label = "rejected", "chosen"
+        
         if self.verbose:
             print(f"🎯 Frame selection: {len(chosen_images)} → 1, {len(rejected_images)} → 1")
+            print(f"🎲 Randomized order: Image A = {image_a_label}, Image B = {image_b_label}")
         
         # Initialize log entry
         sample_log = self._init_sample_log(
@@ -135,25 +156,35 @@ class VLMPreferenceBaseline:
                 self._save_frames(sample_id, chosen_images, rejected_images, 
                                 chosen_frame, rejected_frame)
             
-            # Query VLM
+            # Query VLM with randomized images
             prompt = self._build_prompt(task_description)
             sample_log["prompt"] = prompt if self.debug else prompt[:200] + "..."
+            sample_log["chosen_is_first"] = chosen_is_first  # Track randomization for debugging
             
             if self.vlm_provider == "gemini":
-                preference, raw_response = self._query_gemini(prompt, chosen_frame, rejected_frame)
+                preference, raw_response = self._query_gemini(prompt, image_a, image_b)
             else:
-                preference, raw_response = self._query_openai(prompt, chosen_frame, rejected_frame)
+                preference, raw_response = self._query_openai(prompt, image_a, image_b)
             
-            # Process result - handle different cases
-            # A = chosen (Image 1) is better, B = rejected (Image 2) is better, tie = no difference
+            # Process result - adjust for randomized order
+            # preference is "A"/"B"/"tie" based on VLM's choice of Image A vs Image B
+            # We need to map this back to chosen vs rejected based on randomization
             if preference == "A":
+                # VLM chose Image A
+                vlm_chose_chosen = chosen_is_first  # If chosen is first, A=chosen, else A=rejected
+            elif preference == "B":
+                # VLM chose Image B  
+                vlm_chose_chosen = not chosen_is_first  # If chosen is first, B=rejected, else B=chosen
+            else:  # preference == "tie"
+                vlm_chose_chosen = None  # Tie case
+            
+            # Determine correctness
+            if vlm_chose_chosen is True:
                 is_correct = True  # VLM correctly chose the chosen trajectory
-            elif preference == "tie":
-                # For ties, we need to determine if this is correct based on context
-                # If trajectories are actually very similar or from different tasks, tie could be correct
-                # For now, treating ties as incorrect since we expect clear preferences in our data
+            elif vlm_chose_chosen is None:
+                # For ties, treating as incorrect since we expect clear preferences
                 is_correct = False
-            else:  # preference == "B"
+            else:  # vlm_chose_chosen is False
                 is_correct = False  # VLM incorrectly chose the rejected trajectory
             
             # Update log
@@ -161,9 +192,18 @@ class VLMPreferenceBaseline:
                 "success": True,
                 "vlm_response": raw_response if self.debug else raw_response[:500] + "...",
                 "preference": preference,
+                "vlm_chose_chosen": vlm_chose_chosen,
                 "is_correct": is_correct,
                 "processing_time_seconds": time.time() - start_time
             })
+            
+            # Debug failures: save detailed info for first 3 incorrect predictions
+            if not is_correct and self.debug and self.failure_count < self.max_failures_to_debug:
+                self._save_failure_debug(
+                    sample_id, task_description, chosen_frame, rejected_frame, 
+                    preference, raw_response, sample_log, chosen_is_first
+                )
+                self.failure_count += 1
             
             if self.verbose:
                 print(f"✅ Sample {sample_id}: {preference} (correct: {is_correct})")
@@ -207,20 +247,17 @@ class VLMPreferenceBaseline:
     
     def _build_prompt(self, task: str) -> str:
         """Build RL-VLM-F prompt - exact match to original paper."""
-        base = """1. What is shown in Image 1?
-2. What is shown in Image 2?
-3. {goal_text}
-
-Is the goal better achieved in Image 1 or Image 2?
-Reply a single line of:
-0 (if the goal is better achieved in Image 1 or if Image 1 is shows some progress towards the goal while Image 2 is not or seems from a different task, 
-OR)
-1 (if it is better achieved in Image 2.)
-OR 
--1 (if the text is unsure or there is no discernible difference)."""
+        base = """ Each frame comes from a robot trajectory. (Think causally and use image comparison to verify any confusion between the base of the robot and the end effector)
+1. What is shown in the first image (Image A)?
+2. What is shown in the second image (Image B)?
+3. For this question here is the Goal Text: {goal_text}  
+Is the goal being better achieved in Image A or Image B? 
+Reply a single line of 0 if the goal is better achieved in Image A, or 1 if it is better achieved in Image B.
+Reply -1 if the text is really unsure about either making any progress towards the goal or there is absolutely no difference. (only use this if there is no discernible signs of progress in either image or no discernible difference between the progress in the two images for the given task)
+"""
         
         if task:
-            goal_text = f"The goal is {task}. Is there any difference between Image 1 and Image 2 in terms of achieving the goal?"
+            goal_text = f"The goal is {task}."
         else:
             goal_text = "Which image shows better task execution?"
         
@@ -383,6 +420,105 @@ OR
         if self.verbose and samples:
             s = self.eval_log["summary"]
             print(f"📝 {s['successful_samples']}/{s['total_samples']} successful, accuracy: {s['accuracy']:.2%}")
+    
+    def _save_failure_debug(self, sample_id: int, task: str, chosen_frame: Image.Image, 
+                           rejected_frame: Image.Image, preference: str, raw_response: str,
+                           sample_log: Dict, chosen_is_first: bool) -> None:
+        """Save detailed debug information for a failed prediction."""
+        if not self.debug_failures_dir:
+            return
+            
+        failure_dir = os.path.join(self.debug_failures_dir, f"failure_{self.failure_count + 1:03d}")
+        os.makedirs(failure_dir, exist_ok=True)
+        
+        # Save images
+        chosen_frame.save(os.path.join(failure_dir, "chosen_image1.jpg"))
+        rejected_frame.save(os.path.join(failure_dir, "rejected_image2.jpg"))
+        
+        # Determine which image the VLM actually chose
+        if chosen_is_first:
+            image_a_type, image_b_type = "chosen", "rejected"
+        else:
+            image_a_type, image_b_type = "rejected", "chosen"
+            
+        vlm_chose_desc = f"Image A ({image_a_type})" if preference == "A" else f"Image B ({image_b_type})" if preference == "B" else "tie"
+        
+        # Create detailed analysis
+        analysis = {
+            "sample_id": sample_id,
+            "task": task,
+            "vlm_prediction": preference,
+            "chosen_is_first": chosen_is_first,
+            "vlm_chose": vlm_chose_desc,
+            "correct_answer": f"Image {'A' if chosen_is_first else 'B'} (chosen trajectory)",
+            "randomization": {
+                "image_a_contains": image_a_type + "_trajectory",
+                "image_b_contains": image_b_type + "_trajectory",
+                "should_choose": "A" if chosen_is_first else "B"
+            },
+            "why_wrong": f"VLM chose {preference} but should have chosen {'A' if chosen_is_first else 'B'} (chosen trajectory)",
+            "full_vlm_response": raw_response,
+            "prompt_used": self._build_prompt(task),
+            "image_mapping": {
+                "chosen_image1.jpg": "chosen_trajectory (should be preferred)",
+                "rejected_image2.jpg": "rejected_trajectory (should not be preferred)",
+                "note": f"In this query: Image A = {image_a_type}, Image B = {image_b_type}"
+            },
+            "analysis_notes": [
+                "Look at chosen_image1.jpg vs rejected_image2.jpg",
+                "Check if VLM's reasoning makes sense given the task",
+                "Consider if ground truth labels might be wrong",
+                f"VLM said: {preference} - check if this is reasonable"
+            ],
+            "sample_log": sample_log
+        }
+        
+        # Save analysis as JSON
+        with open(os.path.join(failure_dir, "failure_analysis.json"), 'w') as f:
+            json.dump(analysis, f, indent=2)
+            
+        # Save human-readable summary
+        summary_text = f"""FAILURE DEBUG #{self.failure_count + 1}
+==============================
+
+TASK: {task}
+
+RANDOMIZATION: chosen_is_first = {chosen_is_first}
+- Image A contains: {image_a_type} trajectory  
+- Image B contains: {image_b_type} trajectory
+- VLM should choose: {'A' if chosen_is_first else 'B'} (chosen trajectory)
+
+VLM PREDICTION: {preference}
+- VLM chose: {vlm_chose_desc}
+- Should have chosen: {analysis['correct_answer']}
+
+IMAGES (always same files):
+- chosen_image1.jpg = chosen trajectory (CORRECT choice)
+- rejected_image2.jpg = rejected trajectory (WRONG choice)
+- Note: Image A = {image_a_type}, Image B = {image_b_type} in this query
+
+VLM REASONING:
+{raw_response}
+
+PROMPT USED:
+{self._build_prompt(task)}
+
+WHY THIS IS WRONG:
+{analysis['why_wrong']}
+
+QUESTIONS TO INVESTIGATE:
+1. Does the VLM's visual reasoning make sense?
+2. Are the ground truth labels correct for this sample?
+3. Is the task description clear enough?
+4. Which image actually shows better progress?
+"""
+        
+        with open(os.path.join(failure_dir, "README.txt"), 'w') as f:
+            f.write(summary_text)
+            
+        print(f"🐛 DEBUG: Saved failure #{self.failure_count + 1} to {failure_dir}")
+        should_choose = "A" if chosen_is_first else "B"
+        print(f"   VLM chose {preference} (should be {should_choose}), task: {task[:50]}...")
     
     def finalize_log(self):
         """Finalize and save log."""

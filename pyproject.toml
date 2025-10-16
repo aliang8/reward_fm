@@ -29,6 +29,7 @@ dependencies = [
     # HuggingFace & VLM
     "huggingface-hub[hf-xet]>=0.33.0",
     "qwen-vl-utils>=0.0.11",
+    "google-generativeai>=0.8.0",
     
     # Server & API
     "fastapi>=0.116.1",

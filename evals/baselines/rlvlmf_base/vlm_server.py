@@ -72,7 +72,10 @@ def create_app(task_description: str = "", debug: bool = False) -> FastAPI:
     def compute_metrics(samples: List[SamplePayload]) -> Dict[str, Any]:
         """Compute evaluation metrics using VLM - matching RL-VLM-F capabilities."""
         
-        results = []
+        predictions = []
+        reward_chosen = []
+        reward_rejected = []
+        
         for sample in samples:
             if sample.prediction_type != "preference":
                 continue

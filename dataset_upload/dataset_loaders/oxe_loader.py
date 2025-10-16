@@ -409,6 +409,12 @@ def convert_oxe_dataset_to_hf(
                         desc=f"Processing batch (workers={num_workers})",
                     )
                 )
+            # Collect all results
+            for res in results:
+                entries.extend(res)
+                produced += len(res)
+                if produced >= max_limit:
+                    break
 
         # For language_table, cap the number of episodes considered
         if base_ds_name == "language_table" and ep_idx + 1 >= MAX_LANGTABLE_EPISODES:

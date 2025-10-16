@@ -41,13 +41,12 @@ sleep 5
 # Run evaluation
 echo "Running evaluation on LIBERO $DATASET..."
 uv run python evals/run_model_eval.py \
-    --config rfm/configs/config.yaml \
-    --set evaluation.server_url="http://localhost:8002" \
-    --set evaluation.batch_size=$BATCH_SIZE \
-    --set evaluation.num_batches=$BATCHES \
+    --config rfm/configs/eval_config.yaml \
+    --set server_url="http://localhost:8002" \
+    --set batch_size=$BATCH_SIZE \
+    --set num_batches=$BATCHES \
     --set data.eval_datasets='["datasets/libero_rfm"]' \
-    --set data.eval_subsets='[["'$DATASET'"]]' \
-    --set data.dataset_type="default"
+    --set data.eval_subsets='[["'$DATASET'"]]'
 
 # Cleanup
 echo ""

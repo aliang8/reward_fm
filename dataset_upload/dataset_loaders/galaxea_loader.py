@@ -74,8 +74,8 @@ def _process_single_galaxea_episode(args):
         frames = [first_step["observation"][img_key]] + [s["observation"][img_key] for s in episode if img_key in s["observation"]]
         if not frames:
             continue
-        # skip anything > 1000 frames 
-        elif len(frames) > 1000:
+        # skip anything > 800 frames for now because memory usage
+        elif len(frames) > 800:
             print(f"Skipping episode {ep_idx} because it's too long, length is {len(frames)}")
             del frames
             continue
@@ -179,7 +179,7 @@ def convert_galaxea_dataset_to_hf(
         raise ValueError(f"No valid builder found for {rlds_name} in {ds_root}")
 
     # to keep memory usage low, use 1 worker for decoding and interleave files
-    dataset = builder.as_dataset(split="train", shuffle_files=False, read_config=tfds.ReadConfig(num_parallel_calls_for_decode=1, num_parallel_calls_for_interleave_files=1))
+    dataset = builder.as_dataset(split="train", shuffle_files=False)
 
     # Determine valid image observation keys for Galaxea (head and both wrists)
     valid_img_keys = [

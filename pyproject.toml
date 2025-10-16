@@ -25,6 +25,7 @@ dependencies = [
     "imageio>=2.37.0",
     "numpy>=1.21.0",
     "pillow>=9.0.0",
+    "opencv-python-headless>=4.8.0",
     
     # HuggingFace & VLM
     "huggingface-hub[hf-xet]>=0.33.0",

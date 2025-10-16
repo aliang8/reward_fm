@@ -619,8 +619,7 @@ def main(cfg: GenerateConfig):
             try:
                 # remove the galaxea_rfm prefix from the dataset name because otherwise it won't match the video folder name 
                 # don't need to do this for OXE or others because I processed it in their loaders but forgot for this.
-                dataset_name = cfg.dataset.dataset_name.replace("galaxea_rfm_", "")
-                push_hf_dataset_and_video_files_to_hub(dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, dataset_name, cfg.output.output_dir)
+                push_hf_dataset_and_video_files_to_hub(dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir)
             except Exception as e:
                 print(f"❌ Error pushing to hub: {e}")
                 print("Dataset was created locally but failed to push metadata to hub")

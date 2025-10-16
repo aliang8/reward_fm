@@ -554,7 +554,7 @@ class GVLAnalyzer:
 
     def stream_inference(self, parts: List[Dict]) -> str:
         """Call Gemini streaming API."""
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:streamGenerateContent?alt=sse&key={self.api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse&key={self.api_key}"
         body = {
             "contents": [{"parts": parts}]
         }

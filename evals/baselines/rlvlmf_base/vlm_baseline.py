@@ -96,8 +96,8 @@ class VLMPreferenceBaseline:
             
             genai.configure(api_key=api_key)
             # Note: Original RL-VLM-F uses 'gemini-pro-vision' which is deprecated
-            # Using 'gemini-1.5-pro' for better reasoning and accuracy
-            self.model = genai.GenerativeModel('gemini-1.5-flash') # gemini-1.5-flash
+            # Using latest flash model for speed and cost-effectiveness
+            self.model = genai.GenerativeModel('gemini-2.5-flash')
             
         elif self.vlm_provider == "openai":
             if not OPENAI_AVAILABLE:

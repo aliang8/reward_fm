@@ -9,47 +9,65 @@ authors = [
 ]
 
 dependencies = [
+    # Core ML dependencies (all work on macOS)
+    "torch>=2.4.0",
+    "torchvision",
+    "transformers==4.53.2",
     "accelerate>=1.9.0",
-    "datasets>=3.6.0",
     "einops>=0.8.0",
-    "evaluate>=0.4.3",
-    "h5py>=3.10.0",
-    "huggingface-hub[hf-xet]>=0.33.0",
-    "numpy>=1.21.0",
-    "matplotlib>=3.5.0",
     "peft",
-    "pyrallis>=0.3.0",
     "safetensors>=0.6.0rc0",
     "sentence-transformers>=2.0.0",
-    "torch>=2.4.0",
-    "transformers==4.53.2",
-    "tqdm>=4.67.1",
-    "wandb>=0.20.1",
+    
+    # Data & processing
+    "datasets>=3.6.0",
+    "h5py>=3.10.0",
+    "imageio>=2.37.0",
+    "numpy>=1.21.0",
+    "pillow>=9.0.0",
+    
+    # HuggingFace & VLM
+    "huggingface-hub[hf-xet]>=0.33.0",
+    "qwen-vl-utils>=0.0.11",
+    
+    # Server & API
+    "fastapi>=0.116.1",
+    "uvicorn>=0.35.0",
+    "requests>=2.32.4",
+    "aiohttp>=3.9.0",
+    
+    # Config & utilities
     "pyyaml>=6.0.0",
+    "omegaconf>=2.3.0",
+    "pyrallis>=0.3.0",
     "rich>=14.0.0",
+    "tqdm>=4.67.1",
+    "codetiming>=1.4.0",
+    "scipy>=1.15.3",
+]
+
+[project.optional-dependencies]
+# Only bitsandbytes is optional (doesn't work on macOS ARM64)
+gpu = [
+    "bitsandbytes",
+]
+
+# Development extras
+dev = [
+    "evaluate>=0.4.3",
+    "matplotlib>=3.5.0",
+    "wandb>=0.20.1",
     "soundfile>=0.13.1",
     "ipdb>=0.13.13",
     "hf_transfer>=0.1.0",
     "gradio>=4.0.0",
-    "pillow>=9.0.0",
     "ffmpeg",
     "termcolor>=3.1.0",
-    "qwen-vl-utils>=0.0.11",
-    "fastapi>=0.116.1",
-    "uvicorn>=0.35.0",
-    "requests>=2.32.4",
-    "scipy>=1.15.3",
-    "codetiming>=1.4.0",
     "robosuite==1.4.0",
-    "imageio>=2.37.0",
-    "omegaconf>=2.3.0",
     "opencv-python-headless>=4.8.0",
-    "opencv-contrib-python-headless>=4.8.0",  # Additional OpenCV modules
-    "einops>=0.8.0",
+    "opencv-contrib-python-headless>=4.8.0",
     "num2words", 
     "seaborn",
-    "bitsandbytes",
-    "torchvision",
     "moviepy",
     "wandb[media]",
     "torchcodec"
@@ -73,13 +91,6 @@ packages = ["rfm"]
 
 # Configuration for the 'uv' package manager
 [tool.uv]
-# Ensure flash-attn builds against the same Torch that's in your env
-[tool.uv.extra-build-dependencies]
-flash-attn = [{ requirement = "torch", match-runtime = true }]
-
-# Tell flash-attn to use a prebuilt wheel instead of compiling CUDA kernels
-[tool.uv.extra-build-variables]
-flash-attn = { FLASH_ATTENTION_SKIP_CUDA_BUILD = "TRUE" }
 
 # Tool configuration for the 'ruff' linter and formatter
 [tool.ruff]

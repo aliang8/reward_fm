@@ -369,9 +369,13 @@ def convert_oxe_dataset_to_hf(
             if produced >= max_limit:
                 break
 
-        # at end
+        # For language_table, cap the number of episodes considered
+        if base_ds_name == "language_table" and ep_idx + 1 >= MAX_LANGTABLE_EPISODES:
+            break
+
+    # After iterating all episodes, process any remaining batch
+    if episode_batch:
         if num_workers == 1:
-            # Sequential processing
             for args in zip(
                 episode_batch,
                 [info[0] for info in episode_info_batch],
@@ -388,10 +392,7 @@ def convert_oxe_dataset_to_hf(
                 entries.extend(episode_entries)
                 produced += len(episode_entries)
         else:
-            # Parallel processing
             from multiprocessing import Pool
-
-            # Prepare arguments for workers
             worker_args = list(
                 zip(
                     episode_batch,
@@ -406,7 +407,6 @@ def convert_oxe_dataset_to_hf(
                     strict=False,
                 )
             )
-
             with Pool(processes=num_workers) as pool:
                 results = list(
                     tqdm(
@@ -415,16 +415,11 @@ def convert_oxe_dataset_to_hf(
                         desc=f"Processing batch (workers={num_workers})",
                     )
                 )
-            # Collect all results
-            for res in results:
-                entries.extend(res)
-                produced += len(res)
+            for episode_entries in results:
+                entries.extend(episode_entries)
+                produced += len(episode_entries)
                 if produced >= max_limit:
                     break
-
-        # For language_table, cap the number of episodes considered
-        if base_ds_name == "language_table" and ep_idx + 1 >= MAX_LANGTABLE_EPISODES:
-            break
 
     if not entries:
         return Dataset.from_dict({

@@ -75,7 +75,7 @@ def _process_single_galaxea_episode(args):
         if not frames:
             continue
         # skip anything > 800 frames for now because memory usage
-        elif len(frames) > 800:
+        elif len(frames) > 1000:
             print(f"Skipping episode {ep_idx} because it's too long, length is {len(frames)}")
             del frames
             continue

@@ -16,6 +16,7 @@ from tqdm import tqdm
 
 # Disable GPUs for TensorFlow in this loader to avoid CUDA context issues in workers
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+DEBUG=True
 
 import tensorflow_datasets as tfds
 
@@ -192,6 +193,8 @@ def convert_galaxea_dataset_to_hf(
     entries: list[dict[str, Any]] = []
     produced = 0
     max_limit = float("inf") if (max_trajectories is None or max_trajectories == -1) else int(max_trajectories)
+    if DEBUG:
+        max_limit = 10
 
     episode_batch = []
     info_batch = []

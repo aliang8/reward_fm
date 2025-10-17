@@ -1,4 +1,5 @@
 import os
+import cv2
 from multiprocessing import cpu_count
 from pathlib import Path
 from typing import Any
@@ -107,8 +108,13 @@ def _process_single_oxe_episode(args):
             continue
 
         frames = [s["observation"][img_key] for s in episode if img_key in s["observation"]]
+
         if not frames:
             continue
+        
+        if "nyu_rot_dataset_converted_externally_to_rlds" in dataset_name:
+            # convert each frame from bgr to rgb
+            frames = [cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) for frame in frames]
 
         full_path, rel_path = _build_oxe_video_paths(
             output_dir=output_dir,
@@ -119,7 +125,7 @@ def _process_single_oxe_episode(args):
 
         traj_dict = {
             "id": generate_unique_id(),
-            "frames": np.stack(frames) if isinstance(frames[0], np.ndarray) else frames,
+            "frames": frames,
             "task": task,
             "is_robot": True,
             "quality_label": "successful",

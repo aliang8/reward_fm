@@ -185,8 +185,8 @@ def convert_galaxea_dataset_to_hf(
     ]
 
     # Batch/process episodes
-    batch_size = 16
-    num_workers = min(num_workers, 8)
+    batch_size = 1
+    num_workers = min(num_workers, 1)
     entries: list[dict[str, Any]] = []
     produced = 0
     max_limit = float("inf") if (max_trajectories is None or max_trajectories == -1) else int(max_trajectories)

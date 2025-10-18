@@ -117,6 +117,12 @@ This project uses `uv` for fast and reliable dependency management. We recommend
     ```
 ### Next: Dataset Setup
 We now download the dataset to the local `./rfm_dataset` directory (by default).
+
+First, login with huggingface:
+```bash
+hf auth # you'll need to paste your auth token 
+```
+
 For space reasons, you should symlink `~/.cache/huggingface/datasets` to some other location with ample space first, as that's where the dataset is downloaded to by default before being symlinked to `./rfm_dataset`.
 
 ```bash

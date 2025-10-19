@@ -123,20 +123,27 @@ def _process_single_humanoid_episode(args):
     return episode_entries
 
 
-def _load_single_humanoid_episode(zip_path: str, episode_idx: int):
-    """Load a single episode from humanoid everyday dataset zip file."""
+def _create_humanoid_dataloader(zip_path: str):
+    """Create a humanoid everyday dataloader for a zip file."""
     try:
         # Import humanoid_everyday dataloader
         from humanoid_everyday import Dataloader
-
-        # check if the non zip path exists
-        try:
-            ds = Dataloader(zip_path.replace(".zip", ""))
-        except Exception as e:
-            # Load dataset from zip file
-            print(f"failed to load from folder: {e}, trying zip extraction method")
-            ds = Dataloader(zip_path)
         
+        # Load dataset from zip file
+        ds = Dataloader(zip_path)
+        return ds
+        
+    except ImportError:
+        print(f"Warning: humanoid_everyday package not found. Please install it with: pip install humanoid_everyday")
+        return None
+    except Exception as e:
+        print(f"Warning: Failed to create dataloader from {zip_path}: {e}")
+        return None
+
+
+def _load_single_humanoid_episode(ds, episode_idx: int):
+    """Load a single episode from an existing humanoid everyday dataloader."""
+    try:
         # Get the specific episode
         episode = ds[episode_idx]
         
@@ -147,31 +154,9 @@ def _load_single_humanoid_episode(zip_path: str, episode_idx: int):
         
         return episode_data
         
-    except ImportError:
-        print(f"Warning: humanoid_everyday package not found. Please install it with: pip install humanoid_everyday")
-        return None
     except Exception as e:
-        print(f"Warning: Failed to load episode {episode_idx} from {zip_path}: {e}")
+        print(f"Warning: Failed to load episode {episode_idx}: {e}")
         return None
-
-
-def _get_humanoid_zip_episode_count(zip_path: str):
-    """Get the number of episodes in a humanoid everyday dataset zip file."""
-    try:
-        # Import humanoid_everyday dataloader
-        from humanoid_everyday import Dataloader
-        
-        # Load dataset from zip file
-        ds = Dataloader(zip_path)
-        
-        return len(ds)
-        
-    except ImportError:
-        print(f"Warning: humanoid_everyday package not found. Please install it with: pip install humanoid_everyday")
-        return 0
-    except Exception as e:
-        print(f"Warning: Failed to get episode count from {zip_path}: {e}")
-        return 0
 
 
 def convert_humanoid_everyday_dataset_to_hf(
@@ -239,8 +224,13 @@ def convert_humanoid_everyday_dataset_to_hf(
             lang_cache[task_name] = lang_model.encode(task_name)
         lang_vec = lang_cache[task_name]
         
-        # Get episode count for this zip file
-        episode_count = _get_humanoid_zip_episode_count(zip_file)
+        # Create dataloader once for this zip file
+        ds = _create_humanoid_dataloader(zip_file)
+        if ds is None:
+            print(f"Failed to create dataloader for {zip_file}")
+            continue
+            
+        episode_count = len(ds)
         if episode_count == 0:
             print(f"No episodes found in {zip_file}")
             continue
@@ -252,8 +242,8 @@ def convert_humanoid_everyday_dataset_to_hf(
             if produced >= max_limit:
                 break
                 
-            # Load single episode
-            episode_data = _load_single_humanoid_episode(zip_file, ep_idx)
+            # Load single episode using the existing dataloader
+            episode_data = _load_single_humanoid_episode(ds, ep_idx)
             if episode_data is None:
                 print(f"Failed to load episode {ep_idx} from {zip_file}")
                 continue

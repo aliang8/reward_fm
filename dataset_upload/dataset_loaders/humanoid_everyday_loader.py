@@ -132,8 +132,9 @@ def _load_single_humanoid_episode(zip_path: str, episode_idx: int):
         # check if the non zip path exists
         try:
             ds = Dataloader(zip_path.replace(".zip", ""))
-        except:
+        except e:
             # Load dataset from zip file
+            print(f"failed to load from folder: {e}, trying zip extraction method")
             ds = Dataloader(zip_path)
         
         # Get the specific episode

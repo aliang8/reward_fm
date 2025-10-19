@@ -134,7 +134,7 @@ hub:
 ## Usage
 
 ```bash
-uv run python -m dataset_upload.generate_hf_dataset --config configs/data_gen_configs/humanoid_everyday.yaml
+uv run python -m dataset_upload.generate_hf_dataset --config dataset_upload/configs/data_gen_configs/humanoid_everyday.yaml
 ```
 
 This will:

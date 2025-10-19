@@ -8,6 +8,7 @@ Creates one unified cache for each dataset/subset split.
 import datetime
 import json
 import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 from dataclasses import dataclass, field
 from typing import Any
 import shutil

@@ -123,8 +123,8 @@ def _process_single_humanoid_episode(args):
     return episode_entries
 
 
-def _load_humanoid_zip_dataset(zip_path: str, max_episodes: int = None):
-    """Load humanoid everyday dataset from a zip file."""
+def _load_single_humanoid_episode(zip_path: str, episode_idx: int):
+    """Load a single episode from humanoid everyday dataset zip file."""
     try:
         # Import humanoid_everyday dataloader
         from humanoid_everyday import Dataloader
@@ -132,29 +132,41 @@ def _load_humanoid_zip_dataset(zip_path: str, max_episodes: int = None):
         # Load dataset from zip file
         ds = Dataloader(zip_path)
         
-        episodes = []
-        episode_count = 0
+        # Get the specific episode
+        episode = ds[episode_idx]
         
-        for i, episode in enumerate(ds):
-            if max_episodes is not None and episode_count >= max_episodes:
-                break
-            
-            # Convert episode to list of step dictionaries
-            episode_data = []
-            for step in episode:
-                episode_data.append(step)
-            
-            episodes.append(episode_data)
-            episode_count += 1
-            
-        return episodes
+        # Convert episode to list of step dictionaries
+        episode_data = []
+        for step in episode:
+            episode_data.append(step)
+        
+        return episode_data
         
     except ImportError:
         print(f"Warning: humanoid_everyday package not found. Please install it with: pip install humanoid_everyday")
-        return []
+        return None
     except Exception as e:
-        print(f"Warning: Failed to load dataset from {zip_path}: {e}")
-        return []
+        print(f"Warning: Failed to load episode {episode_idx} from {zip_path}: {e}")
+        return None
+
+
+def _get_humanoid_zip_episode_count(zip_path: str):
+    """Get the number of episodes in a humanoid everyday dataset zip file."""
+    try:
+        # Import humanoid_everyday dataloader
+        from humanoid_everyday import Dataloader
+        
+        # Load dataset from zip file
+        ds = Dataloader(zip_path)
+        
+        return len(ds)
+        
+    except ImportError:
+        print(f"Warning: humanoid_everyday package not found. Please install it with: pip install humanoid_everyday")
+        return 0
+    except Exception as e:
+        print(f"Warning: Failed to get episode count from {zip_path}: {e}")
+        return 0
 
 
 def convert_humanoid_everyday_dataset_to_hf(
@@ -222,18 +234,24 @@ def convert_humanoid_everyday_dataset_to_hf(
             lang_cache[task_name] = lang_model.encode(task_name)
         lang_vec = lang_cache[task_name]
         
-        # Load episodes from this zip file
-        episodes = _load_humanoid_zip_dataset(zip_file)
-        if not episodes:
-            print(f"No episodes loaded from {zip_file}")
+        # Get episode count for this zip file
+        episode_count = _get_humanoid_zip_episode_count(zip_file)
+        if episode_count == 0:
+            print(f"No episodes found in {zip_file}")
             continue
             
-        print(f"Loaded {len(episodes)} episodes from {zip_file}")
+        print(f"Found {episode_count} episodes in {zip_file}")
         
-        # Process episodes from this zip file
-        for ep_idx, episode_data in enumerate(episodes):
+        # Process episodes one at a time to save memory
+        for ep_idx in range(episode_count):
             if produced >= max_limit:
                 break
+                
+            # Load single episode
+            episode_data = _load_single_humanoid_episode(zip_file, ep_idx)
+            if episode_data is None:
+                print(f"Failed to load episode {ep_idx} from {zip_file}")
+                continue
                 
             # Process single episode
             episode_entries = _process_single_humanoid_episode((
@@ -242,6 +260,10 @@ def convert_humanoid_everyday_dataset_to_hf(
             
             all_entries.extend(episode_entries)
             produced += len(episode_entries)
+            
+            # Clean up episode data to free memory
+            del episode_data
+            gc.collect()
             
             if produced >= max_limit:
                 break

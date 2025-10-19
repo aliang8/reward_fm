@@ -34,7 +34,7 @@ The Humanoid Everyday Dataset is a diverse collection of humanoid robot (Unitree
 ```bash
 git clone https://github.com/ausbxuse/Humanoid-Everyday
 cd Humanoid-Everyday
-pip install -e .
+uv pip install -e .
 ```
 
 ### Download dataset

@@ -183,7 +183,8 @@ uv run python rfm/data/generate_hf_dataset.py \
 ```bash
 
 # Preprocess the dataset
-uv run data/scripts/preprocess_datasets.py  --cache_dir /path/to/save/processed_datasets (./processed_datasets by default)
+# first check preprocess.yaml for dataset paths and subsets
+uv run python -m rfm.data.scripts.preprocess_datasets --cache_dir /path/to/save/processed_datasets (./processed_datasets by default)
 export RFM_PROCESSED_DATASETS_PATH=/path/to/save/processed_datasets
 
 # Training

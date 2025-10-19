@@ -1,6 +1,7 @@
 import os
 import gc
 import glob
+from re import T
 import zipfile
 import tempfile
 from multiprocessing import cpu_count
@@ -238,7 +239,7 @@ def convert_humanoid_everyday_dataset_to_hf(
         print(f"Found {episode_count} episodes in {zip_file}")
         
         # Process episodes one at a time to save memory
-        for ep_idx in range(episode_count):
+        for ep_idx in tqdm(range(episode_count), desc=f"Processing episodes in {zip_file}"):
             if produced >= max_limit:
                 break
                 

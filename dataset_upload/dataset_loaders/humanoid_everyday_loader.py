@@ -128,9 +128,13 @@ def _load_single_humanoid_episode(zip_path: str, episode_idx: int):
     try:
         # Import humanoid_everyday dataloader
         from humanoid_everyday import Dataloader
-        
-        # Load dataset from zip file
-        ds = Dataloader(zip_path)
+
+        # check if the non zip path exists
+        try:
+            ds = Dataloader(zip_path.replace(".zip", ""))
+        except:
+            # Load dataset from zip file
+            ds = Dataloader(zip_path)
         
         # Get the specific episode
         episode = ds[episode_idx]

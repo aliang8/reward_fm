@@ -27,13 +27,13 @@ mkdir -p "$DEST_ROOT"
 # ------------------------------------------------------------------
 # 2️⃣ List of URLs (one per line). Add or remove lines as needed.
 URLS=(
-"https://www.dropbox.com/scl/fo/r6xwxxuiwmnypzprzqza7/AA8nw-Rehsp19BgpznzX3G8/Articulated?rlkey=42llsh52wfq47r77m05mkikus&subfolder_nav_tracking=1&st=p7o1n5u8&dl=0"
-"https://www.dropbox.com/scl/fo/r6xwxxuiwmnypzprzqza7/AB-bJ9d9SthpaxRq-psftIM/Basic%20manipulation?rlkey=42llsh52wfq47r77m05mkikus&e=1&st=ujqfmcrx&dl=0"
-"https://www dropbox.com/scl/fo/r6xwxxuiwmnypzprzqza7/AHhg5yc8HuZ3nUJwHEpvV7o/Deformable?rlkey=42llsh52wfq47r77m05mkikus&e=1&st=hgn9ls6u&dl=0"
-"https://www.dropbox.com/scl/fo/r6xwxxuiwmnypzprzqza7/AHCZsyuhfXG9BpV9OvyTUUY/Human%20robot%20interaction?rlkey=42llsh52wfq47r77m05mkikus&e=1&st=cx89gb0e&dl=0"
-"https://www.dropbox.com/scl/fo/r6xwxxuiwmnypzprzqza7/AIaNECZ5mNu7P84jRk5IaAE/Loco-manipulation?rlkey=42llsh52wfq47r77m05mkikus&e=1&st=1mm8hkk7&dl=0"
-"https://www.dropbox.com/scl/fo/r6xwxxuiwmnypzprzqza7/AGDzhFFpengBQRE4K_mK-_k/Precision?rlkey=42llsh52wfq47r77m05mkikus&e=1&st=lvtb1e6t&dl=0"
-"https://www.dropbox.com/scl/fo/r6xwxxuiwmnypzprzqza7/AMeSkqL7WLIuIFVzHe8T5nE/Tool%20use?rlkey=42llsh52wfq47r77m05mkikus&e=1&st=g3ect71d&dl=0"
+#"https://www.dropbox.com/scl/fo/r6xwxxuiwmnypzprzqza7/AA8nw-Rehsp19BgpznzX3G8/Articulated?rlkey=42llsh52wfq47r77m05mkikus&subfolder_nav_tracking=1&st=p7o1n5u8&dl=0"
+#"https://www.dropbox.com/scl/fo/r6xwxxuiwmnypzprzqza7/AB-bJ9d9SthpaxRq-psftIM/Basic%20manipulation?rlkey=42llsh52wfq47r77m05mkikus&e=1&st=ujqfmcrx&dl=0"
+"https://www.dropbox.com/scl/fo/r6xwxxuiwmnypzprzqza7/AHhg5yc8HuZ3nUJwHEpvV7o/Deformable?rlkey=42llsh52wfq47r77m05mkikus&subfolder_nav_tracking=1&st=uuahde75&dl=0"
+"https://www.dropbox.com/scl/fo/r6xwxxuiwmnypzprzqza7/AHCZsyuhfXG9BpV9OvyTUUY/Human%20robot%20interaction?rlkey=42llsh52wfq47r77m05mkikus&subfolder_nav_tracking=1&st=f0l92o3l&dl=0"
+"https://www.dropbox.com/scl/fo/r6xwxxuiwmnypzprzqza7/AIaNECZ5mNu7P84jRk5IaAE/Loco-manipulation?rlkey=42llsh52wfq47r77m05mkikus&subfolder_nav_tracking=1&st=ndxg5mxe&dl=0"
+"https://www.dropbox.com/scl/fo/r6xwxxuiwmnypzprzqza7/AGDzhFFpengBQRE4K_mK-_k/Precision?rlkey=42llsh52wfq47r77m05mkikus&subfolder_nav_tracking=1&st=v7wpk52e&dl=0"
+"https://www.dropbox.com/scl/fo/r6xwxxuiwmnypzprzqza7/AMeSkqL7WLIuIFVzHe8T5nE/Tool%20use?rlkey=42llsh52wfq47r77m05mkikus&subfolder_nav_tracking=1&st=1dmsbxmc&dl=0"
 )
 
 # ------------------------------------------------------------------
@@ -55,7 +55,7 @@ download_and_extract() {
     mkdir -p "$out_dir"
 
     echo "📂 [$url] → extracting to '$out_dir/' …"
-    unzip -o /tmp/dropbox_folder.zip -d "$out_dir"
+    unzip -o /tmp/dropbox_folder.zip -d "$out_dir" || true # ignore non-fatal warnings
 
     rm -f /tmp/dropbox_folder.zip
     echo "✅ [$url] done!"

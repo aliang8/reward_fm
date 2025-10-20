@@ -6,12 +6,12 @@ Creates one unified cache for each dataset/subset split.
 """
 
 import datetime
+import shutil
 import json
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 from dataclasses import dataclass, field
 from typing import Any
-import shutil
 
 import numpy as np
 import torch
@@ -23,6 +23,12 @@ from PIL import Image
 
 from datasets import Dataset, DatasetDict, Video, load_dataset
 from rfm.utils.distributed import rank_0_print
+VIDEO_ERROR_PRINTED = False
+# maps subsets to functions that filter the dataset
+filters = {
+    "jesbu1/molmoact_rfm/molmoact_dataset_tabletop": lambda x: not "load the bowl" in x["task"].lower(),
+    "jesbu1/galaxea_rfm": lambda x: not all(word in x["task"].lower() for word in ["return", "to", "initial", "position"])
+}
 
 
 @dataclass
@@ -92,7 +98,7 @@ class DatasetPreprocessor:
 
             # Initialize DINOv2 for video embeddings
             self.dinov2_model = AutoModel.from_pretrained(config.dinov2_model)
-            self.dinov2_processor = AutoImageProcessor.from_pretrained(config.dinov2_model)
+            self.dinov2_processor = AutoImageProcessor.from_pretrained(config.dinov2_model, use_fast=True)
             self.dinov2_model.eval()
 
             # Initialize Sentence Transformer for text embeddings
@@ -310,22 +316,20 @@ class DatasetPreprocessor:
         batch_size = self.config.embedding_batch_size
         num_frames = frames_array.shape[0]
 
-        with torch.no_grad():
+        with torch.no_grad(), torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
             for i in range(0, num_frames, batch_size):
                 end_idx = min(i + batch_size, num_frames)
                 batch_frames = frames_array[i:end_idx]
 
-                # Convert numpy frames to PIL images for processing
-                pil_images = []
-                for frame in batch_frames:
-                    # Convert from (H, W, C) to PIL Image
-                    if frame.dtype != np.uint8:
-                        frame = (frame * 255).astype(np.uint8)
-                    pil_images.append(Image.fromarray(frame))
+                # Convert numpy frames to PIL images for processing (vectorized)
+                if batch_frames.dtype != np.uint8:
+                    batch_frames = (batch_frames * 255).astype(np.uint8)
+                
+                pil_images = [Image.fromarray(frame) for frame in batch_frames]
 
                 # Process with DINOv2
                 inputs = self.dinov2_processor(images=pil_images, return_tensors="pt")
-                inputs = {k: v.to(device) for k, v in inputs.items()}
+                inputs = {k: v.to(device, non_blocking=True) for k, v in inputs.items()}
 
                 outputs = self.dinov2_model(**inputs)
                 # Use pooler_output for global representation
@@ -349,8 +353,13 @@ class DatasetPreprocessor:
         if self.sentence_model is None:
             raise ValueError("Sentence model not initialized. Set precompute_embeddings=True in config.")
 
-        with torch.no_grad():
-            embedding = self.sentence_model.encode(text, convert_to_tensor=True)
+        with torch.no_grad(), torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
+            embedding = self.sentence_model.encode(
+                text, 
+                convert_to_tensor=True,
+                show_progress_bar=False,
+                batch_size=1
+            )
             return embedding.cpu()
 
     def _save_embeddings(self, video_embeddings: torch.Tensor, text_embedding: torch.Tensor, embeddings_path: str):
@@ -445,6 +454,7 @@ class DatasetPreprocessor:
         quality_indices = {}
         task_indices = {}
         source_indices = {}
+        partial_success_indices = {}
 
         frames_dir = os.path.join(cache_dir, "frames")
         embeddings_dir = os.path.join(cache_dir, self.config.embeddings_cache_dir)
@@ -456,6 +466,11 @@ class DatasetPreprocessor:
             # Debug: Log what we're processing
             if idx < 3:  # Only log first 5 examples to avoid spam
                 rank_0_print(f"Processing example {idx}: {example['id']} - {example['task']}")
+
+            # filter the example if needed
+            should_keep = filters.get(cache_key, lambda x: True)(example)
+            if not should_keep:
+                return {"frames": None, "frames_processed": False}
 
             # Get the video reader object from the Video feature
             frames = example.get("frames_video")
@@ -473,15 +488,7 @@ class DatasetPreprocessor:
             # Save frames as npz file
             frames_filename = f"trajectory_{example['id']}.npz"
             frames_filepath = os.path.join(frames_dir, frames_filename)
-
-            # Save frames with metadata
-            np.savez_compressed(
-                frames_filepath,
-                frames=frames_array,
-                shape=frames_array.shape,
-                num_frames=frames_array.shape[0] if len(frames_array.shape) > 0 else 0,
-            )
-
+            
             # Store file path and metadata in dataset (not the actual frames)
             example["frames"] = frames_filepath  # Store path to npz file
             example["frames_shape"] = frames_array.shape
@@ -530,6 +537,13 @@ class DatasetPreprocessor:
                 source_indices[source] = []
             source_indices[source].append(idx)
 
+            # Partial success-based indices
+            partial_success = example.get("partial_success", None)
+            if partial_success is not None and quality == "failure": # only record partial success for failure cases
+                if partial_success not in partial_success_indices:
+                    partial_success_indices[partial_success] = []
+                partial_success_indices[partial_success].append(idx)
+
             # Optimal/Suboptimal by task
             if task not in optimal_by_task:
                 optimal_by_task[task] = []
@@ -542,6 +556,14 @@ class DatasetPreprocessor:
                 optimal_by_task[task].append(idx)
             elif quality in ["suboptimal", "failed", "failure"]:
                 suboptimal_by_task[task].append(idx)
+
+            # Save frames with metadata
+            np.savez_compressed(
+                frames_filepath,
+                frames=frames_array,
+                shape=frames_array.shape,
+                num_frames=frames_array.shape[0] if len(frames_array.shape) > 0 else 0,
+            )
 
             return example
 
@@ -560,6 +582,7 @@ class DatasetPreprocessor:
         rank_0_print(f"  Tasks: {len(task_indices)}")
         rank_0_print(f"  Quality labels: {len(quality_indices)}")
         rank_0_print(f"  Data sources: {len(source_indices)}")
+        rank_0_print(f"  Partial success indices: {len(partial_success_indices)}")
 
         return processed_dataset, {
             "robot_trajectories": robot_trajectories,
@@ -569,6 +592,7 @@ class DatasetPreprocessor:
             "quality_indices": quality_indices,
             "task_indices": task_indices,
             "source_indices": source_indices,
+            "partial_success_indices": partial_success_indices,
         }
 
     def _process_dataset_videos_threaded(self, dataset, cache_dir: str, cache_key: str):
@@ -587,6 +611,7 @@ class DatasetPreprocessor:
         quality_indices = {}
         task_indices = {}
         source_indices = {}
+        partial_success_indices = {}
 
         frames_dir = os.path.join(cache_dir, "frames")
         embeddings_dir = os.path.join(cache_dir, self.config.embeddings_cache_dir)
@@ -594,6 +619,7 @@ class DatasetPreprocessor:
         os.makedirs(embeddings_dir, exist_ok=True)
 
         def process_one(idx: int):
+            global VIDEO_ERROR_PRINTED
             # Fetch example inside the worker to avoid holding many decoded readers
             example: dict[str, Any] = dataset[idx]
             frames_src = example.get("frames_video")
@@ -603,77 +629,114 @@ class DatasetPreprocessor:
             # If the source is a path string, open with a lightweight reader
             if isinstance(frames_src, str):
                 reader = None
+                frames_array = None
+                
                 try:
+                    # Try decord first (fastest for video decoding)
                     try:
-                        import imageio.v2 as iio  # type: ignore
-
-                        reader = iio.get_reader(frames_src)
-                        frames_iter = (frame for frame in reader)
-                        frames_array = self._preprocess_videos(frames_iter, self.config.max_frames_for_preprocessing)
-                    except Exception:
+                        import decord  # type: ignore
+                        decord.bridge.set_bridge('numpy')
+                        
+                        vr = decord.VideoReader(frames_src, num_threads=1)
+                        total_frames = len(vr)
+                        
+                        # Sample frames efficiently
+                        if total_frames <= self.config.max_frames_for_preprocessing:
+                            frame_indices = list(range(total_frames))
+                        else:
+                            # Uniform sampling
+                            frame_indices = [int(i * total_frames / self.config.max_frames_for_preprocessing) 
+                                           for i in range(self.config.max_frames_for_preprocessing)]
+                        
+                        frames_array = vr.get_batch(frame_indices).asnumpy()
+                        
+                        # Pad if needed
+                        #if total_frames < self.config.max_frames_for_preprocessing:
+                        #    last_frame = frames_array[-1]
+                        #    padding_frames = np.repeat(last_frame[np.newaxis, :, :, :], 
+                        #                              self.config.max_frames_for_preprocessing - total_frames, axis=0)
+                        #    frames_array = np.concatenate([frames_array, padding_frames], axis=0)
+                        
+                        del vr
+                        
+                    except (ImportError, Exception) as decord_error:
+                        if not VIDEO_ERROR_PRINTED:
+                            rank_0_print(f"Warning: Decord failed, trying alternative decoding method {decord_error}")
+                            VIDEO_ERROR_PRINTED = True
+                        # Fallback to imageio
                         try:
-                            import imageio as iio  # type: ignore
+                            import imageio.v2 as iio  # type: ignore
 
                             reader = iio.get_reader(frames_src)
                             frames_iter = (frame for frame in reader)
-                            frames_array = self._preprocess_videos(
-                                frames_iter, self.config.max_frames_for_preprocessing
-                            )
-                        except Exception as e2:
-                            # Fallback to OpenCV
+                            frames_array = self._preprocess_videos(frames_iter, self.config.max_frames_for_preprocessing)
+                        except Exception:
                             try:
-                                import cv2  # type: ignore
+                                import imageio as iio  # type: ignore
 
-                                cap = cv2.VideoCapture(frames_src)
+                                reader = iio.get_reader(frames_src)
+                                frames_iter = (frame for frame in reader)
+                                frames_array = self._preprocess_videos(
+                                    frames_iter, self.config.max_frames_for_preprocessing
+                                )
+                            except Exception as e2:
+                                # Fallback to OpenCV
+                                try:
+                                    import cv2  # type: ignore
 
-                                # Check if video file can be opened
-                                if not cap.isOpened():
-                                    rank_0_print(f"Warning: Cannot open video file {frames_src} with OpenCV")
-                                    frames_array = np.array([])
-                                else:
-                                    # Get video properties
-                                    total_frames_cv = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                                    cap.get(cv2.CAP_PROP_FPS)
+                                    cap = cv2.VideoCapture(frames_src)
 
-                                    if total_frames_cv <= 0:
-                                        rank_0_print(
-                                            f"Warning: Invalid frame count ({total_frames_cv}) for video {frames_src}"
-                                        )
+                                    # Check if video file can be opened
+                                    if not cap.isOpened():
                                         frames_array = np.array([])
                                     else:
-                                        frames_list = []
-                                        frame_count = 0
-                                        max_attempts = min(total_frames_cv, 1000)  # Limit attempts for corrupted files
-
-                                        while frame_count < max_attempts:
-                                            ret, frame = cap.read()
-                                            if not ret:
-                                                break
-                                            # Convert BGR to RGB
-                                            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                                            frames_list.append(frame_rgb)
-                                            frame_count += 1
-
-                                        cap.release()
-
-                                        if frames_list:
-                                            frames_array = np.stack(frames_list)
-                                            frames_array = self._preprocess_videos(
-                                                frames_array, self.config.max_frames_for_preprocessing
-                                            )
-                                        else:
+                                        # Get video properties
+                                        total_frames_cv = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                                        
+                                        if total_frames_cv <= 0:
                                             frames_array = np.array([])
-                            except Exception as e3:
-                                rank_0_print(
-                                    f"Warning: All video reading methods failed for {frames_src}: imageio error: {e2}, OpenCV error: {e3}"
-                                )
-                                frames_array = np.array([])
+                                        else:
+                                            # Sample frames efficiently with seeking
+                                            if total_frames_cv <= self.config.max_frames_for_preprocessing:
+                                                frame_indices = list(range(total_frames_cv))
+                                            else:
+                                                frame_indices = [int(i * total_frames_cv / self.config.max_frames_for_preprocessing) 
+                                                               for i in range(self.config.max_frames_for_preprocessing)]
+                                            
+                                            frames_list = []
+                                            for frame_idx in frame_indices:
+                                                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                                                ret, frame = cap.read()
+                                                if ret:
+                                                    frames_list.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                                            
+                                            cap.release()
+
+                                            if frames_list:
+                                                frames_array = np.stack(frames_list)
+                                                # Pad if needed
+                                                #if len(frames_list) < self.config.max_frames_for_preprocessing:
+                                                #    last_frame = frames_array[-1]
+                                                #    padding_frames = np.repeat(last_frame[np.newaxis, :, :, :], 
+                                                #                              self.config.max_frames_for_preprocessing - len(frames_list), axis=0)
+                                                #    frames_array = np.concatenate([frames_array, padding_frames], axis=0)
+                                            else:
+                                                frames_array = np.array([])
+                                except Exception as e3:
+                                    if idx < 5:  # Only log first few failures
+                                        rank_0_print(
+                                            f"Warning: All video reading methods failed for {frames_src}"
+                                        )
+                                    frames_array = np.array([])
                 finally:
                     try:
                         if reader is not None:
                             reader.close()
                     except Exception:
                         pass
+                        
+                if frames_array is None or frames_array.size == 0:
+                    frames_array = np.array([])
             else:
                 frames_array = self._preprocess_videos(frames_src, self.config.max_frames_for_preprocessing)
 
@@ -727,6 +790,13 @@ class DatasetPreprocessor:
                 ex["num_frames"] = shape[0] if len(shape) > 0 else 0
                 ex["frames_processed"] = True
 
+                should_keep = filters.get(cache_key, lambda x: True)(ex)
+                if not should_keep:
+                    # remove the frames_path and then continue processing others
+                    os.remove(frames_path)
+                    print(f"Removed frames_path {frames_path} for {ex['id']} because it was filtered out")
+                    continue
+
                 # Add embedding information if available
                 if embeddings_path is not None:
                     ex["embeddings_path"] = embeddings_path
@@ -747,6 +817,10 @@ class DatasetPreprocessor:
 
                 source = ex.get("data_source", "unknown")
                 source_indices.setdefault(source, []).append(i)
+
+                partial_success = ex.get("partial_success", None)
+                if partial_success is not None and quality == "failure": # only record partial success for failure cases
+                    partial_success_indices.setdefault(partial_success, []).append(i)
 
                 if task not in optimal_by_task:
                     optimal_by_task[task] = []
@@ -773,6 +847,7 @@ class DatasetPreprocessor:
         rank_0_print(f"  Tasks: {len(task_indices)}")
         rank_0_print(f"  Quality labels: {len(quality_indices)}")
         rank_0_print(f"  Data sources: {len(source_indices)}")
+        rank_0_print(f"  Partial success indices: {len(partial_success_indices)}")
 
         return processed_dataset, {
             "robot_trajectories": robot_trajectories,
@@ -782,6 +857,7 @@ class DatasetPreprocessor:
             "quality_indices": quality_indices,
             "task_indices": task_indices,
             "source_indices": source_indices,
+            "partial_success_indices": partial_success_indices,
         }
 
     def _save_individual_cache(
@@ -863,6 +939,7 @@ class DatasetPreprocessor:
             "quality_indices": {},
             "task_indices": {},
             "source_indices": {},
+            "partial_success_indices": {},
         }
 
         # Track offset for each dataset
@@ -894,7 +971,7 @@ class DatasetPreprocessor:
         """Load dataset from path with proper video handling."""
         if "/" in dataset_path and not os.path.exists(dataset_path):
             # Loading from HuggingFace Hub - handle video paths
-            rank_0_print(f"Loading from HuggingFace Hub: {dataset_path}")
+            rank_0_print(f"Loading dataset: {dataset_path}")
 
             # Check if RFM_DATASET_PATH is set
             rfm_dataset_path = os.environ.get("RFM_DATASET_PATH")

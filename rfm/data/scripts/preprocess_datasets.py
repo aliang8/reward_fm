@@ -24,10 +24,10 @@ from PIL import Image
 from datasets import Dataset, DatasetDict, Video, load_dataset
 from rfm.utils.distributed import rank_0_print
 VIDEO_ERROR_PRINTED = False
-# maps subsets to functions that filter the dataset
+# maps subsets to functions that filter the dataset. If true, the example is dropped.
 filters = {
-    "jesbu1/molmoact_rfm/molmoact_dataset_tabletop": lambda x: not "load the bowl" in x["task"].lower(),
-    "jesbu1/galaxea_rfm": lambda x: not all(word in x["task"].lower() for word in ["return", "to", "initial", "position"])
+    "jesbu1/molmoact_rfm/molmoact_dataset_tabletop": lambda x: "load the bowl" in x["task"].lower(), 
+    "jesbu1/galaxea_rfm": lambda x: all(word in x["task"].lower() for word in ["return", "to", "initial", "position"])
 }
 
 
@@ -468,8 +468,8 @@ class DatasetPreprocessor:
                 rank_0_print(f"Processing example {idx}: {example['id']} - {example['task']}")
 
             # filter the example if needed
-            should_keep = filters.get(cache_key, lambda x: True)(example)
-            if not should_keep:
+            should_drop = filters.get(cache_key, lambda x: False)(example)
+            if should_drop:
                 return {"frames": None, "frames_processed": False}
 
             # Get the video reader object from the Video feature
@@ -790,8 +790,8 @@ class DatasetPreprocessor:
                 ex["num_frames"] = shape[0] if len(shape) > 0 else 0
                 ex["frames_processed"] = True
 
-                should_keep = filters.get(cache_key, lambda x: True)(ex)
-                if not should_keep:
+                should_drop = filters.get(cache_key, lambda x: False)(ex)
+                if should_drop:
                     # remove the frames_path and then continue processing others
                     os.remove(frames_path)
                     print(f"Removed frames_path {frames_path} for {ex['id']} because it was filtered out")

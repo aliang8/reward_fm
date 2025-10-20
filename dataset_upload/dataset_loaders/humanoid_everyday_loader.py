@@ -216,7 +216,11 @@ def convert_humanoid_everyday_dataset_to_hf(
             continue
             
         # Get the metadata.json for getting task description
-        metadata_path = os.path.join(zip_file.replace(".zip", ""), "metadata", "metadata.json")
+        # find metadata.json in the unzipped directory using correct glob pattern
+        metadata_paths = glob.glob(os.path.join(zip_file.replace(".zip", ""), "**", "metadata.json"), recursive=True)
+        if not metadata_paths:
+            raise FileNotFoundError(f"metadata.json not found in extracted directory for {zip_file}")
+        metadata_path = metadata_paths[0]
         with open(metadata_path, "r") as f:
             metadata = json.load(f)
         task_name = metadata["description"]

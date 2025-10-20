@@ -1,4 +1,6 @@
 import os
+import json
+import shutil
 import gc
 import glob
 from re import T
@@ -46,13 +48,6 @@ def _build_humanoid_video_paths(
     full_path = os.path.join(episode_dir, filename)
     rel_path = os.path.join(dataset_label.lower(), shard_dir, f"episode_{episode_idx:06d}", filename)
     return full_path, rel_path
-
-
-def _extract_task_name_from_zip(zip_path: str) -> str:
-    """Extract task name from zip file path."""
-    # Get the basename without extension
-    task_name = os.path.basename(zip_path).replace('.zip', '')
-    return task_name
 
 
 def _process_single_humanoid_episode(args):
@@ -217,9 +212,12 @@ def convert_humanoid_everyday_dataset_to_hf(
             
         print(f"Processing zip file: {zip_file}")
         
-        # Extract task name from zip file
-        task_name = _extract_task_name_from_zip(zip_file)
-        
+        # Get the metadata.json for getting task description
+        metadata_path = os.path.join(zip_file.replace(".zip", ""), "metadata", "metadata.json")
+        with open(metadata_path, "r") as f:
+            metadata = json.load(f)
+        task_name = metadata["description"]
+
         # Precompute embedding for this task
         if task_name not in lang_cache:
             lang_cache[task_name] = lang_model.encode(task_name)
@@ -240,6 +238,8 @@ def convert_humanoid_everyday_dataset_to_hf(
         
         # Process episodes one at a time to save memory
         for ep_idx in tqdm(range(episode_count), desc=f"Processing episodes in {zip_file}"):
+            if ep_idx > 0:
+                break
             if produced >= max_limit:
                 break
                 
@@ -265,7 +265,7 @@ def convert_humanoid_everyday_dataset_to_hf(
                 break
 
         # remove the unzipped file after done since humanoid loader unzips it
-        os.remove(zip_file.replace(".zip", ""))
+        shutil.rmtree(zip_file.replace(".zip", ""))
 
     if not all_entries:
         return Dataset.from_dict({

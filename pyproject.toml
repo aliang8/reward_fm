@@ -54,15 +54,16 @@ dependencies = [
     "imageio>=2.37.0",
     "omegaconf>=2.3.0",
     "opencv-python-headless>=4.8.0",
-    "opencv-contrib-python-headless>=4.8.0",  # Additional OpenCV modules
+    "opencv-contrib-python-headless>=4.8.0", # Additional OpenCV modules
     "einops>=0.8.0",
-    "num2words", 
+    "num2words",
     "seaborn",
     "bitsandbytes",
     "torchvision",
     "moviepy",
     "wandb[media]",
-    "torchcodec"
+    "torchcodec",
+    "decord>=0.6.0",
 ]
 
 [project.urls]
@@ -107,11 +108,12 @@ packages = ["models", "data"]
 [tool.uv]
 # This section could be used for advanced features like overriding dependencies
 # from your environment if needed, similar to the 'openpi' example.
-# override-dependencies = ["ml-dtypes==0.4.1"]
+#override-dependencies = ["av<16.0.0"]
 
 # Ensure flash-attn builds against the same Torch that's in your env
 [tool.uv.extra-build-dependencies]
 flash-attn = [{ requirement = "torch", match-runtime = true }]
+
 
 # Tell flash-attn to use a prebuilt wheel instead of compiling CUDA kernels
 [tool.uv.extra-build-variables]

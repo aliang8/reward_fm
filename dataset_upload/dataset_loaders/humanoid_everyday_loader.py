@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 from datasets import Dataset
 
 from dataset_upload.helpers import (
@@ -25,11 +26,39 @@ os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
 to_skip = set(["pull_out_tissue_from_tissue_box_h1.zip"]) # skip because it's incorrect videos
 
-# backups for if metadata.json is not found
-zip_to_lang = {
-    "fold_towel.zip": "Use the left hand to fold a white towel with checkered patterns in half.",
-    "use_eraser_to_wipe_desk_g1.zip": "Use the left hand to press on the green eraser and wipe the desk from center to the left and then back to center.",
-}
+# Google Sheet with task descriptions
+GOOGLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/158Wzf8Xywky3aHJSCfp3OZxf4bkhzAJdcG94eHf8gVc/export?format=csv&gid=1307250382"
+
+
+def _load_google_sheet_tasks() -> dict[str, str]:
+    """Load task descriptions from Google Sheet.
+    
+    Returns:
+        Dictionary mapping task names (from zip filenames) to task descriptions.
+    """
+    try:
+        # Read the Google Sheet as CSV, skipping the first 2 rows and using row 3 as header
+        df = pd.read_csv(GOOGLE_SHEET_URL, header=2)
+        
+        # Create a mapping from task name to description
+        task_map = {}
+        for _, row in df.iterrows():
+            # Check if we have valid task name and description
+            if pd.notna(row.get('Task Name')) and pd.notna(row.get('Task Description')):
+                task_name = row['Task Name']
+                description = row['Task Description']
+                
+                # Create mapping for both with and without .zip extension
+                task_map[f"{task_name}.zip"] = description
+                task_map[task_name] = description
+        
+        print(f"Loaded {len(task_map) // 2} task descriptions from Google Sheet")
+        return task_map
+    except Exception as e:
+        print(f"Warning: Failed to load Google Sheet: {e}")
+        import traceback
+        traceback.print_exc()
+        return {}
 
 
 def _stable_shard_for_index(index: int, shard_modulus: int = 1000) -> str:
@@ -208,6 +237,9 @@ def convert_humanoid_everyday_dataset_to_hf(
     produced = 0
     max_limit = float("inf") if (max_trajectories is None or max_trajectories == -1) else int(max_trajectories)
     
+    print("Loading task descriptions from Google Sheet...")
+    google_sheet_tasks = _load_google_sheet_tasks()
+    
     for zip_file in tqdm(zip_files, desc="Processing zip files"):
         print(f"Processing zip file: {zip_file}")
         
@@ -221,17 +253,30 @@ def convert_humanoid_everyday_dataset_to_hf(
             print(f"Failed to create dataloader for {zip_file}")
             continue
             
-        # Get the metadata.json for getting task description
-        # find metadata.json in the unzipped directory using correct glob pattern
-        metadata_paths = glob.glob(os.path.join(zip_file.replace(".zip", ""), "**", "metadata.json"), recursive=True)
-        if not metadata_paths:
-            print(f"metadata.json not found in extracted directory for {zip_file}, using backup task name")
-            task_name = zip_to_lang[zip_file.split("/")[-1]]
+        # Try to find task in Google Sheet
+        zip_filename = zip_file.split("/")[-1]
+        if zip_filename in google_sheet_tasks:
+            task_name = google_sheet_tasks[zip_filename]
+            print(f"Found task description from Google Sheet: {task_name}")
         else:
-            metadata_path = metadata_paths[0]
-            with open(metadata_path, "r") as f:
-                metadata = json.load(f)
-        task_name = metadata["description"]
+            try:
+                # Get the metadata.json for getting task description
+                # find metadata.json in the unzipped directory using correct glob pattern
+                metadata_paths = glob.glob(os.path.join(zip_file.replace(".zip", ""), "**", "metadata.json"), recursive=True)
+                if not metadata_paths:
+                    print(f"metadata.json not found in extracted directory for {zip_file}")
+                    
+                else:
+                    metadata_path = metadata_paths[0]
+                    with open(metadata_path, "r") as f:
+                        metadata = json.load(f)
+                    task_name = metadata["description"]
+                    print(f"Found task description from metadata.json: {task_name}")
+            except Exception as e:
+                print(f"Warning: Failed to load metadata.json for {zip_file}: {e}")
+            print(f"Warning: No task description found for {zip_filename} in Google Sheet, skipping")
+            shutil.rmtree(zip_file.replace(".zip", ""))
+            continue
 
         # Precompute embedding for this task
         if task_name not in lang_cache:
@@ -241,15 +286,13 @@ def convert_humanoid_everyday_dataset_to_hf(
         episode_count = len(ds)
         if episode_count == 0:
             print(f"No episodes found in {zip_file}")
+            shutil.rmtree(zip_file.replace(".zip", ""))
             continue
             
         print(f"Found {episode_count} episodes in {zip_file}")
         
         # Process episodes one at a time to save memory
         for ep_idx in tqdm(range(episode_count), desc=f"Processing episodes in {zip_file}"):
-            if ep_idx > 0:
-                break
-                
             # Load single episode using the existing dataloader
             episode_data = _load_single_humanoid_episode(ds, ep_idx)
             if episode_data is None:

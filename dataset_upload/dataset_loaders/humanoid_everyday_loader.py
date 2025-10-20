@@ -70,12 +70,6 @@ def _process_single_humanoid_episode(args):
         if not frames:
             return episode_entries
         
-        # Skip episodes that are too long
-        if len(frames) > 1000:
-            print(f"Skipping episode {ep_idx} because it's too long, length is {len(frames)}")
-            del frames
-            return episode_entries
-        
         full_path, rel_path = _build_humanoid_video_paths(
             output_dir=output_dir,
             dataset_label=dataset_name,
@@ -207,9 +201,6 @@ def convert_humanoid_everyday_dataset_to_hf(
     max_limit = float("inf") if (max_trajectories is None or max_trajectories == -1) else int(max_trajectories)
     
     for zip_file in tqdm(zip_files, desc="Processing zip files"):
-        if produced >= max_limit:
-            break
-            
         print(f"Processing zip file: {zip_file}")
         
         # Get the metadata.json for getting task description
@@ -240,8 +231,6 @@ def convert_humanoid_everyday_dataset_to_hf(
         for ep_idx in tqdm(range(episode_count), desc=f"Processing episodes in {zip_file}"):
             if ep_idx > 0:
                 break
-            if produced >= max_limit:
-                break
                 
             # Load single episode using the existing dataloader
             episode_data = _load_single_humanoid_episode(ds, ep_idx)
@@ -265,6 +254,10 @@ def convert_humanoid_everyday_dataset_to_hf(
 
         # remove the unzipped file after done since humanoid loader unzips it
         shutil.rmtree(zip_file.replace(".zip", ""))
+        
+        if produced >= max_limit:
+            break
+            
 
     if not all_entries:
         return Dataset.from_dict({

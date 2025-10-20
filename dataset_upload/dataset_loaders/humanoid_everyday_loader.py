@@ -259,7 +259,6 @@ def convert_humanoid_everyday_dataset_to_hf(
             
             # Clean up episode data to free memory
             del episode_data
-            gc.collect()
             
             if produced >= max_limit:
                 break

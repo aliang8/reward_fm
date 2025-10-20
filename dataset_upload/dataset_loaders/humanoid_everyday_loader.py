@@ -23,6 +23,8 @@ from tqdm import tqdm
 # Disable GPUs for TensorFlow in this loader to avoid CUDA context issues in workers
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
+to_skip = set(["pull_out_tissue_from_tissue_box_h1.zip"]) # skip because it's incorrect videos
+
 
 def _stable_shard_for_index(index: int, shard_modulus: int = 1000) -> str:
     """Generate stable shard directory name for trajectory indexing."""
@@ -202,6 +204,10 @@ def convert_humanoid_everyday_dataset_to_hf(
     
     for zip_file in tqdm(zip_files, desc="Processing zip files"):
         print(f"Processing zip file: {zip_file}")
+        
+        if zip_file.split("/")[-1] in to_skip:
+            print(f"Skipping zip file: {zip_file}")
+            continue
         
         # Create dataloader once for this zip file
         ds = _create_humanoid_dataloader(zip_file)

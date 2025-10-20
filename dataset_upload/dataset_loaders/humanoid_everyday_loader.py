@@ -203,6 +203,12 @@ def convert_humanoid_everyday_dataset_to_hf(
     for zip_file in tqdm(zip_files, desc="Processing zip files"):
         print(f"Processing zip file: {zip_file}")
         
+        # Create dataloader once for this zip file
+        ds = _create_humanoid_dataloader(zip_file)
+        if ds is None:
+            print(f"Failed to create dataloader for {zip_file}")
+            continue
+            
         # Get the metadata.json for getting task description
         metadata_path = os.path.join(zip_file.replace(".zip", ""), "metadata", "metadata.json")
         with open(metadata_path, "r") as f:
@@ -214,12 +220,6 @@ def convert_humanoid_everyday_dataset_to_hf(
             lang_cache[task_name] = lang_model.encode(task_name)
         lang_vec = lang_cache[task_name]
         
-        # Create dataloader once for this zip file
-        ds = _create_humanoid_dataloader(zip_file)
-        if ds is None:
-            print(f"Failed to create dataloader for {zip_file}")
-            continue
-            
         episode_count = len(ds)
         if episode_count == 0:
             print(f"No episodes found in {zip_file}")

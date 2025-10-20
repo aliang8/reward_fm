@@ -264,6 +264,9 @@ def convert_humanoid_everyday_dataset_to_hf(
             if produced >= max_limit:
                 break
 
+        # remove the unzipped file after done since humanoid loader unzips it
+        os.remove(zip_file.replace(".zip", ""))
+
     if not all_entries:
         return Dataset.from_dict({
             "id": [],

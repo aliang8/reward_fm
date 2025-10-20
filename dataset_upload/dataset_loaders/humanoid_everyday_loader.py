@@ -25,6 +25,12 @@ os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
 to_skip = set(["pull_out_tissue_from_tissue_box_h1.zip"]) # skip because it's incorrect videos
 
+# backups for if metadata.json is not found
+zip_to_lang = {
+    "fold_towel.zip": "Use the left hand to fold a white towel with checkered patterns in half.",
+    "use_eraser_to_wipe_desk_g1.zip": "Use the left hand to press on the green eraser and wipe the desk from center to the left and then back to center.",
+}
+
 
 def _stable_shard_for_index(index: int, shard_modulus: int = 1000) -> str:
     """Generate stable shard directory name for trajectory indexing."""
@@ -219,10 +225,12 @@ def convert_humanoid_everyday_dataset_to_hf(
         # find metadata.json in the unzipped directory using correct glob pattern
         metadata_paths = glob.glob(os.path.join(zip_file.replace(".zip", ""), "**", "metadata.json"), recursive=True)
         if not metadata_paths:
-            raise FileNotFoundError(f"metadata.json not found in extracted directory for {zip_file}")
-        metadata_path = metadata_paths[0]
-        with open(metadata_path, "r") as f:
-            metadata = json.load(f)
+            print(f"metadata.json not found in extracted directory for {zip_file}, using backup task name")
+            task_name = zip_to_lang[zip_file.split("/")[-1]]
+        else:
+            metadata_path = metadata_paths[0]
+            with open(metadata_path, "r") as f:
+                metadata = json.load(f)
         task_name = metadata["description"]
 
         # Precompute embedding for this task

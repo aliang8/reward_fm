@@ -81,7 +81,7 @@ def _build_humanoid_video_paths(
     shard_dir = _stable_shard_for_index(episode_idx)
     episode_dir = os.path.join(output_dir, dataset_label.lower(), shard_dir, f"episode_{episode_idx:06d}")
     os.makedirs(episode_dir, exist_ok=True)
-    filename = f"clip@{task_name}.mp4"
+    filename = f"clip.mp4"
     full_path = os.path.join(episode_dir, filename)
     rel_path = os.path.join(dataset_label.lower(), shard_dir, f"episode_{episode_idx:06d}", filename)
     return full_path, rel_path

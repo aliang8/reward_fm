@@ -75,7 +75,6 @@ def _build_humanoid_video_paths(
     output_dir: str,
     dataset_label: str,
     episode_idx: int,
-    task_name: str,
 ) -> tuple[str, str]:
     """Build video paths for humanoid everyday dataset."""
     shard_dir = _stable_shard_for_index(episode_idx)
@@ -111,7 +110,6 @@ def _process_single_humanoid_episode(args):
             output_dir=output_dir,
             dataset_label=dataset_name,
             episode_idx=ep_idx,
-            task_name=task.replace(' ', '_'),
         )
         
         # Create trajectory dictionary

@@ -113,7 +113,6 @@ repos=(
   aliangdw/metaworld_rfm
   HenryZhang/metaworld_rewind_rfm_train
   HenryZhang/metaworld_rewind_rfm_eval
-  ykorkmaz/h2r_rfm
   aliangdw/metaworld
   jesbu1/oxe_rfm
   jesbu1/galaxea_rfm

@@ -110,7 +110,7 @@ repos=(
   #abraranwar/agibotworld_rfm   # still downloading
   #abraranwar/egodex_rfm        # still downloading
   ykorkmaz/libero_failure_rfm
-  #aliangdw/metaworld_rfm
+  aliangdw/metaworld_rfm
   HenryZhang/metaworld_rewind_rfm_train
   HenryZhang/metaworld_rewind_rfm_eval
   ykorkmaz/h2r_rfm

@@ -84,7 +84,7 @@ BASE_FEATURES = {
     "quality_label": datasets.Value("string"),
     # "preference_group_id": datasets.Value("string"),
     # "preference_rank": datasets.Value("int32"),
-    "partial_success": datasets.Value("int32"),  # in [0, 1]
+    "partial_success": datasets.Value("float32"),  # in [0, 1]
 }
 
 

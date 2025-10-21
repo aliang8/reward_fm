@@ -635,7 +635,6 @@ class DatasetPreprocessor:
                     # Try decord first (fastest for video decoding)
                     try:
                         import decord  # type: ignore
-                        decord.bridge.set_bridge('numpy')
                         
                         vr = decord.VideoReader(frames_src, num_threads=1)
                         total_frames = len(vr)
@@ -819,6 +818,7 @@ class DatasetPreprocessor:
                 source_indices.setdefault(source, []).append(i)
 
                 partial_success = ex.get("partial_success", None)
+                breakpoint()
                 if partial_success is not None and quality == "failure": # only record partial success for failure cases
                     partial_success_indices.setdefault(partial_success, []).append(i)
 

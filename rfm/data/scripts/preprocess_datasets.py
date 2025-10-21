@@ -582,7 +582,7 @@ class DatasetPreprocessor:
         rank_0_print(f"  Tasks: {len(task_indices)}")
         rank_0_print(f"  Quality labels: {len(quality_indices)}")
         rank_0_print(f"  Data sources: {len(source_indices)}")
-        rank_0_print(f"  Partial success indices: {len(partial_success_indicese}")
+        rank_0_print(f"  Partial success indices: {len(partial_success_indices)}")
 
         return processed_dataset, {
             "robot_trajectories": robot_trajectories,

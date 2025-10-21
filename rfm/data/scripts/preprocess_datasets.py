@@ -649,13 +649,6 @@ class DatasetPreprocessor:
                         
                         frames_array = vr.get_batch(frame_indices).asnumpy()
                         
-                        # Pad if needed
-                        #if total_frames < self.config.max_frames_for_preprocessing:
-                        #    last_frame = frames_array[-1]
-                        #    padding_frames = np.repeat(last_frame[np.newaxis, :, :, :], 
-                        #                              self.config.max_frames_for_preprocessing - total_frames, axis=0)
-                        #    frames_array = np.concatenate([frames_array, padding_frames], axis=0)
-                        
                         del vr
                         
                     except (ImportError, Exception) as decord_error:
@@ -713,12 +706,6 @@ class DatasetPreprocessor:
 
                                             if frames_list:
                                                 frames_array = np.stack(frames_list)
-                                                # Pad if needed
-                                                #if len(frames_list) < self.config.max_frames_for_preprocessing:
-                                                #    last_frame = frames_array[-1]
-                                                #    padding_frames = np.repeat(last_frame[np.newaxis, :, :, :], 
-                                                #                              self.config.max_frames_for_preprocessing - len(frames_list), axis=0)
-                                                #    frames_array = np.concatenate([frames_array, padding_frames], axis=0)
                                             else:
                                                 frames_array = np.array([])
                                 except Exception as e3:
@@ -818,7 +805,8 @@ class DatasetPreprocessor:
                 source_indices.setdefault(source, []).append(i)
 
                 partial_success = ex.get("partial_success", None)
-                breakpoint()
+                if "roboarena" in cache_key:
+                    breakpoint()
                 if partial_success is not None and quality == "failure": # only record partial success for failure cases
                     partial_success_indices.setdefault(partial_success, []).append(i)
 

@@ -582,7 +582,7 @@ class DatasetPreprocessor:
         rank_0_print(f"  Tasks: {len(task_indices)}")
         rank_0_print(f"  Quality labels: {len(quality_indices)}")
         rank_0_print(f"  Data sources: {len(source_indices)}")
-        rank_0_print(f"  Partial success indices: {len(partial_success_indices)}")
+        rank_0_print(f"  Partial success indices: {len(partial_success_indicese}")
 
         return processed_dataset, {
             "robot_trajectories": robot_trajectories,
@@ -805,8 +805,6 @@ class DatasetPreprocessor:
                 source_indices.setdefault(source, []).append(i)
 
                 partial_success = ex.get("partial_success", None)
-                if "roboarena" in cache_key:
-                    breakpoint()
                 if partial_success is not None and quality == "failure": # only record partial success for failure cases
                     partial_success_indices.setdefault(partial_success, []).append(i)
 

@@ -35,6 +35,7 @@ class RFMBaseDataset(torch.utils.data.Dataset):
         self.quality_indices = {}
         self.task_indices = {}
         self.source_indices = {}
+        self.partial_success_indices = {}
 
         # Load trajectory dataset
         self._load_trajectory_dataset()
@@ -137,6 +138,7 @@ class RFMBaseDataset(torch.utils.data.Dataset):
             "quality_indices": {},
             "task_indices": {},
             "source_indices": {},
+            "partial_success_indices": {},
         }
 
         offset = 0
@@ -190,6 +192,7 @@ class RFMBaseDataset(torch.utils.data.Dataset):
         self.quality_indices = combined_indices["quality_indices"]
         self.task_indices = combined_indices["task_indices"]
         self.source_indices = combined_indices["source_indices"]
+        self.partial_success_indices = combined_indices["partial_success_indices"]
 
         dataset_type = "training" if is_training else "evaluation"
         rank_0_print(f"✅ Loaded {len(self.dataset)} total trajectories from preprocessed {dataset_type} datasets")

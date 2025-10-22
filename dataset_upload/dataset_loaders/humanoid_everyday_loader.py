@@ -75,20 +75,21 @@ def _build_humanoid_video_paths(
     output_dir: str,
     dataset_label: str,
     episode_idx: int,
+    zip_file: str,
 ) -> tuple[str, str]:
     """Build video paths for humanoid everyday dataset."""
     shard_dir = _stable_shard_for_index(episode_idx)
-    episode_dir = os.path.join(output_dir, dataset_label.lower(), shard_dir, f"episode_{episode_idx:06d}")
     os.makedirs(episode_dir, exist_ok=True)
-    filename = f"clip.mp4"
-    full_path = os.path.join(episode_dir, filename)
-    rel_path = os.path.join(dataset_label.lower(), shard_dir, f"episode_{episode_idx:06d}", filename)
+    task_prefix = f"{'_'.join(zip_file.split('/')[-2]).replace('.zip', '')}"
+    episode_dir = os.path.join(output_dir, dataset_label.lower(), task_prefix, shard_dir, f"episode_{episode_idx:06d}")
+    full_path = os.path.join(episode_dir, f"clip.mp4")
+    rel_path = os.path.join(dataset_label.lower(), task_prefix, shard_dir, f"episode_{episode_idx:06d}", f"clip.mp4")
     return full_path, rel_path
 
 
 def _process_single_humanoid_episode(args):
     """Process a single episode from humanoid everyday dataset."""
-    episode_data, ep_idx, task, lang_vec, output_dir, dataset_name, max_frames, fps = args
+    episode_data, ep_idx, task, lang_vec, output_dir, dataset_name, max_frames, fps, zip_file = args
     
     episode_entries = []
     
@@ -110,6 +111,7 @@ def _process_single_humanoid_episode(args):
             output_dir=output_dir,
             dataset_label=dataset_name,
             episode_idx=ep_idx,
+            zip_file=zip_file,
         )
         
         # Create trajectory dictionary
@@ -299,7 +301,7 @@ def convert_humanoid_everyday_dataset_to_hf(
                 
             # Process single episode
             episode_entries = _process_single_humanoid_episode((
-                episode_data, ep_idx, task_name, lang_vec, output_dir, dataset_name, max_frames, fps
+                episode_data, ep_idx, task_name, lang_vec, output_dir, dataset_name, max_frames, fps, zip_file,
             ))
             
             all_entries.extend(episode_entries)

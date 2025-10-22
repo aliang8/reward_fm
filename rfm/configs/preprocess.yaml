@@ -1,44 +1,42 @@
 train_datasets:
-  #- "jesbu1/molmoact_rfm"  # need to figure out how to filter trajsf rist
-  #- "abraranwar/libero_rfm"
-  #- "ykorkmaz/libero_failure_rfm"
-  #- "HenryZhang/metaworld_rewind_rfm_train"
-  - "jesbu1/epic_rfm"
-  #- "jesbu1/ph2d_rfm"
-  #- "jesbu1/h2r_rfm"
-  #- "anqil/rh20t_subset_rfm"
-  #- "jesbu1/roboarena_0825_rfm"
-  #- "jesbu1/oxe_rfm"
+  - "jesbu1/molmoact_rfm"  # need to figure out how to filter trajsf rist
+  - "abraranwar/libero_rfm"
+  - "ykorkmaz/libero_failure_rfm"
+  - "HenryZhang/metaworld_rewind_rfm_train"
+  - "jesbu1/ph2d_rfm"
+  - "jesbu1/h2r_rfm"
+  - "anqil/rh20t_subset_rfm"
+  - "jesbu1/roboarena_0825_rfm"
+  - "jesbu1/oxe_rfm"
   - "jesbu1/galaxea_rfm"
+  - "jesbu1/epic_rfm"
 
 train_subsets:
-  #- ["molmoact_dataset_household", "molmoact_dataset_tabletop"]
-  #- ["libero256_90"]
-  #- ["libero_90_failure"]
-  #- ["metaworld_rewind_train"]
-  - ["epic"]
-  #- ["ph2d"]
-  #- ["h2r"]
-  #- ["rh20t_human", "rh20t_robot"]
-  #- ["roboarena"]
-  #- ["oxe_aloha_mobile", "oxe_austin_buds_dataset_converted_externally_to_rlds", "oxe_bc_z", "oxe_berkeley_cable_routing", "oxe_berkeley_fanuc_manipulation", "oxe_berkeley_mvp_converted_externally_to_rlds", "oxe_berkeley_rpt_converted_externally_to_rlds", "oxe_bridge_v2", "oxe_dlr_edan_shared_control_converted_externally_to_rlds", "oxe_droid", "oxe_fractal20220817_data", "oxe_furniture_bench_dataset_converted_externally_to_rlds", "oxe_iamlab_cmu_pickup_insert_converted_externally_to_rlds", "oxe_imperialcollege_sawyer_wrist_cam", "oxe_jaco_play", "oxe_language_table", "oxe_nyu_rot_dataset_converted_externally_to_rlds", "oxe_robo_set", "oxe_stanford_hydra_dataset_converted_externally_to_rlds", "oxe_tidybot", "oxe_tokyo_u_lsmo_converted_externally_to_rlds", "oxe_toto", "oxe_ucsd_kitchen_dataset_converted_externally_to_rlds", "oxe_utaustin_mutex"]
+  - ["molmoact_dataset_household", "molmoact_dataset_tabletop"]
+  - ["libero256_90"]
+  - ["libero_90_failure"]
+  - ["metaworld_rewind_train"]
+  - ["ph2d"]
+  - ["h2r"]
+  - ["rh20t_human", "rh20t_robot"]
+  - ["roboarena"]
+  - ["oxe_aloha_mobile", "oxe_austin_buds_dataset_converted_externally_to_rlds", "oxe_bc_z", "oxe_berkeley_cable_routing", "oxe_berkeley_fanuc_manipulation", "oxe_berkeley_mvp_converted_externally_to_rlds", "oxe_berkeley_rpt_converted_externally_to_rlds", "oxe_bridge_v2", "oxe_dlr_edan_shared_control_converted_externally_to_rlds", "oxe_droid", "oxe_fractal20220817_data", "oxe_furniture_bench_dataset_converted_externally_to_rlds", "oxe_iamlab_cmu_pickup_insert_converted_externally_to_rlds", "oxe_imperialcollege_sawyer_wrist_cam", "oxe_jaco_play", "oxe_language_table", "oxe_nyu_rot_dataset_converted_externally_to_rlds", "oxe_robo_set", "oxe_stanford_hydra_dataset_converted_externally_to_rlds", "oxe_tidybot", "oxe_tokyo_u_lsmo_converted_externally_to_rlds", "oxe_toto", "oxe_ucsd_kitchen_dataset_converted_externally_to_rlds", "oxe_utaustin_mutex"]
   - ["galaxea_part1_r1_lite", "galaxea_part2_r1_lite", "galaxea_part3_r1_lite", "galaxea_part4_r1_lite", "galaxea_part5_r1_lite"]
+  - ["epic"]
 
 
 
 eval_datasets:
-  #- "abraranwar/libero_rfm"
-  #- "ykorkmaz/libero_failure_rfm"
-  #- "HenryZhang/metaworld_rewind_rfm_eval"
-  #- "jesbu1/oxe_rfm_eval"
-  - "jesbu1/h2r_rfm"
+  - "abraranwar/libero_rfm"
+  - "ykorkmaz/libero_failure_rfm"
+  - "HenryZhang/metaworld_rewind_rfm_eval"
+  - "jesbu1/oxe_rfm_eval"
 
 eval_subsets:
-  #- ["libero256_10"]
-  - ["h2r"]
-  #- ["libero_10_failure"]
-  #- ["metaworld_rewind_eval"]
-  #- ["oxe_bc_z_eval", "oxe_berkeley_cable_routing_eval", "oxe_bridge_v2_eval", "oxe_jaco_play_eval", "oxe_toto_eval", "oxe_viola_eval"]
+  - ["libero256_10"]
+  - ["libero_10_failure"]
+  - ["metaworld_rewind_eval"]
+  - ["oxe_bc_z_eval", "oxe_berkeley_cable_routing_eval", "oxe_bridge_v2_eval", "oxe_jaco_play_eval", "oxe_toto_eval", "oxe_viola_eval"]
 
 max_frames_for_preprocessing: 32
 video_frame_sampling: "uniform"

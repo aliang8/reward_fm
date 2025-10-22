@@ -3,7 +3,7 @@ train_datasets:
   #- "abraranwar/libero_rfm"
   #- "ykorkmaz/libero_failure_rfm"
   #- "HenryZhang/metaworld_rewind_rfm_train"
-  #- "jesbu1/epic_rfm"
+  - "jesbu1/epic_rfm"
   #- "jesbu1/ph2d_rfm"
   #- "jesbu1/h2r_rfm"
   #- "anqil/rh20t_subset_rfm"
@@ -16,7 +16,7 @@ train_subsets:
   #- ["libero256_90"]
   #- ["libero_90_failure"]
   #- ["metaworld_rewind_train"]
-  #- ["epic"]
+  - ["epic"]
   #- ["ph2d"]
   #- ["h2r"]
   #- ["rh20t_human", "rh20t_robot"]

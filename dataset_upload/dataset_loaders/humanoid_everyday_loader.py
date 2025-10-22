@@ -79,9 +79,9 @@ def _build_humanoid_video_paths(
 ) -> tuple[str, str]:
     """Build video paths for humanoid everyday dataset."""
     shard_dir = _stable_shard_for_index(episode_idx)
-    os.makedirs(episode_dir, exist_ok=True)
     task_prefix = f"{'_'.join(zip_file.split('/')[-2]).replace('.zip', '')}"
     episode_dir = os.path.join(output_dir, dataset_label.lower(), task_prefix, shard_dir, f"episode_{episode_idx:06d}")
+    os.makedirs(episode_dir, exist_ok=True)
     full_path = os.path.join(episode_dir, f"clip.mp4")
     rel_path = os.path.join(dataset_label.lower(), task_prefix, shard_dir, f"episode_{episode_idx:06d}", f"clip.mp4")
     return full_path, rel_path

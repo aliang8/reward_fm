@@ -1,0 +1,124 @@
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+import cv2
+import numpy as np
+
+from dataset_upload.helpers import generate_unique_id
+
+
+class MotifFrameLoader:
+    """Pickle-able loader that reads frames for a single trajectory on demand.
+
+    Supports two backing sources:
+    - A video file path (e.g., .mp4)
+    - A directory of image frames (sorted by filename)
+    """
+
+    def __init__(self, source_path: str) -> None:
+        self.source_path = source_path
+
+    def _load_from_video(self) -> np.ndarray:
+        cap = cv2.VideoCapture(self.source_path)
+        frames = []
+        while True:
+            ok, frame_bgr = cap.read()
+            if not ok:
+                break
+            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+            frames.append(frame_rgb)
+        cap.release()
+
+        frames_np = np.asarray(frames)
+        if frames_np.ndim != 4 or frames_np.shape[-1] != 3:
+            raise ValueError(
+                f"Unexpected frames shape from video {self.source_path}: {getattr(frames_np, 'shape', None)}"
+            )
+        if frames_np.dtype != np.uint8:
+            frames_np = frames_np.astype(np.uint8, copy=False)
+        return frames_np
+
+    def _load_from_image_dir(self) -> np.ndarray:
+        image_exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+        files = [
+            p
+            for p in sorted(os.listdir(self.source_path))
+            if Path(p).suffix.lower() in image_exts
+        ]
+        frames = []
+        for name in files:
+            img_bgr = cv2.imread(os.path.join(self.source_path, name), cv2.IMREAD_COLOR)
+            if img_bgr is None:
+                continue
+            img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+            frames.append(img_rgb)
+
+        frames_np = np.asarray(frames)
+        if frames_np.ndim != 4 or frames_np.shape[-1] != 3:
+            raise ValueError(
+                f"Unexpected frames shape from directory {self.source_path}: {getattr(frames_np, 'shape', None)}"
+            )
+        if frames_np.dtype != np.uint8:
+            frames_np = frames_np.astype(np.uint8, copy=False)
+        return frames_np
+
+    def __call__(self) -> np.ndarray:
+        p = Path(self.source_path)
+        if p.is_file():
+            return self._load_from_video()
+        if p.is_dir():
+            return self._load_from_image_dir()
+        raise FileNotFoundError(f"Source path not found: {self.source_path}")
+
+
+def _infer_is_robot_from_path(path: Path) -> bool:
+    parts = [s.lower() for s in path.parts]
+    # MotIF repo mentions 'human_motion' and 'stretch_motion'
+    if any("stretch" in s for s in parts):
+        return True
+    elif any("human" in s for s in parts):
+        return False
+    else:
+        raise ValueError(f"Unknown robot/human: {path}")
+
+
+def _make_traj(source_path: Path, task_text: str) -> dict:
+    traj: dict[str, Any] = {}
+    traj["id"] = generate_unique_id()
+    traj["task"] = task_text 
+    traj["frames"] = MotifFrameLoader(str(source_path))
+    traj["is_robot"] = _infer_is_robot_from_path(source_path)
+    traj["quality_label"] = "successful"
+    traj["partial_success"] = 1
+    traj["data_source"] = "motif"
+    return traj
+
+
+def load_motif_dataset(dataset_path: str) -> dict[str, list[dict]]:
+    """Load MoTiF dataset using FrameLoader without HF conversion.
+
+    Strategy:
+      1) Try parsing annotations under `<root>/annotations` for paths and texts.
+      2) If none found, fallback to scanning `human_motion/**` and `stretch_motion/**` for videos or image dirs.
+    Returns mapping: task -> list of trajectory dicts.
+    """
+    root = Path(os.path.expanduser(dataset_path))
+    if not root.exists():
+        raise FileNotFoundError(f"MoTiF dataset path not found: {root}")
+
+    task_to_trajs: dict[str, list[dict]] = {}
+
+    # Annotations
+    ann_dir = root / "annotations"
+    human_json = json.load(open(ann_dir / "human_motion_data_info.json"))
+    stretch_json = json.load(open(ann_dir / "stretch_motion_data_info.json"))
+    for json in [human_json, stretch_json]:
+        for item in json:
+            src = '/'.join(Path(item["video_path"]).split("/")[2:])
+            full_vid_path = root / src
+            traj = _make_traj(full_vid_path, item.get("task_instruction") + ": " + item.get("motion_description"))
+            task_to_trajs.setdefault(traj["task"], []).append(traj)
+    return task_to_trajs
+

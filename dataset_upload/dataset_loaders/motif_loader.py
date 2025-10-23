@@ -1,4 +1,3 @@
-import json
 import os
 from pathlib import Path
 from typing import Any
@@ -98,12 +97,9 @@ def _make_traj(source_path: Path, task_text: str) -> dict:
 
 def load_motif_dataset(dataset_path: str) -> dict[str, list[dict]]:
     """Load MoTiF dataset using FrameLoader without HF conversion.
-
-    Strategy:
-      1) Try parsing annotations under `<root>/annotations` for paths and texts.
-      2) If none found, fallback to scanning `human_motion/**` and `stretch_motion/**` for videos or image dirs.
     Returns mapping: task -> list of trajectory dicts.
     """
+    import json
     root = Path(os.path.expanduser(dataset_path))
     if not root.exists():
         raise FileNotFoundError(f"MoTiF dataset path not found: {root}")

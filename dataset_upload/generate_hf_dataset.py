@@ -655,6 +655,12 @@ def main(cfg: GenerateConfig):
             print(f"Dataset saved locally to: {dataset_path_local}")
         print("Dataset conversion complete!")
         return
+    elif "autoeval" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.autoeval_loader import load_autoeval_dataset
+
+        print(f"Loading AutoEval dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_autoeval_dataset(cfg.dataset.dataset_path)
+        trajectories = flatten_task_data(task_data)
     elif "egocot" in cfg.dataset.dataset_name.lower():
         from dataset_upload.dataset_loaders.egocot_loader import load_egocot_dataset
 

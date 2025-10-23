@@ -123,6 +123,28 @@ First, login with huggingface:
 hf auth # you'll need to paste your auth token 
 ```
 
+We recommend directly download the processed datasets from HuggingFace:
+### Download processed datasets
+
+First add the processed datasets path to your environment variables or `~/.bashrc`:
+```bash
+export RFM_PROCESSED_DATASETS_PATH=/path/to/save/processed_datasets
+```
+
+Then, download the processed datasets:
+```bash
+./scripts/download_processed_datasets.sh
+```
+
+Then, untar the processed datasets:
+```bash
+./scripts/untar_processed_datasets.sh
+```
+
+Alternatively, you can download the raw datasets and preprocess them manually below.
+
+### Download raw datasets (optional but not recommended if you just need to train)
+
 For space reasons, you should symlink `~/.cache/huggingface/datasets` to some other location with ample space first, as that's where the dataset is downloaded to by default before being symlinked to `./rfm_dataset`.
 
 ```bash
@@ -140,6 +162,14 @@ Add to your `.bashrc` the following export:
 
 ```bash
 export RFM_DATASET_PATH=/path/to/your/rfm_dataset
+```
+
+Now, preprocess the dataset:
+```bash
+# Preprocess the dataset
+# first check preprocess.yaml for dataset paths and subsets
+uv run python -m rfm.data.scripts.preprocess_datasets --cache_dir /path/to/save/processed_datasets (./processed_datasets by default) --config rfm/configs/preprocess.yaml
+export RFM_PROCESSED_DATASETS_PATH=/path/to/save/processed_datasets
 ```
 
 
@@ -181,12 +211,6 @@ uv run python rfm/data/generate_hf_dataset.py \
 
 ## Training and Evaluation
 ```bash
-
-# Preprocess the dataset
-# first check preprocess.yaml for dataset paths and subsets
-uv run python -m rfm.data.scripts.preprocess_datasets --cache_dir /path/to/save/processed_datasets (./processed_datasets by default) --config rfm/configs/preprocess.yaml
-export RFM_PROCESSED_DATASETS_PATH=/path/to/save/processed_datasets
-
 # Training
 uv run accelerate launch --config_file rfm/configs/fsdp.yaml train.py --config_path=rfm/configs/config.yaml
 

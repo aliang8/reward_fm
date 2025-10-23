@@ -110,8 +110,8 @@ def load_motif_dataset(dataset_path: str) -> dict[str, list[dict]]:
     ann_dir = root / "annotations"
     for json_file_name in ["human_motion_data_info.json", "stretch_motion_data_info.json"]:
         path_precursor = "human_motion/videos_raw" if "human" in json_file_name.split("_")[0] else "stretch_motion/videos_raw"
-        json = json.load(open(ann_dir / json_file_name))
-        for item in json:
+        json_data = json.load(open(ann_dir / json_file_name))
+        for item in json_data:
             src = item["video_path"].split("/")[-1]
             full_vid_path = root / path_precursor / src
             traj = _make_traj(full_vid_path, item.get("task_instruction") + ": " + item.get("motion_description"))

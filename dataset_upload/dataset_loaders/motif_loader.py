@@ -130,7 +130,9 @@ def load_motif_dataset(dataset_path: str) -> dict[str, list[dict]]:
     # some stretch trajs are not corresponding to any human trajs, so we need to filter them
     all_stretch_trajs = {k: v for k, v in all_stretch_trajs.items() if k in all_human_trajs}
 
-    for instruction, paths in (all_stretch_trajs + all_human_trajs).items():
+    all_trajs = {**all_stretch_trajs, **all_human_trajs}
+
+    for instruction, paths in all_trajs.items():
         for path in paths:
             traj = _make_traj(path, instruction)
             task_to_trajs.setdefault(instruction, []).append(traj)

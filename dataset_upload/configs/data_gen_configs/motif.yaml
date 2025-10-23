@@ -13,7 +13,7 @@ output:
   center_crop: false
 
 hub:
-  push_to_hub: false
+  push_to_hub: true
   hub_repo_id: motif_rfm
 
 

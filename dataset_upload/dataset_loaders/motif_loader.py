@@ -118,7 +118,7 @@ def load_motif_dataset(dataset_path: str) -> dict[str, list[dict]]:
         instruction = item.get("task_instruction") + ": " + item.get("motion_description")
         all_human_trajs.setdefault(instruction, []).append(full_vid_path)
 
-    all_stretch_trajs = []
+    all_stretch_trajs = {}
     path_precursor = "stretch_motion/videos_raw"
     json_data = json.load(open(ann_dir / "stretch_motion_data_info.json"))
     for item in json_data:

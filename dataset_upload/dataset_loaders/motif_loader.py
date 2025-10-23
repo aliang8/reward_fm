@@ -115,6 +115,10 @@ def load_motif_dataset(dataset_path: str) -> dict[str, list[dict]]:
     for item in json_data:
         src = item["video_path"].split("/")[-1]
         full_vid_path = root / path_precursor / src
+        # assert the path exists
+        if not full_vid_path.exists():
+            print(f"Human video path not found: {full_vid_path}")
+            continue
         instruction = item.get("task_instruction") + ": " + item.get("motion_description")
         all_human_trajs.setdefault(instruction, []).append(full_vid_path)
 
@@ -124,6 +128,10 @@ def load_motif_dataset(dataset_path: str) -> dict[str, list[dict]]:
     for item in json_data:
         src = item["video_path"].split("/")[-1]
         full_vid_path = root / path_precursor / src
+        # assert the path exists
+        if not full_vid_path.exists():
+            print(f"Stretch video path not found: {full_vid_path}")
+            continue
         instruction = item.get("task_instruction") + ": " + item.get("motion_description")
         all_stretch_trajs.setdefault(instruction, []).append(full_vid_path)
  

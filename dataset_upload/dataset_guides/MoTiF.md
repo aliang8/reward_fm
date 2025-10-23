@@ -61,17 +61,16 @@ hub:
 
 ## Usage Example
 
-```python
-from dataset_upload.dataset_loaders.motif_loader import load_motif_dataset
-
-dataset_root = "./datasets/MotIF"
-by_task = load_motif_dataset(dataset_root)
-
-for task_name, trajs in by_task.items():
-    print(task_name, len(trajs))
-    frames = trajs[0]["frames"]()  # Load frames now (numpy array, (T,H,W,3), uint8)
-    print(frames.shape)
+```bash
+uv run python -m dataset_upload.generate_hf_dataset --config dataset_upload/configs/data_gen_configs/motif.yaml
 ```
+
+This will:
+- Find all zip files in the specified dataset path
+- For each zip file, extract the task name and load episodes using the humanoid_everyday dataloader
+- Extract RGB images from each episode
+- Convert frames to web-optimized videos and create a HuggingFace dataset
+- Use the zip filename (without extension) as the task description
 
 ## Notes
 

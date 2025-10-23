@@ -1,7 +1,7 @@
 # config.yaml
 dataset:
   dataset_path: ./datasets/MotIF  # Root containing annotations/, human_motion/, stretch_motion/
-  dataset_name: motif
+  dataset_name: motif_rfm
 
 output:
   output_dir: ./rfm_dataset/motif_rfm

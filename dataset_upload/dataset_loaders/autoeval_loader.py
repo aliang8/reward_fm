@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-
+from tqdm import tqdm
 from dataset_upload.helpers import generate_unique_id
 
 
@@ -56,24 +56,15 @@ def load_autoeval_dataset(dataset_path: str) -> dict[str, list[dict]]:
     if not eval_root.exists():
         raise FileNotFoundError(f"AutoEval eval_data folder not found: {eval_root}")
 
-    pkl_files = list(eval_root.glob("*.pkl"))
+    pkl_files = list(eval_root.rglob("*.pkl"))
 
     success_count = 0
     total_count = 0
 
     task_data: dict[str, list[dict]] = defaultdict(list)
+    task_success_set = set()
 
-    for pkl in pkl_files:
-
-
-        # If success flag is stored inside pickle instead of filename, detect here
-        def read_success_flag(path: Path) -> bool | None:
-            with open(path, "rb") as f:
-                ep = pickle.load(f)
-            # Try step-level success or episode attribute
-            if ep.success is not None:
-                return bool(ep.success)
-            return None
+    for pkl in tqdm(pkl_files, desc="Loading AutoEval dataset", total=len(pkl_files)):
 
         with open(pkl, "rb") as f:
             ep = pickle.load(f)
@@ -84,8 +75,13 @@ def load_autoeval_dataset(dataset_path: str) -> dict[str, list[dict]]:
 
         success_count += int(success)
         total_count += 1
-        task_data[task].append(_make_traj(pkl, task, success))
+        if bool(success):
+            task_success_set.add(task)
+        task_data[task].append(_make_traj(pkl, task, success=bool(success)))
 
+    # make sure all tasks have at least one success
+    for task in task_data.keys():
+        assert task in task_success_set, f"Task {task} is not in task_success_set"
     print(f"AutoEval: successes={success_count}, total={total_count}")
     return task_data
 

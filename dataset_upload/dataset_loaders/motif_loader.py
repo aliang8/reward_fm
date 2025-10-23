@@ -108,13 +108,32 @@ def load_motif_dataset(dataset_path: str) -> dict[str, list[dict]]:
 
     # Annotations
     ann_dir = root / "annotations"
-    for json_file_name in ["human_motion_data_info.json", "stretch_motion_data_info.json"]:
-        path_precursor = "human_motion/videos_raw" if "human" in json_file_name.split("_")[0] else "stretch_motion/videos_raw"
-        json_data = json.load(open(ann_dir / json_file_name))
-        for item in json_data:
-            src = item["video_path"].split("/")[-1]
-            full_vid_path = root / path_precursor / src
-            traj = _make_traj(full_vid_path, item.get("task_instruction") + ": " + item.get("motion_description"))
-            task_to_trajs.setdefault(traj["task"], []).append(traj)
+
+    all_human_trajs = {}
+    path_precursor = "human_motion/videos_raw"
+    json_data = json.load(open(ann_dir / "human_motion_data_info.json"))
+    for item in json_data:
+        src = item["video_path"].split("/")[-1]
+        full_vid_path = root / path_precursor / src
+        instruction = item.get("task_instruction") + ": " + item.get("motion_description")
+        all_human_trajs.setdefault(instruction, []).append(full_vid_path)
+
+    all_stretch_trajs = []
+    path_precursor = "stretch_motion/videos_raw"
+    json_data = json.load(open(ann_dir / "stretch_motion_data_info.json"))
+    for item in json_data:
+        src = item["video_path"].split("/")[-1]
+        full_vid_path = root / path_precursor / src
+        instruction = item.get("task_instruction") + ": " + item.get("motion_description")
+        all_stretch_trajs.setdefault(instruction, []).append(full_vid_path)
+ 
+    # some stretch trajs are not corresponding to any human trajs, so we need to filter them
+    all_stretch_trajs = {k: v for k, v in all_stretch_trajs.items() if k in all_human_trajs}
+
+    for instruction, paths in (all_stretch_trajs + all_human_trajs).items():
+        for path in paths:
+            traj = _make_traj(path, instruction)
+            task_to_trajs.setdefault(instruction, []).append(traj)
+
     return task_to_trajs
 

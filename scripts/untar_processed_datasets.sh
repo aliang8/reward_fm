@@ -33,6 +33,28 @@ for file in *.tar.partaa; do
     fi
 done
 
+# Now handle split archives that look like .tar.part-aa, .tar.part-ab, etc.
+echo "Processing split archives..."
+for file in *.tar.part-aa; do
+    if [ -f "$file" ]; then
+        # Get the base name without .part-aa
+        base_name="${file%.part-aa}"
+        echo "Extracting split archive: $base_name"
+        # Concatenate all parts and extract
+        cat "${base_name}.part"* | tar -xvf -
+
+        # remove the parts if successfully extracted
+        if [ $? -eq 0 ]; then
+            rm "${base_name}.part"*
+        else
+            echo "Failed to extract $base_name, will need to retry and remove the failed parts"
+            continue
+        fi
+        # Mark this base archive as processed
+        processed_archives["$base_name"]=1
+    fi
+done
+
 # Then, handle regular tar files (skip those that were split archives)
 echo "Processing regular tar files..."
 for file in *.tar; do

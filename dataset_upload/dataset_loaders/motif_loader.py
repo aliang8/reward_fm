@@ -39,36 +39,10 @@ class MotifFrameLoader:
             frames_np = frames_np.astype(np.uint8, copy=False)
         return frames_np
 
-    def _load_from_image_dir(self) -> np.ndarray:
-        image_exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
-        files = [
-            p
-            for p in sorted(os.listdir(self.source_path))
-            if Path(p).suffix.lower() in image_exts
-        ]
-        frames = []
-        for name in files:
-            img_bgr = cv2.imread(os.path.join(self.source_path, name), cv2.IMREAD_COLOR)
-            if img_bgr is None:
-                continue
-            img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-            frames.append(img_rgb)
-
-        frames_np = np.asarray(frames)
-        if frames_np.ndim != 4 or frames_np.shape[-1] != 3:
-            raise ValueError(
-                f"Unexpected frames shape from directory {self.source_path}: {getattr(frames_np, 'shape', None)}"
-            )
-        if frames_np.dtype != np.uint8:
-            frames_np = frames_np.astype(np.uint8, copy=False)
-        return frames_np
-
     def __call__(self) -> np.ndarray:
         p = Path(self.source_path)
         if p.is_file():
             return self._load_from_video()
-        if p.is_dir():
-            return self._load_from_image_dir()
         raise FileNotFoundError(f"Source path not found: {self.source_path}")
 
 
@@ -90,7 +64,7 @@ def _make_traj(source_path: Path, task_text: str) -> dict:
     traj["frames"] = MotifFrameLoader(str(source_path))
     traj["is_robot"] = _infer_is_robot_from_path(source_path)
     traj["quality_label"] = "successful"
-    traj["partial_success"] = 1
+    #traj["partial_success"] = 1
     traj["data_source"] = "motif"
     return traj
 

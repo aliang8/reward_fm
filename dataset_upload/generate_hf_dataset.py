@@ -693,6 +693,12 @@ def main(cfg: GenerateConfig):
             print(f"Dataset saved locally to: {dataset_path}")
         print("Dataset conversion complete!")
         return
+    elif "motif" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.motif_loader import load_motif_dataset
+
+        print(f"Loading MotIF dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_motif_dataset(cfg.dataset.dataset_path)
+        trajectories = flatten_task_data(task_data)
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")
 

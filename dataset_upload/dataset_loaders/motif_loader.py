@@ -114,8 +114,8 @@ def load_motif_dataset(dataset_path: str) -> dict[str, list[dict]]:
     all_stretch_trajs = {k: v for k, v in all_stretch_trajs.items() if k in common_keys}
     all_human_trajs = {k: v for k, v in all_human_trajs.items() if k in common_keys}
 
-    print(f"Number of human trajs: {len(all_human_trajs)}")
-    print(f"Number of stretch trajs: {len(all_stretch_trajs)}")
+    print(f"Number of human tasks: {len(all_human_trajs)}")
+    print(f"Number of stretch tasks: {len(all_stretch_trajs)}")
 
     for instruction, paths in all_human_trajs.items():
         for path in paths:

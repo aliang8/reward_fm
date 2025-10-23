@@ -1,6 +1,6 @@
 # config.yaml
 dataset:
-  dataset_path: ./test_datasets/DataDump_08-05-2025
+  dataset_path: ./datasets/roboarena
   dataset_name: roboarena # This will be the dataset name / data source
 
 output:
@@ -10,6 +10,7 @@ output:
   use_video: true
   fps: 10
   shortest_edge_size: 240
+  num_workers: 4
   center_crop: false
 
 hub:

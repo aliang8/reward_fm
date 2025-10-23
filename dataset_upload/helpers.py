@@ -361,6 +361,7 @@ def create_hf_trajectory(
     quality_label: str = str(traj_dict.get("quality_label", "successful"))
     preference_group_id = traj_dict.get("preference_group_id", None)
     preference_rank = traj_dict.get("preference_rank", None)
+    partial_success = traj_dict.get("partial_success", None)
 
     # Create dataset trajectory
     trajectory = {
@@ -373,6 +374,7 @@ def create_hf_trajectory(
         "quality_label": quality_label,
         "preference_group_id": preference_group_id,
         "preference_rank": preference_rank,
+        "partial_success": partial_success,
     }
 
     return trajectory

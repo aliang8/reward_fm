@@ -72,8 +72,7 @@ def create_new_trajectory(video_path: str, partial_success: int, task_name: str)
 
 
 def load_roboarena_dataset(dataset_path: str) -> dict[str, list[dict]]:
-    path_to_roboarena = "test_datasets/DataDump_08-05-2025"
-    eval_folder = os.path.join(path_to_roboarena, "evaluation_sessions")
+    eval_folder = os.path.join(dataset_path, "evaluation_sessions")
     eval_sessions = os.listdir(eval_folder)
 
     # tasks_to_videos = dict()

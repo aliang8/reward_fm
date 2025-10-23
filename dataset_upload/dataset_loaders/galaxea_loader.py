@@ -75,7 +75,7 @@ def _process_single_galaxea_episode(args):
         if not frames:
             continue
         # skip anything > 800 frames for now because memory usage
-        elif len(frames) > 800:
+        elif len(frames) > 1000:
             print(f"Skipping episode {ep_idx} because it's too long, length is {len(frames)}")
             del frames
             continue
@@ -156,8 +156,6 @@ def convert_galaxea_dataset_to_hf(
     lang_model = load_sentence_transformer_model()
     lang_cache: dict[str, Any] = {}
 
-    datasets_out: list[Dataset] = []
-
     rlds_name = dataset_name.replace("galaxea_", "")
 
     # Find builder directory/version: root/rlds_name/<version>
@@ -188,14 +186,14 @@ def convert_galaxea_dataset_to_hf(
 
     # Batch/process episodes
     batch_size = 1
-    num_workers = min(num_workers, 4)
+    num_workers = min(num_workers, 1)
     entries: list[dict[str, Any]] = []
     produced = 0
     max_limit = float("inf") if (max_trajectories is None or max_trajectories == -1) else int(max_trajectories)
-
     episode_batch = []
     info_batch = []
 
+    # split up 
     for ep_idx, episode in enumerate(tqdm(dataset, desc=f"Processing {rlds_name} episodes")):
         if produced >= max_limit:
             break
@@ -285,42 +283,18 @@ def convert_galaxea_dataset_to_hf(
             episode_batch = []
             info_batch = []
 
-        if not entries:
-            ds_out = Dataset.from_dict(
-                {
-                    "id": [],
-                    "task": [],
-                    "lang_vector": [],
-                    "data_source": [],
-                    "frames": [],
-                    "is_robot": [],
-                    "quality_label": [],
-                    "preference_group_id": [],
-                    "preference_rank": [],
-                }
-            )
-        else:
-            ds_out = Dataset.from_list(entries)
-
-        datasets_out.append(ds_out)
-
-    if not datasets_out:
-        return Dataset.from_dict(
-            {
-                "id": [],
-                "task": [],
-                "lang_vector": [],
-                "data_source": [],
-                "frames": [],
-                "is_robot": [],
-                "quality_label": [],
-                "preference_group_id": [],
-                "preference_rank": [],
-            }
-        )
-
-    if len(datasets_out) == 1:
-        return datasets_out[0]
-    return concatenate_datasets(datasets_out)
+    if not entries:
+        return Dataset.from_dict({
+            "id": [],
+            "task": [],
+            "lang_vector": [],
+            "data_source": [],
+            "frames": [],
+            "is_robot": [],
+            "quality_label": [],
+            "preference_group_id": [],
+            "preference_rank": [],
+        })
+    return Dataset.from_list(entries)
 
 

@@ -84,7 +84,7 @@ BASE_FEATURES = {
     "quality_label": datasets.Value("string"),
     # "preference_group_id": datasets.Value("string"),
     # "preference_rank": datasets.Value("int32"),
-    "partial_success": datasets.Value("int32"),  # in [0, 1]
+    "partial_success": datasets.Value("float32"),  # in [0, 1]
 }
 
 
@@ -664,6 +664,35 @@ def main(cfg: GenerateConfig):
             cfg.dataset.dataset_path,
         )
         trajectories = flatten_task_data(task_data)
+    elif "humanoid_everyday" in cfg.dataset.dataset_name.lower():
+        # Stream + convert directly (OXE-style)
+        from dataset_upload.dataset_loaders.humanoid_everyday_loader import convert_humanoid_everyday_dataset_to_hf
+
+        print(f"Converting Humanoid Everyday dataset directly to HF from: {cfg.dataset.dataset_path}")
+        dataset = convert_humanoid_everyday_dataset_to_hf(
+            dataset_path=cfg.dataset.dataset_path,
+            dataset_name=cfg.dataset.dataset_name,
+            output_dir=cfg.output.output_dir,
+            max_trajectories=cfg.output.max_trajectories,
+            max_frames=cfg.output.max_frames,
+            fps=cfg.output.fps,
+            num_workers=cfg.output.num_workers,
+        )
+
+        # Handle pushing/saving consistently
+        if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
+            print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")
+            try:
+                push_hf_dataset_and_video_files_to_hub(dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir)
+            except Exception as e:
+                print(f"❌ Error pushing to hub: {e}")
+                print("Dataset was created locally but failed to push videos and/or metadata to hub")
+        else:
+            dataset_path = os.path.join(cfg.output.output_dir, (cfg.dataset.dataset_name).lower())
+            dataset.save_to_disk(dataset_path)
+            print(f"Dataset saved locally to: {dataset_path}")
+        print("Dataset conversion complete!")
+        return
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")
 

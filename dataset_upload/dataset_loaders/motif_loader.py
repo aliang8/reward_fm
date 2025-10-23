@@ -134,12 +134,11 @@ def load_motif_dataset(dataset_path: str) -> dict[str, list[dict]]:
             continue
         instruction = item.get("task_instruction") + ": " + item.get("motion_description")
         all_stretch_trajs.setdefault(instruction, []).append(full_vid_path)
- 
-    # some stretch trajs are not corresponding to any human trajs, so we need to filter them
-    all_stretch_trajs = {k: v for k, v in all_stretch_trajs.items() if k in all_human_trajs}
 
-    # some human trajs are not corresponding to any stretch trajs, so we need to filter them
-    all_human_trajs = {k: v for k, v in all_human_trajs.items() if k in all_stretch_trajs}
+    # get the keys in both
+    common_keys = set(all_human_trajs.keys()) & set(all_stretch_trajs.keys())
+    all_stretch_trajs = {k: v for k, v in all_stretch_trajs.items() if k in common_keys}
+    all_human_trajs = {k: v for k, v in all_human_trajs.items() if k in common_keys}
 
     print(f"Number of human trajs: {len(all_human_trajs)}")
     print(f"Number of stretch trajs: {len(all_stretch_trajs)}")

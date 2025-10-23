@@ -655,7 +655,7 @@ def main(cfg: GenerateConfig):
             print(f"Dataset saved locally to: {dataset_path_local}")
         print("Dataset conversion complete!")
         return
-    elif "autoeval" in cfg.dataset.dataset_name.lower():
+    elif "auto_eval" in cfg.dataset.dataset_name.lower():
         from dataset_upload.dataset_loaders.autoeval_loader import load_autoeval_dataset
 
         print(f"Loading AutoEval dataset from: {cfg.dataset.dataset_path}")

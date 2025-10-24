@@ -66,6 +66,7 @@ for file in *.tar; do
 
             # remove the tar file only if it was successfully extracted
             if [ $? -eq 0 ]; then
+                processed_archives["$file"]=1
                 rm "$file"
             else
                 echo "Failed to extract $file, will need to retry and remove the failed tar file"
@@ -88,5 +89,11 @@ if [ -d "processed_datasets" ]; then
     echo "Done moving datasets out of processed_datasets subdirectory!"
 fi
 
+# print which datasets might've failed
+for file in *.tar; do
+    if [ -z "${processed_archives[$file]}" ]; then
+        echo "Failed to extract $file"
+    fi
+done
 cd ..
 echo "Done extracting all archives!"

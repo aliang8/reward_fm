@@ -11,8 +11,9 @@ train_datasets:
   - "jesbu1/galaxea_rfm"
   - "jesbu1/epic_rfm"
   - "jesbu1/humanoid_everyday_rfm"
-  - "jesbu1/soar_rfm"
   - "jesbu1/motif_rfm"
+  - "jesbu1/auto_eval_rfm"
+  - "jesbu1/soar_rfm"
 
 train_subsets:
   - ["molmoact_dataset_household", "molmoact_dataset_tabletop"]
@@ -27,8 +28,9 @@ train_subsets:
   - ["galaxea_part1_r1_lite", "galaxea_part2_r1_lite", "galaxea_part3_r1_lite", "galaxea_part4_r1_lite", "galaxea_part5_r1_lite"]
   - ["epic"]
   - ["humanoid_everyday_rfm"]
-  - ["soar_rfm"]
   - ["motif_rfm"]
+  - ["auto_eval_rfm"]
+  - ["soar_rfm"]
 
 
 eval_datasets:

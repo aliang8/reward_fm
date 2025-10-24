@@ -64,7 +64,7 @@ huggingface-cli login
 ```bash
 python dataset_upload/dataset_helpers/generate_soar_labels_vlm.py \
     --dataset_path /path/to/soar/rlds \
-    --output soar_vlm_labels.json
+    --output dataset_upload/dataset_helpers/soar_vlm_labels.json
 ```
 
 ### Advanced Usage
@@ -72,8 +72,8 @@ python dataset_upload/dataset_helpers/generate_soar_labels_vlm.py \
 ```bash
 python dataset_upload/dataset_helpers/generate_soar_labels_vlm.py \
     --dataset_path /path/to/soar/rlds \
-    --output labels_8b.json \
-    --model Qwen/Qwen3-VL-8B-Instruct \
+    --output dataset_upload/dataset_helpers/soar_vlm_labels_8b.json \
+    --model Qwen/Qwen3-VL-8B-Instruct-FP8 \
     --num_frames 16 \
     --device cuda \
     --max_episodes 100
@@ -84,9 +84,9 @@ python dataset_upload/dataset_helpers/generate_soar_labels_vlm.py \
 - `--dataset_path` (required): Path to SOAR TFDS dataset directory
 - `--output`: Output JSON file path (default: `soar_vlm_labels.json`)
 - `--model`: Model to use (default: `Qwen/Qwen3-VL-8B-Instruct`)
-  - `Qwen/Qwen3-VL-2B-Instruct` - Fastest, ~8GB VRAM
-  - `Qwen/Qwen3-VL-8B-Instruct` - Balanced (default)
-  - `Qwen/Qwen3-VL-32B-Instruct` - Most accurate, requires ~150GB VRAM
+  - `Qwen/Qwen3-VL-4B-Instruct-FP8` - Fastest, ~4GB VRAM
+  - `Qwen/Qwen3-VL-8B-Instruct-FP8` - Balanced (default)
+  - `Qwen/Qwen3-VL-32B-Instruct-FP8` - Most accurate, requires ~32GB VRAM
 - `--num_frames`: Number of frames to sample per video (default: 8)
 - `--device`: Device to use - 'cuda', 'cpu', or 'auto' (default: auto)
 - `--max_episodes`: Maximum episodes to process per split (default: all)
@@ -99,7 +99,7 @@ The script generates a JSON file with the following structure:
 {
   "metadata": {
     "dataset_path": "/path/to/soar/rlds",
-    "model": "Qwen/Qwen3-VL-8B-Instruct",
+    "model": "Qwen/Qwen3-VL-8B-Instruct-FP8",
     "num_frames": 8,
     "total_episodes": 1000
   },
@@ -126,13 +126,13 @@ The script generates a JSON file with the following structure:
 
 | Model | VRAM Required | Speed | Accuracy |
 |-------|---------------|-------|----------|
-| 2B | ~8 GB | Fast | Good |
-| 8B | ~20 GB | Medium | Better |
+| 4B | ~4 GB | Fast | Good |
+| 8B | ~8 GB | Medium | Better |
 | 32B | ~32 GB | Slow | Best |
 
 ### Processing Time
 
-- ~5-10 seconds per episode (8B model on A100)
+- ~15 seconds per episode (4B model on A100)
 - Can be parallelized by splitting the dataset
 
 ### Tips for Large Datasets
@@ -148,7 +148,7 @@ The script generates a JSON file with the following structure:
 ```bash
 python dataset_upload/dataset_helpers/generate_soar_labels_vlm.py \
     --dataset_path /path/to/soar/rlds \
-    --output test_labels.json \
+    --output dataset_upload/dataset_helpers/test_labels.json \
     --max_episodes 10
 ```
 
@@ -156,7 +156,7 @@ python dataset_upload/dataset_helpers/generate_soar_labels_vlm.py \
 ```bash
 python dataset_upload/dataset_helpers/generate_soar_labels_vlm.py \
     --dataset_path /path/to/soar/rlds \
-    --output soar_labels_8b.json \
+    --output dataset_upload/dataset_helpers/soar_labels_8b.json \
     --model Qwen/Qwen3-VL-8B-Instruct \
     --num_frames 8
 ```

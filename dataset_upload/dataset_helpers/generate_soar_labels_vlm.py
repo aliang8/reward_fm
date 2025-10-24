@@ -149,7 +149,7 @@ class Qwen3VLClassifier:
         
         self.model = AutoModelForVision2Seq.from_pretrained(
             model_name,
-            torch_dtype="auto",
+            dtype="auto",
             device_map=device,
             #attn_implementation="flash_attention_2",
         )

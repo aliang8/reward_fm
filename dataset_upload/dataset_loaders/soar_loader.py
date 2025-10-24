@@ -17,19 +17,6 @@ from dataset_upload.helpers import (
 import tensorflow_datasets as tfds
 
 
-POSSIBLE_LANG_KEYS = [
-    "language_instruction",
-    "instruction",
-    "language_command",
-]
-
-POSSIBLE_IMAGE_OBS_KEYS = [
-    "image",  # common
-    "image_primary",
-    "image_camera_head",
-]
-
-
 def _build_video_paths(output_dir: str, dataset_label: str, episode_idx: int, view_key: str) -> tuple[str, str]:
     shard_index = episode_idx // 1000
     shard_dir = f"shard_{shard_index:04d}"
@@ -95,7 +82,6 @@ def convert_soar_dataset_to_hf(
     dataset_path: str,
     dataset_name: str,
     output_dir: str,
-    rlds_splits: list[str],  # e.g., ["success", "failure"]
     max_trajectories: int | None = None,
     max_frames: int = 64,
     fps: int = 10,
@@ -107,7 +93,7 @@ def convert_soar_dataset_to_hf(
       <dataset_path>/rlds/<split>/<version>/ (TFDS builder dir)
     """
 
-    root = Path(os.path.expanduser(dataset_path)) / "rlds"
+    root = Path(os.path.expanduser(dataset_path))
     if not root.exists():
         raise FileNotFoundError(f"'rlds' directory not found under: {dataset_path}")
 
@@ -121,28 +107,10 @@ def convert_soar_dataset_to_hf(
 
     datasets_list: list[Dataset] = []
 
-    for split_name in rlds_splits:
-        split_dir = root / split_name
-        versions = os.listdir(str(split_dir)) if split_dir.exists() else []
-        if not versions:
-            print(f"Warning: No versions found for split '{split_name}' in {split_dir}")
-            continue
-
-        builder = None
-        for version in versions:
-            if "incomplete" in version:
-                continue
-            try:
-                builder = tfds.builder_from_directory(f"{split_dir}/{version}")
-                break
-            except Exception:
-                continue
-        if builder is None:
-            print(f"Warning: No valid builder found for split '{split_name}' in {split_dir}")
-            continue
-
+    builder = tfds.builder_from_directory(root)
+    for split_name in ["success", "failure"]:
         # Commonly RLDS train split contains the episodes
-        ds = builder.as_dataset(split="train", shuffle_files=False)
+        ds = builder.as_dataset(split=split_name, shuffle_files=False)
 
         entries: list[dict] = []
         produced = 0
@@ -163,30 +131,13 @@ def convert_soar_dataset_to_hf(
             first = steps_np[0] if steps_np else None
             if first is not None:
                 # First try step-level keys
-                for key in POSSIBLE_LANG_KEYS:
-                    if key in first:
-                        val = first[key]
-                        try:
-                            task_text = val.decode() if isinstance(val, (bytes, bytearray)) else str(val)
-                        except Exception:
-                            task_text = None
-                        if task_text:
-                            break
-                # Then try observation sub-keys
-                if not task_text:
-                    obs = first.get("observation", {}) if isinstance(first, dict) else {}
-                    for key in POSSIBLE_LANG_KEYS:
-                        if key in obs:
-                            val = obs[key]
-                            try:
-                                task_text = val.decode() if isinstance(val, (bytes, bytearray)) else str(val)
-                            except Exception:
-                                task_text = None
-                            if task_text:
-                                break
+                if "language_instruction" in first:
+                    val = first["language_instruction"]
+                    task_text = val.decode() if isinstance(val, (bytes, bytearray)) else str(val)
 
             if not task_text:
                 continue
+
 
             if task_text not in lang_cache:
                 lang_cache[task_text] = lang_model.encode(task_text)
@@ -194,13 +145,7 @@ def convert_soar_dataset_to_hf(
 
             # Choose a valid image key
             valid_img_key: str | None = None
-            obs0 = first.get("observation", {}) if (isinstance(first, dict)) else {}
-            for k in POSSIBLE_IMAGE_OBS_KEYS:
-                if k in obs0:
-                    valid_img_key = k
-                    break
-            if not valid_img_key:
-                continue
+            valid_img_key = "image_0"
 
             quality_label = "successful" if split_name.lower().startswith("success") else "failure"
 

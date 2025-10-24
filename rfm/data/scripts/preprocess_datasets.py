@@ -25,9 +25,11 @@ from datasets import Dataset, DatasetDict, Video, load_dataset
 from rfm.utils.distributed import rank_0_print
 VIDEO_ERROR_PRINTED = False
 # maps subsets to functions that filter the dataset. If true, the example is dropped.
+soar_bad_trajectories = ["20018cd0-8043-401a-a941-3df0921b3774", "8fd5436d-9add-4bcb-9ef2-c0de50d60eae", "ac87af33-48d5-4972-a328-29bddce8fd57", "2aedbc6f-e2ca-41d7-bf3c-66b47ebe1885", "294df3a0-f0a6-4681-9400-83a4c9da3c1b", "404edae0-0f4c-483c-8cef-348549e61aea", "1c297365-5090-4a4b-89df-6545384159da"]
 filters = {
     "jesbu1/molmoact_rfm/molmoact_dataset_tabletop": lambda x: "load the bowl" in x["task"].lower(), 
-    "jesbu1/galaxea_rfm": lambda x: all(word in x["task"].lower() for word in ["return", "to", "initial", "position"])
+    "jesbu1/galaxea_rfm": lambda x: all(word in x["task"].lower() for word in ["return", "to", "initial", "position"]),
+    "jesbu1/soar_rfm": lambda x: x["trajectory_id"] in soar_bad_trajectories,
 }
 
 

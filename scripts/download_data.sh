@@ -123,6 +123,10 @@ repos=(
   jesbu1/roboarena_0825_rfm
   jesbu1/oxe_rfm_eval
   anqil/rh20t_subset_rfm # can be replaced with anqil/rh20t_rfm full dataset
+  jesbu1/humanoid_everyday_rfm
+  jesbu1/motif_rfm
+  jesbu1/auto_eval_rfm
+  jesbu1/soar_rfm
 )
 
 # ------------------------------

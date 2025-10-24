@@ -1,6 +1,7 @@
 import glob
 import json
 import os
+import random
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,7 @@ class FailSafeFrameListLoader:
 
     def __init__(self, image_paths: list[str]) -> None:
         self.image_paths = image_paths
+        assert len(image_paths) > 0
 
     def __call__(self) -> np.ndarray:
         frames: list[np.ndarray] = []
@@ -76,6 +78,7 @@ def _gather_full_episodes(task_dir: Path, view: str, instruction: str) -> list[d
         gt_view_dir = seed_dir / "Ground_Truth" / view
         if gt_view_dir.exists():
             imgs = _sorted_pngs(gt_view_dir)
+            assert len(imgs) > 0
             if imgs:
                 episodes.append(_make_traj(imgs, task_dir.name, instruction, is_success=True))
 
@@ -83,6 +86,7 @@ def _gather_full_episodes(task_dir: Path, view: str, instruction: str) -> list[d
         for attempt_dir in sorted([p for p in seed_dir.iterdir() if p.is_dir() and p.name != "Ground_Truth"]):
             view_dir = attempt_dir / view
             if view_dir.exists():
+                assert len(imgs) > 0
                 imgs = _sorted_pngs(view_dir)
                 if imgs:
                     episodes.append(_make_traj(imgs, task_dir.name, instruction, is_success=False))
@@ -105,7 +109,8 @@ def _gather_sub_episodes_from_json(dataset_root: Path, view: str) -> list[dict]:
             continue
         if not isinstance(data, list):
             continue
-        for entry in data:
+        # sub sample 1/3 for 3 views
+        for entry in random.sample(data, len(data) // 3):
             task_key = entry.get("task")
             instruction = entry.get("instruction") or TASK_TO_INSTRUCTION.get(task_key, task_key or "")
             sub_task = entry.get("sub_task")
@@ -117,6 +122,8 @@ def _gather_sub_episodes_from_json(dataset_root: Path, view: str) -> list[dict]:
             # Filter by desired view: ensure each path contains "/<view>/"
             if view:
                 imgs_rel = [p for p in imgs_rel if f"/{view}/" in p or f"\\{view}\\" in p]
+                if len(imgs_rel) == 0:
+                    continue
             image_paths = [str((dataset_root / p).resolve()) for p in imgs_rel]
             is_success = (failure_type is None) or (str(failure_type).lower() == "none")
             episodes.append(_make_traj(image_paths, task_key or "failsafe", instruction, is_success=is_success, sub_task=sub_task))
@@ -148,8 +155,9 @@ def load_failsafe_dataset(dataset_path: str) -> dict[str, list[dict]]:
     # Sub-trajectory episodes from JSON
     if include_sub_trajectories:
         for view in views:
+            # sample one view
             sub_episodes = _gather_sub_episodes_from_json(root, view=view)
-            print(f"Found {len(sub_episodes)} sub-trajectories for {view}")
+            print(f"Found {len(sub_episodes)} sub-trajectories for {view} after sampling 1/3 of the data")
             for traj in sub_episodes:
                 task = traj["task"]
                 task_data.setdefault(task, []).append(traj)
@@ -180,6 +188,6 @@ def load_failsafe_dataset(dataset_path: str) -> dict[str, list[dict]]:
     successful_trajectories = [sum([1 for t in traj if t["quality_label"] == "successful"]) for traj in task_data_paired.values()]
     print(f"Found {sum(failed_trajectories)} failed trajectories")
     print(f"Found {sum(successful_trajectories)} successful trajectories")
-    return task_data
+    return task_data_paired
 
 

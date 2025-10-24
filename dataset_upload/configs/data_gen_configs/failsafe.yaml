@@ -10,7 +10,7 @@ output:
   use_video: true
   fps: 10
   shortest_edge_size: 240
-  num_workers: 1
+  num_workers: 4
   center_crop: false
 
 hub:

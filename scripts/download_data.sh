@@ -119,6 +119,7 @@ repos=(
   jesbu1/molmoact_rfm
   jesbu1/ph2d_rfm
   jesbu1/epic_rfm
+  jesbu1/failsafe_rfm
   jesbu1/h2r_rfm
   jesbu1/roboarena_0825_rfm
   jesbu1/oxe_rfm_eval

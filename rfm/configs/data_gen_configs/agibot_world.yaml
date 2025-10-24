@@ -2,6 +2,7 @@
 dataset:
   dataset_path: "agibot-world/AgiBotWorld-Alpha"  # HuggingFace dataset name for streaming
   dataset_name: agibotworld
+  use_local_upload: true  # If true, skip streaming and upload from local shard/episode/clip files
 
 output:
   output_dir: datasets/agibotworld_dataset
@@ -10,6 +11,7 @@ output:
   use_video: true
   fps: 30
   num_workers: 16
+  # skip_shard_videos_threshold: 800  # If a shard already has > N videos, skip streaming it
 
 hub:
   push_to_hub: true  # Set to true when ready to upload

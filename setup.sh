@@ -14,11 +14,11 @@ set -euo pipefail
 #   ./setup.sh /data/rfm                      # positional base dir
 
 # get uv 
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.local/bin/env
+# curl -LsSf https://astral.sh/uv/install.sh | sh
+# source $HOME/.local/bin/env
 
 # install dependencies
-uv pip install huggingface_hub
+# uv pip install huggingface_hub
 
 METHOD=${RFM_DOWNLOAD_METHOD:-hf}  # hf | git
 BASE_DIR_DEFAULT=${RFM_DATASET_PATH:-./rfm_dataset}
@@ -106,7 +106,7 @@ download_dataset() {
 }
 
 # download_dataset abraranwar/agibotworld_rfm
-download_dataset abraranwar/libero_rfm
+# download_dataset abraranwar/libero_rfm
 # download_dataset abraranwar/egodex_rfm
 # download_dataset ykorkmaz/libero_failure_rfm
 # download_dataset jesbu1/oxe_rfm_eval

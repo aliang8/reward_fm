@@ -81,6 +81,12 @@ class DatasetConfig:
     dataset_name: Optional[str] = field(
         default=None, metadata={"help": "Name of the dataset (defaults to dataset_type)"}
     )
+    use_local_upload: bool = field(
+        default=False,
+        metadata={
+            "help": "For AgiBotWorld only: if true, upload from local shard/episode/clip files instead of streaming."
+        },
+    )
 
 
 @dataclass
@@ -103,6 +109,12 @@ class OutputConfig:
     fps: int = field(default=10, metadata={"help": "Frames per second for video creation"})
     num_workers: int = field(
         default=-1, metadata={"help": "Number of parallel workers for processing (-1 for auto, 0 for sequential)"}
+    )
+    use_agibotworld_local_upload: bool = field(
+        default=False,
+        metadata={
+            "help": "For AgiBotWorld only: if true, scan existing local shard/episode/clip files and upload entries instead of streaming."
+        },
     )
 
 
@@ -399,20 +411,32 @@ def main(cfg: GenerateConfig):
         task_data = load_libero_dataset(cfg.dataset.dataset_path)
         trajectories = flatten_task_data(task_data)
     elif "agibotworld" in (cfg.dataset.dataset_name or "").lower():
-        # Stream + convert directly inside the AgiBotWorld loader
-        from rfm.data.dataset_loaders.agibotworld_loader import (
-            convert_agibotworld_streaming_to_hf,
-        )
+        # Either stream+convert via loader, or upload from local shard/episode/clip structure
+        dataset = None
+        if getattr(cfg.dataset, "use_local_upload", False):
+            from rfm.data.data_scripts.agibot.agibot_upload import upload_agibotworld_local
 
-        dataset = convert_agibotworld_streaming_to_hf(
-            dataset_name=cfg.dataset.dataset_path,
-            output_dir=cfg.output.output_dir,
-            dataset_label=cfg.dataset.dataset_name or "agibotworld",
-            max_trajectories=cfg.output.max_trajectories,
-            max_frames=cfg.output.max_frames,
-            fps=cfg.output.fps,
-            num_workers=cfg.output.num_workers,
-        )
+            dataset = upload_agibotworld_local(
+                root_dir=cfg.output.output_dir,
+                dataset_label=cfg.dataset.dataset_name or "agibotworld",
+                max_frames=cfg.output.max_frames,
+                fps=cfg.output.fps,
+                push_to_hub=False,
+            )
+        else:
+            from rfm.data.dataset_loaders.agibotworld_loader import (
+                convert_agibotworld_streaming_to_hf,
+            )
+
+            dataset = convert_agibotworld_streaming_to_hf(
+                dataset_name=cfg.dataset.dataset_path,
+                output_dir=cfg.output.output_dir,
+                dataset_label=cfg.dataset.dataset_name or "agibotworld",
+                max_trajectories=cfg.output.max_trajectories,
+                max_frames=cfg.output.max_frames,
+                fps=cfg.output.fps,
+                num_workers=cfg.output.num_workers,
+            )
         # Handle pushing/saving consistently
         if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
             print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")

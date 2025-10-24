@@ -14,7 +14,6 @@ from datasets import load_dataset, Dataset, concatenate_datasets
 import datasets as hfds
 from tqdm import tqdm
 from helpers import (
-    create_trajectory_video_optimized,
     load_sentence_transformer_model,
     create_hf_trajectory,
 )
@@ -89,6 +88,93 @@ def _build_video_paths(
     return full_path, rel_path
 
 
+def _should_skip_shard(
+    output_dir: str,
+    dataset_name: str,
+    shard_dir: str,
+    threshold: Optional[int],
+    cache: Dict[str, bool],
+) -> bool:
+    """Return True if the shard should be skipped due to existing episode folder count.
+
+    Counts immediate child directories named like 'episode_*' under
+    <output>/<dataset>/<shard_dir> once per shard and caches the decision.
+    A threshold <= 0 or None disables skipping.
+    """
+    if threshold is None or threshold <= 0:
+        return False
+    if shard_dir in cache:
+        return cache[shard_dir]
+    shard_path = os.path.join(output_dir, dataset_name.lower(), shard_dir)
+    total = 0
+    try:
+        with os.scandir(shard_path) as it:
+            for entry in it:
+                if not entry.is_dir():
+                    continue
+                name = entry.name
+                if name.startswith("episode_"):
+                    total += 1
+                    if total > threshold:
+                        break
+    except Exception:
+        # If any issue reading the directory, do not skip
+        total = 0
+
+    print(f"shard_dir: {shard_dir}, total: {total}, threshold: {threshold}")
+    skip = total > threshold
+    cache[shard_dir] = skip
+    return skip
+
+
+def _hf_shard_all_seen_shards_full(
+    ds,
+    dataset_name: str,
+    output_dir: str,
+    dataset_label: str,
+    threshold: Optional[int],
+    max_samples: int = 1000,
+) -> Tuple[bool, int, set]:
+    """Peek up to max_samples items from an HF shard to decide if it's safe to skip entirely.
+
+    We only read lightweight metadata (`__key__`), map each sample to its stable
+    output shard via episode id, and check whether ALL encountered stable shards
+    already exceed the folder-count threshold. If we find any sample mapping to
+    a shard that is NOT full, we return False immediately (do not skip).
+    """
+    if threshold is None or threshold <= 0:
+        return False, 0, set()
+    shard_skip_cache: Dict[str, bool] = {}
+    encountered_stable_shards: set = set()
+    it = iter(ds)
+    count = 0
+    while count < max_samples:
+        try:
+            s = next(it)
+        except StopIteration:
+            break
+        except Exception:
+            # On transient read error, err on side of not skipping
+            return False, len(encountered_stable_shards), encountered_stable_shards
+        key = s.get("__key__", "")
+        episode_id, _camera = _parse_episode_and_camera(key)
+        if not episode_id:
+            count += 1
+            continue
+        stable_shard = _stable_shard_for_episode(episode_id)
+        encountered_stable_shards.add(stable_shard)
+        if not _should_skip_shard(
+            output_dir=output_dir,
+            dataset_name=dataset_label,
+            shard_dir=stable_shard,
+            threshold=threshold,
+            cache=shard_skip_cache,
+        ):
+            return False, len(encountered_stable_shards), encountered_stable_shards
+        count += 1
+    # If we encountered nothing, don't skip; otherwise skip
+    return (len(encountered_stable_shards) > 0), len(encountered_stable_shards), encountered_stable_shards
+
 def _collect_unique_texts_for_batch(records: List[Tuple[str, dict]]) -> List[str]:
     """Collect unique instruction texts from a list of (episode_id, record) pairs."""
     texts: List[str] = []
@@ -155,19 +241,24 @@ def _process_single_stream_sample(
     except Exception:
         return result_entries
 
-    # Get video bytes (dataset exposes only 'mp4', '__key__', '__url__')
-    video_bytes = sample.get("mp4")
-    if not video_bytes:
-        return result_entries
+    # Lazily decode frames only if we must write any missing videos.
+    # IMPORTANT: Accessing sample["mp4"] may trigger a remote fetch; avoid unless needed.
+    frames_cache: Optional[np.ndarray] = None
 
-    # Decode the video to frames once
-    try:
-        frames = load_video_frames(video_bytes)
-    except Exception:
-        return result_entries
-
-    if frames is None or len(frames) == 0:
-        return result_entries
+    def get_frames() -> np.ndarray:
+        nonlocal frames_cache
+        if frames_cache is None:
+            try:
+                video_bytes_local = sample.get("mp4")
+            except Exception:
+                return np.empty((0,), dtype=object)
+            if not video_bytes_local:
+                return np.empty((0,), dtype=object)
+            try:
+                frames_cache = load_video_frames(video_bytes_local)
+            except Exception:
+                return np.empty((0,), dtype=object)
+        return frames_cache
 
     # Build entries: full + subtasks
     # Full trajectory
@@ -175,9 +266,8 @@ def _process_single_stream_sample(
     if full_text:
         subtask_idx = 0
         full_out_path, rel_path = _build_video_paths(output_dir, dataset_name, episode_id, subtask_idx, camera)
-        # Create video if missing
-        if not os.path.exists(full_out_path):
-            _ = create_trajectory_video_optimized(frames, full_out_path, max_frames=max_frames, fps=fps)
+        # Always route through create_hf_trajectory which internally creates the video only if missing.
+        # Provide frames as a callable so frames are only loaded if writing is needed.
 
         lang_vec = embeddings.get(full_text)
         if lang_vec is None:
@@ -186,7 +276,7 @@ def _process_single_stream_sample(
 
         traj_dict = {
             "id": generate_unique_id(),
-            "frames": frames,  # Not used by create_hf_trajectory now since we already wrote, but pass for API
+            "frames": (lambda: get_frames()),
             "task": full_text,
             "is_robot": True,
             "quality_label": "successful",
@@ -215,14 +305,9 @@ def _process_single_stream_sample(
         if not text:
             continue
         start = a.get("start_frame", 0)
-        end = a.get("end_frame", len(frames))
-        sub_frames = _frames_for_subrange(frames, start, end)
-        if sub_frames.size == 0:
-            continue
-
+        # Use a large sentinel end bound; actual frames length will be applied lazily when needed
+        end = a.get("end_frame", 10**9)
         out_path, rel_path = _build_video_paths(output_dir, dataset_name, episode_id, i, camera)
-        if not os.path.exists(out_path):
-            _ = create_trajectory_video_optimized(sub_frames, out_path, max_frames=max_frames, fps=fps)
 
         lang_vec = embeddings.get(text)
         if lang_vec is None:
@@ -230,7 +315,8 @@ def _process_single_stream_sample(
 
         traj_dict = {
             "id": generate_unique_id(),
-            "frames": sub_frames,
+            # Provide subrange lazily; only computed if the subclip video is missing
+            "frames": (lambda s=start, e=end: _frames_for_subrange(get_frames(), s, e)),
             "task": text,
             "is_robot": True,
             "quality_label": "successful",
@@ -258,7 +344,8 @@ def _convert_agibotworld_shard_worker(args) -> Dataset:
 
     Args tuple: (
         dataset_name, output_dir, dataset_label, max_trajectories,
-        max_frames, fps, num_workers, dataset_num_shards, shard_index
+        max_frames, fps, num_workers, dataset_num_shards, shard_index,
+        skip_shard_videos_threshold
     )
     """
     (
@@ -271,6 +358,7 @@ def _convert_agibotworld_shard_worker(args) -> Dataset:
         num_workers,
         dataset_num_shards,
         shard_index,
+        skip_shard_videos_threshold,
     ) = args
 
     return convert_agibotworld_streaming_to_hf(
@@ -283,7 +371,8 @@ def _convert_agibotworld_shard_worker(args) -> Dataset:
         num_workers=num_workers,
         dataset_num_shards=dataset_num_shards,
         shard_index=shard_index,
-        parallelize_shards=False,
+        skip_shard_videos_threshold=skip_shard_videos_threshold,
+        parallelize_shards=True,
     )
 
 
@@ -297,6 +386,7 @@ def convert_agibotworld_streaming_to_hf(
     num_workers: int = -1,
     dataset_num_shards: int = 2500,
     shard_index: Optional[int] = None,
+    skip_shard_videos_threshold: Optional[int] = 400,
     parallelize_shards: bool = True,
 ) -> Dataset:
     """Stream AgiBotWorld, extract camera videos, and write HF entries.
@@ -325,6 +415,10 @@ def convert_agibotworld_streaming_to_hf(
         max_procs = max(1, min(cpu_count(), 8))
         shard_pool_procs = min(dataset_num_shards, max_procs)
         per_shard_workers = max(1, max_procs // dataset_num_shards)
+        # Early skip via lightweight peek: for each HF shard, sample up to N keys and
+        # check whether all encountered stable shards are already full by folder count.
+        filtered_indices = shard_indices
+ 
         with Pool(processes=shard_pool_procs) as pool:
             args_list = [
                 (
@@ -337,8 +431,9 @@ def convert_agibotworld_streaming_to_hf(
                     per_shard_workers,
                     dataset_num_shards,
                     si,
+                    skip_shard_videos_threshold,
                 )
-                for si in shard_indices
+                for si in filtered_indices
             ]
             shard_datasets = list(
                 tqdm(
@@ -381,22 +476,12 @@ def convert_agibotworld_streaming_to_hf(
         try:
             ds = ds.shard(dataset_num_shards, effective_shard_index)
         except Exception as e:
-            print(f"Warning: failed to apply dataset.shard(...): {e}")
+            print(f"Warning: failed to apply dataset.shard(...): {e}", "effective_shard_index",
+             effective_shard_index, "dataset_num_shards", dataset_num_shards)
+        # Note: We avoid any peeking to keep streaming robust across schema variations.
+        # Skipping whole shards is disabled here; rely on main loop checks per sample.
 
-    # Some shards expose PNG frames instead of MP4. Widen features so casting
-    # does not fail during iteration; we'll simply skip non-MP4 samples.
-    widened = hfds.Features(
-        {
-            "__key__": hfds.Value("string"),
-            "__url__": hfds.Value("string"),
-            "mp4": hfds.Value("binary"),
-            "png": hfds.Value("binary"),
-        }
-    )
-    try:
-        ds = ds.cast(widened)
-    except Exception:
-        pass
+    # Do not cast the streaming dataset; iterate keys and check presence of 'mp4' lazily
 
     # Determine workers
     if num_workers == -1:
@@ -419,6 +504,8 @@ def convert_agibotworld_streaming_to_hf(
     skipped_camera = 0
     skipped_no_record = 0
     skipped_no_mp4 = 0
+    skipped_due_to_full_shard = 0
+    shard_skip_cache: Dict[str, bool] = {}
     decode_fail = 0
 
     def flush_batch():
@@ -507,6 +594,8 @@ def convert_agibotworld_streaming_to_hf(
             skipped_camera += 1
             continue
 
+        # Per-sample skip removed in favor of HF shard-level skipping based on shard_index
+
         # Ensure episode record exists; gather for embedding planning
         try:
             _json_path, rec = get_episode_record(episode_id)
@@ -554,7 +643,7 @@ def convert_agibotworld_streaming_to_hf(
     print(
         f"Done. seen={seen_samples}, entries={len(entries)}, "
         f"skipped_camera={skipped_camera}, skipped_no_record={skipped_no_record}, "
-        f"skipped_no_mp4={skipped_no_mp4}"
+        f"skipped_no_mp4={skipped_no_mp4}, skipped_full_shard={skipped_due_to_full_shard}"
     )
     return Dataset.from_list(entries)
 

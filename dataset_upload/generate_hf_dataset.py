@@ -664,15 +664,13 @@ def main(cfg: GenerateConfig):
     elif "soar" in cfg.dataset.dataset_name.lower():
         from dataset_upload.dataset_loaders.soar_loader import convert_soar_dataset_to_hf
 
-        rlds_splits = getattr(cfg.dataset, "rlds_splits", ["success", "failure"]) or ["success", "failure"]
         print(
-            f"Converting SOAR RLDS (local) to HF from: {cfg.dataset.dataset_path} | splits={rlds_splits}"
+            f"Converting SOAR RLDS (local) to HF from: {cfg.dataset.dataset_path} "
         )
         dataset = convert_soar_dataset_to_hf(
             dataset_path=cfg.dataset.dataset_path,
             dataset_name=cfg.dataset.dataset_name,
             output_dir=cfg.output.output_dir,
-            rlds_splits=rlds_splits,
             max_trajectories=cfg.output.max_trajectories,
             max_frames=cfg.output.max_frames,
             fps=cfg.output.fps,
@@ -683,16 +681,7 @@ def main(cfg: GenerateConfig):
         if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
             print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")
             try:
-                dataset.push_to_hub(
-                    cfg.hub.hub_repo_id,
-                    config_name=(cfg.dataset.dataset_name).lower(),
-                    token=cfg.hub.hub_token,
-                    private=False,
-                    commit_message=f"Add {cfg.dataset.dataset_name} dataset for RFM training",
-                )
-                print(
-                    f"✅ Successfully pushed dataset {cfg.dataset.dataset_name} to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}"
-                )
+                push_hf_dataset_and_video_files_to_hub(dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir)
             except Exception as e:
                 print(f"❌ Error pushing to hub: {e}")
                 print("Dataset was created locally but failed to push metadata to hub")

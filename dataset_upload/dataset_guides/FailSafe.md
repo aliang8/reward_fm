@@ -48,7 +48,6 @@ Source: `https://huggingface.co/datasets/onepiece1999/correctdata_v2/tree/main`
 dataset:
   dataset_path: ./datasets/failsafe
   dataset_name: failsafe
-  include_sub_trajectories: true
 
 output:
   output_dir: ./rfm_dataset/failsafe_rfm
@@ -67,7 +66,7 @@ hub:
 ## Loader
 
 - File: `dataset_upload/dataset_loaders/failsafe_loader.py`
-- Function: `load_failsafe_dataset(dataset_path, view='front', include_sub_trajectories=True)`
+- Function: `load_failsafe_dataset(dataset_path)`
 - The loader:
   - Builds full episodes from `Ground_Truth/` (success) and failure attempt folders for the chosen camera `view`.
   - Parses `vla_data_*.json` entries to create sub-task mini-trajectories using the specified image paths and labels; includes the `sub_task` text in the trajectory `task` field.

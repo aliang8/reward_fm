@@ -135,9 +135,14 @@ def main():
     console.print("[bold blue]Processing Training Datasets...[/bold blue]")
     train_total = 0
     train_found = 0
+    train_dataset_aggregates = {}  # To store aggregated counts per dataset
     
     for dataset_path, dataset_subsets in zip(train_datasets, train_subsets):
+        if dataset_path not in train_dataset_aggregates:
+            train_dataset_aggregates[dataset_path] = {'count': 0, 'found': 0, 'total_subsets': 0}
+        
         for subset in dataset_subsets:
+            train_dataset_aggregates[dataset_path]['total_subsets'] += 1
             individual_cache_dir = get_cache_dir_for_dataset(cache_dir, dataset_path, subset)
             result = count_trajectories_in_dataset(individual_cache_dir)
             
@@ -147,6 +152,8 @@ def main():
                 status_style = "green"
                 train_total += result['count']
                 train_found += 1
+                train_dataset_aggregates[dataset_path]['count'] += result['count']
+                train_dataset_aggregates[dataset_path]['found'] += 1
             else:
                 count_str = "N/A"
                 status = f"✗ {result['error']}"
@@ -158,9 +165,14 @@ def main():
     console.print("[bold blue]Processing Evaluation Datasets...[/bold blue]")
     eval_total = 0
     eval_found = 0
+    eval_dataset_aggregates = {}  # To store aggregated counts per dataset
     
     for dataset_path, dataset_subsets in zip(eval_datasets, eval_subsets):
+        if dataset_path not in eval_dataset_aggregates:
+            eval_dataset_aggregates[dataset_path] = {'count': 0, 'found': 0, 'total_subsets': 0}
+        
         for subset in dataset_subsets:
+            eval_dataset_aggregates[dataset_path]['total_subsets'] += 1
             individual_cache_dir = get_cache_dir_for_dataset(cache_dir, dataset_path, subset)
             result = count_trajectories_in_dataset(individual_cache_dir)
             
@@ -170,6 +182,8 @@ def main():
                 status_style = "green"
                 eval_total += result['count']
                 eval_found += 1
+                eval_dataset_aggregates[dataset_path]['count'] += result['count']
+                eval_dataset_aggregates[dataset_path]['found'] += 1
             else:
                 count_str = "N/A"
                 status = f"✗ {result['error']}"
@@ -182,6 +196,53 @@ def main():
     console.print(train_table)
     console.print()
     console.print(eval_table)
+    console.print()
+    
+    # Create aggregated tables
+    train_agg_table = Table(title="Training Datasets - Aggregated by Dataset", show_header=True, header_style="bold magenta")
+    train_agg_table.add_column("Dataset", style="cyan", width=50)
+    train_agg_table.add_column("Total Trajectories", justify="right", style="yellow")
+    train_agg_table.add_column("Subsets Found/Total", justify="center", style="green")
+    
+    for dataset_path in sorted(train_dataset_aggregates.keys()):
+        agg = train_dataset_aggregates[dataset_path]
+        count_str = f"{agg['count']:,}" if agg['count'] > 0 else "0"
+        subsets_str = f"{agg['found']}/{agg['total_subsets']}"
+        
+        # Color code based on whether all subsets were found
+        if agg['found'] == agg['total_subsets'] and agg['total_subsets'] > 0:
+            subsets_display = f"[green]{subsets_str}[/green]"
+        elif agg['found'] > 0:
+            subsets_display = f"[yellow]{subsets_str}[/yellow]"
+        else:
+            subsets_display = f"[red]{subsets_str}[/red]"
+        
+        train_agg_table.add_row(dataset_path, count_str, subsets_display)
+    
+    eval_agg_table = Table(title="Evaluation Datasets - Aggregated by Dataset", show_header=True, header_style="bold magenta")
+    eval_agg_table.add_column("Dataset", style="cyan", width=50)
+    eval_agg_table.add_column("Total Trajectories", justify="right", style="yellow")
+    eval_agg_table.add_column("Subsets Found/Total", justify="center", style="green")
+    
+    for dataset_path in sorted(eval_dataset_aggregates.keys()):
+        agg = eval_dataset_aggregates[dataset_path]
+        count_str = f"{agg['count']:,}" if agg['count'] > 0 else "0"
+        subsets_str = f"{agg['found']}/{agg['total_subsets']}"
+        
+        # Color code based on whether all subsets were found
+        if agg['found'] == agg['total_subsets'] and agg['total_subsets'] > 0:
+            subsets_display = f"[green]{subsets_str}[/green]"
+        elif agg['found'] > 0:
+            subsets_display = f"[yellow]{subsets_str}[/yellow]"
+        else:
+            subsets_display = f"[red]{subsets_str}[/red]"
+        
+        eval_agg_table.add_row(dataset_path, count_str, subsets_display)
+    
+    # Display aggregated tables
+    console.print(train_agg_table)
+    console.print()
+    console.print(eval_agg_table)
     console.print()
     
     # Summary
@@ -199,10 +260,30 @@ def main():
     
     # Save results to JSON
     output_file = "trajectory_counts.json"
+    
+    # Prepare aggregated data for JSON
+    train_aggregates_json = {}
+    for dataset_path, agg in train_dataset_aggregates.items():
+        train_aggregates_json[dataset_path] = {
+            "total_trajectories": agg['count'],
+            "subsets_found": agg['found'],
+            "total_subsets": agg['total_subsets']
+        }
+    
+    eval_aggregates_json = {}
+    for dataset_path, agg in eval_dataset_aggregates.items():
+        eval_aggregates_json[dataset_path] = {
+            "total_trajectories": agg['count'],
+            "subsets_found": agg['found'],
+            "total_subsets": agg['total_subsets']
+        }
+    
     results = {
         "cache_dir": cache_dir,
         "training_datasets": [],
+        "training_datasets_aggregated": train_aggregates_json,
         "evaluation_datasets": [],
+        "evaluation_datasets_aggregated": eval_aggregates_json,
         "summary": {
             "train_total_trajectories": train_total,
             "train_datasets_found": train_found,

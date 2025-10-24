@@ -746,6 +746,12 @@ def main(cfg: GenerateConfig):
         print(f"Loading MotIF dataset from: {cfg.dataset.dataset_path}")
         task_data = load_motif_dataset(cfg.dataset.dataset_path)
         trajectories = flatten_task_data(task_data)
+    elif "failsafe" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.failsafe_loader import load_failsafe_dataset
+
+        print(f"Loading FailSafe dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_failsafe_dataset(cfg.dataset.dataset_path, include_sub_trajectories=cfg.dataset.include_sub_trajectories)
+        trajectories = flatten_task_data(task_data)
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")
 

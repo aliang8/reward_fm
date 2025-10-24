@@ -1,8 +1,7 @@
 # config.yaml
 dataset:
-  dataset_path: ./datasets/soar  # Root containing rlds/<split>/<version>/
-  dataset_name: soar
-  rlds_splits: ["success", "failure"]
+  dataset_path: ./datasets/soar_data # Root containing rlds/<split>/<version>/
+  dataset_name: soar_rfm
 
 output:
   output_dir: ./rfm_dataset/soar_rfm

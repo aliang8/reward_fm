@@ -56,13 +56,12 @@ def _make_traj(image_paths: list[str], task: str, instruction: str, is_success: 
     traj["id"] = generate_unique_id()
     # Combine main instruction with optional sub_task for clarity
     if sub_task:
-        traj["task"] = f"{instruction} | Sub-task: {sub_task}"
+        traj["task"] = sub_task
     else:
         traj["task"] = instruction
     traj["frames"] = FailSafeFrameListLoader(image_paths)
     traj["is_robot"] = True
     traj["quality_label"] = "successful" if is_success else "failure"
-    traj["partial_success"] = 1 if is_success else 0
     traj["data_source"] = "failsafe"
     traj["preference_group_id"] = None
     traj["preference_rank"] = None
@@ -124,17 +123,17 @@ def _gather_sub_episodes_from_json(dataset_root: Path, view: str) -> list[dict]:
     return episodes
 
 
-def load_failsafe_dataset(dataset_path: str, include_sub_trajectories: bool = True) -> dict[str, list[dict]]:
+def load_failsafe_dataset(dataset_path: str) -> dict[str, list[dict]]:
     """Load FailSafe dataset from local folders and JSON sub-trajectory annotations.
 
     Args:
         dataset_path: Root directory containing FailPickCube-v1/ FailPushCube-v1/ FailStackCube-v1/ and jsons
-        include_sub_trajectories: Whether to parse vla_data_*.json and include sub-task mini-trajectories
 
     Returns:
         Mapping: instruction string -> list of trajectory dicts
     """
     views = ["front", "side", "wrist"]
+    include_sub_trajectories = True
     root = Path(os.path.expanduser(dataset_path))
     if not root.exists():
         raise FileNotFoundError(f"FailSafe dataset path not found: {root}")
@@ -146,21 +145,41 @@ def load_failsafe_dataset(dataset_path: str, include_sub_trajectories: bool = Tr
 
     task_data: dict[str, list[dict]] = {}
 
-    # Full episodes
-    for tdir in task_dirs:
-        instruction = TASK_TO_INSTRUCTION.get(tdir.name, tdir.name)
-        episodes = _gather_full_episodes(tdir, view=view, instruction=instruction)
-        if episodes:
-            task_data.setdefault(instruction, []).extend(episodes)
-
     # Sub-trajectory episodes from JSON
     if include_sub_trajectories:
         for view in views:
             sub_episodes = _gather_sub_episodes_from_json(root, view=view)
+            print(f"Found {len(sub_episodes)} sub-trajectories for {view}")
             for traj in sub_episodes:
                 task = traj["task"]
                 task_data.setdefault(task, []).append(traj)
 
+    # Full episodes
+    for tdir in task_dirs:
+        instruction = TASK_TO_INSTRUCTION.get(tdir.name, tdir.name)
+        print(f"Gathering full episodes for {instruction}")
+        for view in views:
+            episodes = _gather_full_episodes(tdir, view=view, instruction=instruction)
+            print(f"Found {len(episodes)} episodes for {instruction} {view}")
+            if episodes:
+                task_data.setdefault(instruction, []).extend(episodes)
+
+    # only keep tasks that have both failed and successful trajectories
+    task_data_paired = {}
+    for task, trajectories in task_data.items():
+        failed_trajectories = [t for t in trajectories if t["quality_label"] == "failure"]
+        successful_trajectories = [t for t in trajectories if t["quality_label"] == "successful"]
+        if len(failed_trajectories) == 0 or len(successful_trajectories) == 0:
+            continue
+        task_data_paired[task] = failed_trajectories + successful_trajectories
+
+    print(f"Found {len(task_data_paired)} tasks with both failed and successful trajectories from originally {len(task_data)} tasks")
+
+    # print how many failed and successful trajectories there are
+    failed_trajectories = [sum([1 for t in traj if t["quality_label"] == "failure"]) for traj in task_data_paired.values()]
+    successful_trajectories = [sum([1 for t in traj if t["quality_label"] == "successful"]) for traj in task_data_paired.values()]
+    print(f"Found {sum(failed_trajectories)} failed trajectories")
+    print(f"Found {sum(successful_trajectories)} successful trajectories")
     return task_data
 
 

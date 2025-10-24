@@ -1,8 +1,7 @@
 # config.yaml
 dataset:
-  dataset_path: ./datasets/failsafe  # Root containing FailPickCube-v1/ FailPushCube-v1/ FailStackCube-v1/ and jsons
+  dataset_path: ./datasets/failsafe_data  # Root containing FailPickCube-v1/ FailPushCube-v1/ FailStackCube-v1/ and jsons
   dataset_name: failsafe
-  include_sub_trajectories: true
 
 output:
   output_dir: ./rfm_dataset/failsafe_rfm

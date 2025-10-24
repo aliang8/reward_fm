@@ -195,12 +195,12 @@ class Qwen3VLClassifier:
 Task: {task_instruction}
 
 Watch the video and answer:
-1. Reasoning: Why?
+1. Context: What happened in the video? Explain how the motion change from the first frame to last frame demonstrates the robot solving the task specified by the isntruction or not.
 2. Decision: Did the robot succeed or fail?
 3. Confidence: How confident are you (0.0 to 1.0)?
 
 Format your response EXACTLY as:
-Reasoning: Your explanation
+Context: Your explanation of the video and the decision.
 Decision: SUCCESS or FAILURE
 Confidence: 0.X"""
 
@@ -220,14 +220,22 @@ Confidence: 0.X"""
             messages, tokenize=False, add_generation_prompt=True
         )
         
-        image_inputs, video_inputs = process_vision_info(messages)
+        image_inputs, video_inputs, video_kwargs = process_vision_info(messages, return_video_kwargs=True, return_video_metadata=True)
         
+        # split the videos and according metadatas
+        if video_inputs is not None:
+            videos, video_metadatas = zip(*video_inputs)
+            videos, video_metadatas = list(videos), list(video_metadatas)
+        else:
+            video_metadatas = None
         inputs = self.processor(
             text=[text],
             images=image_inputs,
-            videos=video_inputs,
+            videos=videos,
+            video_metadata=video_metadatas,
             padding=True,
             return_tensors="pt",
+            **video_kwargs,
         )
         
         # Move inputs to device
@@ -470,7 +478,11 @@ def main():
         print(f"\nProcessing '{split_name}' split...")
         
         ep_count = 0
-        for ep_idx, episode in enumerate(tqdm(dataset, desc=split_name)):
+        agreements = 0  # Track agreements in this split
+        
+        # Create tqdm with postfix for live stats
+        pbar = tqdm(dataset, desc=split_name)
+        for ep_idx, episode in enumerate(pbar):
             # Check if we've already processed this episode
             if (split_name, ep_idx) in processed_episodes:
                 continue
@@ -508,21 +520,36 @@ def main():
                 )
                 
                 # Store result
+                original_label = "success" if split_name == "success" else "failure"
+                predicted_label = classification["prediction"]
+                
                 result = {
                     "episode_id": episode_id,
                     "split_name": split_name,
                     "episode_index": ep_idx,
                     "task": task,
                     "num_frames": len(frames),
-                    "predicted_label": classification["prediction"],
+                    "predicted_label": predicted_label,
                     "confidence": classification["confidence"],
                     "reasoning": classification["reasoning"],
-                    "original_label": "success" if split_name == "success" else "failure",
+                    "original_label": original_label,
                 }
                 
                 results.append(result)
                 episode_id += 1
                 ep_count += 1
+                
+                # Track agreement
+                if predicted_label == original_label:
+                    agreements += 1
+                
+                # Update progress bar with live stats
+                agreement_pct = (agreements / ep_count * 100) if ep_count > 0 else 0
+                avg_conf = sum(r["confidence"] for r in results[-ep_count:]) / ep_count if ep_count > 0 else 0
+                pbar.set_postfix({
+                    'agree': f'{agreement_pct:.1f}%',
+                    'conf': f'{avg_conf:.2f}'
+                })
                 
                 # Save checkpoint periodically
                 if args.checkpoint_interval > 0 and episode_id % args.checkpoint_interval == 0:
@@ -551,6 +578,9 @@ def main():
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+        
+        # Close progress bar for this split
+        pbar.close()
     
     # Save results
     print(f"\n\nSaving {len(results)} results to {args.output}")

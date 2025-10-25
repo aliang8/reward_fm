@@ -1,5 +1,5 @@
 train_datasets:
-  - "jesbu1/molmoact_rfm"  # need to figure out how to filter trajsf rist
+  - "jesbu1/molmoact_rfm" 
   - "abraranwar/libero_rfm"
   - "ykorkmaz/libero_failure_rfm"
   - "HenryZhang/metaworld_rewind_rfm_train"

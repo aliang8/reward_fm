@@ -50,3 +50,9 @@ test*
 .triton/*
 .python_history
 *.h5
+
+# Baseline eval logs
+evals/baselines/**/vlm_eval_logs/
+evals/baselines/**/gvl_eval_logs/
+evals/baselines/**/test_logs/
+RL-VLM-F/

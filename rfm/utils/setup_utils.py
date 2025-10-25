@@ -8,7 +8,13 @@ import re
 from typing import Tuple, Optional
 import torch
 from peft import LoraConfig, get_peft_model
-import bitsandbytes as bnb
+
+try:
+    import bitsandbytes as bnb
+    BITSANDBYTES_AVAILABLE = True
+except ImportError:
+    BITSANDBYTES_AVAILABLE = False
+
 from huggingface_hub import HfApi
 from transformers import (
     AutoImageProcessor,
@@ -19,8 +25,10 @@ from transformers import (
     Qwen2_5_VLForConditionalGeneration,
     Qwen2_5_VLModel,
     TrainingArguments,
-    BitsAndBytesConfig,
 )
+
+if BITSANDBYTES_AVAILABLE:
+    from transformers import BitsAndBytesConfig
 
 from rfm.configs.experiment_configs import DataConfig, ExperimentConfig, ModelConfig, PEFTConfig
 from rfm.data.collators import BaseCollator, ReWiNDBatchCollator, RFMBatchCollator, VQABatchCollator
@@ -116,6 +124,8 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
 
     # If quantization is enabled, use bitsandbytes
     if cfg.quantization:
+        if not BITSANDBYTES_AVAILABLE:
+            raise RuntimeError("Quantization requested but bitsandbytes is not available")
         bnb = BitsAndBytesConfig(
             load_in_8bit=True,
             llm_int8_enable_fp32_cpu_offload=True,

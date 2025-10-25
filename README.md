@@ -172,6 +172,8 @@ uv run python -m rfm.data.scripts.preprocess_datasets --cache_dir /path/to/save/
 export RFM_PROCESSED_DATASETS_PATH=/path/to/save/processed_datasets
 ```
 
+When adding new datasets, to filter specific trajectories out that you don't want to be used for reward training, you can make a filter function at the top of the `preprocess_datasets.py` file. See the filter in the file for an example.
+
 
 
 ### Troubleshooting

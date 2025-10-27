@@ -168,12 +168,7 @@ class ProgressDataset(RFMBaseDataset):
 
         if strategy_used == DataGenStrat.DIFFERENT_TASK:
             progress = [0.0] * len(progress)
-        
-        # For pairwise progress, we only predict the delta at the last frame
-        if self.config.pairwise_progress:
-            # progress contains the delta, so we just take the last value
-            progress = [progress[-1] if progress else 0.0]
-
+    
         progress_traj = Trajectory(
             frames=frames,
             target_progress=progress,

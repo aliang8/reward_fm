@@ -59,4 +59,5 @@ uv run python3 train.py \
     --debug true \
     --model.train_preference_head false \
     --model.train_progress_head true \
+    --data.pairwise_progress true \
     --training.exp_name debug 

@@ -4,7 +4,7 @@ dataset:
   dataset_name: fino_net  # This will be the dataset name / data source
 
 output:
-  output_dir: datasets/fino_net_rfm
+  output_dir: rfm_dataset/fino_net_rfm
   max_trajectories: -1  # -1 for all episodes
   max_frames: 64
   use_video: true

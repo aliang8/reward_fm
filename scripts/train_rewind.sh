@@ -55,9 +55,9 @@ uv run python3 train.py \
 
 uv run python3 train.py \
     --config_paths rfm/configs/config.yaml rfm/configs/rewind_transformer_config.yaml \
-    --logging.use_wandb false \
-    --debug true \
+    --logging.use_wandb true \
+    --debug false \
     --model.train_preference_head false \
     --model.train_progress_head true \
     --model.train_similarity_head true \
-    --training.exp_name debug 
+    --training.exp_name rewind_mw_prog_sim 

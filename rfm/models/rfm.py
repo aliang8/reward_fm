@@ -11,8 +11,8 @@ import torch
 import torch.nn as nn
 from transformers import PreTrainedModel, Qwen2_5_VLModel
 from transformers import SmolVLMModel
-from transformers.modeling_outputs import SequenceClassifierOutputWithPast
 
+from rfm.models.utils import ModelOutput
 from rfm.utils.timer import _timer
 
 
@@ -134,18 +134,14 @@ class RFM(PreTrainedModel):
             **kwargs: Additional keyword arguments passed to the base model.
 
         Returns:
-            tuple: (model_outputs, progress_logits)
-                - model_outputs (SequenceClassifierOutputWithPast):
-                    Contains logits for the specified sample type:
-                    - For preference: Binary logits [batch_size, 1]
-                    - For similarity: Continuous similarity scores [batch_size, 1]
-                    - For paired_video: Continuous similarity scores [batch_size, 1]
-                    - For none: Zero tensor [batch_size, 1]
-
-                - progress_logits (Dict[str, List[torch.Tensor]] or None):
-                    Progress prediction logits split by trajectory:
-                    - 'A': List of tensors for trajectory A (before vision_end token), each [seq_len_A]
-                    - 'B': List of tensors for trajectory B (after vision_end token), each [seq_len_B]
+            tuple: (model_output, timing_raw)
+                - model_output (ModelOutput):
+                    Contains predictions for the specified sample type:
+                    - pref_logits: Binary logits [batch_size, 1] for preference
+                    - sim_logits: Continuous similarity scores [batch_size, 1] for similarity
+                    - progress_logits: Dict with 'A' and 'B' trajectories
+                        - 'A': List of tensors for trajectory A (before vision_end token), each [seq_len_A]
+                        - 'B': List of tensors for trajectory B (after vision_end token), each [seq_len_B]
                     Values should be in range [0, 1] representing task completion percentage at each timestep.
 
                 - timing_raw (Dict[str, float]):
@@ -325,14 +321,17 @@ class RFM(PreTrainedModel):
 
                 progress_logits = {"A": progress_logits_A, "B": progress_logits_B}
 
+        # Create ModelOutput
+        output = ModelOutput()
+        output.progress_logits = progress_logits
+
         # For preference and similarity, use specific tokens
         with _timer("time/logits", timing_raw=timing_raw):
-            logits = None
             if sample_type in ["preference", "similarity"]:
                 if sample_type == "preference":
                     token_id = self.processor.tokenizer.convert_tokens_to_ids("<|pref_token|>")
                 else:  # similarity
-                    token_id = self.processor.tokenizer.convert_tokens_to_ids("<|reward_token|>")
+                    token_id = self.processor.tokenizer.convert_tokens_to_ids("<|sim_token|>")
 
                 # Find all positions where the target token appears
                 token_positions = []
@@ -359,8 +358,8 @@ class RFM(PreTrainedModel):
 
                 # Apply the appropriate head
                 if sample_type == "preference":
-                    logits = self.preference_head(token_hidden_states)
+                    output.pref_logits = self.preference_head(token_hidden_states)
                 else:  # similarity
-                    logits = self.similarity_head(token_hidden_states)
+                    output.sim_logits = self.similarity_head(token_hidden_states)
 
-        return SequenceClassifierOutputWithPast(logits=logits), progress_logits, timing_raw
+        return output, timing_raw

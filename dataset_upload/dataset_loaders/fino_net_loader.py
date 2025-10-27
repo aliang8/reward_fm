@@ -23,8 +23,8 @@ from datasets import Dataset
 # Task mapping from task names to instructions
 TASK_TO_INSTRUCTION = {
     "put_on": "put the single block on the table onto the stack",
-    "put_in": "put the thing on the table into the container",
-    "place": "place the block in your hand onto the stack",
+    "put_in": "put the object on the table into the container",
+    "place": "place the object on the table onto the stack",
     "pour": "pour the contents of the cup into the receptacle on the table without spilling",
     "push": "push the object to the right without knocking it over",
 }
@@ -216,7 +216,6 @@ def _process_single_episode(args):
         
         # Determine quality label (0 = success, 1 = failure)
         quality_label = "failed" if label == 1 else "successful"
-        partial_success = 0.0 if label == 1 else 1.0
         
         # Create video path
         episode_video_dir = os.path.join(output_dir, dataset_name.lower(), task_name, f"episode_{episode_num:06d}")
@@ -229,11 +228,10 @@ def _process_single_episode(args):
             "id": generate_unique_id(),
             "frames": frames,
             "task": task_instruction,
-            "is_robot": False,  # This is human demonstration data
+            "is_robot": True,  
             "quality_label": quality_label,
             "preference_group_id": None,
             "preference_rank": None,
-            "partial_success": partial_success,
         }
         
         # Create HF trajectory entry

@@ -20,14 +20,14 @@ class ModelConfig(PretrainedConfig):
     trust_remote_code: bool = field(default=True)
     train_vision_encoder: bool = field(default=False, metadata={"help": "Whether to train the vision encoder"})
     train_language_model: bool = field(default=True, metadata={"help": "Whether to train the language model"})
-    train_value_head: bool = field(default=True, metadata={"help": "Whether to train the value head"})
+
     # RFM-specific head training options
-    train_progress_head: bool = field(default=True, metadata={"help": "Whether to train the progress prediction head"})
+    train_progress_head: bool = field(default=False, metadata={"help": "Whether to train the progress prediction head"})
     train_preference_head: bool = field(
-        default=True, metadata={"help": "Whether to train the preference prediction head"}
+        default=False, metadata={"help": "Whether to train the preference prediction head"}
     )
-    train_similarity_head: bool = field(default=True, metadata={"help": "Whether to train the similarity scoring head"})
-    train_success_head: bool = field(default=True, metadata={"help": "Whether to train the success prediction head"})
+    train_similarity_head: bool = field(default=False, metadata={"help": "Whether to train the similarity scoring head"})
+    train_success_head: bool = field(default=False, metadata={"help": "Whether to train the success prediction head"})
 
     use_peft: bool = field(default=False, metadata={"help": "Whether to use PEFT/LoRA or train full model"})
     peft_vision_encoder: bool = field(default=False, metadata={"help": "Whether to attach LoRA to the vision encoder"})
@@ -62,18 +62,12 @@ class PEFTConfig:
 class DataConfig:
     """Configuration for data loading and processing."""
 
-    # Dataset paths and subsets
+    # Dataset paths
     train_datasets: List[str] = field(
         default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of training dataset names"}
     )
-    train_subsets: List[List[str]] = field(
-        default_factory=lambda: [["libero_90"]], metadata={"help": "List of training dataset subsets"}
-    )
     eval_datasets: List[str] = field(
         default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of evaluation dataset names"}
-    )
-    eval_subsets: List[List[str]] = field(
-        default_factory=lambda: [["libero_10"]], metadata={"help": "List of evaluation dataset subsets"}
     )
 
     # Dataset type and configuration
@@ -166,7 +160,7 @@ class DataConfig:
     )
     dataset_success_cutoff_file: Optional[str] = field(
         default=None,
-        metadata={"help": "Path to dataset-specific success cutoff file (CSV format: dataset_name,cutoff_frame_index)"},
+        metadata={"help": "Path to dataset-specific success cutoff file (CSV format: dataset_name,n_frames_last)"},
     )
 
 
@@ -175,11 +169,9 @@ class CustomEvaluationConfig:
     """Config for custom evaluation settings"""
 
     eval_types: List[str] = field(default_factory=lambda: ["policy_ranking", "confusion_matrix", "reward_alignment"])
-    policy_ranking: List[List[str]] = field(default_factory=lambda: [["aliangdw/metaworld_rfm", "metaworld"]])
-    confusion_matrix: List[List[str]] = field(default_factory=lambda: [["aliangdw/metaworld_rfm", "metaworld"]])
-    reward_alignment: List[List[str]] = field(
-        default_factory=lambda: [["HenryZhang/metaworld_rewind_rfm_eval", "metaworld_rewind_eval"]]
-    )
+    policy_ranking: List[str] = field(default_factory=lambda: ["aliangdw/metaworld_rfm"])
+    confusion_matrix: List[str] = field(default_factory=lambda: ["aliangdw/metaworld_rfm"])
+    reward_alignment: List[str] = field(default_factory=lambda: ["HenryZhang/metaworld_rewind_rfm_eval"])
 
 
 @dataclass

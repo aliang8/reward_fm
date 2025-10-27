@@ -20,19 +20,19 @@ from rfm.data.datasets.helpers import load_frames_from_npz
 import torch.distributed as dist
 
 
-def load_dataset_success_cutoffs(cutoff_file_path):
-    """Load dataset-specific success cutoffs from file."""
-    cutoffs = {}
+def load_dataset_success_n_frames(cutoff_file_path):
+    """Load dataset-specific success n_frames from file."""
+    n_frames_dict = {}
     try:
         with open(cutoff_file_path, "r") as f:
             for line in f:
                 line = line.strip()
                 if line and "," in line:
-                    dataset_name, cutoff = line.split(",")
-                    cutoffs[dataset_name.strip()] = int(cutoff.strip())
+                    dataset_name, n_frames = line.split(",")
+                    n_frames_dict[dataset_name.strip()] = int(n_frames.strip())
     except FileNotFoundError:
         print(f"Warning: Success cutoff file {cutoff_file_path} not found. Using default thresholds.")
-    return cutoffs
+    return n_frames_dict
 
 
 def seed_worker(worker_id):
@@ -147,9 +147,9 @@ class RFMHeadsTrainer(Trainer):
 
         self.log_wandb = config.logging.use_wandb
 
-        # Load dataset-specific success cutoffs
+        # Load dataset-specific success n_frames
         cutoff_file_path = config.data.dataset_success_cutoff_file
-        self.dataset_success_cutoffs = load_dataset_success_cutoffs(cutoff_file_path)
+        self.dataset_success_n_frames = load_dataset_success_n_frames(cutoff_file_path)
 
     def training_step(self, model, inputs, num_items_in_batch=None):
         """
@@ -329,20 +329,13 @@ class RFMHeadsTrainer(Trainer):
             rank_0_print(f"Running evaluation for: {eval_type}")
 
             datasets = getattr(self.config.custom_eval, eval_type)
-            eval_datasets_name = [d[0] for d in datasets]
-            eval_subsets_name = [[d[1]] for d in datasets]
+            eval_datasets_name = datasets
 
-            # if eval_type == "confusion_matrix":
-            #     eval_datasets_name = eval_datasets_name + self.config.data.train_datasets
-            #     eval_subsets_name = eval_subsets_name + self.config.data.train_subsets
-
-            # Pair up each dataset with the corresponding subsets
-            for eval_dataset, eval_subset in zip(eval_datasets_name, eval_subsets_name):
+            for eval_dataset in eval_datasets_name:
                 eval_cfg = copy.deepcopy(self.config.data)
                 eval_cfg.dataset_type = eval_type
 
                 eval_cfg.eval_datasets = [eval_dataset]
-                eval_cfg.eval_subsets = [eval_subset]
 
                 dataset = setup_dataset(eval_cfg, is_eval=True, verbose=False)
                 dataloader = self._make_eval_dataloader(dataset)
@@ -497,7 +490,7 @@ class RFMHeadsTrainer(Trainer):
                     raise ValueError(f"Unsupported eval type: {eval_type}")
 
                 # Store metrics for all processes
-                ds_name = DS_SHORT_NAME_MAPPING[eval_dataset + "/" + eval_subset[0]]
+                ds_name = DS_SHORT_NAME_MAPPING.get(eval_dataset, eval_dataset)
                 metrics[ds_name][eval_type] = eval_metrics
 
                 # Only log and visualize on main process
@@ -518,7 +511,7 @@ class RFMHeadsTrainer(Trainer):
 
                             columns = ["video", "progress_plot"]
                             wandb.log({
-                                f"{eval_subset[0]}/reward_alignment_samples": wandb.Table(data=data, columns=columns),
+                                f"{ds_name}/reward_alignment_samples": wandb.Table(data=data, columns=columns),
                             })
                         else:
                             for plot, frames in zip(plots, video_frames_list):
@@ -536,13 +529,13 @@ class RFMHeadsTrainer(Trainer):
                         columns = ["task", "quality_and_rews"]
                         if self.log_wandb:
                             wandb.log({
-                                f"{eval_subset[0]}/policy_ranking_samples": wandb.Table(data=data, columns=columns),
+                                f"{ds_name}/policy_ranking_samples": wandb.Table(data=data, columns=columns),
                             })
 
                     elif eval_type == "confusion_matrix":
                         # Log confusion matrix figure to wandb
                         if self.log_wandb:
-                            wandb.log({f"{eval_subset[0]}/confusion_matrix": wandb.Image(confusion_plot)})
+                            wandb.log({f"{ds_name}/confusion_matrix": wandb.Image(confusion_plot)})
 
         # Prepare metrics for callbacks (all processes)
         callback_metrics = {}
@@ -650,7 +643,7 @@ class RFMHeadsTrainer(Trainer):
         # Initialize loss components and metadata
         total_loss = 0.0
         log_metadata = {}
-
+        
         # Compute preference loss if we have preference samples
         if num_preferences > 0 and preference_inputs and self.config.model.train_preference_head:
             with _timer("time/compute_preference_loss", timing_raw=self.timing_raw):
@@ -735,16 +728,16 @@ class RFMHeadsTrainer(Trainer):
             else:
                 dataset_key = data_source if isinstance(data_source, str) else str(data_source)
 
-            if dataset_key in self.dataset_success_cutoffs:
-                # Use dataset-specific threshold: success if target_index >= cutoff
-                dataset_cutoff = self.dataset_success_cutoffs[dataset_key]
-                # The cutoff represents the frame index threshold for success
-                # target_progress represents normalized progress (0-1), so we need to convert
-                # frame index to progress value
-
-                # Try to get max frames from config or use default
-                max_frames = getattr(self.config.data, "max_frames", 100)
-                max_success = dataset_cutoff / max_frames
+            if dataset_key in self.dataset_success_n_frames:
+                # Use dataset-specific threshold: last N frames are successful
+                ds_success_n_frames = self.dataset_success_n_frames[dataset_key]
+                # n_frames represents the number of last frames to consider successful
+                # We'll use this to determine max_success threshold based on progress
+                # If we want the last N frames to be successful, we need to set max_success
+                # such that progress > (total_frames - N) / total_frames
+                # For simplicity, assume we want progress > 1 - (N / max_frames)
+                max_frames = getattr(self.config.data, "max_frames", 16)
+                max_success = 1.0 - (ds_success_n_frames / max_frames)
 
         # Splice success logits based on frame shapes
         spliced_success_logits = []
@@ -789,9 +782,8 @@ class RFMHeadsTrainer(Trainer):
                 accuracy = (success_preds == success_labels[success_mask == 1]).float().mean()
                 success_accuracies.append(accuracy)
             else:
-                # No frames to predict, return zero loss
-                success_losses.append(torch.tensor(0.0, device=pred.device))
-                success_accuracies.append(torch.tensor(0.0, device=pred.device))
+                # No frames to predict, skip this sample
+                continue
 
         if success_losses:
             if aggregate:
@@ -803,7 +795,8 @@ class RFMHeadsTrainer(Trainer):
                 success_accuracies = torch.stack(success_accuracies)
                 return success_losses, success_accuracies
 
-        return torch.tensor(0.0, device=self.accelerator.device), torch.tensor(0.0, device=self.accelerator.device)
+        # Return zero tensors matching the input dtype (handled by the later stack operations)
+        return 0.0, 0.0
 
     def _compute_progress_loss_helper(
         self,
@@ -853,7 +846,7 @@ class RFMHeadsTrainer(Trainer):
         spearman_correlations = []
 
         for _i, (pred, target) in enumerate(zip(spliced_progress_logits, spliced_target_progress, strict=False)):
-            loss = F.mse_loss(pred, target)
+            loss = F.mse_loss(pred.float(), target.float())
             progress_losses.append(loss)
 
             # Compute Spearman correlation for this sample
@@ -921,7 +914,7 @@ class RFMHeadsTrainer(Trainer):
         progress_target = inputs["target_progress"]
         frame_shapes = inputs["frame_shapes"]
         progress_target_mask = inputs["target_progress_mask"]
-
+    
         progress_loss_all, spearman_corr_all = self._compute_progress_loss_helper(
             progress_pred,
             progress_target,
@@ -935,6 +928,7 @@ class RFMHeadsTrainer(Trainer):
         # Compute success loss if success head is enabled
         success_loss = 0.0
         success_accuracy = 0.0
+        
         if self.config.model.train_success_head:
             success_logits = model_output.success_logits
             success_pred = success_logits["A"]

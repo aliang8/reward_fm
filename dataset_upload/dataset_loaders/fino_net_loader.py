@@ -24,9 +24,9 @@ from datasets import Dataset
 TASK_TO_INSTRUCTION = {
     "put_on": "put the single block on the table onto the stack",
     "put_in": "put the object on the table into the container",
-    "place": "place the object on the table onto the stack",
+    "place": "place the left object on the table onto the stack",
     "pour": "pour the contents of the cup into the receptacle on the table without spilling",
-    "push": "push the object to the right without knocking it over",
+    "push": "push the object towards the right without knocking it over",
 }
 
 

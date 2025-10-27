@@ -770,6 +770,12 @@ def main(cfg: GenerateConfig):
         print(f"Loading FailSafe dataset from: {cfg.dataset.dataset_path}")
         task_data = load_failsafe_dataset(cfg.dataset.dataset_path)
         trajectories = flatten_task_data(task_data)
+    elif "racer" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.racer_loader import load_racer_dataset
+
+        print(f"Loading RACER dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_racer_dataset(cfg.dataset.dataset_path, cfg.dataset.dataset_name)
+        trajectories = flatten_task_data(task_data)
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")
 

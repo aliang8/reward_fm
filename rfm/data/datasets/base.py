@@ -38,6 +38,10 @@ class RFMBaseDataset(torch.utils.data.Dataset):
         # Load trajectory dataset
         self._load_trajectory_dataset()
 
+        # Filter dataset 
+        # We only want to iterate through successful trajectories
+        self.filtered_dataset = self.dataset.filter(lambda x: x["quality_label"] == "successful")
+
         if verbose:
             rank_0_print(f"Dataset initialized with {len(self.dataset)} total trajectories")
             rank_0_print(f"  Robot trajectories: {len(self.robot_trajectories)}")
@@ -48,6 +52,9 @@ class RFMBaseDataset(torch.utils.data.Dataset):
             rank_0_print(f"  Tasks available: {self.task_indices.keys()}")
             rank_0_print(f"  Quality labels available: {self.quality_indices.keys()}")
             rank_0_print(f"  Data sources available: {self.source_indices.keys()}")
+
+    def __len__(self):
+        return len(self.filtered_dataset)
 
     def _load_trajectory_dataset(self):
         """Load trajectory dataset using preprocessed index-based cache."""

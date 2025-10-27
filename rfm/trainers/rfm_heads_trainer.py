@@ -942,7 +942,8 @@ class RFMHeadsTrainer(Trainer):
             )
             success_loss = success_loss_all.mean()
             success_accuracy = success_acc_all.mean()
-            final_loss = progress_loss + success_loss
+            
+        final_loss = progress_loss + success_loss
 
         if return_outputs:
             outputs_dict = {}

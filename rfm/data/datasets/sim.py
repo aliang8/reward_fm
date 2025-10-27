@@ -30,9 +30,6 @@ class SimilarityDataset(RFMBaseDataset):
 
         rank_0_print(f"SimilarityDataset initialized with {len(self.dataset)} total trajectories")
 
-    def __len__(self):
-        return len(self.dataset)
-
     def __getitem__(self, idx):
         return self._create_similarity_sample()
 

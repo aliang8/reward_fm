@@ -89,6 +89,7 @@ class DataConfig:
         default=1, metadata={"help": "Number of preference samples to generate per trajectory for rewound dataset"}
     )
 
+    max_frames_after_preprocessing: int = field(default=64, metadata={"help": "Maximum number of frames to extract from videos after preprocessing"})
     max_frames: int = field(default=8, metadata={"help": "Maximum number of frames to extract from videos"})
     resized_height: int = field(default=224, metadata={"help": "Height to resize video frames to"})
     resized_width: int = field(default=224, metadata={"help": "Width to resize video frames to"})

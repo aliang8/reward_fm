@@ -715,29 +715,26 @@ class RFMHeadsTrainer(Trainer):
             f"Success logits and target progress have different batch sizes"
         )
 
-        # Get thresholds from config or dataset-specific cutoffs
+        # Get base thresholds from config
         min_success = self.config.data.min_success
-        max_success = self.config.data.max_success
+        max_success_default = self.config.data.max_success
 
-        # Use dataset-specific cutoff if available
+        # Compute per-sample max_success thresholds if data_source is available
+        max_success_list = []
         if data_source is not None:
-            # Handle both single dataset and batch of datasets
-            if isinstance(data_source, (list, tuple)) and len(data_source) > 0:
-                # For batches, use the first dataset's cutoff (assuming homogeneous batches)
-                dataset_key = data_source[0] if isinstance(data_source[0], str) else str(data_source[0])
-            else:
-                dataset_key = data_source if isinstance(data_source, str) else str(data_source)
-
-            if dataset_key in self.dataset_success_n_frames:
-                # Use dataset-specific threshold: last N frames are successful
-                ds_success_n_frames = self.dataset_success_n_frames[dataset_key]
-                # n_frames represents the number of last frames to consider successful
-                # We'll use this to determine max_success threshold based on progress
-                # If we want the last N frames to be successful, we need to set max_success
-                # such that progress > (total_frames - N) / total_frames
-                # For simplicity, assume we want progress > 1 - (N / max_frames)
-                max_frames = getattr(self.config.data, "max_frames", 16)
-                max_success = 1.0 - (ds_success_n_frames / max_frames)
+            for ds in data_source:
+                ds_key = ds if isinstance(ds, str) else str(ds)
+                if ds_key in self.dataset_success_n_frames:
+                    # Use dataset-specific threshold: last N frames are successful
+                    ds_success_n_frames = self.dataset_success_n_frames[ds_key]
+                    max_frames = self.config.data.max_frames_after_preprocessing
+                    max_success_sample = 1.0 - (ds_success_n_frames / max_frames)
+                else:
+                    max_success_sample = max_success_default
+                max_success_list.append(max_success_sample)
+        else:
+            # No data source info, use default for all samples
+            max_success_list = [max_success_default] * len(success_logits)
 
         # Splice success logits based on frame shapes
         spliced_success_logits = []
@@ -757,7 +754,10 @@ class RFMHeadsTrainer(Trainer):
         success_losses = []
         success_accuracies = []
 
-        for _i, (pred, target) in enumerate(zip(spliced_success_logits, spliced_target_progress, strict=False)):
+        for i, (pred, target) in enumerate(zip(spliced_success_logits, spliced_target_progress, strict=False)):
+            # Get per-sample max_success threshold
+            max_success = max_success_list[i]
+            
             # Generate success labels and mask based on progress
             success_labels = torch.zeros_like(target)
             success_mask = torch.zeros_like(target)
@@ -943,7 +943,8 @@ class RFMHeadsTrainer(Trainer):
             success_loss = success_loss_all.mean()
             success_accuracy = success_acc_all.mean()
 
-        final_loss = progress_loss + success_loss
+            import ipdb; ipdb.set_trace()
+            final_loss = progress_loss + success_loss
 
         if return_outputs:
             outputs_dict = {}

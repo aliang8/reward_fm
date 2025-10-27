@@ -46,11 +46,14 @@ peft:
 data:
   # Dataset paths and sources
   train_datasets: 
-    - abraranwar_libero_rfm_libero256_10
+    # - abraranwar_libero_rfm_libero256_10
+    - jesbu1_molmoact_rfm_molmoact_dataset_household
+    - jesbu1_molmoact_rfm_molmoact_dataset_tabletop
   
   # Evaluation dataset settings
   eval_datasets:
     - abraranwar_libero_rfm_libero256_10
+
   eval_subset_size: 500  # Number of evaluation examples
 
   # Video processing settings
@@ -84,6 +87,7 @@ data:
   # Video binned dataset parameters
   num_bins: 10
   progress_pred_type: "absolute" # "absolute" or "relative"
+  pairwise_progress: false
 
   # Success label parameters
   min_success: 0.7  # Progress threshold below which success label is 0
@@ -100,11 +104,11 @@ custom_eval:
   # eval_types: ["reward_alignment", "policy_ranking"]
   # eval_types: ["reward_alignment"]
   policy_ranking: 
-    - "aliangdw/metaworld"
+    - aliangdw_metaworld_metaworld_eval
   confusion_matrix: 
-    - "aliangdw/metaworld"
+    - aliangdw_metaworld_metaworld_eval
   reward_alignment: 
-    - "aliangdw/metaworld"
+    - aliangdw_metaworld_metaworld_eval
 
 # =====================================================================================
 # Training Configuration

@@ -846,12 +846,25 @@ class RFMHeadsTrainer(Trainer):
         spearman_correlations = []
 
         for _i, (pred, target) in enumerate(zip(spliced_progress_logits, spliced_target_progress, strict=False)):
-            loss = F.mse_loss(pred.float(), target.float())
-            progress_losses.append(loss)
+            # Handle pairwise progress: use only the last frame prediction
+            if self.config.data.pairwise_progress:
+                # Take last frame for predictions and targets
+                pred_last = pred[-1].unsqueeze(0) if pred.shape[0] > 1 else pred
+                target_last = target[-1].unsqueeze(0) if target.shape[0] > 1 else target
+                
+                loss = F.mse_loss(pred_last.float(), target_last.float())
+                progress_losses.append(loss)
+                
+                # For pairwise, we don't compute spearman correlation on a single value
+                spearman_corr = torch.tensor(0.0, device=pred.device)
+                spearman_correlations.append(spearman_corr)
+            else:
+                loss = F.mse_loss(pred.float(), target.float())
+                progress_losses.append(loss)
 
-            # Compute Spearman correlation for this sample
-            spearman_corr = compute_spearman_correlation(pred, target)
-            spearman_correlations.append(spearman_corr)
+                # Compute Spearman correlation for this sample
+                spearman_corr = compute_spearman_correlation(pred, target)
+                spearman_correlations.append(spearman_corr)
 
         if progress_losses:
             if aggregate:

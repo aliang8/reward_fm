@@ -549,6 +549,35 @@ def main(cfg: GenerateConfig):
             print(f"Dataset saved locally to: {dataset_path}")
         print("Dataset conversion complete!")
         return
+    elif "fino_net" in cfg.dataset.dataset_name.lower() or "fino-net" in cfg.dataset.dataset_name.lower():
+        # Stream + convert directly inside the FinoNet loader (H2R/OXE-style)
+        from dataset_upload.dataset_loaders.fino_net_loader import convert_fino_net_dataset_to_hf
+
+        print(f"Converting FinoNet dataset directly to HF from: {cfg.dataset.dataset_path}")
+        dataset = convert_fino_net_dataset_to_hf(
+            dataset_path=cfg.dataset.dataset_path,
+            dataset_name=cfg.dataset.dataset_name,
+            output_dir=cfg.output.output_dir,
+            max_trajectories=cfg.output.max_trajectories,
+            max_frames=cfg.output.max_frames,
+            fps=cfg.output.fps,
+            num_workers=cfg.output.num_workers,
+        )
+
+        # Handle pushing/saving consistently
+        if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
+            print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")
+            try:
+                push_hf_dataset_and_video_files_to_hub(dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir)
+            except Exception as e:
+                print(f"❌ Error pushing to hub: {e}")
+                print("Dataset was created locally but failed to push videos and/or metadata to hub")
+        else:
+            dataset_path = os.path.join(cfg.output.output_dir, (cfg.dataset.dataset_name).lower())
+            dataset.save_to_disk(dataset_path)
+            print(f"Dataset saved locally to: {dataset_path}")
+        print("Dataset conversion complete!")
+        return
     elif "epic" in cfg.dataset.dataset_name.lower():
         # Stream + convert directly (H2R/OXE-style)
         from dataset_upload.dataset_loaders.epic_loader import convert_epic_dataset_to_hf

@@ -15,6 +15,7 @@ train_datasets:
   - "jesbu1/motif_rfm"
   - "jesbu1/auto_eval_rfm"
   - "jesbu1/soar_rfm"
+  #- "jesbu1/fino_net_rfm"
 
 train_subsets:
   - ["molmoact_dataset_household", "molmoact_dataset_tabletop"]
@@ -33,6 +34,7 @@ train_subsets:
   - ["motif_rfm"]
   - ["auto_eval_rfm"]
   - ["soar_rfm"]
+  #- ["fino_net"]
 
 
 eval_datasets:

@@ -28,18 +28,24 @@ from rfm.utils.distributed import rank_0_print
 VIDEO_ERROR_PRINTED = False
 # maps subsets to functions that filter the dataset. If true, the example is dropped.
 soar_bad_trajectories = [
-    "20018cd0-8043-401a-a941-3df0921b3774",
-    "8fd5436d-9add-4bcb-9ef2-c0de50d60eae",
-    "ac87af33-48d5-4972-a328-29bddce8fd57",
-    "2aedbc6f-e2ca-41d7-bf3c-66b47ebe1885",
-    "294df3a0-f0a6-4681-9400-83a4c9da3c1b",
-    "404edae0-0f4c-483c-8cef-348549e61aea",
-    "1c297365-5090-4a4b-89df-6545384159da",
+    "b180805a-638e-4055-bc72-3a8d4808a289",
+    "3b82f7dd-7b6d-4488-b296-4354ad7af945",
+    "4aef32ef-2ebe-42c0-8563-96b0ec22a551",
+    "3f7291df-502a-4a4c-acca-2c776cbfaccc",
+    "9785b54a-39ed-48e6-93b5-b8ce589d477b",
+    "c00f8523-1301-47be-b10b-fc3ee32d6c02",
+    "8d1c4509-3d7b-4b00-837c-efa9351ca234",
+    "647060e8-92dd-48db-933b-ee716421a354",
+    "0493e8a2-5520-4f42-b30f-8e67eb0088de",
 ]
 filters = {
     "jesbu1/molmoact_rfm/molmoact_dataset_tabletop": lambda x: "load the bowl" in x["task"].lower(),
-    "jesbu1/galaxea_rfm": lambda x: all(word in x["task"].lower() for word in ["return", "to", "initial", "position"]),
-    "jesbu1/soar_rfm": lambda x: x["trajectory_id"] in soar_bad_trajectories,
+    "jesbu1/galaxea_rfm/galaxea_part1_r1_lite": lambda x: all(word in x["task"].lower() for word in ["return", "to", "initial", "position"]),
+    "jesbu1/galaxea_rfm/galaxea_part2_r1_lite": lambda x: all(word in x["task"].lower() for word in ["return", "to", "initial", "position"]),
+    "jesbu1/galaxea_rfm/galaxea_part3_r1_lite": lambda x: all(word in x["task"].lower() for word in ["return", "to", "initial", "position"]),
+    "jesbu1/galaxea_rfm/galaxea_part4_r1_lite": lambda x: all(word in x["task"].lower() for word in ["return", "to", "initial", "position"]),
+    "jesbu1/galaxea_rfm/galaxea_part5_r1_lite": lambda x: all(word in x["task"].lower() for word in ["return", "to", "initial", "position"]),
+    "jesbu1/soar_rfm/soar_rfm": lambda x: x["id"] in soar_bad_trajectories,
 }
 
 
@@ -473,6 +479,7 @@ class DatasetPreprocessor:
             # filter the example if needed
             should_drop = filters.get(cache_key, lambda x: False)(example)
             if should_drop:
+                rank_0_print(f"Dropping example {idx}: {example['id']} - {example['task']}")
                 return {"frames": None, "frames_processed": False}
 
             # Get the video reader object from the Video feature
@@ -577,6 +584,59 @@ class DatasetPreprocessor:
             desc="Processing video frames and building indices",
             num_proc=self.config.num_proc,
         )
+
+        # Filter out dropped examples (those with frames=None and frames_processed=False)
+        original_length = len(processed_dataset)
+        
+        # Build a list of which indices were kept (had frames_processed=True)
+        kept_indices = []
+        for idx in range(original_length):
+            if processed_dataset[idx].get("frames_processed", False):
+                kept_indices.append(idx)
+        
+        # Filter the dataset
+        processed_dataset = processed_dataset.filter(lambda x: x.get("frames_processed", False))
+        num_filtered = original_length - len(processed_dataset)
+        
+        if num_filtered > 0:
+            rank_0_print(f"Filtered out {num_filtered} trajectories")
+            
+            # Build mapping from old indices to new indices
+            old_to_new_idx = {old_idx: new_idx for new_idx, old_idx in enumerate(kept_indices)}
+            
+            # Remap all indices
+            robot_trajectories = [old_to_new_idx[idx] for idx in robot_trajectories if idx in old_to_new_idx]
+            human_trajectories = [old_to_new_idx[idx] for idx in human_trajectories if idx in old_to_new_idx]
+            
+            quality_indices = {
+                key: [old_to_new_idx[idx] for idx in indices if idx in old_to_new_idx]
+                for key, indices in quality_indices.items()
+            }
+            
+            task_indices = {
+                key: [old_to_new_idx[idx] for idx in indices if idx in old_to_new_idx]
+                for key, indices in task_indices.items()
+            }
+            
+            source_indices = {
+                key: [old_to_new_idx[idx] for idx in indices if idx in old_to_new_idx]
+                for key, indices in source_indices.items()
+            }
+            
+            partial_success_indices = {
+                key: [old_to_new_idx[idx] for idx in indices if idx in old_to_new_idx]
+                for key, indices in partial_success_indices.items()
+            }
+            
+            optimal_by_task = {
+                key: [old_to_new_idx[idx] for idx in indices if idx in old_to_new_idx]
+                for key, indices in optimal_by_task.items()
+            }
+            
+            suboptimal_by_task = {
+                key: [old_to_new_idx[idx] for idx in indices if idx in old_to_new_idx]
+                for key, indices in suboptimal_by_task.items()
+            }
 
         # Log the built indices
         rank_0_print(f"Built index mappings for {cache_key}:")
@@ -773,6 +833,8 @@ class DatasetPreprocessor:
 
         # Update dataset with saved paths and build indices
         updated_rows = []
+        kept_indices = []  # Track which original indices were kept
+        
         for i in tqdm(indices_only, total=len(indices_only), desc=f"Finalizing {cache_key}", unit="traj", leave=False):
             ex = dataset[i]
             if i in idx_to_data:
@@ -796,40 +858,50 @@ class DatasetPreprocessor:
                     ex["video_embedding_shape"] = video_emb_shape
                     ex["text_embedding_shape"] = text_emb_shape
 
-                # Build indices
+                # Track that this index was kept
+                kept_indices.append(i)
+                
+                # Build indices using the NEW index (position in updated_rows)
+                new_idx = len(updated_rows)
+                
                 if ex.get("is_robot", True):
-                    robot_trajectories.append(i)
+                    robot_trajectories.append(new_idx)
                 else:
-                    human_trajectories.append(i)
+                    human_trajectories.append(new_idx)
 
                 quality = ex.get("quality_label", "successful")
-                quality_indices.setdefault(quality, []).append(i)
+                quality_indices.setdefault(quality, []).append(new_idx)
 
                 task = ex.get("task", "unknown")
-                task_indices.setdefault(task, []).append(i)
+                task_indices.setdefault(task, []).append(new_idx)
 
                 source = ex.get("data_source", "unknown")
-                source_indices.setdefault(source, []).append(i)
+                source_indices.setdefault(source, []).append(new_idx)
 
                 partial_success = ex.get("partial_success", None)
                 if (
                     partial_success is not None and quality == "failure"
                 ):  # only record partial success for failure cases
-                    partial_success_indices.setdefault(partial_success, []).append(i)
+                    partial_success_indices.setdefault(partial_success, []).append(new_idx)
 
                 if task not in optimal_by_task:
                     optimal_by_task[task] = []
                     suboptimal_by_task[task] = []
                 if quality in ["successful", "optimal"]:
-                    optimal_by_task[task].append(i)
+                    optimal_by_task[task].append(new_idx)
                 elif quality in ["suboptimal", "failed", "failure"]:
-                    suboptimal_by_task[task].append(i)
+                    suboptimal_by_task[task].append(new_idx)
 
-            # Drop any lingering video readers from rows to free FDs
-            if isinstance(ex, dict):
-                ex.pop("frames_video", None)
+                # Drop any lingering video readers from rows to free FDs
+                if isinstance(ex, dict):
+                    ex.pop("frames_video", None)
 
-            updated_rows.append(ex)
+                updated_rows.append(ex)
+        
+        # Report filtering stats
+        num_filtered = len(indices_only) - len(kept_indices)
+        if num_filtered > 0:
+            rank_0_print(f"Filtered out {num_filtered} trajectories")
 
         # Create a new Dataset from updated_rows
         processed_dataset = Dataset.from_list(updated_rows)

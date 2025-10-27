@@ -8,7 +8,7 @@ output:
   max_trajectories: -1  # -1 for all episodes
   max_frames: 64
   use_video: true
-  fps: 10
+  fps: 5
   shortest_edge_size: 240
   center_crop: false
 

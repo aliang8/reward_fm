@@ -55,13 +55,13 @@ def _load_annotation_files(dataset_path: Path) -> dict[str, dict[int, int]]:
             
         task_annotations = {}
         with open(annot_file, 'r') as f:
-            for line in f:
+            for i, line in enumerate(f):
                 line = line.strip()
                 if not line:
                     continue
                 # Parse format: name, label
                 parts = line.split(',')
-                if len(parts) >= 2:
+                if len(parts) >= 2 and i > 0: # i ==0 is the header line
                     episode_num = int(parts[0].strip())
                     label = int(parts[1].strip())
                     task_annotations[episode_num] = label
@@ -116,18 +116,17 @@ def _discover_episodes(dataset_path: Path) -> list[tuple[str, int, int]]:
     
     Expected structure (after unzipping failure.zip):
     dataset_path/
-        failure/
-            failnet_dataset/
-                rgb_imgs/
-                    put_on/
-                        9/
-                            frame0000000.png
-                            frame0000024.png
-                            ...
-                    put_in/
-                    place/
-                    pour/
-                    push/
+        failnet_dataset/
+            rgb_imgs/
+                put_on/
+                    9/
+                        frame0000000.png
+                        frame0000024.png
+                        ...
+                put_in/
+                place/
+                pour/
+                push/
     
     Returns:
         List of tuples: (task_name, episode_number, label)
@@ -138,7 +137,7 @@ def _discover_episodes(dataset_path: Path) -> list[tuple[str, int, int]]:
     annotations = _load_annotation_files(dataset_path)
     
     # Find the unzipped dataset directory
-    rgb_imgs_dir = dataset_path / "failure" / "failnet_dataset" / "rgb_imgs"
+    rgb_imgs_dir = dataset_path / "failnet_dataset" / "rgb_imgs"
     if not rgb_imgs_dir.exists():
         print(f"Warning: rgb_imgs directory not found at {rgb_imgs_dir}")
         return episodes
@@ -211,19 +210,20 @@ def _process_single_episode(args):
             frames.append(frame)
         
         frames = np.array(frames)  # Shape: (T, H, W, 3)
+
+        # skip first 10 frames because they typically don't show the arm
+        frames = frames[10:]
         
         # Determine quality label (0 = success, 1 = failure)
         quality_label = "failed" if label == 1 else "successful"
         partial_success = 0.0 if label == 1 else 1.0
         
         # Create video path
-        shard_dir = _stable_shard_for_index(episode_num)
-        episode_video_dir = os.path.join(output_dir, dataset_name.lower(), shard_dir, f"episode_{episode_num:06d}")
+        episode_video_dir = os.path.join(output_dir, dataset_name.lower(), task_name, f"episode_{episode_num:06d}")
         os.makedirs(episode_video_dir, exist_ok=True)
         video_filename = "clip.mp4"
         full_video_path = os.path.join(episode_video_dir, video_filename)
-        rel_video_path = os.path.join(dataset_name.lower(), shard_dir, f"episode_{episode_num:06d}", video_filename)
-        
+        rel_video_path = os.path.join(dataset_name.lower(), task_name, f"episode_{episode_num:06d}", video_filename)
         # Create trajectory dict
         traj_dict = {
             "id": generate_unique_id(),
@@ -336,7 +336,7 @@ def convert_fino_net_dataset_to_hf(
     print(f"Found {len(episodes)} episodes; processing in batches of {batch_size} with {num_workers} workers...")
     
     # Path to rgb_imgs directory
-    rgb_imgs_dir = base_path / "failure" / "failnet_dataset" / "rgb_imgs"
+    rgb_imgs_dir = base_path / "failnet_dataset" / "rgb_imgs"
     
     # Process in batches
     episode_batch: list[tuple[str, int, int]] = []
@@ -406,7 +406,7 @@ def convert_fino_net_dataset_to_hf(
             # Clear batch
             episode_batch = []
             info_batch = []
-    
+
     if not entries:
         return Dataset.from_dict(
             {

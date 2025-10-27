@@ -195,6 +195,7 @@ class ReWiNDBatchCollator(RFMBatchCollator):
 
             # Create ref_sim inputs (reference vs sim)
             frame_len = ref_video_embeddings.shape[1]
+
             ref_sim_video_embeddings = torch.cat([ref_video_embeddings, sim_video_embeddings], dim=1)  # [B, T*2, D]
 
             # Create ref_diff inputs (reference vs diff)

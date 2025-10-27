@@ -65,7 +65,6 @@ def load_autoeval_dataset(dataset_path: str) -> dict[str, list[dict]]:
     task_success_set = set()
 
     for pkl in tqdm(pkl_files, desc="Loading AutoEval dataset", total=len(pkl_files)):
-
         with open(pkl, "rb") as f:
             ep = pickle.load(f)
             success = ep.success
@@ -84,5 +83,3 @@ def load_autoeval_dataset(dataset_path: str) -> dict[str, list[dict]]:
         assert task in task_success_set, f"Task {task} is not in task_success_set"
     print(f"AutoEval: successes={success_count}, total={total_count}")
     return task_data
-
-

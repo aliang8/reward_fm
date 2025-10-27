@@ -8,7 +8,7 @@ import numpy as np
 from dataset_upload.helpers import generate_unique_id
 
 
-DEBUG=False
+DEBUG = False
 
 
 class Ph2dFrameloader:
@@ -39,9 +39,7 @@ class Ph2dFrameloader:
 
         frames_np = np.asarray(frames, dtype=np.uint8)
         if frames_np.ndim != 4 or frames_np.shape[-1] != 3:
-            raise ValueError(
-                f"Unexpected frames shape for {self.hdf5_path}: {frames_np.shape} (expected (T,H,W,3))"
-            )
+            raise ValueError(f"Unexpected frames shape for {self.hdf5_path}: {frames_np.shape} (expected (T,H,W,3))")
         return frames_np
 
 
@@ -77,12 +75,11 @@ def load_ph2d_dataset(dataset_path: str) -> dict[str, list[dict]]:
 
     task_data: dict[str, list[dict]] = defaultdict(list)
 
-
     # load metadata.json
-    all_task_attributes = json.load(open(os.path.join(dataset_path, "ph2d_metadata.json")))['per_task_attributes']
+    all_task_attributes = json.load(open(os.path.join(dataset_path, "ph2d_metadata.json")))["per_task_attributes"]
     for task_name, task_attributes in all_task_attributes.items():
         # load all sequences
-        embodiment_type = task_attributes['embodiment_type']
+        embodiment_type = task_attributes["embodiment_type"]
         if "human" in embodiment_type:
             is_robot = False
         else:
@@ -105,5 +102,3 @@ def load_ph2d_dataset(dataset_path: str) -> dict[str, list[dict]]:
             break
     print(f"Loaded {sum(len(task_list) for task_list in task_data.values())} trajectories from {len(task_data)} tasks")
     return task_data
-
-

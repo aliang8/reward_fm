@@ -57,10 +57,10 @@ class EgoCOTFrameloader:
                     # Reverse: pixel * std + mean
                     imagenet_mean = np.array([0.485, 0.456, 0.406]).reshape(1, 3, 1, 1)
                     imagenet_std = np.array([0.229, 0.224, 0.225]).reshape(1, 3, 1, 1)
-                    
+
                     # Denormalize: multiply by std and add mean
                     frames = frames * imagenet_std + imagenet_mean
-                    
+
                     # Clamp to [0, 1] and convert to [0, 255]
                     frames = np.clip(frames, 0, 1)
                     frames = (frames * 255).astype(np.uint8)
@@ -146,7 +146,7 @@ def load_egocot_dataset(dataset_path: str) -> dict[str, list[dict]]:
             # this caption is the llm generated one that's much more detailed from EgoCOT's processing
             caption = item.get("planing").split("\n")[0][1:]
             if not caption:
-                caption = item.get("caption") # use the backup original caption
+                caption = item.get("caption")  # use the backup original caption
             score = item.get("score")
 
             if not image_filename or not caption:
@@ -157,9 +157,9 @@ def load_egocot_dataset(dataset_path: str) -> dict[str, list[dict]]:
             base_dir = os.path.dirname(json_file)
             candidate_paths = [
                 os.path.join(base_dir, "EgoCOT_clear", image_filename) if image_filename else None,
-                #os.path.join(base_dir, image_filename) if image_filename else None,
-                #os.path.join(dataset_path, "EgoCOT_clear", image_filename) if image_filename else None,
-                #os.path.join(dataset_path, image_filename) if image_filename else None,
+                # os.path.join(base_dir, image_filename) if image_filename else None,
+                # os.path.join(dataset_path, "EgoCOT_clear", image_filename) if image_filename else None,
+                # os.path.join(dataset_path, image_filename) if image_filename else None,
             ]
 
             frames_path = None

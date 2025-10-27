@@ -11,8 +11,8 @@ import einops
 import torch
 import torch.nn as nn
 from transformers import PreTrainedModel, AutoConfig, AutoModel
-from transformers.modeling_outputs import SequenceClassifierOutputWithPast
 from transformers import PretrainedConfig
+from rfm.models.utils import ModelOutput
 
 
 def mean_pooling(model_output, attention_mask):
@@ -112,14 +112,13 @@ class ReWiNDTransformer(PreTrainedModel):
             nn.Linear(hidden_dim // 2, 1),
         )
 
-        # Ensure all heads have the same dtype as the base model
-        self.model_dtype = next(self.video_proj.parameters()).dtype
-        self.transformer = self.transformer.to(dtype=self.model_dtype)
-        self.text_proj = self.text_proj.to(dtype=self.model_dtype)
-
-        self.progress_head = self.progress_head.to(dtype=self.model_dtype)
-        self.preference_head = self.preference_head.to(dtype=self.model_dtype)
-        self.similarity_head = self.similarity_head.to(dtype=self.model_dtype)
+        self.success_head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.LayerNorm(hidden_dim // 2),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim // 2, 1),
+        )
 
     def forward(
         self,
@@ -167,6 +166,8 @@ class ReWiNDTransformer(PreTrainedModel):
             video_embeddings = self.video_proj(video_embeddings)  # [B * T, D]
             video_embeddings = video_embeddings.view(B, T, -1)  # [B, T, D]
 
+        output = ModelOutput()
+
         if sample_type == "preference" or sample_type == "similarity":
             video_embeddings_A = video_embeddings[:, : T // 2]
             video_embeddings_B = video_embeddings[:, T // 2 :]
@@ -201,13 +202,26 @@ class ReWiNDTransformer(PreTrainedModel):
 
             progress_logits = {"A": progress_A_logits, "B": progress_B_logits}
 
+            # Predict success for all frames
+            success_A_logits = self.success_head(final_embeddings_A.reshape(-1, D))
+            success_A_logits = einops.rearrange(success_A_logits, "(b t) 1 -> b t", b=B)
+
+            success_B_logits = self.success_head(final_embeddings_B.reshape(-1, D))
+            success_B_logits = einops.rearrange(success_B_logits, "(b t) 1 -> b t", b=B)
+
+            success_logits = {"A": success_A_logits, "B": success_B_logits}
+
             pred_class_token = token_embeddings[:, -1, :]  # [B, D]
 
             logits = None
             if sample_type == "preference":
                 logits = self.preference_head(pred_class_token)
+                output.pref_logits = logits
             else:  # similarity
                 logits = self.similarity_head(pred_class_token)
+                output.sim_logits = logits
+
+            output.success_logits = success_logits
         elif sample_type == "progress":
             first_frame_emb = einops.repeat(self.first_embedding_A, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
 
@@ -221,10 +235,17 @@ class ReWiNDTransformer(PreTrainedModel):
             progress_logits = self.progress_head(final_embeddings)
             progress_logits = progress_logits.squeeze(-1)
 
+            # Predict success for all frames
+            success_logits = self.success_head(final_embeddings)
+            success_logits = success_logits.squeeze(-1)
+
             logits = None
             progress_logits = {"A": progress_logits, "B": None}
+            success_logits = {"A": success_logits, "B": None}
+            output.progress_logits = progress_logits
+            output.success_logits = success_logits
 
-        return SequenceClassifierOutputWithPast(logits=logits), progress_logits, timing_raw
+        return output, timing_raw
 
 
 # Register the model and config with transformers

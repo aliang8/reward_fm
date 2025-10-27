@@ -124,9 +124,7 @@ def convert_molmoact_dataset_to_hf(
                         ep_idx = obj.get("index")
                     if ep_idx is None:
                         continue
-                    text = (
-                        obj.get("tasks")
-                    )[0]
+                    text = (obj.get("tasks"))[0]
                     if isinstance(text, str) and text.strip():
                         mapping[int(ep_idx)] = text.strip()
         except Exception:
@@ -210,7 +208,7 @@ def convert_molmoact_dataset_to_hf(
             current_ep = ep_idx
             frames_by_view = {"first_view": [], "second_view": []}
         elif ep_idx != current_ep:
-            task_text = ep_text_map.get(current_ep) 
+            task_text = ep_text_map.get(current_ep)
             print(f"{task_text} episode loaded")
             flush_episode(current_ep, task_text, label, frames_by_view)
             current_ep = ep_idx
@@ -230,23 +228,17 @@ def convert_molmoact_dataset_to_hf(
         print(f"{task_text} episode loaded")
         flush_episode(current_ep, task_text, label, frames_by_view)
 
-            
-
     if not entries:
-        return Dataset.from_dict(
-            {
-                "id": [],
-                "task": [],
-                "lang_vector": [],
-                "data_source": [],
-                "frames": [],
-                "is_robot": [],
-                "quality_label": [],
-                "preference_group_id": [],
-                "preference_rank": [],
-            }
-        )
+        return Dataset.from_dict({
+            "id": [],
+            "task": [],
+            "lang_vector": [],
+            "data_source": [],
+            "frames": [],
+            "is_robot": [],
+            "quality_label": [],
+            "preference_group_id": [],
+            "preference_rank": [],
+        })
 
     return Dataset.from_list(entries)
-
-

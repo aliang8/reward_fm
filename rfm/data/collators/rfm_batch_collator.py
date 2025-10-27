@@ -259,9 +259,7 @@ class RFMBatchCollator(BaseCollator):
             reference_frames = convert_frames_to_pil_images(
                 sample.ref_trajectory.frames, sample.ref_trajectory.frames_shape
             )
-            sim_frames = convert_frames_to_pil_images(
-                sample.sim_trajectory.frames, sample.sim_trajectory.frames_shape
-            )
+            sim_frames = convert_frames_to_pil_images(sample.sim_trajectory.frames, sample.sim_trajectory.frames_shape)
             diff_frames = convert_frames_to_pil_images(
                 sample.diff_trajectory.frames, sample.diff_trajectory.frames_shape
             )
@@ -276,15 +274,15 @@ class RFMBatchCollator(BaseCollator):
                 tmp_ref = Path(tempfile.gettempdir()) / f"tmp_ref.mp4"
                 write_mp4(reference_frames, tmp_ref)
                 reference_frames_video = str(tmp_ref)
-                
+
                 tmp_sim = Path(tempfile.gettempdir()) / f"tmp_sim.mp4"
                 write_mp4(sim_frames, tmp_sim)
                 sim_frames_video = str(tmp_sim)
-                
+
                 tmp_diff = Path(tempfile.gettempdir()) / f"tmp_diff.mp4"
                 write_mp4(diff_frames, tmp_diff)
                 diff_frames_video = str(tmp_diff)
-                
+
                 content_extras = {}
             else:
                 content_extras = {}
@@ -418,7 +416,7 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["target_progress_ref"] = pad_target_progress(target_progress_ref)
         batch_inputs["target_progress_sim"] = pad_target_progress(target_progress_sim)
         batch_inputs["target_progress_diff"] = pad_target_progress(target_progress_diff)
-        
+
         batch_inputs["target_progress_ref_mask"] = torch.tensor(target_progress_ref_mask, dtype=torch.float32)
         batch_inputs["target_progress_sim_mask"] = torch.tensor(target_progress_sim_mask, dtype=torch.float32)
         batch_inputs["target_progress_diff_mask"] = torch.tensor(target_progress_diff_mask, dtype=torch.float32)

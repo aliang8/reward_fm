@@ -85,8 +85,8 @@ FOLDER_TO_TASK_NAME = {
     "push_box_random_v1": "push the box from left to right",
     "push_box_two_v1": "push the tissues from left to right",
     "push_plate_v1": "push the plate from top to bottom",
-    #"roll": "pick up the brush and write on the table", # skipped because it's weird
-    #"writing": "write aimlessly on the desk", # skipped because writing aimlessly is not helpful for reward modeling
+    # "roll": "pick up the brush and write on the table", # skipped because it's weird
+    # "writing": "write aimlessly on the desk", # skipped because writing aimlessly is not helpful for reward modeling
 }
 
 
@@ -95,7 +95,7 @@ def _get_task_name_from_folder(folder_name: str) -> str:
     # First try to find exact match
     if folder_name in FOLDER_TO_TASK_NAME:
         return FOLDER_TO_TASK_NAME[folder_name]
-    else: 
+    else:
         return None
 
 
@@ -264,20 +264,18 @@ def convert_h2r_dataset_to_hf(
     discovered = _discover_h2r_files(base_path)
     if len(discovered) == 0:
         # Return an empty dataset with expected columns
-        return Dataset.from_dict(
-            {
-                "id": [],
-                "task": [],
-                "lang_vector": [],
-                "data_source": [],
-                "frames": [],
-                "is_robot": [],
-                "quality_label": [],
-                # keep schema compatible with helpers/create_hf_trajectory usage
-                "preference_group_id": [],
-                "preference_rank": [],
-            }
-        )
+        return Dataset.from_dict({
+            "id": [],
+            "task": [],
+            "lang_vector": [],
+            "data_source": [],
+            "frames": [],
+            "is_robot": [],
+            "quality_label": [],
+            # keep schema compatible with helpers/create_hf_trajectory usage
+            "preference_group_id": [],
+            "preference_rank": [],
+        })
 
     # Language model and cache (avoid recomputing for identical tasks)
     lang_model = load_sentence_transformer_model()
@@ -367,19 +365,16 @@ def convert_h2r_dataset_to_hf(
             info_batch = []
 
     if not entries:
-        return Dataset.from_dict(
-            {
-                "id": [],
-                "task": [],
-                "lang_vector": [],
-                "data_source": [],
-                "frames": [],
-                "is_robot": [],
-                "quality_label": [],
-                "preference_group_id": [],
-                "preference_rank": [],
-            }
-        )
+        return Dataset.from_dict({
+            "id": [],
+            "task": [],
+            "lang_vector": [],
+            "data_source": [],
+            "frames": [],
+            "is_robot": [],
+            "quality_label": [],
+            "preference_group_id": [],
+            "preference_rank": [],
+        })
 
     return Dataset.from_list(entries)
-

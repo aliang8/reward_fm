@@ -111,7 +111,7 @@ def _process_single_oxe_episode(args):
 
         if not frames:
             continue
-        
+
         if "nyu_rot_dataset_converted_externally_to_rlds" in dataset_name:
             # convert each frame from bgr to rgb
             frames = [cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) for frame in frames]
@@ -393,6 +393,7 @@ def convert_oxe_dataset_to_hf(
                 produced += len(episode_entries)
         else:
             from multiprocessing import Pool
+
             worker_args = list(
                 zip(
                     episode_batch,

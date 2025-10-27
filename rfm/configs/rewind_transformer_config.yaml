@@ -5,7 +5,7 @@ trainer_cls: "rewind_transformer"
 # Model Configuration
 # =====================================================================================
 model:
-  base_model_id: "rewind_transformer"  # custom transformer model
+  base_model_id: rewind_transformer  # custom transformer model
 
   # set rewind specific parameters
   rewind:

@@ -15,7 +15,7 @@ model:
   model_type: "default" # "default" or "vqa"
   base_model_id: "Qwen/Qwen2.5-VL-3B-Instruct"
   # base_model_id: "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
-  torch_dtype: "bfloat16"
+  torch_dtype: bfloat16
   trust_remote_code: true
   # Additional options for more comprehensive training (when use_peft: false)
   train_vision_encoder: true  # Whether to train the vision encoder
@@ -46,33 +46,11 @@ peft:
 data:
   # Dataset paths and sources
   train_datasets: 
-    # - "abraranwar/libero_rfm"
-    # - "ykorkmaz/libero_failure_rfm"
-    # - "HenryZhang/metaworld_rewind_rfm_train"
-    - "aliangdw/metaworld"
-    # - "jesbu1/oxe_rfm"
-  train_subsets:
-    # - ["libero256_90"]
-    # - ["libero_90_failure"]
-    # - ["metaworld_rewind_train"]
-    - ["metaworld_train"]
-    # - ["oxe_bridge_v2"]
+    - abraranwar_libero_rfm_libero256_10
+  
   # Evaluation dataset settings
   eval_datasets:
-    # - "abraranwar/libero_rfm"
-    # - "ykorkmaz/libero_failure_rfm"
-    # - "HenryZhang/metaworld_rewind_rfm_eval"
-    - "aliangdw/metaworld"
-    # - "aliangdw/metaworld_rfm"
-  eval_subsets:
-    # - ["libero256_10", "libero256_object", "libero256_spatial", "libero256_goal"]
-    # - ["libero256_10"]
-    # - ["libero_10_failure"]
-    # - ["metaworld_rewind_eval"]
-    - ["metaworld_eval"]
-    # - ["metaworld"]
-  # eval_datasets: ["abraranwar/libero_rfm"]
-  # eval_subsets: ["libero_object"]
+    - abraranwar_libero_rfm_libero256_10
   eval_subset_size: 500  # Number of evaluation examples
 
   # Video processing settings
@@ -109,8 +87,7 @@ data:
   # Success label parameters
   min_success: 0.7  # Progress threshold below which success label is 0
   max_success: 0.95  # Progress threshold above which success label is 1
-  # dataset_success_cutoff_file: "rfm/data/dataset_success_cutoff.txt"  # Optional: path to dataset-specific success cutoff file
-
+  dataset_success_cutoff_file: "rfm/data/dataset_success_cutoff.txt"  
 
 # =====================================================================================
 # Custom Evaluation Configuration
@@ -122,12 +99,11 @@ custom_eval:
   # eval_types: ["reward_alignment", "policy_ranking"]
   # eval_types: ["reward_alignment"]
   policy_ranking: 
-    - ["aliangdw/metaworld", "metaworld_eval"]
+    - "aliangdw/metaworld"
   confusion_matrix: 
-    - ["aliangdw/metaworld", "metaworld_eval"]
+    - "aliangdw/metaworld"
   reward_alignment: 
-    - ["aliangdw/metaworld", "metaworld_train"]
-    - ["aliangdw/metaworld", "metaworld_eval"]
+    - "aliangdw/metaworld"
 
 # =====================================================================================
 # Training Configuration

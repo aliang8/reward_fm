@@ -120,16 +120,6 @@ class ReWiNDTransformer(PreTrainedModel):
             nn.Linear(hidden_dim // 2, 1),
         )
 
-        # Ensure all heads have the same dtype as the base model
-        self.model_dtype = next(self.video_proj.parameters()).dtype
-        self.transformer = self.transformer.to(dtype=self.model_dtype)
-        self.text_proj = self.text_proj.to(dtype=self.model_dtype)
-
-        self.progress_head = self.progress_head.to(dtype=self.model_dtype)
-        self.preference_head = self.preference_head.to(dtype=self.model_dtype)
-        self.similarity_head = self.similarity_head.to(dtype=self.model_dtype)
-        self.success_head = self.success_head.to(dtype=self.model_dtype)
-
     def forward(
         self,
         input_ids=None,

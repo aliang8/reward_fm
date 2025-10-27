@@ -39,7 +39,7 @@ def downsample_frames(frames: np.ndarray | list, max_frames: int = 32) -> np.nda
 
     # keep unique frames
     unique_indices = np.unique(indices)
-    
+
     # Handle both list and numpy array inputs
     if isinstance(frames, list):
         return [frames[i] for i in unique_indices]

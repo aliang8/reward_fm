@@ -41,7 +41,18 @@ def load_frames_from_npz(npz_filepath: str) -> np.ndarray:
     Returns:
         numpy array with shape (T, H, W, C) containing the video frames
     """
-    if not npz_filepath or not os.path.exists(npz_filepath):
+    if not npz_filepath:
+        raise ValueError("npz_filepath is None or empty")
+    
+    # If path is relative, prepend RFM_PROCESSED_DATASETS_PATH
+    if not os.path.isabs(npz_filepath):
+        rfm_dataset_path = os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
+        # HACK: 
+        rfm_dataset_path = rfm_dataset_path.replace("processed_datasets/", "")
+        if rfm_dataset_path:
+            npz_filepath = os.path.join(rfm_dataset_path, npz_filepath)
+    
+    if not os.path.exists(npz_filepath):
         raise ValueError(f"NPZ file not found: {npz_filepath}")
 
     try:
@@ -64,6 +75,14 @@ def load_embeddings_from_path(embeddings_path: str, embedding_type: str = "video
     """Load video embeddings from .pt file and return just the video embeddings."""
     if not embeddings_path:
         raise ValueError("embeddings_path is None or empty")
+
+    # If path is relative, prepend RFM_PROCESSED_DATASETS_PATH
+    if not os.path.isabs(embeddings_path):
+        rfm_dataset_path = os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
+        # HACK: 
+        rfm_dataset_path = rfm_dataset_path.replace("processed_datasets/", "")
+        if rfm_dataset_path:
+            embeddings_path = os.path.join(rfm_dataset_path, embeddings_path)
 
     with open(embeddings_path, "rb") as f:
         embeddings_data = torch.load(f, map_location="cpu")
@@ -302,6 +321,84 @@ def subsample_frames_and_progress(
     return subsampled_frames, progress, metadata
 
 
+def subsample_pairs_and_progress(
+    frames, max_frames: int, progress_pred_type: str = "absolute"
+):
+    """Create pairwise frames for progress prediction.
+    
+    Constructs pairs (o_i, o_i+1), (o_i+1, o_i), (o_i, o_i+T), (o_i+T, o_i)
+    where i is a random index and T is a random delta in number of frames.
+    Randomly selects one of these 4 pairs.
+    
+    Args:
+        frames: Full trajectory frames (can be numpy array or torch tensor)
+        max_frames: Maximum number of frame pairs to generate (will be paired to 2*max_frames total)
+        progress_pred_type: "absolute" or "relative" progress prediction
+    
+    Returns:
+        Tuple of (subsampled_frames, progress_list, metadata)
+    """    
+    # Check if frames is a torch tensor
+    is_torch = isinstance(frames, torch.Tensor)
+    
+    num_frames_total = len(frames)
+    
+    # Generate a single random index i
+    i = random.randint(0, num_frames_total - 2)  # Ensure i+1 is valid
+    
+    # Generate a random delta T (between 1 and remaining frames)
+    max_delta = min(10, num_frames_total - i - 1)  # Cap T at reasonable value
+    T = random.randint(1, max_delta)
+    
+    # Define the 4 possible pairs
+    possible_pairs = [
+        ([i, i + 1], "forward_single"),      # (o_i, o_i+1)
+        ([i + 1, i], "backward_single"),      # (o_i+1, o_i)
+        ([i, i + T], "forward_delta"),        # (o_i, o_i+T)
+        ([i + T, i], "backward_delta"),       # (o_i+T, o_i)
+    ]
+    
+    # Randomly select one of the 4 pairs
+    selected_indices, pair_type = random.choice(possible_pairs)
+    
+    # Extract the selected pair
+    pair_frames = [frames[idx] for idx in selected_indices]
+    pair_indices = selected_indices
+    
+    # Trim to max_frames if needed
+    if len(pair_frames) > max_frames:
+        pair_frames = pair_frames[:max_frames]
+        pair_indices = pair_indices[:max_frames]
+    
+    # Convert back to torch tensor if input was a torch tensor
+    if is_torch:
+        pair_frames = torch.stack(pair_frames)
+    
+    # Calculate progress for each frame
+    if progress_pred_type == "absolute":
+        progress = [(idx + 1) / num_frames_total for idx in pair_indices]
+    else:
+        # Relative progress: delta between consecutive frames
+        relative_progress = []
+        for idx in range(len(pair_indices)):
+            if idx == 0:
+                relative_progress.append(0.0)
+            else:
+                delta = pair_indices[idx] - pair_indices[idx - 1]
+                relative_progress.append(delta / num_frames_total)
+        progress = relative_progress
+    
+    metadata = {
+        "pair_indices": pair_indices,
+        "sampling_strategy": "pairwise",
+        "pair_type": pair_type,
+        "i": i,
+        "T": T,
+    }
+    
+    return pair_frames, progress, metadata
+
+
 def create_rewind_trajectory(
     original_traj: dict,
     rewind_length: int | None = None,
@@ -478,6 +575,41 @@ def create_rewind_trajectory(
     rewind_traj["metadata"] = metadata
     rewind_traj["quality_label"] = "rewound"
     return rewind_traj
+
+
+def generate_success_labels(
+    progress: list[float], min_success: float, max_success: float
+) -> tuple[list[bool], list[int]]:
+    """Generate success labels and mask based on progress values.
+
+    Args:
+        progress: List of progress values (floats between 0 and 1)
+        min_success: Progress threshold below which success label is 0 (failure)
+        max_success: Progress threshold above which success label is 1 (success)
+
+    Returns:
+        Tuple of (success_labels, success_label_mask):
+            - success_labels: List of bools indicating success (True) or failure (False)
+            - success_label_mask: List of ints (1=predict, 0=ignore) indicating which frames to predict
+    """
+    success_labels = []
+    success_label_mask = []
+
+    for prog in progress:
+        if prog < min_success:
+            # Below threshold: label as failure (0)
+            success_labels.append(False)
+            success_label_mask.append(1)  # Predict this frame
+        elif prog > max_success:
+            # Above threshold: label as success (1)
+            success_labels.append(True)
+            success_label_mask.append(1)  # Predict this frame
+        else:
+            # In between: don't predict
+            success_labels.append(False)  # Placeholder value
+            success_label_mask.append(0)  # Don't predict this frame
+
+    return success_labels, success_label_mask
 
 
 def show_available_datasets():

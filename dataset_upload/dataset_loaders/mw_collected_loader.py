@@ -18,6 +18,7 @@ from tqdm import tqdm
 from dataset_upload.video_helpers import load_video_frames
 from dataset_upload.dataset_loaders.mw_task_annotations import TRAIN_GT_ANN, EVAL_GT_ANN
 
+
 def apply_center_crop_to_frames(frames: np.ndarray) -> np.ndarray:
     """Apply center crop (224, 224) to video frames using torchvision transforms.
 
@@ -49,6 +50,7 @@ def map_quality_label(original_label: str) -> str:
     """Map original quality labels to standardized RFM labels."""
     label_mapping = {"GT": "successful", "success": "successful", "all_fail": "failure", "close_succ": "suboptimal"}
     return label_mapping.get(original_label, original_label)
+
 
 def load_metaworld_dataset(base_path: str, dataset_name: str) -> dict[str, list[dict]]:
     """Load metaworld dataset and organize by task.
@@ -88,7 +90,7 @@ def load_metaworld_dataset(base_path: str, dataset_name: str) -> dict[str, list[
             if task_name not in tasks:
                 continue
 
-            for traj_name in ["0", "1", "10", "11", "12"]: # not sure why we use these, but we use these 5
+            for traj_name in ["0", "1", "10", "11", "12"]:  # not sure why we use these, but we use these 5
                 traj = f[task_name][traj_name]
                 frames = np.array(traj)
 
@@ -102,7 +104,7 @@ def load_metaworld_dataset(base_path: str, dataset_name: str) -> dict[str, list[
                     "partial_success": 0,
                 }
                 task_data[task_name].append(trajectory)
-    
+
     if "eval" in dataset_name:
         task_dirs = [d for d in base_path.iterdir() if d.is_dir() and not d.name.startswith(".")]
         for task_dir in tqdm(task_dirs, desc="Processing tasks"):

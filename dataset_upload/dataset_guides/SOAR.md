@@ -11,7 +11,7 @@ Source: `https://github.com/rail-berkeley/soar?tab=readme-ov-file#using-soar-dat
 
 ## Label with VLM
 First, we re-label success/failure labels using a VLM model because the original labels are not very accurate.
-TODO: update this with instructions for the labels and update dataset loading.
+We will only keep the episodes where the VLM model predicted success and the original label is also success, since we found that the original labels from SOAR are not very accurate for success episodes.
 
 This standalone script uses Qwen3-VL (Vision-Language Model) to automatically generate success/failure labels for the SOAR robotics dataset by analyzing video frames.
 

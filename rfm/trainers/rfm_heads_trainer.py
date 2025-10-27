@@ -325,6 +325,11 @@ class RFMHeadsTrainer(Trainer):
             "wrong_task": "wrong_task",
         }
 
+        rank_0_print(f"\n\n\n\n")
+        rank_0_print(f"=" * 100)
+        rank_0_print(f"Running custom evaluations: {eval_types}")
+        rank_0_print(f"=" * 100)
+
         for eval_type in eval_types:
             rank_0_print(f"Running evaluation for: {eval_type}")
 

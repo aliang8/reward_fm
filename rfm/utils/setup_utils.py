@@ -418,8 +418,6 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
 def setup_dataset(cfg: DataConfig, is_eval: bool = False, **kwargs) -> RFMBaseDataset:
     """Shared function to create DataGenerator for training or evaluation"""
 
-    rank_0_print(f"Setting up data generator for {'evaluation' if is_eval else 'training'}...")
-
     dataset_cls = {
         "reward_alignment": RewardAlignmentDataset,
         "success_failure": PairedSuccessFailureDataset,

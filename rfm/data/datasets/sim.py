@@ -28,7 +28,8 @@ class SimilarityDataset(RFMBaseDataset):
         super().__init__(config, is_evaluation, verbose=verbose, **kwargs)
         self.similarity_strategy_ratio: list[float] = config.similarity_strategy_ratio
 
-        rank_0_print(f"SimilarityDataset initialized with {len(self.dataset)} total trajectories")
+        if self.verbose:
+            rank_0_print(f"SimilarityDataset initialized with {len(self.dataset)} total trajectories")
 
     def __getitem__(self, idx):
         return self._create_similarity_sample()

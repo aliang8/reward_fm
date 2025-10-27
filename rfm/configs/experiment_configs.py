@@ -163,6 +163,11 @@ class DataConfig:
         default=None,
         metadata={"help": "Path to dataset-specific success cutoff file (CSV format: dataset_name,n_frames_last)"},
     )
+    
+    pairwise_progress: bool = field(
+        default=False,
+        metadata={"help": "Whether to use pairwise progress sampling strategy for progress prediction"},
+    )
 
 
 @dataclass

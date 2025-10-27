@@ -942,8 +942,6 @@ class RFMHeadsTrainer(Trainer):
             )
             success_loss = success_loss_all.mean()
             success_accuracy = success_acc_all.mean()
-
-            import ipdb; ipdb.set_trace()
             final_loss = progress_loss + success_loss
 
         if return_outputs:

@@ -110,7 +110,7 @@ repos=(
   #abraranwar/agibotworld_rfm   # still downloading
   #abraranwar/egodex_rfm        # still downloading
   ykorkmaz/libero_failure_rfm
-  aliangdw/metaworld_rfm
+  # aliangdw/metaworld_rfm
   HenryZhang/metaworld_rewind_rfm_train
   HenryZhang/metaworld_rewind_rfm_eval
   aliangdw/metaworld
@@ -128,6 +128,7 @@ repos=(
   jesbu1/motif_rfm
   jesbu1/auto_eval_rfm
   #jesbu1/soar_rfm #maybe too many bad labels
+  aliangdw/metaworld
 )
 
 # ------------------------------

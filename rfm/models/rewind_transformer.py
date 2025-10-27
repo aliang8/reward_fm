@@ -232,12 +232,25 @@ class ReWiNDTransformer(PreTrainedModel):
             token_embeddings = self.transformer(token_sequence)
             D = token_embeddings.shape[-1]
             final_embeddings = token_embeddings[:, 1:, :]  # avoid the text embedding
-            progress_logits = self.progress_head(final_embeddings)
-            progress_logits = progress_logits.squeeze(-1)
+            
+            # For pairwise progress, we only predict the delta at the last frame
+            if T == 2:  # Pairwise progress has exactly 2 frames
+                # Take only the last frame embedding
+                last_frame_emb = final_embeddings[:, -1:, :]
+                progress_logits = self.progress_head(last_frame_emb)
+                progress_logits = progress_logits.squeeze(-1)
+                
+                # Predict success for all frames (still both frames)
+                success_logits = self.success_head(final_embeddings)
+                success_logits = success_logits.squeeze(-1)
+            else:
+                # Standard progress prediction for all frames
+                progress_logits = self.progress_head(final_embeddings)
+                progress_logits = progress_logits.squeeze(-1)
 
-            # Predict success for all frames
-            success_logits = self.success_head(final_embeddings)
-            success_logits = success_logits.squeeze(-1)
+                # Predict success for all frames
+                success_logits = self.success_head(final_embeddings)
+                success_logits = success_logits.squeeze(-1)
 
             logits = None
             progress_logits = {"A": progress_logits, "B": None}

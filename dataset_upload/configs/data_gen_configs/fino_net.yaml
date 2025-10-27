@@ -1,6 +1,6 @@
 # config.yaml for FinoNet dataset
 dataset:
-  dataset_path: ./fino_net_dataset  # Path to the dataset root (contains failure.zip or unzipped failure directory)
+  dataset_path: ./datasets/fino-net # Path to the dataset root (contains failure.zip or unzipped failure directory)
   dataset_name: fino_net  # This will be the dataset name / data source
 
 output:

@@ -346,21 +346,21 @@ def get_dataset_splits(dataset_path: str) -> dict[str, Any]:
     builder = tfds.builder_from_directory(root)
     
     dataset_dict = {}
-    for split_name in ["success", "failure"]:
+    split_name = "success"
+    try:
+        ds = builder.as_dataset(split=split_name, shuffle_files=False)
+        dataset_dict[split_name] = ds
+        
+        # Get episode count without loading all episodes
         try:
-            ds = builder.as_dataset(split=split_name, shuffle_files=False)
-            dataset_dict[split_name] = ds
-            
-            # Get episode count without loading all episodes
-            try:
-                info = builder.info.splits[split_name]
-                num_episodes = info.num_examples
-                print(f"Found {num_episodes} episodes in '{split_name}' split")
-            except:
-                print(f"Found '{split_name}' split (episode count unknown)")
-        except Exception as e:
-            print(f"Warning: Could not load '{split_name}' split: {e}")
-            dataset_dict[split_name] = None
+            info = builder.info.splits[split_name]
+            num_episodes = info.num_examples
+            print(f"Found {num_episodes} episodes in '{split_name}' split")
+        except:
+            print(f"Found '{split_name}' split (episode count unknown)")
+    except Exception as e:
+        print(f"Warning: Could not load '{split_name}' split: {e}")
+        dataset_dict[split_name] = None
     
     return dataset_dict, builder
 

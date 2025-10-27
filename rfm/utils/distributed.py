@@ -20,7 +20,7 @@ def is_rank_0():
         return True  # If distributed module not available, consider it rank 0
 
 
-def rank_0_print(*args, **kwargs):
+def rank_0_print(*args, verbose=True, **kwargs):
     """Print only if on rank 0."""
-    if is_rank_0():
+    if is_rank_0() and verbose:
         rprint(*args, **kwargs)

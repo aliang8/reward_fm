@@ -2,7 +2,6 @@ train_datasets:
   - "jesbu1/molmoact_rfm" 
   - "abraranwar/libero_rfm"
   - "ykorkmaz/libero_failure_rfm"
-  - "HenryZhang/metaworld_rewind_rfm_train"
   - "jesbu1/ph2d_rfm"
   - "jesbu1/h2r_rfm"
   - "anqil/rh20t_subset_rfm"
@@ -22,7 +21,6 @@ train_subsets:
   - ["molmoact_dataset_household", "molmoact_dataset_tabletop"]
   - ["libero256_90"]
   - ["libero_90_failure"]
-  - ["metaworld_rewind_train"]
   - ["ph2d"]
   - ["h2r"]
   - ["rh20t_human", "rh20t_robot"]
@@ -41,14 +39,12 @@ train_subsets:
 eval_datasets:
   - "abraranwar/libero_rfm"
   - "ykorkmaz/libero_failure_rfm"
-  - "HenryZhang/metaworld_rewind_rfm_eval"
   - "jesbu1/oxe_rfm_eval"
   - "aliangdw/metaworld"
 
 eval_subsets:
   - ["libero256_10"]
   - ["libero_10_failure"]
-  - ["metaworld_rewind_eval"]
   - ["oxe_bc_z_eval", "oxe_berkeley_cable_routing_eval", "oxe_bridge_v2_eval", "oxe_jaco_play_eval", "oxe_toto_eval", "oxe_viola_eval"]
   - ["metaworld_eval"]
   

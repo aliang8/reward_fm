@@ -420,19 +420,6 @@ def setup_dataset(cfg: DataConfig, is_eval: bool = False, **kwargs) -> RFMBaseDa
 
     rank_0_print(f"Setting up data generator for {'evaluation' if is_eval else 'training'}...")
 
-    if is_eval:
-        datasets = cfg.eval_datasets
-        subsets = cfg.eval_subsets
-    else:
-        datasets = cfg.train_datasets
-        subsets = cfg.train_subsets
-
-    # Validate that train_datasets and train_subsets have the same length
-    if len(datasets) != len(subsets):
-        raise ValueError(
-            f"datasets and subsets must have the same length. Got {len(datasets)} datasets and {len(subsets)} subsets"
-        )
-
     dataset_cls = {
         "reward_alignment": RewardAlignmentDataset,
         "success_failure": PairedSuccessFailureDataset,

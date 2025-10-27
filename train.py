@@ -36,7 +36,7 @@ datasets.logging.set_verbosity_error()
 warnings.filterwarnings("ignore", message="Please use DTensor instead and we are deprecating ShardedTensor")
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
+torch.autograd.set_detect_anomaly(True)
 
 def train(cfg: ExperimentConfig):
     timing_raw = {}

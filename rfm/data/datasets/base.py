@@ -19,10 +19,8 @@ class RFMBaseDataset(torch.utils.data.Dataset):
         # Choose datasets based on whether this is for evaluation or training
         if is_evaluation and config.eval_datasets:
             self.datasets = config.eval_datasets
-            self.subsets = config.eval_subsets
         else:
             self.datasets = config.train_datasets
-            self.subsets = config.train_subsets
 
         self.verbose = verbose
 
@@ -79,50 +77,44 @@ class RFMBaseDataset(torch.utils.data.Dataset):
             )
 
     def _load_preprocessed_cache(self, cache_dir: str, is_training: bool = True):
-        """Load the preprocessed cache with index mappings for specific dataset/subset pairs."""
-        # Validate the subsets format
-        if not self.subsets:
-            raise ValueError("No subsets configured. Please check your config.")
-
-        # Check which dataset/subset pairs are available
+        """Load the preprocessed cache with index mappings for datasets."""
+        # Check which datasets are available
         available_datasets = []
         missing_datasets = []
 
-        for i, (dataset_path, dataset_subsets) in enumerate(zip(self.datasets, self.subsets, strict=False)):
-            for subset in dataset_subsets:
-                cache_key = f"{dataset_path}/{subset}"
-                # The preprocessing script creates individual cache directories for each dataset/subset pair
-                individual_cache_dir = os.path.join(cache_dir, cache_key.replace("/", "_").replace(":", "_"))
+        for dataset_path in self.datasets:
+            # The preprocessing script creates individual cache directories for each dataset
+            individual_cache_dir = os.path.join(cache_dir, dataset_path.replace("/", "_").replace(":", "_"))
 
-                if os.path.exists(individual_cache_dir):
-                    info_file = os.path.join(individual_cache_dir, "dataset_info.json")
-                    if os.path.exists(info_file):
-                        try:
-                            with open(info_file) as f:
-                                json.load(f)
+            if os.path.exists(individual_cache_dir):
+                info_file = os.path.join(individual_cache_dir, "dataset_info.json")
+                if os.path.exists(info_file):
+                    try:
+                        with open(info_file) as f:
+                            json.load(f)
 
-                            available_datasets.append((dataset_path, subset, individual_cache_dir))
-                            rank_0_print(f"       Found cache: {individual_cache_dir}")
-                        except:
-                            rank_0_print(f"       Cache info file corrupted, skipping: {individual_cache_dir}")
-                            continue
-                    else:
-                        rank_0_print(f"       No info file found, skipping: {individual_cache_dir}")
+                        available_datasets.append((dataset_path, individual_cache_dir))
+                        rank_0_print(f"       Found cache: {individual_cache_dir}")
+                    except:
+                        rank_0_print(f"       Cache info file corrupted, skipping: {individual_cache_dir}")
                         continue
                 else:
-                    missing_datasets.append((dataset_path, subset))
-                    rank_0_print(f"      ❌ Missing cache: {individual_cache_dir}")
+                    rank_0_print(f"       No info file found, skipping: {individual_cache_dir}")
+                    continue
+            else:
+                missing_datasets.append(dataset_path)
+                rank_0_print(f"      ❌ Missing cache: {individual_cache_dir}")
 
         # Warn about missing datasets
         if missing_datasets:
-            rank_0_print("\n⚠️  Warning: The following configured dataset/subset pairs are not available in the cache:")
-            for dataset_path, subset in missing_datasets:
-                rank_0_print(f"    ❌ {dataset_path}/{subset}")
-            rank_0_print("  Available dataset/subset pairs will be loaded, but some configured data may be missing.")
+            rank_0_print("\n⚠️  Warning: The following configured datasets are not available in the cache:")
+            for dataset_path in missing_datasets:
+                rank_0_print(f"    ❌ {dataset_path}")
+            rank_0_print("  Available datasets will be loaded, but some configured data may be missing.")
 
         if not available_datasets:
             raise RuntimeError(
-                f"No configured dataset/subset pairs are available in the cache. "
+                f"No configured datasets are available in the cache. "
                 f"Please run preprocess_datasets.py to create the cache for: {self.datasets}"
             )
 
@@ -143,7 +135,7 @@ class RFMBaseDataset(torch.utils.data.Dataset):
 
         offset = 0
 
-        for dataset_path, subset, individual_cache_dir in available_datasets:
+        for dataset_path, individual_cache_dir in available_datasets:
             # Load the processed dataset
             dataset_cache_dir = os.path.join(individual_cache_dir, "processed_dataset")
             if not os.path.exists(dataset_cache_dir):
@@ -172,7 +164,7 @@ class RFMBaseDataset(torch.utils.data.Dataset):
                                     combined_indices[key][subkey] = []
                                 combined_indices[key][subkey].extend([idx + offset for idx in subindices])
 
-            rank_0_print(f"  ✅ Loaded {len(dataset)} trajectories from {dataset_path}/{subset}")
+            rank_0_print(f"  ✅ Loaded {len(dataset)} trajectories from {dataset_path}")
             offset += len(dataset)
 
         if not loaded_datasets:

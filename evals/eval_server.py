@@ -40,27 +40,26 @@ from rfm.data.dataset_types import PreferenceSample, ProgressSample
 from rfm.utils.parser import deep_merge
 from rfm.utils.setup_utils import setup_model_and_processor, setup_batch_collator
 from rfm.models.rewind_transformer import ReWiNDTransformer
+from rfm.models.utils import ModelOutput
 
 
 def rewind_forward(
     model, batch_inputs: Dict[str, Any], device: str, sample_type: str = "progress"
-) -> tuple[torch.Tensor, Dict[str, Any]]:
+) -> tuple[ModelOutput, Dict[str, Any]]:
     """Forward pass for ReWiND Transformer."""
     with torch.no_grad():
-        model_outputs, progress_logits, _ = model(
+        model_output, _ = model(
             video_embeddings=batch_inputs["video_embeddings"].to(device),
             text_embeddings=batch_inputs["text_embeddings"].to(device),
             sample_type=sample_type,
         )
-    return model_outputs, progress_logits
+    return model_output
 
 
-def rfm_forward(
-    model, batch_inputs: Dict[str, Any], device: str, sample_type: str = "progress"
-) -> tuple[torch.Tensor, Dict[str, Any]]:
+def rfm_forward(model, batch_inputs: Dict[str, Any], device: str, sample_type: str = "progress") -> ModelOutput:
     """Forward pass for RFM."""
     with torch.no_grad():
-        model_outputs, progress_logits, _ = model(
+        model_output, _ = model(
             input_ids=batch_inputs["input_ids"].to(device),
             attention_mask=batch_inputs["attention_mask"].to(device),
             pixel_values=batch_inputs.get("pixel_values", None).to(device)
@@ -80,7 +79,7 @@ def rfm_forward(
             else None,
             sample_type=sample_type,
         )
-    return model_outputs, progress_logits
+    return model_output
 
 
 class AsyncGPUPool:
@@ -270,11 +269,12 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: dict[str, torch.Tensor
 
     with torch.no_grad():
         if isinstance(model, ReWiNDTransformer):
-            outputs, progress_logits = rewind_forward(model, batch_inputs, device, sample_type="progress")
+            model_output = rewind_forward(model, batch_inputs, device, sample_type="preference")
         else:
-            outputs, progress_logits = rfm_forward(model, batch_inputs, device, sample_type="progress")
+            model_output = rfm_forward(model, batch_inputs, device, sample_type="preference")
 
-        logits = outputs.logits.squeeze(-1)  # [B]
+        # Extract logits from ModelOutput
+        logits = model_output.pref_logits.squeeze(-1)  # [B]
         probs = torch.sigmoid(logits)  # [B]
         print(f"predicted preference probabilities: {probs}")
         preds = (probs > 0.5).long()  # [B]
@@ -286,7 +286,8 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: dict[str, torch.Tensor
         progress_pred_chosen: list[list[float]] = []
         progress_pred_rejected: list[list[float]] = []
 
-        if isinstance(progress_logits, dict):
+        progress_logits = model_output.progress_logits
+        if progress_logits is not None and isinstance(progress_logits, dict):
             # Get preference labels to determine which trajectory (A or B) corresponds to chosen/rejected
             preference_labels = batch_inputs["preference_labels"].cpu().tolist()
 
@@ -330,13 +331,14 @@ def compute_batch_outputs_progress_only(model, tokenizer, batch_inputs: dict[str
 
     with torch.no_grad():
         if isinstance(model, ReWiNDTransformer):
-            outputs, progress_logits = rewind_forward(model, batch_inputs, device, sample_type="progress")
+            model_output = rewind_forward(model, batch_inputs, device, sample_type="progress")
         else:
-            outputs, progress_logits = rfm_forward(model, batch_inputs, device, sample_type="progress")
+            model_output = rfm_forward(model, batch_inputs, device, sample_type="progress")
 
     progress_pred = []
 
-    if isinstance(progress_logits, dict) and "A" in progress_logits:
+    progress_logits = model_output.progress_logits
+    if progress_logits is not None and isinstance(progress_logits, dict) and "A" in progress_logits:
         for seq_A in progress_logits["A"]:
             if seq_A is None:
                 progress_pred.append([])
@@ -344,7 +346,7 @@ def compute_batch_outputs_progress_only(model, tokenizer, batch_inputs: dict[str
                 progress_pred.append(seq_A.detach().cpu().flatten().tolist())
     else:
         # If no progress logits, create empty lists
-        progress_pred = [[] for _ in range(len(batch_inputs["input_ids"]))]
+        progress_pred = [[] for _ in range(len(batch_inputs.get("input_ids", [])))]
 
     return {
         "progress_pred": progress_pred,

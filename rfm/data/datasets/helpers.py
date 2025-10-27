@@ -65,6 +65,14 @@ def load_embeddings_from_path(embeddings_path: str, embedding_type: str = "video
     if not embeddings_path:
         raise ValueError("embeddings_path is None or empty")
 
+    # If path is relative, prepend RFM_PROCESSED_DATASETS_PATH
+    if not os.path.isabs(embeddings_path):
+        rfm_dataset_path = os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
+        # HACK: 
+        rfm_dataset_path = rfm_dataset_path.replace("processed_datasets/", "")
+        if rfm_dataset_path:
+            embeddings_path = os.path.join(rfm_dataset_path, embeddings_path)
+
     with open(embeddings_path, "rb") as f:
         embeddings_data = torch.load(f, map_location="cpu")
     return embeddings_data[embedding_type]
@@ -478,6 +486,41 @@ def create_rewind_trajectory(
     rewind_traj["metadata"] = metadata
     rewind_traj["quality_label"] = "rewound"
     return rewind_traj
+
+
+def generate_success_labels(
+    progress: list[float], min_success: float, max_success: float
+) -> tuple[list[bool], list[int]]:
+    """Generate success labels and mask based on progress values.
+
+    Args:
+        progress: List of progress values (floats between 0 and 1)
+        min_success: Progress threshold below which success label is 0 (failure)
+        max_success: Progress threshold above which success label is 1 (success)
+
+    Returns:
+        Tuple of (success_labels, success_label_mask):
+            - success_labels: List of bools indicating success (True) or failure (False)
+            - success_label_mask: List of ints (1=predict, 0=ignore) indicating which frames to predict
+    """
+    success_labels = []
+    success_label_mask = []
+
+    for prog in progress:
+        if prog < min_success:
+            # Below threshold: label as failure (0)
+            success_labels.append(False)
+            success_label_mask.append(1)  # Predict this frame
+        elif prog > max_success:
+            # Above threshold: label as success (1)
+            success_labels.append(True)
+            success_label_mask.append(1)  # Predict this frame
+        else:
+            # In between: don't predict
+            success_labels.append(False)  # Placeholder value
+            success_label_mask.append(0)  # Don't predict this frame
+
+    return success_labels, success_label_mask
 
 
 def show_available_datasets():

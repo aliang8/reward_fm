@@ -30,9 +30,6 @@ class SimilarityDataset(RFMBaseDataset):
 
         rank_0_print(f"SimilarityDataset initialized with {len(self.dataset)} total trajectories")
 
-    def __len__(self):
-        return len(self.dataset)
-
     def __getitem__(self, idx):
         return self._create_similarity_sample()
 
@@ -44,7 +41,7 @@ class SimilarityDataset(RFMBaseDataset):
             - here o^1 is preferred and should be ranked higher than o^2
         2. Optimal/Suboptimal mode: o^1 is optimal/suboptimal from same task, o^2 varies
             - here o^1 is preferred and should be ranked higher than o^2
-        
+
         Args:
             ref_traj: Optional reference trajectory. If None, samples from optimal trajectories.
         """
@@ -118,7 +115,9 @@ class SimilarityDataset(RFMBaseDataset):
                 except Exception as e:
                     rank_0_print(f"Optimal similarity sampling failed: {e}, removing from available strategies")
                     # Strategy failed, remove it from future attempts
-                    strategies = [(strat, prob) for strat, prob in strategies if strat != DataGenStrat.SUBOPTIMAL_SAME_TASK]
+                    strategies = [
+                        (strat, prob) for strat, prob in strategies if strat != DataGenStrat.SUBOPTIMAL_SAME_TASK
+                    ]
 
         # Final fallback: If all strategies failed, use rewind
         if selected_sample is None:
@@ -134,7 +133,7 @@ class SimilarityDataset(RFMBaseDataset):
         - traj_sim is rewound trajectory from same task as o^ref (different trajectory)
         - traj_diff MUST be from different task than o^ref
         - o^ref is optimal trajectory from a random task
-        
+
         Args:
             ref_traj: Reference trajectory to use as the base for similarity comparison
         """
@@ -194,7 +193,7 @@ class SimilarityDataset(RFMBaseDataset):
         ref_frames = None
         ref_video_embeddings = None
         ref_text_embedding = None
-        
+
         if self.config.load_embeddings and ref_traj.get("embeddings_path"):
             ref_video_embeddings = load_embeddings_from_path(ref_traj["embeddings_path"], "video_embeddings")
             ref_text_embedding = load_embeddings_from_path(ref_traj["embeddings_path"], "text_embedding")
@@ -206,7 +205,7 @@ class SimilarityDataset(RFMBaseDataset):
                 ref_frames = load_frames_from_npz(ref_traj["frames"])
             else:
                 ref_frames = ref_traj["frames"]
-            
+
             ref_frames, ref_progress, ref_metadata = subsample_frames_and_progress(
                 ref_frames, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
             )
@@ -230,7 +229,7 @@ class SimilarityDataset(RFMBaseDataset):
                 traj_sim_frames = load_frames_from_npz(traj_sim["frames"])
             else:
                 traj_sim_frames = traj_sim["frames"]
-            
+
             # Rewound trajectory already has frames and progress from create_rewind_trajectory
             traj_sim_frames = traj_sim["frames"]
             traj_sim_progress = traj_sim["target_progress"]
@@ -254,7 +253,7 @@ class SimilarityDataset(RFMBaseDataset):
                 traj_diff_frames = load_frames_from_npz(traj_diff["frames"])
             else:
                 traj_diff_frames = traj_diff["frames"]
-            
+
             traj_diff_frames, traj_diff_progress, traj_diff_metadata = subsample_frames_and_progress(
                 traj_diff_frames, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
             )
@@ -273,9 +272,7 @@ class SimilarityDataset(RFMBaseDataset):
                 traj_diff_video_embeddings, traj_diff_progress, self.config.max_frames
             )
         else:
-            ref_frames, ref_progress = pad_trajectory_to_max_frames_np(
-                ref_frames, ref_progress, self.config.max_frames
-            )
+            ref_frames, ref_progress = pad_trajectory_to_max_frames_np(ref_frames, ref_progress, self.config.max_frames)
             traj_sim_frames, traj_sim_progress = pad_trajectory_to_max_frames_np(
                 traj_sim_frames, traj_sim_progress, self.config.max_frames
             )
@@ -339,7 +336,7 @@ class SimilarityDataset(RFMBaseDataset):
         - o^ref is optimal trajectory from a random task
         - traj_sim is optimal trajectory from same task as o^ref (different trajectory)
         - traj_diff is suboptimal trajectory from same task as o^ref
-        
+
         Args:
             ref_traj: Reference trajectory to use as the base for similarity comparison
         """
@@ -378,7 +375,7 @@ class SimilarityDataset(RFMBaseDataset):
         ref_frames = None
         ref_video_embeddings = None
         ref_text_embedding = None
-        
+
         if self.config.load_embeddings and ref_traj.get("embeddings_path"):
             ref_video_embeddings = load_embeddings_from_path(ref_traj["embeddings_path"], "video_embeddings")
             ref_text_embedding = load_embeddings_from_path(ref_traj["embeddings_path"], "text_embedding")
@@ -390,7 +387,7 @@ class SimilarityDataset(RFMBaseDataset):
                 ref_frames = load_frames_from_npz(ref_traj["frames"])
             else:
                 ref_frames = ref_traj["frames"]
-            
+
             ref_frames, ref_progress, ref_metadata = subsample_frames_and_progress(
                 ref_frames, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
             )
@@ -413,7 +410,7 @@ class SimilarityDataset(RFMBaseDataset):
                 traj_sim_frames = load_frames_from_npz(traj_sim["frames"])
             else:
                 traj_sim_frames = traj_sim["frames"]
-            
+
             traj_sim_frames, traj_sim_progress, traj_sim_metadata = subsample_frames_and_progress(
                 traj_sim_frames, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
             )
@@ -428,7 +425,7 @@ class SimilarityDataset(RFMBaseDataset):
         if self.config.load_embeddings and traj_diff.get("embeddings_path"):
             traj_diff_video_embeddings = load_embeddings_from_path(traj_diff["embeddings_path"], "video_embeddings")
             traj_diff_text_embedding = load_embeddings_from_path(traj_diff["embeddings_path"], "text_embedding")
-            
+
             # Check if traj_diff is a rewound trajectory
             if traj_diff.get("target_progress"):
                 # Rewound trajectory already has embeddings and progress
@@ -437,14 +434,16 @@ class SimilarityDataset(RFMBaseDataset):
                 traj_diff_metadata = traj_diff["metadata"]
             else:
                 traj_diff_video_embeddings, traj_diff_progress, traj_diff_metadata = subsample_frames_and_progress(
-                    traj_diff_video_embeddings, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
+                    traj_diff_video_embeddings,
+                    self.config.max_frames,
+                    progress_pred_type=self.config.progress_pred_type,
                 )
         else:
             if isinstance(traj_diff["frames"], str):
                 traj_diff_frames = load_frames_from_npz(traj_diff["frames"])
             else:
                 traj_diff_frames = traj_diff["frames"]
-            
+
             # Check if traj_diff is a rewound trajectory
             if traj_diff.get("target_progress"):
                 # Rewound trajectory already has frames and progress
@@ -470,9 +469,7 @@ class SimilarityDataset(RFMBaseDataset):
                 traj_diff_video_embeddings, traj_diff_progress, self.config.max_frames
             )
         else:
-            ref_frames, ref_progress = pad_trajectory_to_max_frames_np(
-                ref_frames, ref_progress, self.config.max_frames
-            )
+            ref_frames, ref_progress = pad_trajectory_to_max_frames_np(ref_frames, ref_progress, self.config.max_frames)
             traj_sim_frames, traj_sim_progress = pad_trajectory_to_max_frames_np(
                 traj_sim_frames, traj_sim_progress, self.config.max_frames
             )

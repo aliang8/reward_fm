@@ -34,16 +34,10 @@ class PrefDataset(RFMBaseDataset):
 
         rank_0_print(f"PrefDataset initialized with {len(self.dataset)} total trajectories")
 
-        # We only want to iterate over non-failure and suboptimal trajectories
-        self.filtered_ds = self.dataset.filter(lambda x: x["quality_label"] not in ["failure", "suboptimal"])
-
-    def __len__(self):
-        return len(self.filtered_ds)
-
     def __getitem__(self, idx):
         """Iterate over one sample per trajectory in the dataset."""
-        dataset_len = len(self.filtered_ds)
-        chosen_traj = self.filtered_ds[idx % dataset_len]
+        dataset_len = len(self.dataset)
+        chosen_traj = self.dataset[idx % dataset_len]
         sample = self._create_pref_sample(chosen_traj)
         return sample
 

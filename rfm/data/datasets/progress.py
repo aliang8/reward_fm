@@ -10,23 +10,17 @@ from .helpers import (
     pad_trajectory_to_max_frames_torch,
     pad_trajectory_to_max_frames_np,
     subsample_frames_and_progress,
+    subsample_pairs_and_progress,
 )
 
 
 class ProgressDataset(RFMBaseDataset):
     """Data generator for progress samples."""
 
-    def __init__(self, config, is_evaluation=False, verbose=True):
-        super().__init__(config, is_evaluation, verbose=verbose)
-        self.iter_dataset = self.dataset.filter(lambda x: x["quality_label"] not in ["failure", "suboptimal"])
-
-    def __len__(self):
-        return len(self.iter_dataset)
-
     def __getitem__(self, idx):
         """Iterate over one sample per trajectory in the dataset."""
-        dataset_len = len(self.iter_dataset)
-        traj = self.iter_dataset[idx % dataset_len]
+        dataset_len = len(self.dataset)
+        traj = self.dataset[idx % dataset_len]
         sample = self._create_progress_sample(traj)
         return sample
 
@@ -49,6 +43,9 @@ class ProgressDataset(RFMBaseDataset):
             (DataGenStrat.REWIND_SAME_TASK, self.config.progress_strategy_ratio[1]),
             (DataGenStrat.DIFFERENT_TASK, self.config.progress_strategy_ratio[2]),
         ]
+
+        if self.config.pairwise_progress:
+            strategies[1] = (DataGenStrat.REWIND_SAME_TASK, 0.0) # remove rewind same task strategy for pairwise progress
 
         # Remove strategies with zero probability
         strategies = [(strat, prob) for strat, prob in strategies if prob > 0]
@@ -123,9 +120,14 @@ class ProgressDataset(RFMBaseDataset):
                 metadata = processed_traj["metadata"]
             else:
                 video_embeddings = load_embeddings_from_path(processed_traj["embeddings_path"], "video_embeddings")
-                video_embeddings, progress, metadata = subsample_frames_and_progress(
-                    video_embeddings, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
-                )
+                if self.config.pairwise_progress:
+                    video_embeddings, progress, metadata = subsample_pairs_and_progress(
+                        video_embeddings, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
+                    )
+                else:
+                    video_embeddings, progress, metadata = subsample_frames_and_progress(
+                        video_embeddings, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
+                    )
 
             text_embedding = load_embeddings_from_path(processed_traj["embeddings_path"], "text_embedding")
             if strategy_used == DataGenStrat.DIFFERENT_TASK:
@@ -134,9 +136,10 @@ class ProgressDataset(RFMBaseDataset):
                 lang_vector = traj["lang_vector"]
                 task = traj["task"]
 
-            video_embeddings, progress = pad_trajectory_to_max_frames_torch(
-                video_embeddings, progress, self.config.max_frames
-            )
+            if not self.config.pairwise_progress:
+                video_embeddings, progress = pad_trajectory_to_max_frames_torch(
+                    video_embeddings, progress, self.config.max_frames
+                )
         else:
             # We are using the image frames
             if strategy_used == DataGenStrat.REWIND_SAME_TASK:
@@ -145,9 +148,14 @@ class ProgressDataset(RFMBaseDataset):
                 metadata = processed_traj["metadata"]
             else:
                 frames = load_frames_from_npz(processed_traj["frames"])
-                frames, progress, metadata = subsample_frames_and_progress(
-                    frames, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
-                )
+                if self.config.pairwise_progress:
+                    frames, progress, metadata = subsample_pairs_and_progress(
+                        frames, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
+                    )
+                else:
+                    frames, progress, metadata = subsample_frames_and_progress(
+                        frames, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
+                    )
 
             if strategy_used == DataGenStrat.DIFFERENT_TASK:
                 # for different task, we use original language instruction, but
@@ -155,10 +163,16 @@ class ProgressDataset(RFMBaseDataset):
                 lang_vector = traj["lang_vector"]
                 task = traj["task"]
 
-            frames, progress = pad_trajectory_to_max_frames_np(frames, progress, self.config.max_frames)
+            if not self.config.pairwise_progress:
+                frames, progress = pad_trajectory_to_max_frames_np(frames, progress, self.config.max_frames)
 
         if strategy_used == DataGenStrat.DIFFERENT_TASK:
             progress = [0.0] * len(progress)
+        
+        # For pairwise progress, we only predict the delta at the last frame
+        if self.config.pairwise_progress:
+            # progress contains the delta, so we just take the last value
+            progress = [progress[-1] if progress else 0.0]
 
         progress_traj = Trajectory(
             frames=frames,

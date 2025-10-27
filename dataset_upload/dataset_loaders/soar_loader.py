@@ -1,4 +1,5 @@
 import os
+import json
 from multiprocessing import cpu_count
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,8 @@ from dataset_upload.helpers import (
 
 # We do not stream; assume RLDS TFDS builders are already downloaded locally.
 import tensorflow_datasets as tfds
+
+soar_new_success_labels_path = "dataset_upload/dataset_helpers/soar_vlm_labels_checkpoint.json"
 
 
 def _build_video_paths(output_dir: str, dataset_label: str, episode_idx: int, view_key: str) -> tuple[str, str]:
@@ -108,15 +111,26 @@ def convert_soar_dataset_to_hf(
     datasets_list: list[Dataset] = []
 
     builder = tfds.builder_from_directory(root)
+    success_episode_instructions = set() # to only upload failures that have a corresponding success episode
     for split_name in ["success", "failure"]:
         # Commonly RLDS train split contains the episodes
         ds = builder.as_dataset(split=split_name, shuffle_files=False)
+
+        if split_name == "success":
+            with open(soar_new_success_labels_path, "r") as f:
+                new_success_labels = json.load(f)["results"]
+                # episodes where qwen-3-vl predicted success
+                new_success_labels = [result["predicted_label"] for result in new_success_labels if result["original_label"] == "success"]
 
         entries: list[dict] = []
         produced = 0
         max_limit = float("inf") if (max_trajectories is None or max_trajectories == -1) else int(max_trajectories)
 
         for ep_idx, episode in enumerate(tqdm(ds, desc=f"SOAR {split_name} episodes")):
+            if split_name == "success":
+                if new_success_labels[ep_idx] != "success":
+                    # disagree with qwen-3-vl's prediction, skip this episode
+                    continue
             if produced >= max_limit:
                 break
 
@@ -134,10 +148,14 @@ def convert_soar_dataset_to_hf(
                 if "language_instruction" in first:
                     val = first["language_instruction"]
                     task_text = val.decode() if isinstance(val, (bytes, bytearray)) else str(val)
-
+            
             if not task_text:
                 continue
-
+            elif split_name == "failure":
+                if task_text not in success_episode_instructions:
+                    # no corresponding success episode, skip this failure
+                    print(f"No corresponding success episode for failure {ep_idx}, skipping")
+                    continue
 
             if task_text not in lang_cache:
                 lang_cache[task_text] = lang_model.encode(task_text)
@@ -149,46 +167,27 @@ def convert_soar_dataset_to_hf(
 
             quality_label = "successful" if split_name.lower().startswith("success") else "failure"
 
+            if split_name == "success":
+                success_episode_instructions.add(task_text)
+
             # Build entry for this view
-            episode_entries = _process_episode(
-                (
-                    steps_np,
-                    ep_idx,
-                    task_text,
-                    lang_vec,
-                    output_dir,
-                    dataset_name,
-                    max_frames,
-                    fps,
-                    valid_img_key,
-                    quality_label,
-                )
-            )
+            episode_entries = _process_episode((
+                steps_np,
+                ep_idx,
+                task_text,
+                lang_vec,
+                output_dir,
+                dataset_name,
+                max_frames,
+                fps,
+                valid_img_key,
+                quality_label,
+            ))
             entries.extend(episode_entries)
             produced += len(episode_entries)
 
         if not entries:
-            ds_out = Dataset.from_dict(
-                {
-                    "id": [],
-                    "task": [],
-                    "lang_vector": [],
-                    "data_source": [],
-                    "frames": [],
-                    "is_robot": [],
-                    "quality_label": [],
-                    "preference_group_id": [],
-                    "preference_rank": [],
-                }
-            )
-        else:
-            ds_out = Dataset.from_list(entries)
-
-        datasets_list.append(ds_out)
-
-    if not datasets_list:
-        return Dataset.from_dict(
-            {
+            ds_out = Dataset.from_dict({
                 "id": [],
                 "task": [],
                 "lang_vector": [],
@@ -198,11 +197,25 @@ def convert_soar_dataset_to_hf(
                 "quality_label": [],
                 "preference_group_id": [],
                 "preference_rank": [],
-            }
-        )
+            })
+        else:
+            ds_out = Dataset.from_list(entries)
+
+        datasets_list.append(ds_out)
+
+    if not datasets_list:
+        return Dataset.from_dict({
+            "id": [],
+            "task": [],
+            "lang_vector": [],
+            "data_source": [],
+            "frames": [],
+            "is_robot": [],
+            "quality_label": [],
+            "preference_group_id": [],
+            "preference_rank": [],
+        })
 
     if len(datasets_list) == 1:
         return datasets_list[0]
     return concatenate_datasets(datasets_list)
-
-

@@ -47,7 +47,7 @@ def _build_galaxea_video_paths(
 def _parse_low_level_english(instruction: bytes | str) -> str | None:
     """Galaxea's language_instruction format: "high@low_cn@low_en". Return low_en."""
     try:
-        instruction = instruction.decode('utf-8')
+        instruction = instruction.decode("utf-8")
         parts = instruction.split("@")
         if len(parts) >= 3:
             return parts[2].strip()
@@ -62,7 +62,9 @@ def _process_single_galaxea_episode(args):
 
     episode_entries = []
     first_step = next(episode)
-    assert len(valid_img_keys) == 1, "Galaxea only has one valid image key for now. No support for multiple because of the way we iterate over the episode."
+    assert len(valid_img_keys) == 1, (
+        "Galaxea only has one valid image key for now. No support for multiple because of the way we iterate over the episode."
+    )
     for img_key in valid_img_keys:
         # Validate key presence
         if img_key not in first_step["observation"]:
@@ -71,7 +73,9 @@ def _process_single_galaxea_episode(args):
         if np.all(first_step["observation"][img_key] == 0):
             continue
 
-        frames = [first_step["observation"][img_key]] + [s["observation"][img_key] for s in episode if img_key in s["observation"]]
+        frames = [first_step["observation"][img_key]] + [
+            s["observation"][img_key] for s in episode if img_key in s["observation"]
+        ]
         if not frames:
             continue
         # skip anything > 800 frames for now because memory usage
@@ -193,7 +197,7 @@ def convert_galaxea_dataset_to_hf(
     episode_batch = []
     info_batch = []
 
-    # split up 
+    # split up
     for ep_idx, episode in enumerate(tqdm(dataset, desc=f"Processing {rlds_name} episodes")):
         if produced >= max_limit:
             break
@@ -218,7 +222,7 @@ def convert_galaxea_dataset_to_hf(
 
         # Convert episode to numpy (list of steps)
         try:
-            #episode_np = list(tfds.as_numpy(episode["steps"]))
+            # episode_np = list(tfds.as_numpy(episode["steps"]))
             episode_np = iter(tfds.as_numpy(episode["steps"]))
         except Exception as e:
             print(f"Warning: Failed to convert episode {ep_idx} to numpy: {e}")
@@ -248,9 +252,9 @@ def convert_galaxea_dataset_to_hf(
                         break
             else:
                 raise ValueError("num_workers > 1 not supported for Galaxea due to the way the frame loader works.")
-                #from multiprocessing import Pool
+                # from multiprocessing import Pool
 
-                #worker_args = list(
+                # worker_args = list(
                 #    zip(
                 #        episode_batch,
                 #        [i for (i, _, _) in info_batch],
@@ -264,9 +268,9 @@ def convert_galaxea_dataset_to_hf(
                 #        [valid_img_keys] * len(episode_batch),
                 #        strict=False,
                 #    )
-                #)
+                # )
 
-                #with Pool(processes=num_workers) as pool:
+                # with Pool(processes=num_workers) as pool:
                 #    results = list(
                 #        tqdm(
                 #            pool.imap_unordered(_process_single_galaxea_episode, worker_args),
@@ -274,7 +278,7 @@ def convert_galaxea_dataset_to_hf(
                 #            desc=f"Processing batch (workers={num_workers})",
                 #        )
                 #    )
-                #for res in results:
+                # for res in results:
                 #    entries.extend(res)
                 #    produced += len(res)
                 #    if produced >= max_limit:
@@ -296,5 +300,3 @@ def convert_galaxea_dataset_to_hf(
             "preference_rank": [],
         })
     return Dataset.from_list(entries)
-
-

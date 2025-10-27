@@ -60,11 +60,11 @@ def _infer_is_robot_from_path(path: Path) -> bool:
 def _make_traj(source_path: Path, task_text: str) -> dict:
     traj: dict[str, Any] = {}
     traj["id"] = generate_unique_id()
-    traj["task"] = task_text 
+    traj["task"] = task_text
     traj["frames"] = MotifFrameLoader(str(source_path))
     traj["is_robot"] = _infer_is_robot_from_path(source_path)
     traj["quality_label"] = "successful"
-    #traj["partial_success"] = 1
+    # traj["partial_success"] = 1
     traj["data_source"] = "motif"
     return traj
 
@@ -74,6 +74,7 @@ def load_motif_dataset(dataset_path: str) -> dict[str, list[dict]]:
     Returns mapping: task -> list of trajectory dicts.
     """
     import json
+
     root = Path(os.path.expanduser(dataset_path))
     if not root.exists():
         raise FileNotFoundError(f"MoTiF dataset path not found: {root}")
@@ -128,4 +129,3 @@ def load_motif_dataset(dataset_path: str) -> dict[str, list[dict]]:
             task_to_trajs.setdefault(instruction, []).append(traj)
 
     return task_to_trajs
-

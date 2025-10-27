@@ -9,6 +9,7 @@ import datetime
 import shutil
 import json
 import os
+
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 from dataclasses import dataclass, field
 from typing import Any
@@ -23,11 +24,20 @@ from PIL import Image
 
 from datasets import Dataset, DatasetDict, Video, load_dataset
 from rfm.utils.distributed import rank_0_print
+
 VIDEO_ERROR_PRINTED = False
 # maps subsets to functions that filter the dataset. If true, the example is dropped.
-soar_bad_trajectories = ["20018cd0-8043-401a-a941-3df0921b3774", "8fd5436d-9add-4bcb-9ef2-c0de50d60eae", "ac87af33-48d5-4972-a328-29bddce8fd57", "2aedbc6f-e2ca-41d7-bf3c-66b47ebe1885", "294df3a0-f0a6-4681-9400-83a4c9da3c1b", "404edae0-0f4c-483c-8cef-348549e61aea", "1c297365-5090-4a4b-89df-6545384159da"]
+soar_bad_trajectories = [
+    "20018cd0-8043-401a-a941-3df0921b3774",
+    "8fd5436d-9add-4bcb-9ef2-c0de50d60eae",
+    "ac87af33-48d5-4972-a328-29bddce8fd57",
+    "2aedbc6f-e2ca-41d7-bf3c-66b47ebe1885",
+    "294df3a0-f0a6-4681-9400-83a4c9da3c1b",
+    "404edae0-0f4c-483c-8cef-348549e61aea",
+    "1c297365-5090-4a4b-89df-6545384159da",
+]
 filters = {
-    "jesbu1/molmoact_rfm/molmoact_dataset_tabletop": lambda x: "load the bowl" in x["task"].lower(), 
+    "jesbu1/molmoact_rfm/molmoact_dataset_tabletop": lambda x: "load the bowl" in x["task"].lower(),
     "jesbu1/galaxea_rfm": lambda x: all(word in x["task"].lower() for word in ["return", "to", "initial", "position"]),
     "jesbu1/soar_rfm": lambda x: x["trajectory_id"] in soar_bad_trajectories,
 }
@@ -38,15 +48,11 @@ class DataPreprocessConfig:
     """Configuration for data loading and processing."""
 
     # Dataset paths and subsets
-    train_datasets: list[str] = field(
-        default_factory=lambda: [], metadata={"help": "List of training dataset names"}
-    )
+    train_datasets: list[str] = field(default_factory=lambda: [], metadata={"help": "List of training dataset names"})
     train_subsets: list[list[str]] = field(
         default_factory=lambda: [[]], metadata={"help": "List of training dataset subsets"}
     )
-    eval_datasets: list[str] = field(
-        default_factory=lambda: [], metadata={"help": "List of evaluation dataset names"}
-    )
+    eval_datasets: list[str] = field(default_factory=lambda: [], metadata={"help": "List of evaluation dataset names"})
     eval_subsets: list[list[str]] = field(
         default_factory=lambda: [[]], metadata={"help": "List of evaluation dataset subsets"}
     )
@@ -326,7 +332,7 @@ class DatasetPreprocessor:
                 # Convert numpy frames to PIL images for processing (vectorized)
                 if batch_frames.dtype != np.uint8:
                     batch_frames = (batch_frames * 255).astype(np.uint8)
-                
+
                 pil_images = [Image.fromarray(frame) for frame in batch_frames]
 
                 # Process with DINOv2
@@ -356,12 +362,7 @@ class DatasetPreprocessor:
             raise ValueError("Sentence model not initialized. Set precompute_embeddings=True in config.")
 
         with torch.no_grad(), torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
-            embedding = self.sentence_model.encode(
-                text, 
-                convert_to_tensor=True,
-                show_progress_bar=False,
-                batch_size=1
-            )
+            embedding = self.sentence_model.encode(text, convert_to_tensor=True, show_progress_bar=False, batch_size=1)
             return embedding.cpu()
 
     def _save_embeddings(self, video_embeddings: torch.Tensor, text_embedding: torch.Tensor, embeddings_path: str):
@@ -490,7 +491,7 @@ class DatasetPreprocessor:
             # Save frames as npz file
             frames_filename = f"trajectory_{example['id']}.npz"
             frames_filepath = os.path.join(frames_dir, frames_filename)
-            
+
             # Store file path and metadata in dataset (not the actual frames)
             example["frames"] = frames_filepath  # Store path to npz file
             example["frames_shape"] = frames_array.shape
@@ -541,7 +542,7 @@ class DatasetPreprocessor:
 
             # Partial success-based indices
             partial_success = example.get("partial_success", None)
-            if partial_success is not None and quality == "failure": # only record partial success for failure cases
+            if partial_success is not None and quality == "failure":  # only record partial success for failure cases
                 if partial_success not in partial_success_indices:
                     partial_success_indices[partial_success] = []
                 partial_success_indices[partial_success].append(idx)
@@ -632,27 +633,29 @@ class DatasetPreprocessor:
             if isinstance(frames_src, str):
                 reader = None
                 frames_array = None
-                
+
                 try:
                     # Try decord first (fastest for video decoding)
                     try:
                         import decord  # type: ignore
-                        
+
                         vr = decord.VideoReader(frames_src, num_threads=1)
                         total_frames = len(vr)
-                        
+
                         # Sample frames efficiently
                         if total_frames <= self.config.max_frames_for_preprocessing:
                             frame_indices = list(range(total_frames))
                         else:
                             # Uniform sampling
-                            frame_indices = [int(i * total_frames / self.config.max_frames_for_preprocessing) 
-                                           for i in range(self.config.max_frames_for_preprocessing)]
-                        
+                            frame_indices = [
+                                int(i * total_frames / self.config.max_frames_for_preprocessing)
+                                for i in range(self.config.max_frames_for_preprocessing)
+                            ]
+
                         frames_array = vr.get_batch(frame_indices).asnumpy()
-                        
+
                         del vr
-                        
+
                     except (ImportError, Exception) as decord_error:
                         if not VIDEO_ERROR_PRINTED:
                             rank_0_print(f"Warning: Decord failed, trying alternative decoding method {decord_error}")
@@ -663,7 +666,9 @@ class DatasetPreprocessor:
 
                             reader = iio.get_reader(frames_src)
                             frames_iter = (frame for frame in reader)
-                            frames_array = self._preprocess_videos(frames_iter, self.config.max_frames_for_preprocessing)
+                            frames_array = self._preprocess_videos(
+                                frames_iter, self.config.max_frames_for_preprocessing
+                            )
                         except Exception:
                             try:
                                 import imageio as iio  # type: ignore
@@ -686,7 +691,7 @@ class DatasetPreprocessor:
                                     else:
                                         # Get video properties
                                         total_frames_cv = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                                        
+
                                         if total_frames_cv <= 0:
                                             frames_array = np.array([])
                                         else:
@@ -694,16 +699,18 @@ class DatasetPreprocessor:
                                             if total_frames_cv <= self.config.max_frames_for_preprocessing:
                                                 frame_indices = list(range(total_frames_cv))
                                             else:
-                                                frame_indices = [int(i * total_frames_cv / self.config.max_frames_for_preprocessing) 
-                                                               for i in range(self.config.max_frames_for_preprocessing)]
-                                            
+                                                frame_indices = [
+                                                    int(i * total_frames_cv / self.config.max_frames_for_preprocessing)
+                                                    for i in range(self.config.max_frames_for_preprocessing)
+                                                ]
+
                                             frames_list = []
                                             for frame_idx in frame_indices:
                                                 cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
                                                 ret, frame = cap.read()
                                                 if ret:
                                                     frames_list.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-                                            
+
                                             cap.release()
 
                                             if frames_list:
@@ -712,9 +719,7 @@ class DatasetPreprocessor:
                                                 frames_array = np.array([])
                                 except Exception as e3:
                                     if idx < 5:  # Only log first few failures
-                                        rank_0_print(
-                                            f"Warning: All video reading methods failed for {frames_src}"
-                                        )
+                                        rank_0_print(f"Warning: All video reading methods failed for {frames_src}")
                                     frames_array = np.array([])
                 finally:
                     try:
@@ -722,7 +727,7 @@ class DatasetPreprocessor:
                             reader.close()
                     except Exception:
                         pass
-                        
+
                 if frames_array is None or frames_array.size == 0:
                     frames_array = np.array([])
             else:
@@ -807,7 +812,9 @@ class DatasetPreprocessor:
                 source_indices.setdefault(source, []).append(i)
 
                 partial_success = ex.get("partial_success", None)
-                if partial_success is not None and quality == "failure": # only record partial success for failure cases
+                if (
+                    partial_success is not None and quality == "failure"
+                ):  # only record partial success for failure cases
                     partial_success_indices.setdefault(partial_success, []).append(i)
 
                 if task not in optimal_by_task:

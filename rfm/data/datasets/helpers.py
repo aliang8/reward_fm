@@ -480,6 +480,41 @@ def create_rewind_trajectory(
     return rewind_traj
 
 
+def generate_success_labels(
+    progress: list[float], min_success: float, max_success: float
+) -> tuple[list[bool], list[int]]:
+    """Generate success labels and mask based on progress values.
+
+    Args:
+        progress: List of progress values (floats between 0 and 1)
+        min_success: Progress threshold below which success label is 0 (failure)
+        max_success: Progress threshold above which success label is 1 (success)
+
+    Returns:
+        Tuple of (success_labels, success_label_mask):
+            - success_labels: List of bools indicating success (True) or failure (False)
+            - success_label_mask: List of ints (1=predict, 0=ignore) indicating which frames to predict
+    """
+    success_labels = []
+    success_label_mask = []
+
+    for prog in progress:
+        if prog < min_success:
+            # Below threshold: label as failure (0)
+            success_labels.append(False)
+            success_label_mask.append(1)  # Predict this frame
+        elif prog > max_success:
+            # Above threshold: label as success (1)
+            success_labels.append(True)
+            success_label_mask.append(1)  # Predict this frame
+        else:
+            # In between: don't predict
+            success_labels.append(False)  # Placeholder value
+            success_label_mask.append(0)  # Don't predict this frame
+
+    return success_labels, success_label_mask
+
+
 def show_available_datasets():
     """Show which datasets are available in the cache."""
     # The preprocessing script now creates individual cache directories for each dataset/subset pair

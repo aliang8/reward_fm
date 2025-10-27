@@ -138,7 +138,6 @@ def convert_soar_dataset_to_hf(
             if not task_text:
                 continue
 
-
             if task_text not in lang_cache:
                 lang_cache[task_text] = lang_model.encode(task_text)
             lang_vec = lang_cache[task_text]
@@ -150,45 +149,23 @@ def convert_soar_dataset_to_hf(
             quality_label = "successful" if split_name.lower().startswith("success") else "failure"
 
             # Build entry for this view
-            episode_entries = _process_episode(
-                (
-                    steps_np,
-                    ep_idx,
-                    task_text,
-                    lang_vec,
-                    output_dir,
-                    dataset_name,
-                    max_frames,
-                    fps,
-                    valid_img_key,
-                    quality_label,
-                )
-            )
+            episode_entries = _process_episode((
+                steps_np,
+                ep_idx,
+                task_text,
+                lang_vec,
+                output_dir,
+                dataset_name,
+                max_frames,
+                fps,
+                valid_img_key,
+                quality_label,
+            ))
             entries.extend(episode_entries)
             produced += len(episode_entries)
 
         if not entries:
-            ds_out = Dataset.from_dict(
-                {
-                    "id": [],
-                    "task": [],
-                    "lang_vector": [],
-                    "data_source": [],
-                    "frames": [],
-                    "is_robot": [],
-                    "quality_label": [],
-                    "preference_group_id": [],
-                    "preference_rank": [],
-                }
-            )
-        else:
-            ds_out = Dataset.from_list(entries)
-
-        datasets_list.append(ds_out)
-
-    if not datasets_list:
-        return Dataset.from_dict(
-            {
+            ds_out = Dataset.from_dict({
                 "id": [],
                 "task": [],
                 "lang_vector": [],
@@ -198,11 +175,25 @@ def convert_soar_dataset_to_hf(
                 "quality_label": [],
                 "preference_group_id": [],
                 "preference_rank": [],
-            }
-        )
+            })
+        else:
+            ds_out = Dataset.from_list(entries)
+
+        datasets_list.append(ds_out)
+
+    if not datasets_list:
+        return Dataset.from_dict({
+            "id": [],
+            "task": [],
+            "lang_vector": [],
+            "data_source": [],
+            "frames": [],
+            "is_robot": [],
+            "quality_label": [],
+            "preference_group_id": [],
+            "preference_rank": [],
+        })
 
     if len(datasets_list) == 1:
         return datasets_list[0]
     return concatenate_datasets(datasets_list)
-
-

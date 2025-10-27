@@ -157,9 +157,17 @@ def convert_epic_dataset_to_hf(
 
     clips = _read_epic_csv(csv_path)
     if not clips:
-        return Dataset.from_dict(
-            {"id": [], "task": [], "lang_vector": [], "data_source": [], "frames": [], "is_robot": [], "quality_label": [], "preference_group_id": [], "preference_rank": []}
-        )
+        return Dataset.from_dict({
+            "id": [],
+            "task": [],
+            "lang_vector": [],
+            "data_source": [],
+            "frames": [],
+            "is_robot": [],
+            "quality_label": [],
+            "preference_group_id": [],
+            "preference_rank": [],
+        })
 
     # Language model and cache
     lang_model = load_sentence_transformer_model()
@@ -183,8 +191,9 @@ def convert_epic_dataset_to_hf(
 
     file_batch: list[EpicClip] = []
     vec_batch: list[np.ndarray] = []
-    
+
     from tqdm import tqdm
+
     for idx, clip in tqdm(enumerate(clips), desc="iterating through EPIC-KITCHENS Clips", total=len(clips)):
         if produced >= max_limit:
             break
@@ -244,10 +253,16 @@ def convert_epic_dataset_to_hf(
             vec_batch = []
 
     if not entries:
-        return Dataset.from_dict(
-            {"id": [], "task": [], "lang_vector": [], "data_source": [], "frames": [], "is_robot": [], "quality_label": [], "preference_group_id": [], "preference_rank": []}
-        )
+        return Dataset.from_dict({
+            "id": [],
+            "task": [],
+            "lang_vector": [],
+            "data_source": [],
+            "frames": [],
+            "is_robot": [],
+            "quality_label": [],
+            "preference_group_id": [],
+            "preference_rank": [],
+        })
 
     return Dataset.from_list(entries)
-
-

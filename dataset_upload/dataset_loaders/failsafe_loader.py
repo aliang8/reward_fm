@@ -43,17 +43,21 @@ class FailSafeFrameListLoader:
 
 def _sorted_pngs(dir_path: Path) -> list[str]:
     files = [str(p) for p in dir_path.glob("*.png")]
+
     def _key(s: str) -> tuple:
         name = os.path.splitext(os.path.basename(s))[0]
         try:
             return (int(name),)
         except Exception:
             return (name,)
+
     files.sort(key=_key)
     return files
 
 
-def _make_traj(image_paths: list[str], task: str, instruction: str, is_success: bool, sub_task: str | None = None) -> dict[str, Any]:
+def _make_traj(
+    image_paths: list[str], task: str, instruction: str, is_success: bool, sub_task: str | None = None
+) -> dict[str, Any]:
     traj: dict[str, Any] = {}
     traj["id"] = generate_unique_id()
     # Combine main instruction with optional sub_task for clarity
@@ -126,7 +130,9 @@ def _gather_sub_episodes_from_json(dataset_root: Path, view: str) -> list[dict]:
                     continue
             image_paths = [str((dataset_root / p).resolve()) for p in imgs_rel]
             is_success = (failure_type is None) or (str(failure_type).lower() == "none")
-            episodes.append(_make_traj(image_paths, task_key or "failsafe", instruction, is_success=is_success, sub_task=sub_task))
+            episodes.append(
+                _make_traj(image_paths, task_key or "failsafe", instruction, is_success=is_success, sub_task=sub_task)
+            )
     return episodes
 
 
@@ -146,8 +152,7 @@ def load_failsafe_dataset(dataset_path: str) -> dict[str, list[dict]]:
         raise FileNotFoundError(f"FailSafe dataset path not found: {root}")
 
     task_dirs = [
-        p for p in [root / "FailPickCube-v1", root / "FailPushCube-v1", root / "FailStackCube-v1"]
-        if p.exists()
+        p for p in [root / "FailPickCube-v1", root / "FailPushCube-v1", root / "FailStackCube-v1"] if p.exists()
     ]
 
     task_data: dict[str, list[dict]] = {}
@@ -181,13 +186,17 @@ def load_failsafe_dataset(dataset_path: str) -> dict[str, list[dict]]:
             continue
         task_data_paired[task] = failed_trajectories + successful_trajectories
 
-    print(f"Found {len(task_data_paired)} tasks with both failed and successful trajectories from originally {len(task_data)} tasks")
+    print(
+        f"Found {len(task_data_paired)} tasks with both failed and successful trajectories from originally {len(task_data)} tasks"
+    )
 
     # print how many failed and successful trajectories there are
-    failed_trajectories = [sum([1 for t in traj if t["quality_label"] == "failure"]) for traj in task_data_paired.values()]
-    successful_trajectories = [sum([1 for t in traj if t["quality_label"] == "successful"]) for traj in task_data_paired.values()]
+    failed_trajectories = [
+        sum([1 for t in traj if t["quality_label"] == "failure"]) for traj in task_data_paired.values()
+    ]
+    successful_trajectories = [
+        sum([1 for t in traj if t["quality_label"] == "successful"]) for traj in task_data_paired.values()
+    ]
     print(f"Found {sum(failed_trajectories)} failed trajectories")
     print(f"Found {sum(successful_trajectories)} successful trajectories")
     return task_data_paired
-
-

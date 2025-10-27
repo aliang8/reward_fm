@@ -27,6 +27,7 @@ class ModelConfig(PretrainedConfig):
         default=True, metadata={"help": "Whether to train the preference prediction head"}
     )
     train_similarity_head: bool = field(default=True, metadata={"help": "Whether to train the similarity scoring head"})
+    train_success_head: bool = field(default=True, metadata={"help": "Whether to train the success prediction head"})
 
     use_peft: bool = field(default=False, metadata={"help": "Whether to use PEFT/LoRA or train full model"})
     peft_vision_encoder: bool = field(default=False, metadata={"help": "Whether to attach LoRA to the vision encoder"})
@@ -108,9 +109,9 @@ class DataConfig:
     # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, video_binned]
     preference_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 1])
     # Tunable strategy ratios for progress generation: [default, rewind_same_task, different_task]
-    progress_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1])    
+    progress_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1])
     similarity_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1])
-    
+
     data_source_weights: Optional[Dict[str, float]] = field(
         default=None,
         metadata={
@@ -154,6 +155,18 @@ class DataConfig:
 
     progress_pred_type: str = field(
         default="absolute", metadata={"help": "Type of progress prediction: 'absolute' or 'relative'"}
+    )
+
+    # Success prediction thresholds
+    min_success: float = field(
+        default=0.0, metadata={"help": "Minimum progress threshold for success prediction (label=0, failure)"}
+    )
+    max_success: float = field(
+        default=1.0, metadata={"help": "Maximum progress threshold for success prediction (label=1, success)"}
+    )
+    dataset_success_cutoff_file: Optional[str] = field(
+        default=None,
+        metadata={"help": "Path to dataset-specific success cutoff file (CSV format: dataset_name,cutoff_frame_index)"},
     )
 
 

@@ -1,6 +1,6 @@
 # config.yaml
 dataset:
-  dataset_path: ./datasets/racer
+  dataset_path: ./datasets/RACER
   dataset_name: racer_val
 
 output:

@@ -13,8 +13,8 @@ CAMERA_DIR_CANDIDATES = [
     "front_rgb",
     "left_shoulder_rgb",
     "right_shoulder_rgb",
-    "right_shoudler_rgb",  # sometimes misspelled in datasets
-    "wrist_rgb",
+    #"right_shoudler_rgb",  # sometimes misspelled in datasets
+    #"wrist_rgb",
 ]
 
 
@@ -42,13 +42,7 @@ class RacerFrameListLoader:
 
 def _sorted_pngs(dir_path: Path) -> list[str]:
     paths = [p for p in dir_path.glob("*.png")]
-    def _key(p: Path):
-        name = p.stem
-        try:
-            return (int(name),)
-        except Exception:
-            return (name,)
-    paths.sort(key=_key)
+    paths.sort(key=lambda x: int(x.stem.split("_")[0]))
     return [str(p) for p in paths]
 
 
@@ -138,7 +132,8 @@ def load_racer_dataset(dataset_path: str, dataset_name: str) -> dict[str, list[d
             for cam, img_list in views.items():
                 if not img_list:
                     continue
-                traj = _make_traj(img_list, task_goal, is_success=True)
+                expert_img_list = [p for p in img_list if "expert" in p]
+                traj = _make_traj(expert_img_list, task_goal, is_success=True)
                 task_data.setdefault(task_goal, []).append(traj)
 
             # Failures: for each expert key that contains heuristic augmentations
@@ -182,12 +177,14 @@ def load_racer_dataset(dataset_path: str, dataset_name: str) -> dict[str, list[d
                     # Keep frames with index < expert_frame_idx
                     subset = [p for p in img_list if _frame_num(p) < expert_frame_idx and "expert" in p]
                     # add the augmented failure frame
-                    subset.append(img_list[img_list.index(aug_image_name)])
+                    for img_name in img_list:
+                        if aug_image_name in img_name:
+                            subset.append(img_name)
+                            break
                     if not subset:
                         continue
                     traj = _make_traj(subset, task_goal, is_success=False)
                     task_data.setdefault(task_goal, []).append(traj)
-
     return task_data
 
 

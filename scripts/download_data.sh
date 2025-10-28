@@ -126,6 +126,7 @@ repos=(
   jesbu1/auto_eval_rfm
   #jesbu1/soar_rfm #maybe too many bad labels
   aliangdw/metaworld
+  jesbu1/racer_rfm
 )
 
 # ------------------------------

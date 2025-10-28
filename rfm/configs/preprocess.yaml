@@ -16,6 +16,7 @@ train_datasets:
   - "jesbu1/soar_rfm"
   - "jesbu1/fino_net_rfm"
   - "aliangdw/metaworld"
+  - "jesbu1/racer_rfm"
 
 train_subsets:
   - ["molmoact_dataset_household", "molmoact_dataset_tabletop"]
@@ -35,18 +36,21 @@ train_subsets:
   - ["soar_rfm"]
   - ["fino_net"]
   - ["metaworld_train"]
+  - ["racer_train"]
 
 eval_datasets:
   - "abraranwar/libero_rfm"
   - "ykorkmaz/libero_failure_rfm"
   - "jesbu1/oxe_rfm_eval"
   - "aliangdw/metaworld"
+  - "jesbu1/racer_rfm"
 
 eval_subsets:
   - ["libero256_10"]
   - ["libero_10_failure"]
   - ["oxe_bc_z_eval", "oxe_berkeley_cable_routing_eval", "oxe_bridge_v2_eval", "oxe_jaco_play_eval", "oxe_toto_eval", "oxe_viola_eval"]
   - ["metaworld_eval"]
+  - ["racer_val"]
   
 max_frames_for_preprocessing: 32
 video_frame_sampling: "uniform"

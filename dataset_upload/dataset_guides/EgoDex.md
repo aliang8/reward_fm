@@ -62,6 +62,9 @@ pip install h5py opencv-python numpy tqdm
 
 ### Option 1: Use Pre-configured Settings (Test Split)
 ```bash
+bash dataset_upload/data_scripts/egodex/download_and_convert.sh
+
+# or run the following manually
 uv run python rfm/data/generate_hf_dataset.py --config_path=rfm/configs/data_gen_configs/egodex.yaml
 ```
 

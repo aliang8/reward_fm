@@ -108,7 +108,6 @@ retry_until_success() {
 repos=(
   abraranwar/libero_rfm
   #abraranwar/agibotworld_rfm   # still downloading
-  #abraranwar/egodex_rfm        # still downloading
   ykorkmaz/libero_failure_rfm
   aliangdw/metaworld
   jesbu1/oxe_rfm
@@ -127,6 +126,7 @@ repos=(
   #jesbu1/soar_rfm #maybe too many bad labels
   aliangdw/metaworld
   jesbu1/racer_rfm
+  jesbu1/egodex_rfm
 )
 
 # ------------------------------

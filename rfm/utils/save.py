@@ -108,6 +108,7 @@ class SaveBestCallback(TrainerCallback):
 
         if missing_metrics:
             rank_0_print(f"⚠️ Metrics {missing_metrics} not found in evaluation metrics")
+            rank_0_print(f"Available metrics: {metrics.keys()}")
             if score == float("-inf"):  # All metrics missing
                 return
 

@@ -25,7 +25,6 @@ for part in test part1 part2 part3 part4 part5; do
 
     # Delete the dataset
     echo "Deleting ${HOME}/egodex/${part}..."
-    exit 1
     rm -rf ${HOME}/egodex/${part}
     echo "Done deleting ${HOME}/egodex/${part}..."
 

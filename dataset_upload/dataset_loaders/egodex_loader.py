@@ -14,7 +14,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 from dataset_upload.helpers import generate_unique_id
-from rfm.data.video_helpers import load_video_frames
+from dataset_upload.video_helpers import load_video_frames
 from tqdm import tqdm
 
 
@@ -116,12 +116,15 @@ def load_egodex_dataset(dataset_path: str, max_trajectories: int = 100) -> dict[
         if max_trajectories is not None and loaded_count >= max_trajectories and max_trajectories != -1:
             break
         try:
+            # Print which file we're processing (useful for debugging hangs)
+            tqdm.write(f"Processing: {mp4_path.name}")
+            
             pose_data, task_description = _load_hdf5_data(hdf5_path)
             frame_loader = EgoDexFrameLoader(str(mp4_path))
 
             trajectory = {
                 "frames": frame_loader,
-                "actions": pose_data,
+                #"actions": pose_data,
                 "is_robot": False,
                 "task": task_description or f"EgoDex {task_name}",
                 "quality_label": "successful",
@@ -133,8 +136,12 @@ def load_egodex_dataset(dataset_path: str, max_trajectories: int = 100) -> dict[
 
             task_data.setdefault(task_name, []).append(trajectory)
             loaded_count += 1
+        except TimeoutError as e:
+            print(f"\nTimeout loading video {mp4_path}: {e}")
+            print("Skipping this trajectory and continuing...")
+            continue
         except Exception as e:
-            print(f"Error loading trajectory {hdf5_path}: {e}")
+            print(f"\nError loading trajectory {hdf5_path}: {e}")
             continue
 
     total_trajectories = sum(len(v) for v in task_data.values())

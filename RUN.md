@@ -34,10 +34,9 @@ export NUMEXPR_NUM_THREADS=1
 # install ffmpeg if not already have
 sudo apt-get install ffmpeg
 
-# preprocess dataset 
-PYTHONPATH=. uv run python3 rfm/data/scripts/preprocess_datasets.py \
-    --config_path=rfm/configs/preprocess.yaml \
-    --cache_dir=$RFM_PROCESSED_DATASETS_PATH
+# preprocess dataset (make sure to set cache_dir in the config file same as RFM_PROCESSED_DATASETS_PATH)
+uv run python3 rfm/data/scripts/preprocess_datasets.py \
+    --config_path=rfm/configs/preprocess.yaml
 
 # train
 # look at rfm/configs/config.yaml for parameters

@@ -149,7 +149,8 @@ class ReWiNDBatchCollator(RFMBatchCollator):
                 "pixel_values_videos": video_inputs,
             }
 
-        batch_inputs = self._add_progress_meta(batch_inputs, progress_samples)
+        if progress_samples[0].trajectory.target_progress is not None:
+            batch_inputs = self._add_progress_meta(batch_inputs, progress_samples)
         return batch_inputs
 
     def _process_similarity_batch(self, similarity_samples: list[SimilaritySample]) -> dict[str, torch.Tensor]:

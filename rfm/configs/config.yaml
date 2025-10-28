@@ -47,8 +47,9 @@ data:
   # Dataset paths and sources
   train_datasets: 
     # - abraranwar_libero_rfm_libero256_10
-    - jesbu1_molmoact_rfm_molmoact_dataset_household
-    - jesbu1_molmoact_rfm_molmoact_dataset_tabletop
+    - aliangdw_metaworld_metaworld_train
+    # - jesbu1_molmoact_rfm_molmoact_dataset_household
+    # - jesbu1_molmoact_rfm_molmoact_dataset_tabletop
   
   # Evaluation dataset settings
   eval_datasets:
@@ -118,7 +119,7 @@ training:
   output_dir: "./logs"
   
   # Training parameters
-  per_device_train_batch_size: 32
+  per_device_train_batch_size: 128
   gradient_accumulation_steps: 1
   learning_rate: 2e-5
   num_train_epochs: -1  # Number of epochs to train for

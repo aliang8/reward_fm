@@ -44,7 +44,7 @@ class BalancedMixedDataset(MixedDataset):
         total_weight = 0.0
 
         for source in available_sources:
-            weight = self.data_source_weights.get(source, 1.0)  # Default weight of 1.0
+            weight = self.data_source_weights.get(source, 1.0)
             weights[source] = weight
             total_weight += weight
 

@@ -40,16 +40,19 @@ class RFMBaseDataset(torch.utils.data.Dataset):
 
         # Filter dataset 
         # We only want to iterate through successful trajectories
-        self.filtered_dataset = self.dataset.filter(lambda x: x["quality_label"] == "successful")
+        # self.filtered_dataset = self.dataset.filter(lambda x: x["quality_label"] == "successful")
+        self.filtered_dataset = self.dataset
 
         if verbose:
+            available_tasks = list(self.task_indices.keys())
+
             rank_0_print(f"Dataset initialized with {len(self.dataset)} total trajectories")
             rank_0_print(f"  Robot trajectories: {len(self.robot_trajectories)}")
             rank_0_print(f"  Human trajectories: {len(self.human_trajectories)}")
             rank_0_print(f"  Tasks: {len(self.task_indices)}")
             rank_0_print(f"  Quality labels: {len(self.quality_indices)}")
             rank_0_print(f"  Data sources: {len(self.source_indices)}")
-            rank_0_print(f"  Tasks available: {self.task_indices.keys()}")
+            rank_0_print(f"  Tasks available: {available_tasks[:50]} ...")
             rank_0_print(f"  Quality labels available: {self.quality_indices.keys()}")
             rank_0_print(f"  Data sources available: {self.source_indices.keys()}")
 
@@ -198,10 +201,10 @@ class RFMBaseDataset(torch.utils.data.Dataset):
         dataset_type = "training" if is_training else "evaluation"
         rank_0_print(f"✅ Loaded {len(self.dataset)} total trajectories from preprocessed {dataset_type} datasets", verbose=self.verbose)
         rank_0_print(
-            f"  📊 Available dataset/subset pairs: {len(available_datasets)}/{len(missing_datasets) + len(available_datasets)}",
+            f"  📊 Available datasets: {len(available_datasets)}/{len(missing_datasets) + len(available_datasets)}",
             verbose=self.verbose
         )
-        rank_0_print(f"  📊 Missing dataset/subset pairs: {len(missing_datasets)}", verbose=self.verbose)
+        rank_0_print(f"  📊 Missing datasets: {len(missing_datasets)}", verbose=self.verbose)
 
     def _get_trajectory_frames(self, trajectory_idx: int) -> np.ndarray:
         """Get frames for a trajectory by index, loading from npz if needed.

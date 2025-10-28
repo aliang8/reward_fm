@@ -4,6 +4,7 @@ Video helper utilities for robust loading of videos with codec handling and
 backend fallbacks. Centralized here to be reused across dataset loaders.
 """
 
+import gc
 import os
 import shutil
 import subprocess
@@ -188,6 +189,8 @@ def load_video_frames(
                     f"Warning: Reached maximum frame limit ({max_frames}) for {video_path_str}. "
                     f"This might indicate a corrupted or unusually long video."
                 )
+                frames = []
+                gc.collect()
                 break
 
             ret, frame = cap.read()
@@ -198,7 +201,6 @@ def load_video_frames(
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             frames.append(rgb_frame)
             frame_count += 1
-
         cap.release()
 
         # Clean up temp file(s) if we created any

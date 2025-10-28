@@ -10,6 +10,7 @@ This module provides a simple, readable loader inspired by the LIBERO loader:
 
 import os
 from pathlib import Path
+from re import A
 
 import h5py
 import numpy as np
@@ -26,7 +27,7 @@ class EgoDexFrameLoader:
 
     def __call__(self) -> np.ndarray:
         """Load frames from the MP4 file when called."""
-        return load_video_frames(Path(self.mp4_path))
+        return load_video_frames(Path(self.mp4_path), max_frames=1800) # 30hz * 60s = 1800 frames
 
 
 def _discover_trajectory_files(dataset_path: Path) -> list[tuple[Path, Path, str]]:
@@ -115,34 +116,29 @@ def load_egodex_dataset(dataset_path: str, max_trajectories: int = 100) -> dict[
     for hdf5_path, mp4_path, task_name in tqdm(traj_files, desc="Processing trajectories"):
         if max_trajectories is not None and loaded_count >= max_trajectories and max_trajectories != -1:
             break
-        try:
-            # Print which file we're processing (useful for debugging hangs)
-            tqdm.write(f"Processing: {mp4_path.name}")
-            
-            pose_data, task_description = _load_hdf5_data(hdf5_path)
-            frame_loader = EgoDexFrameLoader(str(mp4_path))
+        pose_data, task_description = _load_hdf5_data(hdf5_path)
 
-            trajectory = {
-                "frames": frame_loader,
-                #"actions": pose_data,
-                "is_robot": False,
-                "task": task_description or f"EgoDex {task_name}",
-                "quality_label": "successful",
-                "preference_group_id": None,
-                "preference_rank": None,
-                "task_name": task_name,
-                "id": generate_unique_id(),
-            }
+        if "description unavailable" in task_description.lower():
+            print(f"Skipping task {hdf5_path} because description is: {task_description}")
+            continue
+        frame_loader = EgoDexFrameLoader(str(mp4_path))
 
-            task_data.setdefault(task_name, []).append(trajectory)
-            loaded_count += 1
-        except TimeoutError as e:
-            print(f"\nTimeout loading video {mp4_path}: {e}")
-            print("Skipping this trajectory and continuing...")
-            continue
-        except Exception as e:
-            print(f"\nError loading trajectory {hdf5_path}: {e}")
-            continue
+        assert task_description is not None
+
+        trajectory = {
+            "frames": frame_loader,
+            #"actions": pose_data,
+            "is_robot": False,
+            "task": task_description,
+            "quality_label": "successful",
+            "preference_group_id": None,
+            "preference_rank": None,
+            "task_name": task_name,
+            "id": generate_unique_id(),
+        }
+
+        task_data.setdefault(task_name, []).append(trajectory)
+        loaded_count += 1
 
     total_trajectories = sum(len(v) for v in task_data.values())
     print(f"Loaded {total_trajectories} trajectories from {len(task_data)} tasks")

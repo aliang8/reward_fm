@@ -347,8 +347,7 @@ def subsample_pairs_and_progress(
     i = random.randint(0, num_frames_total - 2)  # Ensure i+1 is valid
     
     # Generate a random delta T (between 1 and remaining frames)
-    max_delta = min(10, num_frames_total - i - 1)  # Cap T at reasonable value
-    T = random.randint(1, max_delta)
+    T = random.randint(1, num_frames_total - i - 1)
     
     # Define the 4 possible pairs
     possible_pairs = [
@@ -365,14 +364,11 @@ def subsample_pairs_and_progress(
     pair_frames = [frames[idx] for idx in selected_indices]
     pair_indices = selected_indices
     
-    # Trim to max_frames if needed
-    if len(pair_frames) > max_frames:
-        pair_frames = pair_frames[:max_frames]
-        pair_indices = pair_indices[:max_frames]
-    
     # Convert back to torch tensor if input was a torch tensor
     if is_torch:
         pair_frames = torch.stack(pair_frames)
+    else:
+        pair_frames = np.stack(pair_frames)
     
     # Calculate progress as a single number: delta between the two frames
     # For pairwise, we predict the delta/change between the frame pair
@@ -386,17 +382,9 @@ def subsample_pairs_and_progress(
         "i": i,
         "T": T,
     }
-    
     return pair_frames, progress, metadata
 
-
-def create_rewind_trajectory(
-    original_traj: dict,
-    rewind_length: int | None = None,
-    max_frames: int = 8,
-    use_embeddings: bool = False,
-    progress_pred_type: str = "absolute",
-) -> dict:
+def create_rewind_trajectory(original_traj: dict, rewind_length: int | None = None, max_frames: int = 8, use_embeddings: bool = False, progress_pred_type: str = "absolute") -> dict:
     """Create a suboptimal trajectory by rewinding the original trajectory.
 
     This method creates a trajectory that goes forward then rewinds back:

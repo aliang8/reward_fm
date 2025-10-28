@@ -11,6 +11,7 @@ output:
   use_video: true
   fps: 30
   center_crop: false
+  num_workers: 6
 
 hub:
   push_to_hub: true 

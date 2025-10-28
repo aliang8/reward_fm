@@ -5,12 +5,14 @@ for part in test part1 part2 part3 part4 part5; do
     # Download the dataset. 
     # Example curl "https://ml-site.cdn-apple.com/datasets/egodex/test.zip" -o test.zip
     # Download it to ~/egodex/${part}.zip
-    echo "curl "https://ml-site.cdn-apple.com/datasets/egodex/${part}.zip" -o ${HOME}/egodex/${part}.zip"
-    curl "https://ml-site.cdn-apple.com/datasets/egodex/${part}.zip" -o ${HOME}/egodex/${part}.zip
-    unzip -d ${HOME}/egodex/${part} ${HOME}/egodex/${part}.zip
-
-    rm ${HOME}/egodex/${part}.zip
-
+    # check first if it doesn't exist
+    mkdir -p ${HOME}/egodex
+    if [ ! -d "${HOME}/egodex/${part}" ]; then
+        echo "curl "https://ml-site.cdn-apple.com/datasets/egodex/${part}.zip" -o ${HOME}/egodex/${part}.zip"
+        curl "https://ml-site.cdn-apple.com/datasets/egodex/${part}.zip" -o ${HOME}/egodex/${part}.zip
+        unzip -d ${HOME}/egodex/${part} ${HOME}/egodex/${part}.zip
+        rm ${HOME}/egodex/${part}.zip
+    fi
 
     uv run python -m dataset_upload.generate_hf_dataset \
         --config_path=dataset_upload/configs/data_gen_configs/egodex.yaml \

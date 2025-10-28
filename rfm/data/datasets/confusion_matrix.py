@@ -50,17 +50,17 @@ class ConfusionMatrixDataset(RFMBaseDataset):
 
         # Get unique tasks
         unique_tasks = list(self.task_indices.keys())
-        rank_0_print(f"Found {len(unique_tasks)} unique tasks: {unique_tasks}")
+        rank_0_print(f"Found {len(unique_tasks)} unique tasks: {unique_tasks}", verbose=self.verbose)
 
         # Limit number of trajectories if specified
         trajectories_to_process = self.robot_trajectories
         if self.max_trajectories is not None:
             trajectories_to_process = self.robot_trajectories[: self.max_trajectories]
 
-        rank_0_print(f"Processing {len(trajectories_to_process)} trajectories for confusion matrix analysis")
+        rank_0_print(f"Processing {len(trajectories_to_process)} trajectories for confusion matrix analysis", verbose=self.verbose)
 
         # Create all task-trajectory pairs
-        for lang_task in tqdm(unique_tasks, desc="Generating task-trajectory pairs"):
+        for lang_task in unique_tasks:
             video_task_count = Counter()
 
             for traj_idx in trajectories_to_process:
@@ -80,7 +80,7 @@ class ConfusionMatrixDataset(RFMBaseDataset):
                 })
                 video_task_count[video_task] += 1
 
-        rank_0_print(f"Generated {len(sample_indices)} task-trajectory pairs")
+        rank_0_print(f"Generated {len(sample_indices)} task-trajectory pairs", verbose=self.verbose)
         return sample_indices
 
     def _generate_sample_from_indices(self, sample_idx_info: dict) -> PreferenceSample:

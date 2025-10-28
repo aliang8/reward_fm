@@ -374,19 +374,10 @@ def subsample_pairs_and_progress(
     if is_torch:
         pair_frames = torch.stack(pair_frames)
     
-    # Calculate progress for each frame
-    if progress_pred_type == "absolute":
-        progress = [(idx + 1) / num_frames_total for idx in pair_indices]
-    else:
-        # Relative progress: delta between consecutive frames
-        relative_progress = []
-        for idx in range(len(pair_indices)):
-            if idx == 0:
-                relative_progress.append(0.0)
-            else:
-                delta = pair_indices[idx] - pair_indices[idx - 1]
-                relative_progress.append(delta / num_frames_total)
-        progress = relative_progress
+    # Calculate progress as a single number: delta between the two frames
+    # For pairwise, we predict the delta/change between the frame pair
+    delta_indices = pair_indices[1] - pair_indices[0]
+    progress = [delta_indices / num_frames_total] # make sure it is a list
     
     metadata = {
         "pair_indices": pair_indices,

@@ -7,9 +7,11 @@ from .helpers import (
     create_rewind_trajectory,
     load_frames_from_npz,
     load_embeddings_from_path,
+    load_dataset_success_percent,
     pad_trajectory_to_max_frames_torch,
     pad_trajectory_to_max_frames_np,
-    subsample_frames_and_progress,
+    subsample_segment_frames,
+    compute_progress_from_segment,
     subsample_pairs_and_progress,
 )
 
@@ -84,11 +86,16 @@ class ProgressDataset(RFMBaseDataset):
                 strategy_used = "successful"
 
             elif selected_strategy == DataGenStrat.REWIND_SAME_TASK:
+                # Get success cutoff from pre-loaded map
+                ds_key = traj["data_source"]
+                success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+                
                 processed_traj = create_rewind_trajectory(
                     traj,
                     max_frames=self.config.max_frames,
                     use_embeddings=self.config.load_embeddings,
                     progress_pred_type=self.config.progress_pred_type,
+                    success_cutoff=success_cutoff,
                 )
                 strategy_used = DataGenStrat.REWIND_SAME_TASK
 
@@ -125,9 +132,27 @@ class ProgressDataset(RFMBaseDataset):
                         video_embeddings, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
                     )
                 else:
-                    video_embeddings, progress, metadata = subsample_frames_and_progress(
-                        video_embeddings, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
+                    # Get success cutoff from pre-loaded map
+                    ds_key = processed_traj["data_source"]
+                    success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+
+                    subsampled, start_idx, end_idx, indices = subsample_segment_frames(
+                        video_embeddings, self.config.max_frames
                     )
+                    progress = compute_progress_from_segment(
+                        num_frames_total=len(video_embeddings),
+                        start_idx=start_idx,
+                        end_idx=end_idx,
+                        frame_indices=indices,
+                        progress_pred_type=self.config.progress_pred_type,
+                        success_cutoff=success_cutoff,
+                    )
+                    metadata = {
+                        "start_idx": start_idx,
+                        "end_idx": end_idx,
+                        "subsampled_indices": indices,
+                    }
+                    video_embeddings = subsampled
 
             text_embedding = load_embeddings_from_path(processed_traj["embeddings_path"], "text_embedding")
             if strategy_used == DataGenStrat.DIFFERENT_TASK:
@@ -153,9 +178,27 @@ class ProgressDataset(RFMBaseDataset):
                         frames, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
                     )
                 else:
-                    frames, progress, metadata = subsample_frames_and_progress(
-                        frames, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
+                    # Get success cutoff from pre-loaded map
+                    ds_key = processed_traj["data_source"]
+                    success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+
+                    subsampled, start_idx, end_idx, indices = subsample_segment_frames(
+                        frames, self.config.max_frames
                     )
+                    progress = compute_progress_from_segment(
+                        num_frames_total=len(frames),
+                        start_idx=start_idx,
+                        end_idx=end_idx,
+                        frame_indices=indices,
+                        progress_pred_type=self.config.progress_pred_type,
+                        success_cutoff=success_cutoff,
+                    )
+                    metadata = {
+                        "start_idx": start_idx,
+                        "end_idx": end_idx,
+                        "subsampled_indices": indices,
+                    }
+                    frames = subsampled
 
             if strategy_used == DataGenStrat.DIFFERENT_TASK:
                 # for different task, we use original language instruction, but

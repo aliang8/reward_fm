@@ -48,7 +48,7 @@ data:
 
   # this is based on the subset name
   data_source_weights:
-    metaworld_train: 5
+    metaworld_train: 100
     libero256_90: 1
     libero_90_failure: 1
 

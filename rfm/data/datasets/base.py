@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 from datasets import Dataset, concatenate_datasets
-from .helpers import load_frames_from_npz
+from .helpers import load_frames_from_npz, load_dataset_success_percent
 from rfm.utils.distributed import rank_0_print
 
 
@@ -34,6 +34,11 @@ class RFMBaseDataset(torch.utils.data.Dataset):
         self.task_indices = {}
         self.source_indices = {}
         self.partial_success_indices = {}
+        
+        # Load dataset-specific success cutoff map if available
+        self.dataset_success_cutoff_map = {}
+        if hasattr(config, "dataset_success_cutoff_file") and config.dataset_success_cutoff_file:
+            self.dataset_success_cutoff_map = load_dataset_success_percent(config.dataset_success_cutoff_file)
 
         # Load trajectory dataset
         self._load_trajectory_dataset()

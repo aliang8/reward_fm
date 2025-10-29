@@ -16,24 +16,8 @@ from rfm.utils.setup_utils import setup_dataset, setup_batch_collator
 from torch.utils.data import DataLoader
 from rfm.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
 from evals.compile_results import compute_eval_metrics
-from rfm.data.datasets.helpers import load_frames_from_npz
+from rfm.data.datasets.helpers import load_dataset_success_percent
 import torch.distributed as dist
-
-
-def load_dataset_success_n_frames(cutoff_file_path):
-    """Load dataset-specific success n_frames from file."""
-    n_frames_dict = {}
-    try:
-        with open(cutoff_file_path, "r") as f:
-            for line in f:
-                line = line.strip()
-                if line and "," in line:
-                    dataset_name, n_frames = line.split(",")
-                    n_frames_dict[dataset_name.strip()] = int(n_frames.strip())
-    except FileNotFoundError:
-        print(f"Warning: Success cutoff file {cutoff_file_path} not found. Using default thresholds.")
-    return n_frames_dict
-
 
 def seed_worker(worker_id):
     """Set random seed for dataloader workers."""
@@ -147,9 +131,14 @@ class RFMHeadsTrainer(Trainer):
 
         self.log_wandb = config.logging.use_wandb
 
-        # Load dataset-specific success n_frames
+        # Load dataset-specific success perfect percentage
         cutoff_file_path = config.data.dataset_success_cutoff_file
-        self.dataset_success_n_frames = load_dataset_success_n_frames(cutoff_file_path)
+        self.dataset_success_percent = load_dataset_success_percent(cutoff_file_path)
+
+        rank_0_print(f"Dataset success perfect percentage:")
+        for k, v in self.dataset_success_percent.items():
+            rank_0_print(f"  {k} - {v}")
+        rank_0_print(f"=" * 100)
 
     def training_step(self, model, inputs, num_items_in_batch=None):
         """
@@ -729,11 +718,9 @@ class RFMHeadsTrainer(Trainer):
         if data_source is not None:
             for ds in data_source:
                 ds_key = ds if isinstance(ds, str) else str(ds)
-                if ds_key in self.dataset_success_n_frames:
-                    # Use dataset-specific threshold: last N frames are successful
-                    ds_success_n_frames = self.dataset_success_n_frames[ds_key]
-                    max_frames = self.config.data.max_frames_after_preprocessing
-                    max_success_sample = 1.0 - (ds_success_n_frames / max_frames)
+                if ds_key in self.dataset_success_percent:
+                    # Use dataset-specific threshold: anything >= this percentage is success
+                    max_success_sample = self.dataset_success_percent[ds_key]
                 else:
                     max_success_sample = max_success_default
                 max_success_list.append(max_success_sample)

@@ -77,7 +77,7 @@ data:
 
   dataset_type: balanced_mixed
   data_source_weights:
-    metaworld_train: 5
+    metaworld_train: 20
     libero256_90: 1
     libero_90_failure: 1
 
@@ -91,8 +91,9 @@ data:
   pairwise_progress: false
 
   # Success label parameters
-  min_success: 0.7  # Progress threshold below which success label is 0
+  min_success: 0.8  # Progress threshold below which success label is 0
   max_success: 0.95  # Progress threshold above which success label is 1
+  # Dataset-specific success thresholds (CSV format: dataset_name,success_percentage)
   dataset_success_cutoff_file: "rfm/data/dataset_success_cutoff.txt"  
 
 # =====================================================================================

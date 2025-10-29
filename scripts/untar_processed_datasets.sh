@@ -89,19 +89,6 @@ if [ -d "processed_datasets" ]; then
     echo "Done moving datasets out of processed_datasets subdirectory!"
 fi
 
-# Now, some of the datasets are moved into a large_folder_to_upload3 directory, so move them out and delete 
-# the overall large_folder_to_upload3 directory if it exists.
-if [ -d "large_folder_to_upload3" ]; then
-    echo "Moving datasets out of large_folder_to_upload3 subdirectory..."
-    for dir in large_folder_to_upload3/*; do
-        if [ -d "$dir" ]; then
-            mv "$dir" .
-        fi
-    done
-    rm -rf large_folder_to_upload3
-    echo "Done moving datasets out of large_folder_to_upload3 subdirectory!"
-fi
-
 # print which datasets might've failed
 for file in *.tar; do
     if [ -z "${processed_archives[$file]}" ]; then

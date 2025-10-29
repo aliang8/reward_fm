@@ -856,7 +856,7 @@ class RFMHeadsTrainer(Trainer):
                 # Take last frame for predictions and targets
                 pred_last = pred[-1].unsqueeze(0) if pred.shape[0] > 1 else pred
                 target_last = target[-1].unsqueeze(0) if target.shape[0] > 1 else target
-                
+
                 loss = F.mse_loss(pred_last.float(), target_last.float())
                 progress_losses.append(loss)
                 

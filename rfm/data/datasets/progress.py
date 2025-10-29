@@ -168,7 +168,7 @@ class ProgressDataset(RFMBaseDataset):
 
         if strategy_used == DataGenStrat.DIFFERENT_TASK:
             progress = [0.0] * len(progress)
-    
+
         progress_traj = Trajectory(
             frames=frames,
             target_progress=progress,
@@ -180,7 +180,7 @@ class ProgressDataset(RFMBaseDataset):
             lang_vector=lang_vector,
             data_source=processed_traj["data_source"],
             quality_label=processed_traj["quality_label"],
-            is_robot=processed_traj["is_robot"],
+            is_robot=processed_traj["is_robot"], 
             data_gen_strategy=strategy_used,
             metadata=metadata,
         )

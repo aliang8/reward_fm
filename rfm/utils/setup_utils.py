@@ -22,6 +22,15 @@ from transformers import (
     BitsAndBytesConfig,
 )
 
+# Try to import Qwen3 models if available
+try:
+    from transformers import Qwen3VLForConditionalGeneration, Qwen3VLModel
+    HAS_QWEN3 = True
+except ImportError:
+    HAS_QWEN3 = False
+    Qwen3VLForConditionalGeneration = None
+    Qwen3VLModel = None
+
 from rfm.configs.experiment_configs import DataConfig, ExperimentConfig, ModelConfig, PEFTConfig
 from rfm.data.collators import BaseCollator, ReWiNDBatchCollator, RFMBatchCollator, VQABatchCollator
 from rfm.data.datasets import (
@@ -160,12 +169,18 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
             model_cls = RFM
 
         elif "Qwen" in cfg.base_model_id:
-            if cfg.model_type == "default":
-                qwen_model_cls = Qwen2_5_VLModel
-                model_cls = RFM
-            elif cfg.model_type == "vqa":
-                qwen_model_cls = Qwen2_5_VLForConditionalGeneration
-                model_cls = RFMVQA
+            # Check if it's Qwen3 or Qwen2/2.5
+            is_qwen3 = ("Qwen3" in cfg.base_model_id or "qwen3" in cfg.base_model_id.lower()) and HAS_QWEN3
+            
+            # Select appropriate model classes based on version and model type
+            if is_qwen3:
+                qwen_model_cls = Qwen3VLModel if cfg.model_type == "default" else Qwen3VLForConditionalGeneration
+                rank_0_print("Using Qwen3 models")
+            else:
+                qwen_model_cls = Qwen2_5_VLModel if cfg.model_type == "default" else Qwen2_5_VLForConditionalGeneration
+                rank_0_print("Using Qwen2/2.5 models")
+            
+            model_cls = RFM if cfg.model_type == "default" else RFMVQA
 
             base_model = qwen_model_cls.from_pretrained(
                 cfg.base_model_id,

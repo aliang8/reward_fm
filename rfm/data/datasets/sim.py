@@ -15,7 +15,8 @@ from .helpers import (
     linspace_subsample_frames,
     pad_trajectory_to_max_frames_np,
     pad_trajectory_to_max_frames_torch,
-    subsample_frames_and_progress,
+    subsample_segment_frames,
+    compute_progress_from_segment,
 )
 from rfm.utils.distributed import rank_0_print
 
@@ -143,11 +144,16 @@ class SimilarityDataset(RFMBaseDataset):
         task_name = ref_traj["task"]
 
         # Create traj_sim: rewound trajectory from same task as o^ref
+        # Get success cutoff from pre-loaded map
+        ds_key = ref_traj["data_source"]
+        success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+        
         traj_sim = create_rewind_trajectory(
             ref_traj,
             max_frames=self.config.max_frames,
             use_embeddings=self.config.load_embeddings,
             progress_pred_type=getattr(self.config, "progress_pred_type", "absolute"),
+            success_cutoff=success_cutoff,
         )
 
         # Create traj_diff: trajectory from different task than o^ref
@@ -165,6 +171,7 @@ class SimilarityDataset(RFMBaseDataset):
                     max_frames=self.config.max_frames,
                     use_embeddings=self.config.load_embeddings,
                     progress_pred_type=getattr(self.config, "progress_pred_type", "absolute"),
+                    success_cutoff=success_cutoff,
                 )
         else:
             # Use trajectory from different task
@@ -186,6 +193,7 @@ class SimilarityDataset(RFMBaseDataset):
                         max_frames=self.config.max_frames,
                         use_embeddings=self.config.load_embeddings,
                         progress_pred_type=getattr(self.config, "progress_pred_type", "absolute"),
+                        success_cutoff=success_cutoff,
                     )
 
         # ===============================================================
@@ -198,18 +206,55 @@ class SimilarityDataset(RFMBaseDataset):
         if self.config.load_embeddings and ref_traj.get("embeddings_path"):
             ref_video_embeddings = load_embeddings_from_path(ref_traj["embeddings_path"], "video_embeddings")
             ref_text_embedding = load_embeddings_from_path(ref_traj["embeddings_path"], "text_embedding")
-            ref_video_embeddings, ref_progress, ref_metadata = subsample_frames_and_progress(
-                ref_video_embeddings, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
+            
+            # Get success cutoff from pre-loaded map
+            ds_key = ref_traj["data_source"]
+            success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+
+            subsampled, start_idx, end_idx, indices = subsample_segment_frames(
+                ref_video_embeddings, self.config.max_frames
             )
+            ref_progress = compute_progress_from_segment(
+                num_frames_total=len(ref_video_embeddings),
+                start_idx=start_idx,
+                end_idx=end_idx,
+                frame_indices=indices,
+                progress_pred_type=self.config.progress_pred_type,
+                success_cutoff=success_cutoff,
+            )
+            ref_metadata = {
+                "start_idx": start_idx,
+                "end_idx": end_idx,
+                "subsampled_indices": indices,
+            }
+            ref_video_embeddings = subsampled
         else:
             if isinstance(ref_traj["frames"], str):
                 ref_frames = load_frames_from_npz(ref_traj["frames"])
             else:
                 ref_frames = ref_traj["frames"]
 
-            ref_frames, ref_progress, ref_metadata = subsample_frames_and_progress(
-                ref_frames, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
+            # Get success cutoff from pre-loaded map
+            ds_key = ref_traj["data_source"]
+            success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+
+            subsampled, start_idx, end_idx, indices = subsample_segment_frames(
+                ref_frames, self.config.max_frames
             )
+            ref_progress = compute_progress_from_segment(
+                num_frames_total=len(ref_frames),
+                start_idx=start_idx,
+                end_idx=end_idx,
+                frame_indices=indices,
+                progress_pred_type=self.config.progress_pred_type,
+                success_cutoff=success_cutoff,
+            )
+            ref_metadata = {
+                "start_idx": start_idx,
+                "end_idx": end_idx,
+                "subsampled_indices": indices,
+            }
+            ref_frames = subsampled
 
         # ===============================================================
         # Load and subsample traj_sim trajectory (rewound)
@@ -246,18 +291,55 @@ class SimilarityDataset(RFMBaseDataset):
         if self.config.load_embeddings and traj_diff.get("embeddings_path"):
             traj_diff_video_embeddings = load_embeddings_from_path(traj_diff["embeddings_path"], "video_embeddings")
             traj_diff_text_embedding = load_embeddings_from_path(traj_diff["embeddings_path"], "text_embedding")
-            traj_diff_video_embeddings, traj_diff_progress, traj_diff_metadata = subsample_frames_and_progress(
-                traj_diff_video_embeddings, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
+            
+            # Get success cutoff from pre-loaded map
+            ds_key = traj_diff["data_source"]
+            success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+
+            subsampled, start_idx, end_idx, indices = subsample_segment_frames(
+                traj_diff_video_embeddings, self.config.max_frames
             )
+            traj_diff_progress = compute_progress_from_segment(
+                num_frames_total=len(traj_diff_video_embeddings),
+                start_idx=start_idx,
+                end_idx=end_idx,
+                frame_indices=indices,
+                progress_pred_type=self.config.progress_pred_type,
+                success_cutoff=success_cutoff,
+            )
+            traj_diff_metadata = {
+                "start_idx": start_idx,
+                "end_idx": end_idx,
+                "subsampled_indices": indices,
+            }
+            traj_diff_video_embeddings = subsampled
         else:
             if isinstance(traj_diff["frames"], str):
                 traj_diff_frames = load_frames_from_npz(traj_diff["frames"])
             else:
                 traj_diff_frames = traj_diff["frames"]
 
-            traj_diff_frames, traj_diff_progress, traj_diff_metadata = subsample_frames_and_progress(
-                traj_diff_frames, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
+            # Get success cutoff from pre-loaded map
+            ds_key = traj_diff["data_source"]
+            success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+
+            subsampled, start_idx, end_idx, indices = subsample_segment_frames(
+                traj_diff_frames, self.config.max_frames
             )
+            traj_diff_progress = compute_progress_from_segment(
+                num_frames_total=len(traj_diff_frames),
+                start_idx=start_idx,
+                end_idx=end_idx,
+                frame_indices=indices,
+                progress_pred_type=self.config.progress_pred_type,
+                success_cutoff=success_cutoff,
+            )
+            traj_diff_metadata = {
+                "start_idx": start_idx,
+                "end_idx": end_idx,
+                "subsampled_indices": indices,
+            }
+            traj_diff_frames = subsampled
 
         # ===============================================================
         # Pad all trajectories to max_frames if needed
@@ -363,11 +445,16 @@ class SimilarityDataset(RFMBaseDataset):
             traj_diff = self.dataset[traj_diff_idx]
         else:
             # If no suboptimal trajectories, create a rewind trajectory
+            # Get success cutoff from pre-loaded map
+            ds_key = ref_traj["data_source"]
+            success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+            
             traj_diff = create_rewind_trajectory(
                 ref_traj,
                 max_frames=self.config.max_frames,
                 use_embeddings=self.config.load_embeddings,
                 progress_pred_type=getattr(self.config, "progress_pred_type", "absolute"),
+                success_cutoff=success_cutoff,
             )
 
         # ===============================================================
@@ -380,18 +467,55 @@ class SimilarityDataset(RFMBaseDataset):
         if self.config.load_embeddings and ref_traj.get("embeddings_path"):
             ref_video_embeddings = load_embeddings_from_path(ref_traj["embeddings_path"], "video_embeddings")
             ref_text_embedding = load_embeddings_from_path(ref_traj["embeddings_path"], "text_embedding")
-            ref_video_embeddings, ref_progress, ref_metadata = subsample_frames_and_progress(
-                ref_video_embeddings, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
+            
+            # Get success cutoff from pre-loaded map
+            ds_key = ref_traj["data_source"]
+            success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+
+            subsampled, start_idx, end_idx, indices = subsample_segment_frames(
+                ref_video_embeddings, self.config.max_frames
             )
+            ref_progress = compute_progress_from_segment(
+                num_frames_total=len(ref_video_embeddings),
+                start_idx=start_idx,
+                end_idx=end_idx,
+                frame_indices=indices,
+                progress_pred_type=self.config.progress_pred_type,
+                success_cutoff=success_cutoff,
+            )
+            ref_metadata = {
+                "start_idx": start_idx,
+                "end_idx": end_idx,
+                "subsampled_indices": indices,
+            }
+            ref_video_embeddings = subsampled
         else:
             if isinstance(ref_traj["frames"], str):
                 ref_frames = load_frames_from_npz(ref_traj["frames"])
             else:
                 ref_frames = ref_traj["frames"]
 
-            ref_frames, ref_progress, ref_metadata = subsample_frames_and_progress(
-                ref_frames, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
+            # Get success cutoff from pre-loaded map
+            ds_key = ref_traj["data_source"]
+            success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+
+            subsampled, start_idx, end_idx, indices = subsample_segment_frames(
+                ref_frames, self.config.max_frames
             )
+            ref_progress = compute_progress_from_segment(
+                num_frames_total=len(ref_frames),
+                start_idx=start_idx,
+                end_idx=end_idx,
+                frame_indices=indices,
+                progress_pred_type=self.config.progress_pred_type,
+                success_cutoff=success_cutoff,
+            )
+            ref_metadata = {
+                "start_idx": start_idx,
+                "end_idx": end_idx,
+                "subsampled_indices": indices,
+            }
+            ref_frames = subsampled
 
         # ===============================================================
         # Load and subsample traj_sim trajectory
@@ -403,18 +527,55 @@ class SimilarityDataset(RFMBaseDataset):
         if self.config.load_embeddings and traj_sim.get("embeddings_path"):
             traj_sim_video_embeddings = load_embeddings_from_path(traj_sim["embeddings_path"], "video_embeddings")
             traj_sim_text_embedding = load_embeddings_from_path(traj_sim["embeddings_path"], "text_embedding")
-            traj_sim_video_embeddings, traj_sim_progress, traj_sim_metadata = subsample_frames_and_progress(
-                traj_sim_video_embeddings, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
+            
+            # Get success cutoff from pre-loaded map
+            ds_key = traj_sim["data_source"]
+            success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+
+            subsampled, start_idx, end_idx, indices = subsample_segment_frames(
+                traj_sim_video_embeddings, self.config.max_frames
             )
+            traj_sim_progress = compute_progress_from_segment(
+                num_frames_total=len(traj_sim_video_embeddings),
+                start_idx=start_idx,
+                end_idx=end_idx,
+                frame_indices=indices,
+                progress_pred_type=self.config.progress_pred_type,
+                success_cutoff=success_cutoff,
+            )
+            traj_sim_metadata = {
+                "start_idx": start_idx,
+                "end_idx": end_idx,
+                "subsampled_indices": indices,
+            }
+            traj_sim_video_embeddings = subsampled
         else:
             if isinstance(traj_sim["frames"], str):
                 traj_sim_frames = load_frames_from_npz(traj_sim["frames"])
             else:
                 traj_sim_frames = traj_sim["frames"]
 
-            traj_sim_frames, traj_sim_progress, traj_sim_metadata = subsample_frames_and_progress(
-                traj_sim_frames, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
+            # Get success cutoff from pre-loaded map
+            ds_key = traj_sim["data_source"]
+            success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+
+            subsampled, start_idx, end_idx, indices = subsample_segment_frames(
+                traj_sim_frames, self.config.max_frames
             )
+            traj_sim_progress = compute_progress_from_segment(
+                num_frames_total=len(traj_sim_frames),
+                start_idx=start_idx,
+                end_idx=end_idx,
+                frame_indices=indices,
+                progress_pred_type=self.config.progress_pred_type,
+                success_cutoff=success_cutoff,
+            )
+            traj_sim_metadata = {
+                "start_idx": start_idx,
+                "end_idx": end_idx,
+                "subsampled_indices": indices,
+            }
+            traj_sim_frames = subsampled
 
         # ===============================================================
         # Load and subsample traj_diff trajectory
@@ -434,11 +595,27 @@ class SimilarityDataset(RFMBaseDataset):
                 traj_diff_progress = traj_diff["target_progress"]
                 traj_diff_metadata = traj_diff["metadata"]
             else:
-                traj_diff_video_embeddings, traj_diff_progress, traj_diff_metadata = subsample_frames_and_progress(
-                    traj_diff_video_embeddings,
-                    self.config.max_frames,
-                    progress_pred_type=self.config.progress_pred_type,
+                # Get success cutoff from pre-loaded map
+                ds_key = traj_diff["data_source"]
+                success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+
+                subsampled, start_idx, end_idx, indices = subsample_segment_frames(
+                    traj_diff_video_embeddings, self.config.max_frames
                 )
+                traj_diff_progress = compute_progress_from_segment(
+                    num_frames_total=len(traj_diff_video_embeddings),
+                    start_idx=start_idx,
+                    end_idx=end_idx,
+                    frame_indices=indices,
+                    progress_pred_type=self.config.progress_pred_type,
+                    success_cutoff=success_cutoff,
+                )
+                traj_diff_metadata = {
+                    "start_idx": start_idx,
+                    "end_idx": end_idx,
+                    "subsampled_indices": indices,
+                }
+                traj_diff_video_embeddings = subsampled
         else:
             if isinstance(traj_diff["frames"], str):
                 traj_diff_frames = load_frames_from_npz(traj_diff["frames"])
@@ -452,9 +629,27 @@ class SimilarityDataset(RFMBaseDataset):
                 traj_diff_progress = traj_diff["target_progress"]
                 traj_diff_metadata = traj_diff["metadata"]
             else:
-                traj_diff_frames, traj_diff_progress, traj_diff_metadata = subsample_frames_and_progress(
-                    traj_diff_frames, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
+                # Get success cutoff from pre-loaded map
+                ds_key = traj_diff["data_source"]
+                success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+
+                subsampled, start_idx, end_idx, indices = subsample_segment_frames(
+                    traj_diff_frames, self.config.max_frames
                 )
+                traj_diff_progress = compute_progress_from_segment(
+                    num_frames_total=len(traj_diff_frames),
+                    start_idx=start_idx,
+                    end_idx=end_idx,
+                    frame_indices=indices,
+                    progress_pred_type=self.config.progress_pred_type,
+                    success_cutoff=success_cutoff,
+                )
+                traj_diff_metadata = {
+                    "start_idx": start_idx,
+                    "end_idx": end_idx,
+                    "subsampled_indices": indices,
+                }
+                traj_diff_frames = subsampled
 
         # ===============================================================
         # Pad all trajectories to max_frames if needed

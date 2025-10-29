@@ -3,7 +3,7 @@ from tqdm import tqdm
 
 from rfm.data.dataset_types import PreferenceSample, Trajectory
 from .base import RFMBaseDataset
-from .helpers import subsample_frames_and_progress
+from .helpers import subsample_segment_frames, compute_progress_from_segment
 from rfm.utils.distributed import rank_0_print
 
 
@@ -77,12 +77,48 @@ class PairedSuccessFailureDataset(RFMBaseDataset):
         failure_frames = self._get_trajectory_frames(failure_idx)
 
         # Subsample frames
-        success_frames, success_progress, success_metadata = subsample_frames_and_progress(
-            success_frames, max_frames=self.config.max_frames
+        # Get success cutoff from pre-loaded map for both trajectories
+        ds_key_success = success_traj["data_source"]
+        success_cutoff = self.dataset_success_cutoff_map.get(ds_key_success, self.config.max_success)
+        
+        ds_key_failure = failure_traj["data_source"]
+        failure_cutoff = self.dataset_success_cutoff_map.get(ds_key_failure, self.config.max_success)
+
+        subsampled_success, start_idx_success, end_idx_success, indices_success = subsample_segment_frames(
+            success_frames, self.config.max_frames
         )
-        failure_frames, failure_progress, failure_metadata = subsample_frames_and_progress(
-            failure_frames, max_frames=self.config.max_frames
+        success_progress = compute_progress_from_segment(
+            num_frames_total=len(success_frames),
+            start_idx=start_idx_success,
+            end_idx=end_idx_success,
+            frame_indices=indices_success,
+            progress_pred_type=self.config.progress_pred_type,
+            success_cutoff=success_cutoff,
         )
+        success_metadata = {
+            "start_idx": start_idx_success,
+            "end_idx": end_idx_success,
+            "subsampled_indices": indices_success,
+        }
+        success_frames = subsampled_success
+
+        subsampled_failure, start_idx_failure, end_idx_failure, indices_failure = subsample_segment_frames(
+            failure_frames, self.config.max_frames
+        )
+        failure_progress = compute_progress_from_segment(
+            num_frames_total=len(failure_frames),
+            start_idx=start_idx_failure,
+            end_idx=end_idx_failure,
+            frame_indices=indices_failure,
+            progress_pred_type=self.config.progress_pred_type,
+            success_cutoff=failure_cutoff,
+        )
+        failure_metadata = {
+            "start_idx": start_idx_failure,
+            "end_idx": end_idx_failure,
+            "subsampled_indices": indices_failure,
+        }
+        failure_frames = subsampled_failure
 
         chosen_trajectory = Trajectory(
             frames=success_frames,

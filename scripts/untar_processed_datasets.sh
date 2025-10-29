@@ -9,6 +9,18 @@ cd "$RFM_PROCESSED_DATASETS_PATH" || exit 1
 # Track already processed archives to avoid duplicates
 declare -A processed_archives
 
+
+# Some of the datasets are moved into a large_folder_to_upload3 directory, so move them out 
+if [ -d "large_folder_to_upload3" ]; then
+    echo "Moving tar'd datasets from large_folder_to_upload3 subdirectory to the current directory..."
+    for dir in large_folder_to_upload3/*; do
+        mv "$dir" ..
+    done
+    rm -rf large_folder_to_upload3
+    echo "Done moving tar'd datasets from large_folder_to_upload3 subdirectory to the current directory!"
+fi
+
+
 # First, handle split archives (.tar.partaa, .tar.partab, etc.)
 echo "Processing split archives..."
 for file in *.tar.partaa; do
@@ -87,19 +99,6 @@ if [ -d "processed_datasets" ]; then
     done
     rm -rf processed_datasets
     echo "Done moving datasets out of processed_datasets subdirectory!"
-fi
-
-# Now, some of the datasets are moved into a large_folder_to_upload3 directory, so move them out and delete 
-# the overall large_folder_to_upload3 directory if it exists.
-if [ -d "large_folder_to_upload3" ]; then
-    echo "Moving datasets out of large_folder_to_upload3 subdirectory..."
-    for dir in large_folder_to_upload3/*; do
-        if [ -d "$dir" ]; then
-            mv "$dir" .
-        fi
-    done
-    rm -rf large_folder_to_upload3
-    echo "Done moving datasets out of large_folder_to_upload3 subdirectory!"
 fi
 
 # print which datasets might've failed

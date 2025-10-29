@@ -1,0 +1,17 @@
+data:
+  train_datasets:
+    - jesbu1_oxe_rfm_oxe_aloha_mobile 
+    - jesbu1_oxe_rfm_oxe_austin_buds_dataset_converted_externally_to_rlds
+    - jesbu1_oxe_rfm_oxe_bc_z
+    - jesbu1_oxe_rfm_oxe_berkeley_cable_routing
+    - jesbu1_oxe_rfm_oxe_berkeley_fanuc_manipulation
+    - jesbu1_oxe_rfm_oxe_berkeley_mvp_converted_externally_to_rlds
+    - jesbu1_oxe_rfm_oxe_berkeley_rpt_converted_externally_to_rlds
+    - jesbu1_oxe_rfm_oxe_bridge_v2
+    - jesbu1_oxe_rfm_oxe_dlr_edan_shared_control_converted_externally_to_rlds
+    - jesbu1_oxe_rfm_oxe_droid
+    - jesbu1_oxe_rfm_oxe_fractal20220817_data
+    - jesbu1_oxe_rfm_oxe_furniture_bench_dataset_converted_externally_to_rlds
+    - jesbu1_oxe_rfm_oxe_iamlab_cmu_pickup_insert_converted_externally_to_rlds
+    - jesbu1_oxe_rfm_oxe_imperialcollege_sawyer_wrist_cam
+    - aliangdw_metaworld_metaworld_train

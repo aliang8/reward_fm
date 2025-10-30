@@ -180,7 +180,7 @@ class SaveBestCallback(TrainerCallback):
                     # Remove consecutive hyphens and ensure valid naming
                     tag_name = re.sub(r"-+", "-", tag_name)  # Replace multiple hyphens with single hyphen
                     tag_name = tag_name.strip("-")  # Remove leading/trailing hyphens
-                    hub_model_id = f"aliangdw/{base_name}"
+                    hub_model_id = f"rewardfm/{base_name}"
 
                     # Build detailed commit message with individual metric scores
                     individual_scores = []

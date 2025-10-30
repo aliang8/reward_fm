@@ -23,13 +23,17 @@ def compute_spearman_correlation(pred: torch.Tensor, target: torch.Tensor) -> to
     try:
         from scipy.stats import spearmanr
 
-        pred_np = pred.detach().cpu().numpy()
-        target_np = target.detach().cpu().numpy()
+        # NumPy doesn't support bf16/half; cast to float32 before moving to CPU
+        pred_f32 = pred.detach().to(dtype=torch.float32)
+        target_f32 = target.detach().to(dtype=torch.float32)
+
+        pred_np = pred_f32.cpu().numpy()
+        target_np = target_f32.cpu().numpy()
 
         # Handle 1D arrays
         if pred_np.ndim == 1 and target_np.ndim == 1:
             correlation, _ = spearmanr(pred_np, target_np)
-            return torch.tensor(correlation, device=pred.device, dtype=pred.dtype)
+            return torch.tensor(correlation, device=pred.device, dtype=torch.float32)
 
         # Handle 2D arrays (batch, sequence)
         elif pred_np.ndim == 2 and target_np.ndim == 2:
@@ -41,9 +45,9 @@ def compute_spearman_correlation(pred: torch.Tensor, target: torch.Tensor) -> to
                         correlations.append(corr)
 
             if correlations:
-                return torch.tensor(np.mean(correlations), device=pred.device, dtype=pred.dtype)
+                return torch.tensor(np.mean(correlations), device=pred.device, dtype=torch.float32)
             else:
-                return torch.tensor(0.0, device=pred.device, dtype=pred.dtype)
+                return torch.tensor(0.0, device=pred.device, dtype=torch.float32)
 
         else:
             raise ValueError(f"Unsupported tensor dimensions: pred={pred_np.ndim}, target={target_np.ndim}")

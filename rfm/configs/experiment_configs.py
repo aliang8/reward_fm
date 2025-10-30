@@ -34,6 +34,9 @@ class ModelConfig(PretrainedConfig):
 
     # use bitsandbytes for quantization
     quantization: bool = field(default=False, metadata={"help": "Whether to use bitsandbytes for quantization"})
+    
+    # use unsloth for faster training
+    use_unsloth: bool = field(default=False, metadata={"help": "Whether to use unsloth for faster vision model training"})
 
     # rewind sub-config
     rewind: Optional[Dict[str, Any]] = field(default=None)
@@ -161,7 +164,7 @@ class DataConfig:
     )
     dataset_success_cutoff_file: Optional[str] = field(
         default=None,
-        metadata={"help": "Path to dataset-specific success cutoff file (CSV format: dataset_name,n_frames_last)"},
+        metadata={"help": "Path to dataset-specific success cutoff file (CSV format: dataset_name,success_percentage)"},
     )
     
     pairwise_progress: bool = field(

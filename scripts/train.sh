@@ -46,4 +46,5 @@ uv run python3 \train.py \
     --model.train_preference_head true \
     --model.train_progress_head true \
     --model.train_language_model true \
-    --training.exp_name rfm_mw_pp
+    --data.pairwise_progress true \
+    --training.exp_name debug 

@@ -64,7 +64,7 @@ def train(cfg: ExperimentConfig):
 
     # Use the shared function to set up model and processor
     with _timer("time/setup_model_and_processor", timing_raw=timing_raw):
-        tokenizer, processor, rfm_model = setup_model_and_processor(cfg.model)
+        tokenizer, processor, rfm_model = setup_model_and_processor(cfg.model, peft_config=cfg.peft)
 
     # Apply PEFT if enabled
     if cfg.model.use_peft:

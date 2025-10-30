@@ -786,8 +786,8 @@ class RFMHeadsTrainer(Trainer):
                 accuracy = (success_preds == success_labels[success_mask == 1]).float().mean()
                 success_accuracies.append(accuracy)
             else:
-                # No frames to predict, skip this sample
-                continue
+                success_losses.append(torch.tensor(0.0, device=pred.device, dtype=pred.dtype))
+                success_accuracies.append(torch.tensor(0.0, device=pred.device, dtype=pred.dtype))
 
         if success_losses:
             success_losses = torch.stack(success_losses)

@@ -34,6 +34,9 @@ class ModelConfig(PretrainedConfig):
 
     # use bitsandbytes for quantization
     quantization: bool = field(default=False, metadata={"help": "Whether to use bitsandbytes for quantization"})
+    
+    # use unsloth for faster training
+    use_unsloth: bool = field(default=False, metadata={"help": "Whether to use unsloth for faster vision model training"})
 
     # rewind sub-config
     rewind: Optional[Dict[str, Any]] = field(default=None)

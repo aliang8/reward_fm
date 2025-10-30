@@ -393,8 +393,8 @@ class RFMHeadsTrainer(Trainer):
                         for i in range(len(progress_pred)):
                             sample_result = {
                                 "task": gathered_task[i],
-                                "target_progress": target_progress[i].cpu().numpy(),
-                                "progress_pred": progress_pred[i].cpu().numpy(),
+                                "target_progress": target_progress[i].detach().to(dtype=torch.float32).cpu().numpy(),
+                                "progress_pred": progress_pred[i].detach().to(dtype=torch.float32).cpu().numpy(),
                                 "data_source": gathered_data_source[i],
                                 "data_gen_strategy": gathered_data_gen_strategy[i],
                                 "quality_label": gathered_quality_labels[i],
@@ -457,8 +457,8 @@ class RFMHeadsTrainer(Trainer):
                         for i in range(len(pref_logits)):
                             sample_result = {
                                 "task": gathered_task[i],
-                                "preference_pred": pref_logits[i].cpu().numpy(),
-                                "preference_labels": preference_labels[i].cpu().numpy(),
+                                "preference_pred": pref_logits[i].detach().to(dtype=torch.float32).cpu().numpy(),
+                                "preference_labels": preference_labels[i].detach().to(dtype=torch.float32).cpu().numpy(),
                                 "data_source": gathered_data_source[i],
                                 "chosen_data_gen_strategy": gathered_chosen_data_gen_strategy[i],
                                 "rejected_data_gen_strategy": gathered_rejected_data_gen_strategy[i],

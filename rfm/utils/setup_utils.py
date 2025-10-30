@@ -355,7 +355,7 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "", peft_conf
         if "progress_head" in name:
             param.requires_grad = cfg.train_progress_head
         elif "success_head" in name:
-            param.requires_grad = getattr(cfg, "train_success_head", False)
+            param.requires_grad = cfg.train_success_head
         elif "preference_head" in name:
             param.requires_grad = cfg.train_preference_head
         elif "similarity_head" in name:

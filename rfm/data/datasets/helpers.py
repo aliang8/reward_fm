@@ -63,7 +63,7 @@ def load_frames_from_npz(npz_filepath: str) -> np.ndarray:
     if not os.path.isabs(npz_filepath):
         rfm_dataset_path = os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
         # HACK: 
-        rfm_dataset_path = rfm_dataset_path.replace("processed_datasets/", "")
+        rfm_dataset_path = rfm_dataset_path.replace("processed_datasets", "")
         if rfm_dataset_path:
             npz_filepath = os.path.join(rfm_dataset_path, npz_filepath)
     

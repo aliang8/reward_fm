@@ -13,7 +13,8 @@ from .helpers import (
     load_frames_from_npz,
     pad_trajectory_to_max_frames_np,
     pad_trajectory_to_max_frames_torch,
-    subsample_frames_and_progress,
+    subsample_segment_frames,
+    compute_progress_from_segment,
 )
 from rfm.utils.distributed import rank_0_print
 from rfm.utils.timer import timer
@@ -265,11 +266,16 @@ class PrefDataset(RFMBaseDataset):
             total_prob = sum(prob for _, prob in strategies)
             if total_prob == 0:
                 # All strategies have zero probability, fallback to rewind
+                # Get success cutoff from pre-loaded map
+                ds_key = chosen_traj["data_source"]
+                success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+                
                 rejected_traj = create_rewind_trajectory(
                     chosen_traj,
                     max_frames=self.config.max_frames,
                     use_embeddings=self.config.load_embeddings,
                     progress_pred_type=self.config.progress_pred_type,
+                    success_cutoff=success_cutoff,
                 )
                 strategy_used = DataGenStrat.REWIND_SAME_TASK
                 break
@@ -290,11 +296,16 @@ class PrefDataset(RFMBaseDataset):
 
             # Execute selected strategy
             if selected_strategy == DataGenStrat.REWIND_SAME_TASK:
+                # Get success cutoff from pre-loaded map
+                ds_key = chosen_traj["data_source"]
+                success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+                
                 rejected_traj = create_rewind_trajectory(
                     chosen_traj,
                     max_frames=self.config.max_frames,
                     use_embeddings=self.config.load_embeddings,
                     progress_pred_type=self.config.progress_pred_type,
+                    success_cutoff=success_cutoff,
                 )
                 strategy_used = DataGenStrat.REWIND_SAME_TASK
 
@@ -329,11 +340,16 @@ class PrefDataset(RFMBaseDataset):
 
         # Final fallback: If all strategies failed, use rewind
         if rejected_traj is None:
+            # Get success cutoff from pre-loaded map
+            ds_key = chosen_traj["data_source"]
+            success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+            
             rejected_traj = create_rewind_trajectory(
                 chosen_traj,
                 max_frames=self.config.max_frames,
                 use_embeddings=self.config.load_embeddings,
                 progress_pred_type=self.config.progress_pred_type,
+                success_cutoff=success_cutoff,
             )
             strategy_used = DataGenStrat.REWIND_SAME_TASK
 
@@ -352,16 +368,52 @@ class PrefDataset(RFMBaseDataset):
             chosen_video_embeddings = load_embeddings_from_path(chosen_traj["embeddings_path"], "video_embeddings")
             chosen_text_embedding = load_embeddings_from_path(chosen_traj["embeddings_path"], "text_embedding")
 
-            chosen_video_embeddings, chosen_progress, chosen_metadata = subsample_frames_and_progress(
-                chosen_video_embeddings, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
+            # Get success cutoff from pre-loaded map
+            ds_key = chosen_traj["data_source"]
+            success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+
+            subsampled, start_idx, end_idx, indices = subsample_segment_frames(
+                chosen_video_embeddings, self.config.max_frames
             )
+            chosen_progress = compute_progress_from_segment(
+                num_frames_total=len(chosen_video_embeddings),
+                start_idx=start_idx,
+                end_idx=end_idx,
+                frame_indices=indices,
+                progress_pred_type=self.config.progress_pred_type,
+                success_cutoff=success_cutoff,
+            )
+            chosen_metadata = {
+                "start_idx": start_idx,
+                "end_idx": end_idx,
+                "subsampled_indices": indices,
+            }
+            chosen_video_embeddings = subsampled
         else:
             if isinstance(chosen_traj["frames"], str):
                 chosen_frames = load_frames_from_npz(chosen_traj["frames"])
 
-            chosen_frames, chosen_progress, chosen_metadata = subsample_frames_and_progress(
-                chosen_frames, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
+            # Get success cutoff from pre-loaded map
+            ds_key = chosen_traj["data_source"]
+            success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+
+            subsampled, start_idx, end_idx, indices = subsample_segment_frames(
+                chosen_frames, self.config.max_frames
             )
+            chosen_progress = compute_progress_from_segment(
+                num_frames_total=len(chosen_frames),
+                start_idx=start_idx,
+                end_idx=end_idx,
+                frame_indices=indices,
+                progress_pred_type=self.config.progress_pred_type,
+                success_cutoff=success_cutoff,
+            )
+            chosen_metadata = {
+                "start_idx": start_idx,
+                "end_idx": end_idx,
+                "subsampled_indices": indices,
+            }
+            chosen_frames = subsampled
         if "metadata" in chosen_traj:
             chosen_metadata.update(chosen_traj["metadata"])
 
@@ -377,9 +429,27 @@ class PrefDataset(RFMBaseDataset):
                 rejected_progress = rejected_traj["target_progress"]
                 rejected_metadata = rejected_traj["metadata"]
             else:
-                rejected_video_embeddings, rejected_progress, rejected_metadata = subsample_frames_and_progress(
-                    rejected_video_embeddings, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
+                # Get success cutoff from pre-loaded map
+                ds_key = rejected_traj["data_source"]
+                success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+
+                subsampled, start_idx, end_idx, indices = subsample_segment_frames(
+                    rejected_video_embeddings, self.config.max_frames
                 )
+                rejected_progress = compute_progress_from_segment(
+                    num_frames_total=len(rejected_video_embeddings),
+                    start_idx=start_idx,
+                    end_idx=end_idx,
+                    frame_indices=indices,
+                    progress_pred_type=self.config.progress_pred_type,
+                    success_cutoff=success_cutoff,
+                )
+                rejected_metadata = {
+                    "start_idx": start_idx,
+                    "end_idx": end_idx,
+                    "subsampled_indices": indices,
+                }
+                rejected_video_embeddings = subsampled
         else:
             if isinstance(rejected_traj["frames"], str):
                 rejected_frames = load_frames_from_npz(rejected_traj["frames"])
@@ -391,9 +461,27 @@ class PrefDataset(RFMBaseDataset):
                 rejected_progress = rejected_traj["target_progress"]
                 rejected_metadata = rejected_traj["metadata"]
             else:
-                rejected_frames, rejected_progress, rejected_metadata = subsample_frames_and_progress(
-                    rejected_frames, self.config.max_frames, progress_pred_type=self.config.progress_pred_type
+                # Get success cutoff from pre-loaded map
+                ds_key = rejected_traj["data_source"]
+                success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+
+                subsampled, start_idx, end_idx, indices = subsample_segment_frames(
+                    rejected_frames, self.config.max_frames
                 )
+                rejected_progress = compute_progress_from_segment(
+                    num_frames_total=len(rejected_frames),
+                    start_idx=start_idx,
+                    end_idx=end_idx,
+                    frame_indices=indices,
+                    progress_pred_type=self.config.progress_pred_type,
+                    success_cutoff=success_cutoff,
+                )
+                rejected_metadata = {
+                    "start_idx": start_idx,
+                    "end_idx": end_idx,
+                    "subsampled_indices": indices,
+                }
+                rejected_frames = subsampled
 
         if "metadata" in rejected_traj:
             rejected_metadata.update(rejected_traj["metadata"])

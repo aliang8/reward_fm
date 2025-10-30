@@ -1,5 +1,5 @@
 # ReWIND Transformer Configuration
-trainer_cls: "rewind_transformer"
+trainer_cls: rewind_transformer
 
 # =====================================================================================
 # Model Configuration
@@ -48,16 +48,16 @@ data:
 
   # this is based on the subset name
   data_source_weights:
-    metaworld_train: 5
+    metaworld_train: 100
     libero256_90: 1
     libero_90_failure: 1
 
   load_embeddings: true
-  progress_pred_type: "absolute" 
+  progress_pred_type: absolute 
 
 # =====================================================================================
 # Logging and Output Configuration
 # =====================================================================================
 logging:
-  wandb_project: "rfm"
+  wandb_project: rfm
   wandb_entity: clvr

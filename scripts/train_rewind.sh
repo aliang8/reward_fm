@@ -54,10 +54,9 @@ uv run python3 train.py \
     --training.predict_pref_progress false
 
 uv run python3 train.py \
-    --config_paths rfm/configs/config.yaml rfm/configs/rewind_transformer_config.yaml \
+    --config_paths rfm/configs/config.yaml rfm/configs/rewind_transformer_config.yaml rfm/configs/data/oxe_mw.yaml \
     --logging.use_wandb false \
     --debug true \
     --model.train_preference_head false \
     --model.train_progress_head true \
-    --data.pairwise_progress true \
-    --training.exp_name debug 
+    --training.exp_name debug

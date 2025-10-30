@@ -69,6 +69,15 @@ class RFM(PreTrainedModel):
         self.preference_head = self.preference_head.to(dtype=self.model_dtype)
         self.similarity_head = self.similarity_head.to(dtype=self.model_dtype)
 
+        # Success prediction head (binary logit per frame)
+        self.success_head = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.LayerNorm(hidden_size // 2),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_size // 2, 1),
+        ).to(dtype=self.model_dtype)
+
         self.processor = processor
         self.tokenizer = tokenizer
 
@@ -173,6 +182,7 @@ class RFM(PreTrainedModel):
 
         # Always compute progress for all timesteps if target_progress is provided
         progress_logits = None
+        success_logits = None
 
         if "SmolVLM" in self.base_model_id:
             with _timer("time/rfm_forward", timing_raw=timing_raw):
@@ -195,8 +205,9 @@ class RFM(PreTrainedModel):
             # [B, V, T, D]
             per_frame_hidden_states = vision_hidden_states.mean(dim=3)
 
-            # apply progress head to per frame hidden states
+            # apply heads to per frame hidden states
             progress_logits = self.progress_head(per_frame_hidden_states)
+            success_per_frame = self.success_head(per_frame_hidden_states)
 
             progress_logits_A = progress_logits[:, 0, :, :]
             progress_logits_B = None
@@ -205,6 +216,13 @@ class RFM(PreTrainedModel):
                 progress_logits_B = progress_logits_B.squeeze(-1)
 
             progress_logits = {"A": progress_logits_A.squeeze(-1), "B": progress_logits_B}
+
+            # Success logits follow the same per-frame structure
+            success_A = success_per_frame[:, 0, :, :].squeeze(-1)
+            success_B = None
+            if sample_type != "progress":
+                success_B = success_per_frame[:, 1, :, :].squeeze(-1)
+            success_logits = {"A": success_A, "B": success_B}
         else:
             with _timer("time/rfm_forward", timing_raw=timing_raw):
                 outputs = self.model(**model_kwargs)
@@ -218,6 +236,8 @@ class RFM(PreTrainedModel):
 
             progress_logits_A = []
             progress_logits_B = []
+            success_logits_A = []
+            success_logits_B = []
 
             # temporal patch size
             tps = self.processor.video_processor.merge_size
@@ -274,9 +294,12 @@ class RFM(PreTrainedModel):
                             f"Expected {T_A} frames, got {boundary_hidden_states_A.shape[0]}"
                         )
                         progress_A = self.progress_head(boundary_hidden_states_A).squeeze(-1)  # [num_frames_A]
+                        success_A = self.success_head(boundary_hidden_states_A).squeeze(-1)  # [num_frames_A]
                         progress_logits_A.append(progress_A)
+                        success_logits_A.append(success_A)
                     else:
                         progress_logits_A.append(torch.empty(0, device=hidden_state.device))
+                        success_logits_A.append(torch.empty(0, device=hidden_state.device))
 
                     # For progress-only samples, we don't need trajectory B
                     if sample_type != "progress":
@@ -312,18 +335,24 @@ class RFM(PreTrainedModel):
                                 f"Expected {T_B} frames, got {boundary_hidden_states_B.shape[0]}"
                             )
                             progress_B = self.progress_head(boundary_hidden_states_B).squeeze(-1)  # [num_frames_B]
+                            success_B = self.success_head(boundary_hidden_states_B).squeeze(-1)  # [num_frames_B]
                             progress_logits_B.append(progress_B)
+                            success_logits_B.append(success_B)
                         else:
                             progress_logits_B.append(torch.empty(0, device=hidden_state.device))
+                            success_logits_B.append(torch.empty(0, device=hidden_state.device))
                     else:
                         # For progress-only samples, trajectory B is None
                         progress_logits_B.append(None)
+                        success_logits_B.append(None)
 
                 progress_logits = {"A": progress_logits_A, "B": progress_logits_B}
+                success_logits = {"A": success_logits_A, "B": success_logits_B}
 
         # Create ModelOutput
         output = ModelOutput()
         output.progress_logits = progress_logits
+        output.success_logits = success_logits
 
         # For preference and similarity, use specific tokens
         with _timer("time/logits", timing_raw=timing_raw):

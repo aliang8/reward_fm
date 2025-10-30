@@ -680,6 +680,7 @@ class RFMHeadsTrainer(Trainer):
         success_logits,
         target_progress,
         frame_shape,
+        mask=None,
         data_source=None,
         aggregate: bool = False,
     ):
@@ -789,13 +790,31 @@ class RFMHeadsTrainer(Trainer):
                 continue
 
         if success_losses:
+            success_losses = torch.stack(success_losses)
+            success_accuracies = torch.stack(success_accuracies)
+
             if aggregate:
-                success_loss = torch.stack(success_losses).mean()
-                mean_accuracy = torch.stack(success_accuracies).mean()
+                if mask is not None:
+                    mask_t = mask.to(device=success_losses.device, dtype=success_losses.dtype)
+                    if mask_t.sum() > 0:
+                        success_loss = (success_losses * mask_t).sum() / mask_t.sum()
+                    else:
+                        success_loss = success_losses.mean()
+
+                    acc_mask_t = mask.to(device=success_accuracies.device, dtype=success_accuracies.dtype)
+                    if acc_mask_t.sum() > 0:
+                        mean_accuracy = (success_accuracies * acc_mask_t).sum() / acc_mask_t.sum()
+                    else:
+                        mean_accuracy = success_accuracies.mean()
+                else:
+                    success_loss = success_losses.mean()
+                    mean_accuracy = success_accuracies.mean()
                 return success_loss, mean_accuracy
             else:
-                success_losses = torch.stack(success_losses)
-                success_accuracies = torch.stack(success_accuracies)
+                if mask is not None:
+                    mask_t = mask.to(device=success_losses.device, dtype=success_losses.dtype)
+                    success_losses = success_losses * mask_t
+                    success_accuracies = success_accuracies.to(dtype=mask_t.dtype) * mask_t
                 return success_losses, success_accuracies
 
         # Return zero tensors matching the input dtype (handled by the later stack operations)
@@ -953,6 +972,7 @@ class RFMHeadsTrainer(Trainer):
                 success_pred,
                 progress_target,
                 frame_shapes,
+                mask=progress_target_mask,
                 data_source=data_source,
                 aggregate=False,
             )
@@ -1036,12 +1056,17 @@ class RFMHeadsTrainer(Trainer):
 
         final_loss = preference_loss
 
-        # If we are predicting progress for preferences samples
-        if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
-            # Compute progress for both trajectories
+        # Prepare chosen/rejected progress targets and shapes if needed by either progress or success heads
+        need_pref_progress_artifacts = (
+            (self.config.model.train_progress_head and self.config.training.predict_pref_progress)
+            or self.config.model.train_success_head
+        )
+
+        if need_pref_progress_artifacts:
             chosen_frames_shape = inputs.get("chosen_frames_shape", None)
             rejected_frames_shape = inputs.get("rejected_frames_shape", None)
             batch_size = len(preference_labels)
+
             chosen_traj_shapes = []
             rejected_traj_shapes = []
             chosen_traj_progress_pred = []
@@ -1052,7 +1077,6 @@ class RFMHeadsTrainer(Trainer):
             rejected_traj_progress_target_mask = []
 
             for i in range(batch_size):
-                # First trajectory is preferred (chosen)
                 chosen_traj_shapes.append(chosen_frames_shape[i])
                 rejected_traj_shapes.append(rejected_frames_shape[i])
 
@@ -1061,22 +1085,22 @@ class RFMHeadsTrainer(Trainer):
                 chosen_traj_progress_target_mask.append(inputs["target_progress_chosen_mask"][i])
                 rejected_traj_progress_target_mask.append(inputs["target_progress_rejected_mask"][i])
 
-                if preference_labels[i] == 1.0:
-                    chosen_traj_progress_pred.append(progress_logits["A"][i])
-                    rejected_traj_progress_pred.append(progress_logits["B"][i])
-                else:
-                    # Second trajectory is preferred
-                    chosen_traj_progress_pred.append(progress_logits["B"][i])
-                    rejected_traj_progress_pred.append(progress_logits["A"][i])
+                if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
+                    if preference_labels[i] == 1.0:
+                        chosen_traj_progress_pred.append(progress_logits["A"][i])
+                        rejected_traj_progress_pred.append(progress_logits["B"][i])
+                    else:
+                        chosen_traj_progress_pred.append(progress_logits["B"][i])
+                        rejected_traj_progress_pred.append(progress_logits["A"][i])
 
-            # Convert to tensors for the helper function
+            # Convert masks/shapes to tensors for helper consumption
             chosen_traj_shapes = torch.stack(chosen_traj_shapes)
             rejected_traj_shapes = torch.stack(rejected_traj_shapes)
             chosen_traj_progress_target_mask = torch.stack(chosen_traj_progress_target_mask)
             rejected_traj_progress_target_mask = torch.stack(rejected_traj_progress_target_mask)
 
-            # Compute progress loss for both trajectories using the helper function
-            # Now we know which shape corresponds to which trajectory based on preference labels
+        # If we are predicting progress for preference samples, compute that loss
+        if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
             progress_loss_chosen, spearman_corr_chosen = self._compute_progress_loss_helper(
                 chosen_traj_progress_pred,
                 chosen_traj_progress_target,
@@ -1117,6 +1141,7 @@ class RFMHeadsTrainer(Trainer):
                 chosen_traj_success_pred,
                 chosen_traj_progress_target,
                 chosen_traj_shapes,
+                mask=chosen_traj_progress_target_mask,
                 data_source=data_source,
                 aggregate=False,
             )
@@ -1124,6 +1149,7 @@ class RFMHeadsTrainer(Trainer):
                 rejected_traj_success_pred,
                 rejected_traj_progress_target,
                 rejected_traj_shapes,
+                mask=rejected_traj_progress_target_mask,
                 data_source=data_source,
                 aggregate=False,
             )
@@ -1294,6 +1320,7 @@ class RFMHeadsTrainer(Trainer):
                 success_logits_ref_sim["A"],
                 inputs["target_progress_ref"],
                 ref_frames_shape,
+                mask=inputs["target_progress_ref_mask"],
                 data_source=data_source,
                 aggregate=False,
             )
@@ -1301,6 +1328,7 @@ class RFMHeadsTrainer(Trainer):
                 success_logits_ref_sim["B"],
                 inputs["target_progress_sim"],
                 traj_sim_frames_shape,
+                mask=inputs["target_progress_sim_mask"],
                 data_source=data_source,
                 aggregate=False,
             )
@@ -1310,6 +1338,7 @@ class RFMHeadsTrainer(Trainer):
                 success_logits_ref_diff["A"],
                 inputs["target_progress_ref"],
                 ref_frames_shape,
+                mask=inputs["target_progress_ref_mask"],
                 data_source=data_source,
                 aggregate=False,
             )
@@ -1317,6 +1346,7 @@ class RFMHeadsTrainer(Trainer):
                 success_logits_ref_diff["B"],
                 inputs["target_progress_diff"],
                 traj_diff_frames_shape,
+                mask=inputs["target_progress_diff_mask"],
                 data_source=data_source,
                 aggregate=False,
             )

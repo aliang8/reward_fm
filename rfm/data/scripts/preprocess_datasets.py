@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+import decord  # type: ignore
 import torch
 from pyrallis import wrap
 from tqdm import tqdm
@@ -25,7 +26,7 @@ from PIL import Image
 from datasets import Dataset, DatasetDict, Video, load_dataset
 from rfm.utils.distributed import rank_0_print
 
-VIDEO_ERROR_PRINTED = False
+#VIDEO_ERROR_PRINTED = False
 # maps subsets to functions that filter the dataset. If true, the example is dropped.
 soar_bad_trajectories = [
     "b180805a-638e-4055-bc72-3a8d4808a289",
@@ -225,91 +226,6 @@ class DatasetPreprocessor:
 
         return processed_dataset, indices
 
-    def _preprocess_videos(self, frames, num_frames: int | None = None) -> np.ndarray:
-        """
-        Process video frames from VideoReader objects into numpy arrays with downsampling.
-
-        Args:
-            frames: VideoReader object from HuggingFace Video feature
-            num_frames: Number of frames to extract
-
-        Returns:
-            frames as numpy arrays with shape (max_frames, H, W, C) where T is time dimension
-        """
-        if num_frames is None:
-            num_frames = self.max_frames_for_preprocessing
-
-        if frames is None:
-            return np.array([])
-
-        try:
-            # Convert VideoReader to list of frames
-            all_frames = list(frames)
-            # print(f"Total frames: {len(all_frames)}, num_frames: {num_frames}")
-
-            total_frames = len(all_frames)
-
-            if total_frames == 0:
-                return np.array([])
-
-            # Extract frame data from VideoReader objects
-            frames_list = []
-            for frame in all_frames:
-                if hasattr(frame, "get") and "data" in frame:
-                    # VideoReader frame format
-                    frame_data = frame["data"]
-                    if hasattr(frame_data, "numpy"):
-                        frame_data = frame_data.numpy()
-                    frames_list.append(frame_data)
-                else:
-                    # Direct frame data
-                    if hasattr(frame, "numpy"):
-                        frame_data = frame.numpy()
-                    else:
-                        frame_data = frame
-                    frames_list.append(frame_data)
-
-            # Stack frames into numpy array
-            if frames_list and hasattr(frames_list[0], "shape"):
-                frames_array = np.stack(frames_list)
-            else:
-                frames_array = np.array(frames_list)
-
-            # Ensure we have the correct shape: (T, H, W, C)
-            if len(frames_array.shape) != 4:
-                raise ValueError(f"Expected 4D array (T, H, W, C), got shape {frames_array.shape}")
-
-            # Convert from CxHxW to HxWxC if needed
-            if frames_array.shape[1] == 3:
-                frames_array = np.transpose(frames_array, (0, 2, 3, 1))
-
-            # Downsample frames to max_frames
-            if total_frames <= num_frames:
-                # If video has fewer frames than requested, pad with last frame
-                if total_frames < num_frames:
-                    last_frame = frames_array[-1]  # Get the last frame
-                    padding_frames = np.repeat(last_frame[np.newaxis, :, :, :], num_frames - total_frames, axis=0)
-                    frames_array = np.concatenate([frames_array, padding_frames], axis=0)
-            else:
-                # Uniform sampling across the video
-                frame_indices = [int(i * total_frames / num_frames) for i in range(num_frames)]
-                frames_array = frames_array[frame_indices]
-
-            return frames_array
-
-        except Exception as e:
-            rank_0_print(f"Error in _preprocess_videos: {e}")
-            return np.array([])
-        finally:
-            # Ensure underlying video resources are released
-            try:
-                if hasattr(frames, "close"):
-                    frames.close()
-                elif hasattr(frames, "reader") and hasattr(frames.reader, "close"):
-                    frames.reader.close()
-            except Exception:
-                pass
-
     def _compute_video_embeddings(self, frames_array: np.ndarray) -> torch.Tensor:
         """
         Compute DINOv2 embeddings for video frames.
@@ -438,6 +354,7 @@ class DatasetPreprocessor:
         Returns:
             Dataset with processed frame paths and metadata
         """
+        raise NotImplementedError("This method is not properly implemented rn, use threaded version with 1 process.")
         # Check if frames are already processed (npz file paths)
         sample_item = dataset[0]
         frames_data = sample_item.get("frames")
@@ -690,110 +607,27 @@ class DatasetPreprocessor:
                 return idx, None, None, None, None, None
 
             # If the source is a path string, open with a lightweight reader
-            if isinstance(frames_src, str):
-                reader = None
-                frames_array = None
+            try:
+                # Try decord first (fastest for video decoding)
+                    vr = decord.VideoReader(frames_src, num_threads=1)
+                    total_frames = len(vr)
 
-                try:
-                    # Try decord first (fastest for video decoding)
-                    try:
-                        import decord  # type: ignore
+                    # Sample frames efficiently
+                    if total_frames <= self.config.max_frames_for_preprocessing:
+                        frame_indices = list(range(total_frames))
+                    else:
+                        # Uniform sampling
+                        frame_indices = [
+                            int(i * total_frames / self.config.max_frames_for_preprocessing)
+                            for i in range(self.config.max_frames_for_preprocessing)
+                        ]
 
-                        vr = decord.VideoReader(frames_src, num_threads=1)
-                        total_frames = len(vr)
+                    frames_array = vr.get_batch(frame_indices).asnumpy()
 
-                        # Sample frames efficiently
-                        if total_frames <= self.config.max_frames_for_preprocessing:
-                            frame_indices = list(range(total_frames))
-                        else:
-                            # Uniform sampling
-                            frame_indices = [
-                                int(i * total_frames / self.config.max_frames_for_preprocessing)
-                                for i in range(self.config.max_frames_for_preprocessing)
-                            ]
+                    del vr
 
-                        frames_array = vr.get_batch(frame_indices).asnumpy()
-
-                        del vr
-
-                    except (ImportError, Exception) as decord_error:
-                        if not VIDEO_ERROR_PRINTED:
-                            rank_0_print(f"Warning: Decord failed, trying alternative decoding method {decord_error}")
-                            VIDEO_ERROR_PRINTED = True
-                        # Fallback to imageio
-                        try:
-                            import imageio.v2 as iio  # type: ignore
-
-                            reader = iio.get_reader(frames_src)
-                            frames_iter = (frame for frame in reader)
-                            frames_array = self._preprocess_videos(
-                                frames_iter, self.config.max_frames_for_preprocessing
-                            )
-                        except Exception:
-                            try:
-                                import imageio as iio  # type: ignore
-
-                                reader = iio.get_reader(frames_src)
-                                frames_iter = (frame for frame in reader)
-                                frames_array = self._preprocess_videos(
-                                    frames_iter, self.config.max_frames_for_preprocessing
-                                )
-                            except Exception as e2:
-                                # Fallback to OpenCV
-                                try:
-                                    import cv2  # type: ignore
-
-                                    cap = cv2.VideoCapture(frames_src)
-
-                                    # Check if video file can be opened
-                                    if not cap.isOpened():
-                                        frames_array = np.array([])
-                                    else:
-                                        # Get video properties
-                                        total_frames_cv = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-                                        if total_frames_cv <= 0:
-                                            frames_array = np.array([])
-                                        else:
-                                            # Sample frames efficiently with seeking
-                                            if total_frames_cv <= self.config.max_frames_for_preprocessing:
-                                                frame_indices = list(range(total_frames_cv))
-                                            else:
-                                                frame_indices = [
-                                                    int(i * total_frames_cv / self.config.max_frames_for_preprocessing)
-                                                    for i in range(self.config.max_frames_for_preprocessing)
-                                                ]
-
-                                            frames_list = []
-                                            for frame_idx in frame_indices:
-                                                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-                                                ret, frame = cap.read()
-                                                if ret:
-                                                    frames_list.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-
-                                            cap.release()
-
-                                            if frames_list:
-                                                frames_array = np.stack(frames_list)
-                                            else:
-                                                frames_array = np.array([])
-                                except Exception as e3:
-                                    if idx < 5:  # Only log first few failures
-                                        rank_0_print(f"Warning: All video reading methods failed for {frames_src}")
-                                    frames_array = np.array([])
-                finally:
-                    try:
-                        if reader is not None:
-                            reader.close()
-                    except Exception:
-                        pass
-
-                if frames_array is None or frames_array.size == 0:
-                    frames_array = np.array([])
-            else:
-                frames_array = self._preprocess_videos(frames_src, self.config.max_frames_for_preprocessing)
-
-            if frames_array.size == 0:
+            except Exception as e:
+                rank_0_print(f"Error in _process_one: {e}")
                 return idx, None, None, None, None, None
 
             # Save frames as npz file

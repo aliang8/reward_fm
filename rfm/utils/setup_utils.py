@@ -31,6 +31,7 @@ except ImportError:
     Qwen3VLForConditionalGeneration = None
     Qwen3VLModel = None
 
+from unsloth import FastVisionModel
 from rfm.configs.experiment_configs import DataConfig, ExperimentConfig, ModelConfig, PEFTConfig
 from rfm.data.collators import BaseCollator, ReWiNDBatchCollator, RFMBatchCollator, VQABatchCollator
 from rfm.data.datasets import (
@@ -120,11 +121,34 @@ def find_best_model_tag(hf_model_id: str, hub_token: Optional[str] = None) -> Tu
         return None, None
 
 
-def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[AutoProcessor, RFM]:
-    """Shared function to set up model, processor, and tokenizer for both training and evaluation"""
-
-    # If quantization is enabled, use bitsandbytes
-    if cfg.quantization:
+def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "", peft_config: PEFTConfig = None) -> tuple[AutoProcessor, RFM]:
+    """
+    Shared function to set up model, processor, and tokenizer for both training and evaluation.
+    
+    Args:
+        cfg: Model configuration
+        hf_model_id: Optional HuggingFace model ID to load from
+    
+    Note:
+        When use_unsloth is enabled for Qwen models:
+        - The model will be loaded using unsloth's FastVisionModel
+        - Automatically uses optimized gradient checkpointing
+        - If use_peft is enabled, applies unsloth's optimized PEFT configuration
+        - Use unsloth/Qwen models for best performance (e.g., unsloth/Qwen2.5-VL-3B-Instruct-bnb-4bit)
+    """
+    
+    # Convert string dtype to torch dtype (used across all model loading paths)
+    torch_dtype = getattr(torch, cfg.torch_dtype, torch.bfloat16)
+    rank_0_print(f"Using torch dtype: {torch_dtype}")
+    
+    # Check if unsloth should be used
+    use_unsloth = cfg.use_unsloth and "Qwen" in cfg.base_model_id
+    
+    if use_unsloth:
+        rank_0_print("Unsloth mode enabled for faster training")
+    
+    # If quantization is enabled, use bitsandbytes (unless using unsloth)
+    if cfg.quantization and not use_unsloth:
         bnb = BitsAndBytesConfig(
             load_in_8bit=True,
             llm_int8_enable_fp32_cpu_offload=True,
@@ -161,7 +185,7 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
 
             base_model = AutoModelForImageTextToText.from_pretrained(
                 cfg.base_model_id,
-                torch_dtype=torch.bfloat16,
+                torch_dtype=torch_dtype,
                 **extra_kwargs,
                 quantization_config=bnb,
             )
@@ -169,25 +193,53 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "") -> tuple[
             model_cls = RFM
 
         elif "Qwen" in cfg.base_model_id:
-            # Check if it's Qwen3 or Qwen2/2.5
-            is_qwen3 = ("Qwen3" in cfg.base_model_id or "qwen3" in cfg.base_model_id.lower()) and HAS_QWEN3
-            
-            # Select appropriate model classes based on version and model type
-            if is_qwen3:
-                qwen_model_cls = Qwen3VLModel if cfg.model_type == "default" else Qwen3VLForConditionalGeneration
-                rank_0_print("Using Qwen3 models")
+            # Check if unsloth should be used
+            if use_unsloth:
+                rank_0_print("Using Unsloth for faster training with Qwen model")
+                
+                # Load model with unsloth
+                base_model, tokenizer = FastVisionModel.from_pretrained(
+                    cfg.base_model_id,
+                    load_in_4bit=cfg.quantization,  # Use 4bit if quantization is enabled
+                    use_gradient_checkpointing="unsloth",  # Use unsloth's optimized checkpointing
+                    dtype=torch_dtype,  # Set the dtype from config
+                )
+                if cfg.model_type == "default":
+                    base_model = base_model.model
+                
+                # Apply PEFT if enabled
+                if cfg.use_peft and peft_config:
+                    base_model = FastVisionModel.get_peft_model(
+                        base_model,
+                        finetune_vision_layers=cfg.train_vision_encoder,
+                        finetune_language_layers=cfg.train_language_model,
+                        finetune_attention_modules=True,
+                        finetune_mlp_modules=True,
+                        r=peft_config.r,
+                        lora_alpha=peft_config.lora_alpha,
+                        lora_dropout=peft_config.lora_dropout,
+                        bias=peft_config.bias,
+                    )
             else:
-                qwen_model_cls = Qwen2_5_VLModel if cfg.model_type == "default" else Qwen2_5_VLForConditionalGeneration
-                rank_0_print("Using Qwen2/2.5 models")
+                # Check if it's Qwen3 or Qwen2/2.5
+                is_qwen3 = ("Qwen3" in cfg.base_model_id or "qwen3" in cfg.base_model_id.lower()) and HAS_QWEN3
+                
+                # Select appropriate model classes based on version and model type
+                if is_qwen3:
+                    qwen_model_cls = Qwen3VLModel if cfg.model_type == "default" else Qwen3VLForConditionalGeneration
+                    rank_0_print("Using Qwen3 models")
+                else:
+                    qwen_model_cls = Qwen2_5_VLModel if cfg.model_type == "default" else Qwen2_5_VLForConditionalGeneration
+                    rank_0_print("Using Qwen2/2.5 models")
+                
+                base_model = qwen_model_cls.from_pretrained(
+                    cfg.base_model_id,
+                    torch_dtype=torch_dtype,
+                    **extra_kwargs,
+                    quantization_config=bnb,
+                )
             
             model_cls = RFM if cfg.model_type == "default" else RFMVQA
-
-            base_model = qwen_model_cls.from_pretrained(
-                cfg.base_model_id,
-                torch_dtype=torch.bfloat16,
-                **extra_kwargs,
-                quantization_config=bnb,
-            )
 
             processor = AutoProcessor.from_pretrained(
                 cfg.base_model_id,

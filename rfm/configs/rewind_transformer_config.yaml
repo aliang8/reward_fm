@@ -1,5 +1,5 @@
 # ReWIND Transformer Configuration
-trainer_cls: "rewind_transformer"
+trainer_cls: rewind_transformer
 
 # =====================================================================================
 # Model Configuration
@@ -53,11 +53,11 @@ data:
     libero_90_failure: 1
 
   load_embeddings: true
-  progress_pred_type: "absolute" 
+  progress_pred_type: absolute 
 
 # =====================================================================================
 # Logging and Output Configuration
 # =====================================================================================
 logging:
-  wandb_project: "rfm"
+  wandb_project: rfm
   wandb_entity: clvr

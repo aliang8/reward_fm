@@ -354,6 +354,8 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "", peft_conf
         # Train prediction heads based on individual settings
         if "progress_head" in name:
             param.requires_grad = cfg.train_progress_head
+        elif "success_head" in name:
+            param.requires_grad = cfg.train_success_head
         elif "preference_head" in name:
             param.requires_grad = cfg.train_preference_head
         elif "similarity_head" in name:
@@ -385,6 +387,7 @@ def setup_model_and_processor(cfg: ModelConfig, hf_model_id: str = "", peft_conf
     rank_0_print(f"  - Vision encoder: {cfg.train_vision_encoder}")
     rank_0_print(f"  - Language model: {cfg.train_language_model}")
     rank_0_print(f"  - Progress head: {cfg.train_progress_head}")
+    rank_0_print(f"  - Success head: {getattr(cfg, 'train_success_head', False)}")
     rank_0_print(f"  - Preference head: {cfg.train_preference_head}")
     rank_0_print(f"  - Similarity head: {cfg.train_similarity_head}")
 

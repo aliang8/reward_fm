@@ -343,15 +343,13 @@ def compute_progress_from_segment(
     if success_cutoff is not None and success_cutoff > 0:
         # Calculate which absolute index (in original trajectory) corresponds to cutoff
         # Find the first position where progress would exceed cutoff
-        # Progress at position i is (i+1) / base_denom
-        # We want (i+1) / base_denom >= success_cutoff
-        # i+1 >= success_cutoff * base_denom
         cutoff_index = int(success_cutoff * num_frames_total) - 1  # 0-based
 
     segment_progress = []
     for i in range(segment_len):        
         # Check if this index is at or after the cutoff and set progress to 1.0
-        if cutoff_index is not None:
+        if cutoff_index is not None and cutoff_index > start_idx:
+            # if it goes pass the cutoff, the progress will be set to 1
             segment_progress.append(min(1.0, (i + 1) / (cutoff_index - start_idx)))
         else:
             # Normal progress calculation

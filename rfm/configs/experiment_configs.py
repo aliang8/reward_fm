@@ -229,6 +229,13 @@ class TrainingConfig:
     do_eval: bool = field(default=False, metadata={"help": "Whether to run evaluation during training"})
     prediction_loss_only: bool = field(default=True, metadata={"help": "Only compute loss for the prediction head"})
 
+    success_positive_weight: float = field(
+        default=1.0,
+        metadata={
+            "help": "Positive class weight for BCEWithLogits loss in success prediction (pos_weight)."
+        },
+    )
+
     # Optimizer settings
     lr_scheduler_type: str = field(default="cosine")
     warmup_steps: int = field(default=0)

@@ -93,7 +93,7 @@ def run_reward_alignment_eval(results: list[dict[str, Any]], progress_pred_type:
         "mse": mse.item(),
         "pearson": pearson.item() if not np.isnan(pearson) else 0.0,
         "spearman": spearman.item() if not np.isnan(spearman) else 0.0,
-        "num_samples": len(last_preds),
+        # "num_samples": len(last_preds),
     }
 
 

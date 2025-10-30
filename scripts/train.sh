@@ -39,12 +39,11 @@ accelerate launch \
     --model.train_language_model true \
     --training.exp_name rfm_progress_only_mw_train_all
 
-uv run python3 \train.py \
+uv run python train.py \
     --config rfm/configs/config.yaml \
     --logging.use_wandb false \
-    --debug false \
-    --model.train_preference_head true \
+    --debug true \
+    --model.train_preference_head false \
     --model.train_progress_head true \
-    --model.train_language_model true \
-    --data.pairwise_progress true \
-    --training.exp_name debug 
+    --model.use_unsloth true \
+    --training.exp_name debug

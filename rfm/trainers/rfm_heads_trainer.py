@@ -337,7 +337,7 @@ class RFMHeadsTrainer(Trainer):
                 self.model.eval()
                 eval_results = []
 
-                for batch in tqdm(dataloader, desc=f"Evaluating {eval_type}"):
+                for batch in tqdm(dataloader, desc=f"Running {eval_type}, ds: {eval_dataset}, batch size: {self.config.training.per_device_eval_batch_size}"):
                     batch = self._prepare_inputs(batch)
 
                     if eval_type in ["reward_alignment", "policy_ranking", "confusion_matrix"]:
@@ -746,6 +746,9 @@ class RFMHeadsTrainer(Trainer):
         success_losses = []
         success_accuracies = []
 
+        # Fetch positive weight for BCE loss from config (default to 1.0)
+        positive_weight_value = float(getattr(self.config.training, "success_positive_weight", 1.0))
+
         for i, (pred, target) in enumerate(zip(spliced_success_logits, spliced_target_progress, strict=False)):
             # Get per-sample max_success threshold
             max_success = max_success_list[i]
@@ -764,8 +767,16 @@ class RFMHeadsTrainer(Trainer):
 
             # Only compute loss for frames with mask=1
             if success_mask.sum() > 0:
+                pos_weight_tensor = torch.tensor(
+                    positive_weight_value,
+                    device=pred.device,
+                    dtype=pred.dtype,
+                )
                 loss = F.binary_cross_entropy_with_logits(
-                    pred[success_mask == 1], success_labels[success_mask == 1], reduction="mean"
+                    pred[success_mask == 1],
+                    success_labels[success_mask == 1],
+                    reduction="mean",
+                    pos_weight=pos_weight_tensor,
                 )
                 success_losses.append(loss)
 

@@ -360,6 +360,20 @@ class RFMHeadsTrainer(Trainer):
                             progress_samples["quality_labels"]
                         )
 
+                        success_pred_gathered = None
+                        if self.config.model.train_success_head:
+                            success_logits = outputs.success_logits
+                            success_pred = success_logits["A"]
+                            # Normalize to a tensor [B, T]
+                            if isinstance(success_pred, list):
+                                if len(success_pred) > 0 and isinstance(success_pred[0], torch.Tensor):
+                                    success_pred = torch.stack(success_pred)
+                                else:
+                                    success_pred = torch.tensor(success_pred, device=self.accelerator.device)
+                            success_probs = torch.sigmoid(success_pred)
+                            success_binary = (success_probs > 0.5).float()
+                            success_pred_gathered = self.accelerator.gather_for_metrics(success_binary)
+
                         # Gather non-tensor metadata using all_gather_object
                         if dist.is_initialized():
                             world_size = dist.get_world_size()
@@ -402,6 +416,10 @@ class RFMHeadsTrainer(Trainer):
                                 "id": gathered_metadata[i]["id"],
                                 "video_path": gathered_metadata[i]["video_path"],
                             }
+                            if success_pred_gathered is not None:
+                                sample_result["success_pred"] = (
+                                    success_pred_gathered[i].detach().to(dtype=torch.float32).cpu().numpy()
+                                )
                             eval_results.append(sample_result)
 
                     elif eval_type == "success_failure":

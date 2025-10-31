@@ -39,6 +39,17 @@ class MixedDataset(RFMBaseDataset):
         """
         idx = idx % self.data_len
 
+        # Preference-only override by data_source using raw filtered dataset entry
+        pref_only = getattr(self.config, "pref_only_datasets", []) or []
+        try:
+            base_entry = self.filtered_dataset[idx]
+            data_source = base_entry.get("data_source", None)
+        except Exception:
+            data_source = None
+        if data_source in pref_only:
+            pref_idx = idx % max(1, len(self.pref_dataset))
+            return self.pref_dataset[pref_idx]
+
         # Available dataset types with their probabilities
         datasets = [
             ("pref", self.sample_type_ratio[0], self.pref_dataset),

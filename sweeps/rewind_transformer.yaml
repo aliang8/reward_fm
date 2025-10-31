@@ -1,4 +1,4 @@
-use_accelerate: false
+use_accelerate: False
 config_paths:
   - rfm/configs/config.yaml
   - rfm/configs/rewind_transformer_config.yaml
@@ -11,11 +11,12 @@ groups:
         - [0, 1, 0]
         - [1, 1, 0]
       model.train_preference_head:
-        - false
-        - true
+        - False
+        - True
 
   - combine: cartesian
     sweep_overrides:
-      model.train_progress_head: [true]
-      logging.use_wandb: [false]
+      model.train_progress_head: [True]
+      model.train_success_head: [False, True]
+      logging.use_wandb: [False]
 

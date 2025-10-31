@@ -1,0 +1,21 @@
+use_accelerate: false
+config_paths:
+  - rfm/configs/config.yaml
+  - rfm/configs/rewind_transformer_config.yaml
+  - rfm/configs/data/oxe_mw.yaml
+
+groups:
+  - combine: zip
+    sweep_overrides:
+      data.sample_type_ratio:
+        - [0, 1, 0]
+        - [1, 1, 0]
+      model.train_preference_head:
+        - false
+        - true
+
+  - combine: cartesian
+    sweep_overrides:
+      model.train_progress_head: [true]
+      logging.use_wandb: [false]
+

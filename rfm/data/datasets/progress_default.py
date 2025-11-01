@@ -18,10 +18,12 @@ class ProgressDefaultDataset(RFMBaseDataset):
         super().__init__(config, is_evaluation, verbose=verbose)
         self.current_idx = 0
 
-        rank_0_print(f"ProgressDataset initialized with {len(self.robot_trajectories)} trajectories", verbose=self.verbose)
-        
+        rank_0_print(
+            f"ProgressDataset initialized with {len(self.robot_trajectories)} trajectories", verbose=self.verbose
+        )
+
         self.sample_indices = self._generate_all_sample_indices()
-        
+
         rank_0_print(f"Generated {len(self.sample_indices)} sample indices", verbose=self.verbose)
 
     def _generate_all_sample_indices(self) -> list[dict]:

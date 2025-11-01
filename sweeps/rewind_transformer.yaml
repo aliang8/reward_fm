@@ -4,14 +4,18 @@ config_paths:
   - rfm/configs/rewind_transformer_config.yaml
   - rfm/configs/data/oxe_mw.yaml
 
+
+# no progress only samples right now
+# we predict progress for the preference samples
+# and also the preference too  
 groups:
   - combine: zip
     sweep_overrides:
       data.sample_type_ratio:
-        - [0, 1, 0]
-        - [1, 1, 0]
+        - [1, 0, 0]
       model.train_preference_head:
-        - False
+        - True
+      training.predict_pref_progress:
         - True
 
   - combine: cartesian

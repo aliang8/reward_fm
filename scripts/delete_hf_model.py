@@ -13,9 +13,6 @@ for model in my_models:
     model_id = model.modelId
 
     match = ["debug"]
-    
+
     if any(pattern in model_id for pattern in match):
-        delete_repo(
-            repo_id=model_id,
-            repo_type="model"  
-        )
+        delete_repo(repo_id=model_id, repo_type="model")

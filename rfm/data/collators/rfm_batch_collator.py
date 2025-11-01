@@ -15,6 +15,34 @@ from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilarityS
 from typing import List, Dict
 
 
+def should_compute_progress(quality_label: str, data_gen_strategy: str) -> float:
+    """
+    Check if progress should be computed for a trajectory.
+
+    Includes if it is successful, rewound, rewind_same_task, or different_task,
+    but NOT suboptimal or failure.
+
+    Args:
+        quality_label: The quality label of the trajectory
+        data_gen_strategy: The data generation strategy
+
+    Returns:
+        1.0 if progress should be computed, 0.0 otherwise
+    """
+    if quality_label in ["suboptimal", "failure"]:
+        return 0.0
+
+    if (
+        quality_label == "successful"
+        or quality_label == "rewound"
+        or data_gen_strategy == "rewind_same_task"
+        or data_gen_strategy == "different_task"
+    ):
+        return 1.0
+
+    return 0.0
+
+
 class RFMBatchCollator(BaseCollator):
     def _process_conversation(self, conversations: List[List[Dict]]) -> Dict[str, torch.Tensor]:
         """
@@ -83,22 +111,42 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["rejected_data_gen_strategy"] = [
             sample.rejected_trajectory.data_gen_strategy for sample in preference_samples
         ]
+        batch_inputs["chosen_quality_label"] = [sample.chosen_trajectory.quality_label for sample in preference_samples]
 
-        # Add target progress for both trajectories based on conversation order
+        # Determine which trajectory is A and which is B based on preference_label
+        # Trajectory A is chosen if preference_label==1.0, otherwise rejected is A
+        trajectory_A_list = [
+            sample.chosen_trajectory if batch_inputs["preference_labels"][i].item() == 1.0 else sample.rejected_trajectory
+            for i, sample in enumerate(preference_samples)
+        ]
+        trajectory_B_list = [
+            sample.rejected_trajectory if batch_inputs["preference_labels"][i].item() == 1.0 else sample.chosen_trajectory
+            for i, sample in enumerate(preference_samples)
+        ]
+
+        batch_inputs["trajectory_A_quality_label"] = [traj.quality_label for traj in trajectory_A_list]
+        batch_inputs["trajectory_A_data_gen_strategy"] = [traj.data_gen_strategy for traj in trajectory_A_list]
+
+        # Add target progress for both trajectories using list comprehensions
+        target_progress_A = [traj.target_progress for traj in trajectory_A_list]
+        target_progress_B = [traj.target_progress for traj in trajectory_B_list]
+        target_progress_A_mask = [
+            should_compute_progress(traj.quality_label, traj.data_gen_strategy) for traj in trajectory_A_list
+        ]
+        target_progress_B_mask = [
+            should_compute_progress(traj.quality_label, traj.data_gen_strategy) for traj in trajectory_B_list
+        ]
+
         target_progress_chosen = [sample.chosen_trajectory.target_progress for sample in preference_samples]
         target_progress_rejected = [sample.rejected_trajectory.target_progress for sample in preference_samples]
         target_progress_chosen_mask = [
-            1.0
-            if sample.chosen_trajectory.quality_label == "successful"
-            or sample.chosen_trajectory.data_gen_strategy == "rewind_same_task"
-            else 0.0
+            should_compute_progress(sample.chosen_trajectory.quality_label, sample.chosen_trajectory.data_gen_strategy)
             for sample in preference_samples
         ]
         target_progress_rejected_mask = [
-            1.0
-            if sample.rejected_trajectory.quality_label == "successful"
-            or sample.rejected_trajectory.data_gen_strategy == "rewind_same_task"
-            else 0.0
+            should_compute_progress(
+                sample.rejected_trajectory.quality_label, sample.rejected_trajectory.data_gen_strategy
+            )
             for sample in preference_samples
         ]
 
@@ -108,7 +156,19 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["target_progress_chosen_mask"] = torch.tensor(target_progress_chosen_mask, dtype=torch.float32)
         batch_inputs["target_progress_rejected_mask"] = torch.tensor(target_progress_rejected_mask, dtype=torch.float32)
 
-        # Also add the frame_shapes
+        batch_inputs["target_progress_A"] = pad_target_progress(target_progress_A)
+        batch_inputs["target_progress_B"] = pad_target_progress(target_progress_B)
+        batch_inputs["target_progress_A_mask"] = torch.tensor(target_progress_A_mask, dtype=torch.float32)
+        batch_inputs["target_progress_B_mask"] = torch.tensor(target_progress_B_mask, dtype=torch.float32)
+
+        # Add frames_shape for A/B trajectories using list comprehensions
+        frames_shape_A = [traj.frames_shape for traj in trajectory_A_list]
+        frames_shape_B = [traj.frames_shape for traj in trajectory_B_list]
+
+        batch_inputs["frames_shape_A"] = torch.tensor(frames_shape_A, dtype=torch.int32)
+        batch_inputs["frames_shape_B"] = torch.tensor(frames_shape_B, dtype=torch.int32)
+
+        # Also add the frame_shapes for backward compatibility
         if not self.load_embeddings:
             batch_inputs["chosen_frames_shape"] = torch.tensor(
                 [sample.chosen_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
@@ -118,10 +178,10 @@ class RFMBatchCollator(BaseCollator):
             )
         else:
             batch_inputs["chosen_frames_shape"] = torch.tensor(
-                [sample.chosen_trajectory.video_embeddings.shape for sample in preference_samples], dtype=torch.int32
+                [sample.chosen_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
             )
             batch_inputs["rejected_frames_shape"] = torch.tensor(
-                [sample.rejected_trajectory.video_embeddings.shape for sample in preference_samples], dtype=torch.int32
+                [sample.rejected_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
             )
         return batch_inputs
 
@@ -146,16 +206,13 @@ class RFMBatchCollator(BaseCollator):
             )
         else:
             batch_inputs["frame_shapes"] = torch.tensor(
-                [sample.trajectory.video_embeddings.shape for sample in progress_samples], dtype=torch.int32
+                [sample.trajectory.frames_shape for sample in progress_samples], dtype=torch.int32
             )
 
         batch_inputs["data_source"] = [sample.trajectory.data_source for sample in progress_samples]
         batch_inputs["data_gen_strategy"] = [sample.trajectory.data_gen_strategy for sample in progress_samples]
         target_progress_mask = [
-            1.0
-            if sample.trajectory.quality_label == "successful"
-            or sample.trajectory.data_gen_strategy == "rewind_same_task"
-            else 0.0
+            should_compute_progress(sample.trajectory.quality_label, sample.trajectory.data_gen_strategy)
             for sample in progress_samples
         ]
         batch_inputs["target_progress_mask"] = torch.tensor(target_progress_mask, dtype=torch.float32)
@@ -391,24 +448,15 @@ class RFMBatchCollator(BaseCollator):
 
         # Create masks for progress loss (only compute for successful trajectories or rewinds)
         target_progress_ref_mask = [
-            1.0
-            if sample.ref_trajectory.quality_label == "successful"
-            or sample.ref_trajectory.data_gen_strategy == "rewind_same_task"
-            else 0.0
+            should_compute_progress(sample.ref_trajectory.quality_label, sample.ref_trajectory.data_gen_strategy)
             for sample in similarity_samples
         ]
         target_progress_sim_mask = [
-            1.0
-            if sample.sim_trajectory.quality_label == "successful"
-            or sample.sim_trajectory.data_gen_strategy == "rewind_same_task"
-            else 0.0
+            should_compute_progress(sample.sim_trajectory.quality_label, sample.sim_trajectory.data_gen_strategy)
             for sample in similarity_samples
         ]
         target_progress_diff_mask = [
-            1.0
-            if sample.diff_trajectory.quality_label == "successful"
-            or sample.diff_trajectory.data_gen_strategy == "rewind_same_task"
-            else 0.0
+            should_compute_progress(sample.diff_trajectory.quality_label, sample.diff_trajectory.data_gen_strategy)
             for sample in similarity_samples
         ]
 
@@ -434,13 +482,13 @@ class RFMBatchCollator(BaseCollator):
             )
         else:
             batch_inputs["ref_frames_shape"] = torch.tensor(
-                [sample.ref_trajectory.video_embeddings.shape for sample in similarity_samples], dtype=torch.int32
+                [sample.ref_trajectory.frames_shape for sample in similarity_samples], dtype=torch.int32
             )
             batch_inputs["traj_sim_frames_shape"] = torch.tensor(
-                [sample.sim_trajectory.video_embeddings.shape for sample in similarity_samples], dtype=torch.int32
+                [sample.sim_trajectory.frames_shape for sample in similarity_samples], dtype=torch.int32
             )
             batch_inputs["traj_diff_frames_shape"] = torch.tensor(
-                [sample.diff_trajectory.video_embeddings.shape for sample in similarity_samples], dtype=torch.int32
+                [sample.diff_trajectory.frames_shape for sample in similarity_samples], dtype=torch.int32
             )
 
         return batch_inputs

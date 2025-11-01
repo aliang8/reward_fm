@@ -39,7 +39,7 @@ class RewardAlignmentDataset(RFMBaseDataset):
 
         rank_0_print(
             f"Generated {len(self.sample_indices)} reward alignment sample indices from {min(len(self.robot_trajectories), self.max_trajectories) if self.max_trajectories else len(self.robot_trajectories)} trajectories",
-            verbose=self.verbose
+            verbose=self.verbose,
         )
 
     def _generate_all_sample_indices(self) -> list[dict]:
@@ -51,7 +51,9 @@ class RewardAlignmentDataset(RFMBaseDataset):
         if self.max_trajectories is not None:
             trajectories_to_process = self.robot_trajectories[: self.max_trajectories]
 
-        rank_0_print(f"Generating subsequence samples for {len(trajectories_to_process)} trajectories", verbose=self.verbose)
+        rank_0_print(
+            f"Generating subsequence samples for {len(trajectories_to_process)} trajectories", verbose=self.verbose
+        )
 
         for traj_idx in trajectories_to_process:
             traj = self.dataset[traj_idx]

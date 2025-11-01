@@ -57,7 +57,10 @@ class ConfusionMatrixDataset(RFMBaseDataset):
         if self.max_trajectories is not None:
             trajectories_to_process = self.robot_trajectories[: self.max_trajectories]
 
-        rank_0_print(f"Processing {len(trajectories_to_process)} trajectories for confusion matrix analysis", verbose=self.verbose)
+        rank_0_print(
+            f"Processing {len(trajectories_to_process)} trajectories for confusion matrix analysis",
+            verbose=self.verbose,
+        )
 
         # Create all task-trajectory pairs
         for lang_task in unique_tasks:

@@ -269,7 +269,7 @@ class PrefDataset(RFMBaseDataset):
                 # Get success cutoff from pre-loaded map
                 ds_key = chosen_traj["data_source"]
                 success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
-                
+
                 rejected_traj = create_rewind_trajectory(
                     chosen_traj,
                     max_frames=self.config.max_frames,
@@ -299,7 +299,7 @@ class PrefDataset(RFMBaseDataset):
                 # Get success cutoff from pre-loaded map
                 ds_key = chosen_traj["data_source"]
                 success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
-                
+
                 rejected_traj = create_rewind_trajectory(
                     chosen_traj,
                     max_frames=self.config.max_frames,
@@ -343,7 +343,7 @@ class PrefDataset(RFMBaseDataset):
             # Get success cutoff from pre-loaded map
             ds_key = chosen_traj["data_source"]
             success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
-            
+
             rejected_traj = create_rewind_trajectory(
                 chosen_traj,
                 max_frames=self.config.max_frames,
@@ -354,15 +354,11 @@ class PrefDataset(RFMBaseDataset):
             strategy_used = DataGenStrat.REWIND_SAME_TASK
 
         # ===============================================================
-        # Subsample the chosen trajectory to max_frames
+        # Construct chosen trajectory and pad to max_frames
         # ===============================================================
         chosen_frames = None
         chosen_video_embeddings = None
         chosen_text_embedding = None
-
-        rejected_frames = None
-        rejected_video_embeddings = None
-        rejected_text_embedding = None
 
         if self.config.load_embeddings and chosen_traj.get("embeddings_path"):
             chosen_video_embeddings = load_embeddings_from_path(chosen_traj["embeddings_path"], "video_embeddings")
@@ -397,9 +393,7 @@ class PrefDataset(RFMBaseDataset):
             ds_key = chosen_traj["data_source"]
             success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
 
-            subsampled, start_idx, end_idx, indices = subsample_segment_frames(
-                chosen_frames, self.config.max_frames
-            )
+            subsampled, start_idx, end_idx, indices = subsample_segment_frames(chosen_frames, self.config.max_frames)
             chosen_progress = compute_progress_from_segment(
                 num_frames_total=len(chosen_frames),
                 start_idx=start_idx,
@@ -418,8 +412,12 @@ class PrefDataset(RFMBaseDataset):
             chosen_metadata.update(chosen_traj["metadata"])
 
         # ===============================================================
-        # Subsample the rejected trajectory to max_frames
+        # Construct rejected trajectory and pad to max_frames
         # ===============================================================
+        rejected_frames = None
+        rejected_video_embeddings = None
+        rejected_text_embedding = None
+
         if self.config.load_embeddings and rejected_traj.get("embeddings_path"):
             rejected_video_embeddings = load_embeddings_from_path(rejected_traj["embeddings_path"], "video_embeddings")
             rejected_text_embedding = load_embeddings_from_path(rejected_traj["embeddings_path"], "text_embedding")
@@ -488,18 +486,22 @@ class PrefDataset(RFMBaseDataset):
 
         # Let's make sure to pad both trajectories to max_frames
         if self.config.load_embeddings:
+            chosen_frames_shape_orig = chosen_video_embeddings.shape
             chosen_video_embeddings, chosen_progress = pad_trajectory_to_max_frames_torch(
-                chosen_video_embeddings, chosen_progress, self.config.max_frames
+                chosen_video_embeddings, chosen_progress, self.config.max_frames, pad_from="right"
             )
+            rejected_frames_shape_orig = rejected_video_embeddings.shape
             rejected_video_embeddings, rejected_progress = pad_trajectory_to_max_frames_torch(
-                rejected_video_embeddings, rejected_progress, self.config.max_frames
+                rejected_video_embeddings, rejected_progress, self.config.max_frames, pad_from="right"
             )
         else:
+            chosen_frames_shape_orig = chosen_frames.shape
             chosen_frames, chosen_progress = pad_trajectory_to_max_frames_np(
-                chosen_frames, chosen_progress, self.config.max_frames
+                chosen_frames, chosen_progress, self.config.max_frames, pad_from="right"
             )
+            rejected_frames_shape_orig = rejected_frames.shape
             rejected_frames, rejected_progress = pad_trajectory_to_max_frames_np(
-                rejected_frames, rejected_progress, self.config.max_frames
+                rejected_frames, rejected_progress, self.config.max_frames, pad_from="right"
             )
 
         # If our strategy is different task, make sure the rejected trajectory has 0 progress
@@ -508,10 +510,9 @@ class PrefDataset(RFMBaseDataset):
 
         # Create preference sample structure
         sample = PreferenceSample(
-            # Create Trajectory objects for chosen and rejected
             chosen_trajectory=Trajectory(
                 frames=chosen_frames,
-                frames_shape=chosen_frames.shape if chosen_frames is not None else None,
+                frames_shape=chosen_frames_shape_orig,
                 video_embeddings=chosen_video_embeddings,
                 text_embedding=chosen_text_embedding,
                 id=chosen_traj["id"],
@@ -526,7 +527,7 @@ class PrefDataset(RFMBaseDataset):
             ),
             rejected_trajectory=Trajectory(
                 frames=rejected_frames,
-                frames_shape=rejected_frames.shape if rejected_frames is not None else None,
+                frames_shape=rejected_frames_shape_orig,
                 video_embeddings=rejected_video_embeddings,
                 text_embedding=rejected_text_embedding,
                 id=rejected_traj["id"],

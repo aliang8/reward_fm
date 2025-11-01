@@ -80,7 +80,7 @@ class PairedSuccessFailureDataset(RFMBaseDataset):
         # Get success cutoff from pre-loaded map for both trajectories
         ds_key_success = success_traj["data_source"]
         success_cutoff = self.dataset_success_cutoff_map.get(ds_key_success, self.config.max_success)
-        
+
         ds_key_failure = failure_traj["data_source"]
         failure_cutoff = self.dataset_success_cutoff_map.get(ds_key_failure, self.config.max_success)
 

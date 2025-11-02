@@ -13,8 +13,8 @@ CAMERA_DIR_CANDIDATES = [
     "front_rgb",
     "left_shoulder_rgb",
     "right_shoulder_rgb",
-    #"right_shoudler_rgb",  # sometimes misspelled in datasets
-    #"wrist_rgb",
+    # "right_shoudler_rgb",  # sometimes misspelled in datasets
+    # "wrist_rgb",
 ]
 
 
@@ -167,6 +167,7 @@ def load_racer_dataset(dataset_path: str, dataset_name: str) -> dict[str, list[d
                 for cam, img_list in views.items():
                     if not img_list:
                         continue
+
                     # Find frames with numeric names and truncate accordingly
                     def _frame_num(p: str) -> int:
                         try:
@@ -186,5 +187,3 @@ def load_racer_dataset(dataset_path: str, dataset_name: str) -> dict[str, list[d
                     traj = _make_traj(subset, task_goal, is_success=False)
                     task_data.setdefault(task_goal, []).append(traj)
     return task_data
-
-

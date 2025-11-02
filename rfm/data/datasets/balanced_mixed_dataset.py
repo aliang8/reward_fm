@@ -96,6 +96,11 @@ class BalancedMixedDataset(MixedDataset):
         # Select trajectory index randomly within the source
         selected_traj_idx = random.choice(source_indices)
 
+        # Enforce preference-only sampling for configured data sources
+        pref_only = getattr(self.config, "pref_only_datasets", []) or []
+        if selected_source in pref_only:
+            return self.pref_dataset[selected_traj_idx]
+
         # Generate sample using the appropriate dataset
         if sample_type == "pref":
             return self.pref_dataset[selected_traj_idx]

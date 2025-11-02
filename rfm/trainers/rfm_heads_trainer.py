@@ -19,6 +19,7 @@ from evals.compile_results import compute_eval_metrics
 from rfm.data.datasets.helpers import load_dataset_success_percent
 import torch.distributed as dist
 
+
 def seed_worker(worker_id):
     """Set random seed for dataloader workers."""
     import random
@@ -331,13 +332,17 @@ class RFMHeadsTrainer(Trainer):
 
                 eval_cfg.eval_datasets = [eval_dataset]
 
-                dataset = setup_dataset(eval_cfg, is_eval=True, verbose=False)
+                # set max_trajectories to 10 for reward_alignment per eval dataset
+                dataset = setup_dataset(eval_cfg, is_eval=True, verbose=False, max_trajectories=10)
                 dataloader = self._make_eval_dataloader(dataset)
 
                 self.model.eval()
                 eval_results = []
 
-                for batch in tqdm(dataloader, desc=f"Running {eval_type}, ds: {eval_dataset}, batch size: {self.config.training.per_device_eval_batch_size}"):
+                for batch in tqdm(
+                    dataloader,
+                    desc=f"Running {eval_type}, ds: {eval_dataset}, batch size: {self.config.training.per_device_eval_batch_size}",
+                ):
                     batch = self._prepare_inputs(batch)
 
                     if eval_type in ["reward_alignment", "policy_ranking", "confusion_matrix"]:
@@ -359,6 +364,20 @@ class RFMHeadsTrainer(Trainer):
                         gathered_quality_labels = self.accelerator.gather_for_metrics(
                             progress_samples["quality_labels"]
                         )
+
+                        success_pred_gathered = None
+                        if self.config.model.train_success_head:
+                            success_logits = outputs.success_logits
+                            success_pred = success_logits["A"]
+                            # Normalize to a tensor [B, T]
+                            if isinstance(success_pred, list):
+                                if len(success_pred) > 0 and isinstance(success_pred[0], torch.Tensor):
+                                    success_pred = torch.stack(success_pred)
+                                else:
+                                    success_pred = torch.tensor(success_pred, device=self.accelerator.device)
+                            success_probs = torch.sigmoid(success_pred)
+                            success_binary = (success_probs > 0.5).float()
+                            success_pred_gathered = self.accelerator.gather_for_metrics(success_binary)
 
                         # Gather non-tensor metadata using all_gather_object
                         if dist.is_initialized():
@@ -402,6 +421,10 @@ class RFMHeadsTrainer(Trainer):
                                 "id": gathered_metadata[i]["id"],
                                 "video_path": gathered_metadata[i]["video_path"],
                             }
+                            if success_pred_gathered is not None:
+                                sample_result["success_pred"] = (
+                                    success_pred_gathered[i].detach().to(dtype=torch.float32).cpu().numpy()
+                                )
                             eval_results.append(sample_result)
 
                     elif eval_type == "success_failure":
@@ -458,7 +481,11 @@ class RFMHeadsTrainer(Trainer):
                             sample_result = {
                                 "task": gathered_task[i],
                                 "preference_pred": pref_logits[i].detach().to(dtype=torch.float32).cpu().numpy(),
-                                "preference_labels": preference_labels[i].detach().to(dtype=torch.float32).cpu().numpy(),
+                                "preference_labels": preference_labels[i]
+                                .detach()
+                                .to(dtype=torch.float32)
+                                .cpu()
+                                .numpy(),
                                 "data_source": gathered_data_source[i],
                                 "chosen_data_gen_strategy": gathered_chosen_data_gen_strategy[i],
                                 "rejected_data_gen_strategy": gathered_rejected_data_gen_strategy[i],
@@ -530,6 +557,7 @@ class RFMHeadsTrainer(Trainer):
                         # Log confusion matrix figure to wandb
                         if self.log_wandb:
                             wandb.log({f"{ds_name}/confusion_matrix": wandb.Image(confusion_plot)})
+                            plt.close(confusion_plot)
 
         # Prepare metrics for callbacks (all processes)
         callback_metrics = {}
@@ -637,7 +665,7 @@ class RFMHeadsTrainer(Trainer):
         # Initialize loss components and metadata
         total_loss = 0.0
         log_metadata = {}
-        
+
         # Compute preference loss if we have preference samples
         if num_preferences > 0 and preference_inputs and self.config.model.train_preference_head:
             with _timer("time/compute_preference_loss", timing_raw=self.timing_raw):
@@ -740,20 +768,19 @@ class RFMHeadsTrainer(Trainer):
             else:
                 spliced_target = target[:num_frames]
 
-            spliced_success_logits.append(pred)
+            spliced_success_logits.append(pred[:num_frames])
             spliced_target_progress.append(spliced_target)
 
         # Compute success loss per element
         success_losses = []
         success_accuracies = []
 
-        # Fetch positive weight for BCE loss from config (default to 1.0)
         positive_weight_value = float(getattr(self.config.training, "success_positive_weight", 1.0))
 
         for i, (pred, target) in enumerate(zip(spliced_success_logits, spliced_target_progress, strict=False)):
             # Get per-sample max_success threshold
             max_success = max_success_list[i]
-            
+
             # Generate success labels and mask based on progress
             success_labels = torch.zeros_like(target)
             success_mask = torch.zeros_like(target)
@@ -765,6 +792,8 @@ class RFMHeadsTrainer(Trainer):
             # Frames with high progress are successes (label=1)
             success_mask[target > max_success] = 1.0
             success_labels[target > max_success] = 1.0
+
+            # Everything else in-between is ignored and we don't predict success for these frames
 
             # Only compute loss for frames with mask=1
             if success_mask.sum() > 0:
@@ -817,7 +846,6 @@ class RFMHeadsTrainer(Trainer):
                     success_accuracies = success_accuracies.to(dtype=mask_t.dtype) * mask_t
                 return success_losses, success_accuracies
 
-        # Return zero tensors matching the input dtype (handled by the later stack operations)
         return 0.0, 0.0
 
     def _compute_progress_loss_helper(
@@ -825,7 +853,7 @@ class RFMHeadsTrainer(Trainer):
         progress_logits,
         target_progress,
         frame_shape,
-        target_progress_mask,
+        mask,
         aggregate: bool = False,
     ):
         """
@@ -850,6 +878,7 @@ class RFMHeadsTrainer(Trainer):
         )
 
         # Splice both predicted and target logits based on frame shapes
+        # The frame shape is used for splicing target and removing the padded frames / progress values
         spliced_progress_logits = []
         spliced_target_progress = []
 
@@ -860,7 +889,7 @@ class RFMHeadsTrainer(Trainer):
             else:
                 spliced_target = target[:num_frames]
 
-            spliced_progress_logits.append(pred)
+            spliced_progress_logits.append(pred[:num_frames])
             spliced_target_progress.append(spliced_target)
 
         # Compute MSE loss per element and then stack into a tensor
@@ -876,40 +905,40 @@ class RFMHeadsTrainer(Trainer):
 
                 loss = F.mse_loss(pred_last.float(), target_last.float())
                 progress_losses.append(loss)
-                
+
                 # For pairwise, we don't compute spearman correlation on a single value
                 spearman_corr = torch.tensor(0.0, device=pred.device)
                 spearman_correlations.append(spearman_corr)
             else:
                 loss = F.mse_loss(pred.float(), target.float())
-                progress_losses.append(loss)
+            progress_losses.append(loss)
 
-                # Compute Spearman correlation for this sample
-                spearman_corr = compute_spearman_correlation(pred, target)
-                spearman_correlations.append(spearman_corr)
+            # Compute Spearman correlation for this sample
+            spearman_corr = compute_spearman_correlation(pred, target)
+            spearman_correlations.append(spearman_corr)
 
         if progress_losses:
             if aggregate:
-                progress_loss = torch.stack(progress_losses) * target_progress_mask
-                if target_progress_mask.sum() > 0:
-                    progress_loss = progress_loss.sum() / target_progress_mask.sum()
+                progress_loss = torch.stack(progress_losses) * mask
+                if mask.sum() > 0:
+                    progress_loss = progress_loss.sum() / mask.sum()
                 else:
                     progress_loss = progress_loss.mean()
 
                 # Average the Spearman correlations
-                mean_spearman = torch.stack(spearman_correlations) * target_progress_mask
-                if target_progress_mask.sum() > 0:
-                    mean_spearman = mean_spearman.sum() / target_progress_mask.sum()
+                mean_spearman = torch.stack(spearman_correlations) * mask
+                if mask.sum() > 0:
+                    mean_spearman = mean_spearman.sum() / mask.sum()
                 else:
                     mean_spearman = mean_spearman.mean()
 
                 return progress_loss, mean_spearman
             else:
-                progress_losses = torch.stack(progress_losses) * target_progress_mask
-                spearman_correlations = torch.stack(spearman_correlations) * target_progress_mask
+                progress_losses = torch.stack(progress_losses) * mask
+                spearman_correlations = torch.stack(spearman_correlations) * mask
                 return progress_losses, spearman_correlations
 
-        raise ValueError("No progress losses found")
+        return 0.0, 0.0
 
     def forward_model(self, model, inputs, sample_type="progress"):
         """Forward pass for the model."""
@@ -947,13 +976,13 @@ class RFMHeadsTrainer(Trainer):
         progress_logits = model_output.progress_logits
         progress_pred = progress_logits["A"]
         progress_target = inputs["target_progress"]
-        frame_shapes = inputs["frame_shapes"]
+        frames_shape = inputs["frames_shape"]
         progress_target_mask = inputs["target_progress_mask"]
-    
+
         progress_loss_all, spearman_corr_all = self._compute_progress_loss_helper(
             progress_pred,
             progress_target,
-            frame_shapes,
+            frames_shape,
             progress_target_mask,
             aggregate=False,
         )
@@ -963,7 +992,7 @@ class RFMHeadsTrainer(Trainer):
         # Compute success loss if success head is enabled
         success_loss = 0.0
         success_accuracy = 0.0
-        
+
         if self.config.model.train_success_head:
             success_logits = model_output.success_logits
             success_pred = success_logits["A"]
@@ -971,14 +1000,14 @@ class RFMHeadsTrainer(Trainer):
             success_loss_all, success_acc_all = self._compute_success_loss_helper(
                 success_pred,
                 progress_target,
-                frame_shapes,
+                frames_shape,
                 mask=progress_target_mask,
                 data_source=data_source,
                 aggregate=False,
             )
             success_loss = success_loss_all.mean()
             success_accuracy = success_acc_all.mean()
-            
+
         final_loss = progress_loss + success_loss
 
         if return_outputs:
@@ -1056,105 +1085,64 @@ class RFMHeadsTrainer(Trainer):
 
         final_loss = preference_loss
 
-        # Prepare chosen/rejected progress targets and shapes if needed by either progress or success heads
-        need_pref_progress_artifacts = (
-            (self.config.model.train_progress_head and self.config.training.predict_pref_progress)
-            or self.config.model.train_success_head
-        )
+        # =========================================================================================
+        # Compute progress and success loss for the first trajectory in the paired samples
+        # =========================================================================================
 
-        if need_pref_progress_artifacts:
-            chosen_frames_shape = inputs.get("chosen_frames_shape", None)
-            rejected_frames_shape = inputs.get("rejected_frames_shape", None)
-            batch_size = len(preference_labels)
+        # Compute mask for trajectory A - only compute loss for samples that meet criteria
+        target_progress_A_mask = inputs["target_progress_A_mask"]
 
-            chosen_traj_shapes = []
-            rejected_traj_shapes = []
-            chosen_traj_progress_pred = []
-            rejected_traj_progress_pred = []
-            chosen_traj_progress_target = []
-            rejected_traj_progress_target = []
-            chosen_traj_progress_target_mask = []
-            rejected_traj_progress_target_mask = []
+        # Get trajectory A data (used by both progress and success loss)
+        target_progress_A = inputs["target_progress_A"]
+        frames_shape_A = inputs["frames_shape_A"]
+        if isinstance(frames_shape_A, (list, tuple)):
+            frames_shape_A = torch.stack(frames_shape_A)
+        data_source = inputs["data_source"]
 
-            for i in range(batch_size):
-                chosen_traj_shapes.append(chosen_frames_shape[i])
-                rejected_traj_shapes.append(rejected_frames_shape[i])
+        progress_loss = 0.0
+        spearman_corr_A = 0.0
 
-                chosen_traj_progress_target.append(inputs["target_progress_chosen"][i])
-                rejected_traj_progress_target.append(inputs["target_progress_rejected"][i])
-                chosen_traj_progress_target_mask.append(inputs["target_progress_chosen_mask"][i])
-                rejected_traj_progress_target_mask.append(inputs["target_progress_rejected_mask"][i])
-
-                if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
-                    if preference_labels[i] == 1.0:
-                        chosen_traj_progress_pred.append(progress_logits["A"][i])
-                        rejected_traj_progress_pred.append(progress_logits["B"][i])
-                    else:
-                        chosen_traj_progress_pred.append(progress_logits["B"][i])
-                        rejected_traj_progress_pred.append(progress_logits["A"][i])
-
-            # Convert masks/shapes to tensors for helper consumption
-            chosen_traj_shapes = torch.stack(chosen_traj_shapes)
-            rejected_traj_shapes = torch.stack(rejected_traj_shapes)
-            chosen_traj_progress_target_mask = torch.stack(chosen_traj_progress_target_mask)
-            rejected_traj_progress_target_mask = torch.stack(rejected_traj_progress_target_mask)
-
-        # If we are predicting progress for preference samples, compute that loss
         if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
-            progress_loss_chosen, spearman_corr_chosen = self._compute_progress_loss_helper(
-                chosen_traj_progress_pred,
-                chosen_traj_progress_target,
-                chosen_traj_shapes,
-                chosen_traj_progress_target_mask,
-                aggregate=False,
-            )
-            progress_loss_rejected, spearman_corr_rejected = self._compute_progress_loss_helper(
-                rejected_traj_progress_pred,
-                rejected_traj_progress_target,
-                rejected_traj_shapes,
-                rejected_traj_progress_target_mask,
-                aggregate=False,
-            )
-            progress_loss = progress_loss_chosen.mean() + progress_loss_rejected.mean()
-            final_loss = preference_loss + progress_loss
+            if target_progress_A_mask.any():
+                progress_logits_A = progress_logits["A"]
+
+                progress_loss_A, spearman_corr_A = self._compute_progress_loss_helper(
+                    progress_logits_A,
+                    target_progress_A,
+                    frames_shape_A,
+                    mask=target_progress_A_mask,
+                    aggregate=False,
+                )
+
+                if progress_loss_A.any():
+                    progress_loss = progress_loss_A.mean()
+                    spearman_corr_A = spearman_corr_A.mean()
+                else:
+                    progress_loss = torch.tensor(0.0, device=self.accelerator.device)
+                    spearman_corr_A = torch.tensor(0.0, device=self.accelerator.device)
+                final_loss = preference_loss + progress_loss
+            else:
+                final_loss = preference_loss
 
         # Compute success loss if success head is enabled
         success_loss = 0.0
+        success_accuracy = 0.0
         if self.config.model.train_success_head:
-            success_logits = model_outputs.success_logits
-            # Separate success predictions for chosen and rejected
-            chosen_traj_success_pred = []
-            rejected_traj_success_pred = []
-            batch_size = len(preference_labels)
+            if target_progress_A_mask.any():
+                success_logits = model_outputs.success_logits
+                success_logits_A = success_logits["A"]
 
-            for i in range(batch_size):
-                if preference_labels[i] == 1.0:
-                    chosen_traj_success_pred.append(success_logits["A"][i])
-                    rejected_traj_success_pred.append(success_logits["B"][i])
-                else:
-                    chosen_traj_success_pred.append(success_logits["B"][i])
-                    rejected_traj_success_pred.append(success_logits["A"][i])
-
-            # Compute success loss for both trajectories
-            data_source = inputs["data_source"]
-            success_loss_chosen, success_acc_chosen = self._compute_success_loss_helper(
-                chosen_traj_success_pred,
-                chosen_traj_progress_target,
-                chosen_traj_shapes,
-                mask=chosen_traj_progress_target_mask,
-                data_source=data_source,
-                aggregate=False,
-            )
-            success_loss_rejected, success_acc_rejected = self._compute_success_loss_helper(
-                rejected_traj_success_pred,
-                rejected_traj_progress_target,
-                rejected_traj_shapes,
-                mask=rejected_traj_progress_target_mask,
-                data_source=data_source,
-                aggregate=False,
-            )
-            success_loss = success_loss_chosen.mean() + success_loss_rejected.mean()
-            final_loss = final_loss + success_loss
+                success_loss_A, success_acc_A = self._compute_success_loss_helper(
+                    success_logits_A,
+                    target_progress_A,
+                    frames_shape_A,
+                    mask=target_progress_A_mask,
+                    data_source=data_source,
+                    aggregate=False,
+                )
+                success_loss = success_loss_A.mean()
+                success_accuracy = success_acc_A.mean()
+                final_loss = final_loss + success_loss
 
         if return_outputs:
             outputs_dict = {}
@@ -1163,12 +1151,18 @@ class RFMHeadsTrainer(Trainer):
 
             if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
                 outputs_dict.update({
-                    f"{prefix}/pref_progress_loss": progress_loss.item(),
+                    f"{prefix}/pref_progress_loss": progress_loss.item()
+                    if isinstance(progress_loss, torch.Tensor)
+                    else (float(progress_loss) if progress_loss != 0.0 else 0.0),
+                    f"{prefix}/pref_spearman_corr": spearman_corr_A.item()
+                    if isinstance(spearman_corr_A, torch.Tensor)
+                    else (float(spearman_corr_A) if spearman_corr_A != 0.0 else 0.0),
                 })
 
             if self.config.model.train_success_head:
                 outputs_dict.update({
                     f"{prefix}/pref_success_loss": success_loss.item(),
+                    f"{prefix}/pref_success_accuracy": success_accuracy.item(),
                 })
 
             if preference_loss is not None:
@@ -1260,101 +1254,58 @@ class RFMHeadsTrainer(Trainer):
         similarity_loss = similarity_loss_all.mean()
 
         final_loss = similarity_loss
+
+
+        # =========================================================================================
+        # Compute progress and success loss for the reference trajectory
+        # =========================================================================================
         progress_loss = 0.0
+
+        target_progress_ref_mask = inputs["target_progress_ref_mask"]
+        target_progress_ref = inputs["target_progress_ref"]
+        ref_frames_shape = inputs["ref_frames_shape"]
+        if isinstance(ref_frames_shape, (list, tuple)):
+            ref_frames_shape = torch.stack(ref_frames_shape)
+        data_source = inputs["data_source"]
 
         # If we are predicting progress for similarity samples
         if self.config.model.train_progress_head and self.config.training.predict_sim_progress:
-            # Get frame shapes for splicing target progress to match predicted lengths
-            ref_frames_shape = inputs.get("ref_frames_shape", None)
-            traj_sim_frames_shape = inputs.get("traj_sim_frames_shape", None)
-            traj_diff_frames_shape = inputs.get("traj_diff_frames_shape", None)
+            if target_progress_ref_mask.any():
+                progress_logits_ref_sim_A = progress_logits_ref_sim["A"]
 
-            # Compute progress loss for both forward passes
-            # A is the reference trajectory and B is the trajectory to compare to
-            progress_loss_ref_sim, spearman_corr_ref_sim = self._compute_progress_loss_helper(
-                progress_logits_ref_sim["A"],
-                inputs["target_progress_ref"],
-                ref_frames_shape,
-                inputs["target_progress_ref_mask"],
-                aggregate=False,
-            )
-            progress_loss_sim, spearman_corr_sim = self._compute_progress_loss_helper(
-                progress_logits_ref_sim["B"],
-                inputs["target_progress_sim"],
-                traj_sim_frames_shape,
-                inputs["target_progress_sim_mask"],
-                aggregate=False,
-            )
+                progress_loss_ref_sim, spearman_corr_ref_sim = self._compute_progress_loss_helper(
+                    progress_logits_ref_sim_A,
+                    target_progress_ref,
+                    ref_frames_shape,
+                    mask=target_progress_ref_mask,
+                    aggregate=False,
+                )
 
-            # For the ref_diff forward pass, A is still the reference trajectory
-            progress_loss_ref_diff, spearman_corr_ref_diff = self._compute_progress_loss_helper(
-                progress_logits_ref_diff["A"],
-                inputs["target_progress_ref"],
-                ref_frames_shape,
-                inputs["target_progress_ref_mask"],
-                aggregate=False,
-            )
-            progress_loss_diff, spearman_corr_diff = self._compute_progress_loss_helper(
-                progress_logits_ref_diff["B"],
-                inputs["target_progress_diff"],
-                traj_diff_frames_shape,
-                inputs["target_progress_diff_mask"],
-                aggregate=False,
-            )
-
-            # Average the ref progress loss from both forward passes (mean across batch)
-            progress_loss_ref = (progress_loss_ref_sim.mean() + progress_loss_ref_diff.mean()) / 2
-            progress_loss = progress_loss_ref + progress_loss_sim.mean() + progress_loss_diff.mean()
-            final_loss = similarity_loss + progress_loss
+                progress_loss_ref = progress_loss_ref_sim.mean()
+                progress_loss = progress_loss_ref
+                final_loss = similarity_loss + progress_loss
 
         # Compute success loss if success head is enabled
         success_loss = 0.0
+        success_accuracy = 0.0
         if self.config.model.train_success_head:
-            success_logits_ref_sim = model_outputs_ref_sim.success_logits
-            success_logits_ref_diff = model_outputs_ref_diff.success_logits
+            if target_progress_ref_mask.any():
+                success_logits_ref_sim = model_outputs_ref_sim.success_logits
+                success_logits_ref_sim_A = success_logits_ref_sim["A"]
 
-            # Compute success loss for all trajectories
-            data_source = inputs["data_source"]
-            # For ref_sim forward pass
-            success_loss_ref_sim, success_acc_ref_sim = self._compute_success_loss_helper(
-                success_logits_ref_sim["A"],
-                inputs["target_progress_ref"],
-                ref_frames_shape,
-                mask=inputs["target_progress_ref_mask"],
-                data_source=data_source,
-                aggregate=False,
-            )
-            success_loss_sim, success_acc_sim = self._compute_success_loss_helper(
-                success_logits_ref_sim["B"],
-                inputs["target_progress_sim"],
-                traj_sim_frames_shape,
-                mask=inputs["target_progress_sim_mask"],
-                data_source=data_source,
-                aggregate=False,
-            )
+                success_loss_ref_sim, success_acc_ref_sim = self._compute_success_loss_helper(
+                    success_logits_ref_sim_A,
+                    target_progress_ref,
+                    ref_frames_shape,
+                    mask=target_progress_ref_mask,
+                    data_source=data_source,
+                    aggregate=False,
+                )
 
-            # For ref_diff forward pass
-            success_loss_ref_diff, success_acc_ref_diff = self._compute_success_loss_helper(
-                success_logits_ref_diff["A"],
-                inputs["target_progress_ref"],
-                ref_frames_shape,
-                mask=inputs["target_progress_ref_mask"],
-                data_source=data_source,
-                aggregate=False,
-            )
-            success_loss_diff, success_acc_diff = self._compute_success_loss_helper(
-                success_logits_ref_diff["B"],
-                inputs["target_progress_diff"],
-                traj_diff_frames_shape,
-                mask=inputs["target_progress_diff_mask"],
-                data_source=data_source,
-                aggregate=False,
-            )
-
-            # Average the ref success loss from both forward passes
-            success_loss_ref = (success_loss_ref_sim.mean() + success_loss_ref_diff.mean()) / 2
-            success_loss = success_loss_ref + success_loss_sim.mean() + success_loss_diff.mean()
-            final_loss = final_loss + success_loss
+                success_loss_ref = success_loss_ref_sim.mean()
+                success_accuracy = success_acc_ref_sim.mean()
+                success_loss = success_loss_ref
+                final_loss = final_loss + success_loss
 
         if return_outputs:
             outputs_dict = {}
@@ -1398,9 +1349,9 @@ class RFMHeadsTrainer(Trainer):
 
             # Add progress loss metrics if computed
             if self.config.model.train_progress_head and self.config.training.predict_sim_progress:
-                # Compute average Spearman correlation across all trajectories
+                # Compute average Spearman correlation across reference trajectories
                 spearman_values = []
-                for corr in [spearman_corr_ref_sim, spearman_corr_sim, spearman_corr_ref_diff, spearman_corr_diff]:
+                for corr in [spearman_corr_ref_sim]:
                     if isinstance(corr, torch.Tensor):
                         spearman_values.append(corr.mean().item())
                     else:
@@ -1409,10 +1360,12 @@ class RFMHeadsTrainer(Trainer):
                 avg_spearman = np.mean(spearman_values) if spearman_values else 0.0
 
                 outputs_dict.update({
-                    f"{prefix}/sim_progress_loss": progress_loss.item(),
-                    f"{prefix}/sim_progress_loss_ref": progress_loss_ref.item(),
-                    f"{prefix}/sim_progress_loss_sim": progress_loss_sim.mean().item(),
-                    f"{prefix}/sim_progress_loss_diff": progress_loss_diff.mean().item(),
+                    f"{prefix}/sim_progress_loss": progress_loss.item()
+                    if isinstance(progress_loss, torch.Tensor)
+                    else progress_loss,
+                    f"{prefix}/sim_progress_loss_ref": progress_loss_ref.item()
+                    if isinstance(progress_loss_ref, torch.Tensor)
+                    else progress_loss_ref,
                     f"{prefix}/sim_spearman_corr_avg": avg_spearman,
                 })
 
@@ -1420,6 +1373,7 @@ class RFMHeadsTrainer(Trainer):
             if self.config.model.train_success_head:
                 outputs_dict.update({
                     f"{prefix}/sim_success_loss": success_loss.item(),
+                    f"{prefix}/sim_success_accuracy": success_accuracy.item(),
                 })
 
             return final_loss, outputs_dict

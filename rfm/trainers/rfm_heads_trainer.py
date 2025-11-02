@@ -332,7 +332,8 @@ class RFMHeadsTrainer(Trainer):
 
                 eval_cfg.eval_datasets = [eval_dataset]
 
-                dataset = setup_dataset(eval_cfg, is_eval=True, verbose=False)
+                # set max_trajectories to 10 for reward_alignment per eval dataset
+                dataset = setup_dataset(eval_cfg, is_eval=True, verbose=False, max_trajectories=10)
                 dataloader = self._make_eval_dataloader(dataset)
 
                 self.model.eval()
@@ -845,7 +846,6 @@ class RFMHeadsTrainer(Trainer):
                     success_accuracies = success_accuracies.to(dtype=mask_t.dtype) * mask_t
                 return success_losses, success_accuracies
 
-        # Return zero tensors matching the input dtype (handled by the later stack operations)
         return 0.0, 0.0
 
     def _compute_progress_loss_helper(
@@ -938,7 +938,7 @@ class RFMHeadsTrainer(Trainer):
                 spearman_correlations = torch.stack(spearman_correlations) * mask
                 return progress_losses, spearman_correlations
 
-        raise ValueError("No progress losses found")
+        return 0.0, 0.0
 
     def forward_model(self, model, inputs, sample_type="progress"):
         """Forward pass for the model."""
@@ -976,13 +976,13 @@ class RFMHeadsTrainer(Trainer):
         progress_logits = model_output.progress_logits
         progress_pred = progress_logits["A"]
         progress_target = inputs["target_progress"]
-        frame_shapes = inputs["frame_shapes"]
+        frames_shape = inputs["frames_shape"]
         progress_target_mask = inputs["target_progress_mask"]
 
         progress_loss_all, spearman_corr_all = self._compute_progress_loss_helper(
             progress_pred,
             progress_target,
-            frame_shapes,
+            frames_shape,
             progress_target_mask,
             aggregate=False,
         )
@@ -1000,7 +1000,7 @@ class RFMHeadsTrainer(Trainer):
             success_loss_all, success_acc_all = self._compute_success_loss_helper(
                 success_pred,
                 progress_target,
-                frame_shapes,
+                frames_shape,
                 mask=progress_target_mask,
                 data_source=data_source,
                 aggregate=False,
@@ -1254,9 +1254,13 @@ class RFMHeadsTrainer(Trainer):
         similarity_loss = similarity_loss_all.mean()
 
         final_loss = similarity_loss
+
+
+        # =========================================================================================
+        # Compute progress and success loss for the reference trajectory
+        # =========================================================================================
         progress_loss = 0.0
 
-        # Get reference trajectory data (used by both progress and success loss)
         target_progress_ref_mask = inputs["target_progress_ref_mask"]
         target_progress_ref = inputs["target_progress_ref"]
         ref_frames_shape = inputs["ref_frames_shape"]
@@ -1268,7 +1272,6 @@ class RFMHeadsTrainer(Trainer):
         if self.config.model.train_progress_head and self.config.training.predict_sim_progress:
             if target_progress_ref_mask.any():
                 progress_logits_ref_sim_A = progress_logits_ref_sim["A"]
-                progress_logits_ref_diff_A = progress_logits_ref_diff["A"]
 
                 progress_loss_ref_sim, spearman_corr_ref_sim = self._compute_progress_loss_helper(
                     progress_logits_ref_sim_A,
@@ -1288,10 +1291,7 @@ class RFMHeadsTrainer(Trainer):
         if self.config.model.train_success_head:
             if target_progress_ref_mask.any():
                 success_logits_ref_sim = model_outputs_ref_sim.success_logits
-                success_logits_ref_diff = model_outputs_ref_diff.success_logits
-
                 success_logits_ref_sim_A = success_logits_ref_sim["A"]
-                success_logits_ref_diff_A = success_logits_ref_diff["A"]
 
                 success_loss_ref_sim, success_acc_ref_sim = self._compute_success_loss_helper(
                     success_logits_ref_sim_A,
@@ -1351,7 +1351,7 @@ class RFMHeadsTrainer(Trainer):
             if self.config.model.train_progress_head and self.config.training.predict_sim_progress:
                 # Compute average Spearman correlation across reference trajectories
                 spearman_values = []
-                for corr in [spearman_corr_ref_sim, spearman_corr_ref_diff]:
+                for corr in [spearman_corr_ref_sim]:
                     if isinstance(corr, torch.Tensor):
                         spearman_values.append(corr.mean().item())
                     else:

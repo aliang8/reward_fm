@@ -13,8 +13,6 @@ from rich.panel import Panel
 from peft import prepare_model_for_kbit_training
 
 import wandb
-
-# Import shared configs and utilities
 from rfm.configs.experiment_configs import ExperimentConfig
 from rfm.trainers import ReWiNDTrainer, RFMHeadsTrainer, RFMVQATrainer
 from rfm.data.datasets.helpers import show_available_datasets
@@ -32,9 +30,6 @@ from rfm.utils.setup_utils import (
 import datasets
 
 datasets.logging.set_verbosity_error()
-
-warnings.filterwarnings("ignore", message="Please use DTensor instead and we are deprecating ShardedTensor")
-
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 torch.autograd.set_detect_anomaly(True)
 

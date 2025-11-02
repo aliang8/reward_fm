@@ -123,7 +123,7 @@ repos=(
   jesbu1/humanoid_everyday_rfm
   jesbu1/motif_rfm
   jesbu1/auto_eval_rfm
-  #jesbu1/soar_rfm #maybe too many bad labels
+  jesbu1/soar_rfm 
   aliangdw/metaworld
   jesbu1/racer_rfm
   jesbu1/egodex_rfm

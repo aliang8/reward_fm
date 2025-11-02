@@ -804,6 +804,8 @@ class RFMHeadsTrainer(Trainer):
         if aggregate:
             success_loss = masked_loss.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
             mean_accuracy = masked_correct.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
+            success_loss = success_loss.mean()
+            mean_accuracy = mean_accuracy.mean()
             return success_loss, mean_accuracy
 
         return masked_loss, masked_correct

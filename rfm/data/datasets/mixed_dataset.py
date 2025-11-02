@@ -22,7 +22,7 @@ class MixedDataset(RFMBaseDataset):
         self.sample_type_ratio = config.sample_type_ratio
         self.max_samples = max_samples
         self.batch_size = batch_size
-        
+
         self.data_len = max(len(self.pref_dataset), len(self.similarity_dataset), len(self.progress_dataset))
 
     def __len__(self):
@@ -38,6 +38,17 @@ class MixedDataset(RFMBaseDataset):
         to handle cases where some sample types have zero probability or datasets are unavailable.
         """
         idx = idx % self.data_len
+
+        # Preference-only override by data_source using raw filtered dataset entry
+        pref_only = getattr(self.config, "pref_only_datasets", []) or []
+        try:
+            base_entry = self.filtered_dataset[idx]
+            data_source = base_entry.get("data_source", None)
+        except Exception:
+            data_source = None
+        if data_source in pref_only:
+            pref_idx = idx % max(1, len(self.pref_dataset))
+            return self.pref_dataset[pref_idx]
 
         # Available dataset types with their probabilities
         datasets = [

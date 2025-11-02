@@ -27,7 +27,7 @@ class EgoDexFrameLoader:
 
     def __call__(self) -> np.ndarray:
         """Load frames from the MP4 file when called."""
-        return load_video_frames(Path(self.mp4_path), max_frames=1800) # 30hz * 60s = 1800 frames
+        return load_video_frames(Path(self.mp4_path), max_frames=1800)  # 30hz * 60s = 1800 frames
 
 
 def _discover_trajectory_files(dataset_path: Path) -> list[tuple[Path, Path, str]]:
@@ -127,7 +127,7 @@ def load_egodex_dataset(dataset_path: str, max_trajectories: int = 100) -> dict[
 
         trajectory = {
             "frames": frame_loader,
-            #"actions": pose_data,
+            # "actions": pose_data,
             "is_robot": False,
             "task": task_description,
             "quality_label": "successful",

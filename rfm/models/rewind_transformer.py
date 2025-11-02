@@ -200,6 +200,7 @@ class ReWiNDTransformer(PreTrainedModel):
             progress_B_logits = einops.rearrange(progress_B_logits, "(b t) 1 -> b t", b=B)
 
             progress_logits = {"A": progress_A_logits, "B": progress_B_logits}
+            output.progress_logits = progress_logits
 
             # Predict success for all frames
             success_A_logits = self.success_head(final_embeddings_A.reshape(-1, D))
@@ -231,7 +232,7 @@ class ReWiNDTransformer(PreTrainedModel):
             token_embeddings = self.transformer(token_sequence)
             D = token_embeddings.shape[-1]
             final_embeddings = token_embeddings[:, 1:, :]  # avoid the text embedding
-            
+
             # Progress prediction for all frames
             progress_logits = self.progress_head(final_embeddings)
             progress_logits = progress_logits.squeeze(-1)

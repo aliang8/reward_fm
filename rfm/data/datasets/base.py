@@ -34,7 +34,7 @@ class RFMBaseDataset(torch.utils.data.Dataset):
         self.task_indices = {}
         self.source_indices = {}
         self.partial_success_indices = {}
-        
+
         # Load dataset-specific success cutoff map if available
         self.dataset_success_cutoff_map = {}
         if hasattr(config, "dataset_success_cutoff_file") and config.dataset_success_cutoff_file:
@@ -43,7 +43,7 @@ class RFMBaseDataset(torch.utils.data.Dataset):
         # Load trajectory dataset
         self._load_trajectory_dataset()
 
-        # Filter dataset 
+        # Filter dataset
         # We only want to iterate through successful trajectories
         # self.filtered_dataset = self.dataset.filter(lambda x: x["quality_label"] == "successful")
         self.filtered_dataset = self.dataset
@@ -75,13 +75,15 @@ class RFMBaseDataset(torch.utils.data.Dataset):
 
         # Check if preprocessed cache exists
         if os.path.exists(cache_dir):
-            rank_0_print(f"Found preprocessed cache at {cache_dir}, loading {cache_type} datasets...", verbose=self.verbose)
-        
+            rank_0_print(
+                f"Found preprocessed cache at {cache_dir}, loading {cache_type} datasets...", verbose=self.verbose
+            )
+
             self._load_preprocessed_cache(cache_dir, is_training=not self.is_evaluation)
 
             rank_0_print(
                 f"Successfully loaded preprocessed {cache_type} datasets with {len(self.dataset)} trajectory indices",
-                verbose=self.verbose
+                verbose=self.verbose,
             )
         else:
             # If no cache exists, we need to run the preprocessor first
@@ -112,7 +114,9 @@ class RFMBaseDataset(torch.utils.data.Dataset):
                         available_datasets.append((dataset_path, individual_cache_dir))
                         rank_0_print(f"       Found cache: {individual_cache_dir}", verbose=self.verbose)
                     except:
-                        rank_0_print(f"       Cache info file corrupted, skipping: {individual_cache_dir}", verbose=self.verbose)
+                        rank_0_print(
+                            f"       Cache info file corrupted, skipping: {individual_cache_dir}", verbose=self.verbose
+                        )
                         continue
                 else:
                     rank_0_print(f"       No info file found, skipping: {individual_cache_dir}", verbose=self.verbose)
@@ -123,10 +127,14 @@ class RFMBaseDataset(torch.utils.data.Dataset):
 
         # Warn about missing datasets
         if missing_datasets:
-            rank_0_print("\n⚠️  Warning: The following configured datasets are not available in the cache:", verbose=self.verbose)
+            rank_0_print(
+                "\n⚠️  Warning: The following configured datasets are not available in the cache:", verbose=self.verbose
+            )
             for dataset_path in missing_datasets:
                 rank_0_print(f"    ❌ {dataset_path}", verbose=self.verbose)
-            rank_0_print("  Available datasets will be loaded, but some configured data may be missing.", verbose=self.verbose)
+            rank_0_print(
+                "  Available datasets will be loaded, but some configured data may be missing.", verbose=self.verbose
+            )
 
         if not available_datasets:
             raise RuntimeError(
@@ -134,7 +142,9 @@ class RFMBaseDataset(torch.utils.data.Dataset):
                 f"Please run preprocess_datasets.py to create the cache for: {self.datasets}"
             )
 
-        rank_0_print(f"\nSummary: {len(available_datasets)} available, {len(missing_datasets)} missing", verbose=self.verbose)
+        rank_0_print(
+            f"\nSummary: {len(available_datasets)} available, {len(missing_datasets)} missing", verbose=self.verbose
+        )
 
         # Load available datasets
         loaded_datasets = []
@@ -155,7 +165,9 @@ class RFMBaseDataset(torch.utils.data.Dataset):
             # Load the processed dataset
             dataset_cache_dir = os.path.join(individual_cache_dir, "processed_dataset")
             if not os.path.exists(dataset_cache_dir):
-                rank_0_print(f"   Warning: Processed dataset not found at {dataset_cache_dir}, skipping...", verbose=self.verbose)
+                rank_0_print(
+                    f"   Warning: Processed dataset not found at {dataset_cache_dir}, skipping...", verbose=self.verbose
+                )
                 continue
 
             dataset = Dataset.load_from_disk(dataset_cache_dir, keep_in_memory=True)
@@ -204,10 +216,13 @@ class RFMBaseDataset(torch.utils.data.Dataset):
         self.partial_success_indices = combined_indices["partial_success_indices"]
 
         dataset_type = "training" if is_training else "evaluation"
-        rank_0_print(f"✅ Loaded {len(self.dataset)} total trajectories from preprocessed {dataset_type} datasets", verbose=self.verbose)
+        rank_0_print(
+            f"✅ Loaded {len(self.dataset)} total trajectories from preprocessed {dataset_type} datasets",
+            verbose=self.verbose,
+        )
         rank_0_print(
             f"  📊 Available datasets: {len(available_datasets)}/{len(missing_datasets) + len(available_datasets)}",
-            verbose=self.verbose
+            verbose=self.verbose,
         )
         rank_0_print(f"  📊 Missing datasets: {len(missing_datasets)}", verbose=self.verbose)
 

@@ -147,7 +147,7 @@ class SimilarityDataset(RFMBaseDataset):
         # Get success cutoff from pre-loaded map
         ds_key = ref_traj["data_source"]
         success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
-        
+
         traj_sim = create_rewind_trajectory(
             ref_traj,
             max_frames=self.config.max_frames,
@@ -206,7 +206,7 @@ class SimilarityDataset(RFMBaseDataset):
         if self.config.load_embeddings and ref_traj.get("embeddings_path"):
             ref_video_embeddings = load_embeddings_from_path(ref_traj["embeddings_path"], "video_embeddings")
             ref_text_embedding = load_embeddings_from_path(ref_traj["embeddings_path"], "text_embedding")
-            
+
             # Get success cutoff from pre-loaded map
             ds_key = ref_traj["data_source"]
             success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
@@ -214,6 +214,7 @@ class SimilarityDataset(RFMBaseDataset):
             subsampled, start_idx, end_idx, indices = subsample_segment_frames(
                 ref_video_embeddings, self.config.max_frames
             )
+            ref_frames_shape_orig = subsampled.shape
             ref_progress = compute_progress_from_segment(
                 num_frames_total=len(ref_video_embeddings),
                 start_idx=start_idx,
@@ -238,9 +239,8 @@ class SimilarityDataset(RFMBaseDataset):
             ds_key = ref_traj["data_source"]
             success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
 
-            subsampled, start_idx, end_idx, indices = subsample_segment_frames(
-                ref_frames, self.config.max_frames
-            )
+            subsampled, start_idx, end_idx, indices = subsample_segment_frames(ref_frames, self.config.max_frames)
+            ref_frames_shape_orig = subsampled.shape
             ref_progress = compute_progress_from_segment(
                 num_frames_total=len(ref_frames),
                 start_idx=start_idx,
@@ -268,6 +268,7 @@ class SimilarityDataset(RFMBaseDataset):
             traj_sim_text_embedding = load_embeddings_from_path(traj_sim["embeddings_path"], "text_embedding")
             # Rewound trajectory already has frames and progress from create_rewind_trajectory
             traj_sim_video_embeddings = traj_sim["frames"]
+            traj_sim_frames_shape_orig = traj_sim["frames_shape"]
             traj_sim_progress = traj_sim["target_progress"]
             traj_sim_metadata = traj_sim["metadata"]
         else:
@@ -278,6 +279,7 @@ class SimilarityDataset(RFMBaseDataset):
 
             # Rewound trajectory already has frames and progress from create_rewind_trajectory
             traj_sim_frames = traj_sim["frames"]
+            traj_sim_frames_shape_orig = traj_sim["frames_shape"]
             traj_sim_progress = traj_sim["target_progress"]
             traj_sim_metadata = traj_sim["metadata"]
 
@@ -291,7 +293,7 @@ class SimilarityDataset(RFMBaseDataset):
         if self.config.load_embeddings and traj_diff.get("embeddings_path"):
             traj_diff_video_embeddings = load_embeddings_from_path(traj_diff["embeddings_path"], "video_embeddings")
             traj_diff_text_embedding = load_embeddings_from_path(traj_diff["embeddings_path"], "text_embedding")
-            
+
             # Get success cutoff from pre-loaded map
             ds_key = traj_diff["data_source"]
             success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
@@ -299,6 +301,7 @@ class SimilarityDataset(RFMBaseDataset):
             subsampled, start_idx, end_idx, indices = subsample_segment_frames(
                 traj_diff_video_embeddings, self.config.max_frames
             )
+            traj_diff_frames_shape_orig = subsampled.shape
             traj_diff_progress = compute_progress_from_segment(
                 num_frames_total=len(traj_diff_video_embeddings),
                 start_idx=start_idx,
@@ -323,9 +326,8 @@ class SimilarityDataset(RFMBaseDataset):
             ds_key = traj_diff["data_source"]
             success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
 
-            subsampled, start_idx, end_idx, indices = subsample_segment_frames(
-                traj_diff_frames, self.config.max_frames
-            )
+            subsampled, start_idx, end_idx, indices = subsample_segment_frames(traj_diff_frames, self.config.max_frames)
+            traj_diff_frames_shape_orig = subsampled.shape
             traj_diff_progress = compute_progress_from_segment(
                 num_frames_total=len(traj_diff_frames),
                 start_idx=start_idx,
@@ -367,7 +369,7 @@ class SimilarityDataset(RFMBaseDataset):
         sample = SimilaritySample(
             ref_trajectory=Trajectory(
                 frames=ref_frames,
-                frames_shape=ref_frames.shape if ref_frames is not None else None,
+                frames_shape=ref_frames_shape_orig,
                 video_embeddings=ref_video_embeddings,
                 text_embedding=ref_text_embedding,
                 id=ref_traj["id"],
@@ -381,7 +383,7 @@ class SimilarityDataset(RFMBaseDataset):
             ),
             sim_trajectory=Trajectory(
                 frames=traj_sim_frames,
-                frames_shape=traj_sim_frames.shape if traj_sim_frames is not None else None,
+                frames_shape=traj_sim_frames_shape_orig,
                 video_embeddings=traj_sim_video_embeddings,
                 text_embedding=traj_sim_text_embedding,
                 id=traj_sim["id"],
@@ -395,7 +397,7 @@ class SimilarityDataset(RFMBaseDataset):
             ),
             diff_trajectory=Trajectory(
                 frames=traj_diff_frames,
-                frames_shape=traj_diff_frames.shape if traj_diff_frames is not None else None,
+                frames_shape=traj_diff_frames_shape_orig,
                 video_embeddings=traj_diff_video_embeddings,
                 text_embedding=traj_diff_text_embedding,
                 id=traj_diff["id"],
@@ -448,7 +450,7 @@ class SimilarityDataset(RFMBaseDataset):
             # Get success cutoff from pre-loaded map
             ds_key = ref_traj["data_source"]
             success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
-            
+
             traj_diff = create_rewind_trajectory(
                 ref_traj,
                 max_frames=self.config.max_frames,
@@ -467,7 +469,7 @@ class SimilarityDataset(RFMBaseDataset):
         if self.config.load_embeddings and ref_traj.get("embeddings_path"):
             ref_video_embeddings = load_embeddings_from_path(ref_traj["embeddings_path"], "video_embeddings")
             ref_text_embedding = load_embeddings_from_path(ref_traj["embeddings_path"], "text_embedding")
-            
+
             # Get success cutoff from pre-loaded map
             ds_key = ref_traj["data_source"]
             success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
@@ -475,6 +477,7 @@ class SimilarityDataset(RFMBaseDataset):
             subsampled, start_idx, end_idx, indices = subsample_segment_frames(
                 ref_video_embeddings, self.config.max_frames
             )
+            ref_frames_shape_orig = subsampled.shape
             ref_progress = compute_progress_from_segment(
                 num_frames_total=len(ref_video_embeddings),
                 start_idx=start_idx,
@@ -499,9 +502,8 @@ class SimilarityDataset(RFMBaseDataset):
             ds_key = ref_traj["data_source"]
             success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
 
-            subsampled, start_idx, end_idx, indices = subsample_segment_frames(
-                ref_frames, self.config.max_frames
-            )
+            subsampled, start_idx, end_idx, indices = subsample_segment_frames(ref_frames, self.config.max_frames)
+            ref_frames_shape_orig = subsampled.shape
             ref_progress = compute_progress_from_segment(
                 num_frames_total=len(ref_frames),
                 start_idx=start_idx,
@@ -527,7 +529,7 @@ class SimilarityDataset(RFMBaseDataset):
         if self.config.load_embeddings and traj_sim.get("embeddings_path"):
             traj_sim_video_embeddings = load_embeddings_from_path(traj_sim["embeddings_path"], "video_embeddings")
             traj_sim_text_embedding = load_embeddings_from_path(traj_sim["embeddings_path"], "text_embedding")
-            
+
             # Get success cutoff from pre-loaded map
             ds_key = traj_sim["data_source"]
             success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
@@ -535,6 +537,7 @@ class SimilarityDataset(RFMBaseDataset):
             subsampled, start_idx, end_idx, indices = subsample_segment_frames(
                 traj_sim_video_embeddings, self.config.max_frames
             )
+            traj_sim_frames_shape_orig = subsampled.shape
             traj_sim_progress = compute_progress_from_segment(
                 num_frames_total=len(traj_sim_video_embeddings),
                 start_idx=start_idx,
@@ -559,9 +562,8 @@ class SimilarityDataset(RFMBaseDataset):
             ds_key = traj_sim["data_source"]
             success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
 
-            subsampled, start_idx, end_idx, indices = subsample_segment_frames(
-                traj_sim_frames, self.config.max_frames
-            )
+            subsampled, start_idx, end_idx, indices = subsample_segment_frames(traj_sim_frames, self.config.max_frames)
+            traj_sim_frames_shape_orig = subsampled.shape
             traj_sim_progress = compute_progress_from_segment(
                 num_frames_total=len(traj_sim_frames),
                 start_idx=start_idx,
@@ -592,6 +594,7 @@ class SimilarityDataset(RFMBaseDataset):
             if traj_diff.get("target_progress"):
                 # Rewound trajectory already has embeddings and progress
                 traj_diff_video_embeddings = traj_diff["frames"]
+                traj_diff_frames_shape_orig = traj_diff["frames_shape"]
                 traj_diff_progress = traj_diff["target_progress"]
                 traj_diff_metadata = traj_diff["metadata"]
             else:
@@ -602,6 +605,7 @@ class SimilarityDataset(RFMBaseDataset):
                 subsampled, start_idx, end_idx, indices = subsample_segment_frames(
                     traj_diff_video_embeddings, self.config.max_frames
                 )
+                traj_diff_frames_shape_orig = subsampled.shape
                 traj_diff_progress = compute_progress_from_segment(
                     num_frames_total=len(traj_diff_video_embeddings),
                     start_idx=start_idx,
@@ -626,6 +630,7 @@ class SimilarityDataset(RFMBaseDataset):
             if traj_diff.get("target_progress"):
                 # Rewound trajectory already has frames and progress
                 traj_diff_frames = traj_diff["frames"]
+                traj_diff_frames_shape_orig = traj_diff["frames_shape"]
                 traj_diff_progress = traj_diff["target_progress"]
                 traj_diff_metadata = traj_diff["metadata"]
             else:
@@ -636,6 +641,7 @@ class SimilarityDataset(RFMBaseDataset):
                 subsampled, start_idx, end_idx, indices = subsample_segment_frames(
                     traj_diff_frames, self.config.max_frames
                 )
+                traj_diff_frames_shape_orig = subsampled.shape
                 traj_diff_progress = compute_progress_from_segment(
                     num_frames_total=len(traj_diff_frames),
                     start_idx=start_idx,
@@ -677,7 +683,7 @@ class SimilarityDataset(RFMBaseDataset):
         sample = SimilaritySample(
             ref_trajectory=Trajectory(
                 frames=ref_frames,
-                frames_shape=ref_frames.shape if ref_frames is not None else None,
+                frames_shape=ref_frames_shape_orig,
                 video_embeddings=ref_video_embeddings,
                 text_embedding=ref_text_embedding,
                 id=ref_traj["id"],
@@ -691,7 +697,7 @@ class SimilarityDataset(RFMBaseDataset):
             ),
             sim_trajectory=Trajectory(
                 frames=traj_sim_frames,
-                frames_shape=traj_sim_frames.shape if traj_sim_frames is not None else None,
+                frames_shape=traj_sim_frames_shape_orig,
                 video_embeddings=traj_sim_video_embeddings,
                 text_embedding=traj_sim_text_embedding,
                 id=traj_sim["id"],
@@ -705,7 +711,7 @@ class SimilarityDataset(RFMBaseDataset):
             ),
             diff_trajectory=Trajectory(
                 frames=traj_diff_frames,
-                frames_shape=traj_diff_frames.shape if traj_diff_frames is not None else None,
+                frames_shape=traj_diff_frames_shape_orig,
                 video_embeddings=traj_diff_video_embeddings,
                 text_embedding=traj_diff_text_embedding,
                 id=traj_diff["id"],

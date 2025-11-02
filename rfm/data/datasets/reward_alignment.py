@@ -7,6 +7,7 @@ For each trajectory, it creates multiple subsequences (0:2, 0:4, 0:6, etc.) and 
 as PreferenceSample objects that can be evaluated by the model.
 """
 
+import random
 from tqdm import tqdm
 
 from rfm.data.dataset_types import ProgressSample, Trajectory
@@ -33,13 +34,13 @@ class RewardAlignmentDataset(RFMBaseDataset):
     ):
         super().__init__(config, is_evaluation, verbose=verbose)
 
-        self.max_trajectories = config.max_trajectories
+        self.max_trajectories = max_trajectories
         self.frame_step = frame_step
         self.sample_indices = self._generate_all_sample_indices()
 
         rank_0_print(
             f"Generated {len(self.sample_indices)} reward alignment sample indices from {min(len(self.robot_trajectories), self.max_trajectories) if self.max_trajectories else len(self.robot_trajectories)} trajectories",
-            verbose=self.verbose
+            verbose=self.verbose,
         )
 
     def _generate_all_sample_indices(self) -> list[dict]:
@@ -48,10 +49,12 @@ class RewardAlignmentDataset(RFMBaseDataset):
 
         # Limit number of trajectories if specified
         trajectories_to_process = self.robot_trajectories
-        if self.max_trajectories is not None:
-            trajectories_to_process = self.robot_trajectories[: self.max_trajectories]
+        if self.max_trajectories is not None and self.max_trajectories < len(self.robot_trajectories):
+            trajectories_to_process = random.sample(self.robot_trajectories, self.max_trajectories)
 
-        rank_0_print(f"Generating subsequence samples for {len(trajectories_to_process)} trajectories", verbose=self.verbose)
+        rank_0_print(
+            f"Generating subsequence samples for {len(trajectories_to_process)} trajectories", verbose=self.verbose
+        )
 
         for traj_idx in trajectories_to_process:
             traj = self.dataset[traj_idx]
@@ -106,6 +109,7 @@ class RewardAlignmentDataset(RFMBaseDataset):
             video_embeddings = video_embeddings[:end_idx]
 
             subsequence_video_embeddings, _ = linspace_subsample_frames(video_embeddings, self.config.max_frames)
+            frames_shape_orig = subsequence_video_embeddings.shape
             video_embeddings, _ = pad_trajectory_to_max_frames_torch(
                 subsequence_video_embeddings, [gt_progress], self.config.max_frames
             )
@@ -122,6 +126,7 @@ class RewardAlignmentDataset(RFMBaseDataset):
 
             # Uniform subsample to max_frames
             subsequence_frames, _ = linspace_subsample_frames(subsequence_frames, max_frames)
+            frames_shape_orig = subsequence_frames.shape
 
             # Use the existing helper function to pad/subsample frames
             frames, _ = pad_trajectory_to_max_frames_np(subsequence_frames, [0], max_frames)
@@ -140,7 +145,7 @@ class RewardAlignmentDataset(RFMBaseDataset):
             id=original_traj["id"],
             task=original_traj["task"],
             frames=frames,
-            frames_shape=frames.shape if frames is not None else None,
+            frames_shape=frames_shape_orig,
             video_embeddings=video_embeddings,
             text_embedding=text_embedding,
             data_source=original_traj["data_source"],

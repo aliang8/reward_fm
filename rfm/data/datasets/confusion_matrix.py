@@ -28,10 +28,9 @@ class ConfusionMatrixDataset(RFMBaseDataset):
     how well the model can distinguish between different tasks.
     """
 
-    def __init__(self, config, is_evaluation=False, verbose=True, max_trajectories: int | None = None):
+    def __init__(self, config, is_evaluation=False, verbose=True, **kwargs):
         super().__init__(config, is_evaluation, verbose=verbose)
 
-        self.max_trajectories = max_trajectories
         self.sample_indices = self._generate_all_sample_indices()
         self.current_idx = 0
 
@@ -41,7 +40,7 @@ class ConfusionMatrixDataset(RFMBaseDataset):
             self.sentence_model.eval()
 
         rank_0_print(
-            f"Generated {len(self.sample_indices)} confusion matrix sample indices from {min(len(self.robot_trajectories), self.max_trajectories) if self.max_trajectories else len(self.robot_trajectories)} trajectories and {len(self.task_indices)} tasks"
+            f"Generated {len(self.sample_indices)} confusion matrix sample indices from {len(self.robot_trajectories)} trajectories and {len(self.task_indices)} tasks"
         )
 
     def _generate_all_sample_indices(self) -> list[dict]:
@@ -52,12 +51,11 @@ class ConfusionMatrixDataset(RFMBaseDataset):
         unique_tasks = list(self.task_indices.keys())
         rank_0_print(f"Found {len(unique_tasks)} unique tasks: {unique_tasks}", verbose=self.verbose)
 
-        # Limit number of trajectories if specified
         trajectories_to_process = self.robot_trajectories
-        if self.max_trajectories is not None:
-            trajectories_to_process = self.robot_trajectories[: self.max_trajectories]
-
-        rank_0_print(f"Processing {len(trajectories_to_process)} trajectories for confusion matrix analysis", verbose=self.verbose)
+        rank_0_print(
+            f"Processing {len(trajectories_to_process)} trajectories for confusion matrix analysis",
+            verbose=self.verbose,
+        )
 
         # Create all task-trajectory pairs
         for lang_task in unique_tasks:
@@ -89,44 +87,30 @@ class ConfusionMatrixDataset(RFMBaseDataset):
         lang_task = sample_idx_info["lang_task"]
         video_task = sample_idx_info["video_task"]
         video_path = sample_idx_info["video_path"]
-        id = sample_idx_info["id"]
 
         # Get the original trajectory
         video_traj = self.dataset[traj_idx]
 
-        # Initialize variables
         frames = None
         video_embeddings = None
         text_embedding = None
-
-        # Get max_frames from config
         max_frames = self.config.max_frames
 
         if self.config.load_embeddings and video_traj.get("embeddings_path"):
-            # Load embeddings from path
             video_embeddings = load_embeddings_from_path(video_traj["embeddings_path"], "video_embeddings")
-            # text_embedding = load_embeddings_from_path(video_traj["embeddings_path"], "text_embedding")
-
-            # we want the text embedding of the language task
             text_embedding = self.sentence_model.encode(lang_task)
-            # convert to torch tensor
             text_embedding = torch.tensor(text_embedding)
 
-            # Uniform subsample to max_frames
             video_embeddings, _ = linspace_subsample_frames(video_embeddings, max_frames)
-
-            # Use the torch padding function for embeddings
+            frames_shape_orig = video_embeddings.shape
             video_embeddings, _ = pad_trajectory_to_max_frames_torch(video_embeddings, [0], max_frames)
         else:
-            # Get frames and create sample
             frames = self._get_trajectory_frames(traj_idx)
             if frames is None or len(frames) == 0:
                 return None
 
-            # Uniform subsample to max_frames
             frames, _ = linspace_subsample_frames(frames, max_frames)
-
-            # Use the existing helper function to pad/subsample frames
+            frames_shape_orig = frames.shape
             frames, _ = pad_trajectory_to_max_frames_np(frames, [0], max_frames)
 
         # Create metadata for the confusion matrix analysis
@@ -142,7 +126,7 @@ class ConfusionMatrixDataset(RFMBaseDataset):
             id=video_traj["id"],
             task=lang_task,  # Use the confusion matrix task, not the original trajectory task
             frames=frames,
-            frames_shape=frames.shape if frames is not None and hasattr(frames, "shape") else None,
+            frames_shape=frames_shape_orig,
             video_embeddings=video_embeddings,
             text_embedding=text_embedding,
             data_source=video_traj["data_source"],

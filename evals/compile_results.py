@@ -116,6 +116,7 @@ def run_reward_alignment_eval_per_trajectory(
     for trajectory_id in unique_trajectory_ids:
         last_preds = []
         last_targets = []
+        last_success = []
         progress_preds = []
         results_for_trajectory = [r for r in results if r.get("id") == trajectory_id]
         results_for_trajectory.sort(key=lambda r: r["metadata"]["subsequence_end"])
@@ -130,6 +131,8 @@ def run_reward_alignment_eval_per_trajectory(
         # Try to get video_path from results, if not available, we'll return None for frames
         video_path = results_for_trajectory[0].get("video_path", None)
 
+        # Determine success availability from the first result only
+        have_success = results_for_trajectory[0].get("success_pred", None) is not None
         for r in results_for_trajectory:
             pred = r.get("progress_pred")
             tgt = r.get("target_progress")
@@ -142,6 +145,11 @@ def run_reward_alignment_eval_per_trajectory(
                 last_targets.append(float(tgt[-1]))
             else:
                 last_targets.append(0.0)
+
+            # Optional success prediction (binary) from trainer outputs
+            succ = r.get("success_pred", None)
+            if succ is not None:
+                last_success.append(float(succ[-1]))
 
         if len(last_preds) == 0 or len(last_targets) == 0:
             print("No valid predictions or targets found for trajectory: ", trajectory_id)
@@ -179,19 +187,43 @@ def run_reward_alignment_eval_per_trajectory(
         traj_pearson = traj_pearson if not np.isnan(traj_pearson) else 0.0
         traj_spearman = traj_spearman if not np.isnan(traj_spearman) else 0.0
 
-        # Create a wandb plot for progress predictions similar to the custom eval
-        fig, ax = plt.subplots(figsize=(6, 3.5))
-        ax.plot(last_preds, linewidth=2)
-        ax.set_ylabel("Progress")
-        ax.set_title(
-            f"Progress Pred - {task} - {quality_label}\nMSE: {traj_mse:.2f}, Pearson: {traj_pearson:.2f}, Spearman: {traj_spearman:.2f}"
-        )
-        ax.set_ylim(0, 1)
-        # remove right and top spines
-        ax.spines["right"].set_visible(False)
-        ax.spines["top"].set_visible(False)
-        # remove y ticks
-        ax.set_yticks([])
+        # Create a wandb plot for progress predictions and, if available, success predictions
+        if have_success and len(last_success) == len(last_preds):
+            fig, axs = plt.subplots(1, 2, figsize=(10, 3.5))
+            # Progress subplot
+            ax = axs[0]
+            ax.plot(last_preds, linewidth=2)
+            ax.set_ylabel("Progress")
+            ax.set_title(
+                f"Progress - {task} - {quality_label}\nMSE: {traj_mse:.2f}, r: {traj_pearson:.2f}, sp: {traj_spearman:.2f}"
+            )
+            ax.set_ylim(0, 1)
+            ax.spines["right"].set_visible(False)
+            ax.spines["top"].set_visible(False)
+            ax.set_yticks([])
+
+            # Success subplot (binary)
+            ax2 = axs[1]
+            ax2.step(range(len(last_success)), last_success, where="post", linewidth=2)
+            ax2.set_ylabel("Success")
+            ax2.set_title("Success (final per slice)")
+            ax2.set_ylim(-0.05, 1.05)
+            ax2.spines["right"].set_visible(False)
+            ax2.spines["top"].set_visible(False)
+            ax2.set_yticks([0, 1])
+        else:
+            fig, ax = plt.subplots(figsize=(6, 3.5))
+            ax.plot(last_preds, linewidth=2)
+            ax.set_ylabel("Progress")
+            ax.set_title(
+                f"Progress Pred - {task} - {quality_label}\nMSE: {traj_mse:.2f}, Pearson: {traj_pearson:.2f}, Spearman: {traj_spearman:.2f}"
+            )
+            ax.set_ylim(0, 1)
+            # remove right and top spines
+            ax.spines["right"].set_visible(False)
+            ax.spines["top"].set_visible(False)
+            # remove y ticks
+            ax.set_yticks([])
 
         plots.append(fig)
 

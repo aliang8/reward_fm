@@ -372,7 +372,7 @@ class PrefDataset(RFMBaseDataset):
                 chosen_video_embeddings, self.config.max_frames
             )
             chosen_progress = compute_progress_from_segment(
-                num_frames_total=len(chosen_video_embeddings),
+                num_frames_total=self.config.max_frames_after_preprocessing,
                 start_idx=start_idx,
                 end_idx=end_idx,
                 frame_indices=indices,
@@ -395,7 +395,7 @@ class PrefDataset(RFMBaseDataset):
 
             subsampled, start_idx, end_idx, indices = subsample_segment_frames(chosen_frames, self.config.max_frames)
             chosen_progress = compute_progress_from_segment(
-                num_frames_total=len(chosen_frames),
+                num_frames_total=self.config.max_frames_after_preprocessing,
                 start_idx=start_idx,
                 end_idx=end_idx,
                 frame_indices=indices,
@@ -435,7 +435,7 @@ class PrefDataset(RFMBaseDataset):
                     rejected_video_embeddings, self.config.max_frames
                 )
                 rejected_progress = compute_progress_from_segment(
-                    num_frames_total=len(rejected_video_embeddings),
+                    num_frames_total=self.config.max_frames_after_preprocessing,
                     start_idx=start_idx,
                     end_idx=end_idx,
                     frame_indices=indices,
@@ -467,7 +467,7 @@ class PrefDataset(RFMBaseDataset):
                     rejected_frames, self.config.max_frames
                 )
                 rejected_progress = compute_progress_from_segment(
-                    num_frames_total=len(rejected_frames),
+                    num_frames_total=self.config.max_frames_after_preprocessing,
                     start_idx=start_idx,
                     end_idx=end_idx,
                     frame_indices=indices,

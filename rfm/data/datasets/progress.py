@@ -122,6 +122,7 @@ class ProgressDataset(RFMBaseDataset):
         text_embedding = None
         task = processed_traj["task"]
         lang_vector = processed_traj["lang_vector"]
+        ds_key = processed_traj["data_source"]
 
         if self.config.load_embeddings and processed_traj.get("embeddings_path"):
             # We are loading precomputed image/text embeddings
@@ -138,15 +139,13 @@ class ProgressDataset(RFMBaseDataset):
                     )
                     frames_shape_orig = video_embeddings.shape
                 else:
-                    # Get success cutoff from pre-loaded map
-                    ds_key = processed_traj["data_source"]
                     success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
 
                     video_embeddings, start_idx, end_idx, indices = subsample_segment_frames(
                         video_embeddings, self.config.max_frames
                     )
                     progress = compute_progress_from_segment(
-                        num_frames_total=len(video_embeddings),
+                        num_frames_total=self.config.max_frames_after_preprocessing,
                         start_idx=start_idx,
                         end_idx=end_idx,
                         frame_indices=indices,
@@ -158,10 +157,6 @@ class ProgressDataset(RFMBaseDataset):
                         "end_idx": end_idx,
                         "subsampled_indices": indices,
                     }
-                    frames_shape_orig = video_embeddings.shape
-                    video_embeddings, progress = pad_trajectory_to_max_frames_torch(
-                        video_embeddings, progress, self.config.max_frames
-                    )
 
             text_embedding = load_embeddings_from_path(processed_traj["embeddings_path"], "text_embedding")
             if strategy_used == DataGenStrat.DIFFERENT_TASK:
@@ -184,13 +179,11 @@ class ProgressDataset(RFMBaseDataset):
                     )
                     frames_shape_orig = frames.shape
                 else:
-                    # Get success cutoff from pre-loaded map
-                    ds_key = processed_traj["data_source"]
                     success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
 
                     frames, start_idx, end_idx, indices = subsample_segment_frames(frames, self.config.max_frames)
                     progress = compute_progress_from_segment(
-                        num_frames_total=len(frames),
+                        num_frames_total=self.config.max_frames_after_preprocessing,
                         start_idx=start_idx,
                         end_idx=end_idx,
                         frame_indices=indices,
@@ -202,8 +195,6 @@ class ProgressDataset(RFMBaseDataset):
                         "end_idx": end_idx,
                         "subsampled_indices": indices,
                     }
-                    frames_shape_orig = frames.shape
-                    frames, progress = pad_trajectory_to_max_frames_np(frames, progress, self.config.max_frames)
 
             if strategy_used == DataGenStrat.DIFFERENT_TASK:
                 # for different task, we use original language instruction, but
@@ -213,6 +204,17 @@ class ProgressDataset(RFMBaseDataset):
 
         if strategy_used == DataGenStrat.DIFFERENT_TASK:
             progress = [0.0] * len(progress)
+
+        if self.config.load_embeddings:
+            frames_shape_orig = video_embeddings.shape
+            video_embeddings, progress = pad_trajectory_to_max_frames_torch(
+                video_embeddings, progress, self.config.max_frames, pad_from="right"
+            )
+        else:
+            frames_shape_orig = frames.shape
+            frames, progress = pad_trajectory_to_max_frames_np(
+                frames, progress, self.config.max_frames, pad_from="right"
+            )
 
         progress_traj = Trajectory(
             frames=frames,

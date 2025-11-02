@@ -763,7 +763,7 @@ class RFMHeadsTrainer(Trainer):
                 device=target_progress.device,
             )
 
-        # Handle Qwen downsampling: take every 2nd frame if using Qwen (done once)
+        # Handle Qwen downsampling: take every 2nd frame if using Qwen
         # Ensure success_logits matches target_progress length after downsampling
         if "Qwen" in self.config.model.base_model_id:
             target_progress = target_progress[:, ::2]
@@ -795,20 +795,18 @@ class RFMHeadsTrainer(Trainer):
             pos_weight=pos_weight_tensor,
         )
         masked_loss = loss * combined_mask
-        success_losses = masked_loss.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
 
         # Compute accuracy per sample
         success_preds = (torch.sigmoid(success_logits) > 0.5).float()
         correct = (success_preds == success_labels).float()
         masked_correct = correct * combined_mask
-        success_accuracies = masked_correct.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
 
         if aggregate:
-            success_loss = success_losses.mean()
-            mean_accuracy = success_accuracies.mean()
+            success_loss = masked_loss.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
+            mean_accuracy = masked_correct.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
             return success_loss, mean_accuracy
 
-        return success_losses, success_accuracies
+        return masked_loss, masked_correct
 
     def _compute_progress_loss_helper(
         self,
@@ -840,7 +838,7 @@ class RFMHeadsTrainer(Trainer):
         if isinstance(target_progress, list):
             target_progress = torch.stack(target_progress)
 
-        # Handle Qwen downsampling: take every 2nd frame if using Qwen (done once)
+        # Handle Qwen downsampling: take every 2nd frame if using Qwen
         if "Qwen" in self.config.model.base_model_id:
             target_progress = target_progress[:, ::2]
             if padding_mask is not None:
@@ -909,16 +907,14 @@ class RFMHeadsTrainer(Trainer):
 
     def _compute_progress_loss(self, model, inputs, return_outputs=False, training=True):
         """Compute progress prediction loss."""
-        model_output, model_timing_raw = self.forward_model(model, inputs, sample_type="progress")
+        model_output, _ = self.forward_model(model, inputs, sample_type="progress")
         progress_logits = model_output.progress_logits
         progress_pred = progress_logits["A"]
         progress_target = inputs["target_progress"]
         progress_target_mask = inputs["target_progress_mask"]
         padding_mask = inputs["padding_mask"]
 
-        import ipdb
-
-        ipdb.set_trace()
+        # [B, T], [B]
         progress_loss_all, spearman_corr_all = self._compute_progress_loss_helper(
             progress_pred,
             progress_target,
@@ -926,6 +922,19 @@ class RFMHeadsTrainer(Trainer):
             aggregate=False,
             padding_mask=padding_mask,
         )
+
+        # Apply all masks together at once
+        combined_mask = torch.ones_like(progress_target, dtype=torch.float32)
+        if padding_mask is not None:
+            combined_mask = combined_mask * padding_mask
+        if progress_target_mask is not None:
+            mask_t = progress_target_mask.to(device=combined_mask.device, dtype=combined_mask.dtype)
+            # Expand mask from (batch_size,) to (batch_size, seq_len)
+            combined_mask = combined_mask * mask_t.unsqueeze(1)
+
+        progress_loss_all = progress_loss_all * combined_mask
+        progress_loss = progress_loss_all.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
+        progress_loss = progress_loss.mean()
 
         if self.config.model.train_success_head:
             success_logits = model_output.success_logits
@@ -939,10 +948,11 @@ class RFMHeadsTrainer(Trainer):
                 aggregate=False,
                 padding_mask=padding_mask,
             )
-            success_loss = success_loss_all.mean()
-            success_accuracy = success_acc_all.mean()
-
-        final_loss = progress_loss + success_loss
+            success_loss = success_loss_all.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
+            success_accuracy = success_acc_all.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
+            success_loss = success_loss.mean()
+            success_accuracy = success_accuracy.mean()
+            final_loss = progress_loss + success_loss
 
         if return_outputs:
             outputs_dict = {}

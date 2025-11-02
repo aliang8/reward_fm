@@ -216,7 +216,7 @@ class SimilarityDataset(RFMBaseDataset):
             )
             ref_frames_shape_orig = subsampled.shape
             ref_progress = compute_progress_from_segment(
-                num_frames_total=len(ref_video_embeddings),
+                num_frames_total=self.config.max_frames_after_preprocessing,
                 start_idx=start_idx,
                 end_idx=end_idx,
                 frame_indices=indices,
@@ -242,7 +242,7 @@ class SimilarityDataset(RFMBaseDataset):
             subsampled, start_idx, end_idx, indices = subsample_segment_frames(ref_frames, self.config.max_frames)
             ref_frames_shape_orig = subsampled.shape
             ref_progress = compute_progress_from_segment(
-                num_frames_total=len(ref_frames),
+                num_frames_total=self.config.max_frames_after_preprocessing,
                 start_idx=start_idx,
                 end_idx=end_idx,
                 frame_indices=indices,
@@ -303,7 +303,7 @@ class SimilarityDataset(RFMBaseDataset):
             )
             traj_diff_frames_shape_orig = subsampled.shape
             traj_diff_progress = compute_progress_from_segment(
-                num_frames_total=len(traj_diff_video_embeddings),
+                num_frames_total=self.config.max_frames_after_preprocessing,
                 start_idx=start_idx,
                 end_idx=end_idx,
                 frame_indices=indices,
@@ -329,7 +329,7 @@ class SimilarityDataset(RFMBaseDataset):
             subsampled, start_idx, end_idx, indices = subsample_segment_frames(traj_diff_frames, self.config.max_frames)
             traj_diff_frames_shape_orig = subsampled.shape
             traj_diff_progress = compute_progress_from_segment(
-                num_frames_total=len(traj_diff_frames),
+                num_frames_total=self.config.max_frames_after_preprocessing,
                 start_idx=start_idx,
                 end_idx=end_idx,
                 frame_indices=indices,
@@ -479,7 +479,7 @@ class SimilarityDataset(RFMBaseDataset):
             )
             ref_frames_shape_orig = subsampled.shape
             ref_progress = compute_progress_from_segment(
-                num_frames_total=len(ref_video_embeddings),
+                num_frames_total=self.config.max_frames_after_preprocessing,
                 start_idx=start_idx,
                 end_idx=end_idx,
                 frame_indices=indices,
@@ -505,7 +505,7 @@ class SimilarityDataset(RFMBaseDataset):
             subsampled, start_idx, end_idx, indices = subsample_segment_frames(ref_frames, self.config.max_frames)
             ref_frames_shape_orig = subsampled.shape
             ref_progress = compute_progress_from_segment(
-                num_frames_total=len(ref_frames),
+                num_frames_total=self.config.max_frames_after_preprocessing,
                 start_idx=start_idx,
                 end_idx=end_idx,
                 frame_indices=indices,
@@ -539,7 +539,7 @@ class SimilarityDataset(RFMBaseDataset):
             )
             traj_sim_frames_shape_orig = subsampled.shape
             traj_sim_progress = compute_progress_from_segment(
-                num_frames_total=len(traj_sim_video_embeddings),
+                num_frames_total=self.config.max_frames_after_preprocessing,
                 start_idx=start_idx,
                 end_idx=end_idx,
                 frame_indices=indices,
@@ -565,7 +565,7 @@ class SimilarityDataset(RFMBaseDataset):
             subsampled, start_idx, end_idx, indices = subsample_segment_frames(traj_sim_frames, self.config.max_frames)
             traj_sim_frames_shape_orig = subsampled.shape
             traj_sim_progress = compute_progress_from_segment(
-                num_frames_total=len(traj_sim_frames),
+                num_frames_total=self.config.max_frames_after_preprocessing,
                 start_idx=start_idx,
                 end_idx=end_idx,
                 frame_indices=indices,
@@ -607,7 +607,7 @@ class SimilarityDataset(RFMBaseDataset):
                 )
                 traj_diff_frames_shape_orig = subsampled.shape
                 traj_diff_progress = compute_progress_from_segment(
-                    num_frames_total=len(traj_diff_video_embeddings),
+                    num_frames_total=self.config.max_frames_after_preprocessing,
                     start_idx=start_idx,
                     end_idx=end_idx,
                     frame_indices=indices,
@@ -643,7 +643,7 @@ class SimilarityDataset(RFMBaseDataset):
                 )
                 traj_diff_frames_shape_orig = subsampled.shape
                 traj_diff_progress = compute_progress_from_segment(
-                    num_frames_total=len(traj_diff_frames),
+                    num_frames_total=self.config.max_frames_after_preprocessing,
                     start_idx=start_idx,
                     end_idx=end_idx,
                     frame_indices=indices,

@@ -51,7 +51,7 @@ class ProgressDataset(RFMBaseDataset):
             strategies[1] = (
                 DataGenStrat.REWIND_SAME_TASK,
                 0.0,
-            )  
+            )
 
         # Remove strategies with zero probability
         strategies = [(strat, prob) for strat, prob in strategies if prob > 0]

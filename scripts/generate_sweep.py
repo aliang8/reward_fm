@@ -103,11 +103,11 @@ def _build_command(use_accelerate: bool, config_paths: List[str], overrides: Dic
         base_cmd = " ".join(accel)
     else:
         base_cmd = "uv run python3 train.py"
-    
+
     lines: List[str] = [base_cmd + " \\"]
-    
+
     override_items = list(overrides.items())
-    
+
     if config_paths:
         config_paths_str = " ".join(config_paths)
         if override_items:
@@ -120,7 +120,7 @@ def _build_command(use_accelerate: bool, config_paths: List[str], overrides: Dic
             lines.append(f"    {arg} \\")
         else:
             lines.append(f"    {arg}")
-    
+
     return "\n".join(lines)
 
 

@@ -100,14 +100,28 @@ def _build_command(use_accelerate: bool, config_paths: List[str], overrides: Dic
             "--num_processes=2",
             "train.py",
         ]
-        parts: List[str] = [" ".join(accel)]
+        base_cmd = " ".join(accel)
     else:
-        parts = ["uv run python3 train.py"]
+        base_cmd = "uv run python3 train.py"
+    
+    lines: List[str] = [base_cmd + " \\"]
+    
+    override_items = list(overrides.items())
+    
     if config_paths:
-        parts.append("--config_paths " + " ".join(config_paths))
-    for k, v in overrides.items():
-        parts.append(_format_override_arg(k, v))
-    return " ".join(parts)
+        config_paths_str = " ".join(config_paths)
+        if override_items:
+            lines.append(f"    --config_paths {config_paths_str} \\")
+        else:
+            lines.append(f"    --config_paths {config_paths_str}")
+    for i, (k, v) in enumerate(override_items):
+        arg = _format_override_arg(k, v)
+        if i < len(override_items) - 1:
+            lines.append(f"    {arg} \\")
+        else:
+            lines.append(f"    {arg}")
+    
+    return "\n".join(lines)
 
 
 def main():

@@ -2,7 +2,7 @@ use_accelerate: False
 config_paths:
   - rfm/configs/config.yaml
   - rfm/configs/rewind_transformer_config.yaml
-  - rfm/configs/data/oxe_mw.yaml
+  # - rfm/configs/data/oxe_mw.yaml
 
 
 # no progress only samples right now
@@ -22,5 +22,5 @@ groups:
     sweep_overrides:
       model.train_progress_head: [True]
       model.train_success_head: [False, True]
-      logging.use_wandb: [False]
+      logging.use_wandb: [True]
 

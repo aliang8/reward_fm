@@ -47,10 +47,11 @@ class ProgressDataset(RFMBaseDataset):
         ]
 
         if self.config.pairwise_progress:
+            # remove rewind same task strategy for pairwise progress
             strategies[1] = (
                 DataGenStrat.REWIND_SAME_TASK,
                 0.0,
-            )  # remove rewind same task strategy for pairwise progress
+            )  
 
         # Remove strategies with zero probability
         strategies = [(strat, prob) for strat, prob in strategies if prob > 0]
@@ -187,7 +188,7 @@ class ProgressDataset(RFMBaseDataset):
                     ds_key = processed_traj["data_source"]
                     success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
 
-                    subsampled, start_idx, end_idx, indices = subsample_segment_frames(frames, self.config.max_frames)
+                    frames, start_idx, end_idx, indices = subsample_segment_frames(frames, self.config.max_frames)
                     progress = compute_progress_from_segment(
                         num_frames_total=len(frames),
                         start_idx=start_idx,
@@ -201,7 +202,6 @@ class ProgressDataset(RFMBaseDataset):
                         "end_idx": end_idx,
                         "subsampled_indices": indices,
                     }
-                    frames = subsampled
                     frames_shape_orig = frames.shape
                     frames, progress = pad_trajectory_to_max_frames_np(frames, progress, self.config.max_frames)
 

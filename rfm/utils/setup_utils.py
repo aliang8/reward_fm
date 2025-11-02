@@ -463,6 +463,7 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
         "warmup_steps": cfg.training.warmup_steps,
         "warmup_ratio": cfg.training.warmup_ratio,
         "max_grad_norm": cfg.training.max_grad_norm,
+        "disable_tqdm": True,
         # # Compile settings
         # "torch_compile": True,
         # "torch_compile_mode": "max-autotune",

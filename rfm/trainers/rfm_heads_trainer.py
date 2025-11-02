@@ -913,11 +913,13 @@ class RFMHeadsTrainer(Trainer):
         progress_logits = model_output.progress_logits
         progress_pred = progress_logits["A"]
         progress_target = inputs["target_progress"]
-        frames_shape = inputs["frames_shape"]
         progress_target_mask = inputs["target_progress_mask"]
-
         padding_mask = inputs["padding_mask"]
-        masked_loss_all, spearman_corr_all = self._compute_progress_loss_helper(
+
+        import ipdb
+
+        ipdb.set_trace()
+        progress_loss_all, spearman_corr_all = self._compute_progress_loss_helper(
             progress_pred,
             progress_target,
             progress_target_mask,
@@ -925,23 +927,10 @@ class RFMHeadsTrainer(Trainer):
             padding_mask=padding_mask,
         )
 
-        # Average per sample using padding_mask
-        combined_mask = padding_mask if padding_mask is not None else torch.ones_like(masked_loss_all)
-        if progress_target_mask is not None:
-            progress_target_mask_t = progress_target_mask.to(device=combined_mask.device, dtype=combined_mask.dtype)
-            combined_mask = combined_mask * progress_target_mask_t.unsqueeze(1)
-        progress_loss_all = masked_loss_all.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
-        progress_loss = progress_loss_all.mean()
-
-        # Compute success loss if success head is enabled
-        success_loss = 0.0
-        success_accuracy = 0.0
-
         if self.config.model.train_success_head:
             success_logits = model_output.success_logits
             success_pred = success_logits["A"]
             data_source = inputs["data_source"]
-            padding_mask = inputs["padding_mask"]
             success_loss_all, success_acc_all = self._compute_success_loss_helper(
                 success_pred,
                 progress_target,
@@ -1031,50 +1020,35 @@ class RFMHeadsTrainer(Trainer):
         # Compute progress and success loss for the first trajectory in the paired samples
         # =========================================================================================
 
-        # Compute mask for trajectory A - only compute loss for samples that meet criteria
         target_progress_A_mask = inputs["target_progress_A_mask"]
-
-        # Get trajectory A data (used by both progress and success loss)
         target_progress_A = inputs["target_progress_A"]
-        frames_shape_A = inputs["frames_shape_A"]
-        if isinstance(frames_shape_A, (list, tuple)):
-            frames_shape_A = torch.stack(frames_shape_A)
         data_source = inputs["data_source"]
-
-        progress_loss = 0.0
-        spearman_corr_A = 0.0
+        padding_mask_A = inputs["padding_mask_A"]
 
         if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
             progress_pred_A = progress_logits["A"]
 
-            padding_mask_A = inputs["padding_mask_A"]
-            progress_loss, spearman_corr_A = self._compute_progress_loss_helper(
+            progress_loss, spearman_corr = self._compute_progress_loss_helper(
                 progress_pred_A,
                 target_progress_A,
                 mask=target_progress_A_mask,
-                aggregate=True,
                 padding_mask=padding_mask_A,
+                aggregate=True,
             )
             final_loss = preference_loss + progress_loss
 
-        # Compute success loss if success head is enabled
-        success_loss = 0.0
-        success_accuracy = 0.0
         if self.config.model.train_success_head:
             success_logits = model_outputs.success_logits
-            success_logits_A = success_logits["A"]
-            padding_mask_A = inputs["padding_mask_A"]
+            success_logits = success_logits["A"]
 
-            success_loss_A, success_acc_A = self._compute_success_loss_helper(
-                success_logits_A,
+            success_loss, success_accuracy = self._compute_success_loss_helper(
+                success_logits,
                 target_progress_A,
                 progress_loss_mask=target_progress_A_mask,
                 data_source=data_source,
-                aggregate=False,
                 padding_mask=padding_mask_A,
+                aggregate=True,
             )
-            success_loss = success_loss_A.mean()
-            success_accuracy = success_acc_A.mean()
             final_loss = final_loss + success_loss
 
         if return_outputs:
@@ -1086,7 +1060,7 @@ class RFMHeadsTrainer(Trainer):
             if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
                 outputs_dict.update({
                     f"{prefix}/pref_progress_loss": progress_loss.item(),
-                    f"{prefix}/pref_spearman_corr": spearman_corr_A.item(),
+                    f"{prefix}/pref_spearman_corr": spearman_corr.item(),
                 })
 
             if self.config.model.train_success_head:
@@ -1168,86 +1142,56 @@ class RFMHeadsTrainer(Trainer):
 
         # Forward pass for reference vs trajectory sim
         model_outputs_ref_sim, _ = self.forward_model(model, ref_sim_inputs, sample_type="similarity")
-        progress_logits_ref_sim = model_outputs_ref_sim.progress_logits
 
         # Forward pass for reference vs trajectory diff
         model_outputs_ref_diff, _ = self.forward_model(model, ref_diff_inputs, sample_type="similarity")
-        progress_logits_ref_diff = model_outputs_ref_diff.progress_logits
 
-        # Extract similarity scores from ModelOutput
         score_ref_sim = model_outputs_ref_sim.sim_logits.squeeze(-1)
         score_ref_diff = model_outputs_ref_diff.sim_logits.squeeze(-1)
 
         # Compute DPO-style loss: encourage trajectory sim to be more similar to reference than trajectory diff
         # This assumes trajectory sim is the "better" trajectory (more similar to reference)
-        similarity_loss_all = -F.logsigmoid(self.config.training.beta * (score_ref_sim - score_ref_diff))
-        similarity_loss = similarity_loss_all.mean()
-
+        # Use softplus for numerical stability: -log(sigmoid(x)) = log(1 + exp(-x)) = softplus(-x)
+        diff_scores = self.config.training.beta * (score_ref_sim - score_ref_diff)
+        diff_scores = torch.clamp(diff_scores, min=-50.0, max=50.0)
+        similarity_loss_all = F.softplus(-diff_scores)
+        similarity_loss = similarity_loss_all.float().mean()
         final_loss = similarity_loss
 
         # =========================================================================================
         # Compute progress and success loss for the reference trajectory
         # =========================================================================================
-        progress_loss = 0.0
-
         target_progress_ref_mask = inputs["target_progress_ref_mask"]
         target_progress_ref = inputs["target_progress_ref"]
-        ref_frames_shape = inputs["ref_frames_shape"]
-        if isinstance(ref_frames_shape, (list, tuple)):
-            ref_frames_shape = torch.stack(ref_frames_shape)
         data_source = inputs["data_source"]
+        padding_mask_ref = inputs["padding_mask_ref"]
 
-        # If we are predicting progress for similarity samples
         if self.config.model.train_progress_head and self.config.training.predict_sim_progress:
-            if target_progress_ref_mask.any():
-                progress_pred_ref_sim_A = progress_logits_ref_sim["A"]
+            progress_logits_ref_sim = model_outputs_ref_sim.progress_logits
+            progress_pred_ref_sim_A = progress_logits_ref_sim["A"]
 
-                padding_mask_ref = inputs["padding_mask_ref"]
-                masked_loss_ref_sim, spearman_corr_ref_sim = self._compute_progress_loss_helper(
-                    progress_pred_ref_sim_A,
-                    target_progress_ref,
-                    mask=target_progress_ref_mask,
-                    aggregate=False,
-                    padding_mask=padding_mask_ref,
-                )
+            progress_loss, spearman_corr = self._compute_progress_loss_helper(
+                progress_pred_ref_sim_A,
+                target_progress_ref,
+                mask=target_progress_ref_mask,
+                padding_mask=padding_mask_ref,
+                aggregate=True,
+            )
+            final_loss = similarity_loss + progress_loss
 
-                # Average per sample
-                combined_mask_ref = (
-                    padding_mask_ref if padding_mask_ref is not None else torch.ones_like(masked_loss_ref_sim)
-                )
-                if target_progress_ref_mask is not None:
-                    target_progress_ref_mask_t = target_progress_ref_mask.to(
-                        device=combined_mask_ref.device, dtype=combined_mask_ref.dtype
-                    )
-                    combined_mask_ref = combined_mask_ref * target_progress_ref_mask_t.unsqueeze(1)
-                progress_loss_ref_sim = masked_loss_ref_sim.sum(dim=1) / (combined_mask_ref.sum(dim=1) + 1e-8)
-
-                progress_loss_ref = progress_loss_ref_sim.mean()
-                progress_loss = progress_loss_ref
-                final_loss = similarity_loss + progress_loss
-
-        # Compute success loss if success head is enabled
-        success_loss = 0.0
-        success_accuracy = 0.0
         if self.config.model.train_success_head:
-            if target_progress_ref_mask.any():
-                success_logits_ref_sim = model_outputs_ref_sim.success_logits
-                success_logits_ref_sim_A = success_logits_ref_sim["A"]
-                padding_mask_ref = inputs.get("padding_mask_ref", None)
+            success_logits_ref_sim = model_outputs_ref_sim.success_logits
+            success_logits_ref_sim_A = success_logits_ref_sim["A"]
 
-                success_loss_ref_sim, success_acc_ref_sim = self._compute_success_loss_helper(
-                    success_logits_ref_sim_A,
-                    target_progress_ref,
-                    progress_loss_mask=target_progress_ref_mask,
-                    data_source=data_source,
-                    aggregate=False,
-                    padding_mask=padding_mask_ref,
-                )
-
-                success_loss_ref = success_loss_ref_sim.mean()
-                success_accuracy = success_acc_ref_sim.mean()
-                success_loss = success_loss_ref
-                final_loss = final_loss + success_loss
+            success_loss, success_accuracy = self._compute_success_loss_helper(
+                success_logits_ref_sim_A,
+                target_progress_ref,
+                progress_loss_mask=target_progress_ref_mask,
+                data_source=data_source,
+                padding_mask=padding_mask_ref,
+                aggregate=True,
+            )
+            final_loss = final_loss + success_loss
 
         if return_outputs:
             outputs_dict = {}
@@ -1258,8 +1202,7 @@ class RFMHeadsTrainer(Trainer):
             similarity_correct = (score_ref_sim > score_ref_diff).float()
             similarity_accuracy = similarity_correct.mean()
 
-            # Get data generation strategy for breakdown
-            data_gen_strategy = inputs.get("data_gen_strategy", None)
+            data_gen_strategy = inputs["data_gen_strategy"]
 
             # Split metrics by data generation strategy
             if data_gen_strategy is not None:
@@ -1293,8 +1236,7 @@ class RFMHeadsTrainer(Trainer):
             if self.config.model.train_progress_head and self.config.training.predict_sim_progress:
                 outputs_dict.update({
                     f"{prefix}/sim_progress_loss": progress_loss.item(),
-                    f"{prefix}/sim_progress_loss_ref": progress_loss_ref.item(),
-                    f"{prefix}/sim_spearman_corr_avg": spearman_corr_ref_sim.mean().item(),
+                    f"{prefix}/sim_spearman_corr_avg": spearman_corr.item(),
                 })
 
             # Add success loss metrics if computed
@@ -1306,4 +1248,4 @@ class RFMHeadsTrainer(Trainer):
 
             return final_loss, outputs_dict
 
-        return final_loss
+        return final_loss, {}

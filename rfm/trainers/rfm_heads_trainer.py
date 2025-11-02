@@ -707,13 +707,13 @@ class RFMHeadsTrainer(Trainer):
         self,
         success_logits,
         target_progress,
-        frame_shape,
-        mask=None,
+        progress_loss_mask=None,
         data_source=None,
         aggregate: bool = False,
+        padding_mask=None,
     ):
         """
-        Helper function to compute success prediction loss based on progress values.
+        Helper function to compute success prediction loss.
 
         Computes binary cross-entropy loss for frames with:
         - progress < min_success (label=0, failure)
@@ -723,9 +723,11 @@ class RFMHeadsTrainer(Trainer):
         Args:
             success_logits: Success prediction logits (can be tensor or list of tensors)
             target_progress: Target progress tensors (can be tensor or list of tensors)
-            frame_shape: List of frame shapes for splicing
+            progress_loss_mask: Per-sample mask tensor of shape (batch_size,) with 1.0 for samples
+                where we should compute progress/success loss (e.g., successful, rewound, different_task)
             data_source: Dataset source information for threshold lookup
             aggregate: Whether to return the mean of the losses and accuracies
+            padding_mask: Padding mask tensor of shape (batch_size, max_length) with 1.0 for valid frames
 
         Returns:
             tuple: (success_loss, success_accuracy)
@@ -733,212 +735,147 @@ class RFMHeadsTrainer(Trainer):
         if success_logits is None or target_progress is None:
             return 0.0, 0.0
 
-        # Ensure we have the same number of samples
-        assert len(success_logits) == len(target_progress), (
-            f"Success logits and target progress have different batch sizes"
-        )
+        # Normalize inputs to tensors
+        if isinstance(success_logits, list):
+            success_logits = torch.stack(success_logits)
+        if isinstance(target_progress, list):
+            target_progress = torch.stack(target_progress)
 
         # Get base thresholds from config
         min_success = self.config.data.min_success
         max_success_default = self.config.data.max_success
 
         # Compute per-sample max_success thresholds if data_source is available
-        max_success_list = []
         if data_source is not None:
-            for ds in data_source:
-                ds_key = ds if isinstance(ds, str) else str(ds)
-                if ds_key in self.dataset_success_percent:
-                    # Use dataset-specific threshold: anything >= this percentage is success
-                    max_success_sample = self.dataset_success_percent[ds_key]
-                else:
-                    max_success_sample = max_success_default
-                max_success_list.append(max_success_sample)
+            max_success_tensor = torch.tensor(
+                [
+                    self.dataset_success_percent.get(ds if isinstance(ds, str) else str(ds), max_success_default)
+                    for ds in data_source
+                ],
+                dtype=target_progress.dtype,
+                device=target_progress.device,
+            )
         else:
-            # No data source info, use default for all samples
-            max_success_list = [max_success_default] * len(success_logits)
+            max_success_tensor = torch.full(
+                (success_logits.shape[0],),
+                max_success_default,
+                dtype=target_progress.dtype,
+                device=target_progress.device,
+            )
 
-        # Splice success logits based on frame shapes
-        spliced_success_logits = []
-        spliced_target_progress = []
+        # Handle Qwen downsampling: take every 2nd frame if using Qwen (done once)
+        # Ensure success_logits matches target_progress length after downsampling
+        if "Qwen" in self.config.model.base_model_id:
+            target_progress = target_progress[:, ::2]
+            if padding_mask is not None:
+                padding_mask = padding_mask[:, ::2]
 
-        for _i, (pred, target, shape) in enumerate(zip(success_logits, target_progress, frame_shape, strict=False)):
-            num_frames = shape[0] if len(shape) > 0 else 0
-            if "Qwen" in self.config.model.base_model_id:
-                spliced_target = target[:num_frames][::2]
-            else:
-                spliced_target = target[:num_frames]
+        # Generate success labels and mask vectorized
+        # combined_mask: 1.0 where we should compute loss (low or high progress), 0.0 otherwise
+        # success_labels: 0.0 for failure, 1.0 for success
+        combined_mask = ((target_progress < min_success) | (target_progress > max_success_tensor.unsqueeze(1))).float()
+        success_labels = (target_progress > max_success_tensor.unsqueeze(1)).float()
 
-            spliced_success_logits.append(pred[:num_frames])
-            spliced_target_progress.append(spliced_target)
-
-        # Compute success loss per element
-        success_losses = []
-        success_accuracies = []
+        if padding_mask is not None:
+            combined_mask = combined_mask * padding_mask
+        if progress_loss_mask is not None:
+            progress_loss_mask_t = progress_loss_mask.to(device=combined_mask.device, dtype=combined_mask.dtype)
+            # Expand mask from (batch_size,) to (batch_size, seq_len)
+            combined_mask = combined_mask * progress_loss_mask_t.unsqueeze(1)
 
         positive_weight_value = float(getattr(self.config.training, "success_positive_weight", 1.0))
+        pos_weight_tensor = torch.tensor(
+            positive_weight_value, device=success_logits.device, dtype=success_logits.dtype
+        )
 
-        for i, (pred, target) in enumerate(zip(spliced_success_logits, spliced_target_progress, strict=False)):
-            # Get per-sample max_success threshold
-            max_success = max_success_list[i]
+        loss = F.binary_cross_entropy_with_logits(
+            success_logits,
+            success_labels,
+            reduction="none",
+            pos_weight=pos_weight_tensor,
+        )
+        masked_loss = loss * combined_mask
+        success_losses = masked_loss.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
 
-            # Generate success labels and mask based on progress
-            success_labels = torch.zeros_like(target)
-            success_mask = torch.zeros_like(target)
+        # Compute accuracy per sample
+        success_preds = (torch.sigmoid(success_logits) > 0.5).float()
+        correct = (success_preds == success_labels).float()
+        masked_correct = correct * combined_mask
+        success_accuracies = masked_correct.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
 
-            # Frames with low progress are failures (label=0)
-            success_mask[target < min_success] = 1.0
-            success_labels[target < min_success] = 0.0
+        if aggregate:
+            success_loss = success_losses.mean()
+            mean_accuracy = success_accuracies.mean()
+            return success_loss, mean_accuracy
 
-            # Frames with high progress are successes (label=1)
-            success_mask[target > max_success] = 1.0
-            success_labels[target > max_success] = 1.0
-
-            # Everything else in-between is ignored and we don't predict success for these frames
-
-            # Only compute loss for frames with mask=1
-            if success_mask.sum() > 0:
-                pos_weight_tensor = torch.tensor(
-                    positive_weight_value,
-                    device=pred.device,
-                    dtype=pred.dtype,
-                )
-                loss = F.binary_cross_entropy_with_logits(
-                    pred[success_mask == 1],
-                    success_labels[success_mask == 1],
-                    reduction="mean",
-                    pos_weight=pos_weight_tensor,
-                )
-                success_losses.append(loss)
-
-                # Compute accuracy
-                success_preds = (torch.sigmoid(pred[success_mask == 1]) > 0.5).float()
-                accuracy = (success_preds == success_labels[success_mask == 1]).float().mean()
-                success_accuracies.append(accuracy)
-            else:
-                success_losses.append(torch.tensor(0.0, device=pred.device, dtype=pred.dtype))
-                success_accuracies.append(torch.tensor(0.0, device=pred.device, dtype=pred.dtype))
-
-        if success_losses:
-            success_losses = torch.stack(success_losses)
-            success_accuracies = torch.stack(success_accuracies)
-
-            if aggregate:
-                if mask is not None:
-                    mask_t = mask.to(device=success_losses.device, dtype=success_losses.dtype)
-                    if mask_t.sum() > 0:
-                        success_loss = (success_losses * mask_t).sum() / mask_t.sum()
-                    else:
-                        success_loss = success_losses.mean()
-
-                    acc_mask_t = mask.to(device=success_accuracies.device, dtype=success_accuracies.dtype)
-                    if acc_mask_t.sum() > 0:
-                        mean_accuracy = (success_accuracies * acc_mask_t).sum() / acc_mask_t.sum()
-                    else:
-                        mean_accuracy = success_accuracies.mean()
-                else:
-                    success_loss = success_losses.mean()
-                    mean_accuracy = success_accuracies.mean()
-                return success_loss, mean_accuracy
-            else:
-                if mask is not None:
-                    mask_t = mask.to(device=success_losses.device, dtype=success_losses.dtype)
-                    success_losses = success_losses * mask_t
-                    success_accuracies = success_accuracies.to(dtype=mask_t.dtype) * mask_t
-                return success_losses, success_accuracies
-
-        return 0.0, 0.0
+        return success_losses, success_accuracies
 
     def _compute_progress_loss_helper(
         self,
-        progress_logits,
+        progress_pred,
         target_progress,
-        frame_shape,
         mask,
         aggregate: bool = False,
+        padding_mask=None,
     ):
         """
-        Helper function to compute progress loss for a single trajectory with frame shape splicing.
+        Helper function to compute progress loss.
 
         Args:
-            progress_logits: Progress prediction tensors (can be tensor or list of tensors)
-            target_progress: Target progress tensors (can be tensor or list of tensors)
-            frame_shape: List of frame shapes for splicing
+            progress_pred: Progress prediction tensors (can be tensor or list of tensors) of shape (batch_size, seq_len)
+            target_progress: Target progress tensors (can be tensor or list of tensors) of shape (batch_size, seq_len)
+            mask: Per-sample mask tensor of shape (batch_size,) with 1.0 for samples where we should compute loss
             aggregate: Whether to return the mean of the losses and correlations
+            padding_mask: Padding mask tensor of shape (batch_size, max_length) with 1.0 for valid frames
 
         Returns:
             tuple: (progress_loss, spearman_correlation)
         """
-        # Handle case where inputs might be tensors or lists
-        if progress_logits is None or target_progress is None:
+        if progress_pred is None or target_progress is None:
             return 0.0, 0.0
 
-        # Ensure we have the same number of samples
-        assert len(progress_logits) == len(target_progress), (
-            f"Progress logits and target progress have different batch sizes"
+        # Normalize inputs to tensors
+        if isinstance(progress_pred, list):
+            progress_pred = torch.stack(progress_pred)
+        if isinstance(target_progress, list):
+            target_progress = torch.stack(target_progress)
+
+        # Handle Qwen downsampling: take every 2nd frame if using Qwen (done once)
+        if "Qwen" in self.config.model.base_model_id:
+            target_progress = target_progress[:, ::2]
+            if padding_mask is not None:
+                padding_mask = padding_mask[:, ::2]
+
+        # Apply all masks together at once
+        combined_mask = torch.ones_like(target_progress, dtype=torch.float32)
+        if padding_mask is not None:
+            combined_mask = combined_mask * padding_mask
+        if mask is not None:
+            mask_t = mask.to(device=combined_mask.device, dtype=combined_mask.dtype)
+            # Expand mask from (batch_size,) to (batch_size, seq_len)
+            combined_mask = combined_mask * mask_t.unsqueeze(1)
+
+        if self.config.data.pairwise_progress:
+            # Take last frame for predictions and targets
+            progress_pred = progress_pred[:, -1:]  # Keep dim for consistency
+            target_progress = target_progress[:, -1:]
+            combined_mask = combined_mask[:, -1:]
+
+        # Compute MSE loss per frame
+        loss_per_frame = F.mse_loss(progress_pred.float(), target_progress.float(), reduction="none")
+        masked_loss = loss_per_frame * combined_mask
+        spearman_correlations = compute_spearman_correlation(
+            progress_pred, target_progress, aggregate=False, mask=combined_mask
         )
 
-        # Splice both predicted and target logits based on frame shapes
-        # The frame shape is used for splicing target and removing the padded frames / progress values
-        spliced_progress_logits = []
-        spliced_target_progress = []
+        if aggregate:
+            # Average per sample, then take mean across batch
+            progress_losses = masked_loss.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
+            progress_loss = progress_losses.mean()
+            mean_spearman = spearman_correlations.mean()
+            return progress_loss, mean_spearman
 
-        for _i, (pred, target, shape) in enumerate(zip(progress_logits, target_progress, frame_shape, strict=False)):
-            num_frames = shape[0] if len(shape) > 0 else 0
-            if "Qwen" in self.config.model.base_model_id:
-                spliced_target = target[:num_frames][::2]
-            else:
-                spliced_target = target[:num_frames]
-
-            spliced_progress_logits.append(pred[:num_frames])
-            spliced_target_progress.append(spliced_target)
-
-        # Compute MSE loss per element and then stack into a tensor
-        progress_losses = []
-        spearman_correlations = []
-
-        for _i, (pred, target) in enumerate(zip(spliced_progress_logits, spliced_target_progress, strict=False)):
-            # Handle pairwise progress: use only the last frame prediction
-            if self.config.data.pairwise_progress:
-                # Take last frame for predictions and targets
-                pred_last = pred[-1].unsqueeze(0) if pred.shape[0] > 1 else pred
-                target_last = target[-1].unsqueeze(0) if target.shape[0] > 1 else target
-
-                loss = F.mse_loss(pred_last.float(), target_last.float())
-                progress_losses.append(loss)
-
-                # For pairwise, we don't compute spearman correlation on a single value
-                spearman_corr = torch.tensor(0.0, device=pred.device)
-                spearman_correlations.append(spearman_corr)
-            else:
-                loss = F.mse_loss(pred.float(), target.float())
-            progress_losses.append(loss)
-
-            # Compute Spearman correlation for this sample
-            spearman_corr = compute_spearman_correlation(pred, target)
-            spearman_correlations.append(spearman_corr)
-
-        if progress_losses:
-            if aggregate:
-                progress_loss = torch.stack(progress_losses) * mask
-                if mask.sum() > 0:
-                    progress_loss = progress_loss.sum() / mask.sum()
-                else:
-                    progress_loss = progress_loss.mean()
-
-                # Average the Spearman correlations
-                mean_spearman = torch.stack(spearman_correlations) * mask
-                if mask.sum() > 0:
-                    mean_spearman = mean_spearman.sum() / mask.sum()
-                else:
-                    mean_spearman = mean_spearman.mean()
-
-                return progress_loss, mean_spearman
-            else:
-                progress_losses = torch.stack(progress_losses) * mask
-                spearman_correlations = torch.stack(spearman_correlations) * mask
-                return progress_losses, spearman_correlations
-
-        return 0.0, 0.0
+        return masked_loss, spearman_correlations
 
     def forward_model(self, model, inputs, sample_type="progress"):
         """Forward pass for the model."""
@@ -979,14 +916,21 @@ class RFMHeadsTrainer(Trainer):
         frames_shape = inputs["frames_shape"]
         progress_target_mask = inputs["target_progress_mask"]
 
-        progress_loss_all, spearman_corr_all = self._compute_progress_loss_helper(
+        padding_mask = inputs["padding_mask"]
+        masked_loss_all, spearman_corr_all = self._compute_progress_loss_helper(
             progress_pred,
             progress_target,
-            frames_shape,
             progress_target_mask,
             aggregate=False,
+            padding_mask=padding_mask,
         )
 
+        # Average per sample using padding_mask
+        combined_mask = padding_mask if padding_mask is not None else torch.ones_like(masked_loss_all)
+        if progress_target_mask is not None:
+            progress_target_mask_t = progress_target_mask.to(device=combined_mask.device, dtype=combined_mask.dtype)
+            combined_mask = combined_mask * progress_target_mask_t.unsqueeze(1)
+        progress_loss_all = masked_loss_all.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
         progress_loss = progress_loss_all.mean()
 
         # Compute success loss if success head is enabled
@@ -997,13 +941,14 @@ class RFMHeadsTrainer(Trainer):
             success_logits = model_output.success_logits
             success_pred = success_logits["A"]
             data_source = inputs["data_source"]
+            padding_mask = inputs["padding_mask"]
             success_loss_all, success_acc_all = self._compute_success_loss_helper(
                 success_pred,
                 progress_target,
-                frames_shape,
-                mask=progress_target_mask,
+                progress_loss_mask=progress_target_mask,
                 data_source=data_source,
                 aggregate=False,
+                padding_mask=padding_mask,
             )
             success_loss = success_loss_all.mean()
             success_accuracy = success_acc_all.mean()
@@ -1064,9 +1009,6 @@ class RFMHeadsTrainer(Trainer):
         model_outputs, model_timing_raw = self.forward_model(model, inputs, sample_type="preference")
         progress_logits = model_outputs.progress_logits
 
-        inputs.get("chosen_data_gen_strategy", None)
-        rejected_data_gen_strategy = inputs.get("rejected_data_gen_strategy", None)
-
         preference_loss = 0.0
         # progress_loss = 0.0
 
@@ -1103,60 +1045,48 @@ class RFMHeadsTrainer(Trainer):
         spearman_corr_A = 0.0
 
         if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
-            if target_progress_A_mask.any():
-                progress_logits_A = progress_logits["A"]
+            progress_pred_A = progress_logits["A"]
 
-                progress_loss_A, spearman_corr_A = self._compute_progress_loss_helper(
-                    progress_logits_A,
-                    target_progress_A,
-                    frames_shape_A,
-                    mask=target_progress_A_mask,
-                    aggregate=False,
-                )
-
-                if progress_loss_A.any():
-                    progress_loss = progress_loss_A.mean()
-                    spearman_corr_A = spearman_corr_A.mean()
-                else:
-                    progress_loss = torch.tensor(0.0, device=self.accelerator.device)
-                    spearman_corr_A = torch.tensor(0.0, device=self.accelerator.device)
-                final_loss = preference_loss + progress_loss
-            else:
-                final_loss = preference_loss
+            padding_mask_A = inputs["padding_mask_A"]
+            progress_loss, spearman_corr_A = self._compute_progress_loss_helper(
+                progress_pred_A,
+                target_progress_A,
+                mask=target_progress_A_mask,
+                aggregate=True,
+                padding_mask=padding_mask_A,
+            )
+            final_loss = preference_loss + progress_loss
 
         # Compute success loss if success head is enabled
         success_loss = 0.0
         success_accuracy = 0.0
         if self.config.model.train_success_head:
-            if target_progress_A_mask.any():
-                success_logits = model_outputs.success_logits
-                success_logits_A = success_logits["A"]
+            success_logits = model_outputs.success_logits
+            success_logits_A = success_logits["A"]
+            padding_mask_A = inputs["padding_mask_A"]
 
-                success_loss_A, success_acc_A = self._compute_success_loss_helper(
-                    success_logits_A,
-                    target_progress_A,
-                    frames_shape_A,
-                    mask=target_progress_A_mask,
-                    data_source=data_source,
-                    aggregate=False,
-                )
-                success_loss = success_loss_A.mean()
-                success_accuracy = success_acc_A.mean()
-                final_loss = final_loss + success_loss
+            success_loss_A, success_acc_A = self._compute_success_loss_helper(
+                success_logits_A,
+                target_progress_A,
+                progress_loss_mask=target_progress_A_mask,
+                data_source=data_source,
+                aggregate=False,
+                padding_mask=padding_mask_A,
+            )
+            success_loss = success_loss_A.mean()
+            success_accuracy = success_acc_A.mean()
+            final_loss = final_loss + success_loss
 
         if return_outputs:
             outputs_dict = {}
 
             prefix = "train" if training else "eval"
+            rejected_data_gen_strategy = inputs["rejected_data_gen_strategy"]
 
             if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
                 outputs_dict.update({
-                    f"{prefix}/pref_progress_loss": progress_loss.item()
-                    if isinstance(progress_loss, torch.Tensor)
-                    else (float(progress_loss) if progress_loss != 0.0 else 0.0),
-                    f"{prefix}/pref_spearman_corr": spearman_corr_A.item()
-                    if isinstance(spearman_corr_A, torch.Tensor)
-                    else (float(spearman_corr_A) if spearman_corr_A != 0.0 else 0.0),
+                    f"{prefix}/pref_progress_loss": progress_loss.item(),
+                    f"{prefix}/pref_spearman_corr": spearman_corr_A.item(),
                 })
 
             if self.config.model.train_success_head:
@@ -1255,7 +1185,6 @@ class RFMHeadsTrainer(Trainer):
 
         final_loss = similarity_loss
 
-
         # =========================================================================================
         # Compute progress and success loss for the reference trajectory
         # =========================================================================================
@@ -1271,15 +1200,27 @@ class RFMHeadsTrainer(Trainer):
         # If we are predicting progress for similarity samples
         if self.config.model.train_progress_head and self.config.training.predict_sim_progress:
             if target_progress_ref_mask.any():
-                progress_logits_ref_sim_A = progress_logits_ref_sim["A"]
+                progress_pred_ref_sim_A = progress_logits_ref_sim["A"]
 
-                progress_loss_ref_sim, spearman_corr_ref_sim = self._compute_progress_loss_helper(
-                    progress_logits_ref_sim_A,
+                padding_mask_ref = inputs["padding_mask_ref"]
+                masked_loss_ref_sim, spearman_corr_ref_sim = self._compute_progress_loss_helper(
+                    progress_pred_ref_sim_A,
                     target_progress_ref,
-                    ref_frames_shape,
                     mask=target_progress_ref_mask,
                     aggregate=False,
+                    padding_mask=padding_mask_ref,
                 )
+
+                # Average per sample
+                combined_mask_ref = (
+                    padding_mask_ref if padding_mask_ref is not None else torch.ones_like(masked_loss_ref_sim)
+                )
+                if target_progress_ref_mask is not None:
+                    target_progress_ref_mask_t = target_progress_ref_mask.to(
+                        device=combined_mask_ref.device, dtype=combined_mask_ref.dtype
+                    )
+                    combined_mask_ref = combined_mask_ref * target_progress_ref_mask_t.unsqueeze(1)
+                progress_loss_ref_sim = masked_loss_ref_sim.sum(dim=1) / (combined_mask_ref.sum(dim=1) + 1e-8)
 
                 progress_loss_ref = progress_loss_ref_sim.mean()
                 progress_loss = progress_loss_ref
@@ -1292,14 +1233,15 @@ class RFMHeadsTrainer(Trainer):
             if target_progress_ref_mask.any():
                 success_logits_ref_sim = model_outputs_ref_sim.success_logits
                 success_logits_ref_sim_A = success_logits_ref_sim["A"]
+                padding_mask_ref = inputs.get("padding_mask_ref", None)
 
                 success_loss_ref_sim, success_acc_ref_sim = self._compute_success_loss_helper(
                     success_logits_ref_sim_A,
                     target_progress_ref,
-                    ref_frames_shape,
-                    mask=target_progress_ref_mask,
+                    progress_loss_mask=target_progress_ref_mask,
                     data_source=data_source,
                     aggregate=False,
+                    padding_mask=padding_mask_ref,
                 )
 
                 success_loss_ref = success_loss_ref_sim.mean()
@@ -1349,24 +1291,10 @@ class RFMHeadsTrainer(Trainer):
 
             # Add progress loss metrics if computed
             if self.config.model.train_progress_head and self.config.training.predict_sim_progress:
-                # Compute average Spearman correlation across reference trajectories
-                spearman_values = []
-                for corr in [spearman_corr_ref_sim]:
-                    if isinstance(corr, torch.Tensor):
-                        spearman_values.append(corr.mean().item())
-                    else:
-                        spearman_values.append(corr)
-
-                avg_spearman = np.mean(spearman_values) if spearman_values else 0.0
-
                 outputs_dict.update({
-                    f"{prefix}/sim_progress_loss": progress_loss.item()
-                    if isinstance(progress_loss, torch.Tensor)
-                    else progress_loss,
-                    f"{prefix}/sim_progress_loss_ref": progress_loss_ref.item()
-                    if isinstance(progress_loss_ref, torch.Tensor)
-                    else progress_loss_ref,
-                    f"{prefix}/sim_spearman_corr_avg": avg_spearman,
+                    f"{prefix}/sim_progress_loss": progress_loss.item(),
+                    f"{prefix}/sim_progress_loss_ref": progress_loss_ref.item(),
+                    f"{prefix}/sim_spearman_corr_avg": spearman_corr_ref_sim.mean().item(),
                 })
 
             # Add success loss metrics if computed

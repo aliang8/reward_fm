@@ -43,6 +43,36 @@ def should_compute_progress(quality_label: str, data_gen_strategy: str) -> float
     return 0.0
 
 
+def create_padding_mask(frames_shapes: torch.Tensor, max_length: int = None) -> torch.Tensor:
+    """
+    Create padding mask based on frames_shape.
+
+    Args:
+        frames_shapes: Tensor of shape (batch_size, ...) where first dim of each row is num_frames
+        max_length: Maximum length for padding. If None, uses max of first dim in frames_shapes
+
+    Returns:
+        Tensor of shape (batch_size, max_length) with 1.0 for valid frames, 0.0 for padding
+    """
+    # Extract num_frames from first dimension of each shape
+    if frames_shapes.dim() > 1:
+        num_frames = frames_shapes[:, 0].float()
+    else:
+        num_frames = frames_shapes.float()
+
+    if max_length is None:
+        max_length = int(num_frames.max().item())
+
+    # Create range tensor: [0, 1, 2, ..., max_length-1]
+    range_tensor = torch.arange(max_length, dtype=torch.float32, device=frames_shapes.device)
+
+    # Broadcast comparison: (batch_size, 1) vs (1, max_length) -> (batch_size, max_length)
+    # For each sample, positions < num_frames are valid (1.0), others are padding (0.0)
+    masks = (range_tensor.unsqueeze(0) < num_frames.unsqueeze(1)).float()
+
+    return masks
+
+
 class RFMBatchCollator(BaseCollator):
     def _process_conversation(self, conversations: List[List[Dict]]) -> Dict[str, torch.Tensor]:
         """
@@ -218,6 +248,14 @@ class RFMBatchCollator(BaseCollator):
 
         batch_inputs["frames_shape_A"] = torch.tensor(frames_shape_A, dtype=torch.int32)
         batch_inputs["frames_shape_B"] = torch.tensor(frames_shape_B, dtype=torch.int32)
+
+        # Create padding masks based on frames_shape
+        # Get max length from padded target_progress_A/B
+        max_length_A = batch_inputs["target_progress_A"].shape[-1]
+        max_length_B = batch_inputs["target_progress_B"].shape[-1]
+        batch_inputs["padding_mask_A"] = create_padding_mask(batch_inputs["frames_shape_A"], max_length_A)
+        batch_inputs["padding_mask_B"] = create_padding_mask(batch_inputs["frames_shape_B"], max_length_B)
+
         batch_inputs["chosen_frames_shape"] = torch.tensor(
             [sample.chosen_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
         )
@@ -241,9 +279,12 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["target_progress"] = pad_target_progress(target_progress_list)
         batch_inputs["quality_labels"] = [sample.trajectory.quality_label for sample in progress_samples]
 
-        batch_inputs["frames_shape"] = torch.tensor(
-            [sample.trajectory.frames_shape for sample in progress_samples], dtype=torch.int32
-        )
+        frames_shape_list = [sample.trajectory.frames_shape for sample in progress_samples]
+        batch_inputs["frames_shape"] = torch.tensor(frames_shape_list, dtype=torch.int32)
+
+        # Create padding mask based on frames_shape
+        max_length = batch_inputs["target_progress"].shape[-1]
+        batch_inputs["padding_mask"] = create_padding_mask(batch_inputs["frames_shape"], max_length)
 
         batch_inputs["data_source"] = [sample.trajectory.data_source for sample in progress_samples]
         batch_inputs["data_gen_strategy"] = [sample.trajectory.data_gen_strategy for sample in progress_samples]
@@ -253,7 +294,6 @@ class RFMBatchCollator(BaseCollator):
         ]
         batch_inputs["target_progress_mask"] = torch.tensor(target_progress_mask, dtype=torch.float32)
         return batch_inputs
-
 
     def _process_preference_batch(self, preference_samples: list[PreferenceSample]) -> dict[str, torch.Tensor]:
         """Process a batch of preference samples."""
@@ -506,14 +546,20 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["target_progress_sim_mask"] = torch.tensor(target_progress_sim_mask, dtype=torch.float32)
         batch_inputs["target_progress_diff_mask"] = torch.tensor(target_progress_diff_mask, dtype=torch.float32)
 
-        batch_inputs["ref_frames_shape"] = torch.tensor(
-            [sample.ref_trajectory.frames_shape for sample in similarity_samples], dtype=torch.int32
-        )
-        batch_inputs["traj_sim_frames_shape"] = torch.tensor(
-            [sample.sim_trajectory.frames_shape for sample in similarity_samples], dtype=torch.int32
-        )
-        batch_inputs["traj_diff_frames_shape"] = torch.tensor(
-            [sample.diff_trajectory.frames_shape for sample in similarity_samples], dtype=torch.int32
-        )
+        ref_frames_shape_list = [sample.ref_trajectory.frames_shape for sample in similarity_samples]
+        traj_sim_frames_shape_list = [sample.sim_trajectory.frames_shape for sample in similarity_samples]
+        traj_diff_frames_shape_list = [sample.diff_trajectory.frames_shape for sample in similarity_samples]
+
+        batch_inputs["ref_frames_shape"] = torch.tensor(ref_frames_shape_list, dtype=torch.int32)
+        batch_inputs["traj_sim_frames_shape"] = torch.tensor(traj_sim_frames_shape_list, dtype=torch.int32)
+        batch_inputs["traj_diff_frames_shape"] = torch.tensor(traj_diff_frames_shape_list, dtype=torch.int32)
+
+        # Create padding masks based on frames_shape
+        max_length_ref = batch_inputs["target_progress_ref"].shape[-1]
+        max_length_sim = batch_inputs["target_progress_sim"].shape[-1]
+        max_length_diff = batch_inputs["target_progress_diff"].shape[-1]
+        batch_inputs["padding_mask_ref"] = create_padding_mask(batch_inputs["ref_frames_shape"], max_length_ref)
+        batch_inputs["padding_mask_sim"] = create_padding_mask(batch_inputs["traj_sim_frames_shape"], max_length_sim)
+        batch_inputs["padding_mask_diff"] = create_padding_mask(batch_inputs["traj_diff_frames_shape"], max_length_diff)
 
         return batch_inputs

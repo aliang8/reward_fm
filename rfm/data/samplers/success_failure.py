@@ -1,17 +1,18 @@
 import numpy as np
+import torch
 from tqdm import tqdm
 
 from rfm.data.dataset_types import PreferenceSample, Trajectory
-from .base import RFMBaseDataset
+from .base import RFMBaseSampler
 from .helpers import subsample_segment_frames, compute_progress_from_segment
 from rfm.utils.distributed import rank_0_print
 
 
-class PairedSuccessFailureDataset(RFMBaseDataset):
+class PairedSuccessFailureSampler(RFMBaseSampler):
     """Dataset that generates preference samples by pairing successful and failed trajectories for the same task."""
 
-    def __init__(self, config, is_evaluation=False, verbose=True):
-        super().__init__(config, is_evaluation, verbose=verbose)
+    def __init__(self, dataset, combined_indices, config, is_evaluation=False, verbose=True, **kwargs):
+        super().__init__(dataset, combined_indices, config, verbose=verbose)
 
         # Generate all possible sample indices upfront (not the actual samples)
         self.sample_indices = self._generate_all_sample_indices()
@@ -155,8 +156,8 @@ class PairedSuccessFailureDataset(RFMBaseDataset):
 
         return sample
 
-    def __getitem__(self, idx):
-        return self._generate_sample_from_indices(self.sample_indices[idx])
-
     def __len__(self):
         return len(self.sample_indices)
+
+    def __getitem__(self, idx):
+        return self._generate_sample_from_indices(self.sample_indices[idx])

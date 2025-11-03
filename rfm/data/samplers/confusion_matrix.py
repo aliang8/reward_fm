@@ -8,7 +8,7 @@ import torch
 from collections import Counter
 
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, Trajectory
-from .base import RFMBaseDataset
+from .base import RFMBaseSampler
 from .pref import DataGenStrat
 from .helpers import (
     linspace_subsample_frames,
@@ -20,7 +20,7 @@ from rfm.utils.distributed import rank_0_print
 from sentence_transformers import SentenceTransformer
 
 
-class ConfusionMatrixDataset(RFMBaseDataset):
+class ConfusionMatrixSampler(RFMBaseSampler):
     """
     Data generator that creates task-trajectory pairs for confusion matrix analysis.
 
@@ -28,8 +28,8 @@ class ConfusionMatrixDataset(RFMBaseDataset):
     how well the model can distinguish between different tasks.
     """
 
-    def __init__(self, config, is_evaluation=False, verbose=True, **kwargs):
-        super().__init__(config, is_evaluation, verbose=verbose)
+    def __init__(self, dataset, combined_indices, config, is_evaluation=False, verbose=True, **kwargs):
+        super().__init__(dataset, combined_indices, config, verbose=verbose)
 
         self.sample_indices = self._generate_all_sample_indices()
         self.current_idx = 0

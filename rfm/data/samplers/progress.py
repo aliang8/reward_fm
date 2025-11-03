@@ -1,22 +1,22 @@
 import random
+import torch
 
 from rfm.data.dataset_types import ProgressSample, Trajectory
-from rfm.data.datasets.base import RFMBaseDataset
+from rfm.data.samplers.base import RFMBaseSampler
 from rfm.data.datasets.helpers import (
     DataGenStrat,
     load_embeddings_from_path,
 )
 
 
-class ProgressDataset(RFMBaseDataset):
+class ProgressSampler(RFMBaseSampler):
     """Data generator for progress samples."""
 
-    def __getitem__(self, idx):
-        """Iterate over one sample per trajectory in the dataset."""
-        dataset_len = len(self.dataset)
-        traj = self.dataset[idx % dataset_len]
-        sample = self._create_progress_sample(traj)
-        return sample
+    def __init__(self, dataset, combined_indices, config, is_evaluation=False, verbose=True, **kwargs):
+        super().__init__(dataset, combined_indices, config, verbose=verbose)
+
+    def _generate_sample(self, item: dict):
+        return self._create_progress_sample(item)
 
     def _create_progress_sample(self, traj: dict):
         """Create a progress sample using normalized and rebalanced strategy selection.
@@ -97,7 +97,9 @@ class ProgressDataset(RFMBaseDataset):
 
         # If we still don't have a sample after all attempts, raise an error
         if processed_traj is None:
-            raise ValueError(f"Failed to generate progress sample after {max_attempts} attempts - all strategies exhausted")
+            raise ValueError(
+                f"Failed to generate progress sample after {max_attempts} attempts - all strategies exhausted"
+            )
 
         progress_traj = self._get_traj_from_data(processed_traj)
 

@@ -8,10 +8,11 @@ as PreferenceSample objects that can be evaluated by the model.
 """
 
 import random
+import torch
 from tqdm import tqdm
 
 from rfm.data.dataset_types import ProgressSample, Trajectory
-from .base import RFMBaseDataset
+from .base import RFMBaseSampler
 from .helpers import (
     linspace_subsample_frames,
     pad_trajectory_to_max_frames_np,
@@ -21,7 +22,7 @@ from .helpers import (
 from rfm.utils.distributed import rank_0_print
 
 
-class RewardAlignmentDataset(RFMBaseDataset):
+class RewardAlignmentSampler(RFMBaseSampler):
     """
     Data generator that creates subsequence samples for reward alignment evaluation.
 
@@ -30,9 +31,17 @@ class RewardAlignmentDataset(RFMBaseDataset):
     """
 
     def __init__(
-        self, config, is_evaluation=False, verbose=True, max_trajectories: int | None = None, frame_step: int = 2
+        self,
+        dataset,
+        combined_indices,
+        config,
+        is_evaluation=False,
+        verbose=True,
+        max_trajectories: int | None = None,
+        frame_step: int = 2,
+        **kwargs,
     ):
-        super().__init__(config, is_evaluation, verbose=verbose)
+        super().__init__(dataset, combined_indices, config, verbose=verbose)
 
         self.max_trajectories = max_trajectories
         self.frame_step = frame_step

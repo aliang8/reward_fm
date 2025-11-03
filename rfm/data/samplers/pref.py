@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-PrefDataset class for producing batches of preference prediction data.
+PrefSampler class for producing batches of preference data.
 """
 
 import random
+import torch
 
 from rfm.data.dataset_types import PreferenceSample, Trajectory
-from rfm.data.datasets.base import RFMBaseDataset
+from rfm.data.samplers.base import RFMBaseSampler
 from rfm.data.datasets.helpers import (
     DataGenStrat,
     load_frames_from_npz,
@@ -16,11 +17,11 @@ from rfm.utils.distributed import rank_0_print
 from rfm.utils.timer import timer
 
 
-class PrefDataset(RFMBaseDataset):
+class PrefSampler(RFMBaseSampler):
     """Data generator for producing batches of preference prediction data."""
 
-    def __init__(self, config, is_evaluation=False, verbose=True, **kwargs):
-        super().__init__(config, is_evaluation, verbose=verbose, **kwargs)
+    def __init__(self, dataset, combined_indices, config, is_evaluation=False, verbose=True, **kwargs):
+        super().__init__(dataset, combined_indices, config, verbose=verbose)
 
         self.dataset_preference_ratio = config.dataset_preference_ratio
         self.preference_strategy_ratio: list[float] = config.preference_strategy_ratio
@@ -28,14 +29,10 @@ class PrefDataset(RFMBaseDataset):
         # Initialize preference dataset
         self._load_preference_dataset()
 
-        rank_0_print(f"PrefDataset initialized with {len(self.dataset)} total trajectories")
+        rank_0_print(f"PrefSampler initialized with {len(self.dataset)} total trajectories")
 
-    def __getitem__(self, idx):
-        """Iterate over one sample per trajectory in the dataset."""
-        dataset_len = len(self.dataset)
-        chosen_traj = self.dataset[idx % dataset_len]
-        sample = self._create_pref_sample(chosen_traj)
-        return sample
+    def _generate_sample(self, item: dict):
+        return self._create_pref_sample(item)
 
     def _create_video_binned_trajectory(self, original_traj: dict, num_bins: int = 10) -> tuple[dict, dict]:
         """Create a preference sample by splitting a video into temporal bins and sampling from different bins.
@@ -308,7 +305,9 @@ class PrefDataset(RFMBaseDataset):
 
         # If we still don't have a sample after all attempts, raise an error
         if rejected_traj is None:
-            raise ValueError(f"Failed to generate preference sample after {max_attempts} attempts - all strategies exhausted")
+            raise ValueError(
+                f"Failed to generate preference sample after {max_attempts} attempts - all strategies exhausted"
+            )
 
         chosen_trajectory = self._get_traj_from_data(chosen_traj)
         rejected_trajectory = self._get_traj_from_data(rejected_traj)

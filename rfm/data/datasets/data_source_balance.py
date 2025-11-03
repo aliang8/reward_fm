@@ -1,12 +1,12 @@
 import random
 from collections import defaultdict
 
-from rfm.data.datasets.mixed_dataset import MixedDataset
+from rfm.data.datasets.rfm import RFMDataset
 from rfm.utils.distributed import rank_0_print
 
 
-class BalancedMixedDataset(MixedDataset):
-    """Dataset that extends MixedDataset with configurable sampling weights per data source."""
+class BalancedRFMDataset(RFMDataset):
+    """Dataset that extends RFMDataset with configurable sampling weights per data source."""
 
     def __init__(self, config, is_evaluation=False, max_samples=None, batch_size=None, **kwargs):
         super().__init__(config, is_evaluation, max_samples, batch_size, **kwargs)
@@ -14,7 +14,7 @@ class BalancedMixedDataset(MixedDataset):
         self.data_source_weights = config.data_source_weights
         self.data_len = 10000000
 
-        rank_0_print("Building source indices for BalancedMixedDataset...")
+        rank_0_print("Building source indices for BalancedRFMDataset...")
         self.source_indices = defaultdict(list)
 
         if "data_source" in self.dataset.column_names:
@@ -26,7 +26,7 @@ class BalancedMixedDataset(MixedDataset):
         self._normalize_data_source_weights()
 
         if self.verbose:
-            rank_0_print(f"BalancedMixedDataset initialized with {len(self.source_indices)} data sources")
+            rank_0_print(f"BalancedRFMDataset initialized with {len(self.source_indices)} data sources")
             for source, indices in self.source_indices.items():
                 weight = self.normalized_weights.get(source, 0.0)
                 rank_0_print(f"  {source}: {len(indices)} trajectories (weight: {weight:.3f})")
@@ -133,7 +133,7 @@ class BalancedMixedDataset(MixedDataset):
 
 
 def test():
-    """Test the BalancedMixedDataset with generated samples and timing."""
+    """Test the BalancedRFMDataset with generated samples and timing."""
     import time
     from dataclasses import dataclass
 
@@ -177,8 +177,8 @@ def test():
         # train_datasets=["jesbu1_failsafe_rfm_failsafe"],
         # train_datasets=["jesbu1_h2r_rfm_h2r", "anqil_rh20t_subset_rfm_rh20t_human", "anqil_rh20t_subset_rfm_rh20t_robot", "jesbu1_humanoid_everyday_rfm_humanoid_everyday_rfm", "jesbu1_motif_rfm_motif_rfm"],
         # train_datasets=["jesbu1_motif_rfm_motif_rfm", "anqil_rh20t_subset_rfm_rh20t_human", "anqil_rh20t_subset_rfm_rh20t_robot", "jesbu1_h2r_rfm_h2r"],
-        train_datasets=["jesbu1_motif_rfm_motif_rfm", "jesbu1_h2r_rfm_h2r"],
-
+        # train_datasets=["jesbu1_motif_rfm_motif_rfm", "jesbu1_h2r_rfm_h2r"],
+        train_datasets=["anqil_rh20t_subset_rfm_rh20t_human", "anqil_rh20t_subset_rfm_rh20t_robot"],
         sample_type_ratio=[0, 0, 1],  # pref, progress, similarity
         preference_strategy_ratio=[6, 1, 1, 0],
         progress_strategy_ratio=[1, 6, 1],
@@ -205,14 +205,14 @@ def test():
     )
 
     # Create balanced dataset generator
-    rank_0_print("Initializing BalancedMixedDataset...")
+    rank_0_print("Initializing BalancedRFMDataset...")
     init_start = time.time()
-    generator = BalancedMixedDataset(config=mock_data_config, batch_size=mock_data_config.batch_size)
+    generator = BalancedRFMDataset(config=mock_data_config, batch_size=mock_data_config.batch_size)
     init_time = time.time() - init_start
     rank_0_print(f"Dataset initialization took {init_time:.2f} seconds")
 
     # Test the dataset
-    rank_0_print("Testing BalancedMixedDataset...")
+    rank_0_print("Testing BalancedRFMDataset...")
 
     sample_type_counts = {"pref": 0, "progress": 0, "similarity": 0}
     source_counts = defaultdict(int)

@@ -15,13 +15,13 @@ class RFMDataset(BaseDataset):
         super().__init__(config, is_evaluation, **kwargs)
 
         self.pref_sampler = PrefSampler(
-            self.dataset, self._combined_indices, config, is_evaluation, verbose=False, **kwargs
+            config, self.dataset, self._combined_indices, self.dataset_success_cutoff_map, is_evaluation, verbose=False, **kwargs
         )
         self.progress_sampler = ProgressSampler(
-            self.dataset, self._combined_indices, config, is_evaluation, verbose=False, **kwargs
+            config, self.dataset, self._combined_indices, self.dataset_success_cutoff_map, is_evaluation, verbose=False, **kwargs
         )
         self.similarity_sampler = SimSampler(
-            self.dataset, self._combined_indices, config, is_evaluation, verbose=False, **kwargs
+            config, self.dataset, self._combined_indices, self.dataset_success_cutoff_map, is_evaluation, verbose=False, **kwargs
         )
 
         self.sample_type_ratio = config.sample_type_ratio

@@ -1,7 +1,7 @@
 import random
 from collections import defaultdict
 
-from rfm.data.datasets.rfm import RFMDataset
+from rfm.data.datasets.rfm_data import RFMDataset
 from rfm.utils.distributed import rank_0_print
 
 
@@ -22,7 +22,6 @@ class BalancedRFMDataset(RFMDataset):
             for i, source in enumerate(sources):
                 self.source_indices[source].append(i)
 
-        # Normalize data source weights
         self._normalize_data_source_weights()
 
         if self.verbose:
@@ -58,34 +57,34 @@ class BalancedRFMDataset(RFMDataset):
 
     def __getitem__(self, idx):
         """Create a sample with balanced data source sampling and configured sample type ratios."""
-        # Available dataset types with their probabilities
-        datasets = [
-            ("pref", self.sample_type_ratio[0], self.pref_dataset),
-            ("progress", self.sample_type_ratio[1], self.progress_dataset),
-            ("similarity", self.sample_type_ratio[2], self.similarity_dataset),
+        # Available sampler types with their probabilities
+        samplers = [
+            ("pref", self.sample_type_ratio[0], self.pref_sampler),
+            ("progress", self.sample_type_ratio[1], self.progress_sampler),
+            ("similarity", self.sample_type_ratio[2], self.similarity_sampler),
         ]
 
-        # Remove datasets with zero probability
-        available_datasets = [(name, prob, dataset) for name, prob, dataset in datasets if prob > 0]
+        # Remove samplers with zero probability
+        available_samplers = [(name, prob, sampler) for name, prob, sampler in samplers if prob > 0]
 
         # Normalize probabilities
-        total_prob = sum(prob for _, prob, _ in available_datasets)
-        normalized_datasets = [(name, prob / total_prob, dataset) for name, prob, dataset in available_datasets]
+        total_prob = sum(prob for _, prob, _ in available_samplers)
+        normalized_samplers = [(name, prob / total_prob, sampler) for name, prob, sampler in available_samplers]
 
-        # Select dataset based on normalized probabilities
+        # Select sampler based on normalized probabilities
         prob = random.random()
         cumulative_prob = 0.0
 
-        for name, normalized_prob, dataset in normalized_datasets:
+        for name, normalized_prob, sampler in normalized_samplers:
             cumulative_prob += normalized_prob
             if prob <= cumulative_prob:
                 return self._get_balanced_sample(name)
 
         # Fallback (should not reach here)
-        if available_datasets:
-            return self._get_balanced_sample(available_datasets[0][0])
+        if available_samplers:
+            return self._get_balanced_sample(available_samplers[0][0])
         else:
-            raise ValueError("No available datasets to sample from")
+            raise ValueError("No available samplers to sample from")
 
     def _get_balanced_sample(self, sample_type: str):
         """Get a sample of the specified type with weighted data source sampling."""
@@ -98,18 +97,21 @@ class BalancedRFMDataset(RFMDataset):
         # Select trajectory index randomly within the source
         selected_traj_idx = random.choice(source_indices)
 
+        # Get the trajectory item from the dataset
+        item = self.dataset[selected_traj_idx]
+
         # Enforce preference-only sampling for configured data sources
         pref_only = getattr(self.config, "pref_only_datasets", []) or []
         if selected_source in pref_only:
-            return self.pref_dataset[selected_traj_idx]
+            return self.pref_sampler._generate_sample(item)
 
-        # Generate sample using the appropriate dataset
+        # Generate sample using the appropriate sampler
         if sample_type == "pref":
-            return self.pref_dataset[selected_traj_idx]
+            return self.pref_sampler._generate_sample(item)
         elif sample_type == "progress":
-            return self.progress_dataset[selected_traj_idx]
+            return self.progress_sampler._generate_sample(item)
         elif sample_type == "similarity":
-            return self.similarity_dataset[selected_traj_idx]
+            return self.similarity_sampler._generate_sample(item)
 
     def _select_weighted_source(self) -> str:
         """Select a data source based on normalized weights."""

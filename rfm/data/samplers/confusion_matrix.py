@@ -8,9 +8,9 @@ import torch
 from collections import Counter
 
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, Trajectory
-from .base import RFMBaseSampler
-from .pref import DataGenStrat
-from .helpers import (
+from rfm.data.samplers.base import RFMBaseSampler
+from rfm.data.datasets.helpers import DataGenStrat
+from rfm.data.datasets.helpers import (
     linspace_subsample_frames,
     pad_trajectory_to_max_frames_np,
     pad_trajectory_to_max_frames_torch,
@@ -28,8 +28,8 @@ class ConfusionMatrixSampler(RFMBaseSampler):
     how well the model can distinguish between different tasks.
     """
 
-    def __init__(self, dataset, combined_indices, config, is_evaluation=False, verbose=True, **kwargs):
-        super().__init__(dataset, combined_indices, config, verbose=verbose)
+    def __init__(self, config, dataset, combined_indices, dataset_success_cutoff_map=None, is_evaluation=False, verbose=True, **kwargs):
+        super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
 
         self.sample_indices = self._generate_all_sample_indices()
         self.current_idx = 0

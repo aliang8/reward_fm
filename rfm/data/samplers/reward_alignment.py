@@ -12,8 +12,8 @@ import torch
 from tqdm import tqdm
 
 from rfm.data.dataset_types import ProgressSample, Trajectory
-from .base import RFMBaseSampler
-from .helpers import (
+from rfm.data.samplers.base import RFMBaseSampler
+from rfm.data.datasets.helpers import (
     linspace_subsample_frames,
     pad_trajectory_to_max_frames_np,
     pad_trajectory_to_max_frames_torch,
@@ -32,16 +32,17 @@ class RewardAlignmentSampler(RFMBaseSampler):
 
     def __init__(
         self,
+        config,
         dataset,
         combined_indices,
-        config,
+        dataset_success_cutoff_map=None,
         is_evaluation=False,
         verbose=True,
         max_trajectories: int | None = None,
         frame_step: int = 2,
         **kwargs,
     ):
-        super().__init__(dataset, combined_indices, config, verbose=verbose)
+        super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
 
         self.max_trajectories = max_trajectories
         self.frame_step = frame_step

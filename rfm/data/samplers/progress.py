@@ -12,8 +12,8 @@ from rfm.data.datasets.helpers import (
 class ProgressSampler(RFMBaseSampler):
     """Data generator for progress samples."""
 
-    def __init__(self, dataset, combined_indices, config, is_evaluation=False, verbose=True, **kwargs):
-        super().__init__(dataset, combined_indices, config, verbose=verbose)
+    def __init__(self, config, dataset, combined_indices, dataset_success_cutoff_map=None, is_evaluation=False, verbose=True, **kwargs):
+        super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
 
     def _generate_sample(self, item: dict):
         return self._create_progress_sample(item)

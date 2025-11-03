@@ -13,8 +13,8 @@ from rfm.utils.distributed import rank_0_print
 class SimSampler(RFMBaseSampler):
     """Data generator for producing batches for similarity scoring."""
 
-    def __init__(self, dataset, combined_indices, config, is_evaluation=False, verbose=True, **kwargs):
-        super().__init__(dataset, combined_indices, config, verbose=verbose)
+    def __init__(self, config, dataset, combined_indices, dataset_success_cutoff_map=None, is_evaluation=False, verbose=True, **kwargs):
+        super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
         self.similarity_strategy_ratio: list[float] = config.similarity_strategy_ratio
 
         if self.verbose:

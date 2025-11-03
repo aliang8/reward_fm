@@ -31,7 +31,7 @@ class CustomEvalDataset(BaseDataset):
             raise ValueError(f"Unknown sampler type: {sampler_type}. Available: {list(sampler_cls.keys())}")
 
         self.sampler = sampler_cls[sampler_type](
-            self.dataset, self._combined_indices, config, is_evaluation=is_evaluation, **kwargs
+            config, self.dataset, self._combined_indices, self.dataset_success_cutoff_map, is_evaluation=is_evaluation, **kwargs
         )
 
     def __len__(self):

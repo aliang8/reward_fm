@@ -18,18 +18,20 @@ from rfm.utils.distributed import rank_0_print
 class RFMBaseSampler:
     """Base sampler class that provides trajectory retrieval functions for generating samples."""
 
-    def __init__(self, dataset, combined_indices, config, verbose=True):
+    def __init__(self, config, dataset, combined_indices, dataset_success_cutoff_map=None, verbose=True):
         """Initialize sampler with dataset and indices.
 
         Args:
+            config: Configuration object
             dataset: The loaded dataset
             combined_indices: Dictionary of combined indices from dataset loading
-            config: Configuration object
+            dataset_success_cutoff_map: Dictionary mapping dataset names to success cutoff percentages
             verbose: Verbose flag
         """
-        self.dataset = dataset
         self.config = config
+        self.dataset = dataset
         self.verbose = verbose
+        self.dataset_success_cutoff_map = dataset_success_cutoff_map or {}
 
         self._cached_ids = self.dataset["id"]
         self._cached_is_robot = self.dataset["is_robot"]

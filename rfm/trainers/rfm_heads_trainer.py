@@ -151,7 +151,6 @@ class RFMHeadsTrainer(Trainer):
         self.log_metadata = {}
 
         with _timer("time/training_step", timing_raw=self.timing_raw):
-            # Call the parent training_step to handle all the standard training logic
             loss = super().training_step(model, inputs, num_items_in_batch)
 
         # Extract the separate batches
@@ -164,23 +163,15 @@ class RFMHeadsTrainer(Trainer):
 
         # Adding more granular counting for the data strategies
         if num_preferences > 0 and preference_inputs:
-            rejected_data_gen_strategy = preference_inputs.get("rejected_data_gen_strategy", [])
+            rejected_data_gen_strategy = preference_inputs["rejected_data_gen_strategy"]
             if isinstance(rejected_data_gen_strategy, list) and len(rejected_data_gen_strategy) > 0:
-                # Normalize keys we care about
-                strat_counts = {
-                    "pref_num_trajs_rewind": 0,
-                    "pref_num_trajs_same_task": 0,
-                    "pref_num_trajs_different_task": 0,
-                }
                 for s in rejected_data_gen_strategy:
                     if s == "rewind_same_task":
-                        strat_counts["pref_num_trajs_rewind"] += 1
+                        self.global_metadata["pref_num_trajs_rewind"] += 1
                     elif s == "suboptimal_same_task":
-                        strat_counts["pref_num_trajs_same_task"] += 1
+                        self.global_metadata["pref_num_trajs_same_task_subopt"] += 1
                     elif s == "different_task":
-                        strat_counts["pref_num_trajs_different_task"] += 1
-
-                self.log_metadata.update(strat_counts)
+                        self.global_metadata["pref_num_trajs_diff_task"] += 1
 
             data_sources = preference_inputs.get("data_source", None)
             if data_sources is not None:
@@ -188,22 +179,15 @@ class RFMHeadsTrainer(Trainer):
                     self.global_metadata[f"total_{ds}"] += 1.0
 
         if num_progress > 0 and progress_inputs:
-            data_gen_strategy = progress_inputs.get("data_gen_strategy", [])
+            data_gen_strategy = progress_inputs["data_gen_strategy"]
             if isinstance(data_gen_strategy, list) and len(data_gen_strategy) > 0:
-                strat_counts = {
-                    "prog_num_trajs_successful": 0,
-                    "prog_num_trajs_rewind_same_task": 0,
-                    "prog_num_trajs_different_task": 0,
-                }
                 for s in data_gen_strategy:
                     if s == "successful":
-                        strat_counts["prog_num_trajs_successful"] += 1
+                        self.global_metadata["prog_num_trajs_succ"] += 1
                     elif s == "rewind_same_task":
-                        strat_counts["prog_num_trajs_rewind_same_task"] += 1
+                        self.global_metadata["prog_num_trajs_rewind"] += 1
                     elif s == "different_task":
-                        strat_counts["prog_num_trajs_different_task"] += 1
-
-                self.log_metadata.update(strat_counts)
+                        self.global_metadata["prog_num_trajs_diff_task"] += 1
 
             data_sources = progress_inputs.get("data_source", None)
             if data_sources is not None:
@@ -211,19 +195,13 @@ class RFMHeadsTrainer(Trainer):
                     self.global_metadata[f"total_{ds}"] += 1.0
 
         if num_similarities > 0 and similarity_inputs:
-            data_gen_strategy = similarity_inputs.get("data_gen_strategy", [])
+            data_gen_strategy = similarity_inputs["data_gen_strategy"]
             if isinstance(data_gen_strategy, list) and len(data_gen_strategy) > 0:
-                strat_counts = {
-                    "sim_num_trajs_rewind": 0,
-                    "sim_num_trajs_same_task": 0,
-                }
                 for s in data_gen_strategy:
                     if s == "rewind_same_task":
-                        strat_counts["sim_num_trajs_rewind"] += 1
+                        self.global_metadata["sim_num_trajs_rewind"] += 1
                     elif s == "suboptimal_same_task":
-                        strat_counts["sim_num_trajs_same_task"] += 1
-
-                self.log_metadata.update(strat_counts)
+                        self.global_metadata["sim_num_trajs_same_task_subopt"] += 1
 
             data_sources = similarity_inputs.get("data_source", None)
             if data_sources is not None:

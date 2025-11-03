@@ -31,6 +31,7 @@ class ReWiNDBatchCollator(RFMBatchCollator):
                 if any(
                     emb is None for emb in [chosen_video_emb, chosen_text_emb, rejected_video_emb, rejected_text_emb]
                 ):
+                    import ipdb; ipdb.set_trace()
                     raise ValueError("Sample trajectories are missing embeddings")
 
                 all_chosen_video_embeddings.append(chosen_video_emb)

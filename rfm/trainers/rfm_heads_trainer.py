@@ -202,6 +202,8 @@ class RFMHeadsTrainer(Trainer):
                         self.global_metadata["sim_num_trajs_rewind"] += 1
                     elif s == "suboptimal_same_task":
                         self.global_metadata["sim_num_trajs_same_task_subopt"] += 1
+                    elif s == "paired_human_robot":
+                        self.global_metadata["sim_num_trajs_paired_hr"] += 1
 
             data_sources = similarity_inputs.get("data_source", None)
             if data_sources is not None:

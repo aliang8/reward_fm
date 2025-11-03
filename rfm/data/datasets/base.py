@@ -21,9 +21,10 @@ from rfm.data.datasets.helpers import create_rewind_trajectory, load_embeddings_
 
 # Global list of data sources that contain paired human/robot trajectories
 PAIRED_DATA_SOURCES = [
-    "ph2d",
+    # "ph2d",
+    "h2r",
     "motif_rfm",
-    "rh20t"
+    # "rh20t"
 ]
 
 

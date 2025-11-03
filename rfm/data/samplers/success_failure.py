@@ -3,16 +3,16 @@ import torch
 from tqdm import tqdm
 
 from rfm.data.dataset_types import PreferenceSample, Trajectory
-from .base import RFMBaseSampler
-from .helpers import subsample_segment_frames, compute_progress_from_segment
+from rfm.data.samplers.base import RFMBaseSampler
+from rfm.data.datasets.helpers import subsample_segment_frames, compute_progress_from_segment
 from rfm.utils.distributed import rank_0_print
 
 
 class PairedSuccessFailureSampler(RFMBaseSampler):
     """Dataset that generates preference samples by pairing successful and failed trajectories for the same task."""
 
-    def __init__(self, dataset, combined_indices, config, is_evaluation=False, verbose=True, **kwargs):
-        super().__init__(dataset, combined_indices, config, verbose=verbose)
+    def __init__(self, config, dataset, combined_indices, dataset_success_cutoff_map=None, is_evaluation=False, verbose=True, **kwargs):
+        super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
 
         # Generate all possible sample indices upfront (not the actual samples)
         self.sample_indices = self._generate_all_sample_indices()

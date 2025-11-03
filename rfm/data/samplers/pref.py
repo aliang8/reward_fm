@@ -20,8 +20,8 @@ from rfm.utils.timer import timer
 class PrefSampler(RFMBaseSampler):
     """Data generator for producing batches of preference prediction data."""
 
-    def __init__(self, dataset, combined_indices, config, is_evaluation=False, verbose=True, **kwargs):
-        super().__init__(dataset, combined_indices, config, verbose=verbose)
+    def __init__(self, config, dataset, combined_indices, dataset_success_cutoff_map=None, is_evaluation=False, verbose=True, **kwargs):
+        super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
 
         self.dataset_preference_ratio = config.dataset_preference_ratio
         self.preference_strategy_ratio: list[float] = config.preference_strategy_ratio

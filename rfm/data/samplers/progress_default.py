@@ -2,8 +2,8 @@ import numpy as np
 import torch
 
 from rfm.data.dataset_types import ProgressSample, Trajectory
-from .base import RFMBaseSampler
-from .helpers import (
+from rfm.data.samplers.base import RFMBaseSampler
+from rfm.data.datasets.helpers import (
     linspace_subsample_frames,
     pad_trajectory_to_max_frames_np,
     pad_trajectory_to_max_frames_torch,
@@ -16,8 +16,8 @@ from rfm.utils.distributed import rank_0_print
 class ProgressDefaultSampler(RFMBaseSampler):
     """Dataset that generates progress samples by iterating through each trajectory in the dataset, used in policy ranking."""
 
-    def __init__(self, dataset, combined_indices, config, is_evaluation=False, verbose=True, **kwargs):
-        super().__init__(dataset, combined_indices, config, verbose=verbose)
+    def __init__(self, config, dataset, combined_indices, dataset_success_cutoff_map=None, is_evaluation=False, verbose=True, **kwargs):
+        super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
         self.current_idx = 0
 
         rank_0_print(

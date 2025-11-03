@@ -82,6 +82,7 @@ data:
     metaworld_train: 20
     libero256_90: 1
     libero_90_failure: 1
+    
   # Data sources restricted to preference-only sampling
   pref_only_datasets:
     - jesbu1_oxe_rfm_oxe_bc_z

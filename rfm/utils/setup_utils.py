@@ -267,7 +267,7 @@ def setup_model_and_processor(
 
         # Add RFM special tokens if they don't exist
         if cfg.model_type == "default":
-            special_tokens = ["<|split_token|>", "<|reward_token|>", "<|pref_token|>"]
+            special_tokens = ["<|split_token|>", "<|reward_token|>", "<|pref_token|>", "<|sim_token|>"]
         else:
             special_tokens = []
 

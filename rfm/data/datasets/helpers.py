@@ -499,6 +499,7 @@ def create_rewind_trajectory(
     else:
         # Load frames from npz file
         frames_data = load_frames_from_npz(original_traj["frames"])
+        text_embedding = None
 
     # Get the number of frames
     if hasattr(frames_data, "shape"):
@@ -566,7 +567,6 @@ def create_rewind_trajectory(
         combined_frames = forward_frames + reverse_frames
 
     # Step 6: Calculate progress for each frame position in the combined trajectory
-
     # Determine if success cutoff affects this segment
     cutoff_index = None
     if success_cutoff is not None and success_cutoff > 0:

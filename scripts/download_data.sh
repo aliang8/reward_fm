@@ -108,6 +108,7 @@ retry_until_success() {
 repos=(
   abraranwar/libero_rfm
   abraranwar/agibotworld_alpha_rfm   
+  abraranwar/usc_koch_rewind_rfm
   ykorkmaz/libero_failure_rfm
   aliangdw/metaworld
   jesbu1/oxe_rfm

@@ -494,7 +494,8 @@ def create_rewind_trajectory(
     """
     if use_embeddings:
         # Load embeddings from .pt file
-        frames_data = load_embeddings_from_path(original_traj["embeddings_path"])
+        frames_data = load_embeddings_from_path(original_traj["embeddings_path"], "video_embeddings")
+        text_embedding = load_embeddings_from_path(original_traj["embeddings_path"], "text_embedding")
     else:
         # Load frames from npz file
         frames_data = load_frames_from_npz(original_traj["frames"])
@@ -597,7 +598,7 @@ def create_rewind_trajectory(
 
     subsampled_frames, subsampled_indices = linspace_subsample_frames(combined_frames, max_frames)
     subsampled_progress = [combined_progress_abs[idx] for idx in subsampled_indices]
-    subsampled_frames_shape = subsampled_frames.shape if not use_embeddings else None
+    subsampled_frames_shape = subsampled_frames.shape
 
     if progress_pred_type == "relative":
         subsampled_progress = convert_absolute_to_relative_progress(subsampled_progress)
@@ -623,8 +624,7 @@ def create_rewind_trajectory(
         frames=subsampled_frames if not use_embeddings else None,
         frames_shape=subsampled_frames_shape,
         video_embeddings=subsampled_frames if use_embeddings else None,
-        text_embedding=None,  # Rewound trajectories don't have text embeddings
-        id=original_traj["id"],
+        text_embedding=text_embedding,
         task=original_traj["task"],
         lang_vector=original_traj["lang_vector"],
         data_source=original_traj["data_source"],

@@ -47,7 +47,7 @@ filters = {
     "jesbu1/galaxea_rfm/galaxea_part4_r1_lite": lambda x: all(word in x["task"].lower() for word in ["return", "to", "initial", "position"]),
     "jesbu1/galaxea_rfm/galaxea_part5_r1_lite": lambda x: all(word in x["task"].lower() for word in ["return", "to", "initial", "position"]),
     "jesbu1/soar_rfm/soar_rfm": lambda x: x["id"] in soar_bad_trajectories,
-    "jesbu1/auto_eval_rfm/auto_eval_rfm": lambda x: x["frames_shape"][0] < 5, # some episodes are too short and are likely poor/faulty success detections 
+    "jesbu1/auto_eval_rfm/auto_eval_rfm": lambda x: x["frames_shape"][0] <= 5, # some episodes are too short and are likely poor/faulty success detections 
 }
 
 

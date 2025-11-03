@@ -4,10 +4,20 @@ import os
 
 import numpy as np
 import torch
+import random
 
 from datasets import Dataset, concatenate_datasets
-from .helpers import load_frames_from_npz, load_dataset_success_percent
+from rfm.data.datasets.helpers import (
+    load_frames_from_npz,
+    load_dataset_success_percent,
+    subsample_segment_frames,
+    compute_progress_from_segment,
+    pad_trajectory_to_max_frames_torch,
+    pad_trajectory_to_max_frames_np,
+)
 from rfm.utils.distributed import rank_0_print
+from rfm.data.dataset_types import Trajectory
+from rfm.data.datasets.helpers import create_rewind_trajectory, load_embeddings_from_path
 
 
 class RFMBaseDataset(torch.utils.data.Dataset):
@@ -214,6 +224,7 @@ class RFMBaseDataset(torch.utils.data.Dataset):
         self.task_indices = combined_indices["task_indices"]
         self.source_indices = combined_indices["source_indices"]
         self.partial_success_indices = combined_indices["partial_success_indices"]
+        self._cached_ids = self.dataset["id"]
 
         dataset_type = "training" if is_training else "evaluation"
         rank_0_print(
@@ -242,3 +253,204 @@ class RFMBaseDataset(torch.utils.data.Dataset):
             raise ValueError(f"No frames path found for trajectory {trajectory_idx}")
 
         return load_frames_from_npz(npz_filepath)
+
+    def _get_same_task_optimal(self, ref_traj: dict) -> dict | None:
+        """Get optimal trajectory from same task (different from ref).
+
+        Args:
+            ref_traj: Reference trajectory
+
+        Returns:
+            Same task optimal trajectory dict or None if not available
+        """
+        task_name = ref_traj["task"]
+        same_task_optimal_indices = self.optimal_by_task.get(task_name, [])
+        if not same_task_optimal_indices:
+            return None
+
+        # Use cached IDs to check without loading full trajectories
+        chosen_id = ref_traj["id"]
+        random_idx = random.choice(same_task_optimal_indices)
+
+        # Retry if the selected trajectory has the same ID as ref
+        max_retries = min(10, len(same_task_optimal_indices))
+        retries = 0
+        while self._cached_ids[random_idx] == chosen_id and retries < max_retries:
+            random_idx = random.choice(same_task_optimal_indices)
+            retries += 1
+
+        # If still matches after retries, fall back to filtering
+        if self._cached_ids[random_idx] == chosen_id:
+            filtered_indices = [idx for idx in same_task_optimal_indices if self._cached_ids[idx] != chosen_id]
+            if filtered_indices:
+                random_idx = random.choice(filtered_indices)
+            else:
+                # No other trajectories available
+                return None
+
+        return self.dataset[random_idx]
+
+    def _get_same_task_suboptimal(self, ref_traj: dict) -> dict | None:
+        """Get suboptimal trajectory from same task.
+
+        Args:
+            ref_traj: Reference trajectory
+
+        Returns:
+            Suboptimal trajectory dict or None if not available
+        """
+        task_name = ref_traj["task"]
+        same_task_suboptimal_indices = self.suboptimal_by_task.get(task_name, [])
+        if not same_task_suboptimal_indices:
+            return None
+
+        # Use cached IDs to check without loading full trajectories
+        chosen_id = ref_traj["id"]
+        random_idx = random.choice(same_task_suboptimal_indices)
+
+        # Retry if the selected trajectory has the same ID as ref
+        max_retries = min(10, len(same_task_suboptimal_indices))
+        retries = 0
+        while self._cached_ids[random_idx] == chosen_id and retries < max_retries:
+            random_idx = random.choice(same_task_suboptimal_indices)
+            retries += 1
+
+        # If still matches after retries, fall back to filtering
+        if self._cached_ids[random_idx] == chosen_id:
+            filtered_indices = [idx for idx in same_task_suboptimal_indices if self._cached_ids[idx] != chosen_id]
+            if filtered_indices:
+                random_idx = random.choice(filtered_indices)
+            else:
+                # No other trajectories available
+                return None
+
+        return self.dataset[random_idx]
+
+    def _get_different_task(self, ref_traj: dict) -> dict | None:
+        """Get trajectory from different task.
+
+        Args:
+            ref_traj: Reference trajectory
+
+        Returns:
+            Different task trajectory dict or None if not available
+        """
+        other_tasks = [task for task in self.optimal_by_task.keys() if task != ref_traj["task"]]
+        if not other_tasks:
+            return None
+
+        other_task = random.choice(other_tasks)
+        other_task_indices = self.optimal_by_task[other_task]
+        if not other_task_indices:
+            return None
+
+        other_idx = random.choice(other_task_indices)
+        return self.dataset[other_idx]
+
+    def _get_rewound_traj(self, ref_traj: dict) -> Trajectory:
+        """Get rewound trajectory from reference trajectory.
+
+        Args:
+            ref_traj: Reference trajectory
+
+        Returns:
+            Rewound trajectory as Trajectory object (already processed)
+        """
+        ds_key = ref_traj["data_source"]
+        success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+        return create_rewind_trajectory(
+            ref_traj,
+            max_frames=self.config.max_frames,
+            use_embeddings=self.config.load_embeddings,
+            progress_pred_type=getattr(self.config, "progress_pred_type", "absolute"),
+            success_cutoff=success_cutoff,
+        )
+
+    def _get_traj_from_data(self, traj: dict | Trajectory) -> Trajectory:
+        """Load, subsample, pad trajectory data and create a Trajectory object.
+
+        Args:
+            traj: Trajectory dict or Trajectory object
+
+        Returns:
+            Trajectory object with loaded, subsampled, and padded data
+        """
+        if isinstance(traj, Trajectory):
+            return traj
+
+        frames = None
+        video_embeddings = None
+        text_embedding = None
+
+        if self.config.load_embeddings and traj.get("embeddings_path"):
+            video_embeddings = load_embeddings_from_path(traj["embeddings_path"], "video_embeddings")
+            text_embedding = load_embeddings_from_path(traj["embeddings_path"], "text_embedding")
+
+            # Get success cutoff from pre-loaded map
+            ds_key = traj["data_source"]
+            success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+
+            subsampled, start_idx, end_idx, indices = subsample_segment_frames(video_embeddings, self.config.max_frames)
+            frames_shape = subsampled.shape
+            progress = compute_progress_from_segment(
+                num_frames_total=self.config.max_frames_after_preprocessing,
+                start_idx=start_idx,
+                end_idx=end_idx,
+                frame_indices=indices,
+                progress_pred_type=self.config.progress_pred_type,
+                success_cutoff=success_cutoff,
+            )
+            metadata = {
+                "start_idx": start_idx,
+                "end_idx": end_idx,
+                "subsampled_indices": indices,
+            }
+            video_embeddings = subsampled
+        else:
+            if isinstance(traj["frames"], str):
+                frames = load_frames_from_npz(traj["frames"])
+            else:
+                frames = traj["frames"]
+
+            # Get success cutoff from pre-loaded map
+            ds_key = traj["data_source"]
+            success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+
+            subsampled, start_idx, end_idx, indices = subsample_segment_frames(frames, self.config.max_frames)
+            frames_shape = subsampled.shape
+            progress = compute_progress_from_segment(
+                num_frames_total=self.config.max_frames_after_preprocessing,
+                start_idx=start_idx,
+                end_idx=end_idx,
+                frame_indices=indices,
+                progress_pred_type=self.config.progress_pred_type,
+                success_cutoff=success_cutoff,
+            )
+            metadata = {
+                "start_idx": start_idx,
+                "end_idx": end_idx,
+                "subsampled_indices": indices,
+            }
+            frames = subsampled
+
+        if self.config.load_embeddings:
+            video_embeddings, progress = pad_trajectory_to_max_frames_torch(
+                video_embeddings, progress, self.config.max_frames
+            )
+        else:
+            frames, progress = pad_trajectory_to_max_frames_np(frames, progress, self.config.max_frames)
+
+        return Trajectory(
+            frames=frames,
+            frames_shape=frames_shape,
+            video_embeddings=video_embeddings,
+            text_embedding=text_embedding,
+            id=traj["id"],
+            task=traj["task"],
+            lang_vector=traj["lang_vector"],
+            data_source=traj["data_source"],
+            quality_label=traj.get("quality_label"),
+            is_robot=traj["is_robot"],
+            target_progress=progress,
+            metadata=metadata,
+        )

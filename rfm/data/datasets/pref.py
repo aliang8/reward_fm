@@ -6,19 +6,14 @@ PrefDataset class for producing batches of preference prediction data.
 import random
 
 from rfm.data.dataset_types import PreferenceSample, Trajectory
-from .base import RFMBaseDataset
-from .helpers import (
+from rfm.data.datasets.base import RFMBaseDataset
+from rfm.data.datasets.helpers import (
     DataGenStrat,
-    create_rewind_trajectory,
     load_frames_from_npz,
-    pad_trajectory_to_max_frames_np,
-    pad_trajectory_to_max_frames_torch,
-    subsample_segment_frames,
-    compute_progress_from_segment,
+    linspace_subsample_frames,
 )
 from rfm.utils.distributed import rank_0_print
 from rfm.utils.timer import timer
-from .helpers import load_embeddings_from_path
 
 
 class PrefDataset(RFMBaseDataset):
@@ -131,8 +126,8 @@ class PrefDataset(RFMBaseDataset):
         # Apply uniform subsampling to both bins to ensure consistent frame counts
         # Use uniform subsampling for real trajectories (not rewound)
         num_frames_to_sample = self.config.max_frames
-        chosen_frames, chosen_indices = self._linspace_subsample_frames(chosen_frames, num_frames_to_sample)
-        rejected_frames, rejected_indices = self._linspace_subsample_frames(rejected_frames, num_frames_to_sample)
+        chosen_frames, chosen_indices = linspace_subsample_frames(chosen_frames, num_frames_to_sample)
+        rejected_frames, rejected_indices = linspace_subsample_frames(rejected_frames, num_frames_to_sample)
 
         # Calculate progress for each bin relative to the original trajectory
         chosen_progress = [chosen_progress[idx] for idx in chosen_indices]
@@ -266,17 +261,7 @@ class PrefDataset(RFMBaseDataset):
             total_prob = sum(prob for _, prob in strategies)
             if total_prob == 0:
                 # All strategies have zero probability, fallback to rewind
-                # Get success cutoff from pre-loaded map
-                ds_key = chosen_traj["data_source"]
-                success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
-
-                rejected_traj = create_rewind_trajectory(
-                    chosen_traj,
-                    max_frames=self.config.max_frames,
-                    use_embeddings=self.config.load_embeddings,
-                    progress_pred_type=self.config.progress_pred_type,
-                    success_cutoff=success_cutoff,
-                )
+                rejected_traj = self._get_rewound_traj(chosen_traj)
                 strategy_used = DataGenStrat.REWIND_SAME_TASK
                 break
 
@@ -296,21 +281,11 @@ class PrefDataset(RFMBaseDataset):
 
             # Execute selected strategy
             if selected_strategy == DataGenStrat.REWIND_SAME_TASK:
-                # Get success cutoff from pre-loaded map
-                ds_key = chosen_traj["data_source"]
-                success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
-
-                rejected_traj = create_rewind_trajectory(
-                    chosen_traj,
-                    max_frames=self.config.max_frames,
-                    use_embeddings=self.config.load_embeddings,
-                    progress_pred_type=self.config.progress_pred_type,
-                    success_cutoff=success_cutoff,
-                )
+                rejected_traj = self._get_rewound_traj(chosen_traj)
                 strategy_used = DataGenStrat.REWIND_SAME_TASK
 
             elif selected_strategy == DataGenStrat.SUBOPTIMAL_SAME_TASK:
-                rejected_traj = self._create_same_task_suboptimal_trajectory(chosen_traj)
+                rejected_traj = self._get_same_task_suboptimal(chosen_traj)
                 if rejected_traj is not None:
                     strategy_used = DataGenStrat.SUBOPTIMAL_SAME_TASK
                 else:
@@ -320,7 +295,7 @@ class PrefDataset(RFMBaseDataset):
                     ]
 
             elif selected_strategy == DataGenStrat.DIFFERENT_TASK:
-                rejected_traj = self._create_different_task_trajectory(chosen_traj)
+                rejected_traj = self._get_different_task(chosen_traj)
                 if rejected_traj is not None:
                     strategy_used = DataGenStrat.DIFFERENT_TASK
                 else:
@@ -337,264 +312,25 @@ class PrefDataset(RFMBaseDataset):
                     rank_0_print(f"Video binning failed: {e}, removing from available strategies")
                     # Strategy failed, remove it from future attempts
                     strategies = [(strat, prob) for strat, prob in strategies if strat != DataGenStrat.VIDEO_BINNED]
+            else:
+                raise ValueError(f"Invalid strategy selected: {selected_strategy}")
 
         # Final fallback: If all strategies failed, use rewind
         if rejected_traj is None:
-            # Get success cutoff from pre-loaded map
-            ds_key = chosen_traj["data_source"]
-            success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
-
-            rejected_traj = create_rewind_trajectory(
-                chosen_traj,
-                max_frames=self.config.max_frames,
-                use_embeddings=self.config.load_embeddings,
-                progress_pred_type=self.config.progress_pred_type,
-                success_cutoff=success_cutoff,
-            )
+            rejected_traj = self._get_rewound_traj(chosen_traj)
             strategy_used = DataGenStrat.REWIND_SAME_TASK
 
-        # ===============================================================
-        # Construct chosen trajectory and pad to max_frames
-        # ===============================================================
-        chosen_frames = None
-        chosen_video_embeddings = None
-        chosen_text_embedding = None
-
-        if self.config.load_embeddings and chosen_traj.get("embeddings_path"):
-            chosen_video_embeddings = load_embeddings_from_path(chosen_traj["embeddings_path"], "video_embeddings")
-            chosen_text_embedding = load_embeddings_from_path(chosen_traj["embeddings_path"], "text_embedding")
-
-            # Get success cutoff from pre-loaded map
-            ds_key = chosen_traj["data_source"]
-            success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
-
-            subsampled, start_idx, end_idx, indices = subsample_segment_frames(
-                chosen_video_embeddings, self.config.max_frames
-            )
-            chosen_progress = compute_progress_from_segment(
-                num_frames_total=self.config.max_frames_after_preprocessing,
-                start_idx=start_idx,
-                end_idx=end_idx,
-                frame_indices=indices,
-                progress_pred_type=self.config.progress_pred_type,
-                success_cutoff=success_cutoff,
-            )
-            chosen_metadata = {
-                "start_idx": start_idx,
-                "end_idx": end_idx,
-                "subsampled_indices": indices,
-            }
-            chosen_video_embeddings = subsampled
-        else:
-            if isinstance(chosen_traj["frames"], str):
-                chosen_frames = load_frames_from_npz(chosen_traj["frames"])
-
-            # Get success cutoff from pre-loaded map
-            ds_key = chosen_traj["data_source"]
-            success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
-
-            subsampled, start_idx, end_idx, indices = subsample_segment_frames(chosen_frames, self.config.max_frames)
-            chosen_progress = compute_progress_from_segment(
-                num_frames_total=self.config.max_frames_after_preprocessing,
-                start_idx=start_idx,
-                end_idx=end_idx,
-                frame_indices=indices,
-                progress_pred_type=self.config.progress_pred_type,
-                success_cutoff=success_cutoff,
-            )
-            chosen_metadata = {
-                "start_idx": start_idx,
-                "end_idx": end_idx,
-                "subsampled_indices": indices,
-            }
-            chosen_frames = subsampled
-        if "metadata" in chosen_traj:
-            chosen_metadata.update(chosen_traj["metadata"])
-
-        # ===============================================================
-        # Construct rejected trajectory and pad to max_frames
-        # ===============================================================
-        rejected_frames = None
-        rejected_video_embeddings = None
-        rejected_text_embedding = None
-
-        if self.config.load_embeddings and rejected_traj.get("embeddings_path"):
-            rejected_video_embeddings = load_embeddings_from_path(rejected_traj["embeddings_path"], "video_embeddings")
-            rejected_text_embedding = load_embeddings_from_path(rejected_traj["embeddings_path"], "text_embedding")
-
-            if strategy_used == DataGenStrat.REWIND_SAME_TASK:
-                rejected_video_embeddings = rejected_traj["frames"]
-                rejected_progress = rejected_traj["target_progress"]
-                rejected_metadata = rejected_traj["metadata"]
-            else:
-                # Get success cutoff from pre-loaded map
-                ds_key = rejected_traj["data_source"]
-                success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
-
-                subsampled, start_idx, end_idx, indices = subsample_segment_frames(
-                    rejected_video_embeddings, self.config.max_frames
-                )
-                rejected_progress = compute_progress_from_segment(
-                    num_frames_total=self.config.max_frames_after_preprocessing,
-                    start_idx=start_idx,
-                    end_idx=end_idx,
-                    frame_indices=indices,
-                    progress_pred_type=self.config.progress_pred_type,
-                    success_cutoff=success_cutoff,
-                )
-                rejected_metadata = {
-                    "start_idx": start_idx,
-                    "end_idx": end_idx,
-                    "subsampled_indices": indices,
-                }
-                rejected_video_embeddings = subsampled
-        else:
-            if isinstance(rejected_traj["frames"], str):
-                rejected_frames = load_frames_from_npz(rejected_traj["frames"])
-            else:
-                rejected_frames = rejected_traj["frames"]
-
-            if strategy_used == DataGenStrat.REWIND_SAME_TASK:
-                rejected_frames = rejected_traj["frames"]
-                rejected_progress = rejected_traj["target_progress"]
-                rejected_metadata = rejected_traj["metadata"]
-            else:
-                # Get success cutoff from pre-loaded map
-                ds_key = rejected_traj["data_source"]
-                success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
-
-                subsampled, start_idx, end_idx, indices = subsample_segment_frames(
-                    rejected_frames, self.config.max_frames
-                )
-                rejected_progress = compute_progress_from_segment(
-                    num_frames_total=self.config.max_frames_after_preprocessing,
-                    start_idx=start_idx,
-                    end_idx=end_idx,
-                    frame_indices=indices,
-                    progress_pred_type=self.config.progress_pred_type,
-                    success_cutoff=success_cutoff,
-                )
-                rejected_metadata = {
-                    "start_idx": start_idx,
-                    "end_idx": end_idx,
-                    "subsampled_indices": indices,
-                }
-                rejected_frames = subsampled
-
-        if "metadata" in rejected_traj:
-            rejected_metadata.update(rejected_traj["metadata"])
-
-        # Let's make sure to pad both trajectories to max_frames
-        if self.config.load_embeddings:
-            chosen_frames_shape_orig = chosen_video_embeddings.shape
-            chosen_video_embeddings, chosen_progress = pad_trajectory_to_max_frames_torch(
-                chosen_video_embeddings, chosen_progress, self.config.max_frames, pad_from="right"
-            )
-            rejected_frames_shape_orig = rejected_video_embeddings.shape
-            rejected_video_embeddings, rejected_progress = pad_trajectory_to_max_frames_torch(
-                rejected_video_embeddings, rejected_progress, self.config.max_frames, pad_from="right"
-            )
-        else:
-            chosen_frames_shape_orig = chosen_frames.shape
-            chosen_frames, chosen_progress = pad_trajectory_to_max_frames_np(
-                chosen_frames, chosen_progress, self.config.max_frames, pad_from="right"
-            )
-            rejected_frames_shape_orig = rejected_frames.shape
-            rejected_frames, rejected_progress = pad_trajectory_to_max_frames_np(
-                rejected_frames, rejected_progress, self.config.max_frames, pad_from="right"
-            )
+        chosen_trajectory = self._get_traj_from_data(chosen_traj)
+        rejected_trajectory = self._get_traj_from_data(rejected_traj)
 
         # If our strategy is different task, make sure the rejected trajectory has 0 progress
         if strategy_used == DataGenStrat.DIFFERENT_TASK:
-            rejected_progress = [0.0] * len(rejected_progress)
+            rejected_trajectory.target_progress = [0.0] * len(rejected_trajectory.target_progress)
 
         # Create preference sample structure
         sample = PreferenceSample(
-            chosen_trajectory=Trajectory(
-                frames=chosen_frames,
-                frames_shape=chosen_frames_shape_orig,
-                video_embeddings=chosen_video_embeddings,
-                text_embedding=chosen_text_embedding,
-                id=chosen_traj["id"],
-                task=chosen_traj["task"],
-                lang_vector=chosen_traj["lang_vector"],
-                data_source=chosen_traj["data_source"],
-                quality_label=chosen_traj.get("quality_label"),
-                is_robot=chosen_traj["is_robot"],
-                target_progress=chosen_progress,
-                data_gen_strategy=DataGenStrat.SUBSAMPLE_TASK.value,
-                metadata=chosen_metadata,
-            ),
-            rejected_trajectory=Trajectory(
-                frames=rejected_frames,
-                frames_shape=rejected_frames_shape_orig,
-                video_embeddings=rejected_video_embeddings,
-                text_embedding=rejected_text_embedding,
-                id=rejected_traj["id"],
-                task=rejected_traj["task"],
-                lang_vector=rejected_traj["lang_vector"],
-                data_source=rejected_traj["data_source"],
-                quality_label=rejected_traj["quality_label"],
-                is_robot=rejected_traj["is_robot"],
-                target_progress=rejected_progress,
-                data_gen_strategy=strategy_used.value,
-                metadata=rejected_metadata,
-            ),
+            chosen_trajectory=chosen_trajectory,
+            rejected_trajectory=rejected_trajectory,
+            data_gen_strategy=strategy_used.value,
         )
         return sample
-
-    def _create_same_task_suboptimal_trajectory(self, chosen_traj: dict) -> dict | None:
-        """Create a suboptimal trajectory from the same task as the chosen trajectory.
-
-        This function tries to find an existing suboptimal/failure trajectory from the same task.
-        Returns None if no suboptimal trajectories are available.
-
-        Args:
-            chosen_traj: The chosen (optimal) trajectory dictionary
-
-        Returns:
-            Optional[Dict]: The rejected trajectory, or None if none available
-        """
-        task_name = chosen_traj["task"]
-
-        # Try to find suboptimal trajectories from the same task
-        same_task_suboptimal_indices = self.suboptimal_by_task.get(task_name, [])
-        same_task_suboptimal = [
-            self.dataset[idx] for idx in same_task_suboptimal_indices if self.dataset[idx]["id"] != chosen_traj["id"]
-        ]
-
-        if same_task_suboptimal:
-            return random.choice(same_task_suboptimal)
-        else:
-            return None
-
-    def _create_different_task_trajectory(self, chosen_traj: dict) -> dict | None:
-        """Create a trajectory from a different task than the chosen trajectory.
-
-        This function tries to find trajectories from different tasks.
-        Returns None if no other tasks are available.
-
-        Args:
-            chosen_traj: The chosen trajectory dictionary
-
-        Returns:
-            Optional[Dict]: The rejected trajectory, or None if none available
-        """
-        # Find other tasks
-        other_tasks = [task for task in self.optimal_by_task.keys() if task != chosen_traj["task"]]
-        if other_tasks:
-            other_task = random.choice(other_tasks)
-            other_task_indices = self.optimal_by_task[other_task]
-
-            if other_task_indices:
-                other_idx = random.choice(other_task_indices)
-                other_traj = self.dataset[other_idx]
-
-                # Check if it's not the same trajectory
-                if other_traj["id"] != chosen_traj["id"]:
-                    return other_traj
-        else:
-            # Only one task available
-            return None
-
-        return None

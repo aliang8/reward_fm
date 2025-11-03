@@ -6,6 +6,7 @@ import numpy as np
 import json
 
 from rfm.utils.distributed import rank_0_print
+from rfm.data.dataset_types import Trajectory
 
 try:
     import torch
@@ -457,7 +458,7 @@ def create_rewind_trajectory(
     use_embeddings: bool = False,
     progress_pred_type: str = "absolute",
     success_cutoff: float | None = None,
-) -> dict:
+) -> Trajectory:
     """Create a suboptimal trajectory by rewinding the original trajectory.
 
     This method creates a trajectory that goes forward then rewinds back:
@@ -502,6 +503,12 @@ def create_rewind_trajectory(
         num_frames = frames_data.shape[0]  # Use shape[0] for numpy array
     else:
         num_frames = len(frames_data)
+
+    if num_frames == 0 or (num_frames // 2 - 1) == 0:
+        import ipdb
+
+        ipdb.set_trace()
+        raise ValueError(f"Number of frames is 0 for trajectory: {original_traj['id']}")
 
     # Step 1: Select start and end indices
     # Start index is in the first half of the trajectory
@@ -592,9 +599,19 @@ def create_rewind_trajectory(
 
     subsampled_frames, subsampled_indices = linspace_subsample_frames(combined_frames, max_frames)
     subsampled_progress = [combined_progress_abs[idx] for idx in subsampled_indices]
+    subsampled_frames_shape = subsampled_frames.shape if not use_embeddings else None
 
     if progress_pred_type == "relative":
         subsampled_progress = convert_absolute_to_relative_progress(subsampled_progress)
+
+    if use_embeddings:
+        subsampled_frames, subsampled_progress = pad_trajectory_to_max_frames_torch(
+            subsampled_frames, subsampled_progress, max_frames
+        )
+    else:
+        subsampled_frames, subsampled_progress = pad_trajectory_to_max_frames_np(
+            subsampled_frames, subsampled_progress, max_frames
+        )
 
     metadata = {
         "start_idx": start_idx,
@@ -604,14 +621,20 @@ def create_rewind_trajectory(
         "subsampled_indices": subsampled_indices,
     }
 
-    # Create new trajectory with rewind frames/embeddings
-    rewind_traj = original_traj.copy()
-    rewind_traj["frames"] = subsampled_frames
-    rewind_traj["frames_shape"] = subsampled_frames.shape
-    rewind_traj["target_progress"] = subsampled_progress
-    rewind_traj["metadata"] = metadata
-    rewind_traj["quality_label"] = "rewound"
-    return rewind_traj
+    return Trajectory(
+        frames=subsampled_frames if not use_embeddings else None,
+        frames_shape=subsampled_frames_shape,
+        video_embeddings=subsampled_frames if use_embeddings else None,
+        text_embedding=None,  # Rewound trajectories don't have text embeddings
+        id=original_traj["id"],
+        task=original_traj["task"],
+        lang_vector=original_traj["lang_vector"],
+        data_source=original_traj["data_source"],
+        quality_label="rewound",
+        is_robot=original_traj["is_robot"],
+        target_progress=subsampled_progress,
+        metadata=metadata,
+    )
 
 
 def show_available_datasets():

@@ -193,9 +193,9 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["padding_mask"] = create_padding_mask(batch_inputs["frames_shape"], max_length)
 
         batch_inputs["data_source"] = [sample.trajectory.data_source for sample in progress_samples]
-        batch_inputs["data_gen_strategy"] = [sample.trajectory.data_gen_strategy for sample in progress_samples]
+        batch_inputs["data_gen_strategy"] = [sample.data_gen_strategy for sample in progress_samples]
         target_progress_mask = [
-            should_compute_progress(sample.trajectory.quality_label, sample.trajectory.data_gen_strategy)
+            should_compute_progress(sample.trajectory.quality_label, sample.data_gen_strategy)
             for sample in progress_samples
         ]
         batch_inputs["target_progress_mask"] = torch.tensor(target_progress_mask, dtype=torch.float32)
@@ -312,16 +312,29 @@ class RFMBatchCollator(BaseCollator):
         ]
 
         batch_inputs["trajectory_A_quality_label"] = [traj.quality_label for traj in trajectory_A_list]
-        batch_inputs["trajectory_A_data_gen_strategy"] = [traj.data_gen_strategy for traj in trajectory_A_list]
+
+        trajectory_A_data_gen_strategy = []
+        trajectory_B_data_gen_strategy = []
+        for i, sample in enumerate(preference_samples):
+            if batch_inputs["preference_labels"][i].item() == 1.0:
+                trajectory_A_data_gen_strategy.append("subsample_task")
+                trajectory_B_data_gen_strategy.append(sample.data_gen_strategy)
+            else:
+                trajectory_A_data_gen_strategy.append(sample.data_gen_strategy)
+                trajectory_B_data_gen_strategy.append("subsample_task")
+
+        batch_inputs["trajectory_A_data_gen_strategy"] = trajectory_A_data_gen_strategy
 
         # Add target progress for both trajectories using list comprehensions
         target_progress_A = [traj.target_progress for traj in trajectory_A_list]
         target_progress_B = [traj.target_progress for traj in trajectory_B_list]
         target_progress_A_mask = [
-            should_compute_progress(traj.quality_label, traj.data_gen_strategy) for traj in trajectory_A_list
+            should_compute_progress(traj.quality_label, strategy)
+            for traj, strategy in zip(trajectory_A_list, trajectory_A_data_gen_strategy)
         ]
         target_progress_B_mask = [
-            should_compute_progress(traj.quality_label, traj.data_gen_strategy) for traj in trajectory_B_list
+            should_compute_progress(traj.quality_label, strategy)
+            for traj, strategy in zip(trajectory_B_list, trajectory_B_data_gen_strategy)
         ]
 
         batch_inputs["target_progress_A"] = pad_target_progress(target_progress_A)
@@ -339,24 +352,18 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["padding_mask_A"] = create_padding_mask(batch_inputs["frames_shape_A"], max_length_A)
         batch_inputs["padding_mask_B"] = create_padding_mask(batch_inputs["frames_shape_B"], max_length_B)
 
-        batch_inputs["chosen_data_gen_strategy"] = [
-            sample.chosen_trajectory.data_gen_strategy for sample in preference_samples
-        ]
-        batch_inputs["rejected_data_gen_strategy"] = [
-            sample.rejected_trajectory.data_gen_strategy for sample in preference_samples
-        ]
+        batch_inputs["chosen_data_gen_strategy"] = ["subsample_task"] * len(preference_samples)
+        batch_inputs["rejected_data_gen_strategy"] = [sample.data_gen_strategy for sample in preference_samples]
         batch_inputs["chosen_quality_label"] = [sample.chosen_trajectory.quality_label for sample in preference_samples]
 
         target_progress_chosen = [sample.chosen_trajectory.target_progress for sample in preference_samples]
         target_progress_rejected = [sample.rejected_trajectory.target_progress for sample in preference_samples]
         target_progress_chosen_mask = [
-            should_compute_progress(sample.chosen_trajectory.quality_label, sample.chosen_trajectory.data_gen_strategy)
+            should_compute_progress(sample.chosen_trajectory.quality_label, "subsample_task")
             for sample in preference_samples
         ]
         target_progress_rejected_mask = [
-            should_compute_progress(
-                sample.rejected_trajectory.quality_label, sample.rejected_trajectory.data_gen_strategy
-            )
+            should_compute_progress(sample.rejected_trajectory.quality_label, sample.data_gen_strategy)
             for sample in preference_samples
         ]
 
@@ -506,7 +513,7 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["data_source"] = [sample.ref_trajectory.data_source for sample in similarity_samples]
         batch_inputs["sample_type"] = ["similarity"] * len(similarity_samples)
         batch_inputs["task"] = [sample.ref_trajectory.task for sample in similarity_samples]
-        batch_inputs["data_gen_strategy"] = [sample.diff_trajectory.data_gen_strategy for sample in similarity_samples]
+        batch_inputs["data_gen_strategy"] = [sample.data_gen_strategy for sample in similarity_samples]
 
         # Add target progress for all three trajectories
         target_progress_ref = [sample.ref_trajectory.target_progress for sample in similarity_samples]
@@ -514,16 +521,18 @@ class RFMBatchCollator(BaseCollator):
         target_progress_diff = [sample.diff_trajectory.target_progress for sample in similarity_samples]
 
         # Create masks for progress loss (only compute for successful trajectories or rewinds)
+        # For similarity samples, ref is always successful, sim and diff depend on sample's data_gen_strategy
         target_progress_ref_mask = [
-            should_compute_progress(sample.ref_trajectory.quality_label, sample.ref_trajectory.data_gen_strategy)
-            for sample in similarity_samples
+            should_compute_progress(sample.ref_trajectory.quality_label, "successful") for sample in similarity_samples
         ]
+        # sim_trajectory strategy depends on sample's data_gen_strategy (e.g., "rewind_same_task" -> sim is rewound)
         target_progress_sim_mask = [
-            should_compute_progress(sample.sim_trajectory.quality_label, sample.sim_trajectory.data_gen_strategy)
+            should_compute_progress(sample.sim_trajectory.quality_label, sample.data_gen_strategy)
             for sample in similarity_samples
         ]
+        # diff_trajectory is usually from different task or suboptimal
         target_progress_diff_mask = [
-            should_compute_progress(sample.diff_trajectory.quality_label, sample.diff_trajectory.data_gen_strategy)
+            should_compute_progress(sample.diff_trajectory.quality_label, "different_task")
             for sample in similarity_samples
         ]
 

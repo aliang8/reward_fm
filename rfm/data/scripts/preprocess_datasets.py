@@ -26,7 +26,7 @@ from PIL import Image
 from datasets import Dataset, DatasetDict, Video, load_dataset
 from rfm.utils.distributed import rank_0_print
 
-#VIDEO_ERROR_PRINTED = False
+# VIDEO_ERROR_PRINTED = False
 # maps subsets to functions that filter the dataset. If true, the example is dropped.
 soar_bad_trajectories = [
     "b180805a-638e-4055-bc72-3a8d4808a289",
@@ -41,12 +41,23 @@ soar_bad_trajectories = [
 ]
 filters = {
     "jesbu1/molmoact_rfm/molmoact_dataset_tabletop": lambda x: "load the bowl" in x["task"].lower(),
-    "jesbu1/galaxea_rfm/galaxea_part1_r1_lite": lambda x: all(word in x["task"].lower() for word in ["return", "to", "initial", "position"]),
-    "jesbu1/galaxea_rfm/galaxea_part2_r1_lite": lambda x: all(word in x["task"].lower() for word in ["return", "to", "initial", "position"]),
-    "jesbu1/galaxea_rfm/galaxea_part3_r1_lite": lambda x: all(word in x["task"].lower() for word in ["return", "to", "initial", "position"]),
-    "jesbu1/galaxea_rfm/galaxea_part4_r1_lite": lambda x: all(word in x["task"].lower() for word in ["return", "to", "initial", "position"]),
-    "jesbu1/galaxea_rfm/galaxea_part5_r1_lite": lambda x: all(word in x["task"].lower() for word in ["return", "to", "initial", "position"]),
+    "jesbu1/galaxea_rfm/galaxea_part1_r1_lite": lambda x: all(
+        word in x["task"].lower() for word in ["return", "to", "initial", "position"]
+    ),
+    "jesbu1/galaxea_rfm/galaxea_part2_r1_lite": lambda x: all(
+        word in x["task"].lower() for word in ["return", "to", "initial", "position"]
+    ),
+    "jesbu1/galaxea_rfm/galaxea_part3_r1_lite": lambda x: all(
+        word in x["task"].lower() for word in ["return", "to", "initial", "position"]
+    ),
+    "jesbu1/galaxea_rfm/galaxea_part4_r1_lite": lambda x: all(
+        word in x["task"].lower() for word in ["return", "to", "initial", "position"]
+    ),
+    "jesbu1/galaxea_rfm/galaxea_part5_r1_lite": lambda x: all(
+        word in x["task"].lower() for word in ["return", "to", "initial", "position"]
+    ),
     "jesbu1/soar_rfm/soar_rfm": lambda x: x["id"] in soar_bad_trajectories,
+    "jesbu1/auto_eval_rfm/auto_eval_rfm": lambda x: x["frames_shape"][0] <= 5, # some episodes are too short and are likely poor/faulty success detections 
 }
 
 
@@ -504,52 +515,52 @@ class DatasetPreprocessor:
 
         # Filter out dropped examples (those with frames=None and frames_processed=False)
         original_length = len(processed_dataset)
-        
+
         # Build a list of which indices were kept (had frames_processed=True)
         kept_indices = []
         for idx in range(original_length):
             if processed_dataset[idx].get("frames_processed", False):
                 kept_indices.append(idx)
-        
+
         # Filter the dataset
         processed_dataset = processed_dataset.filter(lambda x: x.get("frames_processed", False))
         num_filtered = original_length - len(processed_dataset)
-        
+
         if num_filtered > 0:
             rank_0_print(f"Filtered out {num_filtered} trajectories")
-            
+
             # Build mapping from old indices to new indices
             old_to_new_idx = {old_idx: new_idx for new_idx, old_idx in enumerate(kept_indices)}
-            
+
             # Remap all indices
             robot_trajectories = [old_to_new_idx[idx] for idx in robot_trajectories if idx in old_to_new_idx]
             human_trajectories = [old_to_new_idx[idx] for idx in human_trajectories if idx in old_to_new_idx]
-            
+
             quality_indices = {
                 key: [old_to_new_idx[idx] for idx in indices if idx in old_to_new_idx]
                 for key, indices in quality_indices.items()
             }
-            
+
             task_indices = {
                 key: [old_to_new_idx[idx] for idx in indices if idx in old_to_new_idx]
                 for key, indices in task_indices.items()
             }
-            
+
             source_indices = {
                 key: [old_to_new_idx[idx] for idx in indices if idx in old_to_new_idx]
                 for key, indices in source_indices.items()
             }
-            
+
             partial_success_indices = {
                 key: [old_to_new_idx[idx] for idx in indices if idx in old_to_new_idx]
                 for key, indices in partial_success_indices.items()
             }
-            
+
             optimal_by_task = {
                 key: [old_to_new_idx[idx] for idx in indices if idx in old_to_new_idx]
                 for key, indices in optimal_by_task.items()
             }
-            
+
             suboptimal_by_task = {
                 key: [old_to_new_idx[idx] for idx in indices if idx in old_to_new_idx]
                 for key, indices in suboptimal_by_task.items()
@@ -609,22 +620,22 @@ class DatasetPreprocessor:
             # If the source is a path string, open with a lightweight reader
             try:
                 # Try decord first (fastest for video decoding)
-                    vr = decord.VideoReader(frames_src, num_threads=1)
-                    total_frames = len(vr)
+                vr = decord.VideoReader(frames_src, num_threads=1)
+                total_frames = len(vr)
 
-                    # Sample frames efficiently
-                    if total_frames <= self.config.max_frames_for_preprocessing:
-                        frame_indices = list(range(total_frames))
-                    else:
-                        # Uniform sampling
-                        frame_indices = [
-                            int(i * total_frames / self.config.max_frames_for_preprocessing)
-                            for i in range(self.config.max_frames_for_preprocessing)
-                        ]
+                # Sample frames efficiently
+                if total_frames <= self.config.max_frames_for_preprocessing:
+                    frame_indices = list(range(total_frames))
+                else:
+                    # Uniform sampling
+                    frame_indices = [
+                        int(i * total_frames / self.config.max_frames_for_preprocessing)
+                        for i in range(self.config.max_frames_for_preprocessing)
+                    ]
 
-                    frames_array = vr.get_batch(frame_indices).asnumpy()
+                frames_array = vr.get_batch(frame_indices).asnumpy()
 
-                    del vr
+                del vr
 
             except Exception as e:
                 rank_0_print(f"Error in _process_one: {e}")
@@ -668,7 +679,7 @@ class DatasetPreprocessor:
         # Update dataset with saved paths and build indices
         updated_rows = []
         kept_indices = []  # Track which original indices were kept
-        
+
         for i in tqdm(indices_only, total=len(indices_only), desc=f"Finalizing {cache_key}", unit="traj", leave=False):
             ex = dataset[i]
             if i in idx_to_data:
@@ -694,10 +705,10 @@ class DatasetPreprocessor:
 
                 # Track that this index was kept
                 kept_indices.append(i)
-                
+
                 # Build indices using the NEW index (position in updated_rows)
                 new_idx = len(updated_rows)
-                
+
                 if ex.get("is_robot", True):
                     robot_trajectories.append(new_idx)
                 else:
@@ -731,7 +742,7 @@ class DatasetPreprocessor:
                     ex.pop("frames_video", None)
 
                 updated_rows.append(ex)
-        
+
         # Report filtering stats
         num_filtered = len(indices_only) - len(kept_indices)
         if num_filtered > 0:

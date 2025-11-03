@@ -7,6 +7,7 @@ from .helpers import (
     pad_trajectory_to_max_frames_np,
     pad_trajectory_to_max_frames_torch,
     load_embeddings_from_path,
+    convert_absolute_to_relative_progress,
 )
 from rfm.utils.distributed import rank_0_print
 
@@ -14,14 +15,16 @@ from rfm.utils.distributed import rank_0_print
 class ProgressDefaultDataset(RFMBaseDataset):
     """Dataset that generates progress samples by iterating through each trajectory in the dataset, used in policy ranking."""
 
-    def __init__(self, config, is_evaluation=False, verbose=True):
+    def __init__(self, config, is_evaluation=False, verbose=True, **kwargs):
         super().__init__(config, is_evaluation, verbose=verbose)
         self.current_idx = 0
 
-        rank_0_print(f"ProgressDataset initialized with {len(self.robot_trajectories)} trajectories", verbose=self.verbose)
-        
+        rank_0_print(
+            f"ProgressDataset initialized with {len(self.robot_trajectories)} trajectories", verbose=self.verbose
+        )
+
         self.sample_indices = self._generate_all_sample_indices()
-        
+
         rank_0_print(f"Generated {len(self.sample_indices)} sample indices", verbose=self.verbose)
 
     def _generate_all_sample_indices(self) -> list[dict]:
@@ -46,42 +49,32 @@ class ProgressDefaultDataset(RFMBaseDataset):
         # Use linspace sampling to get max_frames
         max_frames = self.config.max_frames
 
+        # Load data (embeddings or frames)
         if self.config.load_embeddings and traj.get("embeddings_path"):
-            # Load embeddings from path
             video_embeddings = load_embeddings_from_path(traj["embeddings_path"], "video_embeddings")
             text_embedding = load_embeddings_from_path(traj["embeddings_path"], "text_embedding")
+            data = video_embeddings
             total_frames = video_embeddings.shape[0] if hasattr(video_embeddings, "shape") else len(video_embeddings)
-
-            # Subsample video embeddings
-            video_embeddings, frame_indices = linspace_subsample_frames(video_embeddings, max_frames)
-
-            # Calculate progress based on the sampled frame indices
-            if self.config.progress_pred_type == "absolute":
-                progress = [(idx + 1) / total_frames for idx in frame_indices]
-            else:
-                progress = [0.0]
-                for start, end in zip(frame_indices[:-1], frame_indices[1:]):
-                    progress.append(sum(1 / total_frames for _ in range(start, end)))
-
-            # Pad embeddings and progress if needed
-            video_embeddings, progress = pad_trajectory_to_max_frames_torch(video_embeddings, progress, max_frames)
+            use_embeddings = True
         else:
-            # Get frames
             frames = self._get_trajectory_frames(idx)
+            data = frames
             total_frames = len(frames)
+            use_embeddings = False
 
-            # Subsample frames
-            frames, frame_indices = linspace_subsample_frames(frames, max_frames)
+        data, frame_indices = linspace_subsample_frames(data, max_frames)
+        frames_shape_orig = data.shape
+        progress_abs = [(idx + 1) / total_frames for idx in frame_indices]
 
-            if self.config.progress_pred_type == "absolute":
-                progress = [(idx + 1) / total_frames for idx in frame_indices]
-            else:
-                progress = [0.0]
-                for start, end in zip(frame_indices[:-1], frame_indices[1:]):
-                    progress.append(sum(1 / total_frames for _ in range(start, end)))
+        if use_embeddings:
+            video_embeddings, progress_abs = pad_trajectory_to_max_frames_torch(data, progress_abs, max_frames)
+        else:
+            frames, progress_abs = pad_trajectory_to_max_frames_np(data, progress_abs, max_frames)
 
-            # Pad frames and progress if needed
-            frames, progress = pad_trajectory_to_max_frames_np(frames, progress, max_frames)
+        if self.config.progress_pred_type == "relative":
+            progress = convert_absolute_to_relative_progress(progress_abs)
+        else:
+            progress = progress_abs
 
         metadata = {
             "quality_label": traj["quality_label"],
@@ -94,7 +87,7 @@ class ProgressDefaultDataset(RFMBaseDataset):
         # Create trajectory for the progress sample
         trajectory = Trajectory(
             frames=frames,
-            frames_shape=frames.shape if frames is not None and hasattr(frames, "shape") else None,
+            frames_shape=frames_shape_orig,
             video_embeddings=video_embeddings,
             text_embedding=text_embedding,
             id=traj["id"],

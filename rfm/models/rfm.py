@@ -44,7 +44,6 @@ class RFM(PreTrainedModel):
         self.base_model_id = base_model_id
 
         # Three prediction heads for different objectives
-        # self.progress_head = nn.Linear(hidden_size, 1)  # Progress prediction (0-1)
         self.progress_head = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
             nn.LayerNorm(hidden_size // 2),
@@ -53,7 +52,6 @@ class RFM(PreTrainedModel):
             nn.Linear(hidden_size // 2, 1),
             nn.Sigmoid(),
         )
-        # self.preference_head = nn.Linear(hidden_size, 1)  # Preference prediction (binary)
         self.preference_head = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
             nn.LayerNorm(hidden_size // 2),
@@ -61,7 +59,7 @@ class RFM(PreTrainedModel):
             nn.Dropout(0.1),
             nn.Linear(hidden_size // 2, 1),
         )
-        self.similarity_head = nn.Linear(hidden_size, 1)  # Similarity scoring (reward)
+        self.similarity_head = nn.Linear(hidden_size, 1)
 
         # Ensure all heads have the same dtype as the base model
         self.model_dtype = self.model.dtype

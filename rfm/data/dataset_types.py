@@ -30,8 +30,6 @@ class Trajectory(BaseModel):
     quality_label: str | None = None
     is_robot: bool | None = None
 
-    data_gen_strategy: str | None = None
-
     # Progress and metadata
     target_progress: list[float] | None = None
     metadata: dict[str, Any] | None = None
@@ -45,6 +43,7 @@ class ProgressSample(BaseModel):
 
     trajectory: Trajectory
     sample_type: str = "progress"
+    data_gen_strategy: str | None = None
 
 
 class PreferenceSample(BaseModel):
@@ -55,6 +54,7 @@ class PreferenceSample(BaseModel):
     rejected_trajectory: Trajectory
 
     sample_type: str = "preference"
+    data_gen_strategy: str | None = None
 
 
 class SimilaritySample(BaseModel):
@@ -66,6 +66,7 @@ class SimilaritySample(BaseModel):
     diff_trajectory: Trajectory  # Different trajectory
 
     sample_type: str = "similarity"
+    data_gen_strategy: str | None = None
 
 
 SampleType = Union[PreferenceSample, SimilaritySample, ProgressSample]

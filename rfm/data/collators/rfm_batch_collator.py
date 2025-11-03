@@ -15,6 +15,64 @@ from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilarityS
 from typing import List, Dict
 
 
+def should_compute_progress(quality_label: str, data_gen_strategy: str) -> float:
+    """
+    Check if progress should be computed for a trajectory.
+
+    Includes if it is successful, rewound, rewind_same_task, or different_task,
+    but NOT suboptimal or failure.
+
+    Args:
+        quality_label: The quality label of the trajectory
+        data_gen_strategy: The data generation strategy
+
+    Returns:
+        1.0 if progress should be computed, 0.0 otherwise
+    """
+    if quality_label in ["suboptimal", "failure"]:
+        return 0.0
+
+    if (
+        quality_label == "successful"
+        or quality_label == "rewound"
+        or data_gen_strategy == "rewind_same_task"
+        or data_gen_strategy == "different_task"
+    ):
+        return 1.0
+
+    return 0.0
+
+
+def create_padding_mask(frames_shapes: torch.Tensor, max_length: int = None) -> torch.Tensor:
+    """
+    Create padding mask based on frames_shape.
+
+    Args:
+        frames_shapes: Tensor of shape (batch_size, ...) where first dim of each row is num_frames
+        max_length: Maximum length for padding. If None, uses max of first dim in frames_shapes
+
+    Returns:
+        Tensor of shape (batch_size, max_length) with 1.0 for valid frames, 0.0 for padding
+    """
+    # Extract num_frames from first dimension of each shape
+    if frames_shapes.dim() > 1:
+        num_frames = frames_shapes[:, 0].float()
+    else:
+        num_frames = frames_shapes.float()
+
+    if max_length is None:
+        max_length = int(num_frames.max().item())
+
+    # Create range tensor: [0, 1, 2, ..., max_length-1]
+    range_tensor = torch.arange(max_length, dtype=torch.float32, device=frames_shapes.device)
+
+    # Broadcast comparison: (batch_size, 1) vs (1, max_length) -> (batch_size, max_length)
+    # For each sample, positions < num_frames are valid (1.0), others are padding (0.0)
+    masks = (range_tensor.unsqueeze(0) < num_frames.unsqueeze(1)).float()
+
+    return masks
+
+
 class RFMBatchCollator(BaseCollator):
     def _process_conversation(self, conversations: List[List[Dict]]) -> Dict[str, torch.Tensor]:
         """
@@ -69,68 +127,56 @@ class RFMBatchCollator(BaseCollator):
 
         return batch_inputs
 
-    def _add_preference_meta(
-        self, batch_inputs: dict[str, torch.Tensor], preference_samples: list[PreferenceSample]
-    ) -> dict[str, torch.Tensor]:
-        """Add metadata to the batch inputs."""
-        batch_inputs["data_source"] = [sample.chosen_trajectory.data_source for sample in preference_samples]
-        batch_inputs["sample_type"] = ["preference"] * len(preference_samples)
-        batch_inputs["task"] = [sample.chosen_trajectory.task for sample in preference_samples]
+    def _process_progress_batch(self, progress_samples: list[ProgressSample]) -> dict[str, torch.Tensor]:
+        """Process a batch of progress samples with VQA-style question."""
+        # Collect all messages for batch processing
+        all_messages = []
 
-        batch_inputs["chosen_data_gen_strategy"] = [
-            sample.chosen_trajectory.data_gen_strategy for sample in preference_samples
-        ]
-        batch_inputs["rejected_data_gen_strategy"] = [
-            sample.rejected_trajectory.data_gen_strategy for sample in preference_samples
-        ]
+        for sample in progress_samples:
+            # Convert frames to appropriate format using stored shapes
+            frames = convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
 
-        # Add target progress for both trajectories based on conversation order
-        target_progress_chosen = [sample.chosen_trajectory.target_progress for sample in preference_samples]
-        target_progress_rejected = [sample.rejected_trajectory.target_progress for sample in preference_samples]
-        target_progress_chosen_mask = [
-            1.0
-            if sample.chosen_trajectory.quality_label == "successful"
-            or sample.chosen_trajectory.data_gen_strategy == "rewind_same_task"
-            else 0.0
-            for sample in preference_samples
-        ]
-        target_progress_rejected_mask = [
-            1.0
-            if sample.rejected_trajectory.quality_label == "successful"
-            or sample.rejected_trajectory.data_gen_strategy == "rewind_same_task"
-            else 0.0
-            for sample in preference_samples
-        ]
+            if "Qwen" in self.base_model_id:
+                content_extras = {
+                    "resized_height": self.resized_height,
+                    "resized_width": self.resized_width,
+                }
+            elif "SmolVLM" in self.base_model_id:
+                # we need to write the frames to a temporary file
+                tmp = Path(tempfile.gettempdir()) / f"tmp_progress.mp4"
+                write_mp4(frames, tmp)
+                frames = str(tmp)
+                content_extras = {}
+            else:
+                content_extras = {}
 
-        # Pad target progress tensors to max length in last dimension
-        batch_inputs["target_progress_chosen"] = pad_target_progress(target_progress_chosen)
-        batch_inputs["target_progress_rejected"] = pad_target_progress(target_progress_rejected)
-        batch_inputs["target_progress_chosen_mask"] = torch.tensor(target_progress_chosen_mask, dtype=torch.float32)
-        batch_inputs["target_progress_rejected_mask"] = torch.tensor(target_progress_rejected_mask, dtype=torch.float32)
+            # Create conversation for progress evaluation
+            conversation = [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"Task: {sample.trajectory.task}",
+                        },
+                        {
+                            "type": "video",
+                            "video": frames,
+                            **content_extras,
+                        },
+                    ],
+                }
+            ]
 
-        # Also add the frame_shapes
-        if not self.load_embeddings:
-            batch_inputs["chosen_frames_shape"] = torch.tensor(
-                [sample.chosen_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
-            )
-            batch_inputs["rejected_frames_shape"] = torch.tensor(
-                [sample.rejected_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
-            )
-        else:
-            batch_inputs["chosen_frames_shape"] = torch.tensor(
-                [sample.chosen_trajectory.video_embeddings.shape for sample in preference_samples], dtype=torch.int32
-            )
-            batch_inputs["rejected_frames_shape"] = torch.tensor(
-                [sample.rejected_trajectory.video_embeddings.shape for sample in preference_samples], dtype=torch.int32
-            )
+            all_messages.append(conversation)
+
+        batch_inputs = self._process_conversation(all_messages)
+        batch_inputs = self._add_progress_meta(batch_inputs, progress_samples)
         return batch_inputs
 
     def _add_progress_meta(
         self, batch_inputs: dict[str, torch.Tensor], progress_samples: list[ProgressSample]
     ) -> dict[str, torch.Tensor]:
-        """Add metadata to the batch inputs."""
-
-        # Add metadata
         batch_inputs["sample_type"] = ["progress"] * len(progress_samples)
         batch_inputs["task"] = [sample.trajectory.task for sample in progress_samples]
         batch_inputs["metadata"] = [sample.trajectory.metadata for sample in progress_samples]
@@ -140,22 +186,16 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["target_progress"] = pad_target_progress(target_progress_list)
         batch_inputs["quality_labels"] = [sample.trajectory.quality_label for sample in progress_samples]
 
-        if not self.load_embeddings:
-            batch_inputs["frame_shapes"] = torch.tensor(
-                [sample.trajectory.frames_shape for sample in progress_samples], dtype=torch.int32
-            )
-        else:
-            batch_inputs["frame_shapes"] = torch.tensor(
-                [sample.trajectory.video_embeddings.shape for sample in progress_samples], dtype=torch.int32
-            )
+        frames_shape_list = [sample.trajectory.frames_shape for sample in progress_samples]
+        batch_inputs["frames_shape"] = torch.tensor(frames_shape_list, dtype=torch.int32)
+
+        max_length = batch_inputs["target_progress"].shape[-1]
+        batch_inputs["padding_mask"] = create_padding_mask(batch_inputs["frames_shape"], max_length)
 
         batch_inputs["data_source"] = [sample.trajectory.data_source for sample in progress_samples]
-        batch_inputs["data_gen_strategy"] = [sample.trajectory.data_gen_strategy for sample in progress_samples]
+        batch_inputs["data_gen_strategy"] = [sample.data_gen_strategy for sample in progress_samples]
         target_progress_mask = [
-            1.0
-            if sample.trajectory.quality_label == "successful"
-            or sample.trajectory.data_gen_strategy == "rewind_same_task"
-            else 0.0
+            should_compute_progress(sample.trajectory.quality_label, sample.data_gen_strategy)
             for sample in progress_samples
         ]
         batch_inputs["target_progress_mask"] = torch.tensor(target_progress_mask, dtype=torch.float32)
@@ -247,6 +287,98 @@ class RFMBatchCollator(BaseCollator):
         # Use the dynamically generated preference labels based on trajectory order
         batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
         batch_inputs = self._add_preference_meta(batch_inputs, preference_samples)
+        return batch_inputs
+
+    def _add_preference_meta(
+        self, batch_inputs: dict[str, torch.Tensor], preference_samples: list[PreferenceSample]
+    ) -> dict[str, torch.Tensor]:
+        batch_inputs["data_source"] = [sample.chosen_trajectory.data_source for sample in preference_samples]
+        batch_inputs["sample_type"] = ["preference"] * len(preference_samples)
+        batch_inputs["task"] = [sample.chosen_trajectory.task for sample in preference_samples]
+
+        # Determine which trajectory is A and which is B based on preference_label
+        # Trajectory A is chosen if preference_label==1.0, otherwise rejected is A
+        trajectory_A_list = [
+            sample.chosen_trajectory
+            if batch_inputs["preference_labels"][i].item() == 1.0
+            else sample.rejected_trajectory
+            for i, sample in enumerate(preference_samples)
+        ]
+        trajectory_B_list = [
+            sample.rejected_trajectory
+            if batch_inputs["preference_labels"][i].item() == 1.0
+            else sample.chosen_trajectory
+            for i, sample in enumerate(preference_samples)
+        ]
+
+        batch_inputs["trajectory_A_quality_label"] = [traj.quality_label for traj in trajectory_A_list]
+
+        trajectory_A_data_gen_strategy = []
+        trajectory_B_data_gen_strategy = []
+        for i, sample in enumerate(preference_samples):
+            if batch_inputs["preference_labels"][i].item() == 1.0:
+                trajectory_A_data_gen_strategy.append("subsample_task")
+                trajectory_B_data_gen_strategy.append(sample.data_gen_strategy)
+            else:
+                trajectory_A_data_gen_strategy.append(sample.data_gen_strategy)
+                trajectory_B_data_gen_strategy.append("subsample_task")
+
+        batch_inputs["trajectory_A_data_gen_strategy"] = trajectory_A_data_gen_strategy
+
+        # Add target progress for both trajectories using list comprehensions
+        target_progress_A = [traj.target_progress for traj in trajectory_A_list]
+        target_progress_B = [traj.target_progress for traj in trajectory_B_list]
+        target_progress_A_mask = [
+            should_compute_progress(traj.quality_label, strategy)
+            for traj, strategy in zip(trajectory_A_list, trajectory_A_data_gen_strategy)
+        ]
+        target_progress_B_mask = [
+            should_compute_progress(traj.quality_label, strategy)
+            for traj, strategy in zip(trajectory_B_list, trajectory_B_data_gen_strategy)
+        ]
+
+        batch_inputs["target_progress_A"] = pad_target_progress(target_progress_A)
+        batch_inputs["target_progress_B"] = pad_target_progress(target_progress_B)
+        batch_inputs["target_progress_A_mask"] = torch.tensor(target_progress_A_mask, dtype=torch.float32)
+        batch_inputs["target_progress_B_mask"] = torch.tensor(target_progress_B_mask, dtype=torch.float32)
+
+        frames_shape_A = [traj.frames_shape for traj in trajectory_A_list]
+        frames_shape_B = [traj.frames_shape for traj in trajectory_B_list]
+        batch_inputs["frames_shape_A"] = torch.tensor(frames_shape_A, dtype=torch.int32)
+        batch_inputs["frames_shape_B"] = torch.tensor(frames_shape_B, dtype=torch.int32)
+
+        max_length_A = batch_inputs["target_progress_A"].shape[-1]
+        max_length_B = batch_inputs["target_progress_B"].shape[-1]
+        batch_inputs["padding_mask_A"] = create_padding_mask(batch_inputs["frames_shape_A"], max_length_A)
+        batch_inputs["padding_mask_B"] = create_padding_mask(batch_inputs["frames_shape_B"], max_length_B)
+
+        batch_inputs["chosen_data_gen_strategy"] = ["subsample_task"] * len(preference_samples)
+        batch_inputs["rejected_data_gen_strategy"] = [sample.data_gen_strategy for sample in preference_samples]
+        batch_inputs["chosen_quality_label"] = [sample.chosen_trajectory.quality_label for sample in preference_samples]
+
+        target_progress_chosen = [sample.chosen_trajectory.target_progress for sample in preference_samples]
+        target_progress_rejected = [sample.rejected_trajectory.target_progress for sample in preference_samples]
+        target_progress_chosen_mask = [
+            should_compute_progress(sample.chosen_trajectory.quality_label, "subsample_task")
+            for sample in preference_samples
+        ]
+        target_progress_rejected_mask = [
+            should_compute_progress(sample.rejected_trajectory.quality_label, sample.data_gen_strategy)
+            for sample in preference_samples
+        ]
+
+        # Pad target progress tensors to max length in last dimension
+        batch_inputs["target_progress_chosen"] = pad_target_progress(target_progress_chosen)
+        batch_inputs["target_progress_rejected"] = pad_target_progress(target_progress_rejected)
+        batch_inputs["target_progress_chosen_mask"] = torch.tensor(target_progress_chosen_mask, dtype=torch.float32)
+        batch_inputs["target_progress_rejected_mask"] = torch.tensor(target_progress_rejected_mask, dtype=torch.float32)
+
+        batch_inputs["chosen_frames_shape"] = torch.tensor(
+            [sample.chosen_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
+        )
+        batch_inputs["rejected_frames_shape"] = torch.tensor(
+            [sample.rejected_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
+        )
         return batch_inputs
 
     def _process_similarity_batch(self, similarity_samples: list[SimilaritySample]) -> dict[str, torch.Tensor]:
@@ -378,11 +510,10 @@ class RFMBatchCollator(BaseCollator):
     def _add_similarity_meta(
         self, batch_inputs: dict[str, torch.Tensor], similarity_samples: list[SimilaritySample]
     ) -> dict[str, torch.Tensor]:
-        """Add metadata to the batch inputs for similarity samples."""
         batch_inputs["data_source"] = [sample.ref_trajectory.data_source for sample in similarity_samples]
         batch_inputs["sample_type"] = ["similarity"] * len(similarity_samples)
         batch_inputs["task"] = [sample.ref_trajectory.task for sample in similarity_samples]
-        batch_inputs["data_gen_strategy"] = [sample.diff_trajectory.data_gen_strategy for sample in similarity_samples]
+        batch_inputs["data_gen_strategy"] = [sample.data_gen_strategy for sample in similarity_samples]
 
         # Add target progress for all three trajectories
         target_progress_ref = [sample.ref_trajectory.target_progress for sample in similarity_samples]
@@ -390,29 +521,21 @@ class RFMBatchCollator(BaseCollator):
         target_progress_diff = [sample.diff_trajectory.target_progress for sample in similarity_samples]
 
         # Create masks for progress loss (only compute for successful trajectories or rewinds)
+        # For similarity samples, ref is always successful, sim and diff depend on sample's data_gen_strategy
         target_progress_ref_mask = [
-            1.0
-            if sample.ref_trajectory.quality_label == "successful"
-            or sample.ref_trajectory.data_gen_strategy == "rewind_same_task"
-            else 0.0
-            for sample in similarity_samples
+            should_compute_progress(sample.ref_trajectory.quality_label, "successful") for sample in similarity_samples
         ]
+        # sim_trajectory strategy depends on sample's data_gen_strategy (e.g., "rewind_same_task" -> sim is rewound)
         target_progress_sim_mask = [
-            1.0
-            if sample.sim_trajectory.quality_label == "successful"
-            or sample.sim_trajectory.data_gen_strategy == "rewind_same_task"
-            else 0.0
+            should_compute_progress(sample.sim_trajectory.quality_label, sample.data_gen_strategy)
             for sample in similarity_samples
         ]
+        # diff_trajectory is usually from different task or suboptimal
         target_progress_diff_mask = [
-            1.0
-            if sample.diff_trajectory.quality_label == "successful"
-            or sample.diff_trajectory.data_gen_strategy == "rewind_same_task"
-            else 0.0
+            should_compute_progress(sample.diff_trajectory.quality_label, "different_task")
             for sample in similarity_samples
         ]
 
-        # Pad target progress tensors to max length in last dimension
         batch_inputs["target_progress_ref"] = pad_target_progress(target_progress_ref)
         batch_inputs["target_progress_sim"] = pad_target_progress(target_progress_sim)
         batch_inputs["target_progress_diff"] = pad_target_progress(target_progress_diff)
@@ -421,73 +544,19 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["target_progress_sim_mask"] = torch.tensor(target_progress_sim_mask, dtype=torch.float32)
         batch_inputs["target_progress_diff_mask"] = torch.tensor(target_progress_diff_mask, dtype=torch.float32)
 
-        # Also add the frame_shapes
-        if not self.load_embeddings:
-            batch_inputs["ref_frames_shape"] = torch.tensor(
-                [sample.ref_trajectory.frames_shape for sample in similarity_samples], dtype=torch.int32
-            )
-            batch_inputs["traj_sim_frames_shape"] = torch.tensor(
-                [sample.sim_trajectory.frames_shape for sample in similarity_samples], dtype=torch.int32
-            )
-            batch_inputs["traj_diff_frames_shape"] = torch.tensor(
-                [sample.diff_trajectory.frames_shape for sample in similarity_samples], dtype=torch.int32
-            )
-        else:
-            batch_inputs["ref_frames_shape"] = torch.tensor(
-                [sample.ref_trajectory.video_embeddings.shape for sample in similarity_samples], dtype=torch.int32
-            )
-            batch_inputs["traj_sim_frames_shape"] = torch.tensor(
-                [sample.sim_trajectory.video_embeddings.shape for sample in similarity_samples], dtype=torch.int32
-            )
-            batch_inputs["traj_diff_frames_shape"] = torch.tensor(
-                [sample.diff_trajectory.video_embeddings.shape for sample in similarity_samples], dtype=torch.int32
-            )
+        ref_frames_shape_list = [sample.ref_trajectory.frames_shape for sample in similarity_samples]
+        traj_sim_frames_shape_list = [sample.sim_trajectory.frames_shape for sample in similarity_samples]
+        traj_diff_frames_shape_list = [sample.diff_trajectory.frames_shape for sample in similarity_samples]
 
-        return batch_inputs
+        batch_inputs["ref_frames_shape"] = torch.tensor(ref_frames_shape_list, dtype=torch.int32)
+        batch_inputs["traj_sim_frames_shape"] = torch.tensor(traj_sim_frames_shape_list, dtype=torch.int32)
+        batch_inputs["traj_diff_frames_shape"] = torch.tensor(traj_diff_frames_shape_list, dtype=torch.int32)
 
-    def _process_progress_batch(self, progress_samples: list[ProgressSample]) -> dict[str, torch.Tensor]:
-        """Process a batch of progress samples with VQA-style question."""
-        # Collect all messages for batch processing
-        all_messages = []
+        max_length_ref = batch_inputs["target_progress_ref"].shape[-1]
+        max_length_sim = batch_inputs["target_progress_sim"].shape[-1]
+        max_length_diff = batch_inputs["target_progress_diff"].shape[-1]
+        batch_inputs["padding_mask_ref"] = create_padding_mask(batch_inputs["ref_frames_shape"], max_length_ref)
+        batch_inputs["padding_mask_sim"] = create_padding_mask(batch_inputs["traj_sim_frames_shape"], max_length_sim)
+        batch_inputs["padding_mask_diff"] = create_padding_mask(batch_inputs["traj_diff_frames_shape"], max_length_diff)
 
-        for sample in progress_samples:
-            # Convert frames to appropriate format using stored shapes
-            frames = convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
-
-            if "Qwen" in self.base_model_id:
-                content_extras = {
-                    "resized_height": self.resized_height,
-                    "resized_width": self.resized_width,
-                }
-            elif "SmolVLM" in self.base_model_id:
-                # we need to write the frames to a temporary file
-                tmp = Path(tempfile.gettempdir()) / f"tmp_progress.mp4"
-                write_mp4(frames, tmp)
-                frames = str(tmp)
-                content_extras = {}
-            else:
-                content_extras = {}
-
-            # Create conversation for progress evaluation
-            conversation = [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": f"Task: {sample.trajectory.task}",
-                        },
-                        {
-                            "type": "video",
-                            "video": frames,
-                            **content_extras,
-                        },
-                    ],
-                }
-            ]
-
-            all_messages.append(conversation)
-
-        batch_inputs = self._process_conversation(all_messages)
-        batch_inputs = self._add_progress_meta(batch_inputs, progress_samples)
         return batch_inputs

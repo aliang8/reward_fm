@@ -20,3 +20,4 @@ oxe_robo_set,0.85
 oxe_stanford_hydra_dataset_converted_externally_to_rlds,1.0
 oxe_tokyo_u_lsmo_converted_externally_to_rlds,1.0
 oxe_toto,1.0
+metaworld_train,1.0

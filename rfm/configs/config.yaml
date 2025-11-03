@@ -73,7 +73,7 @@ data:
   preference_strategy_ratio: [6, 1, 1, 0]
   # Tunable strategy ratios for progress generation: [default, rewind_same_task, different_task]
   progress_strategy_ratio: [1, 6, 1]
-  similarity_strategy_ratio: [1, 1] # rewind, suboptimal_same_task
+  similarity_strategy_ratio: [1, 1, 1] # rewind, suboptimal_same_task, paired_human_robot
   shuffle: true
   seed: 42
 

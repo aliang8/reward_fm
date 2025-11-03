@@ -173,12 +173,16 @@ def test():
 
     # Create mock config
     mock_data_config = MockDataConfig(
-        train_datasets=["jesbu1_roboarena_0825_rfm_roboarena", "jesbu1_fino_net_rfm_fino_net", "jesbu1_failsafe_rfm_failsafe"],
+        # train_datasets=["jesbu1_roboarena_0825_rfm_roboarena", "jesbu1_fino_net_rfm_fino_net", "jesbu1_failsafe_rfm_failsafe", "jesbu1_soar_rfm_soar_rfm"],
         # train_datasets=["jesbu1_failsafe_rfm_failsafe"],
-        sample_type_ratio=[1, 1, 1],  # pref, progress, similarity
+        # train_datasets=["jesbu1_h2r_rfm_h2r", "anqil_rh20t_subset_rfm_rh20t_human", "anqil_rh20t_subset_rfm_rh20t_robot", "jesbu1_humanoid_everyday_rfm_humanoid_everyday_rfm", "jesbu1_motif_rfm_motif_rfm"],
+        # train_datasets=["jesbu1_motif_rfm_motif_rfm", "anqil_rh20t_subset_rfm_rh20t_human", "anqil_rh20t_subset_rfm_rh20t_robot", "jesbu1_h2r_rfm_h2r"],
+        train_datasets=["jesbu1_motif_rfm_motif_rfm"],
+
+        sample_type_ratio=[0, 0, 1],  # pref, progress, similarity
         preference_strategy_ratio=[6, 1, 1, 0],
         progress_strategy_ratio=[1, 6, 1],
-        similarity_strategy_ratio=[1, 1],  # rewind, suboptimal_same_task
+        similarity_strategy_ratio=[1, 1, 1],  # rewind, suboptimal_same_task, paired_human_robot
         dataset_preference_ratio=0.7,
         data_source_weights={
             "roboarena": 1,
@@ -238,7 +242,7 @@ def test():
 
     rank_0_print("\nTesting batch loading with DataLoader...")
     batch_size = 64
-    num_batches_to_test = 100
+    num_batches_to_test = 50
 
     # Create DataLoader
     dataloader = DataLoader(

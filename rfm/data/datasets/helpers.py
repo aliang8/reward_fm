@@ -22,6 +22,7 @@ class DataGenStrat(Enum):
     SUBOPTIMAL_SAME_TASK = "suboptimal_same_task"
     DIFFERENT_TASK = "different_task"
     VIDEO_BINNED = "video_binned"
+    PAIRED_HUMAN_ROBOT = "paired_human_robot"
 
     # Evaluation-specific strategies
     CONFUSION_MATRIX = "confusion_matrix"
@@ -505,10 +506,7 @@ def create_rewind_trajectory(
         num_frames = len(frames_data)
 
     if num_frames == 0 or (num_frames // 2 - 1) == 0:
-        import ipdb
-
-        ipdb.set_trace()
-        raise ValueError(f"Number of frames is 0 for trajectory: {original_traj['id']}")
+        return None
 
     # Step 1: Select start and end indices
     # Start index is in the first half of the trajectory

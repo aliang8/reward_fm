@@ -48,19 +48,20 @@ class ProgressDataset(RFMBaseDataset):
         # Remove strategies with zero probability
         strategies = [(strat, prob) for strat, prob in strategies if prob > 0]
 
-        max_attempts = 3  # Limit retry attempts to prevent infinite loops
+        max_attempts = 10  # Limit retry attempts to prevent infinite loops
         attempt = 0
 
         while processed_traj is None and attempt < max_attempts:
             attempt += 1
 
+            # Check if we have any strategies left
+            if not strategies:
+                raise ValueError("No strategies available - all strategies failed to generate samples")
+
             # Rebalance probabilities based on remaining strategies
             total_prob = sum(prob for _, prob in strategies)
             if total_prob == 0:
-                # All strategies have zero probability, fallback to successful
-                processed_traj = traj.copy()
-                strategy_used = "successful"
-                break
+                raise ValueError("No strategies with positive probability available")
 
             # Normalize probabilities
             normalized_strategies = [(strat, prob / total_prob) for strat, prob in strategies]
@@ -79,25 +80,24 @@ class ProgressDataset(RFMBaseDataset):
             # Execute selected strategy
             if selected_strategy == "successful":
                 processed_traj = traj.copy()
-                strategy_used = "successful"
-
             elif selected_strategy == DataGenStrat.REWIND_SAME_TASK:
                 processed_traj = self._get_rewound_traj(traj)
-                strategy_used = DataGenStrat.REWIND_SAME_TASK
-
             elif selected_strategy == DataGenStrat.DIFFERENT_TASK:
-                other_traj = self._get_different_task(traj)
-                if other_traj is not None:
-                    processed_traj = other_traj
-                    strategy_used = DataGenStrat.DIFFERENT_TASK
-                else:
-                    # Strategy failed, remove it from future attempts
-                    strategies = [(strat, prob) for strat, prob in strategies if strat != DataGenStrat.DIFFERENT_TASK]
+                processed_traj = self._get_different_task(traj)
+            else:
+                raise ValueError(f"Invalid strategy selected: {selected_strategy}")
 
-        # Final fallback: If all strategies failed, use successful
+            # Check if strategy succeeded
+            if processed_traj is not None:
+                strategy_used = selected_strategy
+            else:
+                # Remove failed strategy and try again
+                strategies = [(strat, prob) for strat, prob in strategies if strat != selected_strategy]
+                continue
+
+        # If we still don't have a sample after all attempts, raise an error
         if processed_traj is None:
-            processed_traj = traj.copy()
-            strategy_used = "successful"
+            raise ValueError(f"Failed to generate progress sample after {max_attempts} attempts - all strategies exhausted")
 
         progress_traj = self._get_traj_from_data(processed_traj)
 

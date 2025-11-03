@@ -23,8 +23,8 @@ train_datasets:
 train_subsets:
   - ["molmoact_dataset_household", "molmoact_dataset_tabletop"]
   - ["libero256_90"]
-  - ["libero_90_failure"]
   - ["agibotworld"]
+  - ["libero_90_failure"]
   - ["ph2d"]
   - ["h2r"]
   - ["rh20t_human", "rh20t_robot"]

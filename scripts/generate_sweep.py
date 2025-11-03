@@ -26,8 +26,9 @@ KEY_SHORTEN_MAP = {
     "model.train_preference_head": "pref",
     "model.train_similarity_head": "sim",
     "model.train_success_head": "succ",
-    "data.pairwise_progress": "2frames"
+    "data.pairwise_progress": "2frames",
 }
+
 
 def _sanitize_val(v: Any) -> str:
     if isinstance(v, list):
@@ -52,6 +53,7 @@ def _sanitize_val(v: Any) -> str:
         res = res.replace("--", "-")
     return res.strip("-")
 
+
 def _make_exp_name(model_tag: str, keys: List[str], values: List[Any]) -> str:
     parts: List[str] = [model_tag]
     for k, v in zip(keys, values):
@@ -59,6 +61,7 @@ def _make_exp_name(model_tag: str, keys: List[str], values: List[Any]) -> str:
             key_short = KEY_SHORTEN_MAP[k]
             parts.append(f"{key_short}-{_sanitize_val(v)}")
     return "_".join(parts)
+
 
 def _format_override_arg(key: str, value: Any) -> str:
     """Format a single override as a CLI argument string.
@@ -77,7 +80,7 @@ def _format_override_arg(key: str, value: Any) -> str:
     # Quote if contains whitespace or special chars
     # Keep brackets unquoted for some CLIs, but quoting JSON is safer overall
     # Here we quote everything except simple alnum/._-/:
-    if any(ch.isspace() for ch in val_str) or any(ch in val_str for ch in ['[', ']', '{', '}', ',', '"', "'"]):
+    if any(ch.isspace() for ch in val_str) or any(ch in val_str for ch in ["[", "]", "{", "}", ",", '"', "'"]):
         val_str = shlex.quote(val_str)
 
     return f"--{key} {val_str}"
@@ -97,14 +100,28 @@ def _build_command(use_accelerate: bool, config_paths: List[str], overrides: Dic
             "--num_processes=2",
             "train.py",
         ]
-        parts: List[str] = [" ".join(accel)]
+        base_cmd = " ".join(accel)
     else:
-        parts = ["uv run python3 train.py"]
+        base_cmd = "uv run python3 train.py"
+
+    lines: List[str] = [base_cmd + " \\"]
+
+    override_items = list(overrides.items())
+
     if config_paths:
-        parts.append("--config_paths " + " ".join(config_paths))
-    for k, v in overrides.items():
-        parts.append(_format_override_arg(k, v))
-    return " ".join(parts)
+        config_paths_str = " ".join(config_paths)
+        if override_items:
+            lines.append(f"    --config_paths {config_paths_str} \\")
+        else:
+            lines.append(f"    --config_paths {config_paths_str}")
+    for i, (k, v) in enumerate(override_items):
+        arg = _format_override_arg(k, v)
+        if i < len(override_items) - 1:
+            lines.append(f"    {arg} \\")
+        else:
+            lines.append(f"    {arg}")
+
+    return "\n".join(lines)
 
 
 def main():
@@ -123,7 +140,9 @@ def main():
     groups: List[Dict[str, Any]] = cfg.get("groups", []) or []
 
     # Helper: build list of dict combos for a given sweep_overrides and combine mode
-    def _build_group_combos(group_sweep: Dict[str, List[Any]], mode: str, zip_keys: List[str] | None = None) -> List[Dict[str, Any]]:
+    def _build_group_combos(
+        group_sweep: Dict[str, List[Any]], mode: str, zip_keys: List[str] | None = None
+    ) -> List[Dict[str, Any]]:
         items = list(group_sweep.items())
         if not items:
             return [{}]
@@ -195,5 +214,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

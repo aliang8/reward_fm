@@ -1,8 +1,7 @@
 use_accelerate: False
 config_paths:
   - rfm/configs/config.yaml
-  - rfm/configs/rewind_transformer_config.yaml
-  - rfm/configs/data/oxe_mw.yaml
+  # - rfm/configs/data/oxe_mw.yaml
 
 
 # no progress only samples right now
@@ -12,14 +11,14 @@ groups:
   - combine: zip
     sweep_overrides:
       data.sample_type_ratio:
-        - [1, 0, 0] # preference only
+        - [1, 0, 0] # preference only 
         - [1, 0, 1] # preference and similarity
       model.train_preference_head:
         - True
         - True
       training.predict_pref_progress:
         - True
-        - True
+        - True 
       training.predict_sim_progress:
         - False
         - True

@@ -23,8 +23,8 @@ train_datasets:
 train_subsets:
   - ["molmoact_dataset_household", "molmoact_dataset_tabletop"]
   - ["libero256_90"]
-  - ["libero_90_failure"]
   - ["agibotworld"]
+  - ["libero_90_failure"]
   - ["ph2d"]
   - ["h2r"]
   - ["rh20t_human", "rh20t_robot"]
@@ -49,6 +49,7 @@ eval_datasets:
   - "aliangdw/metaworld"
   - "jesbu1/racer_rfm"
   - "jesbu1/egodex_rfm"
+  - "abraranwar/usc_koch_rewind_rfm"
 
 eval_subsets:
   - ["libero256_10"]
@@ -57,7 +58,8 @@ eval_subsets:
   - ["metaworld_eval"]
   - ["racer_val"]
   - ["egodex_test"]
-  
+  - ["usc_koch_rewind"]
+
 max_frames_for_preprocessing: 32
 video_frame_sampling: "uniform"
 num_proc: 1

@@ -57,6 +57,9 @@ filters = {
         word in x["task"].lower() for word in ["return", "to", "initial", "position"]
     ),
     "jesbu1/soar_rfm/soar_rfm": lambda x: x["id"] in soar_bad_trajectories,
+    "jesbu1/auto_eval_rfm/auto_eval_rfm": lambda x: x["frames_shape"][0] <= 5, # some episodes are too short and are likely poor/faulty success detections 
+    "anqil/rh20t_subset_rfm/rh20t_human": lambda x: x["frames_shape"][0] < 16, # some episodes are too short 
+    "anqil/rh20t_subset_rfm/rh20t_robot": lambda x: x["frames_shape"][0] < 16, # some episodes are too short 
 }
 
 

@@ -357,8 +357,11 @@ class RFM(PreTrainedModel):
             if sample_type in ["preference", "similarity"]:
                 if sample_type == "preference":
                     token_id = self.processor.tokenizer.convert_tokens_to_ids("<|pref_token|>")
-                else:  # similarity
+                elif sample_type == "similarity": 
                     token_id = self.processor.tokenizer.convert_tokens_to_ids("<|sim_token|>")
+                else:
+                    import ipdb; ipdb.set_trace()
+                    raise ValueError(f"Invalid sample type: {sample_type}")
 
                 # Find all positions where the target token appears
                 token_positions = []

@@ -565,7 +565,9 @@ class RFMHeadsTrainer(Trainer):
             # Log to wandb
             wandb.log(wandb_metrics)
 
-        # Return metrics for callbacks (all processes)
+        rank_0_print("=" * 50)
+        rank_0_print("Finished running custom evaluations!")
+        rank_0_print("=" * 50)
         return callback_metrics
 
     def evaluate(self, eval_dataset=None, ignore_keys=None) -> dict[str, float]:

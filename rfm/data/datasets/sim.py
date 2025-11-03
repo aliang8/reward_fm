@@ -58,24 +58,26 @@ class SimilarityDataset(RFMBaseDataset):
         strategies = [
             (DataGenStrat.REWIND_SAME_TASK, self.similarity_strategy_ratio[0]),
             (DataGenStrat.SUBOPTIMAL_SAME_TASK, self.similarity_strategy_ratio[1]),
+            (DataGenStrat.PAIRED_HUMAN_ROBOT, self.similarity_strategy_ratio[2]),
         ]
 
         # Remove strategies with zero probability
         strategies = [(strat, prob) for strat, prob in strategies if prob > 0]
 
-        max_attempts = 3  # Limit retry attempts to prevent infinite loops
+        max_attempts = 10  # Limit retry attempts to prevent infinite loops
         attempt = 0
 
         while traj_sim is None and attempt < max_attempts:
             attempt += 1
 
+            # Check if we have any strategies left
+            if not strategies:
+                raise ValueError("No strategies available - all strategies failed to generate samples")
+
             # Rebalance probabilities based on remaining strategies
             total_prob = sum(prob for _, prob in strategies)
             if total_prob == 0:
-                # All strategies have zero probability, fallback to rewind
-                traj_sim, traj_diff = self._get_traj_dicts_for_rewind(ref_traj)
-                strategy_used = DataGenStrat.REWIND_SAME_TASK
-                break
+                raise ValueError("No strategies with positive probability available")
 
             # Normalize probabilities
             normalized_strategies = [(strat, prob / total_prob) for strat, prob in strategies]
@@ -93,21 +95,26 @@ class SimilarityDataset(RFMBaseDataset):
 
             # Execute selected strategy
             if selected_strategy == DataGenStrat.REWIND_SAME_TASK:
-                traj_sim, traj_diff = self._get_traj_dicts_for_rewind(ref_traj)
-                strategy_used = DataGenStrat.REWIND_SAME_TASK
-
+                result = self._get_traj_dicts_for_rewind(ref_traj)
             elif selected_strategy == DataGenStrat.SUBOPTIMAL_SAME_TASK:
                 result = self._get_traj_dicts_for_suboptimal(ref_traj)
-                if result is not None:
-                    traj_sim, traj_diff = result
-                    strategy_used = DataGenStrat.SUBOPTIMAL_SAME_TASK
+            elif selected_strategy == DataGenStrat.PAIRED_HUMAN_ROBOT:
+                result = self._get_traj_dicts_for_paired_human_robot(ref_traj)
             else:
                 raise ValueError(f"Invalid strategy selected: {selected_strategy}")
 
-        # Final fallback: If all strategies failed, use rewind
+            # Check if strategy succeeded
+            if result is not None:
+                traj_sim, traj_diff = result
+                strategy_used = selected_strategy
+            else:
+                # Remove failed strategy and try again
+                strategies = [(strat, prob) for strat, prob in strategies if strat != selected_strategy]
+                continue
+
+        # If we still don't have a sample after all attempts, raise an error
         if traj_sim is None:
-            traj_sim, traj_diff = self._get_traj_dicts_for_rewind(ref_traj)
-            strategy_used = DataGenStrat.REWIND_SAME_TASK
+            raise ValueError(f"Failed to generate similarity sample after {max_attempts} attempts - all strategies exhausted")
 
         return SimilaritySample(
             ref_trajectory=self._get_traj_from_data(ref_traj),
@@ -116,7 +123,7 @@ class SimilarityDataset(RFMBaseDataset):
             data_gen_strategy=strategy_used.value,
         )
 
-    def _get_traj_dicts_for_rewind(self, ref_traj: dict) -> tuple[dict | Trajectory, dict]:
+    def _get_traj_dicts_for_rewind(self, ref_traj: dict) -> tuple[dict | Trajectory, dict] | None:
         """Get traj_sim and traj_diff for rewind strategy.
 
         Two cases:
@@ -127,7 +134,7 @@ class SimilarityDataset(RFMBaseDataset):
             ref_traj: Reference trajectory
 
         Returns:
-            Tuple of (traj_sim, traj_diff) where both can be dict or Trajectory objects
+            Tuple of (traj_sim, traj_diff) where both can be dict or Trajectory objects, or None if not available
         """
         # Try case 1: sim = rewound, diff = different task
         traj_sim = self._get_rewound_traj(ref_traj)
@@ -139,12 +146,30 @@ class SimilarityDataset(RFMBaseDataset):
         # Case 1 failed, try case 2: sim = same task optimal, diff = rewound
         traj_sim = self._get_same_task_optimal(ref_traj)
         if traj_sim is None:
-            # No same task optimal available, fallback: both rewound
-            traj_sim = self._get_rewound_traj(ref_traj)
-            traj_diff = self._get_rewound_traj(ref_traj)
-            return traj_sim, traj_diff
+            return None
 
         traj_diff = self._get_rewound_traj(ref_traj)
+        return traj_sim, traj_diff
+
+    def _get_traj_dicts_for_paired_human_robot(self, ref_traj: dict) -> tuple[dict, dict | Trajectory] | None:
+        """Get traj_sim and traj_diff for paired human/robot strategy.
+
+        Args:
+            ref_traj: Reference trajectory
+
+        Returns:
+            Tuple of (traj_sim, traj_diff) or None if not available. Both can be dict or Trajectory objects.
+            traj_sim is the paired human/robot trajectory (opposite type, same task)
+            traj_diff is a trajectory from a different task
+        """
+        traj_sim = self._get_paired_human_robot_traj(ref_traj)
+        if traj_sim is None:
+            return None
+
+        traj_diff = self._get_different_task(ref_traj)
+        if traj_diff is None:
+            return None
+
         return traj_sim, traj_diff
 
     def _get_traj_dicts_for_suboptimal(self, ref_traj: dict) -> tuple[dict, dict | Trajectory] | None:
@@ -162,8 +187,7 @@ class SimilarityDataset(RFMBaseDataset):
 
         traj_diff = self._get_same_task_suboptimal(ref_traj)
         if traj_diff is None:
-            # Fallback: use rewound for diff
-            traj_diff = self._get_rewound_traj(ref_traj)
-            return traj_sim, traj_diff
+            return None
 
         return traj_sim, traj_diff
+        

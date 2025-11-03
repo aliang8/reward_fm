@@ -251,19 +251,20 @@ class PrefDataset(RFMBaseDataset):
         # Remove strategies with zero probability
         strategies = [(strat, prob) for strat, prob in strategies if prob > 0]
 
-        max_attempts = 3  # Limit retry attempts to prevent infinite loops
+        max_attempts = 10  # Limit retry attempts to prevent infinite loops
         attempt = 0
 
         while rejected_traj is None and attempt < max_attempts:
             attempt += 1
 
+            # Check if we have any strategies left
+            if not strategies:
+                raise ValueError("No strategies available - all strategies failed to generate samples")
+
             # Rebalance probabilities based on remaining strategies
             total_prob = sum(prob for _, prob in strategies)
             if total_prob == 0:
-                # All strategies have zero probability, fallback to rewind
-                rejected_traj = self._get_rewound_traj(chosen_traj)
-                strategy_used = DataGenStrat.REWIND_SAME_TASK
-                break
+                raise ValueError("No strategies with positive probability available")
 
             # Normalize probabilities
             normalized_strategies = [(strat, prob / total_prob) for strat, prob in strategies]
@@ -282,43 +283,32 @@ class PrefDataset(RFMBaseDataset):
             # Execute selected strategy
             if selected_strategy == DataGenStrat.REWIND_SAME_TASK:
                 rejected_traj = self._get_rewound_traj(chosen_traj)
-                strategy_used = DataGenStrat.REWIND_SAME_TASK
-
             elif selected_strategy == DataGenStrat.SUBOPTIMAL_SAME_TASK:
                 rejected_traj = self._get_same_task_suboptimal(chosen_traj)
-                if rejected_traj is not None:
-                    strategy_used = DataGenStrat.SUBOPTIMAL_SAME_TASK
-                else:
-                    # Strategy failed, remove it from future attempts
-                    strategies = [
-                        (strat, prob) for strat, prob in strategies if strat != DataGenStrat.SUBOPTIMAL_SAME_TASK
-                    ]
-
             elif selected_strategy == DataGenStrat.DIFFERENT_TASK:
                 rejected_traj = self._get_different_task(chosen_traj)
-                if rejected_traj is not None:
-                    strategy_used = DataGenStrat.DIFFERENT_TASK
-                else:
-                    # Strategy failed, remove it from future attempts
-                    strategies = [(strat, prob) for strat, prob in strategies if strat != DataGenStrat.DIFFERENT_TASK]
-
             elif selected_strategy == DataGenStrat.VIDEO_BINNED:
                 try:
                     chosen_traj, rejected_traj = self._create_video_binned_trajectory(
                         chosen_traj, num_bins=self.config.num_bins
                     )
-                    strategy_used = DataGenStrat.VIDEO_BINNED
                 except Exception as e:
                     rank_0_print(f"Video binning failed: {e}, removing from available strategies")
-                    # Strategy failed, remove it from future attempts
-                    strategies = [(strat, prob) for strat, prob in strategies if strat != DataGenStrat.VIDEO_BINNED]
+                    rejected_traj = None
             else:
                 raise ValueError(f"Invalid strategy selected: {selected_strategy}")
 
-        # Final fallback: If all strategies failed, use rewind
+            # Check if strategy succeeded
+            if rejected_traj is not None:
+                strategy_used = selected_strategy
+            else:
+                # Remove failed strategy and try again
+                strategies = [(strat, prob) for strat, prob in strategies if strat != selected_strategy]
+                continue
+
+        # If we still don't have a sample after all attempts, raise an error
         if rejected_traj is None:
-            rejected_traj = self._get_rewound_traj(chosen_traj)
-            strategy_used = DataGenStrat.REWIND_SAME_TASK
+            raise ValueError(f"Failed to generate preference sample after {max_attempts} attempts - all strategies exhausted")
 
         chosen_trajectory = self._get_traj_from_data(chosen_traj)
         rejected_trajectory = self._get_traj_from_data(rejected_traj)

@@ -19,6 +19,13 @@ from rfm.utils.distributed import rank_0_print
 from rfm.data.dataset_types import Trajectory
 from rfm.data.datasets.helpers import create_rewind_trajectory, load_embeddings_from_path
 
+# Global list of data sources that contain paired human/robot trajectories
+PAIRED_DATA_SOURCES = [
+    "ph2d",
+    "motif_rfm",
+    "rh20t"
+]
+
 
 class RFMBaseDataset(torch.utils.data.Dataset):
     def __init__(self, config, is_evaluation=False, verbose=True, **kwargs):
@@ -44,6 +51,7 @@ class RFMBaseDataset(torch.utils.data.Dataset):
         self.task_indices = {}
         self.source_indices = {}
         self.partial_success_indices = {}
+        self.paired_human_robot_by_task = {}
 
         # Load dataset-specific success cutoff map if available
         self.dataset_success_cutoff_map = {}
@@ -196,7 +204,7 @@ class RFMBaseDataset(torch.utils.data.Dataset):
                             # For list indices, add offset
                             combined_indices[key].extend([idx + offset for idx in indices[key]])
                         elif isinstance(indices[key], dict):
-                            # For dict indices, add offset to values
+                            # For regular dict indices, add offset to values
                             for subkey, subindices in indices[key].items():
                                 if subkey not in combined_indices[key]:
                                     combined_indices[key][subkey] = []
@@ -225,6 +233,10 @@ class RFMBaseDataset(torch.utils.data.Dataset):
         self.source_indices = combined_indices["source_indices"]
         self.partial_success_indices = combined_indices["partial_success_indices"]
         self._cached_ids = self.dataset["id"]
+        self._cached_is_robot = self.dataset["is_robot"]
+        
+        # Build paired_human_robot_by_task from task_indices after concatenation
+        self._build_paired_human_robot_index()
 
         dataset_type = "training" if is_training else "evaluation"
         rank_0_print(
@@ -236,6 +248,49 @@ class RFMBaseDataset(torch.utils.data.Dataset):
             verbose=self.verbose,
         )
         rank_0_print(f"  📊 Missing datasets: {len(missing_datasets)}", verbose=self.verbose)
+
+    def _build_paired_human_robot_index(self):
+        """Build paired_human_robot_by_task index from task_indices by checking is_robot field.
+        
+        This builds the index after concatenation by iterating through task_indices
+        and checking the is_robot field for each trajectory. Only includes trajectories
+        from PAIRED data sources.
+        """
+        self.paired_human_robot_by_task = {}
+        
+        # Filter indices for paired data sources
+        paired_data_source_indices = set()
+        for data_source in PAIRED_DATA_SOURCES:
+            if data_source in self.source_indices:
+                paired_data_source_indices.update(self.source_indices[data_source])
+        
+        if not paired_data_source_indices:
+            if self.verbose:
+                rank_0_print("  No paired data sources found, skipping paired index building", verbose=self.verbose)
+            return
+        
+        # Build index from task_indices using cached is_robot field, but only for paired data sources
+        for task, indices in self.task_indices.items():
+            # Filter to only paired data sources
+            task_indices_paired = [idx for idx in indices if idx in paired_data_source_indices]
+            
+            if not task_indices_paired:
+                continue
+            
+            self.paired_human_robot_by_task[task] = {"robot": [], "human": []}
+            
+            for idx in task_indices_paired:
+                is_robot = self._cached_is_robot[idx] if idx < len(self._cached_is_robot) else True
+                if is_robot:
+                    self.paired_human_robot_by_task[task]["robot"].append(idx)
+                else:
+                    self.paired_human_robot_by_task[task]["human"].append(idx)
+        
+        if self.verbose:
+            # Count tasks with both robot and human trajectories
+            tasks_with_pairs = [task for task, task_dict in self.paired_human_robot_by_task.items() if task_dict["robot"] and task_dict["human"]]
+            num_tasks_with_pairs = len(tasks_with_pairs)
+            rank_0_print(f"  Built paired_human_robot_by_task index: {num_tasks_with_pairs} tasks with both robot and human trajectories (from paired data sources only)", verbose=self.verbose)
 
     def _get_trajectory_frames(self, trajectory_idx: int) -> np.ndarray:
         """Get frames for a trajectory by index, loading from npz if needed.
@@ -346,6 +401,48 @@ class RFMBaseDataset(torch.utils.data.Dataset):
 
         other_idx = random.choice(other_task_indices)
         return self.dataset[other_idx]
+
+    def _get_paired_human_robot_traj(self, ref_traj: dict) -> dict | None:
+        """Get paired human/robot trajectory for the same task.
+
+        Given a reference trajectory, if it's a robot trajectory, returns a human trajectory
+        from the same task. If it's a human trajectory, returns a robot trajectory from the
+        same task.
+
+        Args:
+            ref_traj: Reference trajectory (can be robot or human)
+
+        Returns:
+            Paired trajectory dict (opposite type) or None if not available
+        """
+        task = ref_traj["task"]
+        is_robot = ref_traj.get("is_robot", True)
+        
+        if task not in self.paired_human_robot_by_task:
+            return None
+        
+        task_pairs = self.paired_human_robot_by_task[task]
+        
+        # Get opposite type
+        opposite_key = "human" if is_robot else "robot"
+        opposite_indices = task_pairs.get(opposite_key, [])
+        
+        if not opposite_indices:
+            return None
+        
+        # Exclude the current trajectory if it's in the list
+        chosen_id = ref_traj["id"]
+        filtered_indices = [
+            idx for idx in opposite_indices 
+            if self._cached_ids[idx] != chosen_id
+        ]
+        
+        if not filtered_indices:
+            # If no other trajectories available, use any from the list
+            filtered_indices = opposite_indices
+        
+        paired_idx = random.choice(filtered_indices)
+        return self.dataset[paired_idx]
 
     def _get_rewound_traj(self, ref_traj: dict) -> Trajectory:
         """Get rewound trajectory from reference trajectory.

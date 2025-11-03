@@ -1,29 +1,34 @@
 import random
+import torch
 
-from .base import RFMBaseDataset
-from .pref import PrefDataset
-from .sim import SimilarityDataset
-from .progress import ProgressDataset
+from rfm.data.datasets.base import BaseDataset
+from rfm.data.samplers.pref import PrefSampler
+from rfm.data.samplers.sim import SimSampler
+from rfm.data.samplers.progress import ProgressSampler
 from rfm.utils.distributed import rank_0_print
 
 
-class MixedDataset(RFMBaseDataset):
+class RFMDataset(BaseDataset):
     """Dataset that combines preference, similarity, and progress generation."""
 
     def __init__(self, config, is_evaluation=False, max_samples=None, batch_size=None, **kwargs):
         super().__init__(config, is_evaluation, **kwargs)
 
-        # Initialize the individual datasets
-        self.pref_dataset = PrefDataset(config, is_evaluation, verbose=False, **kwargs)
-        self.progress_dataset = ProgressDataset(config, is_evaluation, verbose=False, **kwargs)
-        self.similarity_dataset = SimilarityDataset(config, is_evaluation, verbose=False, **kwargs)
+        self.pref_sampler = PrefSampler(
+            self.dataset, self._combined_indices, config, is_evaluation, verbose=False, **kwargs
+        )
+        self.progress_sampler = ProgressSampler(
+            self.dataset, self._combined_indices, config, is_evaluation, verbose=False, **kwargs
+        )
+        self.similarity_sampler = SimSampler(
+            self.dataset, self._combined_indices, config, is_evaluation, verbose=False, **kwargs
+        )
 
-        # Set the ratio for sampling between preference, similarity, and progress
         self.sample_type_ratio = config.sample_type_ratio
         self.max_samples = max_samples
         self.batch_size = batch_size
 
-        self.data_len = max(len(self.pref_dataset), len(self.similarity_dataset), len(self.progress_dataset))
+        self.data_len = len(self.dataset)
 
     def __len__(self):
         if self.max_samples is None:
@@ -32,53 +37,47 @@ class MixedDataset(RFMBaseDataset):
             return self.max_samples
 
     def __getitem__(self, idx):
-        """Create a sample based on the configured ratios using normalized and rebalanced selection.
-
-        Uses the same normalization and rebalancing approach as PrefDataset and ProgressDataset
-        to handle cases where some sample types have zero probability or datasets are unavailable.
-        """
+        """Create a data sample from the dataset."""
         idx = idx % self.data_len
+
+        # Get the item from the dataset
+        item = self.filtered_dataset[idx]
 
         # Preference-only override by data_source using raw filtered dataset entry
         pref_only = getattr(self.config, "pref_only_datasets", []) or []
-        try:
-            base_entry = self.filtered_dataset[idx]
-            data_source = base_entry.get("data_source", None)
-        except Exception:
-            data_source = None
+        data_source = item.get("data_source", None)
         if data_source in pref_only:
-            pref_idx = idx % max(1, len(self.pref_dataset))
-            return self.pref_dataset[pref_idx]
+            return self.pref_sampler._generate_sample(item)
 
-        # Available dataset types with their probabilities
-        datasets = [
-            ("pref", self.sample_type_ratio[0], self.pref_dataset),
-            ("progress", self.sample_type_ratio[1], self.progress_dataset),
-            ("similarity", self.sample_type_ratio[2], self.similarity_dataset),
+        # Available samplers with their probabilities
+        samplers = [
+            ("pref", self.sample_type_ratio[0], self.pref_sampler),
+            ("progress", self.sample_type_ratio[1], self.progress_sampler),
+            ("similarity", self.sample_type_ratio[2], self.similarity_sampler),
         ]
 
-        # Remove datasets with zero probability
-        available_datasets = [(name, prob, dataset) for name, prob, dataset in datasets if prob > 0]
+        # Remove samplers with zero probability
+        available_samplers = [(name, prob, sampler) for name, prob, sampler in samplers if prob > 0]
 
-        # Fallback to progress dataset if no datasets have positive probability
-        if not available_datasets:
-            return self.progress_dataset[idx]
+        # Fallback to progress sampler if no samplers have positive probability
+        if not available_samplers:
+            return self.progress_sampler._generate_sample(item)
 
         # Normalize probabilities
-        total_prob = sum(prob for _, prob, _ in available_datasets)
-        normalized_datasets = [(name, prob / total_prob, dataset) for name, prob, dataset in available_datasets]
+        total_prob = sum(prob for _, prob, _ in available_samplers)
+        normalized_samplers = [(name, prob / total_prob, sampler) for name, prob, sampler in available_samplers]
 
-        # Select dataset based on normalized probabilities
+        # Select sampler based on normalized probabilities
         prob = random.random()
         cumulative_prob = 0.0
 
-        for name, normalized_prob, dataset in normalized_datasets:
+        for name, normalized_prob, sampler in normalized_samplers:
             cumulative_prob += normalized_prob
             if prob <= cumulative_prob:
-                return dataset[idx]
+                return sampler._generate_sample(item)
 
         # Final fallback (should not reach here, but safety net)
-        return self.progress_dataset[idx]
+        return self.progress_sampler._generate_sample(item)
 
 
 def test():
@@ -125,7 +124,7 @@ def test():
     MockConfig(data=mock_data_config, debug=False)
 
     # Create data generator with mock config
-    generator = MixedDataset(config=mock_data_config)
+    generator = RFMDataset(config=mock_data_config)
 
     # Test the infinite dataset
     rank_0_print("Testing InfiniteDataGeneratorDataset...")

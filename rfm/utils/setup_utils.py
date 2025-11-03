@@ -36,16 +36,11 @@ from unsloth import FastVisionModel
 from rfm.configs.experiment_configs import DataConfig, ExperimentConfig, ModelConfig, PEFTConfig
 from rfm.data.collators import BaseCollator, ReWiNDBatchCollator, RFMBatchCollator, VQABatchCollator
 from rfm.data.datasets import (
-    BalancedMixedDataset,
-    ConfusionMatrixDataset,
-    MixedDataset,
-    PairedSuccessFailureDataset,
-    ProgressDataset,
-    RewardAlignmentDataset,
-    ProgressDefaultDataset,
-    RFMBaseDataset,
-    WrongTaskDataset,
+    BalancedRFMDataset,
+    RFMDataset,
+    BaseDataset,
 )
+from rfm.data.datasets.custom_eval import CustomEvalDataset
 from rfm.models import RFM, RFMVQA, ReWiNDTransformer
 from rfm.models.rewind_transformer import ReWINDTransformerConfig
 from rfm.utils.distributed import rank_0_print
@@ -493,21 +488,21 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
     return TrainingArguments(**base_args)
 
 
-def setup_dataset(cfg: DataConfig, is_eval: bool = False, **kwargs) -> RFMBaseDataset:
-    """Shared function to create DataGenerator for training or evaluation"""
-
+def setup_dataset(cfg: DataConfig, is_eval: bool = False, **kwargs) -> BaseDataset:
+    """Shared function to create Dataset for training or evaluation"""
     dataset_cls = {
-        "reward_alignment": RewardAlignmentDataset,
-        "success_failure": PairedSuccessFailureDataset,
-        "policy_ranking": ProgressDefaultDataset,
-        "confusion_matrix": ConfusionMatrixDataset,
-        "wrong_task": WrongTaskDataset,
-        "default": MixedDataset,
-        "balanced_mixed": BalancedMixedDataset,
+        "rfm": RFMDataset,
+        "data_source_balance": BalancedRFMDataset,
     }
-
     dataset = dataset_cls[cfg.dataset_type](config=cfg, is_evaluation=is_eval, **kwargs)
     return dataset
+
+
+def setup_custom_eval_dataset(cfg: DataConfig, sampler_type: str, is_eval: bool = False, **kwargs):
+    """Setup a custom evaluation dataset with a specific sampler."""
+    custom_eval_dataset = CustomEvalDataset(sampler_type, cfg, is_evaluation=is_eval, **kwargs)
+
+    return custom_eval_dataset
 
 
 def setup_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg: ExperimentConfig) -> BaseCollator:

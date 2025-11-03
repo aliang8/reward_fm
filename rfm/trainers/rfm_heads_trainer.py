@@ -12,7 +12,7 @@ import wandb
 from rfm.utils.distributed import is_rank_0, rank_0_print
 from rfm.utils.timer import _timer
 from rfm.utils.metrics import compute_spearman_correlation
-from rfm.utils.setup_utils import setup_dataset, setup_batch_collator
+from rfm.utils.setup_utils import setup_dataset, setup_batch_collator, setup_custom_eval_dataset
 from torch.utils.data import DataLoader
 from rfm.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
 from evals.compile_results import compute_eval_metrics
@@ -295,6 +295,14 @@ class RFMHeadsTrainer(Trainer):
             "wrong_task": "wrong_task",
         }
 
+        # Map eval_type to sampler_type for setup_custom_eval_dataset
+        EVAL_TYPE_TO_SAMPLER = {
+            "reward_alignment": "reward_alignment",
+            "confusion_matrix": "confusion_matrix",
+            "policy_ranking": "policy_ranking",
+            "success_failure": "success_failure",
+        }
+
         rank_0_print(f"\n\n\n\n")
         rank_0_print(f"=" * 100)
         rank_0_print(f"Running custom evaluations: {eval_types}")
@@ -308,12 +316,23 @@ class RFMHeadsTrainer(Trainer):
 
             for eval_dataset in eval_datasets_name:
                 eval_cfg = copy.deepcopy(self.config.data)
-                eval_cfg.dataset_type = eval_type
-
                 eval_cfg.eval_datasets = [eval_dataset]
 
+                # Map eval_type to sampler_type
+                sampler_type = EVAL_TYPE_TO_SAMPLER.get(eval_type)
+                if sampler_type is None:
+                    rank_0_print(f"Warning: Unknown eval_type {eval_type}, skipping...")
+                    continue
+
+                # Create custom eval dataset with the appropriate sampler
                 # set max_trajectories to 10 for reward_alignment per eval dataset
-                dataset = setup_dataset(eval_cfg, is_eval=True, verbose=False, max_trajectories=10)
+                kwargs = {}
+                if eval_type == "reward_alignment":
+                    kwargs["max_trajectories"] = 10
+
+                dataset = setup_custom_eval_dataset(
+                    eval_cfg, sampler_type=sampler_type, is_eval=True, verbose=False, **kwargs
+                )
                 dataloader = self._make_eval_dataloader(dataset)
 
                 self.model.eval()
@@ -907,6 +926,11 @@ class RFMHeadsTrainer(Trainer):
             padding_mask=padding_mask,
         )
 
+        if "Qwen" in self.config.model.base_model_id:
+            progress_target = progress_target[:, ::2]
+            if padding_mask is not None:
+                padding_mask = padding_mask[:, ::2]
+
         # Apply all masks together at once
         combined_mask = torch.ones_like(progress_target, dtype=torch.float32)
         if padding_mask is not None:
@@ -919,6 +943,7 @@ class RFMHeadsTrainer(Trainer):
         progress_loss_all = progress_loss_all * combined_mask
         progress_loss = progress_loss_all.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
         progress_loss = progress_loss.mean()
+        final_loss = progress_loss
 
         if self.config.model.train_success_head:
             success_logits = model_output.success_logits

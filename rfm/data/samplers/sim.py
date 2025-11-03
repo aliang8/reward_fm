@@ -2,25 +2,26 @@
 
 
 import random
+import torch
 
 from rfm.data.dataset_types import SimilaritySample, Trajectory
-from rfm.data.datasets.base import RFMBaseDataset
+from rfm.data.samplers.base import RFMBaseSampler
 from rfm.data.datasets.helpers import DataGenStrat
 from rfm.utils.distributed import rank_0_print
 
 
-class SimilarityDataset(RFMBaseDataset):
+class SimSampler(RFMBaseSampler):
     """Data generator for producing batches for similarity scoring."""
 
-    def __init__(self, config, is_evaluation=False, verbose=True, **kwargs):
-        super().__init__(config, is_evaluation, verbose=verbose, **kwargs)
+    def __init__(self, dataset, combined_indices, config, is_evaluation=False, verbose=True, **kwargs):
+        super().__init__(dataset, combined_indices, config, verbose=verbose)
         self.similarity_strategy_ratio: list[float] = config.similarity_strategy_ratio
 
         if self.verbose:
-            rank_0_print(f"SimilarityDataset initialized with {len(self.dataset)} total trajectories")
+            rank_0_print(f"SimSampler initialized with {len(self.dataset)} total trajectories")
 
-    def __getitem__(self, idx):
-        return self._create_similarity_sample()
+    def _generate_sample(self, item: dict):
+        return self._create_similarity_sample(ref_traj=item)
 
     def _create_similarity_sample(self, ref_traj: dict | None = None) -> SimilaritySample:
         """Create a similarity scoring sample: o^1 and o^2 ranked against o^ref.
@@ -114,7 +115,9 @@ class SimilarityDataset(RFMBaseDataset):
 
         # If we still don't have a sample after all attempts, raise an error
         if traj_sim is None:
-            raise ValueError(f"Failed to generate similarity sample after {max_attempts} attempts - all strategies exhausted")
+            raise ValueError(
+                f"Failed to generate similarity sample after {max_attempts} attempts - all strategies exhausted"
+            )
 
         return SimilaritySample(
             ref_trajectory=self._get_traj_from_data(ref_traj),
@@ -190,4 +193,3 @@ class SimilarityDataset(RFMBaseDataset):
             return None
 
         return traj_sim, traj_diff
-        

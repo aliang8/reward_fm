@@ -111,7 +111,7 @@ def convert_soar_dataset_to_hf(
     datasets_list: list[Dataset] = []
 
     builder = tfds.builder_from_directory(root)
-    success_episode_instructions = set() # to only upload failures that have a corresponding success episode
+    success_episode_instructions = set()  # to only upload failures that have a corresponding success episode
     for split_name in ["success", "failure"]:
         # Commonly RLDS train split contains the episodes
         ds = builder.as_dataset(split=split_name, shuffle_files=False)
@@ -120,7 +120,9 @@ def convert_soar_dataset_to_hf(
             with open(soar_new_success_labels_path, "r") as f:
                 new_success_labels = json.load(f)["results"]
                 # episodes where qwen-3-vl predicted success
-                new_success_labels = [result["predicted_label"] for result in new_success_labels if result["original_label"] == "success"]
+                new_success_labels = [
+                    result["predicted_label"] for result in new_success_labels if result["original_label"] == "success"
+                ]
 
         entries: list[dict] = []
         produced = 0
@@ -148,7 +150,7 @@ def convert_soar_dataset_to_hf(
                 if "language_instruction" in first:
                     val = first["language_instruction"]
                     task_text = val.decode() if isinstance(val, (bytes, bytearray)) else str(val)
-            
+
             if not task_text:
                 continue
             elif split_name == "failure":

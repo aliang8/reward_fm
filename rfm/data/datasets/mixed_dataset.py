@@ -22,7 +22,7 @@ class MixedDataset(RFMBaseDataset):
         self.sample_type_ratio = config.sample_type_ratio
         self.max_samples = max_samples
         self.batch_size = batch_size
-        
+
         self.data_len = max(len(self.pref_dataset), len(self.similarity_dataset), len(self.progress_dataset))
 
     def __len__(self):

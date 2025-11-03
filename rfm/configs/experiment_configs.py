@@ -26,7 +26,9 @@ class ModelConfig(PretrainedConfig):
     train_preference_head: bool = field(
         default=False, metadata={"help": "Whether to train the preference prediction head"}
     )
-    train_similarity_head: bool = field(default=False, metadata={"help": "Whether to train the similarity scoring head"})
+    train_similarity_head: bool = field(
+        default=False, metadata={"help": "Whether to train the similarity scoring head"}
+    )
     train_success_head: bool = field(default=False, metadata={"help": "Whether to train the success prediction head"})
 
     use_peft: bool = field(default=False, metadata={"help": "Whether to use PEFT/LoRA or train full model"})
@@ -34,9 +36,11 @@ class ModelConfig(PretrainedConfig):
 
     # use bitsandbytes for quantization
     quantization: bool = field(default=False, metadata={"help": "Whether to use bitsandbytes for quantization"})
-    
+
     # use unsloth for faster training
-    use_unsloth: bool = field(default=False, metadata={"help": "Whether to use unsloth for faster vision model training"})
+    use_unsloth: bool = field(
+        default=False, metadata={"help": "Whether to use unsloth for faster vision model training"}
+    )
 
     # rewind sub-config
     rewind: Optional[Dict[str, Any]] = field(default=None)
@@ -92,7 +96,9 @@ class DataConfig:
         default=1, metadata={"help": "Number of preference samples to generate per trajectory for rewound dataset"}
     )
 
-    max_frames_after_preprocessing: int = field(default=64, metadata={"help": "Maximum number of frames to extract from videos after preprocessing"})
+    max_frames_after_preprocessing: int = field(
+        default=64, metadata={"help": "Maximum number of frames to extract from videos after preprocessing"}
+    )
     max_frames: int = field(default=8, metadata={"help": "Maximum number of frames to extract from videos"})
     resized_height: int = field(default=224, metadata={"help": "Height to resize video frames to"})
     resized_width: int = field(default=224, metadata={"help": "Width to resize video frames to"})
@@ -172,7 +178,7 @@ class DataConfig:
         default=None,
         metadata={"help": "Path to dataset-specific success cutoff file (CSV format: dataset_name,success_percentage)"},
     )
-    
+
     pairwise_progress: bool = field(
         default=False,
         metadata={"help": "Whether to use pairwise progress sampling strategy for progress prediction"},
@@ -237,9 +243,7 @@ class TrainingConfig:
 
     success_positive_weight: float = field(
         default=1.0,
-        metadata={
-            "help": "Positive class weight for BCEWithLogits loss in success prediction (pos_weight)."
-        },
+        metadata={"help": "Positive class weight for BCEWithLogits loss in success prediction (pos_weight)."},
     )
 
     # Optimizer settings

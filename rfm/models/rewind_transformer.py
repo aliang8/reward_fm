@@ -168,8 +168,8 @@ class ReWiNDTransformer(PreTrainedModel):
         output = ModelOutput()
 
         if sample_type == "preference" or sample_type == "similarity":
-            video_embeddings_A = video_embeddings[:, : T // 2]
-            video_embeddings_B = video_embeddings[:, T // 2 :]
+            video_embeddings_A = video_embeddings[:, : T // 2].clone()
+            video_embeddings_B = video_embeddings[:, T // 2 :].clone()
 
             # Add the first embedding to the beginning of embedding A
             first_frame_emb_A = einops.repeat(self.first_embedding_A, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
@@ -200,6 +200,7 @@ class ReWiNDTransformer(PreTrainedModel):
             progress_B_logits = einops.rearrange(progress_B_logits, "(b t) 1 -> b t", b=B)
 
             progress_logits = {"A": progress_A_logits, "B": progress_B_logits}
+            output.progress_logits = progress_logits
 
             # Predict success for all frames
             success_A_logits = self.success_head(final_embeddings_A.reshape(-1, D))
@@ -209,29 +210,27 @@ class ReWiNDTransformer(PreTrainedModel):
             success_B_logits = einops.rearrange(success_B_logits, "(b t) 1 -> b t", b=B)
 
             success_logits = {"A": success_A_logits, "B": success_B_logits}
+            output.success_logits = success_logits
 
             pred_class_token = token_embeddings[:, -1, :]  # [B, D]
 
-            logits = None
             if sample_type == "preference":
-                logits = self.preference_head(pred_class_token)
-                output.pref_logits = logits
+                output.pref_logits = self.preference_head(pred_class_token)
             else:  # similarity
-                logits = self.similarity_head(pred_class_token)
-                output.sim_logits = logits
+                output.sim_logits = self.similarity_head(pred_class_token)
 
-            output.success_logits = success_logits
         elif sample_type == "progress":
             first_frame_emb = einops.repeat(self.first_embedding_A, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
 
             # [B, T, D]
+            video_embeddings = video_embeddings.clone()
             video_embeddings[:, 0:1] += first_frame_emb
 
             token_sequence = torch.cat([text_embeddings.unsqueeze(1), video_embeddings], dim=1)  # shape: [B, T, D]
             token_embeddings = self.transformer(token_sequence)
             D = token_embeddings.shape[-1]
             final_embeddings = token_embeddings[:, 1:, :]  # avoid the text embedding
-            
+
             # Progress prediction for all frames
             progress_logits = self.progress_head(final_embeddings)
             progress_logits = progress_logits.squeeze(-1)

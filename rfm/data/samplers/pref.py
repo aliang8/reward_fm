@@ -29,8 +29,6 @@ class PrefSampler(RFMBaseSampler):
         # Initialize preference dataset
         self._load_preference_dataset()
 
-        rank_0_print(f"PrefSampler initialized with {len(self.dataset)} total trajectories")
-
     def _generate_sample(self, item: dict):
         return self._create_pref_sample(item)
 

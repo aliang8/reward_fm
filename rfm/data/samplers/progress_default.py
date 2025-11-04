@@ -52,8 +52,9 @@ class ProgressDefaultSampler(RFMBaseSampler):
 
         # Load data (embeddings or frames)
         if self.config.load_embeddings and traj.get("embeddings_path"):
-            video_embeddings = load_embeddings_from_path(traj["embeddings_path"], "video_embeddings")
-            text_embedding = load_embeddings_from_path(traj["embeddings_path"], "text_embedding")
+            embeddings = load_embeddings_from_path(traj["embeddings_path"])
+            video_embeddings = embeddings["video_embeddings"]
+            text_embedding = embeddings["text_embedding"]
             data = video_embeddings
             total_frames = video_embeddings.shape[0] if hasattr(video_embeddings, "shape") else len(video_embeddings)
             use_embeddings = True

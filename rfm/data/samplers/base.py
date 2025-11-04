@@ -327,8 +327,9 @@ class RFMBaseSampler:
         text_embedding = None
 
         if self.config.load_embeddings and traj.get("embeddings_path"):
-            video_embeddings = load_embeddings_from_path(traj["embeddings_path"], "video_embeddings")
-            text_embedding = load_embeddings_from_path(traj["embeddings_path"], "text_embedding")
+            embeddings = load_embeddings_from_path(traj["embeddings_path"])
+            video_embeddings = embeddings["video_embeddings"]
+            text_embedding = embeddings["text_embedding"]
 
             # Get success cutoff from pre-loaded map
             ds_key = traj["data_source"]

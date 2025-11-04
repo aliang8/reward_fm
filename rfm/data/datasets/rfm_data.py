@@ -14,15 +14,22 @@ class RFMDataset(BaseDataset):
     def __init__(self, config, is_evaluation=False, max_samples=None, batch_size=None, **kwargs):
         super().__init__(config, is_evaluation, **kwargs)
 
-        self.pref_sampler = PrefSampler(
-            config, self.dataset, self._combined_indices, self.dataset_success_cutoff_map, is_evaluation, verbose=False, **kwargs
-        )
-        self.progress_sampler = ProgressSampler(
-            config, self.dataset, self._combined_indices, self.dataset_success_cutoff_map, is_evaluation, verbose=False, **kwargs
-        )
-        self.similarity_sampler = SimSampler(
-            config, self.dataset, self._combined_indices, self.dataset_success_cutoff_map, is_evaluation, verbose=False, **kwargs
-        )
+        self.pref_sampler = None
+        self.progress_sampler = None
+        self.similarity_sampler = None
+
+        if self.config.sample_type_ratio[0] > 0:
+            self.pref_sampler = PrefSampler(
+                config, self.dataset, self._combined_indices, self.dataset_success_cutoff_map, is_evaluation, verbose=False, **kwargs
+            )
+        if self.config.sample_type_ratio[1] > 0:
+            self.progress_sampler = ProgressSampler(
+                config, self.dataset, self._combined_indices, self.dataset_success_cutoff_map, is_evaluation, verbose=False, **kwargs
+            )
+        if self.config.sample_type_ratio[2] > 0:
+            self.similarity_sampler = SimSampler(
+                config, self.dataset, self._combined_indices, self.dataset_success_cutoff_map, is_evaluation, verbose=False, **kwargs
+            )
 
         self.sample_type_ratio = config.sample_type_ratio
         self.max_samples = max_samples
@@ -45,7 +52,7 @@ class RFMDataset(BaseDataset):
 
         # Preference-only override by data_source using raw filtered dataset entry
         pref_only = getattr(self.config, "pref_only_datasets", []) or []
-        data_source = item.get("data_source", None)
+        data_source = item["data_source"]
         if data_source in pref_only:
             return self.pref_sampler._generate_sample(item)
 
@@ -74,33 +81,48 @@ class RFMDataset(BaseDataset):
         for name, normalized_prob, sampler in normalized_samplers:
             cumulative_prob += normalized_prob
             if prob <= cumulative_prob:
-                return sampler._generate_sample(item)
+                sample = sampler._generate_sample(item)
+                return sample
 
         # Final fallback (should not reach here, but safety net)
         return self.progress_sampler._generate_sample(item)
 
 
 def test():
-    """Test the BatchCollator with generated samples."""
-    # Create a mock config for testing
+    """Test the RFMDataset with generated samples and timing."""
+    import time
+    from collections import defaultdict
     from dataclasses import dataclass
 
+    # Create a mock config for testing
     @dataclass
     class MockDataConfig:
         train_datasets: list[str] = None
-        train_subsets: list[str] = None
         eval_datasets: list[str] = None
-        eval_subsets: list[str] = None
+        dataset_type: str = "rfm"
+        max_frames_after_preprocessing: int = 64
+        max_frames: int = 8
+        resized_height: int = 128
+        resized_width: int = 128
         sample_type_ratio: list[float] = None
+        dataset_preference_ratio: float = None
+        preference_strategy_ratio: list[float] = None
+        progress_strategy_ratio: list[float] = None
+        similarity_strategy_ratio: list[float] = None
+        data_source_weights: dict[str, float] = None
         shuffle: bool = True
         seed: int = 42
-        num_proc: int = 4
-        max_frames: int = 8  # Use 8 frames for testing the new subsampling logic
-        force_reprocess: bool = False
+        eval_subset_size: int = None
         dataloader_pin_memory: bool = False
         dataloader_num_workers: int = 0
-        model_type: str = "default"
-        preference_strategy_ratio: list[float] = None
+        num_bins: int = 10
+        load_embeddings: bool = False
+        pref_only_datasets: list[str] = None
+        progress_pred_type: str = "absolute"
+        min_success: float = 0.8
+        max_success: float = 0.95
+        dataset_success_cutoff_file: str = None
+        pairwise_progress: bool = False
 
     @dataclass
     class MockConfig:
@@ -109,40 +131,101 @@ def test():
 
     # Create mock config
     mock_data_config = MockDataConfig(
-        train_datasets=["jesbu1/oxe_rfm"],
-        train_subsets=["oxe_bridge_v2"],
-        sample_type_ratio=[1.0, 0.0, 0.0],
+        train_datasets=["jesbu1_oxe_rfm_oxe_jaco_play"],
+        eval_datasets=["jesbu1_oxe_rfm_oxe_jaco_play"],
+        dataset_type="rfm",
+        max_frames=16,
+        max_frames_after_preprocessing=64,
+        resized_height=128,
+        resized_width=128,
+        sample_type_ratio=[1, 1, 1],  # pref, progress, similarity
+        dataset_preference_ratio=0.7,
         preference_strategy_ratio=[0.8, 0.1, 0.1, 0.0],
+        progress_strategy_ratio=[1, 1, 1], # default success, rewind, different task
+        similarity_strategy_ratio=[1, 1, 1],  # rewind, suboptimal_same_task, paired_human_robot
+        data_source_weights=None,
         shuffle=True,
         seed=42,
-        num_proc=4,
-        max_frames=8,  # Use 8 frames for testing the new subsampling logic
-        force_reprocess=False,
-        model_type="default",
+        eval_subset_size=None,
+        dataloader_pin_memory=False,
+        dataloader_num_workers=6,
+        num_bins=10,
+        load_embeddings=True,
+        pref_only_datasets=[],
+        progress_pred_type="absolute",
+        min_success=0.8,
+        max_success=0.95,
+        dataset_success_cutoff_file=None,
+        pairwise_progress=False,
     )
 
-    MockConfig(data=mock_data_config, debug=False)
+    # Create dataset generator
+    rank_0_print("Initializing RFMDataset...")
+    init_start = time.time()
+    generator = RFMDataset(config=mock_data_config, batch_size=64)
+    init_time = time.time() - init_start
+    rank_0_print(f"Dataset initialization took {init_time:.2f} seconds")
 
-    # Create data generator with mock config
-    generator = RFMDataset(config=mock_data_config)
+    # Test the dataset
+    rank_0_print("Testing RFMDataset...")
 
-    # Test the infinite dataset
-    rank_0_print("Testing InfiniteDataGeneratorDataset...")
+    sample_type_counts = {"pref": 0, "progress": 0, "similarity": 0}
+    source_counts = defaultdict(int)
 
-    preference_count = 0
-    similarity_count = 0
-
-    for i in range(10):
+    # Quick sample type distribution check
+    for i in range(100):
         sample = generator[i]
-        import ipdb
+        # Determine sample type - fix to use correct attribute names
+        if hasattr(sample, "chosen_trajectory"):
+            sample_type_counts["pref"] += 1
+            source_counts[sample.chosen_trajectory.data_source] += 1
+        elif hasattr(sample, "ref_trajectory"):
+            # SimilaritySample has ref_trajectory, sim_trajectory, diff_trajectory
+            sample_type_counts["similarity"] += 1
+            source_counts[sample.ref_trajectory.data_source] += 1
+        elif hasattr(sample, "trajectory"):
+            # ProgressSample has trajectory
+            sample_type_counts["progress"] += 1
+            source_counts[sample.trajectory.data_source] += 1
 
-        ipdb.set_trace()
-        rank_0_print(f"Sample {i}: {sample}")
+    rank_0_print(f"Sample type distribution: {sample_type_counts}")
+    rank_0_print(f"Data source distribution: {dict(source_counts)}")
+    rank_0_print(f"Total samples tested: {sum(sample_type_counts.values())}")
 
-    rank_0_print(f"Generated {preference_count} preference samples and {similarity_count} similarity samples")
-    rank_0_print(
-        f"Expected ratio: {generator.preference_ratio:.1f} preference, {generator.similarity_ratio:.1f} similarity"
+    # Test batch loading with DataLoader
+    from torch.utils.data import DataLoader
+
+    rank_0_print("\nTesting batch loading with DataLoader...")
+    batch_size = 64
+    num_batches_to_test = 10
+
+    # Create DataLoader
+    dataloader = DataLoader(
+        generator,
+        batch_size=batch_size,
+        num_workers=0,  # Use 0 workers for accurate timing
+        shuffle=False,
+        collate_fn=lambda x: x,  # Simple identity collator for timing
     )
+
+    # Measure actual batch loading by timing the iteration itself
+    iter_times = []
+    dataloader_iter = iter(dataloader)
+    for i in range(num_batches_to_test):
+        iter_start = time.time()
+        batch = next(dataloader_iter)
+        iter_time = time.time() - iter_start
+        iter_times.append(iter_time)
+
+    if iter_times:
+        avg_batch_time = sum(iter_times) / len(iter_times)
+        total_batch_time = sum(iter_times)
+        rank_0_print(f"\nBatch Loading Timing Results (batch_size={batch_size}):")
+        rank_0_print(f"  Average time per batch: {avg_batch_time * 1000:.2f} ms")
+        rank_0_print(f"  Total time for {len(iter_times)} batches: {total_batch_time:.2f} seconds")
+        rank_0_print(f"  Throughput: {batch_size / avg_batch_time:.2f} samples/second")
+        rank_0_print(f"  Min batch time: {min(iter_times) * 1000:.2f} ms")
+        rank_0_print(f"  Max batch time: {max(iter_times) * 1000:.2f} ms")
 
 
 if __name__ == "__main__":

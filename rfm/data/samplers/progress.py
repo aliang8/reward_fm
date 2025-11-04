@@ -26,7 +26,6 @@ class ProgressSampler(RFMBaseSampler):
         2. Rewind Same Task: Create rewound trajectory from same task
         3. Different Task: Use trajectory from different task (progress set to 0.0)
         """
-
         # Initialize variables for strategy selection
         processed_traj = None
         strategy_used = None
@@ -79,7 +78,7 @@ class ProgressSampler(RFMBaseSampler):
 
             # Execute selected strategy
             if selected_strategy == "successful":
-                processed_traj = traj.copy()
+                processed_traj = traj
             elif selected_strategy == DataGenStrat.REWIND_SAME_TASK:
                 processed_traj = self._get_rewound_traj(traj)
             elif selected_strategy == DataGenStrat.DIFFERENT_TASK:
@@ -107,7 +106,7 @@ class ProgressSampler(RFMBaseSampler):
         if strategy_used == DataGenStrat.DIFFERENT_TASK:
             # We need to use the original task embeddings instead of the different task embeddings
             if self.config.load_embeddings and traj.get("embeddings_path"):
-                progress_traj.text_embedding = load_embeddings_from_path(traj["embeddings_path"], "text_embedding")
+                progress_traj.text_embedding = load_embeddings_from_path(traj["embeddings_path"])["text_embedding"]
             progress_traj.lang_vector = traj["lang_vector"]
             progress_traj.task = traj["task"]
             progress_traj.target_progress = [0.0] * len(progress_traj.target_progress)

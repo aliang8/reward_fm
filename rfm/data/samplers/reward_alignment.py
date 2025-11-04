@@ -18,6 +18,7 @@ from rfm.data.datasets.helpers import (
     pad_trajectory_to_max_frames_np,
     pad_trajectory_to_max_frames_torch,
     load_embeddings_from_path,
+    load_frames_from_npz,
 )
 from rfm.utils.distributed import rank_0_print
 
@@ -68,18 +69,7 @@ class RewardAlignmentSampler(RFMBaseSampler):
 
         for traj_idx in trajectories_to_process:
             traj = self.dataset[traj_idx]
-
-            # Get trajectory length from frames
-            frames_path = traj.get("frames")
-            if not frames_path:
-                continue
-
-            # Get frames and determine number of frames
-            frames = self._get_trajectory_frames(traj_idx)
-            if frames is None or len(frames) < self.frame_step:
-                continue
-            num_frames = len(frames)
-
+            num_frames = traj["num_frames"]
             # Create subsequence indices: 0:2, 0:4, 0:6, etc.
             for end_idx in range(self.frame_step, num_frames + 1, self.frame_step):
                 sample_indices.append({
@@ -125,7 +115,7 @@ class RewardAlignmentSampler(RFMBaseSampler):
                 subsequence_video_embeddings, [gt_progress], self.config.max_frames
             )
         else:
-            frames = self._get_trajectory_frames(traj_idx)
+            frames = load_frames_from_npz(original_traj["frames"])
             if frames is None or len(frames) == 0:
                 return None
 

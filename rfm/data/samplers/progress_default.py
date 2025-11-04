@@ -8,6 +8,7 @@ from rfm.data.datasets.helpers import (
     pad_trajectory_to_max_frames_np,
     pad_trajectory_to_max_frames_torch,
     load_embeddings_from_path,
+    load_frames_from_npz,
     convert_absolute_to_relative_progress,
 )
 from rfm.utils.distributed import rank_0_print
@@ -18,8 +19,6 @@ class ProgressDefaultSampler(RFMBaseSampler):
 
     def __init__(self, config, dataset, combined_indices, dataset_success_cutoff_map=None, is_evaluation=False, verbose=True, **kwargs):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
-        self.current_idx = 0
-
         rank_0_print(
             f"ProgressDefaultSampler initialized with {len(self.robot_trajectories)} trajectories", verbose=self.verbose
         )
@@ -31,16 +30,16 @@ class ProgressDefaultSampler(RFMBaseSampler):
     def _generate_all_sample_indices(self) -> list[dict]:
         """Generate all possible sample indices."""
         return [
-            {"idx": i, "video_path": self.dataset[i]["frames"], "id": self.dataset[i]["id"]}
+            {"traj_idx": i, "video_path": self.dataset[i]["frames"], "id": self.dataset[i]["id"]}
             for i in range(len(self.robot_trajectories))
         ]
 
-    def _create_progress_sample(self, idx: int) -> ProgressSample:
+    def _generate_sample_from_indices(self, sample_idx_info: dict) -> ProgressSample:
         """Generate a single progress sample from trajectory index."""
-        sample_info = self.sample_indices[idx]
+        traj_idx = sample_idx_info["traj_idx"]
+        video_path = sample_idx_info["video_path"]
 
-        # Get the trajectory
-        traj = self.dataset[sample_info["idx"]]
+        traj = self.dataset[traj_idx]
 
         # Initialize variables
         frames = None
@@ -59,7 +58,7 @@ class ProgressDefaultSampler(RFMBaseSampler):
             total_frames = video_embeddings.shape[0] if hasattr(video_embeddings, "shape") else len(video_embeddings)
             use_embeddings = True
         else:
-            frames = self._get_trajectory_frames(idx)
+            frames = load_frames_from_npz(traj["frames"])
             data = frames
             total_frames = len(frames)
             use_embeddings = False
@@ -82,8 +81,8 @@ class ProgressDefaultSampler(RFMBaseSampler):
             "quality_label": traj["quality_label"],
             "data_source": traj["data_source"],
             "task": traj["task"],
-            "id": sample_info["id"],
-            "video_path": sample_info["video_path"],
+            "id": traj["id"],
+            "video_path": video_path,
         }
 
         # Create trajectory for the progress sample

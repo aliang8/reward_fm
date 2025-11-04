@@ -15,6 +15,7 @@ from rfm.data.datasets.helpers import (
     pad_trajectory_to_max_frames_np,
     pad_trajectory_to_max_frames_torch,
     load_embeddings_from_path,
+    load_frames_from_npz,
 )
 from rfm.utils.distributed import rank_0_print
 from sentence_transformers import SentenceTransformer
@@ -31,13 +32,23 @@ class ConfusionMatrixSampler(RFMBaseSampler):
     def __init__(self, config, dataset, combined_indices, dataset_success_cutoff_map=None, is_evaluation=False, verbose=True, **kwargs):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
 
-        self.sample_indices = self._generate_all_sample_indices()
-        self.current_idx = 0
+        # Load sentence transformer model and precompute embeddings for all unique tasks
+        self.sentence_model = SentenceTransformer("sentence-transformers/all-MiniLM-L12-v2")
+        self.sentence_model.eval()
+        
+        # Precompute language embeddings for all unique tasks
+        unique_tasks = list(self.task_indices.keys())
+        rank_0_print(f"Precomputing language embeddings for {len(unique_tasks)} unique tasks", verbose=self.verbose)
+        self.task_embeddings = {}
+        for task in unique_tasks:
+            embedding = self.sentence_model.encode(task)
+            self.task_embeddings[task] = torch.tensor(embedding)
+        rank_0_print(f"Precomputed {len(self.task_embeddings)} language embeddings", verbose=self.verbose)
+        
+        # Free up the model after precomputation (no longer needed)
+        del self.sentence_model
 
-        # if we are loading embeddings, we need to also load the sentence transformer model
-        if self.config.load_embeddings:
-            self.sentence_model = SentenceTransformer("sentence-transformers/all-MiniLM-L12-v2")
-            self.sentence_model.eval()
+        self.sample_indices = self._generate_all_sample_indices()
 
         rank_0_print(
             f"Generated {len(self.sample_indices)} confusion matrix sample indices from {len(self.robot_trajectories)} trajectories and {len(self.task_indices)} tasks"
@@ -88,7 +99,6 @@ class ConfusionMatrixSampler(RFMBaseSampler):
         video_task = sample_idx_info["video_task"]
         video_path = sample_idx_info["video_path"]
 
-        # Get the original trajectory
         video_traj = self.dataset[traj_idx]
 
         frames = None
@@ -99,14 +109,11 @@ class ConfusionMatrixSampler(RFMBaseSampler):
         if self.config.load_embeddings and video_traj.get("embeddings_path"):
             embeddings = load_embeddings_from_path(video_traj["embeddings_path"])
             video_embeddings = embeddings["video_embeddings"]
-            text_embedding = self.sentence_model.encode(lang_task)
-            text_embedding = torch.tensor(text_embedding)
-
             video_embeddings, _ = linspace_subsample_frames(video_embeddings, max_frames)
             frames_shape_orig = video_embeddings.shape
             video_embeddings, _ = pad_trajectory_to_max_frames_torch(video_embeddings, [0], max_frames)
         else:
-            frames = self._get_trajectory_frames(traj_idx)
+            frames = load_frames_from_npz(video_traj["frames"])
             if frames is None or len(frames) == 0:
                 return None
 
@@ -114,7 +121,9 @@ class ConfusionMatrixSampler(RFMBaseSampler):
             frames_shape_orig = frames.shape
             frames, _ = pad_trajectory_to_max_frames_np(frames, [0], max_frames)
 
-        # Create metadata for the confusion matrix analysis
+        # Look up precomputed embedding instead of encoding
+        text_embedding = self.task_embeddings[lang_task]
+
         metadata = {
             "id": video_traj["id"],
             "lang_task": lang_task,
@@ -142,7 +151,6 @@ class ConfusionMatrixSampler(RFMBaseSampler):
         )
 
         sample = ProgressSample(trajectory=sample_trajectory)
-
         return sample
 
     def __len__(self):

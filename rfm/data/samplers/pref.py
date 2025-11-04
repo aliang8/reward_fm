@@ -247,7 +247,11 @@ class PrefSampler(RFMBaseSampler):
         strategies = [(strat, prob) for strat, prob in strategies if prob > 0]
 
         max_attempts = 10  # Limit retry attempts to prevent infinite loops
+        max_strategy_attempts = 3  # Maximum attempts per strategy before removing it
         attempt = 0
+
+        # Track attempts per strategy
+        strategy_attempt_counts = {strat: 0 for strat, _ in strategies}
 
         while rejected_traj is None and attempt < max_attempts:
             attempt += 1
@@ -288,7 +292,7 @@ class PrefSampler(RFMBaseSampler):
                         chosen_traj, num_bins=self.config.num_bins
                     )
                 except Exception as e:
-                    rank_0_print(f"Video binning failed: {e}, removing from available strategies")
+                    rank_0_print(f"Video binning failed: {e}")
                     rejected_traj = None
             else:
                 raise ValueError(f"Invalid strategy selected: {selected_strategy}")
@@ -296,6 +300,14 @@ class PrefSampler(RFMBaseSampler):
             # Check if strategy succeeded
             if rejected_traj is not None:
                 strategy_used = selected_strategy
+            else:
+                # Strategy failed - increment attempt count
+                strategy_attempt_counts[selected_strategy] = strategy_attempt_counts.get(selected_strategy, 0) + 1
+                
+                # Only remove strategy if it has failed max_strategy_attempts times
+                if strategy_attempt_counts[selected_strategy] >= max_strategy_attempts:
+                    strategies = [(strat, prob) for strat, prob in strategies if strat != selected_strategy]
+                    continue
          
         # If we still don't have a sample after all attempts, raise an error
         if rejected_traj is None:

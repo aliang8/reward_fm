@@ -245,7 +245,6 @@ class RFMHeadsTrainer(Trainer):
         # make sure values are floats so they are loggable into wandb reports
         log_data = {k: float(v) for k, v in log_data.items()}
 
-        # Log to wandb if available and configured (only on rank 0)
         if self.log_wandb and is_rank_0():
             try:
                 import wandb
@@ -648,7 +647,7 @@ class RFMHeadsTrainer(Trainer):
         num_progress = inputs.get("num_progress", 0)
 
         device = self.accelerator.device if hasattr(self, 'accelerator') else next(model.parameters()).device
-        total_loss = torch.tensor(0.0, device=device, requires_grad=True)
+        total_loss = torch.tensor(0.0, device=device)
         log_metadata = {}
 
         # Compute preference loss if we have preference samples
@@ -657,7 +656,7 @@ class RFMHeadsTrainer(Trainer):
                 preference_loss, loss_dict = self._compute_preference_loss(
                     model, preference_inputs, return_outputs=True, training=training
                 )
-                total_loss += preference_loss
+                total_loss = total_loss + preference_loss
                 log_metadata.update(loss_dict)
 
         # Compute progress loss if we have progress samples
@@ -666,7 +665,7 @@ class RFMHeadsTrainer(Trainer):
                 progress_loss, loss_dict = self._compute_progress_loss(
                     model, progress_inputs, return_outputs=True, training=training
                 )
-                total_loss += progress_loss
+                total_loss = total_loss + progress_loss
             log_metadata.update(loss_dict)
 
         # Compute similarity loss if we have similarity samples
@@ -675,7 +674,7 @@ class RFMHeadsTrainer(Trainer):
                 similarity_loss, loss_dict = self._compute_similarity_loss(
                     model, similarity_inputs, return_outputs=True, training=training
                 )
-                total_loss += similarity_loss
+                total_loss = total_loss + similarity_loss
             log_metadata.update(loss_dict)
 
         # Always store custom losses for logging (even when return_outputs=False)
@@ -1002,7 +1001,7 @@ class RFMHeadsTrainer(Trainer):
         progress_logits = model_outputs.progress_logits
 
         device = self.accelerator.device if hasattr(self, 'accelerator') else next(model.parameters()).device
-        preference_loss = torch.tensor(0.0, device=device, requires_grad=True)
+        preference_loss = torch.tensor(0.0, device=device)
         # progress_loss = 0.0
 
         # Get preference labels (1 if first trajectory is preferred, 0 if second trajectory is preferred)

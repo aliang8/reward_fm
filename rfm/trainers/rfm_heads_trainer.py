@@ -647,8 +647,8 @@ class RFMHeadsTrainer(Trainer):
         num_similarities = inputs.get("num_similarities", 0)
         num_progress = inputs.get("num_progress", 0)
 
-        # Initialize loss components and metadata
-        total_loss = 0.0
+        device = self.accelerator.device if hasattr(self, 'accelerator') else next(model.parameters()).device
+        total_loss = torch.tensor(0.0, device=device, requires_grad=True)
         log_metadata = {}
 
         # Compute preference loss if we have preference samples
@@ -1001,7 +1001,8 @@ class RFMHeadsTrainer(Trainer):
         model_outputs, model_timing_raw = self.forward_model(model, inputs, sample_type="preference")
         progress_logits = model_outputs.progress_logits
 
-        preference_loss = 0.0
+        device = self.accelerator.device if hasattr(self, 'accelerator') else next(model.parameters()).device
+        preference_loss = torch.tensor(0.0, device=device, requires_grad=True)
         # progress_loss = 0.0
 
         # Get preference labels (1 if first trajectory is preferred, 0 if second trajectory is preferred)

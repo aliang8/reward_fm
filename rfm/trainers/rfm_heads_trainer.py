@@ -104,12 +104,9 @@ def reduce_metrics_with_accelerate(metrics: dict, accelerator, aggregate_method=
                 else:
                     result_metrics[key] = 0.0
 
-        # Step 5: Only return metrics that were originally present in this process
-        final_metrics = {}
-        for key in metrics.keys():
-            final_metrics[key] = result_metrics[key]
-
-        return final_metrics
+        # Step 5: Return all reduced metrics (all processes should have the same keys after reduction)
+        # Return all keys from result_metrics to ensure we get all metrics across all processes
+        return result_metrics
 
     except Exception as e:
         # Fallback: return original metrics if reduction fails
@@ -245,6 +242,7 @@ class RFMHeadsTrainer(Trainer):
         # make sure values are floats so they are loggable into wandb reports
         log_data = {k: float(v) for k, v in log_data.items()}
 
+        # Log to wandb if available and configured (only on rank 0)
         if self.log_wandb and is_rank_0():
             try:
                 import wandb
@@ -646,8 +644,7 @@ class RFMHeadsTrainer(Trainer):
         num_similarities = inputs.get("num_similarities", 0)
         num_progress = inputs.get("num_progress", 0)
 
-        device = self.accelerator.device if hasattr(self, 'accelerator') else next(model.parameters()).device
-        total_loss = torch.tensor(0.0, device=device)
+        total_loss = 0.0
         log_metadata = {}
 
         # Compute preference loss if we have preference samples
@@ -656,7 +653,7 @@ class RFMHeadsTrainer(Trainer):
                 preference_loss, loss_dict = self._compute_preference_loss(
                     model, preference_inputs, return_outputs=True, training=training
                 )
-                total_loss = total_loss + preference_loss
+                total_loss += preference_loss
                 log_metadata.update(loss_dict)
 
         # Compute progress loss if we have progress samples
@@ -665,7 +662,7 @@ class RFMHeadsTrainer(Trainer):
                 progress_loss, loss_dict = self._compute_progress_loss(
                     model, progress_inputs, return_outputs=True, training=training
                 )
-                total_loss = total_loss + progress_loss
+                total_loss += progress_loss
             log_metadata.update(loss_dict)
 
         # Compute similarity loss if we have similarity samples
@@ -674,7 +671,7 @@ class RFMHeadsTrainer(Trainer):
                 similarity_loss, loss_dict = self._compute_similarity_loss(
                     model, similarity_inputs, return_outputs=True, training=training
                 )
-                total_loss = total_loss + similarity_loss
+                total_loss += similarity_loss
             log_metadata.update(loss_dict)
 
         # Always store custom losses for logging (even when return_outputs=False)
@@ -1000,22 +997,17 @@ class RFMHeadsTrainer(Trainer):
         model_outputs, model_timing_raw = self.forward_model(model, inputs, sample_type="preference")
         progress_logits = model_outputs.progress_logits
 
-        device = self.accelerator.device if hasattr(self, 'accelerator') else next(model.parameters()).device
-        preference_loss = torch.tensor(0.0, device=device)
-        # progress_loss = 0.0
-
         # Get preference labels (1 if first trajectory is preferred, 0 if second trajectory is preferred)
         preference_labels = inputs["preference_labels"]
 
-        if self.config.model.train_preference_head:
-            # Get preference scores from the preference head
-            preference_scores = model_outputs.pref_logits.squeeze(-1)  # [batch_size]
+        # Get preference scores from the preference head
+        preference_scores = model_outputs.pref_logits.squeeze(-1)  # [batch_size]
 
-            # Binary cross entropy loss for preference prediction
-            preference_loss_all = F.binary_cross_entropy_with_logits(
-                preference_scores, preference_labels.float(), reduction="none"
-            )
-            preference_loss = preference_loss_all.mean()
+        # Binary cross entropy loss for preference prediction
+        preference_loss_all = F.binary_cross_entropy_with_logits(
+            preference_scores, preference_labels.float(), reduction="none"
+        )
+        preference_loss = preference_loss_all.mean()
 
         final_loss = preference_loss
 
@@ -1105,13 +1097,12 @@ class RFMHeadsTrainer(Trainer):
                     f"{prefix}/preference_loss": preference_loss.item(),
                     f"{prefix}/preference_accuracy": preference_accuracy.mean().item(),
                 })
-
-        return final_loss, outputs_dict
+                return final_loss, outputs_dict
+                
+        return final_loss
 
     def _compute_similarity_loss(self, model, inputs, return_outputs=False, training=True):
         """Compute similarity scoring loss (DPO-style)."""
-        # Prepare inputs for reference vs trajectory sim forward pass
-
         if "Qwen" in self.config.model.base_model_id or "SmolVLM" in self.config.model.base_model_id:
             ref_sim_inputs = {
                 "input_ids": inputs["input_ids_ref_sim"],
@@ -1251,4 +1242,4 @@ class RFMHeadsTrainer(Trainer):
 
             return final_loss, outputs_dict
 
-        return final_loss, {}
+        return final_loss

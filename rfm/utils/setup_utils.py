@@ -39,6 +39,7 @@ from rfm.data.datasets import (
     BalancedRFMDataset,
     RFMDataset,
     BaseDataset,
+    InfiniteDataset,
 )
 from rfm.data.datasets.custom_eval import CustomEvalDataset
 from rfm.models import RFM, RFMVQA, ReWiNDTransformer
@@ -495,6 +496,7 @@ def setup_dataset(cfg: DataConfig, is_eval: bool = False, **kwargs) -> BaseDatas
         "data_source_balance": BalancedRFMDataset,
     }
     dataset = dataset_cls[cfg.dataset_type](config=cfg, is_evaluation=is_eval, **kwargs)
+    dataset = InfiniteDataset(dataset)
     return dataset
 
 

@@ -4,6 +4,8 @@ Generate a newline-separated command list for sweeps.
 
 Usage:
   uv run python3 scripts/generate_sweep.py --sweep_config sweeps/rewind_transformer.yaml --out sweep_commands.txt
+  uv run python3 scripts/generate_sweep.py --sweep_config sweeps/qwen.yaml --out sweep_commands.txt
+
 """
 
 import argparse

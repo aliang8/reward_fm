@@ -128,7 +128,7 @@ training:
   output_dir: "./logs"
   
   # Training parameters
-  per_device_train_batch_size: 8
+  per_device_train_batch_size: 16
   gradient_accumulation_steps: 1
   learning_rate: 2e-5
   num_train_epochs: -1  # Number of epochs to train for
@@ -141,8 +141,9 @@ training:
   # Evaluation settings
   evaluation_strategy: "steps"  # Options: "no", "steps", "epoch"
   eval_steps: 100  
-  custom_eval_steps: 100  
-  per_device_eval_batch_size: 8  # Evaluation batch size per device
+  custom_eval_steps: 100
+  # eval_epochs: 100  
+  per_device_eval_batch_size: 16  # Evaluation batch size per device
   do_eval: true  # Enable evaluation during training
   prediction_loss_only: true # Only compute loss for the prediction head
   

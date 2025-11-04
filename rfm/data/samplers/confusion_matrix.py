@@ -97,7 +97,8 @@ class ConfusionMatrixSampler(RFMBaseSampler):
         max_frames = self.config.max_frames
 
         if self.config.load_embeddings and video_traj.get("embeddings_path"):
-            video_embeddings = load_embeddings_from_path(video_traj["embeddings_path"], "video_embeddings")
+            embeddings = load_embeddings_from_path(video_traj["embeddings_path"])
+            video_embeddings = embeddings["video_embeddings"]
             text_embedding = self.sentence_model.encode(lang_task)
             text_embedding = torch.tensor(text_embedding)
 

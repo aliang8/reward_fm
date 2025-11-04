@@ -16,10 +16,7 @@ class SimSampler(RFMBaseSampler):
     def __init__(self, config, dataset, combined_indices, dataset_success_cutoff_map=None, is_evaluation=False, verbose=True, **kwargs):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
         self.similarity_strategy_ratio: list[float] = config.similarity_strategy_ratio
-
-        if self.verbose:
-            rank_0_print(f"SimSampler initialized with {len(self.dataset)} total trajectories")
-
+        
     def _generate_sample(self, item: dict):
         return self._create_similarity_sample(ref_traj=item)
 

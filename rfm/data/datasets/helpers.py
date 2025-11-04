@@ -1,3 +1,4 @@
+from math import e
 import os
 import random
 from enum import Enum
@@ -88,7 +89,7 @@ def load_frames_from_npz(npz_filepath: str) -> np.ndarray:
         raise RuntimeError(f"Failed to load frames from {npz_filepath}: {e}")
 
 
-def load_embeddings_from_path(embeddings_path: str, embedding_type: str = "video_embeddings") -> torch.Tensor:
+def load_embeddings_from_path(embeddings_path: str) -> torch.Tensor:
     """Load video embeddings from .pt file and return just the video embeddings."""
     if not embeddings_path:
         import ipdb
@@ -106,8 +107,7 @@ def load_embeddings_from_path(embeddings_path: str, embedding_type: str = "video
 
     with open(embeddings_path, "rb") as f:
         embeddings_data = torch.load(f, map_location="cpu")
-    return embeddings_data[embedding_type]
-
+    return embeddings_data
 
 def pad_trajectory_to_max_frames_np(
     frames: np.ndarray, progress: list[float], max_frames: int, pad_from: str = "right"
@@ -494,8 +494,9 @@ def create_rewind_trajectory(
     """
     if use_embeddings:
         # Load embeddings from .pt file
-        frames_data = load_embeddings_from_path(original_traj["embeddings_path"], "video_embeddings")
-        text_embedding = load_embeddings_from_path(original_traj["embeddings_path"], "text_embedding")
+        embeddings = load_embeddings_from_path(original_traj["embeddings_path"])
+        frames_data = embeddings["video_embeddings"]
+        text_embedding = embeddings["text_embedding"]
     else:
         # Load frames from npz file
         frames_data = load_frames_from_npz(original_traj["frames"])

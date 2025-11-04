@@ -150,7 +150,7 @@ def test():
         shuffle: bool = True
         seed: int = 42
         num_proc: int = 4
-        max_frames: int = 8
+        max_frames: int = 16
         max_frames_after_preprocessing: int = 64
         force_reprocess: bool = False
         dataloader_pin_memory: bool = False
@@ -180,10 +180,11 @@ def test():
         # train_datasets=["jesbu1_h2r_rfm_h2r", "anqil_rh20t_subset_rfm_rh20t_human", "anqil_rh20t_subset_rfm_rh20t_robot", "jesbu1_humanoid_everyday_rfm_humanoid_everyday_rfm", "jesbu1_motif_rfm_motif_rfm"],
         # train_datasets=["jesbu1_motif_rfm_motif_rfm", "anqil_rh20t_subset_rfm_rh20t_human", "anqil_rh20t_subset_rfm_rh20t_robot", "jesbu1_h2r_rfm_h2r"],
         # train_datasets=["jesbu1_motif_rfm_motif_rfm", "jesbu1_h2r_rfm_h2r"],
-        train_datasets=["anqil_rh20t_subset_rfm_rh20t_human", "anqil_rh20t_subset_rfm_rh20t_robot"],
-        sample_type_ratio=[0, 0, 1],  # pref, progress, similarity
+        # train_datasets=["anqil_rh20t_subset_rfm_rh20t_human", "anqil_rh20t_subset_rfm_rh20t_robot"],
+        train_datasets=["jesbu1_oxe_rfm_oxe_jaco_play"],
+        sample_type_ratio=[0, 1, 0],  # pref, progress, similarity
         preference_strategy_ratio=[6, 1, 1, 0],
-        progress_strategy_ratio=[1, 6, 1],
+        progress_strategy_ratio=[1, 0, 0], # default success, rewind, different task
         similarity_strategy_ratio=[1, 1, 1],  # rewind, suboptimal_same_task, paired_human_robot
         dataset_preference_ratio=0.7,
         data_source_weights={
@@ -193,8 +194,8 @@ def test():
         },
         shuffle=True,
         seed=42,
-        num_proc=4,
-        max_frames=8,
+        num_proc=0,
+        max_frames=16,
         max_frames_after_preprocessing=64,
         force_reprocess=False,
         model_type="default",

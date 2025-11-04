@@ -113,8 +113,9 @@ class RewardAlignmentSampler(RFMBaseSampler):
             gt_progress = 1 / num_frames
 
         if self.config.load_embeddings and original_traj.get("embeddings_path"):
-            video_embeddings = load_embeddings_from_path(original_traj["embeddings_path"], "video_embeddings")
-            text_embedding = load_embeddings_from_path(original_traj["embeddings_path"], "text_embedding")
+            embeddings = load_embeddings_from_path(original_traj["embeddings_path"])
+            video_embeddings = embeddings["video_embeddings"]
+            text_embedding = embeddings["text_embedding"]
 
             video_embeddings = video_embeddings[:end_idx]
 

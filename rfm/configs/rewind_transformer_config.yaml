@@ -43,9 +43,8 @@ data:
   preference_strategy_ratio: [6, 1, 1, 0] # rewind, suboptimal_same_task, different_task, video_binned 
   progress_strategy_ratio: [1, 6, 1] # default success, rewind, different task
   
-  dataset_type: balanced_mixed
-  # dataset_type: default
-
+  dataset_type: rfm
+  
   # this is based on the subset name
   data_source_weights:
     metaworld_train: 20

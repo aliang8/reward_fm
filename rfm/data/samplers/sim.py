@@ -121,7 +121,7 @@ class SimSampler(RFMBaseSampler):
                     continue
 
         # If we still don't have a sample after all attempts, raise an error
-        if traj_sim is None:
+        if traj_sim is None or traj_diff is None:
             print(f"Strategies tried: {strategies_tried}")
             raise ValueError(
                 f"Failed to generate similarity sample after {max_attempts} attempts - all strategies exhausted"

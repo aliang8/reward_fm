@@ -67,7 +67,7 @@ data:
   load_embeddings: false
 
   # Data generation settings
-  sample_type_ratio: [1, 2, 0]  # Ratio of preference, progress, and similarity samples
+  sample_type_ratio: [1, 1, 0]  # Ratio of preference, progress, and similarity samples
   dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
   # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, video_binned]
   preference_strategy_ratio: [6, 1, 1, 0]
@@ -78,6 +78,7 @@ data:
   seed: 42
 
   dataset_type: rfm
+  
   data_source_weights:
     metaworld_train: 20
     libero256_90: 1
@@ -90,7 +91,7 @@ data:
 
   # Data loading settings
   dataloader_pin_memory: false
-  dataloader_num_workers: 0
+  dataloader_num_workers: 6
 
   # Video binned dataset parameters
   num_bins: 10

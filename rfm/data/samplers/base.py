@@ -133,23 +133,6 @@ class RFMBaseSampler:
                 verbose=self.verbose,
             )
 
-    def _get_trajectory_frames(self, trajectory_idx: int) -> np.ndarray:
-        """Get frames for a trajectory by index, loading from npz if needed.
-
-        Args:
-            trajectory_idx: Index of the trajectory in the dataset
-
-        Returns:
-            numpy array with shape (T, H, W, C) containing the video frames
-        """
-        trajectory = self.dataset[trajectory_idx]
-        npz_filepath = trajectory.get("frames")
-
-        if not npz_filepath:
-            raise ValueError(f"No frames path found for trajectory {trajectory_idx}")
-
-        return load_frames_from_npz(npz_filepath)
-
     def _get_same_task_optimal(self, ref_traj: dict) -> dict | None:
         """Get optimal trajectory from same task (different from ref).
 

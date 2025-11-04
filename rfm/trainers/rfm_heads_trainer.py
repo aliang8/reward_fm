@@ -269,7 +269,6 @@ class RFMHeadsTrainer(Trainer):
         """Create a distributed evaluation dataloader with proper sampling."""
         collator = setup_batch_collator(self.model.processor, self.model.tokenizer, self.config)
 
-        # Create dataloader - Accelerate will handle distributed sampling automatically
         dl = DataLoader(
             dataset,
             batch_size=self.config.training.per_device_eval_batch_size,
@@ -280,7 +279,6 @@ class RFMHeadsTrainer(Trainer):
             persistent_workers=self.args.dataloader_persistent_workers,
             worker_init_fn=seed_worker,
         )
-        # Let Accelerate/FSDP finalize device & wrapping and handle distributed sampling
         return self.accelerator.prepare(dl)
 
     def _run_custom_evaluations(self):
@@ -293,14 +291,6 @@ class RFMHeadsTrainer(Trainer):
             "policy_ranking": "p_rank",
             "success_failure": "succ_fail",
             "wrong_task": "wrong_task",
-        }
-
-        # Map eval_type to sampler_type for setup_custom_eval_dataset
-        EVAL_TYPE_TO_SAMPLER = {
-            "reward_alignment": "reward_alignment",
-            "confusion_matrix": "confusion_matrix",
-            "policy_ranking": "policy_ranking",
-            "success_failure": "success_failure",
         }
 
         rank_0_print(f"\n\n\n\n")
@@ -318,12 +308,6 @@ class RFMHeadsTrainer(Trainer):
                 eval_cfg = copy.deepcopy(self.config.data)
                 eval_cfg.eval_datasets = [eval_dataset]
 
-                # Map eval_type to sampler_type
-                sampler_type = EVAL_TYPE_TO_SAMPLER.get(eval_type)
-                if sampler_type is None:
-                    rank_0_print(f"Warning: Unknown eval_type {eval_type}, skipping...")
-                    continue
-
                 # Create custom eval dataset with the appropriate sampler
                 # set max_trajectories to 10 for reward_alignment per eval dataset
                 kwargs = {}
@@ -331,7 +315,7 @@ class RFMHeadsTrainer(Trainer):
                     kwargs["max_trajectories"] = 10
 
                 dataset = setup_custom_eval_dataset(
-                    eval_cfg, sampler_type=sampler_type, is_eval=True, verbose=False, **kwargs
+                    eval_cfg, sampler_type=eval_type, is_eval=True, verbose=False, **kwargs
                 )
                 dataloader = self._make_eval_dataloader(dataset)
 

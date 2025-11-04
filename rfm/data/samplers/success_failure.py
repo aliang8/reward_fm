@@ -4,7 +4,11 @@ from tqdm import tqdm
 
 from rfm.data.dataset_types import PreferenceSample, Trajectory
 from rfm.data.samplers.base import RFMBaseSampler
-from rfm.data.datasets.helpers import subsample_segment_frames, compute_progress_from_segment
+from rfm.data.datasets.helpers import (
+    subsample_segment_frames,
+    compute_progress_from_segment,
+    load_frames_from_npz,
+)
 from rfm.utils.distributed import rank_0_print
 
 
@@ -74,8 +78,8 @@ class PairedSuccessFailureSampler(RFMBaseSampler):
         failure_traj = self.dataset[failure_idx]
 
         # Get frames
-        success_frames = self._get_trajectory_frames(success_idx)
-        failure_frames = self._get_trajectory_frames(failure_idx)
+        success_frames = load_frames_from_npz(success_traj["frames"])
+        failure_frames = load_frames_from_npz(failure_traj["frames"])
 
         # Subsample frames
         # Get success cutoff from pre-loaded map for both trajectories

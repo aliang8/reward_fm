@@ -289,6 +289,10 @@ def subsample_segment_frames(
     """
     num_frames_total = len(frames)
 
+    # If we have fewer frames than max_frames, just return all frames
+    if num_frames_total < max_frames:
+        return frames, 0, num_frames_total, list(range(num_frames_total))
+
     # Select start and end indices for the chosen trajectory segment
     start_idx = random.randint(0, num_frames_total // 2 - 1)
     end = (2 * num_frames_total) // 3
@@ -508,7 +512,7 @@ def create_rewind_trajectory(
     else:
         num_frames = len(frames_data)
 
-    if num_frames == 0 or (num_frames // 2 - 1) == 0:
+    if num_frames == 0 or (num_frames // 2 - 1) <= 0:
         return None
 
     # Step 1: Select start and end indices
@@ -525,10 +529,9 @@ def create_rewind_trajectory(
         end_idx = random.randint(num_frames // 2, num_frames)
         attempts += 1
 
-    # If we still don't have enough frames after max attempts, use the full trajectory
+    # If we still don't have enough frames after max attempts, return None and try a different strategy
     if end_idx - start_idx < 5:
-        start_idx = 0
-        end_idx = num_frames
+        return None 
 
     # Step 2: Select rewind index between start and end
     if rewind_length is None:

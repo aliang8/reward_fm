@@ -353,45 +353,44 @@ class RFM(PreTrainedModel):
         output.success_logits = success_logits
 
         # For preference and similarity, use specific tokens
-        with _timer("time/logits", timing_raw=timing_raw):
-            if sample_type in ["preference", "similarity"]:
-                if sample_type == "preference":
-                    token_id = self.processor.tokenizer.convert_tokens_to_ids("<|pref_token|>")
-                elif sample_type == "similarity":
-                    token_id = self.processor.tokenizer.convert_tokens_to_ids("<|sim_token|>")
+        if sample_type in ["preference", "similarity"]:
+            if sample_type == "preference":
+                token_id = self.processor.tokenizer.convert_tokens_to_ids("<|pref_token|>")
+            elif sample_type == "similarity":
+                token_id = self.processor.tokenizer.convert_tokens_to_ids("<|sim_token|>")
+            else:
+                import ipdb
+
+                ipdb.set_trace()
+                raise ValueError(f"Invalid sample type: {sample_type}")
+
+            # Find all positions where the target token appears
+            token_positions = []
+            for i, seq_ids in enumerate(input_ids):
+                # Find all occurrences of token_id in this sequence
+                positions = (seq_ids == token_id).nonzero(as_tuple=True)[0]
+                if len(positions) == 0:
+                    raise ValueError(f"token_id {token_id} not found in sequence {i}")
+                elif len(positions) > 1:
+                    raise ValueError(
+                        f"token_id {token_id} appears {len(positions)} times in sequence {i}, expected exactly 1"
+                    )
                 else:
-                    import ipdb
+                    # Exactly one occurrence
+                    token_positions.append(positions[0].item())
+            token_positions = torch.tensor(token_positions, device=input_ids.device, dtype=torch.long)
 
-                    ipdb.set_trace()
-                    raise ValueError(f"Invalid sample type: {sample_type}")
+            # Extract hidden states at the target token positions
+            token_hidden_states = torch.gather(
+                hidden_state,
+                1,
+                token_positions.view(-1, 1, 1).expand(-1, -1, hidden_state.size(-1)),
+            ).squeeze(1)
 
-                # Find all positions where the target token appears
-                token_positions = []
-                for i, seq_ids in enumerate(input_ids):
-                    # Find all occurrences of token_id in this sequence
-                    positions = (seq_ids == token_id).nonzero(as_tuple=True)[0]
-                    if len(positions) == 0:
-                        raise ValueError(f"token_id {token_id} not found in sequence {i}")
-                    elif len(positions) > 1:
-                        raise ValueError(
-                            f"token_id {token_id} appears {len(positions)} times in sequence {i}, expected exactly 1"
-                        )
-                    else:
-                        # Exactly one occurrence
-                        token_positions.append(positions[0].item())
-                token_positions = torch.tensor(token_positions, device=input_ids.device, dtype=torch.long)
-
-                # Extract hidden states at the target token positions
-                token_hidden_states = torch.gather(
-                    hidden_state,
-                    1,
-                    token_positions.view(-1, 1, 1).expand(-1, -1, hidden_state.size(-1)),
-                ).squeeze(1)
-
-                # Apply the appropriate head
-                if sample_type == "preference":
-                    output.pref_logits = self.preference_head(token_hidden_states)
-                else:  # similarity
-                    output.sim_logits = self.similarity_head(token_hidden_states)
+            # Apply the appropriate head
+            if sample_type == "preference":
+                output.pref_logits = self.preference_head(token_hidden_states)
+            else:  # similarity
+                output.sim_logits = self.similarity_head(token_hidden_states)
 
         return output, timing_raw

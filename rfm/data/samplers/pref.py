@@ -296,11 +296,7 @@ class PrefSampler(RFMBaseSampler):
             # Check if strategy succeeded
             if rejected_traj is not None:
                 strategy_used = selected_strategy
-            else:
-                # Remove failed strategy and try again
-                strategies = [(strat, prob) for strat, prob in strategies if strat != selected_strategy]
-                continue
-
+         
         # If we still don't have a sample after all attempts, raise an error
         if rejected_traj is None:
             raise ValueError(

@@ -63,7 +63,12 @@ class SimSampler(RFMBaseSampler):
         strategies = [(strat, prob) for strat, prob in strategies if prob > 0]
 
         max_attempts = 10  # Limit retry attempts to prevent infinite loops
+        max_strategy_attempts = 3  # Maximum attempts per strategy before removing it
         attempt = 0
+
+        strategies_tried = []
+        # Track attempts per strategy
+        strategy_attempt_counts = {strat: 0 for strat, _ in strategies}
 
         while traj_sim is None and attempt < max_attempts:
             attempt += 1
@@ -89,6 +94,7 @@ class SimSampler(RFMBaseSampler):
                 cumulative_prob += normalized_prob
                 if prob <= cumulative_prob:
                     selected_strategy = strat
+                    strategies_tried.append(selected_strategy)
                     break
 
             # Execute selected strategy
@@ -105,9 +111,18 @@ class SimSampler(RFMBaseSampler):
             if result is not None:
                 traj_sim, traj_diff = result
                 strategy_used = selected_strategy
+            else:
+                # Strategy failed - increment attempt count
+                strategy_attempt_counts[selected_strategy] = strategy_attempt_counts.get(selected_strategy, 0) + 1
+                
+                # Only remove strategy if it has failed max_strategy_attempts times
+                if strategy_attempt_counts[selected_strategy] >= max_strategy_attempts:
+                    strategies = [(strat, prob) for strat, prob in strategies if strat != selected_strategy]
+                    continue
 
         # If we still don't have a sample after all attempts, raise an error
         if traj_sim is None:
+            print(f"Strategies tried: {strategies_tried}")
             raise ValueError(
                 f"Failed to generate similarity sample after {max_attempts} attempts - all strategies exhausted"
             )

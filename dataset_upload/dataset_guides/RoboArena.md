@@ -33,7 +33,8 @@ The RoboArena dataset consists of real robot demonstrations, primarily focusing 
         │   ├── metadata.yaml
         │   └── <policy_id_1>_<policy_name_1>/
         │       ├── <video_name>_left.mp4
-        │       └── <video_name>_right.mp4
+        │       ├── <video_name>_right.mp4
+        │       └── <video_name>_wrist.mp4
         ├── <session_id_2>/
         │   └── ...
     ```

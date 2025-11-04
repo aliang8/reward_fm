@@ -105,10 +105,6 @@ class SimSampler(RFMBaseSampler):
             if result is not None:
                 traj_sim, traj_diff = result
                 strategy_used = selected_strategy
-            else:
-                # Remove failed strategy and try again
-                strategies = [(strat, prob) for strat, prob in strategies if strat != selected_strategy]
-                continue
 
         # If we still don't have a sample after all attempts, raise an error
         if traj_sim is None:
@@ -140,12 +136,12 @@ class SimSampler(RFMBaseSampler):
         traj_sim = self._get_rewound_traj(ref_traj)
         traj_diff = self._get_different_task(ref_traj)
 
-        if traj_diff is not None:
+        if traj_sim is not None and traj_diff is not None:
             return traj_sim, traj_diff
 
         # Case 1 failed, try case 2: sim = same task optimal, diff = rewound
         traj_sim = self._get_same_task_optimal(ref_traj)
-        if traj_sim is None:
+        if traj_sim is None or traj_diff is None:
             return None
 
         traj_diff = self._get_rewound_traj(ref_traj)

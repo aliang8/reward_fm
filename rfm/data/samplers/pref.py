@@ -279,21 +279,39 @@ class PrefSampler(RFMBaseSampler):
                     selected_strategy = strat
                     break
 
-            # Execute selected strategy
+            # Execute selected strategy with retry logic
+            max_retries = 3  # Number of retry attempts for sampling
+            
             if selected_strategy == DataGenStrat.REWIND_SAME_TASK:
-                rejected_traj = self._get_rewound_traj(chosen_traj)
+                rejected_traj = None
+                for _ in range(max_retries):
+                    rejected_traj = self._get_rewound_traj(chosen_traj)
+                    if rejected_traj is not None:
+                        break
             elif selected_strategy == DataGenStrat.SUBOPTIMAL_SAME_TASK:
-                rejected_traj = self._get_same_task_suboptimal(chosen_traj)
+                rejected_traj = None
+                for _ in range(max_retries):
+                    rejected_traj = self._get_same_task_suboptimal(chosen_traj)
+                    if rejected_traj is not None:
+                        break
             elif selected_strategy == DataGenStrat.DIFFERENT_TASK:
-                rejected_traj = self._get_different_task(chosen_traj)
+                rejected_traj = None
+                for _ in range(max_retries):
+                    rejected_traj = self._get_different_task(chosen_traj)
+                    if rejected_traj is not None:
+                        break
             elif selected_strategy == DataGenStrat.VIDEO_BINNED:
-                try:
-                    chosen_traj, rejected_traj = self._create_video_binned_trajectory(
-                        chosen_traj, num_bins=self.config.num_bins
-                    )
-                except Exception as e:
-                    rank_0_print(f"Video binning failed: {e}")
-                    rejected_traj = None
+                rejected_traj = None
+                for _ in range(max_retries):
+                    try:
+                        chosen_traj, rejected_traj = self._create_video_binned_trajectory(
+                            chosen_traj, num_bins=self.config.num_bins
+                        )
+                        if rejected_traj is not None:
+                            break
+                    except Exception as e:
+                        rank_0_print(f"Video binning failed: {e}")
+                        rejected_traj = None
             else:
                 raise ValueError(f"Invalid strategy selected: {selected_strategy}")
 

@@ -63,7 +63,7 @@ class SimSampler(RFMBaseSampler):
         strategies = [(strat, prob) for strat, prob in strategies if prob > 0]
 
         max_attempts = 10  # Limit retry attempts to prevent infinite loops
-        max_strategy_attempts = 3  # Maximum attempts per strategy before removing it
+        max_strategy_attempts = 4  # Maximum attempts per strategy before removing it
         attempt = 0
 
         strategies_tried = []
@@ -122,7 +122,9 @@ class SimSampler(RFMBaseSampler):
 
         # If we still don't have a sample after all attempts, raise an error
         if traj_sim is None or traj_diff is None:
-            print(f"Strategies tried: {strategies_tried}")
+            rank_0_print(f"Strategies tried: {strategies_tried}")
+            rank_0_print(f"Strategy attempt counts: {strategy_attempt_counts}")
+            # import ipdb; ipdb.set_trace()
             raise ValueError(
                 f"Failed to generate similarity sample after {max_attempts} attempts - all strategies exhausted"
             )
@@ -147,20 +149,41 @@ class SimSampler(RFMBaseSampler):
         Returns:
             Tuple of (traj_sim, traj_diff) where both can be dict or Trajectory objects, or None if not available
         """
+        max_retries = 3  # Number of retry attempts for sampling
+        
         # Try case 1: sim = rewound, diff = different task
-        traj_sim = self._get_rewound_traj(ref_traj)
-        traj_diff = self._get_different_task(ref_traj)
-
+        traj_sim = None
+        for _ in range(max_retries):
+            traj_sim = self._get_rewound_traj(ref_traj)
+            if traj_sim is not None:
+                break
+        
+        traj_diff = None
+        for _ in range(max_retries):
+            traj_diff = self._get_different_task(ref_traj)
+            if traj_diff is not None:
+                break
+        
         if traj_sim is not None and traj_diff is not None:
             return traj_sim, traj_diff
 
         # Case 1 failed, try case 2: sim = same task optimal, diff = rewound
-        traj_sim = self._get_same_task_optimal(ref_traj)
-        if traj_sim is None or traj_diff is None:
-            return None
+        traj_sim = None
+        for _ in range(max_retries):
+            traj_sim = self._get_same_task_optimal(ref_traj)
+            if traj_sim is not None:
+                break
+        
+        traj_diff = None
+        for _ in range(max_retries):
+            traj_diff = self._get_rewound_traj(ref_traj)
+            if traj_diff is not None:
+                break
+        
+        if traj_sim is not None and traj_diff is not None:
+            return traj_sim, traj_diff
 
-        traj_diff = self._get_rewound_traj(ref_traj)
-        return traj_sim, traj_diff
+        return None
 
     def _get_traj_dicts_for_paired_human_robot(self, ref_traj: dict) -> tuple[dict, dict | Trajectory] | None:
         """Get traj_sim and traj_diff for paired human/robot strategy.
@@ -173,15 +196,26 @@ class SimSampler(RFMBaseSampler):
             traj_sim is the paired human/robot trajectory (opposite type, same task)
             traj_diff is a trajectory from a different task
         """
-        traj_sim = self._get_paired_human_robot_traj(ref_traj)
-        if traj_sim is None:
-            return None
+        max_retries = 3  # Number of retry attempts for sampling
+        
+        # Retry traj_sim separately
+        traj_sim = None
+        for _ in range(max_retries):
+            traj_sim = self._get_paired_human_robot_traj(ref_traj)
+            if traj_sim is not None:
+                break
+        
+        # Retry traj_diff separately
+        traj_diff = None
+        for _ in range(max_retries):
+            traj_diff = self._get_different_task(ref_traj)
+            if traj_diff is not None:
+                break
+        
+        if traj_sim is not None and traj_diff is not None:
+            return traj_sim, traj_diff
 
-        traj_diff = self._get_different_task(ref_traj)
-        if traj_diff is None:
-            return None
-
-        return traj_sim, traj_diff
+        return None
 
     def _get_traj_dicts_for_suboptimal(self, ref_traj: dict) -> tuple[dict, dict | Trajectory] | None:
         """Get traj_sim and traj_diff for suboptimal strategy.
@@ -192,12 +226,23 @@ class SimSampler(RFMBaseSampler):
         Returns:
             Tuple of (traj_sim, traj_diff) or None if not available. Both can be dict or Trajectory objects.
         """
-        traj_sim = self._get_same_task_optimal(ref_traj)
-        if traj_sim is None:
-            return None
+        max_retries = 3  # Number of retry attempts for sampling
+        
+        # Retry traj_sim separately
+        traj_sim = None
+        for _ in range(max_retries):
+            traj_sim = self._get_same_task_optimal(ref_traj)
+            if traj_sim is not None:
+                break
+        
+        # Retry traj_diff separately
+        traj_diff = None
+        for _ in range(max_retries):
+            traj_diff = self._get_same_task_suboptimal(ref_traj)
+            if traj_diff is not None:
+                break
+        
+        if traj_sim is not None and traj_diff is not None:
+            return traj_sim, traj_diff
 
-        traj_diff = self._get_same_task_suboptimal(ref_traj)
-        if traj_diff is None:
-            return None
-
-        return traj_sim, traj_diff
+        return None

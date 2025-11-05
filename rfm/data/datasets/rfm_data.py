@@ -53,8 +53,15 @@ class RFMDataset(BaseDataset):
         # Preference-only override by data_source using raw filtered dataset entry
         pref_only = getattr(self.config, "pref_only_datasets", []) or []
         data_source = item["data_source"]
-        if data_source in pref_only:
-            return self.pref_sampler._generate_sample(item)
+        if data_source in pref_only and self.pref_sampler is not None:
+            try:
+                sample = self.pref_sampler._generate_sample(item)
+                # If pref sampler returns None, fall through to try other samplers
+                if sample is not None:
+                    return sample
+            except (ValueError, RuntimeError) as e:
+                # If sampler raises an error, treat as None and try other samplers
+                pass
 
         # Available samplers with their probabilities
         samplers = [
@@ -63,29 +70,90 @@ class RFMDataset(BaseDataset):
             ("similarity", self.sample_type_ratio[2], self.similarity_sampler),
         ]
 
-        # Remove samplers with zero probability
-        available_samplers = [(name, prob, sampler) for name, prob, sampler in samplers if prob > 0]
+        # Remove samplers with zero probability or None samplers
+        available_samplers = [(name, prob, sampler) for name, prob, sampler in samplers if prob > 0 and sampler is not None]
 
         # Fallback to progress sampler if no samplers have positive probability
         if not available_samplers:
-            return self.progress_sampler._generate_sample(item)
+            if self.progress_sampler is not None:
+                return self.progress_sampler._generate_sample(item)
+            raise ValueError("No samplers available")
 
-        # Normalize probabilities
-        total_prob = sum(prob for _, prob, _ in available_samplers)
-        normalized_samplers = [(name, prob / total_prob, sampler) for name, prob, sampler in available_samplers]
+        # Try samplers until we get a non-None result
+        max_attempts = len(available_samplers) * 2  # Try each sampler multiple times if needed
+        attempt = 0
+        tried_samplers = set()
 
-        # Select sampler based on normalized probabilities
-        prob = random.random()
-        cumulative_prob = 0.0
+        while attempt < max_attempts:
+            attempt += 1
 
-        for name, normalized_prob, sampler in normalized_samplers:
-            cumulative_prob += normalized_prob
-            if prob <= cumulative_prob:
-                sample = sampler._generate_sample(item)
+            # If we've tried all samplers, reset and try again
+            if len(tried_samplers) >= len(available_samplers):
+                tried_samplers.clear()
+
+            # Filter out already tried samplers if we haven't exhausted all options
+            remaining_samplers = [
+                (name, prob, sampler) for name, prob, sampler in available_samplers
+                if name not in tried_samplers
+            ]
+
+            # If no remaining samplers, reset and try all again
+            if not remaining_samplers:
+                tried_samplers.clear()
+                remaining_samplers = available_samplers
+
+            # Normalize probabilities for remaining samplers
+            total_prob = sum(prob for _, prob, _ in remaining_samplers)
+            if total_prob == 0:
+                # Reset and try all samplers again
+                tried_samplers.clear()
+                remaining_samplers = available_samplers
+                total_prob = sum(prob for _, prob, _ in remaining_samplers)
+
+            normalized_samplers = [(name, prob / total_prob, sampler) for name, prob, sampler in remaining_samplers]
+
+            # Select sampler based on normalized probabilities
+            prob = random.random()
+            cumulative_prob = 0.0
+            selected_sampler = None
+            selected_name = None
+
+            for name, normalized_prob, sampler in normalized_samplers:
+                cumulative_prob += normalized_prob
+                if prob <= cumulative_prob:
+                    selected_sampler = sampler
+                    selected_name = name
+                    break
+
+            # Fallback: select first sampler if selection failed
+            if selected_sampler is None:
+                selected_name, _, selected_sampler = remaining_samplers[0]
+
+            # Try the selected sampler
+            try:
+                sample = selected_sampler._generate_sample(item)
+            except (ValueError, RuntimeError) as e:
+                # If sampler raises an error, treat as None and try other samplers
+                sample = None
+            
+            # If sample is not None, return it
+            if sample is not None:
                 return sample
+            
+            # Sample is None, mark this sampler as tried
+            tried_samplers.add(selected_name)
 
-        # Final fallback (should not reach here, but safety net)
-        return self.progress_sampler._generate_sample(item)
+        # All attempts failed, try progress sampler as final fallback
+        if self.progress_sampler is not None:
+            try:
+                sample = self.progress_sampler._generate_sample(item)
+                if sample is not None:
+                    return sample
+            except (ValueError, RuntimeError) as e:
+                pass
+
+        # Final fallback: raise error if all samplers returned None
+        raise ValueError(f"All samplers failed to generate a sample after {max_attempts} attempts")
 
 
 def test():
@@ -138,10 +206,10 @@ def test():
         max_frames_after_preprocessing=64,
         resized_height=128,
         resized_width=128,
-        sample_type_ratio=[1, 1, 1],  # pref, progress, similarity
+        sample_type_ratio=[0, 1, 0],  # pref, progress, similarity
         dataset_preference_ratio=0.7,
         preference_strategy_ratio=[0.8, 0.1, 0.1, 0.0],
-        progress_strategy_ratio=[1, 1, 1], # default success, rewind, different task
+        progress_strategy_ratio=[1, 0, 0], # default success, rewind, different task
         similarity_strategy_ratio=[1, 1, 1],  # rewind, suboptimal_same_task, paired_human_robot
         data_source_weights=None,
         shuffle=True,
@@ -163,6 +231,7 @@ def test():
     rank_0_print("Initializing RFMDataset...")
     init_start = time.time()
     generator = RFMDataset(config=mock_data_config, batch_size=64)
+    import ipdb; ipdb.set_trace()
     init_time = time.time() - init_start
     rank_0_print(f"Dataset initialization took {init_time:.2f} seconds")
 
@@ -197,7 +266,7 @@ def test():
 
     rank_0_print("\nTesting batch loading with DataLoader...")
     batch_size = 64
-    num_batches_to_test = 10
+    num_batches_to_test = 1000
 
     # Create DataLoader
     dataloader = DataLoader(
@@ -217,6 +286,7 @@ def test():
         iter_time = time.time() - iter_start
         iter_times.append(iter_time)
 
+    print(iter_times)
     if iter_times:
         avg_batch_time = sum(iter_times) / len(iter_times)
         total_batch_time = sum(iter_times)

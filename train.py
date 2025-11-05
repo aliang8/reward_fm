@@ -74,7 +74,6 @@ def train(cfg: ExperimentConfig):
 
     # Create training arguments from config
     if cfg.debug:
-        cfg.training.save_steps = 2
         cfg.training.logging_steps = 2
         cfg.training.eval_steps = 2
         cfg.data.eval_subset_size = 10

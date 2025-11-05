@@ -764,6 +764,9 @@ class RFMHeadsTrainer(Trainer):
             # Expand mask from (batch_size,) to (batch_size, seq_len)
             combined_mask = combined_mask * progress_loss_mask_t.unsqueeze(1)
 
+        # Clamp logits to prevent extreme values and gradient issues
+        success_logits = torch.clamp(success_logits, min=-50.0, max=50.0)
+
         positive_weight_value = float(getattr(self.config.training, "success_positive_weight", 1.0))
         pos_weight_tensor = torch.tensor(
             positive_weight_value, device=success_logits.device, dtype=success_logits.dtype
@@ -1002,6 +1005,9 @@ class RFMHeadsTrainer(Trainer):
 
         # Get preference scores from the preference head
         preference_scores = model_outputs.pref_logits.squeeze(-1)  # [batch_size]
+        
+        # Clamp logits to prevent extreme values and gradient issues
+        preference_scores = torch.clamp(preference_scores, min=-50.0, max=50.0)
 
         # Binary cross entropy loss for preference prediction
         preference_loss_all = F.binary_cross_entropy_with_logits(
@@ -1142,6 +1148,10 @@ class RFMHeadsTrainer(Trainer):
 
         score_ref_sim = model_outputs_ref_sim.sim_logits.squeeze(-1)
         score_ref_diff = model_outputs_ref_diff.sim_logits.squeeze(-1)
+        
+        # Clamp logits to prevent extreme values and gradient issues
+        score_ref_sim = torch.clamp(score_ref_sim, min=-50.0, max=50.0)
+        score_ref_diff = torch.clamp(score_ref_diff, min=-50.0, max=50.0)
 
         # Compute DPO-style loss: encourage trajectory sim to be more similar to reference than trajectory diff
         # This assumes trajectory sim is the "better" trajectory (more similar to reference)

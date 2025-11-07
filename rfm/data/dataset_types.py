@@ -20,8 +20,8 @@ class Trajectory(BaseModel):
 
     # If embeddings are precomputed
     embeddings_path: str | None = None
-    video_embeddings: torch.Tensor | None = None
-    text_embedding: torch.Tensor | None = None
+    video_embeddings: torch.Tensor | np.ndarray | None = None
+    text_embedding: torch.Tensor | np.ndarray | None = None
 
     id: str | None = None
     task: str | None = None

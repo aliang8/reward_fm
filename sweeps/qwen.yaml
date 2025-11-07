@@ -1,7 +1,7 @@
 use_accelerate: False
 config_paths:
   - rfm/configs/config.yaml
-  # - rfm/configs/data/oxe_mw.yaml
+  - rfm/configs/data/oxe_mw.yaml
 
 
 # no progress only samples right now

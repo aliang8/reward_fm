@@ -316,7 +316,11 @@ class RFMHeadsTrainer(Trainer):
                 )
                 dataloader = self._make_eval_dataloader(dataset)
 
+                # Ensure model is in eval mode and clear any gradient buffers
                 self.model.eval()
+                # Explicitly zero any gradients that might exist (shouldn't, but safety measure)
+                if hasattr(self, 'optimizer') and self.optimizer is not None:
+                    self.optimizer.zero_grad(set_to_none=True)
                 eval_results = []
 
                 for batch in tqdm(
@@ -568,13 +572,26 @@ class RFMHeadsTrainer(Trainer):
         rank_0_print("=" * 50)
         rank_0_print("Finished running custom evaluations!")
         rank_0_print("=" * 50)
+        
+        # Reset model to training mode and clear any cached states to prevent leakage
+        self.model.train()
+        # Ensure gradients are cleared before returning to training
+        if hasattr(self, 'optimizer') and self.optimizer is not None:
+            self.optimizer.zero_grad(set_to_none=True)
+        # Clear any cached computations that might persist from eval mode
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            # Synchronize to ensure all operations are complete
+            torch.cuda.synchronize()
+        
         return callback_metrics
 
     def evaluate(self, eval_dataset=None, ignore_keys=None) -> dict[str, float]:
         """
         Override evaluate method to implement custom RFM evaluation metrics.
         """
-        # Set model to eval mode
+        # Save current training mode and set to eval mode
+        was_training = self.model.training
         self.model.eval()
         metrics = {}
 
@@ -630,6 +647,18 @@ class RFMHeadsTrainer(Trainer):
             # to trigger the callback handler
             # self.log(metrics)
             self.control = self.callback_handler.on_evaluate(self.args, self.state, self.control, metrics)
+        
+        # Restore original training mode to prevent state leakage
+        self.model.train(was_training)
+        # Ensure gradients are cleared before returning to training
+        if hasattr(self, 'optimizer') and self.optimizer is not None:
+            self.optimizer.zero_grad(set_to_none=True)
+        # Clear any cached states that might persist from evaluation
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            # Synchronize to ensure all operations are complete
+            torch.cuda.synchronize()
+        
         return metrics
 
     def compute_loss(self, model, inputs, return_outputs=False, training=True, **kwargs):
@@ -1159,7 +1188,7 @@ class RFMHeadsTrainer(Trainer):
         diff_scores = self.config.training.beta * (score_ref_sim - score_ref_diff)
         diff_scores = torch.clamp(diff_scores, min=-50.0, max=50.0)
         similarity_loss_all = F.softplus(-diff_scores)
-        similarity_loss = similarity_loss_all.float().mean()
+        similarity_loss = similarity_loss_all.mean()
         final_loss = similarity_loss
 
         # =========================================================================================

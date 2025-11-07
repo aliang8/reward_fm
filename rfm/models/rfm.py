@@ -23,6 +23,7 @@ class RFM(PreTrainedModel):
     - Qwen2.5-VL (Qwen2_5_VLModel)
     - SmolVLM (AutoModelForImageTextToText)
     """
+    config_class = Qwen2_5_VLModel.config_class
 
     config_class = Qwen2_5_VLModel.config_class
 

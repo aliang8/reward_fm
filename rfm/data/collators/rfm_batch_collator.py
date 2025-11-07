@@ -171,7 +171,8 @@ class RFMBatchCollator(BaseCollator):
             all_messages.append(conversation)
 
         batch_inputs = self._process_conversation(all_messages)
-        batch_inputs = self._add_progress_meta(batch_inputs, progress_samples)
+        if progress_samples[0].trajectory.target_progress is not None:
+            batch_inputs = self._add_progress_meta(batch_inputs, progress_samples)
         return batch_inputs
 
     def _add_progress_meta(

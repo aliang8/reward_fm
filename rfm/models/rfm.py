@@ -24,6 +24,8 @@ class RFM(PreTrainedModel):
     - SmolVLM (AutoModelForImageTextToText)
     """
 
+    config_class = Qwen2_5_VLModel.config_class
+
     def __init__(self, config, processor, tokenizer, base_model=None, base_model_id=None):
         super().__init__(config)
 

@@ -25,6 +25,7 @@ from PIL import Image
 
 from datasets import Dataset, DatasetDict, Video, load_dataset
 from rfm.utils.distributed import rank_0_print
+from rfm.utils.embedding_utils import compute_video_embeddings, compute_text_embeddings
 
 # VIDEO_ERROR_PRINTED = False
 # maps subsets to functions that filter the dataset. If true, the example is dropped.
@@ -250,39 +251,13 @@ class DatasetPreprocessor:
         Returns:
             Video embeddings as torch tensor (T, D) where D is embedding dimension
         """
-        if self.dinov2_model is None or self.dinov2_processor is None:
-            raise ValueError("DINOv2 model not initialized. Set precompute_embeddings=True in config.")
-
-        device = next(self.dinov2_model.parameters()).device
-        embeddings = []
-
-        # Process frames in batches
-        batch_size = self.config.embedding_batch_size
-        num_frames = frames_array.shape[0]
-
-        with torch.no_grad(), torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
-            for i in range(0, num_frames, batch_size):
-                end_idx = min(i + batch_size, num_frames)
-                batch_frames = frames_array[i:end_idx]
-
-                # Convert numpy frames to PIL images for processing (vectorized)
-                if batch_frames.dtype != np.uint8:
-                    batch_frames = (batch_frames * 255).astype(np.uint8)
-
-                pil_images = [Image.fromarray(frame) for frame in batch_frames]
-
-                # Process with DINOv2
-                inputs = self.dinov2_processor(images=pil_images, return_tensors="pt")
-                inputs = {k: v.to(device, non_blocking=True) for k, v in inputs.items()}
-
-                outputs = self.dinov2_model(**inputs)
-                # Use pooler_output for global representation
-                batch_embeddings = outputs.pooler_output  # (batch_size, embedding_dim)
-                embeddings.append(batch_embeddings.cpu())
-
-        # Concatenate all embeddings
-        video_embeddings = torch.cat(embeddings, dim=0)  # (T, embedding_dim)
-        return video_embeddings
+        return compute_video_embeddings(
+            frames_array,
+            self.dinov2_model,
+            self.dinov2_processor,
+            batch_size=self.config.embedding_batch_size,
+            use_autocast=True,
+        )
 
     def _compute_text_embeddings(self, text: str) -> torch.Tensor:
         """
@@ -294,12 +269,12 @@ class DatasetPreprocessor:
         Returns:
             Text embedding as torch tensor (D,) where D is embedding dimension
         """
-        if self.sentence_model is None:
-            raise ValueError("Sentence model not initialized. Set precompute_embeddings=True in config.")
-
-        with torch.no_grad(), torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
-            embedding = self.sentence_model.encode(text, convert_to_tensor=True, show_progress_bar=False, batch_size=1)
-            return embedding.cpu()
+        return compute_text_embeddings(
+            text,
+            self.sentence_model,
+            use_autocast=True,
+            show_progress_bar=False,
+        )
 
     def _save_embeddings(self, video_embeddings: torch.Tensor, text_embedding: torch.Tensor, embeddings_path: str):
         """

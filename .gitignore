@@ -51,3 +51,4 @@ test*
 .python_history
 *.h5
 unsloth_compiled_cache/*
+*.txt

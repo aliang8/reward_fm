@@ -57,6 +57,30 @@ class BalancedRFMDataset(RFMDataset):
 
     def __getitem__(self, idx):
         """Create a sample with balanced data source sampling and configured sample type ratios."""
+        # Select data source based on unified normalized weights
+        selected_source = self._select_weighted_source()
+
+        # Get available trajectory indices for this source
+        source_indices = self.source_indices[selected_source]
+
+        # Select trajectory index randomly within the source
+        selected_traj_idx = random.choice(source_indices)
+
+        # Get the trajectory item from the dataset
+        item = self.dataset[selected_traj_idx]
+
+        # Preference-only override by data_source using raw dataset entry
+        pref_only = getattr(self.config, "pref_only_datasets", []) or []
+        if selected_source in pref_only and self.pref_sampler is not None:
+            try:
+                sample = self.pref_sampler._generate_sample(item)
+                # If pref sampler returns None, fall through to try other samplers
+                if sample is not None:
+                    return sample
+            except (ValueError, RuntimeError) as e:
+                # If sampler raises an error, treat as None and try other samplers
+                pass
+
         # Available sampler types with their probabilities
         samplers = [
             ("pref", self.sample_type_ratio[0], self.pref_sampler),
@@ -64,27 +88,103 @@ class BalancedRFMDataset(RFMDataset):
             ("similarity", self.sample_type_ratio[2], self.similarity_sampler),
         ]
 
-        # Remove samplers with zero probability
-        available_samplers = [(name, prob, sampler) for name, prob, sampler in samplers if prob > 0]
+        # Remove samplers with zero probability or None samplers
+        available_samplers = [(name, prob, sampler) for name, prob, sampler in samplers if prob > 0 and sampler is not None]
 
-        # Normalize probabilities
-        total_prob = sum(prob for _, prob, _ in available_samplers)
-        normalized_samplers = [(name, prob / total_prob, sampler) for name, prob, sampler in available_samplers]
+        # Fallback to progress sampler if no samplers have positive probability
+        if not available_samplers:
+            if self.progress_sampler is not None:
+                try:
+                    return self.progress_sampler._generate_sample(item)
+                except (ValueError, RuntimeError) as e:
+                    pass
+            raise ValueError("No samplers available")
 
-        # Select sampler based on normalized probabilities
-        prob = random.random()
-        cumulative_prob = 0.0
+        # Try samplers until we get a non-None result
+        max_attempts = len(available_samplers) * 2  # Try each sampler multiple times if needed
+        attempt = 0
+        tried_samplers = set()
 
-        for name, normalized_prob, sampler in normalized_samplers:
-            cumulative_prob += normalized_prob
-            if prob <= cumulative_prob:
-                return self._get_balanced_sample(name)
+        while attempt < max_attempts:
+            attempt += 1
 
-        # Fallback (should not reach here)
-        if available_samplers:
-            return self._get_balanced_sample(available_samplers[0][0])
-        else:
-            raise ValueError("No available samplers to sample from")
+            # If we've tried all samplers, reset and try again
+            if len(tried_samplers) >= len(available_samplers):
+                tried_samplers.clear()
+
+            # Filter out already tried samplers if we haven't exhausted all options
+            remaining_samplers = [
+                (name, prob, sampler) for name, prob, sampler in available_samplers
+                if name not in tried_samplers
+            ]
+
+            # If no remaining samplers, reset and try all again
+            if not remaining_samplers:
+                tried_samplers.clear()
+                remaining_samplers = available_samplers
+
+            # Normalize probabilities for remaining samplers
+            total_prob = sum(prob for _, prob, _ in remaining_samplers)
+            if total_prob == 0:
+                # Reset and try all samplers again
+                tried_samplers.clear()
+                remaining_samplers = available_samplers
+                total_prob = sum(prob for _, prob, _ in remaining_samplers)
+
+            normalized_samplers = [(name, prob / total_prob, sampler) for name, prob, sampler in remaining_samplers]
+
+            # Select sampler based on normalized probabilities
+            prob = random.random()
+            cumulative_prob = 0.0
+            selected_sampler = None
+            selected_name = None
+
+            for name, normalized_prob, sampler in normalized_samplers:
+                cumulative_prob += normalized_prob
+                if prob <= cumulative_prob:
+                    selected_sampler = sampler
+                    selected_name = name
+                    break
+
+            # Fallback: select first sampler if selection failed
+            if selected_sampler is None:
+                selected_name, _, selected_sampler = remaining_samplers[0]
+
+            # Try the selected sampler with balanced data source sampling
+            try:
+                sample = self._get_balanced_sample_with_item(selected_name, item)
+            except (ValueError, RuntimeError) as e:
+                # If sampler raises an error, treat as None and try other samplers
+                sample = None
+            
+            # If sample is not None, return it
+            if sample is not None:
+                return sample
+            
+            # Sample is None, mark this sampler as tried
+            tried_samplers.add(selected_name)
+
+        # All attempts failed, try progress sampler as final fallback
+        if self.progress_sampler is not None:
+            try:
+                sample = self._get_balanced_sample_with_item("progress", item)
+                if sample is not None:
+                    return sample
+            except (ValueError, RuntimeError) as e:
+                pass
+
+        # Final fallback: raise error if all samplers returned None
+        raise ValueError(f"All samplers failed to generate a sample after {max_attempts} attempts")
+
+    def _get_balanced_sample_with_item(self, sample_type: str, item):
+        """Get a sample of the specified type using a pre-selected item."""
+        # Generate sample using the appropriate sampler
+        if sample_type == "pref":
+            return self.pref_sampler._generate_sample(item)
+        elif sample_type == "progress":
+            return self.progress_sampler._generate_sample(item)
+        elif sample_type == "similarity":
+            return self.similarity_sampler._generate_sample(item)
 
     def _get_balanced_sample(self, sample_type: str):
         """Get a sample of the specified type with weighted data source sampling."""
@@ -106,12 +206,7 @@ class BalancedRFMDataset(RFMDataset):
             return self.pref_sampler._generate_sample(item)
 
         # Generate sample using the appropriate sampler
-        if sample_type == "pref":
-            return self.pref_sampler._generate_sample(item)
-        elif sample_type == "progress":
-            return self.progress_sampler._generate_sample(item)
-        elif sample_type == "similarity":
-            return self.similarity_sampler._generate_sample(item)
+        return self._get_balanced_sample_with_item(sample_type, item)
 
     def _select_weighted_source(self) -> str:
         """Select a data source based on normalized weights."""

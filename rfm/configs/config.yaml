@@ -91,7 +91,7 @@ data:
 
   # Data loading settings
   dataloader_pin_memory: false
-  dataloader_num_workers: 6
+  dataloader_num_workers: 0
 
   # Video binned dataset parameters
   num_bins: 10

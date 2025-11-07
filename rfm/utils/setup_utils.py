@@ -3,6 +3,7 @@
 Shared setup utilities for RFM training.
 This file contains setup functions that can be reused across different training scripts.
 """
+from unsloth import FastVisionModel
 
 import re
 from typing import Tuple, Optional
@@ -32,7 +33,6 @@ except ImportError:
     Qwen3VLForConditionalGeneration = None
     Qwen3VLModel = None
 
-from unsloth import FastVisionModel
 from rfm.configs.experiment_configs import DataConfig, ExperimentConfig, ModelConfig, PEFTConfig
 from rfm.data.collators import BaseCollator, ReWiNDBatchCollator, RFMBatchCollator, VQABatchCollator
 from rfm.data.datasets import (

@@ -209,7 +209,7 @@ def main():
         os.makedirs(out_dir, exist_ok=True)
 
     with open(args.out, "w") as f:
-        f.write("\n".join(commands) + "\n")
+        f.write("\n\n".join(commands) + "\n")
 
     print(f"Wrote {len(commands)} commands to {args.out}")
 

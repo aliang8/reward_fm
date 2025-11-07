@@ -64,7 +64,10 @@ dependencies = [
     "wandb[media]",
     "torchcodec",
     "decord>=0.6.0",
-    "unsloth"
+    "unsloth",
+    "gymnasium>=1.2.2",
+    "metaworld>=3.0.0",
+    "loguru>=0.7.3",
 ]
 
 [project.urls]

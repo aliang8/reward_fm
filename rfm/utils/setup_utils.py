@@ -303,7 +303,7 @@ def setup_model_and_processor(
             # before = model.model.visual.blocks[0].mlp.down_proj.weight
             # before = model.preference_head.weight
             # load the model from the evaluation path
-            model = model_cls.from_pretrained(hf_model_id, processor=processor, base_model=base_model)
+            model = model_cls.from_pretrained(hf_model_id, processor=processor, tokenizer=tokenizer, base_model=base_model, base_model_id=cfg.base_model_id)
     elif "rewind_transformer" in cfg.base_model_id:
         # Initialize new model with encoders
         # Pretrained image and text encoders

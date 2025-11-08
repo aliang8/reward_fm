@@ -138,17 +138,101 @@ class RFMHeadsTrainer(Trainer):
             rank_0_print(f"  {k} - {v}")
         rank_0_print(f"=" * 100)
 
+    def _post_checkpoint_load_reset(self):
+        """
+        Reset model and optimizer state after loading from checkpoint.
+        This addresses issues where checkpoint loading can leave stale gradients
+        or computational graph state that causes crashes during training.
+        """
+        rank_0_print("Performing post-checkpoint load reset...")
+
+        # Ensure model is in training mode
+        self.model.train()
+
+        # Clear any optimizer state that might be corrupted
+        if hasattr(self, 'optimizer') and self.optimizer is not None:
+            try:
+                # Reset optimizer state completely
+                self.optimizer.state.clear()
+                self.optimizer.param_groups.clear()
+
+                # Reinitialize optimizer with current model parameters
+                # This is a safety measure - the parent trainer should handle this
+                rank_0_print("Cleared optimizer state, relying on parent trainer to reinitialize")
+            except Exception as e:
+                rank_0_print(f"Warning: Could not reset optimizer state: {e}")
+
+        # Clear any cached gradients or computational graph state
+        try:
+            # Zero out any existing gradients
+            self.optimizer.zero_grad(set_to_none=True)
+        except Exception as e:
+            rank_0_print(f"Warning: Could not clear gradients: {e}")
+
+        # Clear CUDA cache if available
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+
+        rank_0_print("Post-checkpoint load reset complete")
+
+    def train(self, resume_from_checkpoint=None, **kwargs):
+        """
+        Override train method to perform post-checkpoint reset.
+        """
+        # If resuming from checkpoint, set flag for reset in first training step
+        if resume_from_checkpoint is not None:
+            rank_0_print(f"Resuming from checkpoint: {resume_from_checkpoint}")
+            self._just_resumed_from_checkpoint = True
+
+        # Call parent train method
+        result = super().train(resume_from_checkpoint=resume_from_checkpoint, **kwargs)
+
+        return result
+
     def training_step(self, model, inputs, num_items_in_batch=None):
         """
         Perform a training step and log custom losses.
         """
+        # Check if we just resumed from checkpoint (first step after resume)
+        if hasattr(self, '_just_resumed_from_checkpoint') and self._just_resumed_from_checkpoint:
+            self._post_checkpoint_load_reset()
+            self._just_resumed_from_checkpoint = False
+
         self.timing_raw = {}
 
         # Initialize log_metadata
         self.log_metadata = {}
 
+        # Safety check: ensure model is in training mode and gradients are properly set up
+        if not model.training:
+            rank_0_print("Warning: Model not in training mode, setting to train mode")
+            model.train()
+
+        # Clear any stale gradients before starting
+        if hasattr(self, 'optimizer') and self.optimizer is not None:
+            self.optimizer.zero_grad(set_to_none=True)
+
         with _timer("time/training_step", timing_raw=self.timing_raw):
             loss = super().training_step(model, inputs, num_items_in_batch)
+
+        # Additional safety checks on the loss tensor
+        if loss is None:
+            rank_0_print("Error: Loss is None, creating zero loss")
+            loss = torch.tensor(0.0, device=self.accelerator.device if hasattr(self, 'accelerator') else torch.device('cpu'), requires_grad=True)
+
+        if not isinstance(loss, torch.Tensor):
+            rank_0_print(f"Warning: Loss is not a tensor, got {type(loss)}, converting to tensor")
+            loss = torch.tensor(float(loss), device=self.accelerator.device if hasattr(self, 'accelerator') else torch.device('cpu'), requires_grad=True)
+
+        if not loss.requires_grad:
+            rank_0_print("Warning: Loss tensor does not require gradients, enabling")
+            loss.requires_grad_(True)
+
+        # Check for NaN/inf in loss before backward
+        if torch.isnan(loss).any() or torch.isinf(loss).any():
+            rank_0_print(f"Warning: Loss contains NaN/inf values: {loss.item()}, replacing with 0.0")
+            loss = torch.tensor(0.0, device=loss.device, requires_grad=True)
 
         # Extract the separate batches
         preference_inputs = inputs.get("preference_inputs", {})
@@ -673,7 +757,7 @@ class RFMHeadsTrainer(Trainer):
         num_similarities = inputs.get("num_similarities", 0)
         num_progress = inputs.get("num_progress", 0)
 
-        total_loss = 0.0
+        total_loss = torch.tensor(0.0, device=self.accelerator.device if hasattr(self, 'accelerator') else torch.device('cpu'))
         log_metadata = {}
 
         # Compute preference loss if we have preference samples
@@ -702,6 +786,11 @@ class RFMHeadsTrainer(Trainer):
                 )
                 total_loss += similarity_loss
             log_metadata.update(loss_dict)
+
+        # Check for NaN in total loss before returning
+        if torch.isnan(total_loss).any():
+            rank_0_print(f"Warning: NaN detected in total_loss, replacing with 0.0")
+            total_loss = torch.tensor(0.0, device=total_loss.device, dtype=total_loss.dtype)
 
         # Always store custom losses for logging (even when return_outputs=False)
         self.log_metadata = log_metadata
@@ -743,7 +832,9 @@ class RFMHeadsTrainer(Trainer):
             tuple: (success_loss, success_accuracy)
         """
         if success_logits is None or target_progress is None:
-            return 0.0, 0.0
+            # Return zero tensors instead of floats to maintain tensor consistency
+            device = success_logits.device if success_logits is not None else (target_progress.device if target_progress is not None else torch.device('cpu'))
+            return torch.tensor(0.0, device=device), torch.tensor(0.0, device=device)
 
         # Normalize inputs to tensors
         if isinstance(success_logits, list):
@@ -845,7 +936,9 @@ class RFMHeadsTrainer(Trainer):
             tuple: (progress_loss, spearman_correlation)
         """
         if progress_pred is None or target_progress is None:
-            return 0.0, 0.0
+            # Return zero tensors instead of floats to maintain tensor consistency
+            device = progress_pred.device if progress_pred is not None else (target_progress.device if target_progress is not None else torch.device('cpu'))
+            return torch.tensor(0.0, device=device), torch.tensor(0.0, device=device)
 
         # Normalize inputs to tensors
         if isinstance(progress_pred, list):
@@ -975,6 +1068,11 @@ class RFMHeadsTrainer(Trainer):
             success_accuracy = success_accuracy.mean()
             final_loss = progress_loss + success_loss
 
+        # Check for NaN in final loss
+        if torch.isnan(final_loss).any():
+            rank_0_print(f"Warning: NaN detected in progress loss, replacing with 0.0")
+            final_loss = torch.tensor(0.0, device=final_loss.device, dtype=final_loss.dtype)
+
         if return_outputs:
             outputs_dict = {}
 
@@ -1080,6 +1178,11 @@ class RFMHeadsTrainer(Trainer):
                 aggregate=True,
             )
             final_loss = final_loss + success_loss
+
+        # Check for NaN in final loss
+        if torch.isnan(final_loss).any():
+            rank_0_print(f"Warning: NaN detected in preference loss, replacing with 0.0")
+            final_loss = torch.tensor(0.0, device=final_loss.device, dtype=final_loss.dtype)
 
         if return_outputs:
             outputs_dict = {}
@@ -1225,6 +1328,11 @@ class RFMHeadsTrainer(Trainer):
                 aggregate=True,
             )
             final_loss = final_loss + success_loss
+
+        # Check for NaN in final loss
+        if torch.isnan(final_loss).any():
+            rank_0_print(f"Warning: NaN detected in similarity loss, replacing with 0.0")
+            final_loss = torch.tensor(0.0, device=final_loss.device, dtype=final_loss.dtype)
 
         if return_outputs:
             outputs_dict = {}

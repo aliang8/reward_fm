@@ -235,14 +235,19 @@ def run_reward_alignment_eval_per_trajectory(
         if not np.isnan(spearman):
             spearman_trajectories.append(spearman)
 
-    mse_per_trajectory = mse_per_trajectory / len(unique_trajectory_ids)
-    pearson_per_trajectory = np.mean(pearson_trajectories)
-    spearman_per_trajectory = np.mean(spearman_trajectories)
+    if len(unique_trajectory_ids) == 0:
+        mse_per_trajectory = np.nan
+        pearson_per_trajectory = np.nan
+        spearman_per_trajectory = np.nan
+    else:
+        mse_per_trajectory = (mse_per_trajectory / len(unique_trajectory_ids)).item()
+        pearson_per_trajectory = np.mean(pearson_trajectories).item()
+        spearman_per_trajectory = np.mean(spearman_trajectories).item()
 
     metrics = {
-        "mse": mse_per_trajectory.item(),
-        "pearson": pearson_per_trajectory.item(),
-        "spearman": spearman_per_trajectory.item(),
+        "mse": mse_per_trajectory,
+        "pearson": pearson_per_trajectory,
+        "spearman": spearman_per_trajectory,
         "num_samples": len(unique_trajectory_ids),
     }
 

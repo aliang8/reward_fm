@@ -293,6 +293,107 @@ class RFMHeadsTrainer(Trainer):
 
         return loss
 
+    def _get_optimizer_stats(self):
+        """Get optimizer and gradient statistics for logging."""
+        optim_stats = {}
+        
+        if not hasattr(self, 'optimizer') or self.optimizer is None:
+            return optim_stats
+        
+        # Get learning rates for each parameter group
+        for i, param_group in enumerate(self.optimizer.param_groups):
+            lr = param_group.get('lr', 0.0)
+            optim_stats[f"optim/lr_group_{i}"] = lr
+        
+        # If only one param group, also log as optim/lr for convenience
+        if len(self.optimizer.param_groups) == 1:
+            optim_stats["optim/lr"] = self.optimizer.param_groups[0].get('lr', 0.0)
+        
+        # Compute gradient norms across all model parameters
+        total_norm = 0.0
+        num_params_with_grad = 0
+        max_grad_norm = 0.0
+        min_grad_norm = float('inf')
+        
+        for p in self.model.parameters():
+            if p.grad is not None:
+                param_norm = p.grad.data.norm(2).item()
+                total_norm += param_norm ** 2
+                num_params_with_grad += 1
+                max_grad_norm = max(max_grad_norm, param_norm)
+                min_grad_norm = min(min_grad_norm, param_norm)
+        
+        if num_params_with_grad > 0:
+            total_norm = total_norm ** 0.5
+            optim_stats["optim/preclip_grad_norm"] = total_norm
+            optim_stats["optim/preclip_grad_norm_max"] = max_grad_norm
+            optim_stats["optim/preclip_grad_norm_min"] = min_grad_norm if min_grad_norm != float('inf') else 0.0
+            optim_stats["optim/num_params_with_grad"] = num_params_with_grad
+        
+        # Compute parameter norms across all model parameters
+        total_param_norm = 0.0
+        max_param_norm = 0.0
+        min_param_norm = float('inf')
+        param_norms = []
+        
+        for name, p in self.model.named_parameters():
+            if p.data is not None:
+                param_norm = p.data.norm(2).item()
+                total_param_norm += param_norm ** 2
+                max_param_norm = max(max_param_norm, param_norm)
+                min_param_norm = min(min_param_norm, param_norm)
+                param_norms.append((name, param_norm))
+        
+        if param_norms:
+            total_param_norm = total_param_norm ** 0.5
+            optim_stats["optim/param_norm"] = total_param_norm
+            optim_stats["optim/param_norm_max"] = max_param_norm
+            optim_stats["optim/param_norm_min"] = min_param_norm if min_param_norm != float('inf') else 0.0
+
+        
+        # Get optimizer state statistics (e.g., momentum, variance for Adam)
+        if hasattr(self.optimizer, 'state') and len(self.optimizer.state) > 0:
+            # For Adam-like optimizers, log average momentum and variance
+            exp_avg_norms = []
+            exp_avg_sq_norms = []
+            
+            for state in self.optimizer.state.values():
+                if 'exp_avg' in state:
+                    exp_avg_norms.append(state['exp_avg'].norm(2).item())
+                if 'exp_avg_sq' in state:
+                    exp_avg_sq_norms.append(state['exp_avg_sq'].norm(2).item())
+            
+            if exp_avg_norms:
+                optim_stats["optim/exp_avg_norm_mean"] = np.mean(exp_avg_norms)
+                optim_stats["optim/exp_avg_norm_max"] = np.max(exp_avg_norms)
+            if exp_avg_sq_norms:
+                optim_stats["optim/exp_avg_sq_norm_mean"] = np.mean(exp_avg_sq_norms)
+                optim_stats["optim/exp_avg_sq_norm_max"] = np.max(exp_avg_sq_norms)
+        
+        # Log top 10 parameters with largest gradient norms
+        param_grad_norms = []
+        for name, p in self.model.named_parameters():
+            if p.grad is not None:
+                grad_norm = p.grad.data.norm(2).item()
+                param_grad_norms.append((name, grad_norm))
+        
+        if param_grad_norms:
+            # Sort by gradient norm (descending) and take top 10
+            param_grad_norms.sort(key=lambda x: x[1], reverse=True)
+            for i, (name, grad_norm) in enumerate(param_grad_norms[:10]):
+                # Shorten parameter name for cleaner logging
+                short_name = name.replace("model.", "").replace("module.", "")
+                optim_stats[f"optim/top_preclip_grad_norm_{i+1}_{short_name}"] = grad_norm
+        
+        if param_norms:
+            # Sort by parameter norm (descending) and take top 10
+            param_norms.sort(key=lambda x: x[1], reverse=True)
+            for i, (name, param_norm) in enumerate(param_norms[:10]):
+                short_name = name.replace("model.", "").replace("module.", "")
+                optim_stats[f"optim/top_param_norm_{i+1}_{short_name}"] = param_norm
+        
+        return optim_stats
+    
     def _log_metadata(self):
         """Log custom RFM losses to wandb and console."""
         if not self.log_metadata:
@@ -312,6 +413,11 @@ class RFMHeadsTrainer(Trainer):
         global_metadata = reduce_metrics_with_accelerate(self.global_metadata, self.accelerator, aggregate_method="sum")
         log_global = {f"counts/{key}": global_metadata[key] for key in global_metadata}
         log_data.update(log_global)
+        
+        # Log optimizer and gradient statistics
+        optim_stats = self._get_optimizer_stats()
+        log_data.update(optim_stats)
+        
         # make sure values are floats so they are loggable into wandb reports
         log_data = {k: float(v) for k, v in log_data.items()}
 
@@ -334,6 +440,10 @@ class RFMHeadsTrainer(Trainer):
 
             rounded_times = {k: round(v, 2) for k, v in self.timing_raw.items()}
             rank_0_print(f"Timing raw: {rounded_times}")
+            
+            # Log optimizer stats to console
+            if optim_stats:
+                rank_0_print(f"Optimizer stats: {optim_stats}")
 
     def _make_eval_dataloader(self, dataset):
         """Create a distributed evaluation dataloader with proper sampling."""

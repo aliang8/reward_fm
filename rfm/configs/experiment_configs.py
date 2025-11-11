@@ -100,6 +100,9 @@ class DataConfig:
         default=64, metadata={"help": "Maximum number of frames to extract from videos after preprocessing"}
     )
     max_frames: int = field(default=8, metadata={"help": "Maximum number of frames to extract from videos"})
+    min_frames_per_trajectory: int = field(
+        default=10, metadata={"help": "Minimum number of frames required per trajectory (trajectories with fewer frames will be filtered out)"}
+    )
     resized_height: int = field(default=224, metadata={"help": "Height to resize video frames to"})
     resized_width: int = field(default=224, metadata={"help": "Width to resize video frames to"})
 

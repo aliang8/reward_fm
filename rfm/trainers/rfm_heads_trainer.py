@@ -39,84 +39,73 @@ def reduce_metrics_with_accelerate(metrics: dict, accelerator, aggregate_method=
     if not metrics:
         return metrics
 
-    try:
-        # Step 1: Gather all metric keys from all processes
-        local_keys = list(metrics.keys())
-        all_keys_gathered = accelerator.gather_for_metrics(local_keys)
+    # Step 1: Gather all metric keys from all processes
+    local_keys = list(metrics.keys())
+    all_keys_gathered = accelerator.gather_for_metrics(local_keys)
 
-        # Step 2: Create union of all keys across all processes
-        all_unique_keys = set()
-        for keys_from_process in all_keys_gathered:
-            if isinstance(keys_from_process, list):
-                all_unique_keys.update(keys_from_process)
+    # Step 2: Create union of all keys across all processes
+    all_unique_keys = set()
+    for keys_from_process in all_keys_gathered:
+        if isinstance(keys_from_process, list):
+            all_unique_keys.update(keys_from_process)
+        else:
+            # Handle single key case
+            all_unique_keys.add(keys_from_process)
+
+    all_unique_keys = sorted(all_unique_keys)
+
+    # Step 3: Create synchronized metrics dict with 0.0 for missing keys
+    synchronized_metrics = {}
+    for key in all_unique_keys:
+        if key in metrics:
+            synchronized_metrics[key] = metrics[key]
+        else:
+            # This process doesn't have this metric, use 0.0
+            synchronized_metrics[key] = 0.0
+
+    # Step 4: Now reduce all metrics (all processes have same keys)
+    result_metrics = {}
+
+    for key, value in synchronized_metrics.items():
+        try:
+            # Convert to tensor on accelerator device
+            if torch.is_tensor(value):
+                tensor_val = value.to(accelerator.device, dtype=torch.float32)
             else:
-                # Handle single key case
-                all_unique_keys.add(keys_from_process)
+                tensor_val = torch.tensor(float(value), dtype=torch.float32, device=accelerator.device)
 
-        all_unique_keys = sorted(all_unique_keys)
+            # Check for NaN values before reduction
+            if torch.isnan(tensor_val).any():
+                rank_0_print(f"Warning: NaN detected in metric '{key}', using 0.0")
+                tensor_val = torch.tensor(0.0, dtype=torch.float32, device=accelerator.device)
 
-        # Step 3: Create synchronized metrics dict with 0.0 for missing keys
-        synchronized_metrics = {}
-        for key in all_unique_keys:
+            # Check for infinity values
+            if torch.isinf(tensor_val).any():
+                rank_0_print(f"Warning: Infinity detected in metric '{key}', using 0.0")
+                tensor_val = torch.tensor(0.0, dtype=torch.float32, device=accelerator.device)
+
+            # Use accelerator's reduce method - all processes participate
+            reduced_val = accelerator.reduce(tensor_val, reduction=aggregate_method)
+
+            # Final check for NaN in reduced result
+            if torch.isnan(reduced_val).any():
+                rank_0_print(f"Warning: NaN in reduced result for metric '{key}', using fallback")
+                result_metrics[key] = 0.0
+            else:
+                result_metrics[key] = reduced_val.item()
+
+        except Exception as metric_error:
+            # If individual metric fails, keep original value (or 0.0 if missing)
+            rank_0_print(f"Warning: Failed to reduce metric '{key}': {metric_error}")
             if key in metrics:
-                synchronized_metrics[key] = metrics[key]
+                original_val = float(metrics[key]) if not torch.is_tensor(metrics[key]) else metrics[key].item()
+                result_metrics[key] = 0.0 if np.isnan(original_val) else original_val
             else:
-                # This process doesn't have this metric, use 0.0
-                synchronized_metrics[key] = 0.0
+                result_metrics[key] = 0.0
 
-        # Step 4: Now reduce all metrics (all processes have same keys)
-        result_metrics = {}
-
-        for key, value in synchronized_metrics.items():
-            try:
-                # Convert to tensor on accelerator device
-                if torch.is_tensor(value):
-                    tensor_val = value.to(accelerator.device, dtype=torch.float32)
-                else:
-                    tensor_val = torch.tensor(float(value), dtype=torch.float32, device=accelerator.device)
-
-                # Check for NaN values before reduction
-                if torch.isnan(tensor_val).any():
-                    rank_0_print(f"Warning: NaN detected in metric '{key}', using 0.0")
-                    tensor_val = torch.tensor(0.0, dtype=torch.float32, device=accelerator.device)
-
-                # Check for infinity values
-                if torch.isinf(tensor_val).any():
-                    rank_0_print(f"Warning: Infinity detected in metric '{key}', using 0.0")
-                    tensor_val = torch.tensor(0.0, dtype=torch.float32, device=accelerator.device)
-
-                # Use accelerator's reduce method - all processes participate
-                reduced_val = accelerator.reduce(tensor_val, reduction=aggregate_method)
-
-                # Final check for NaN in reduced result
-                if torch.isnan(reduced_val).any():
-                    rank_0_print(f"Warning: NaN in reduced result for metric '{key}', using fallback")
-                    result_metrics[key] = 0.0
-                else:
-                    result_metrics[key] = reduced_val.item()
-
-            except Exception as metric_error:
-                # If individual metric fails, keep original value (or 0.0 if missing)
-                rank_0_print(f"Warning: Failed to reduce metric '{key}': {metric_error}")
-                if key in metrics:
-                    original_val = float(metrics[key]) if not torch.is_tensor(metrics[key]) else metrics[key].item()
-                    result_metrics[key] = 0.0 if np.isnan(original_val) else original_val
-                else:
-                    result_metrics[key] = 0.0
-
-        # Step 5: Return all reduced metrics (all processes should have the same keys after reduction)
-        # Return all keys from result_metrics to ensure we get all metrics across all processes
-        return result_metrics
-
-    except Exception as e:
-        # Fallback: return original metrics if reduction fails
-        rank_0_print(f"Warning: reduce_metrics_with_accelerate failed with error: {e}. Returning original metrics.")
-        fallback_metrics = {}
-        for k, v in metrics.items():
-            val = float(v) if not torch.is_tensor(v) else v.item()
-            # Replace NaN with 0.0 in fallback
-            fallback_metrics[k] = 0.0 if np.isnan(val) else val
-        return fallback_metrics
+    # Step 5: Return all reduced metrics (all processes should have the same keys after reduction)
+    # Return all keys from result_metrics to ensure we get all metrics across all processes
+    return result_metrics
 
 
 class RFMHeadsTrainer(Trainer):
@@ -1147,7 +1136,6 @@ class RFMHeadsTrainer(Trainer):
         # =========================================================================================
         # Compute progress and success loss for the first trajectory in the paired samples
         # =========================================================================================
-
         target_progress_A_mask = inputs["target_progress_A_mask"]
         target_progress_A = inputs["target_progress_A"]
         data_source = inputs["data_source"]

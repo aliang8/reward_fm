@@ -65,6 +65,7 @@ data:
   resized_height: 128  # Height to resize images/videos to
   resized_width: 128   # Width to resize images/videos to
   load_embeddings: false
+  min_frames_per_trajectory: 10  # Minimum number of frames required per trajectory (trajectories with fewer frames will be filtered out)
 
   # Data generation settings
   sample_type_ratio: [1, 1, 0]  # Ratio of preference, progress, and similarity samples

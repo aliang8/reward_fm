@@ -2,6 +2,7 @@
 import json
 import os
 import torch
+import numpy as np
 
 from datasets import Dataset, concatenate_datasets
 from rfm.data.datasets.helpers import load_dataset_success_percent
@@ -44,10 +45,60 @@ class BaseDataset(torch.utils.data.Dataset):
         # Filter dataset
         # We only want to iterate through successful trajectories
         # self.filtered_dataset = self.dataset.filter(lambda x: x["quality_label"] == "successful")
-        self.filtered_dataset = self.dataset
-
+        
+        # Filter out trajectories with fewer than minimum frames
+        min_frames = getattr(config, "min_frames_per_trajectory", 10)
+        initial_count = len(self.dataset)
+        
+        # Verify all trajectories have frames_shape field
+        if "frames_shape" not in self.dataset.column_names:
+            raise ValueError(
+                "Dataset is missing 'frames_shape' column. "
+                "Please re-run preprocessing to ensure all datasets have frame shape information."
+            )
+        
+        # Get all frames_shape values at once and filter
+        frames_shapes = self.dataset["frames_shape"]
+        frame_counts = np.array([shape[0] for shape in frames_shapes])
+        indices_to_keep = np.where(frame_counts >= min_frames)[0].tolist()
+        
+        # Filter the dataset using the indices
+        self.filtered_dataset = self.dataset.select(indices_to_keep)
+        filtered_count = initial_count - len(self.filtered_dataset)
+        
+        # Update combined indices to only include trajectories that passed the filter
+        if hasattr(self, '_combined_indices'):
+            indices_to_keep_set = set(indices_to_keep)
+            
+            # Filter list-based indices
+            for key in ['robot_trajectories', 'human_trajectories']:
+                if key in self._combined_indices:
+                    self._combined_indices[key] = [
+                        idx for idx in self._combined_indices[key] if idx in indices_to_keep_set
+                    ]
+            
+            # Filter dict-based indices
+            for key in ['optimal_by_task', 'suboptimal_by_task', 'quality_indices', 
+                       'task_indices', 'source_indices', 'partial_success_indices']:
+                if key in self._combined_indices and isinstance(self._combined_indices[key], dict):
+                    for subkey in list(self._combined_indices[key].keys()):
+                        self._combined_indices[key][subkey] = [
+                            idx for idx in self._combined_indices[key][subkey] if idx in indices_to_keep_set
+                        ]
+                        # Remove empty subkeys
+                        if not self._combined_indices[key][subkey]:
+                            del self._combined_indices[key][subkey]
+            
+            # Update cached fields to match filtered dataset
+            self._cached_ids = self.filtered_dataset["id"]
+            self._cached_is_robot = self.filtered_dataset["is_robot"]
+        
         if verbose:
-            rank_0_print(f"Dataset loaded with {len(self.dataset)} total trajectories", verbose=self.verbose)
+            rank_0_print(
+                f"Dataset loaded with {len(self.dataset)} total trajectories, "
+                f"filtered out {filtered_count} trajectories with < {min_frames} frames",
+                verbose=self.verbose
+            )
 
     def __len__(self):
         return len(self.filtered_dataset)

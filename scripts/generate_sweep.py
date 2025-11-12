@@ -98,7 +98,7 @@ def _build_command(use_accelerate: bool, config_paths: List[str], overrides: Dic
             "accelerate",
             "launch",
             "--config_file",
-            "rfm/configs/fsdp.yaml",
+            "rfm/configs/distributed/fsdp.yaml",
             "--num_processes=2",
             "train.py",
         ]

@@ -307,7 +307,6 @@ class LoggingConfig:
     use_wandb: bool = field(default=True, metadata={"help": "Whether to use Weights & Biases logging"})
     wandb_project: str = field(default="rfm-model", metadata={"help": "Wandb project name"})
     wandb_entity: Optional[str] = field(default=None, metadata={"help": "Wandb entity/username"})
-    wandb_run_name: Optional[str] = field(default=None, metadata={"help": "Wandb run name"})
 
     # SaveBest configuration
     save_best: Optional[SaveBestConfig] = field(default=None, metadata={"help": "SaveBestCallback configuration"})

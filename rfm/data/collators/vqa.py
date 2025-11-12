@@ -10,7 +10,7 @@ import torch
 import tempfile
 from pathlib import Path
 
-from .rfm_batch_collator import RFMBatchCollator
+from .rfm_heads import RFMBatchCollator
 from .utils import convert_frames_to_pil_images, write_mp4
 from rfm.data.dataset_types import PreferenceSample, ProgressSample
 
@@ -65,10 +65,6 @@ class VQABatchCollator(RFMBatchCollator):
                 write_mp4(rejected_frames, tmp)
                 rejected_frames = str(tmp)
                 content_extras = {}
-
-                import ipdb
-
-                ipdb.set_trace()
             else:
                 content_extras = {}
 
@@ -139,6 +135,7 @@ class VQABatchCollator(RFMBatchCollator):
         # Use the dynamically generated preference labels based on trajectory order
         batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
 
+        # Add preference metadata (includes all the misc fields like target_progress, masks, frames_shape, etc.)
         batch_inputs = self._add_preference_meta(batch_inputs, preference_samples)
 
         return batch_inputs
@@ -150,9 +147,6 @@ class VQABatchCollator(RFMBatchCollator):
 
         for i, sample in enumerate(progress_samples):
             target_progress = sample.trajectory.target_progress
-
-            # Let's round the target progress to 2 decimal places
-            target_progress = np.round(target_progress, 2)
 
             # Convert frames to appropriate format using stored shapes
             frames = convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
@@ -187,8 +181,11 @@ class VQABatchCollator(RFMBatchCollator):
                     ],
                 }
             ]
-            if not self.inference:
-                conversation.append({"role": "assistant", "content": f"<ans>{target_progress}</ans>"})
+            # Add assistant response only if not in inference mode and target_progress exists
+            if not self.inference and target_progress is not None:
+                # Round target progress to 2 decimal places for the response
+                target_progress_rounded = np.round(target_progress, 2)
+                conversation.append({"role": "assistant", "content": f"<ans>{target_progress_rounded}</ans>"})
 
             all_messages.append(conversation)
 
@@ -205,8 +202,12 @@ class VQABatchCollator(RFMBatchCollator):
 
             batch_inputs["labels"] = labels
 
-        batch_inputs["data_gen_strategy"] = [sample.trajectory.data_gen_strategy for sample in progress_samples]
-
-        batch_inputs = self._add_progress_meta(batch_inputs, progress_samples)
+        # Add progress metadata (includes all the misc fields like target_progress, masks, frames_shape, etc.)
+        # Only call if target_progress exists (matches RFM batch collator behavior)
+        if progress_samples[0].trajectory.target_progress is not None:
+            batch_inputs = self._add_progress_meta(batch_inputs, progress_samples)
+        
+        # Add resample_attempts (always added, like RFM batch collator)
+        batch_inputs["resample_attempts"] = [sample.resample_attempts for sample in progress_samples]
 
         return batch_inputs

@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from qwen_vl_utils import process_vision_info
 
-from .base_collator import BaseCollator
+from .base import BaseCollator
 from .utils import convert_frames_to_pil_images, pad_target_progress, write_mp4
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample
 from typing import List, Dict

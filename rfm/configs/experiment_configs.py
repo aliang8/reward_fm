@@ -211,6 +211,10 @@ class TrainingConfig:
     max_seq_length: int = field(default=1024)
     beta: float = field(default=0.1)
     resume_from_checkpoint: Optional[str] = field(default=None)
+    overwrite_output_dir: bool = field(
+        default=False,
+        metadata={"help": "If True, overwrite the output directory if it exists. If False, raise an error if it exists."},
+    )
 
     # Training arguments
     per_device_train_batch_size: int = field(default=1)

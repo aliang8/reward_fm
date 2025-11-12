@@ -70,7 +70,7 @@ data:
   # Data generation settings
   sample_type_ratio: [1, 0, 0]  # Ratio of preference, progress (no longer used, it's absorbed in preference if predict_pref_progress is true), and similarity samples
   dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
-  # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, video_binned]
+  # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task], video binned no longer used
   preference_strategy_ratio: [6, 1, 1, 0]
   # Tunable strategy ratios for progress generation: [default, rewind_same_task, different_task]
   progress_strategy_ratio: [1, 6, 1]
@@ -127,6 +127,7 @@ custom_eval:
 training:  
   # Output and logging
   output_dir: "./logs"
+  overwrite_output_dir: false  # If true, overwrite output directory if it exists (works with accelerate/distributed training)
   
   # Training parameters
   per_device_train_batch_size: 16

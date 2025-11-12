@@ -5,6 +5,7 @@ from dataclasses import asdict
 import shutil
 
 import torch
+import torch.distributed as dist
 import yaml
 from rich import print as rprint
 from rich.console import Console
@@ -83,17 +84,36 @@ def train(cfg: ExperimentConfig):
 
     training_args = create_training_arguments(cfg, output_dir)
 
-    # Save config to output directory
-
+    # Handle output directory existence (works with accelerate/distributed training)
+    overwrite_output_dir = getattr(cfg.training, 'overwrite_output_dir', False)
+    
+    # Check if distributed training is initialized (for proper synchronization)
+    # This is important for accelerate/FSDP setups where multiple processes run
+    dist_initialized = dist.is_available() and dist.is_initialized()
+    
+    # Check if output directory exists (only on rank 0 to avoid race conditions)
     if is_rank_0() and os.path.exists(output_dir):
-        # confirm with user
-        confirm = input(f"Output directory {output_dir} already exists. Do you want to overwrite it? (y/n)")
-        if confirm != "y":
-            raise ValueError("Output directory already exists. Please delete it or use a different output directory.")
-
-        shutil.rmtree(output_dir)
-
+        if overwrite_output_dir:
+            rank_0_print(f"Output directory {output_dir} already exists. Overwriting (overwrite_output_dir=True)...")
+            shutil.rmtree(output_dir)
+        else:
+            raise ValueError(
+                f"Output directory {output_dir} already exists. "
+                f"Set overwrite_output_dir=True in config to overwrite it, or use a different output directory."
+            )
+    
+    # Synchronize all processes before creating directory (important for distributed training)
+    # This ensures rank 0 finishes checking/removing before other processes try to create it
+    if dist_initialized:
+        dist.barrier()
+    
+    # Create output directory (all processes need to do this for distributed training)
+    # os.makedirs is safe to call multiple times (exist_ok=True)
     os.makedirs(output_dir, exist_ok=True)
+    
+    # Synchronize after directory creation to ensure all processes see it
+    if dist_initialized:
+        dist.barrier()
     config_save_path = os.path.join(output_dir, "config.yaml")
     config_dict = asdict(cfg)
     with open(config_save_path, "w") as f:

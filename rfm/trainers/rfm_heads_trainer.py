@@ -205,24 +205,6 @@ class RFMHeadsTrainer(Trainer):
         with _timer("time/training_step", timing_raw=self.timing_raw):
             loss = super().training_step(model, inputs, num_items_in_batch)
 
-        # Additional safety checks on the loss tensor
-        if loss is None:
-            rank_0_print("Error: Loss is None, creating zero loss")
-            loss = torch.tensor(0.0, device=self.accelerator.device if hasattr(self, 'accelerator') else torch.device('cpu'), requires_grad=True)
-
-        if not isinstance(loss, torch.Tensor):
-            rank_0_print(f"Warning: Loss is not a tensor, got {type(loss)}, converting to tensor")
-            loss = torch.tensor(float(loss), device=self.accelerator.device if hasattr(self, 'accelerator') else torch.device('cpu'), requires_grad=True)
-
-        if not loss.requires_grad:
-            rank_0_print("Warning: Loss tensor does not require gradients, enabling")
-            loss.requires_grad_(True)
-
-        # Check for NaN/inf in loss before backward
-        if torch.isnan(loss).any() or torch.isinf(loss).any():
-            rank_0_print(f"Warning: Loss contains NaN/inf values: {loss.item()}, replacing with 0.0")
-            loss = torch.tensor(0.0, device=loss.device, requires_grad=True)
-
         # Extract the separate batches
         preference_inputs = inputs.get("preference_inputs", {})
         progress_inputs = inputs.get("progress_inputs", {})
@@ -934,7 +916,7 @@ class RFMHeadsTrainer(Trainer):
         num_similarities = inputs.get("num_similarities", 0)
         num_progress = inputs.get("num_progress", 0)
 
-        total_loss = torch.tensor(0.0, device=self.accelerator.device if hasattr(self, 'accelerator') else torch.device('cpu'))
+        total_loss = 0
         log_metadata = {}
 
         # Compute preference loss if we have preference samples

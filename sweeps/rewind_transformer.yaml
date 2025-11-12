@@ -14,19 +14,19 @@ groups:
       data.sample_type_ratio:
         - [0, 1, 0] # progress only
         - [1, 0, 0] # preference only
-        - [1, 0, 1] # preference and similarity
+        # - [1, 0, 1] # preference and similarity
       model.train_preference_head:
         - False
         - True
-        - True
+        # - True
       training.predict_pref_progress:
         - False
         - True
-        - True
-      training.predict_sim_progress:
-        - False
-        - False
-        - True
+        # - True
+      # training.predict_sim_progress:
+      #   - False
+      #   - False
+      #   # - True
 
   - combine: cartesian
     sweep_overrides:

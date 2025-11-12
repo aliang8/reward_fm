@@ -15,20 +15,26 @@ from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilarityS
 from typing import List, Dict
 
 
-def should_compute_progress(quality_label: str, data_gen_strategy: str) -> float:
+def should_compute_progress(quality_label: str, data_gen_strategy: str, data_source: str = None, pref_only_datasets: list = None) -> float:
     """
     Check if progress should be computed for a trajectory.
 
     Includes if it is successful, rewound, rewind_same_task, or different_task,
-    but NOT suboptimal or failure.
+    but NOT suboptimal or failure. Also masks out progress if data_source is in pref_only_datasets.
 
     Args:
         quality_label: The quality label of the trajectory
         data_gen_strategy: The data generation strategy
+        data_source: The data source name (optional)
+        pref_only_datasets: List of data source names that should only generate preference samples (optional)
 
     Returns:
         1.0 if progress should be computed, 0.0 otherwise
     """
+    # Mask out progress if data_source is in pref_only_datasets
+    if data_source is not None and pref_only_datasets is not None and data_source in pref_only_datasets:
+        return 0.0
+
     if quality_label in ["suboptimal", "failure"]:
         return 0.0
 
@@ -74,6 +80,30 @@ def create_padding_mask(frames_shapes: torch.Tensor, max_length: int = None) -> 
 
 
 class RFMBatchCollator(BaseCollator):
+    def __init__(
+        self,
+        processor,
+        tokenizer=None,
+        max_length: int = 1024,
+        resized_height: int = 128,
+        resized_width: int = 128,
+        base_model_id: str = None,
+        load_embeddings: bool = False,
+        pref_only_datasets: list = None,
+        **kwargs,
+    ):
+        super().__init__(
+            processor=processor,
+            tokenizer=tokenizer,
+            max_length=max_length,
+            resized_height=resized_height,
+            resized_width=resized_width,
+            base_model_id=base_model_id,
+            load_embeddings=load_embeddings,
+            **kwargs,
+        )
+        self.pref_only_datasets = pref_only_datasets
+
     def _process_conversation(self, conversations: List[List[Dict]]) -> Dict[str, torch.Tensor]:
         """
         Process a list of conversations into a batch of inputs.
@@ -197,7 +227,12 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["data_source"] = [sample.trajectory.data_source for sample in progress_samples]
         batch_inputs["data_gen_strategy"] = [sample.data_gen_strategy for sample in progress_samples]
         target_progress_mask = [
-            should_compute_progress(sample.trajectory.quality_label, sample.data_gen_strategy)
+            should_compute_progress(
+                sample.trajectory.quality_label,
+                sample.data_gen_strategy,
+                data_source=sample.trajectory.data_source,
+                pref_only_datasets=self.pref_only_datasets,
+            )
             for sample in progress_samples
         ]
         batch_inputs["target_progress_mask"] = torch.tensor(target_progress_mask, dtype=torch.float32)
@@ -332,11 +367,21 @@ class RFMBatchCollator(BaseCollator):
         target_progress_A = [traj.target_progress for traj in trajectory_A_list]
         target_progress_B = [traj.target_progress for traj in trajectory_B_list]
         target_progress_A_mask = [
-            should_compute_progress(traj.quality_label, strategy)
+            should_compute_progress(
+                traj.quality_label,
+                strategy,
+                data_source=traj.data_source,
+                pref_only_datasets=self.pref_only_datasets,
+            )
             for traj, strategy in zip(trajectory_A_list, trajectory_A_data_gen_strategy)
         ]
         target_progress_B_mask = [
-            should_compute_progress(traj.quality_label, strategy)
+            should_compute_progress(
+                traj.quality_label,
+                strategy,
+                data_source=traj.data_source,
+                pref_only_datasets=self.pref_only_datasets,
+            )
             for traj, strategy in zip(trajectory_B_list, trajectory_B_data_gen_strategy)
         ]
 
@@ -362,11 +407,21 @@ class RFMBatchCollator(BaseCollator):
         target_progress_chosen = [sample.chosen_trajectory.target_progress for sample in preference_samples]
         target_progress_rejected = [sample.rejected_trajectory.target_progress for sample in preference_samples]
         target_progress_chosen_mask = [
-            should_compute_progress(sample.chosen_trajectory.quality_label, "subsample_task")
+            should_compute_progress(
+                sample.chosen_trajectory.quality_label,
+                "subsample_task",
+                data_source=sample.chosen_trajectory.data_source,
+                pref_only_datasets=self.pref_only_datasets,
+            )
             for sample in preference_samples
         ]
         target_progress_rejected_mask = [
-            should_compute_progress(sample.rejected_trajectory.quality_label, sample.data_gen_strategy)
+            should_compute_progress(
+                sample.rejected_trajectory.quality_label,
+                sample.data_gen_strategy,
+                data_source=sample.rejected_trajectory.data_source,
+                pref_only_datasets=self.pref_only_datasets,
+            )
             for sample in preference_samples
         ]
 
@@ -527,16 +582,32 @@ class RFMBatchCollator(BaseCollator):
         # Create masks for progress loss (only compute for successful trajectories or rewinds)
         # For similarity samples, ref is always successful, sim and diff depend on sample's data_gen_strategy
         target_progress_ref_mask = [
-            should_compute_progress(sample.ref_trajectory.quality_label, "successful") for sample in similarity_samples
+            should_compute_progress(
+                sample.ref_trajectory.quality_label,
+                "successful",
+                data_source=sample.ref_trajectory.data_source,
+                pref_only_datasets=self.pref_only_datasets,
+            )
+            for sample in similarity_samples
         ]
         # sim_trajectory strategy depends on sample's data_gen_strategy (e.g., "rewind_same_task" -> sim is rewound)
         target_progress_sim_mask = [
-            should_compute_progress(sample.sim_trajectory.quality_label, sample.data_gen_strategy)
+            should_compute_progress(
+                sample.sim_trajectory.quality_label,
+                sample.data_gen_strategy,
+                data_source=sample.sim_trajectory.data_source,
+                pref_only_datasets=self.pref_only_datasets,
+            )
             for sample in similarity_samples
         ]
         # diff_trajectory is usually from different task or suboptimal
         target_progress_diff_mask = [
-            should_compute_progress(sample.diff_trajectory.quality_label, "different_task")
+            should_compute_progress(
+                sample.diff_trajectory.quality_label,
+                "different_task",
+                data_source=sample.diff_trajectory.data_source,
+                pref_only_datasets=self.pref_only_datasets,
+            )
             for sample in similarity_samples
         ]
 

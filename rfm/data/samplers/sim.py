@@ -16,6 +16,17 @@ class SimSampler(RFMBaseSampler):
     def __init__(self, config, dataset, combined_indices, dataset_success_cutoff_map=None, is_evaluation=False, verbose=True, **kwargs):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
         self.similarity_strategy_ratio: list[float] = config.similarity_strategy_ratio
+        self._has_paired_human_robot = any(
+            entry["robot"] and entry["human"] for entry in self.paired_human_robot_by_task.values()
+        )
+        self._has_suboptimal = any(
+            indices for indices in self.suboptimal_by_task.values()
+        )
+        if verbose:
+            if self.similarity_strategy_ratio[2] > 0 and not self._has_paired_human_robot:
+                rank_0_print("No paired human/robot data available; skipping paired strategy for similarity sampling.")
+            if self.similarity_strategy_ratio[1] > 0 and not self._has_suboptimal:
+                rank_0_print("No suboptimal/failure data available; skipping suboptimal strategy for similarity sampling.")
         
     def _generate_sample(self, item: dict):
         return self._create_similarity_sample(ref_traj=item)
@@ -53,11 +64,13 @@ class SimSampler(RFMBaseSampler):
         strategy_used = None
 
         # Strategy selection with rebalancing on failure
-        strategies = [
-            (DataGenStrat.REWIND_SAME_TASK, self.similarity_strategy_ratio[0]),
-            (DataGenStrat.SUBOPTIMAL_SAME_TASK, self.similarity_strategy_ratio[1]),
-            (DataGenStrat.PAIRED_HUMAN_ROBOT, self.similarity_strategy_ratio[2]),
-        ]
+        strategies = []
+        if self.similarity_strategy_ratio[0] > 0:
+            strategies.append((DataGenStrat.REWIND_SAME_TASK, self.similarity_strategy_ratio[0]))
+        if self._has_suboptimal and len(self.similarity_strategy_ratio) > 1 and self.similarity_strategy_ratio[1] > 0:
+            strategies.append((DataGenStrat.SUBOPTIMAL_SAME_TASK, self.similarity_strategy_ratio[1]))
+        if self._has_paired_human_robot and len(self.similarity_strategy_ratio) > 2 and self.similarity_strategy_ratio[2] > 0:
+            strategies.append((DataGenStrat.PAIRED_HUMAN_ROBOT, self.similarity_strategy_ratio[2]))
 
         # Remove strategies with zero probability
         strategies = [(strat, prob) for strat, prob in strategies if prob > 0]
@@ -129,12 +142,14 @@ class SimSampler(RFMBaseSampler):
                 f"Failed to generate similarity sample after {max_attempts} attempts - all strategies exhausted"
             )
 
-        return SimilaritySample(
+        sample = SimilaritySample(
             ref_trajectory=self._get_traj_from_data(ref_traj),
             sim_trajectory=self._get_traj_from_data(traj_sim),
             diff_trajectory=self._get_traj_from_data(traj_diff),
             data_gen_strategy=strategy_used.value,
         )
+        sample.resample_attempts = attempt
+        return sample
 
     def _get_traj_dicts_for_rewind(self, ref_traj: dict) -> tuple[dict | Trajectory, dict] | None:
         """Get traj_sim and traj_diff for rewind strategy.

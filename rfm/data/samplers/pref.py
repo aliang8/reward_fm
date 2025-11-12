@@ -25,6 +25,11 @@ class PrefSampler(RFMBaseSampler):
 
         self.dataset_preference_ratio = config.dataset_preference_ratio
         self.preference_strategy_ratio: list[float] = config.preference_strategy_ratio
+        self._has_suboptimal = any(
+            indices for indices in self.suboptimal_by_task.values()
+        )
+        if verbose and self.preference_strategy_ratio[1] > 0 and not self._has_suboptimal:
+            rank_0_print("No suboptimal/failure data available; skipping suboptimal strategy for preferences.")
 
         # Initialize preference dataset
         self._load_preference_dataset()
@@ -233,18 +238,15 @@ class PrefSampler(RFMBaseSampler):
         strategy_used = None
 
         # Strategy selection with rebalancing on failure
-        strategies = [
-            (DataGenStrat.REWIND_SAME_TASK, self.preference_strategy_ratio[0]),
-            (DataGenStrat.SUBOPTIMAL_SAME_TASK, self.preference_strategy_ratio[1]),
-            (DataGenStrat.DIFFERENT_TASK, self.preference_strategy_ratio[2]),
-            (
-                DataGenStrat.VIDEO_BINNED,
-                self.preference_strategy_ratio[3] if len(self.preference_strategy_ratio) > 3 else 0.0,
-            ),
-        ]
-
-        # Remove strategies with zero probability
-        strategies = [(strat, prob) for strat, prob in strategies if prob > 0]
+        strategies = []
+        if self.preference_strategy_ratio[0] > 0:
+            strategies.append((DataGenStrat.REWIND_SAME_TASK, self.preference_strategy_ratio[0]))
+        if self._has_suboptimal and self.preference_strategy_ratio[1] > 0:
+            strategies.append((DataGenStrat.SUBOPTIMAL_SAME_TASK, self.preference_strategy_ratio[1]))
+        if self.preference_strategy_ratio[2] > 0:
+            strategies.append((DataGenStrat.DIFFERENT_TASK, self.preference_strategy_ratio[2]))
+        if len(self.preference_strategy_ratio) > 3 and self.preference_strategy_ratio[3] > 0:
+            strategies.append((DataGenStrat.VIDEO_BINNED, self.preference_strategy_ratio[3]))
 
         max_attempts = 10  # Limit retry attempts to prevent infinite loops
         max_strategy_attempts = 3  # Maximum attempts per strategy before removing it
@@ -346,4 +348,5 @@ class PrefSampler(RFMBaseSampler):
             rejected_trajectory=rejected_trajectory,
             data_gen_strategy=strategy_used.value,
         )
+        sample.resample_attempts = attempt
         return sample

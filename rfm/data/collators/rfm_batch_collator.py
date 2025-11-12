@@ -173,6 +173,7 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs = self._process_conversation(all_messages)
         if progress_samples[0].trajectory.target_progress is not None:
             batch_inputs = self._add_progress_meta(batch_inputs, progress_samples)
+        batch_inputs["resample_attempts"] = [sample.resample_attempts for sample in progress_samples]
         return batch_inputs
 
     def _add_progress_meta(
@@ -296,6 +297,7 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["data_source"] = [sample.chosen_trajectory.data_source for sample in preference_samples]
         batch_inputs["sample_type"] = ["preference"] * len(preference_samples)
         batch_inputs["task"] = [sample.chosen_trajectory.task for sample in preference_samples]
+        batch_inputs["data_gen_strategy"] = [sample.data_gen_strategy for sample in preference_samples]
 
         # Determine which trajectory is A and which is B based on preference_label
         # Trajectory A is chosen if preference_label==1.0, otherwise rejected is A
@@ -380,6 +382,7 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["rejected_frames_shape"] = torch.tensor(
             [sample.rejected_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
         )
+        batch_inputs["resample_attempts"] = [sample.resample_attempts for sample in preference_samples]
         return batch_inputs
 
     def _process_similarity_batch(self, similarity_samples: list[SimilaritySample]) -> dict[str, torch.Tensor]:
@@ -559,5 +562,6 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["padding_mask_ref"] = create_padding_mask(batch_inputs["ref_frames_shape"], max_length_ref)
         batch_inputs["padding_mask_sim"] = create_padding_mask(batch_inputs["traj_sim_frames_shape"], max_length_sim)
         batch_inputs["padding_mask_diff"] = create_padding_mask(batch_inputs["traj_diff_frames_shape"], max_length_diff)
+        batch_inputs["resample_attempts"] = [sample.resample_attempts for sample in similarity_samples]
 
         return batch_inputs

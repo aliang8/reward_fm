@@ -3,7 +3,7 @@
 import numpy as np
 import torch
 
-from .rfm_batch_collator import RFMBatchCollator
+from .rfm_heads import RFMBatchCollator
 from .utils import convert_frames_to_pil_images
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample
 

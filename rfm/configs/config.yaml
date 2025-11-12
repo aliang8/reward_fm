@@ -188,7 +188,6 @@ logging:
   use_wandb: false
   wandb_project: "rfm"
   wandb_entity: clvr
-  wandb_run_name: "rfm"
   
   # SaveBestCallback configuration
   save_best:

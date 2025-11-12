@@ -1,3 +1,4 @@
+import collections
 import random
 import torch
 
@@ -35,7 +36,47 @@ class RFMDataset(BaseDataset):
         self.max_samples = max_samples
         self.batch_size = batch_size
 
-        self.data_len = len(self.dataset)
+        self.data_len = len(self.filtered_dataset)
+        self._resample_attempt_stats: dict[str, collections.defaultdict[str, list[int]]] = {
+            "preference": collections.defaultdict(list),
+            "progress": collections.defaultdict(list),
+            "similarity": collections.defaultdict(list),
+        }
+        self._resample_dataset_attempt_stats: dict[str, collections.defaultdict[str, list[int]]] = {
+            "preference": collections.defaultdict(list),
+            "progress": collections.defaultdict(list),
+            "similarity": collections.defaultdict(list),
+        }
+
+    def _record_resample_attempt(
+        self, sample_type: str, strategy: str, sample_attempts: int, dataset_attempts: int
+    ) -> None:
+        if sample_type not in self._resample_attempt_stats:
+            return
+
+        self._resample_attempt_stats[sample_type][strategy].append(sample_attempts)
+        self._resample_dataset_attempt_stats[sample_type][strategy].append(dataset_attempts)
+
+    def _set_resample_attempts(self, sample, dataset_attempts: int):
+        if sample is None:
+            return None
+        dataset_attempts = max(1, int(dataset_attempts))
+
+        sample_attempts = int(getattr(sample, "resample_attempts", dataset_attempts))
+        sample_attempts = max(1, sample_attempts)
+        sample.resample_attempts = sample_attempts
+
+        sample_type = sample.sample_type
+        strategy = str(sample.data_gen_strategy)
+        self._record_resample_attempt(sample_type, strategy, sample_attempts, dataset_attempts)
+
+        return sample
+
+    def get_resample_attempt_stats(self):
+        return self._resample_attempt_stats
+
+    def get_resample_dataset_attempt_stats(self):
+        return self._resample_dataset_attempt_stats
 
     def __len__(self):
         if self.max_samples is None:
@@ -47,21 +88,16 @@ class RFMDataset(BaseDataset):
         """Create a data sample from the dataset."""
         idx = idx % self.data_len
 
-        # Get the item from the dataset
+        # Get the item from the filtered dataset
         item = self.filtered_dataset[idx]
 
         # Preference-only override by data_source using raw filtered dataset entry
         pref_only = getattr(self.config, "pref_only_datasets", []) or []
         data_source = item["data_source"]
         if data_source in pref_only and self.pref_sampler is not None:
-            try:
-                sample = self.pref_sampler._generate_sample(item)
-                # If pref sampler returns None, fall through to try other samplers
-                if sample is not None:
-                    return sample
-            except (ValueError, RuntimeError) as e:
-                # If sampler raises an error, treat as None and try other samplers
-                pass
+            sample = self.pref_sampler._generate_sample(item)
+            if sample is not None:
+                return self._set_resample_attempts(sample, 1)
 
         # Available samplers with their probabilities
         samplers = [
@@ -76,7 +112,9 @@ class RFMDataset(BaseDataset):
         # Fallback to progress sampler if no samplers have positive probability
         if not available_samplers:
             if self.progress_sampler is not None:
-                return self.progress_sampler._generate_sample(item)
+                sample = self.progress_sampler._generate_sample(item)
+                if sample is not None:
+                    return self._set_resample_attempts(sample, 1)
             raise ValueError("No samplers available")
 
         # Try samplers until we get a non-None result
@@ -130,27 +168,20 @@ class RFMDataset(BaseDataset):
                 selected_name, _, selected_sampler = remaining_samplers[0]
 
             # Try the selected sampler
-            try:
-                sample = selected_sampler._generate_sample(item)
-            except (ValueError, RuntimeError) as e:
-                # If sampler raises an error, treat as None and try other samplers
-                sample = None
-            
+            sample = selected_sampler._generate_sample(item)
+
             # If sample is not None, return it
             if sample is not None:
-                return sample
+                return self._set_resample_attempts(sample, attempt)
             
             # Sample is None, mark this sampler as tried
             tried_samplers.add(selected_name)
 
         # All attempts failed, try progress sampler as final fallback
         if self.progress_sampler is not None:
-            try:
-                sample = self.progress_sampler._generate_sample(item)
-                if sample is not None:
-                    return sample
-            except (ValueError, RuntimeError) as e:
-                pass
+            sample = self.progress_sampler._generate_sample(item)
+            if sample is not None:
+                return self._set_resample_attempts(sample, attempt)
 
         # Final fallback: raise error if all samplers returned None
         raise ValueError(f"All samplers failed to generate a sample after {max_attempts} attempts")

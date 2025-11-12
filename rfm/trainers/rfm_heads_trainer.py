@@ -287,6 +287,8 @@ class RFMHeadsTrainer(Trainer):
         self.global_metadata["total_similarities"] += num_similarities
         self.global_metadata["total_progress"] += num_progress
 
+        self._update_resample_attempt_metrics(inputs)
+
         # Log custom losses at specified intervals
         if self.state.global_step % self.args.logging_steps == 0:
             self._log_metadata()
@@ -337,12 +339,13 @@ class RFMHeadsTrainer(Trainer):
         param_norms = []
         
         for name, p in self.model.named_parameters():
-            if p.data is not None:
-                param_norm = p.data.norm(2).item()
-                total_param_norm += param_norm ** 2
-                max_param_norm = max(max_param_norm, param_norm)
-                min_param_norm = min(min_param_norm, param_norm)
-                param_norms.append((name, param_norm))
+            if not p.requires_grad or p.data is None:
+                continue
+            param_norm = p.data.norm(2).item()
+            total_param_norm += param_norm ** 2
+            max_param_norm = max(max_param_norm, param_norm)
+            min_param_norm = min(min_param_norm, param_norm)
+            param_norms.append((name, param_norm))
         
         if param_norms:
             total_param_norm = total_param_norm ** 0.5
@@ -373,14 +376,15 @@ class RFMHeadsTrainer(Trainer):
         # Log top 10 parameters with largest gradient norms
         param_grad_norms = []
         for name, p in self.model.named_parameters():
-            if p.grad is not None:
-                grad_norm = p.grad.data.norm(2).item()
-                param_grad_norms.append((name, grad_norm))
+            if not p.requires_grad or p.grad is None:
+                continue
+            grad_norm = p.grad.data.norm(2).item()
+            param_grad_norms.append((name, grad_norm))
         
         if param_grad_norms:
             # Sort by gradient norm (descending) and take top 10
             param_grad_norms.sort(key=lambda x: x[1], reverse=True)
-            for i, (name, grad_norm) in enumerate(param_grad_norms[:10]):
+            for i, (name, grad_norm) in enumerate(param_grad_norms[:5]):
                 # Shorten parameter name for cleaner logging
                 short_name = name.replace("model.", "").replace("module.", "")
                 optim_stats[f"optim/top_preclip_grad_norm_{i+1}_{short_name}"] = grad_norm
@@ -388,12 +392,86 @@ class RFMHeadsTrainer(Trainer):
         if param_norms:
             # Sort by parameter norm (descending) and take top 10
             param_norms.sort(key=lambda x: x[1], reverse=True)
-            for i, (name, param_norm) in enumerate(param_norms[:10]):
+            for i, (name, param_norm) in enumerate(param_norms[:5]):
                 short_name = name.replace("model.", "").replace("module.", "")
                 optim_stats[f"optim/top_param_norm_{i+1}_{short_name}"] = param_norm
         
         return optim_stats
     
+    def _update_resample_attempt_metrics(self, inputs: dict) -> None:
+        """Aggregate resample attempt statistics across processes."""
+        if not hasattr(self, "accelerator"):
+            return
+
+        local_pairs: list[tuple[str, float]] = []
+
+        for key in ("preference_inputs", "progress_inputs", "similarity_inputs"):
+            sample_inputs = inputs.get(key) or {}
+            resample_attempts = sample_inputs.get("resample_attempts")
+            if resample_attempts is None:
+                continue
+
+            if torch.is_tensor(resample_attempts):
+                attempts_tensor = resample_attempts.to(self.accelerator.device, dtype=torch.float32).view(-1)
+            else:
+                attempts_tensor = torch.tensor(
+                    resample_attempts, dtype=torch.float32, device=self.accelerator.device
+                ).view(-1)
+
+            if attempts_tensor.numel() == 0:
+                continue
+
+            sample_category = key.replace("_inputs", "")
+            strategies = sample_inputs.get("data_gen_strategy")
+            if strategies is None:
+                raise ValueError(
+                    f"Expected data_gen_strategy for {sample_category} samples when logging resample attempts."
+                )
+
+            if len(strategies) != attempts_tensor.numel():
+                raise ValueError(
+                    f"Mismatch between resample attempts ({attempts_tensor.numel()}) and strategies "
+                    f"({len(strategies)}) for {sample_category} samples."
+                )
+
+            strategy_labels = [
+                f"{sample_category}/{str(strategy)}" for strategy in strategies
+            ]
+
+            for attempt_value, strategy_label in zip(attempts_tensor.tolist(), strategy_labels):
+                local_pairs.append((strategy_label, float(attempt_value)))
+
+        if dist.is_initialized():
+            world_size = dist.get_world_size()
+            gathered_lists: list[list[tuple[str, float]]] = [None] * world_size
+            dist.all_gather_object(gathered_lists, local_pairs)
+            flat_pairs = [pair for proc_pairs in gathered_lists for pair in proc_pairs]
+        else:
+            flat_pairs = local_pairs
+
+        if not flat_pairs:
+            return
+
+        all_attempts = [attempt for _, attempt in flat_pairs]
+        self.log_metadata["data/resample_min"] = float(min(all_attempts))
+        self.log_metadata["data/resample_max"] = float(max(all_attempts))
+        self.log_metadata["data/resample_mean"] = float(sum(all_attempts) / len(all_attempts))
+
+        strategy_values: dict[str, list[float]] = collections.defaultdict(list)
+        for label, attempt in flat_pairs:
+            strategy_values[label].append(attempt)
+
+        for label, values in strategy_values.items():
+            if not values:
+                continue
+            safe_label = label.replace("/", "_").replace(" ", "_")
+            strategy_min = float(min(values))
+            strategy_max = float(max(values))
+            strategy_mean = float(sum(values) / len(values))
+            self.log_metadata[f"data/resample_min_{safe_label}"] = strategy_min
+            self.log_metadata[f"data/resample_max_{safe_label}"] = strategy_max
+            self.log_metadata[f"data/resample_mean_{safe_label}"] = strategy_mean
+
     def _log_metadata(self):
         """Log custom RFM losses to wandb and console."""
         if not self.log_metadata:

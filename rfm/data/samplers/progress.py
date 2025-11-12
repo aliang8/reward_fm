@@ -112,8 +112,10 @@ class ProgressSampler(RFMBaseSampler):
             progress_traj.target_progress = [0.0] * len(progress_traj.target_progress)
 
         strategy_value = strategy_used.value if isinstance(strategy_used, DataGenStrat) else strategy_used
-        return ProgressSample(
+        sample = ProgressSample(
             trajectory=progress_traj,
             sample_type="progress",
             data_gen_strategy=strategy_value,
         )
+        sample.resample_attempts = attempt
+        return sample

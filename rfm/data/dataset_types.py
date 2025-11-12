@@ -44,6 +44,7 @@ class ProgressSample(BaseModel):
     trajectory: Trajectory
     sample_type: str = "progress"
     data_gen_strategy: str | None = None
+    resample_attempts: int = 1
 
 
 class PreferenceSample(BaseModel):
@@ -55,6 +56,7 @@ class PreferenceSample(BaseModel):
 
     sample_type: str = "preference"
     data_gen_strategy: str | None = None
+    resample_attempts: int = 1
 
 
 class SimilaritySample(BaseModel):
@@ -67,6 +69,7 @@ class SimilaritySample(BaseModel):
 
     sample_type: str = "similarity"
     data_gen_strategy: str | None = None
+    resample_attempts: int = 1
 
 
 SampleType = Union[PreferenceSample, SimilaritySample, ProgressSample]

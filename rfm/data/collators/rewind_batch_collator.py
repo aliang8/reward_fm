@@ -112,6 +112,7 @@ class ReWiNDBatchCollator(RFMBatchCollator):
 
         batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
         batch_inputs = self._add_preference_meta(batch_inputs, preference_samples)
+        batch_inputs["resample_attempts"] = [sample.resample_attempts for sample in preference_samples]
         return batch_inputs
 
     def _process_progress_batch(self, progress_samples: list[ProgressSample]) -> dict[str, torch.Tensor]:
@@ -154,6 +155,7 @@ class ReWiNDBatchCollator(RFMBatchCollator):
 
         if progress_samples[0].trajectory.target_progress is not None:
             batch_inputs = self._add_progress_meta(batch_inputs, progress_samples)
+        batch_inputs["resample_attempts"] = [sample.resample_attempts for sample in progress_samples]
         return batch_inputs
 
     def _process_similarity_batch(self, similarity_samples: list[SimilaritySample]) -> dict[str, torch.Tensor]:
@@ -271,4 +273,5 @@ class ReWiNDBatchCollator(RFMBatchCollator):
             }
 
         batch_inputs = self._add_similarity_meta(batch_inputs, similarity_samples)
+        batch_inputs["resample_attempts"] = [sample.resample_attempts for sample in similarity_samples]
         return batch_inputs

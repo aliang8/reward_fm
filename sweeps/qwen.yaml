@@ -1,4 +1,4 @@
-use_accelerate: False
+use_accelerate: True
 config_paths:
   - rfm/configs/config.yaml
   - rfm/configs/data/oxe_mw.yaml
@@ -11,17 +11,18 @@ groups:
   - combine: zip
     sweep_overrides:
       data.sample_type_ratio:
+        - [0, 1, 0] # progress only 
         - [1, 0, 0] # preference only 
-        - [1, 0, 1] # preference and similarity
+        # - [1, 0, 1] # preference and similarity
       model.train_preference_head:
-        - True
-        - True
-      training.predict_pref_progress:
-        - True
-        - True 
-      training.predict_sim_progress:
         - False
         - True
+      training.predict_pref_progress:
+        - False
+        - True 
+      # training.predict_sim_progress:
+      #   - False
+      #   - False
 
   - combine: cartesian
     sweep_overrides:

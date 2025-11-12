@@ -248,7 +248,7 @@ def run_reward_alignment_eval_per_trajectory(
         "mse": mse_per_trajectory,
         "pearson": pearson_per_trajectory,
         "spearman": spearman_per_trajectory,
-        "num_samples": len(unique_trajectory_ids),
+        # "num_samples": len(unique_trajectory_ids),
     }
 
     return metrics, plots, video_frames_list

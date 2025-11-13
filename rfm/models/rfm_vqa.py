@@ -12,7 +12,7 @@ class RFMVQA(PreTrainedModel):
 
     config_class = Qwen2_5_VLForConditionalGeneration.config_class
 
-    def __init__(self, config, processor, tokenizer, base_model=None, base_model_id=None):
+    def __init__(self, config, processor, tokenizer, base_model=None, base_model_id=None, model_config=None):
         super().__init__(config)
         # Use Qwen2_5_VLForConditionalGeneration for VQA (language generation)
         if base_model is not None:

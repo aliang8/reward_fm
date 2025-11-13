@@ -582,7 +582,7 @@ class RFMHeadsTrainer(Trainer):
                         if isinstance(progress_pred, list):
                             if isinstance(progress_pred[0], torch.Tensor):
                                 progress_pred = torch.stack(progress_pred)
-                            elif progress_pred[0] is None:
+                            elif any(p is None for p in progress_pred):
                                 continue
                             else:
                                 progress_pred = torch.tensor(progress_pred)

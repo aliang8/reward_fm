@@ -27,7 +27,7 @@ class RFM(PreTrainedModel):
 
     config_class = Qwen2_5_VLModel.config_class
 
-    def __init__(self, config, processor, tokenizer, base_model=None, base_model_id=None):
+    def __init__(self, config, processor, tokenizer, base_model=None, base_model_id=None, model_config=None):
         super().__init__(config)
 
         if "SmolVLM" in base_model_id:
@@ -81,6 +81,13 @@ class RFM(PreTrainedModel):
 
         self.processor = processor
         self.tokenizer = tokenizer
+        
+        # Store config for averaging temporal patches
+        # model_config is the ModelConfig, config is the base model config
+        if model_config is not None:
+            self.average_temporal_patches = getattr(model_config, "average_temporal_patches", False)
+        else:
+            self.average_temporal_patches = getattr(config, "average_temporal_patches", False)
 
     def gradient_checkpointing_enable(self, **kwargs):
         """Delegates gradient checkpointing enabling to the base model."""
@@ -89,6 +96,66 @@ class RFM(PreTrainedModel):
     def gradient_checkpointing_disable(self, **kwargs):
         """Delegates gradient checkpointing disabling to the base model."""
         self.model.gradient_checkpointing_disable(**kwargs)
+
+    def _extract_progress_from_trajectory(
+        self,
+        hidden_state: torch.Tensor,
+        start_position: int,
+        video_grid_thw: list[int],  # [T, H, W]
+        merge_size: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Extract progress and success predictions from a trajectory's hidden states.
+        
+        Args:
+            hidden_state: Hidden states tensor [seq_len, hidden_dim]
+            start_position: Starting position in the sequence for this trajectory
+            video_grid_thw: Video grid dimensions [T, H, W] where T is number of temporal patch groups,
+                           H and W are spatial grid dimensions
+            merge_size: Merge size for patch grouping
+            
+        Returns:
+            tuple: (progress_logits [T], success_logits [T])
+        """
+        T, H, W = video_grid_thw
+        
+        if T == 0:
+            return torch.empty(0, device=hidden_state.device), torch.empty(0, device=hidden_state.device)
+        
+        # Calculate tokens per frame: (H * W) // merge_size^2
+        tokens_per_frame = (H * W) // (merge_size**2)
+        
+        if self.average_temporal_patches:
+            # Average all tokens within each temporal patch group
+            temporal_patch_tokens = []
+            current_pos = start_position
+            for t_idx in range(T):
+                start_idx = current_pos
+                end_idx = current_pos + tokens_per_frame
+                patch_tokens = hidden_state[start_idx:end_idx]  # [tokens_per_frame, hidden_dim]
+                patch_embedding = patch_tokens.mean(dim=0)  # [hidden_dim] - averaged
+                temporal_patch_tokens.append(patch_embedding)
+                current_pos = end_idx
+            boundary_hidden_states = torch.stack(temporal_patch_tokens)  # [T, hidden_dim]
+        else:
+            # Use last token (boundary) of each temporal patch group
+            frame_boundary_positions = []
+            current_pos = start_position
+            for _frame_idx in range(T):
+                frame_end = current_pos + tokens_per_frame
+                frame_boundary_positions.append(frame_end)
+                current_pos = frame_end
+            
+            trajectory_boundaries = torch.tensor(frame_boundary_positions, device=hidden_state.device)
+            boundary_hidden_states = hidden_state[trajectory_boundaries]  # [T, hidden_dim]
+        
+        assert boundary_hidden_states.shape[0] == T, (
+            f"Expected {T} frames, got {boundary_hidden_states.shape[0]}"
+        )
+        progress = self.progress_head(boundary_hidden_states).squeeze(-1)  # [T]
+        success = self.success_head(boundary_hidden_states).squeeze(-1)  # [T]
+        
+        return progress, success
 
     def forward(
         self,
@@ -267,41 +334,16 @@ class RFM(PreTrainedModel):
                     else:
                         current_video_grid_A = video_grid_thw[i * tps]  # [T, H, W]
 
-                    T_A, H_A, W_A = current_video_grid_A
-
-                    # Calculate tokens per frame for trajectory A: (H_A * W_A) // merge_size^2
-                    tokens_per_frame_A = (H_A * W_A) // (merge_size**2)
-
-                    # Calculate frame boundary positions for trajectory A
-                    frame_boundary_positions_A = []
-                    current_pos = vision_start_positions[0].item()
-
-                    # Find where each frame ends in trajectory A
-                    for _frame_idx in range(T_A):
-                        # Each frame takes tokens_per_frame_A tokens
-                        frame_end = current_pos + tokens_per_frame_A
-                        frame_boundary_positions_A.append(frame_end)
-                        current_pos = frame_end
-
-                    # For trajectory A: extract hidden states at frame boundaries
-                    trajectory_A_boundaries = torch.tensor(frame_boundary_positions_A)
-
-                    # Apply progress head to hidden states at frame boundary positions for trajectory A
-                    if trajectory_A_boundaries.numel() > 0:
-                        boundary_hidden_states_A = hidden_state[i][
-                            trajectory_A_boundaries
-                        ]  # [num_frames_A, hidden_dim]
-
-                        assert boundary_hidden_states_A.shape[0] == T_A, (
-                            f"Expected {T_A} frames, got {boundary_hidden_states_A.shape[0]}"
-                        )
-                        progress_A = self.progress_head(boundary_hidden_states_A).squeeze(-1)  # [num_frames_A]
-                        success_A = self.success_head(boundary_hidden_states_A).squeeze(-1)  # [num_frames_A]
-                        progress_logits_A.append(progress_A)
-                        success_logits_A.append(success_A)
-                    else:
-                        progress_logits_A.append(torch.empty(0, device=hidden_state.device))
-                        success_logits_A.append(torch.empty(0, device=hidden_state.device))
+                    # Extract progress and success from trajectory A
+                    start_position_A = vision_start_positions[0].item()
+                    progress_A, success_A = self._extract_progress_from_trajectory(
+                        hidden_state[i],
+                        start_position_A,
+                        current_video_grid_A,
+                        merge_size,
+                    )
+                    progress_logits_A.append(progress_A)
+                    success_logits_A.append(success_A)
 
                     # For progress-only samples, we don't need trajectory B
                     if sample_type != "progress":
@@ -309,40 +351,17 @@ class RFM(PreTrainedModel):
                         if (i * tps) + 1 >= len(video_grid_thw):
                             raise ValueError(f"video_grid_thw index {(i * tps) + 1} out of bounds for trajectory B")
                         current_video_grid_B = video_grid_thw[i * tps + 1]  # [T, H, W]
-                        T_B, H_B, W_B = current_video_grid_B
 
-                        # Calculate tokens per frame for trajectory B: (H_B * W_B) // merge_size^2
-                        tokens_per_frame_B = (H_B * W_B) // (merge_size**2)
-
-                        # Calculate frame boundary positions for trajectory B (after split_token)
-                        frame_boundary_positions_B = []
-                        current_pos = vision_start_positions[1].item()
-
-                        # Find where each frame ends in trajectory B
-                        for _frame_idx in range(T_B):
-                            # Each frame takes tokens_per_frame_B tokens
-                            frame_end = current_pos + tokens_per_frame_B
-                            frame_boundary_positions_B.append(frame_end)
-                            current_pos = frame_end
-
-                        trajectory_B_boundaries = torch.tensor(frame_boundary_positions_B)
-
-                        # Apply progress head to hidden states at frame boundary positions for trajectory B
-                        if trajectory_B_boundaries.numel() > 0:
-                            boundary_hidden_states_B = hidden_state[i][
-                                trajectory_B_boundaries
-                            ]  # [num_frames_B, hidden_dim]
-
-                            assert boundary_hidden_states_B.shape[0] == T_B, (
-                                f"Expected {T_B} frames, got {boundary_hidden_states_B.shape[0]}"
-                            )
-                            progress_B = self.progress_head(boundary_hidden_states_B).squeeze(-1)  # [num_frames_B]
-                            success_B = self.success_head(boundary_hidden_states_B).squeeze(-1)  # [num_frames_B]
-                            progress_logits_B.append(progress_B)
-                            success_logits_B.append(success_B)
-                        else:
-                            progress_logits_B.append(torch.empty(0, device=hidden_state.device))
-                            success_logits_B.append(torch.empty(0, device=hidden_state.device))
+                        # Extract progress and success from trajectory B
+                        start_position_B = vision_start_positions[1].item()
+                        progress_B, success_B = self._extract_progress_from_trajectory(
+                            hidden_state[i],
+                            start_position_B,
+                            current_video_grid_B,
+                            merge_size,
+                        )
+                        progress_logits_B.append(progress_B)
+                        success_logits_B.append(success_B)
                     else:
                         # For progress-only samples, trajectory B is None
                         progress_logits_B.append(None)

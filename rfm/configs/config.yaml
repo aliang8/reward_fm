@@ -13,9 +13,9 @@ trainer_cls: "rfm_heads" # "rewind_transformer", "rfm_vqa"
 # =====================================================================================
 model:
   model_type: default # "default" or "vqa"
-  # base_model_id: Qwen/Qwen2.5-VL-3B-Instruct
+  base_model_id: Qwen/Qwen2.5-VL-3B-Instruct
   # base_model_id: "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
-  base_model_id: "HuggingFaceTB/SmolVLM2-2.2B-Instruct"
+  # base_model_id: "HuggingFaceTB/SmolVLM2-2.2B-Instruct"
   torch_dtype: bfloat16
   # torch_dtype: float16
   trust_remote_code: true
@@ -26,7 +26,8 @@ model:
   train_preference_head: true   # Whether to train the preference prediction head
   train_similarity_head: false   # Whether to train the similarity scoring head
   train_success_head: false   # Whether to train the success prediction head
-  
+  average_temporal_patches: false
+
   use_peft: false
   peft_vision_encoder: false
   quantization: false

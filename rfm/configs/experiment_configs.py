@@ -31,6 +31,11 @@ class ModelConfig(PretrainedConfig):
     )
     train_success_head: bool = field(default=False, metadata={"help": "Whether to train the success prediction head"})
 
+    average_temporal_patches: bool = field(
+        default=False,
+        metadata={"help": "If True, average all tokens within each temporal patch group for progress prediction. If False, use the last token (boundary) of each temporal patch group."},
+    )
+
     use_peft: bool = field(default=False, metadata={"help": "Whether to use PEFT/LoRA or train full model"})
     peft_vision_encoder: bool = field(default=False, metadata={"help": "Whether to attach LoRA to the vision encoder"})
 

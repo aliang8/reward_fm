@@ -167,7 +167,7 @@ def setup_model_and_processor(
     if has_flash_attn:
         extra_kwargs = {"attn_implementation": "flash_attention_2"}
     else:
-        extra_kwargs = {}
+        extra_kwargs = {"attn_implementation": "sdpa"}
 
     # Load processor and tokenizer
     if "SmolVLM" in cfg.base_model_id or "Qwen" in cfg.base_model_id:
@@ -204,6 +204,7 @@ def setup_model_and_processor(
                     dtype=torch_dtype,  # Set the dtype from config,
                     full_finetuning=True,
                     device_map=None,
+                    attn_implementation="sdpa",
                 )
                 if cfg.model_type == "default":
                     base_model = base_model.model

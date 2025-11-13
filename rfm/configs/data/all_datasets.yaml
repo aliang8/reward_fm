@@ -106,3 +106,8 @@ custom_eval:
     - jesbu1_racer_rfm_racer_val
     - jesbu1_egodex_rfm_egodex_test
     - abraranwar_usc_koch_rewind_rfm_usc_koch_rewind
+
+    # pick two extra datasets from training 
+    # to run custom evaluations on
+    - jesbu1_oxe_rfm_oxe_fractal20220817_data
+    - jesbu1_oxe_rfm_oxe_droid 

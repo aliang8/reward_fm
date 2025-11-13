@@ -62,8 +62,8 @@ data:
   # Video processing settings
   max_frames_after_preprocessing: 64
   max_frames: 16  # Maximum frames per trajectory
-  resized_height: 128  # Height to resize images/videos to
-  resized_width: 128   # Width to resize images/videos to
+  resized_height: 196  # Height to resize images/videos to
+  resized_width: 196   # Width to resize images/videos to
   load_embeddings: false
   min_frames_per_trajectory: 5 # Minimum number of frames required per trajectory (trajectories with fewer frames will be filtered out)
 

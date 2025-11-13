@@ -6,6 +6,7 @@ from rfm.data.datasets.base import BaseDataset
 from rfm.data.samplers.pref import PrefSampler
 from rfm.data.samplers.sim import SimSampler
 from rfm.data.samplers.progress import ProgressSampler
+from rfm.data.dataset_category import is_preference_only
 from rfm.utils.distributed import rank_0_print
 
 
@@ -92,9 +93,8 @@ class RFMDataset(BaseDataset):
         item = self.filtered_dataset[idx]
 
         # Preference-only override by data_source using raw filtered dataset entry
-        pref_only = getattr(self.config, "pref_only_datasets", []) or []
         data_source = item["data_source"]
-        if data_source in pref_only and self.pref_sampler is not None:
+        if is_preference_only(data_source) and self.pref_sampler is not None:
             sample = self.pref_sampler._generate_sample(item)
             if sample is not None:
                 return self._set_resample_attempts(sample, 1)
@@ -216,7 +216,6 @@ def test():
         dataloader_num_workers: int = 0
         num_bins: int = 10
         load_embeddings: bool = False
-        pref_only_datasets: list[str] = None
         progress_pred_type: str = "absolute"
         min_success: float = 0.8
         max_success: float = 0.95
@@ -250,7 +249,6 @@ def test():
         dataloader_num_workers=6,
         num_bins=10,
         load_embeddings=True,
-        pref_only_datasets=[],
         progress_pred_type="absolute",
         min_success=0.8,
         max_success=0.95,
@@ -262,7 +260,7 @@ def test():
     rank_0_print("Initializing RFMDataset...")
     init_start = time.time()
     generator = RFMDataset(config=mock_data_config, batch_size=64)
-    import ipdb; ipdb.set_trace()
+    #import ipdb; ipdb.set_trace()
     init_time = time.time() - init_start
     rank_0_print(f"Dataset initialization took {init_time:.2f} seconds")
 

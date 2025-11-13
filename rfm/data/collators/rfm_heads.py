@@ -140,6 +140,7 @@ class RFMBatchCollator(BaseCollator):
                 do_resize=False
             )
         elif "SmolVLM" in self.base_model_id:
+            import ipdb; ipdb.set_trace()
             batch_inputs = self.processor.apply_chat_template(
                 conversations,
                 add_generation_prompt=False,

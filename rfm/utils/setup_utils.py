@@ -175,9 +175,9 @@ def setup_model_and_processor(
             processor = AutoProcessor.from_pretrained(
                 cfg.base_model_id,
                 trust_remote_code=cfg.trust_remote_code,
-                padding_side="left",
-                size={"longest_edge": 512},
-                max_image_size={"longest_edge": 512},
+                # padding_side="left",
+                # size={"longest_edge": 512},
+                # max_image_size={"longest_edge": 512},
             )
 
             rank_0_print(f"SmolVLM Processor: {processor}")
@@ -459,6 +459,7 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
         "warmup_steps": cfg.training.warmup_steps,
         "warmup_ratio": cfg.training.warmup_ratio,
         "max_grad_norm": cfg.training.max_grad_norm,
+        "weight_decay": cfg.training.weight_decay,
         "disable_tqdm": False,
         # # Compile settings
         # "torch_compile": True,

@@ -252,6 +252,7 @@ class TrainingConfig:
     warmup_steps: int = field(default=0)
     warmup_ratio: float = field(default=0.1)
     max_grad_norm: float = field(default=1.0)
+    weight_decay: float = field(default=0.01, metadata={"help": "Weight decay for optimizer"})
 
     # RFM specific settings
     predict_pref_progress: bool = field(

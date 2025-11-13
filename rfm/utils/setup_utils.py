@@ -515,7 +515,6 @@ def setup_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg
         "resized_height": cfg.data.resized_height,
         "resized_width": cfg.data.resized_width,
         "base_model_id": cfg.model.base_model_id,
-        "pref_only_datasets": cfg.data.pref_only_datasets,
     }
     if "Qwen" in cfg.model.base_model_id or "SmolVLM" in cfg.model.base_model_id:
         if cfg.model.model_type == "default":

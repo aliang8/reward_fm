@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import cv2
 from rfm.data.datasets.helpers import load_frames_from_npz
+from rfm.data.dataset_category import is_failure
 from evals.eval_metrics_utils import compute_pearson, compute_preference_accuracy, compute_spearman
 
 
@@ -100,9 +101,18 @@ def run_reward_alignment_eval(results: list[dict[str, Any]], progress_pred_type:
 def run_reward_alignment_eval_per_trajectory(
     results: list[dict[str, Any]], progress_pred_type: str
 ) -> tuple[dict[str, Any], list, list]:
-    """Run reward_alignment evaluation analysis and create plots for each trajectory."""
+    """Run reward_alignment evaluation analysis and create plots for each trajectory.
+    
+    For failure datasets, we visualize predictions but skip metric computation.
+    """
+    # Determine if this is a failure dataset by checking the data_source of the first result
+    is_failure_dataset = False
+    if results and len(results) > 0:
+        first_data_source = results[0].get("data_source", "")
+        is_failure_dataset = is_failure(first_data_source)
+    
     unique_trajectory_ids = set()
-    mse_per_trajectory = 0
+    mse_per_trajectory = np.zeros(1)
     pearson_trajectories = []
     spearman_trajectories = []
     plots = []
@@ -125,7 +135,8 @@ def run_reward_alignment_eval_per_trajectory(
         task = results_for_trajectory[0].get("task", "unknown")
         quality_label = results_for_trajectory[0].get("quality_label", "unknown")
 
-        if quality_label != "successful":
+        # For failure datasets, visualize all trajectories; otherwise only successful ones
+        if not is_failure_dataset and quality_label != "successful":
             continue
 
         # Try to get video_path from results, if not available, we'll return None for frames
@@ -178,14 +189,19 @@ def run_reward_alignment_eval_per_trajectory(
             last_preds = np.cumsum(last_preds)
             last_targets = np.cumsum(last_targets)
 
-        # Calculate metrics for this trajectory
-        traj_mse = np.mean((np.array(last_targets) - np.array(last_preds)) ** 2)
-        traj_pearson = compute_pearson(last_targets, last_preds)
-        traj_spearman = compute_spearman(last_targets, last_preds)
+        # Calculate metrics for this trajectory (skip for failure datasets)
+        if is_failure_dataset:
+            traj_mse = 0.0
+            traj_pearson = 0.0
+            traj_spearman = 0.0
+        else:
+            traj_mse = np.mean((np.array(last_targets) - np.array(last_preds)) ** 2)
+            traj_pearson = compute_pearson(last_targets, last_preds)
+            traj_spearman = compute_spearman(last_targets, last_preds)
 
-        # Handle NaN values
-        traj_pearson = traj_pearson if not np.isnan(traj_pearson) else 0.0
-        traj_spearman = traj_spearman if not np.isnan(traj_spearman) else 0.0
+            # Handle NaN values
+            traj_pearson = traj_pearson if not np.isnan(traj_pearson) else 0.0
+            traj_spearman = traj_spearman if not np.isnan(traj_spearman) else 0.0
 
         # Create a wandb plot for progress predictions and, if available, success predictions
         if have_success and len(last_success) == len(last_preds):
@@ -227,13 +243,15 @@ def run_reward_alignment_eval_per_trajectory(
 
         plots.append(fig)
 
-        mse_per_trajectory += np.mean((np.array(last_targets) - np.array(last_preds)) ** 2)
-        pearson = compute_pearson(last_targets, last_preds)
-        if not np.isnan(pearson):
-            pearson_trajectories.append(pearson)
-        spearman = compute_spearman(last_targets, last_preds)
-        if not np.isnan(spearman):
-            spearman_trajectories.append(spearman)
+        # Only accumulate metrics for non-failure datasets
+        if not is_failure_dataset:
+            mse_per_trajectory += np.mean((np.array(last_targets) - np.array(last_preds)) ** 2)
+            pearson = compute_pearson(last_targets, last_preds)
+            if not np.isnan(pearson):
+                pearson_trajectories.append(pearson)
+            spearman = compute_spearman(last_targets, last_preds)
+            if not np.isnan(spearman):
+                spearman_trajectories.append(spearman)
 
     if len(unique_trajectory_ids) == 0:
         mse_per_trajectory = np.nan

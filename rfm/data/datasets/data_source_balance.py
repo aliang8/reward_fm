@@ -2,6 +2,7 @@ import random
 from collections import defaultdict
 
 from rfm.data.datasets.rfm_data import RFMDataset
+from rfm.data.dataset_category import is_preference_only
 from rfm.utils.distributed import rank_0_print
 
 
@@ -70,8 +71,7 @@ class BalancedRFMDataset(RFMDataset):
         item = self.dataset[selected_traj_idx]
 
         # Preference-only override by data_source using raw dataset entry
-        pref_only = getattr(self.config, "pref_only_datasets", []) or []
-        if selected_source in pref_only and self.pref_sampler is not None:
+        if is_preference_only(selected_source) and self.pref_sampler is not None:
             try:
                 sample = self.pref_sampler._generate_sample(item)
                 # If pref sampler returns None, fall through to try other samplers
@@ -201,8 +201,7 @@ class BalancedRFMDataset(RFMDataset):
         item = self.dataset[selected_traj_idx]
 
         # Enforce preference-only sampling for configured data sources
-        pref_only = getattr(self.config, "pref_only_datasets", []) or []
-        if selected_source in pref_only:
+        if is_preference_only(selected_source):
             return self.pref_sampler._generate_sample(item)
 
         # Generate sample using the appropriate sampler
@@ -260,7 +259,6 @@ def test():
         progress_pred_type: str = "absolute"
         max_success: float = 0.9
         pairwise_progress: bool = False
-        pref_only_datasets: list[str] = None
         batch_size: int = 64
 
     @dataclass
@@ -298,7 +296,6 @@ def test():
         progress_pred_type="absolute",
         max_success=0.9,
         pairwise_progress=False,
-        pref_only_datasets=[],
         batch_size=64,
     )
 

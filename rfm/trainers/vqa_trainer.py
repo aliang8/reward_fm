@@ -1,5 +1,4 @@
 import ast
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,6 +6,7 @@ import torch.nn.functional as F
 from evals.eval_utils import extract_answer_from_text
 from .rfm_heads_trainer import RFMHeadsTrainer
 from rfm.utils.timer import _timer
+from rfm.models.utils import ModelOutput
 
 
 # copied because the original function forces the metric reduction
@@ -56,6 +56,7 @@ def ForCausalLMLoss(
 class RFMVQATrainer(RFMHeadsTrainer):
     def __init__(self, config, *args, **kwargs):
         super().__init__(config, *args, **kwargs)
+        self._ddp_static_graph_set = False
 
     def forward_model(self, model, inputs, sample_type="progress"):
         with _timer("time/forward_vqa", timing_raw=self.timing_raw):
@@ -83,11 +84,22 @@ class RFMVQATrainer(RFMHeadsTrainer):
             progress_logits = {"A": progress_logits, "B": None}
         else:
             progress_logits = None
-
-        return outputs, progress_logits, self.timing_raw
+        model_output = ModelOutput(progress_logits=progress_logits)
+        return model_output, self.timing_raw
 
     def compute_loss(self, model, inputs, return_outputs=False, training=True, **kwargs):
         """Compute loss for VQA tasks."""
+
+        # Set static graph for DDP on first training step to handle multiple forward passes. This is needed
+        # when combining gradient checkpointing with multiple forward passes.
+        if self.config.training.gradient_checkpointing and (training and not self._ddp_static_graph_set and hasattr(model, 'module')):
+            # Check if model is wrapped in DDP
+            if hasattr(model.module, '_set_static_graph'):
+                model.module._set_static_graph()
+                self._ddp_static_graph_set = True
+            elif hasattr(model, '_set_static_graph'):
+                model._set_static_graph()
+                self._ddp_static_graph_set = True
 
         # Extract the separate batches
         preference_inputs = inputs.get("preference_inputs", {})
@@ -134,8 +146,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
             # Combine outputs from all loss functions
             extra_info = {
                 **log_metadata,
-                "total_loss": total_loss.item(),
-                "batch_size": num_preferences + num_similarities + num_progress,
+                "total_loss": total_loss.item()
             }
             return total_loss, extra_info
 

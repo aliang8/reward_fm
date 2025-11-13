@@ -160,12 +160,6 @@ class DataConfig:
         },
     )
 
-    # Data sources that should only generate preference samples
-    pref_only_datasets: List[str] = field(
-        default_factory=list,
-        metadata={"help": "List of data_source names that should generate only preference samples"},
-    )
-
     progress_pred_type: str = field(
         default="absolute", metadata={"help": "Type of progress prediction: 'absolute' or 'relative'"}
     )

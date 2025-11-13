@@ -12,27 +12,27 @@ from qwen_vl_utils import process_vision_info
 from .base import BaseCollator
 from .utils import convert_frames_to_pil_images, pad_target_progress, write_mp4
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample
+from rfm.data.dataset_category import is_preference_only
 from typing import List, Dict
 
 
-def should_compute_progress(quality_label: str, data_gen_strategy: str, data_source: str = None, pref_only_datasets: list = None) -> float:
+def should_compute_progress(quality_label: str, data_gen_strategy: str, data_source: str = None) -> float:
     """
     Check if progress should be computed for a trajectory.
 
     Includes if it is successful, rewound, rewind_same_task, or different_task,
-    but NOT suboptimal or failure. Also masks out progress if data_source is in pref_only_datasets.
+    but NOT suboptimal or failure. Also masks out progress if data_source is in preference_only category.
 
     Args:
         quality_label: The quality label of the trajectory
         data_gen_strategy: The data generation strategy
         data_source: The data source name (optional)
-        pref_only_datasets: List of data source names that should only generate preference samples (optional)
 
     Returns:
         1.0 if progress should be computed, 0.0 otherwise
     """
-    # Mask out progress if data_source is in pref_only_datasets
-    if data_source is not None and pref_only_datasets is not None and data_source in pref_only_datasets:
+    # Mask out progress if data_source is in preference_only category
+    if data_source is not None and is_preference_only(data_source):
         return 0.0
 
     if quality_label in ["suboptimal", "failure"]:
@@ -89,7 +89,6 @@ class RFMBatchCollator(BaseCollator):
         resized_width: int = 128,
         base_model_id: str = None,
         load_embeddings: bool = False,
-        pref_only_datasets: list = None,
         **kwargs,
     ):
         super().__init__(
@@ -102,7 +101,6 @@ class RFMBatchCollator(BaseCollator):
             load_embeddings=load_embeddings,
             **kwargs,
         )
-        self.pref_only_datasets = pref_only_datasets
 
     def _process_conversation(self, conversations: List[List[Dict]]) -> Dict[str, torch.Tensor]:
         """
@@ -139,6 +137,7 @@ class RFMBatchCollator(BaseCollator):
                 truncation=False,
                 max_length=self.max_length,
                 return_tensors="pt",
+                do_resize=False
             )
         elif "SmolVLM" in self.base_model_id:
             batch_inputs = self.processor.apply_chat_template(
@@ -181,13 +180,14 @@ class RFMBatchCollator(BaseCollator):
                 content_extras = {}
 
             # Create conversation for progress evaluation
+            prompt = f"For the task '{sample.trajectory.task}', evaluate the progress shown in this trajectory video. Assess how well the trajectory demonstrates completion of the task at each frame."
             conversation = [
                 {
                     "role": "user",
                     "content": [
                         {
                             "type": "text",
-                            "text": f"Task: {sample.trajectory.task}",
+                            "text": prompt,
                         },
                         {
                             "type": "video",
@@ -231,7 +231,6 @@ class RFMBatchCollator(BaseCollator):
                 sample.trajectory.quality_label,
                 sample.data_gen_strategy,
                 data_source=sample.trajectory.data_source,
-                pref_only_datasets=self.pref_only_datasets,
             )
             for sample in progress_samples
         ]
@@ -273,19 +272,23 @@ class RFMBatchCollator(BaseCollator):
             else:
                 content_extras = {}
 
+            prompt = f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', evaluate which one better demonstrates successful completion of the task. Compare the trajectories and determine which is preferred."
+            
             if preference_labels[i] == 1.0:
                 # Chosen trajectory first: task + video A (chosen) + <|split_token|> + video B (rejected) + <|pref_token|>
                 conversation = [
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": f"Task: {sample.chosen_trajectory.task}"},
+                            {"type": "text", "text": prompt},
+                            {"type": "text", "text": "This is Trajectory A. "},
                             {
                                 "type": "video",
                                 "video": chosen_frames,
                                 **content_extras,
                             },
                             {"type": "text", "text": "<|split_token|>"},
+                            {"type": "text", "text": "This is Trajectory B. "},
                             {
                                 "type": "video",
                                 "video": rejected_frames,
@@ -301,13 +304,15 @@ class RFMBatchCollator(BaseCollator):
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": f"Task: {sample.chosen_trajectory.task}"},
+                            {"type": "text", "text": prompt},
+                            {"type": "text", "text": "This is Trajectory A. "},
                             {
                                 "type": "video",
                                 "video": rejected_frames,
                                 **content_extras,
                             },
                             {"type": "text", "text": "<|split_token|>"},
+                            {"type": "text", "text": "This is Trajectory B. "},
                             {
                                 "type": "video",
                                 "video": chosen_frames,
@@ -371,7 +376,6 @@ class RFMBatchCollator(BaseCollator):
                 traj.quality_label,
                 strategy,
                 data_source=traj.data_source,
-                pref_only_datasets=self.pref_only_datasets,
             )
             for traj, strategy in zip(trajectory_A_list, trajectory_A_data_gen_strategy)
         ]
@@ -380,7 +384,6 @@ class RFMBatchCollator(BaseCollator):
                 traj.quality_label,
                 strategy,
                 data_source=traj.data_source,
-                pref_only_datasets=self.pref_only_datasets,
             )
             for traj, strategy in zip(trajectory_B_list, trajectory_B_data_gen_strategy)
         ]
@@ -411,7 +414,6 @@ class RFMBatchCollator(BaseCollator):
                 sample.chosen_trajectory.quality_label,
                 "subsample_task",
                 data_source=sample.chosen_trajectory.data_source,
-                pref_only_datasets=self.pref_only_datasets,
             )
             for sample in preference_samples
         ]
@@ -420,7 +422,6 @@ class RFMBatchCollator(BaseCollator):
                 sample.rejected_trajectory.quality_label,
                 sample.data_gen_strategy,
                 data_source=sample.rejected_trajectory.data_source,
-                pref_only_datasets=self.pref_only_datasets,
             )
             for sample in preference_samples
         ]
@@ -489,17 +490,20 @@ class RFMBatchCollator(BaseCollator):
                 diff_video = diff_frames
 
             # Process reference vs trajectory sim
+            prompt_sim = f"For the task '{sample.ref_trajectory.task}', compare these two trajectories and evaluate how similar they are in terms of task completion and behavior."
             conversation_ref_sim = [
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": f"Task: {sample.ref_trajectory.task}"},
+                        {"type": "text", "text": prompt_sim},
+                        {"type": "text", "text": "This is the reference trajectory. "},
                         {
                             "type": "video",
                             "video": ref_video,
                             **content_extras,
                         },
                         {"type": "text", "text": "<|split_token|>"},
+                        {"type": "text", "text": "This is the comparison trajectory. "},
                         {
                             "type": "video",
                             "video": sim_video,
@@ -511,17 +515,20 @@ class RFMBatchCollator(BaseCollator):
             ]
 
             # Process reference vs trajectory diff
+            prompt_diff = f"For the task '{sample.ref_trajectory.task}', compare these two trajectories and evaluate how similar they are in terms of task completion and behavior."
             conversation_ref_diff = [
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": f"Task: {sample.ref_trajectory.task}"},
+                        {"type": "text", "text": prompt_diff},
+                        {"type": "text", "text": "This is the reference trajectory. "},
                         {
                             "type": "video",
                             "video": ref_video,
                             **content_extras,
                         },
                         {"type": "text", "text": "<|split_token|>"},
+                        {"type": "text", "text": "This is the comparison trajectory. "},
                         {
                             "type": "video",
                             "video": diff_video,
@@ -586,7 +593,6 @@ class RFMBatchCollator(BaseCollator):
                 sample.ref_trajectory.quality_label,
                 "successful",
                 data_source=sample.ref_trajectory.data_source,
-                pref_only_datasets=self.pref_only_datasets,
             )
             for sample in similarity_samples
         ]
@@ -596,7 +602,6 @@ class RFMBatchCollator(BaseCollator):
                 sample.sim_trajectory.quality_label,
                 sample.data_gen_strategy,
                 data_source=sample.sim_trajectory.data_source,
-                pref_only_datasets=self.pref_only_datasets,
             )
             for sample in similarity_samples
         ]
@@ -606,7 +611,6 @@ class RFMBatchCollator(BaseCollator):
                 sample.diff_trajectory.quality_label,
                 "different_task",
                 data_source=sample.diff_trajectory.data_source,
-                pref_only_datasets=self.pref_only_datasets,
             )
             for sample in similarity_samples
         ]

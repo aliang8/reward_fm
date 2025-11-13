@@ -582,6 +582,8 @@ class RFMHeadsTrainer(Trainer):
                         if isinstance(progress_pred, list):
                             if isinstance(progress_pred[0], torch.Tensor):
                                 progress_pred = torch.stack(progress_pred)
+                            elif progress_pred[0] is None:
+                                continue
                             else:
                                 progress_pred = torch.tensor(progress_pred)
 
@@ -705,6 +707,8 @@ class RFMHeadsTrainer(Trainer):
 
                         # Build eval_results on all processes for compute_eval_metrics
                         for i in range(len(pref_logits)):
+                            if pref_logits[i] is None:
+                                continue
                             sample_result = {
                                 "task": gathered_task[i],
                                 "preference_pred": pref_logits[i].detach().to(dtype=torch.float32).cpu().numpy(),

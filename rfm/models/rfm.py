@@ -241,7 +241,8 @@ class RFM(PreTrainedModel):
             success_logits_B = []
 
             # temporal patch size
-            tps = self.processor.video_processor.merge_size
+            tps = self.processor.video_processor.temporal_patch_size
+            merge_size = self.processor.video_processor.merge_size
 
             with _timer("time/progress_logits", timing_raw=timing_raw):
                 for i, seq_ids in enumerate(input_ids):
@@ -269,7 +270,7 @@ class RFM(PreTrainedModel):
                     T_A, H_A, W_A = current_video_grid_A
 
                     # Calculate tokens per frame for trajectory A: (H_A * W_A) // merge_size^2
-                    tokens_per_frame_A = (H_A * W_A) // (tps**2)
+                    tokens_per_frame_A = (H_A * W_A) // (merge_size**2)
 
                     # Calculate frame boundary positions for trajectory A
                     frame_boundary_positions_A = []
@@ -311,7 +312,7 @@ class RFM(PreTrainedModel):
                         T_B, H_B, W_B = current_video_grid_B
 
                         # Calculate tokens per frame for trajectory B: (H_B * W_B) // merge_size^2
-                        tokens_per_frame_B = (H_B * W_B) // (tps**2)
+                        tokens_per_frame_B = (H_B * W_B) // (merge_size**2)
 
                         # Calculate frame boundary positions for trajectory B (after split_token)
                         frame_boundary_positions_B = []

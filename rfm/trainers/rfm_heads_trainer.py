@@ -138,23 +138,12 @@ class RFMHeadsTrainer(Trainer):
         # Ensure model is in training mode
         self.model.train()
 
-        # Clear any optimizer state that might be corrupted
-        if hasattr(self, 'optimizer') and self.optimizer is not None:
-            try:
-                # Reset optimizer state completely
-                self.optimizer.state.clear()
-                self.optimizer.param_groups.clear()
-
-                # Reinitialize optimizer with current model parameters
-                # This is a safety measure - the parent trainer should handle this
-                rank_0_print("Cleared optimizer state, relying on parent trainer to reinitialize")
-            except Exception as e:
-                rank_0_print(f"Warning: Could not reset optimizer state: {e}")
-
         # Clear any cached gradients or computational graph state
+        # NOTE: We don't clear optimizer.state or param_groups as that breaks the lr_scheduler
         try:
             # Zero out any existing gradients
-            self.optimizer.zero_grad(set_to_none=True)
+            if hasattr(self, 'optimizer') and self.optimizer is not None:
+                self.optimizer.zero_grad(set_to_none=True)
         except Exception as e:
             rank_0_print(f"Warning: Could not clear gradients: {e}")
 
@@ -164,6 +153,25 @@ class RFMHeadsTrainer(Trainer):
             torch.cuda.synchronize()
 
         rank_0_print("Post-checkpoint load reset complete")
+
+    def _get_learning_rate(self):
+        """
+        Override to safely get learning rate, handling cases where scheduler hasn't been stepped yet.
+        """
+        try:
+            if hasattr(self, 'lr_scheduler') and self.lr_scheduler is not None:
+                last_lrs = self.lr_scheduler.get_last_lr()
+                if last_lrs:
+                    return last_lrs[0]
+            # Fallback to optimizer's learning rate
+            if hasattr(self, 'optimizer') and self.optimizer is not None:
+                if self.optimizer.param_groups:
+                    return self.optimizer.param_groups[0]['lr']
+            # Last resort: return configured learning rate
+            return self.args.learning_rate
+        except Exception as e:
+            rank_0_print(f"Warning: Could not get learning rate: {e}")
+            return self.args.learning_rate
 
     def train(self, resume_from_checkpoint=None, **kwargs):
         """
@@ -585,7 +593,7 @@ class RFMHeadsTrainer(Trainer):
                             elif any(p is None for p in progress_pred):
                                 continue
                             else:
-                                progress_pred = torch.tensor(progress_pred)
+                                progress_pred = torch.tensor(progress_pred, device=self.accelerator.device)
 
                         # Gather predictions and targets across all ranks
                         progress_pred = self.accelerator.gather_for_metrics(progress_pred)

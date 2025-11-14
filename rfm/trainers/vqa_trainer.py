@@ -72,7 +72,9 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
         if sample_type == "progress":
             pred_ids = outputs.logits.argmax(dim=-1)
-            tokenizer = self.model.base_model.processor.tokenizer
+            # RFMVQA has tokenizer directly, handle DDP wrapping
+            rfm_model = self.model.module if hasattr(self.model, 'module') else self.model
+            tokenizer = rfm_model.tokenizer
             pred_texts = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
             predictions = [extract_answer_from_text(text) for text in pred_texts]
             progress_logits = []
@@ -164,10 +166,14 @@ class RFMVQATrainer(RFMHeadsTrainer):
             second_per_grid_ts=inputs.get("second_per_grid_ts"),
         )
 
+        # RFMVQA has model directly, handle DDP wrapping
+        rfm_model = self.model.module if hasattr(self.model, 'module') else self.model
+        vocab_size = rfm_model.model.config.text_config.vocab_size
+        
         loss = ForCausalLMLoss(
             logits=outputs.logits,
             labels=inputs["labels"],
-            vocab_size=self.model.base_model.model.config.text_config.vocab_size,
+            vocab_size=vocab_size,
             reduction="none",
         )
         # reshape
@@ -182,7 +188,9 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
         # compute accuracy
         pred_ids = outputs.logits.argmax(dim=-1)
-        tokenizer = self.model.base_model.processor.tokenizer
+        # RFMVQA has tokenizer directly, handle DDP wrapping
+        rfm_model = self.model.module if hasattr(self.model, 'module') else self.model
+        tokenizer = rfm_model.tokenizer
         pred_texts = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
 
         if mode == "preference":

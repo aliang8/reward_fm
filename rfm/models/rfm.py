@@ -97,6 +97,69 @@ class RFM(PreTrainedModel):
         """Delegates gradient checkpointing disabling to the base model."""
         self.model.gradient_checkpointing_disable(**kwargs)
 
+    def _extract_hidden_states_for_smolvlm(
+        self,
+        hidden_state: torch.Tensor,
+        input_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Extract image/video frame embeddings from hidden states for SmolVLM.
+        
+        SmolVLM uses <fake_token_around_image> tokens to wrap images/videos.
+        This function finds all pairs of these tokens and mean pools the hidden states
+        between them to get per-frame/image embeddings.
+        
+        Args:
+            hidden_state: Hidden states tensor [seq_len, hidden_dim]
+            input_ids: Input token IDs [seq_len]
+            
+        Returns:
+            frame_embeddings: Tensor [num_frames, hidden_dim] containing mean-pooled
+                            embeddings for each frame/image between token pairs
+        """
+        # Get the token ID for <fake_token_around_image>
+        fake_token_id = self.tokenizer.convert_tokens_to_ids("<fake_token_around_image>")
+                   
+        # Find all positions where the fake token appears
+        token_positions = (input_ids == fake_token_id).nonzero(as_tuple=True)[0]
+        
+        if len(token_positions) == 0:
+            raise ValueError(
+                f"No <fake_token_around_image> tokens found in input_ids. "
+                f"Token ID {fake_token_id} not found in sequence."
+            )
+        
+        if len(token_positions) % 2 != 0:
+            raise ValueError(
+                f"Expected even number of <fake_token_around_image> tokens (pairs), "
+                f"but found {len(token_positions)} tokens."
+            )
+        
+        # Group tokens into pairs and extract hidden states between them
+        frame_embeddings = []
+        for i in range(0, len(token_positions), 2):
+            start_pos = token_positions[i].item()
+            end_pos = token_positions[i + 1].item()
+            
+            # Extract hidden states between the token pair (exclusive of the tokens themselves)
+            # Add 1 to start_pos to exclude the start token, end_pos is exclusive
+            frame_tokens = hidden_state[start_pos + 1 : end_pos]
+            
+            if frame_tokens.shape[0] == 0:
+                # If no tokens between the pair, use the token positions themselves
+                # This shouldn't happen normally, but handle it gracefully
+                frame_embedding = (hidden_state[start_pos] + hidden_state[end_pos]) / 2.0
+            else:
+                # Mean pool all tokens between the pair
+                frame_embedding = frame_tokens.mean(dim=0)  # [hidden_dim]
+            
+            frame_embeddings.append(frame_embedding)
+        
+        if len(frame_embeddings) == 0:
+            return torch.empty(0, hidden_state.shape[-1], device=hidden_state.device)
+        
+        return torch.stack(frame_embeddings)  # [num_frames, hidden_dim]
+
     def _extract_progress_from_trajectory(
         self,
         hidden_state: torch.Tensor,
@@ -257,40 +320,58 @@ class RFM(PreTrainedModel):
                 outputs = self.model(**model_kwargs, output_hidden_states=True, return_dict=True)
 
             B = input_ids.shape[0]
-            if sample_type == "progress":
-                V = 1
-            else:
-                V = 2
-            T = 16  # TODO: fix this hardcoding
-            D = outputs.image_hidden_states.shape[-1]
-
             # from the last layer of the text transformer
-            hidden_state = outputs.hidden_states[-1]
-            vision_hidden_states = outputs.image_hidden_states
-            vision_hidden_states = vision_hidden_states.reshape(B, V, T, -1, D)
+            # these hidden states are post multimodal fusion
+            hidden_state = outputs.hidden_states[-1]  # [B, seq_len, hidden_dim]
 
-            # per frame hidden state
-            # [B, V, T, D]
-            per_frame_hidden_states = vision_hidden_states.mean(dim=3)
+            progress_logits_A = []
+            progress_logits_B = []
+            success_logits_A = []
+            success_logits_B = []
 
-            # apply heads to per frame hidden states
-            progress_logits = self.progress_head(per_frame_hidden_states)
-            success_per_frame = self.success_head(per_frame_hidden_states)
+            with _timer("time/progress_logits", timing_raw=timing_raw):
+                for i in range(B):
+                    # Extract frame embeddings for this sample using <fake_token_around_image> tokens
+                    # This returns embeddings for all frames from all videos in the sequence
+                    frame_embeddings = self._extract_hidden_states_for_smolvlm(
+                        hidden_state[i],  # [seq_len, hidden_dim]
+                        input_ids[i],     # [seq_len]
+                    )  # [num_frames, hidden_dim]
 
-            progress_logits_A = progress_logits[:, 0, :, :]
-            progress_logits_B = None
-            if sample_type != "progress":
-                progress_logits_B = progress_logits[:, 1, :, :]
-                progress_logits_B = progress_logits_B.squeeze(-1)
+                    if frame_embeddings.shape[0] == 0:
+                        raise ValueError(f"No frame embeddings extracted for sample {i}")
 
-            progress_logits = {"A": progress_logits_A.squeeze(-1), "B": progress_logits_B}
+                    # For progress samples, there's only one video/trajectory (V=1)
+                    # For preference/similarity samples, there are two videos/trajectories (V=2)
+                    if sample_type == "progress":
+                        # All frames belong to trajectory A
+                        trajectory_A_frames = frame_embeddings
+                        trajectory_B_frames = None
+                    else:
+                        # this is find because we assume both videos are
+                        # padded to the same number of frames
+                        mid_point = frame_embeddings.shape[0] // 2
+                        trajectory_A_frames = frame_embeddings[:mid_point]
+                        trajectory_B_frames = frame_embeddings[mid_point:]
 
-            # Success logits follow the same per-frame structure
-            success_A = success_per_frame[:, 0, :, :].squeeze(-1)
-            success_B = None
-            if sample_type != "progress":
-                success_B = success_per_frame[:, 1, :, :].squeeze(-1)
-            success_logits = {"A": success_A, "B": success_B}
+                    # Apply heads to trajectory A frames
+                    progress_A = self.progress_head(trajectory_A_frames).squeeze(-1)  # [T_A]
+                    success_A = self.success_head(trajectory_A_frames).squeeze(-1)  # [T_A]
+                    progress_logits_A.append(progress_A)
+                    success_logits_A.append(success_A)
+
+                    # Apply heads to trajectory B frames (if available)
+                    if trajectory_B_frames is not None:
+                        progress_B = self.progress_head(trajectory_B_frames).squeeze(-1)  # [T_B]
+                        success_B = self.success_head(trajectory_B_frames).squeeze(-1)  # [T_B]
+                        progress_logits_B.append(progress_B)
+                        success_logits_B.append(success_B)
+                    else:
+                        progress_logits_B.append(None)
+                        success_logits_B.append(None)
+
+            progress_logits = {"A": progress_logits_A, "B": progress_logits_B}
+            success_logits = {"A": success_logits_A, "B": success_logits_B}
         else:
             with _timer("time/rfm_forward", timing_raw=timing_raw):
                 outputs = self.model(**model_kwargs)

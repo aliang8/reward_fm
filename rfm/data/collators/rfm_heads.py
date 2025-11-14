@@ -4,6 +4,7 @@ Batch collator for processing list of samples.
 """
 
 import tempfile
+import uuid
 from pathlib import Path
 import numpy as np
 import torch
@@ -140,7 +141,6 @@ class RFMBatchCollator(BaseCollator):
                 do_resize=False
             )
         elif "SmolVLM" in self.base_model_id:
-            import ipdb; ipdb.set_trace()
             batch_inputs = self.processor.apply_chat_template(
                 conversations,
                 add_generation_prompt=False,
@@ -150,7 +150,7 @@ class RFMBatchCollator(BaseCollator):
                 max_length=self.max_length,
                 return_dict=True,
                 return_tensors="pt",
-                fps=4,  # this should be same as fps for write_mp4
+                fps=1,  # this should be same as fps for write_mp4
             )
         else:
             raise ValueError(f"Invalid base model id: {self.base_model_id}")
@@ -173,8 +173,10 @@ class RFMBatchCollator(BaseCollator):
                 }
             elif "SmolVLM" in self.base_model_id:
                 # we need to write the frames to a temporary file
-                tmp = Path(tempfile.gettempdir()) / f"tmp_progress.mp4"
-                write_mp4(frames, tmp)
+                # Use UUID to avoid collisions when using multiple data workers
+                unique_id = uuid.uuid4().hex
+                tmp = Path(tempfile.gettempdir()) / f"tmp_progress_{unique_id}.mp4"
+                write_mp4(frames, tmp, fps=1)
                 frames = str(tmp)
                 content_extras = {}
             else:
@@ -263,11 +265,14 @@ class RFMBatchCollator(BaseCollator):
                 }
             elif "SmolVLM" in self.base_model_id:
                 # we need to write the frames to a temporary file
-                tmp = Path(tempfile.gettempdir()) / f"tmp_chosen.mp4"
-                write_mp4(chosen_frames, tmp)
+                # Use UUID to avoid collisions when using multiple data workers
+                unique_id_chosen = uuid.uuid4().hex
+                unique_id_rejected = uuid.uuid4().hex
+                tmp = Path(tempfile.gettempdir()) / f"tmp_chosen_{unique_id_chosen}.mp4"
+                write_mp4(chosen_frames, tmp, fps=1)
                 chosen_frames = str(tmp)
-                tmp = Path(tempfile.gettempdir()) / f"tmp_rejected.mp4"
-                write_mp4(rejected_frames, tmp)
+                tmp = Path(tempfile.gettempdir()) / f"tmp_rejected_{unique_id_rejected}.mp4"
+                write_mp4(rejected_frames, tmp, fps=1)
                 rejected_frames = str(tmp)
                 content_extras = {}
             else:
@@ -464,16 +469,20 @@ class RFMBatchCollator(BaseCollator):
                 }
             elif "SmolVLM" in self.base_model_id:
                 # Write frames to temporary files for SmolVLM
-                tmp_ref = Path(tempfile.gettempdir()) / f"tmp_ref.mp4"
-                write_mp4(reference_frames, tmp_ref)
+                # Use UUID to avoid collisions when using multiple data workers
+                unique_id_ref = uuid.uuid4().hex
+                unique_id_sim = uuid.uuid4().hex
+                unique_id_diff = uuid.uuid4().hex
+                tmp_ref = Path(tempfile.gettempdir()) / f"tmp_ref_{unique_id_ref}.mp4"
+                write_mp4(reference_frames, tmp_ref, fps=1)
                 reference_frames_video = str(tmp_ref)
 
-                tmp_sim = Path(tempfile.gettempdir()) / f"tmp_sim.mp4"
-                write_mp4(sim_frames, tmp_sim)
+                tmp_sim = Path(tempfile.gettempdir()) / f"tmp_sim_{unique_id_sim}.mp4"
+                write_mp4(sim_frames, tmp_sim, fps=1)
                 sim_frames_video = str(tmp_sim)
 
-                tmp_diff = Path(tempfile.gettempdir()) / f"tmp_diff.mp4"
-                write_mp4(diff_frames, tmp_diff)
+                tmp_diff = Path(tempfile.gettempdir()) / f"tmp_diff_{unique_id_diff}.mp4"
+                write_mp4(diff_frames, tmp_diff, fps=1)
                 diff_frames_video = str(tmp_diff)
 
                 content_extras = {}

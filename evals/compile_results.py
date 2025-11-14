@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 import yaml
 
-from rfm.configs.eval_configs import EvaluationConfig
+from rfm.configs.eval_configs import EvalServerConfig, EvaluationConfig
 from rfm.configs.experiment_configs import DataConfig
 import numpy as np
 import matplotlib.pyplot as plt
@@ -256,16 +256,16 @@ def run_reward_alignment_eval_per_trajectory(
     if len(unique_trajectory_ids) == 0:
         mse_per_trajectory = np.nan
         pearson_per_trajectory = np.nan
-        spearman_per_trajectory = np.nan
+        # spearman_per_trajectory = np.nan
     else:
         mse_per_trajectory = (mse_per_trajectory / len(unique_trajectory_ids)).item()
         pearson_per_trajectory = np.mean(pearson_trajectories).item()
-        spearman_per_trajectory = np.mean(spearman_trajectories).item()
+        # spearman_per_trajectory = np.mean(spearman_trajectories).item()
 
     metrics = {
         "mse": mse_per_trajectory,
         "pearson": pearson_per_trajectory,
-        "spearman": spearman_per_trajectory,
+        # "spearman": spearman_per_trajectory,
         # "num_samples": len(unique_trajectory_ids),
     }
 

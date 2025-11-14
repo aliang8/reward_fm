@@ -156,6 +156,8 @@ class SaveBestCallback(TrainerCallback):
             self._trainer.save_model(ckpt_dir)
             if args.should_save:
                 self._trainer.save_state()  # trainer_state.json etc. in output_dir
+                # save the trainer_state.json to the actual checkpoint directory
+                shutil.copy(os.path.join(args.output_dir, "trainer_state.json"), ckpt_dir)
 
             # Only manage saved list and file operations on rank 0
             if self._is_main_process(self._trainer):

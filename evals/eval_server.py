@@ -34,7 +34,7 @@ from huggingface_hub import hf_hub_download
 from rich.console import Console
 
 from evals.eval_utils import extract_answer_from_text
-from rfm.configs.eval_configs import EvaluationConfig
+from rfm.configs.eval_configs import EvalServerConfig, EvaluationConfig
 from rfm.configs.experiment_configs import ModelConfig, ExperimentConfig
 from rfm.data.dataset_types import PreferenceSample, ProgressSample
 from rfm.utils.parser import deep_merge

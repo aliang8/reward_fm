@@ -159,7 +159,7 @@ class VQABatchCollator(RFMBatchCollator):
             # Convert frames to appropriate format using stored shapes
             frames = convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
 
-            prompt = f"For the task '{sample.trajectory.task}', estimate the progress at each frame in the trajectory. Give a list of numbers between 0 and 1 where 0 means no progress and 1 means successful completion of the task. Format your answer enclosed by <ans> and </ans> tags. For example, if you think the progress at each frame is [0.0, 0.1, 0.2, 0.3, 0.4, 0.5], your answer should be <ans>[0.0, 0.1, 0.2, 0.3, 0.4, 0.5]</ans>."
+            prompt = f"For the task '{sample.trajectory.task}', estimate the progress at each frame in the trajectory. Give a list of numbers between 0 and 1 where 0 means no progress and 1 means successful completion of the task. Format your answer as a python list enclosed by <ans> and </ans> tags. For example, if you think the progress at each frame is [0.0, 0.10, 0.31, 0.44], your answer should be: <ans>[0.0, 0.10, 0.31, 0.44]</ans>."
             if "Qwen" in self.base_model_id:
                 content_extras = {
                     "resized_height": self.resized_height,

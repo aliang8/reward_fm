@@ -121,7 +121,8 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
         # Initialize loss components and metadata
         # Initialize as tensor to avoid issues when no samples exist
-        total_loss = torch.tensor(0.0, device=self.accelerator.device, requires_grad=True)
+        # Don't set requires_grad=True on leaf tensor - it will get gradients from operations
+        total_loss = torch.tensor(0.0, device=self.accelerator.device)
         log_metadata = {}
 
         # Compute VQA loss for each type of input

@@ -13,8 +13,8 @@ trainer_cls: "rfm_heads" # "rewind_transformer", "rfm_vqa"
 # =====================================================================================
 model:
   model_type: default # "default" or "vqa"
-  base_model_id: Qwen/Qwen2.5-VL-3B-Instruct
-  # base_model_id: "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
+  # base_model_id: Qwen/Qwen2.5-VL-3B-Instruct
+  base_model_id: "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
   # base_model_id: "HuggingFaceTB/SmolVLM2-2.2B-Instruct"
   torch_dtype: bfloat16
   # torch_dtype: float16
@@ -68,6 +68,7 @@ data:
   resized_width: 196   # Width to resize images/videos to
   load_embeddings: false
   min_frames_per_trajectory: 5 # Minimum number of frames required per trajectory (trajectories with fewer frames will be filtered out)
+  use_multi_image: false  # If True, feed frames as a list of images instead of converting to video (avoids encoding overhead)
 
   # Data generation settings
   sample_type_ratio: [1, 0, 0]  # Ratio of preference, progress (no longer used, it's absorbed in preference if predict_pref_progress is true), and similarity samples

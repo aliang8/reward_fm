@@ -14,7 +14,7 @@ from .base import BaseCollator
 from .utils import convert_frames_to_pil_images, pad_target_progress, write_mp4
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample
 from rfm.data.dataset_category import is_preference_only
-from typing import List, Dict
+from typing import List, Dict, Union
 
 
 def should_compute_progress(quality_label: str, data_gen_strategy: str, data_source: str = None) -> float:
@@ -90,6 +90,7 @@ class RFMBatchCollator(BaseCollator):
         resized_width: int = 128,
         base_model_id: str = None,
         load_embeddings: bool = False,
+        use_multi_image: bool = False,
         **kwargs,
     ):
         super().__init__(
@@ -102,6 +103,71 @@ class RFMBatchCollator(BaseCollator):
             load_embeddings=load_embeddings,
             **kwargs,
         )
+        self.use_multi_image = use_multi_image
+
+    def _prepare_frames_for_conversation(
+        self, frames: List, prefix: str = "tmp"
+    ) -> tuple[Union[List, str], dict]:
+        """
+        Prepare frames for conversation based on use_multi_image flag.
+        
+        Args:
+            frames: List of PIL Images
+            prefix: Prefix for temporary video file (if needed)
+            
+        Returns:
+            tuple: (video_field, content_extras)
+                - video_field: Either list of PIL Images (if use_multi_image) or video file path (str)
+                - content_extras: Dictionary with resized_height/width or empty dict
+        """
+        if self.use_multi_image:
+            # Use images directly - return list of PIL Images
+            return frames, {
+                "resized_height": self.resized_height,
+                "resized_width": self.resized_width,
+            }
+        elif "Qwen" in self.base_model_id:
+            # Qwen accepts list of PIL Images directly
+            return frames, {
+                "resized_height": self.resized_height,
+                "resized_width": self.resized_width,
+            }
+        elif "SmolVLM" in self.base_model_id:
+            # Convert to video file for SmolVLM
+            unique_id = uuid.uuid4().hex
+            tmp = Path(tempfile.gettempdir()) / f"{prefix}_{unique_id}.mp4"
+            write_mp4(frames, tmp, fps=1)
+            return str(tmp), {}
+        else:
+            # Default: return frames as-is
+            return frames, {}
+
+    def _add_vision_content_to_list(
+        self, content_list: List[Dict], frames_or_video: Union[List, str], content_extras: dict
+    ) -> None:
+        """
+        Add vision content (images or video) to a content list.
+        
+        Args:
+            content_list: List to append vision content to
+            frames_or_video: Either list of PIL Images (if use_multi_image) or video file path (str)
+            content_extras: Dictionary with additional content parameters
+        """
+        if self.use_multi_image:
+            # Add each image as a separate entry
+            for img in frames_or_video:
+                content_list.append({
+                    "type": "image",
+                    "image": img,
+                    **content_extras,
+                })
+        else:
+            # Add video entry
+            content_list.append({
+                "type": "video",
+                "video": frames_or_video,
+                **content_extras,
+            })
 
     def _process_conversation(self, conversations: List[List[Dict]]) -> Dict[str, torch.Tensor]:
         """
@@ -166,38 +232,18 @@ class RFMBatchCollator(BaseCollator):
             # Convert frames to appropriate format using stored shapes
             frames = convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
 
-            if "Qwen" in self.base_model_id:
-                content_extras = {
-                    "resized_height": self.resized_height,
-                    "resized_width": self.resized_width,
-                }
-            elif "SmolVLM" in self.base_model_id:
-                # we need to write the frames to a temporary file
-                # Use UUID to avoid collisions when using multiple data workers
-                unique_id = uuid.uuid4().hex
-                tmp = Path(tempfile.gettempdir()) / f"tmp_progress_{unique_id}.mp4"
-                write_mp4(frames, tmp, fps=1)
-                frames = str(tmp)
-                content_extras = {}
-            else:
-                content_extras = {}
+            video_field, content_extras = self._prepare_frames_for_conversation(frames, prefix="tmp_progress")
 
             # Create conversation for progress evaluation
             prompt = f"For the task '{sample.trajectory.task}', evaluate the progress shown in this trajectory video. Assess how well the trajectory demonstrates completion of the task at each frame."
+            
+            # Build content list
+            content_list = [{"type": "text", "text": prompt}]
+            self._add_vision_content_to_list(content_list, video_field, content_extras)
             conversation = [
                 {
                     "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": prompt,
-                        },
-                        {
-                            "type": "video",
-                            "video": frames,
-                            **content_extras,
-                        },
-                    ],
+                    "content": content_list,
                 }
             ]
 
@@ -258,76 +304,44 @@ class RFMBatchCollator(BaseCollator):
                 sample.rejected_trajectory.frames, sample.rejected_trajectory.frames_shape
             )
 
-            if "Qwen" in self.base_model_id:
-                content_extras = {
-                    "resized_height": self.resized_height,
-                    "resized_width": self.resized_width,
-                }
-            elif "SmolVLM" in self.base_model_id:
-                # we need to write the frames to a temporary file
-                # Use UUID to avoid collisions when using multiple data workers
-                unique_id_chosen = uuid.uuid4().hex
-                unique_id_rejected = uuid.uuid4().hex
-                tmp = Path(tempfile.gettempdir()) / f"tmp_chosen_{unique_id_chosen}.mp4"
-                write_mp4(chosen_frames, tmp, fps=1)
-                chosen_frames = str(tmp)
-                tmp = Path(tempfile.gettempdir()) / f"tmp_rejected_{unique_id_rejected}.mp4"
-                write_mp4(rejected_frames, tmp, fps=1)
-                rejected_frames = str(tmp)
-                content_extras = {}
-            else:
-                content_extras = {}
+            chosen_video_field, content_extras = self._prepare_frames_for_conversation(
+                chosen_frames, prefix="tmp_chosen"
+            )
+            rejected_video_field, _ = self._prepare_frames_for_conversation(
+                rejected_frames, prefix="tmp_rejected"
+            )
 
             prompt = f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', evaluate which one better demonstrates successful completion of the task. Compare the trajectories and determine which is preferred."
             
+            # Determine which trajectory is A and which is B based on preference label
             if preference_labels[i] == 1.0:
                 # Chosen trajectory first: task + video A (chosen) + <|split_token|> + video B (rejected) + <|pref_token|>
-                conversation = [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {"type": "text", "text": "This is Trajectory A. "},
-                            {
-                                "type": "video",
-                                "video": chosen_frames,
-                                **content_extras,
-                            },
-                            {"type": "text", "text": "<|split_token|>"},
-                            {"type": "text", "text": "This is Trajectory B. "},
-                            {
-                                "type": "video",
-                                "video": rejected_frames,
-                                **content_extras,
-                            },
-                            {"type": "text", "text": "<|pref_token|>"},
-                        ],
-                    }
-                ]
+                traj_a_field = chosen_video_field
+                traj_b_field = rejected_video_field
             else:
                 # Chosen trajectory second: task + video A (rejected) + <|split_token|> + video B (chosen) + <|pref_token|>
-                conversation = [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {"type": "text", "text": "This is Trajectory A. "},
-                            {
-                                "type": "video",
-                                "video": rejected_frames,
-                                **content_extras,
-                            },
-                            {"type": "text", "text": "<|split_token|>"},
-                            {"type": "text", "text": "This is Trajectory B. "},
-                            {
-                                "type": "video",
-                                "video": chosen_frames,
-                                **content_extras,
-                            },
-                            {"type": "text", "text": "<|pref_token|>"},
-                        ],
-                    }
-                ]
+                traj_a_field = rejected_video_field
+                traj_b_field = chosen_video_field
+            
+            # Build content list
+            content_list = [
+                {"type": "text", "text": prompt},
+                {"type": "text", "text": "This is Trajectory A. "},
+            ]
+            self._add_vision_content_to_list(content_list, traj_a_field, content_extras)
+            content_list.extend([
+                {"type": "text", "text": "<|split_token|>"},
+                {"type": "text", "text": "This is Trajectory B. "},
+            ])
+            self._add_vision_content_to_list(content_list, traj_b_field, content_extras)
+            content_list.append({"type": "text", "text": "<|pref_token|>"})
+            
+            conversation = [
+                {
+                    "role": "user",
+                    "content": content_list,
+                }
+            ]
 
             all_messages.append(conversation)
 
@@ -462,90 +476,52 @@ class RFMBatchCollator(BaseCollator):
                 sample.diff_trajectory.frames, sample.diff_trajectory.frames_shape
             )
 
-            if "Qwen" in self.base_model_id:
-                content_extras = {
-                    "resized_height": self.resized_height,
-                    "resized_width": self.resized_width,
-                }
-            elif "SmolVLM" in self.base_model_id:
-                # Write frames to temporary files for SmolVLM
-                # Use UUID to avoid collisions when using multiple data workers
-                unique_id_ref = uuid.uuid4().hex
-                unique_id_sim = uuid.uuid4().hex
-                unique_id_diff = uuid.uuid4().hex
-                tmp_ref = Path(tempfile.gettempdir()) / f"tmp_ref_{unique_id_ref}.mp4"
-                write_mp4(reference_frames, tmp_ref, fps=1)
-                reference_frames_video = str(tmp_ref)
-
-                tmp_sim = Path(tempfile.gettempdir()) / f"tmp_sim_{unique_id_sim}.mp4"
-                write_mp4(sim_frames, tmp_sim, fps=1)
-                sim_frames_video = str(tmp_sim)
-
-                tmp_diff = Path(tempfile.gettempdir()) / f"tmp_diff_{unique_id_diff}.mp4"
-                write_mp4(diff_frames, tmp_diff, fps=1)
-                diff_frames_video = str(tmp_diff)
-
-                content_extras = {}
-            else:
-                content_extras = {}
-
-            # For SmolVLM, use the video paths; for Qwen, use the PIL images
-            if "SmolVLM" in self.base_model_id:
-                ref_video = reference_frames_video
-                sim_video = sim_frames_video
-                diff_video = diff_frames_video
-            else:
-                ref_video = reference_frames
-                sim_video = sim_frames
-                diff_video = diff_frames
+            # Prepare frames for conversation (handles multi-image vs video conversion)
+            ref_video, content_extras = self._prepare_frames_for_conversation(
+                reference_frames, prefix="tmp_ref"
+            )
+            sim_video, _ = self._prepare_frames_for_conversation(sim_frames, prefix="tmp_sim")
+            diff_video, _ = self._prepare_frames_for_conversation(diff_frames, prefix="tmp_diff")
 
             # Process reference vs trajectory sim
             prompt_sim = f"For the task '{sample.ref_trajectory.task}', compare these two trajectories and evaluate how similar they are in terms of task completion and behavior."
+            content_list_sim = [
+                {"type": "text", "text": prompt_sim},
+                {"type": "text", "text": "This is the reference trajectory. "},
+            ]
+            self._add_vision_content_to_list(content_list_sim, ref_video, content_extras)
+            content_list_sim.extend([
+                {"type": "text", "text": "<|split_token|>"},
+                {"type": "text", "text": "This is the comparison trajectory. "},
+            ])
+            self._add_vision_content_to_list(content_list_sim, sim_video, content_extras)
+            content_list_sim.append({"type": "text", "text": "<|sim_token|>"})
+            
             conversation_ref_sim = [
                 {
                     "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt_sim},
-                        {"type": "text", "text": "This is the reference trajectory. "},
-                        {
-                            "type": "video",
-                            "video": ref_video,
-                            **content_extras,
-                        },
-                        {"type": "text", "text": "<|split_token|>"},
-                        {"type": "text", "text": "This is the comparison trajectory. "},
-                        {
-                            "type": "video",
-                            "video": sim_video,
-                            **content_extras,
-                        },
-                        {"type": "text", "text": "<|sim_token|>"},
-                    ],
+                    "content": content_list_sim,
                 }
             ]
 
             # Process reference vs trajectory diff
             prompt_diff = f"For the task '{sample.ref_trajectory.task}', compare these two trajectories and evaluate how similar they are in terms of task completion and behavior."
+            content_list_diff = [
+                {"type": "text", "text": prompt_diff},
+                {"type": "text", "text": "This is the reference trajectory. "},
+            ]
+            self._add_vision_content_to_list(content_list_diff, ref_video, content_extras)
+            content_list_diff.extend([
+                {"type": "text", "text": "<|split_token|>"},
+                {"type": "text", "text": "This is the comparison trajectory. "},
+            ])
+            self._add_vision_content_to_list(content_list_diff, diff_video, content_extras)
+            content_list_diff.append({"type": "text", "text": "<|sim_token|>"})
+            
             conversation_ref_diff = [
                 {
                     "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt_diff},
-                        {"type": "text", "text": "This is the reference trajectory. "},
-                        {
-                            "type": "video",
-                            "video": ref_video,
-                            **content_extras,
-                        },
-                        {"type": "text", "text": "<|split_token|>"},
-                        {"type": "text", "text": "This is the comparison trajectory. "},
-                        {
-                            "type": "video",
-                            "video": diff_video,
-                            **content_extras,
-                        },
-                        {"type": "text", "text": "<|sim_token|>"},
-                    ],
+                    "content": content_list_diff,
                 }
             ]
 

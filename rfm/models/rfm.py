@@ -31,8 +31,7 @@ class RFM(PreTrainedModel):
         super().__init__(config)
 
         if "SmolVLM" in base_model_id:
-            # hidden_size = config.vision_config.hidden_size
-            hidden_size = 960
+            hidden_size = config.text_config.hidden_size
             self.model_cls = SmolVLMModel
         else:
             hidden_size = config.hidden_size

@@ -1035,9 +1035,10 @@ class RFMHeadsTrainer(Trainer):
                 device=target_progress.device,
             )
 
-        # Handle Qwen downsampling: take every 2nd frame if using Qwen
+        # Handle Qwen downsampling: take every 2nd frame if using Qwen and NOT using multi_image
+        # In multi_image mode, we already get one embedding per frame, so no downsampling needed
         # Ensure success_logits matches target_progress length after downsampling
-        if "Qwen" in self.config.model.base_model_id:
+        if "Qwen" in self.config.model.base_model_id and not self.config.data.use_multi_image:
             target_progress = target_progress[:, ::2]
             if padding_mask is not None:
                 padding_mask = padding_mask[:, ::2]
@@ -1117,8 +1118,9 @@ class RFMHeadsTrainer(Trainer):
         if isinstance(target_progress, list):
             target_progress = torch.stack(target_progress)
 
-        # Handle Qwen downsampling: take every 2nd frame if using Qwen
-        if "Qwen" in self.config.model.base_model_id:
+        # Handle Qwen downsampling: take every 2nd frame if using Qwen and NOT using multi_image
+        # In multi_image mode, we already get one embedding per frame, so no downsampling needed
+        if "Qwen" in self.config.model.base_model_id and not self.config.data.use_multi_image:
             target_progress = target_progress[:, ::2]
             if padding_mask is not None:
                 padding_mask = padding_mask[:, ::2]
@@ -1202,7 +1204,10 @@ class RFMHeadsTrainer(Trainer):
             padding_mask=padding_mask,
         )
 
-        if "Qwen" in self.config.model.base_model_id:
+        # Handle Qwen downsampling: take every 2nd frame if using Qwen and NOT using multi_image
+        # In multi_image mode, we already get one embedding per frame, so no downsampling needed
+        # This downsampling is needed for creating the combined_mask that matches progress_loss_all shape
+        if "Qwen" in self.config.model.base_model_id and not self.config.data.use_multi_image:
             progress_target = progress_target[:, ::2]
             if padding_mask is not None:
                 padding_mask = padding_mask[:, ::2]

@@ -227,7 +227,6 @@ class RFMVQATrainer(RFMHeadsTrainer):
             progress_losses = []
             for i, prediction in enumerate(predictions):
                 try:
-                    rank_0_print(f"prediction: {prediction}")
                     progress_pred = ast.literal_eval(prediction)
                     # Ensure tensors are on correct device
                     progress_pred_tensor = torch.tensor(progress_pred, device=self.accelerator.device, dtype=torch.float32)

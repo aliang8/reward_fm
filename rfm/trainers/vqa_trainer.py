@@ -72,7 +72,9 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
         if sample_type == "progress":
             pred_ids = outputs.logits.argmax(dim=-1)
-            tokenizer = self.model.base_model.processor.tokenizer
+            # RFMVQA has tokenizer directly, handle DDP wrapping
+            rfm_model = self.model.module if hasattr(self.model, 'module') else self.model
+            tokenizer = rfm_model.tokenizer
             pred_texts = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
             predictions = [extract_answer_from_text(text) for text in pred_texts]
             progress_logits = []
@@ -84,7 +86,14 @@ class RFMVQATrainer(RFMHeadsTrainer):
             progress_logits = {"A": progress_logits, "B": None}
         else:
             progress_logits = None
-        model_output = ModelOutput(progress_logits=progress_logits)
+        
+        # Create ModelOutput with all expected fields to match parent class expectations
+        model_output = ModelOutput(
+            progress_logits=progress_logits,
+            success_logits=None,  # VQA doesn't use success head
+            pref_logits=None,     # VQA doesn't use preference head
+            sim_logits=None,      # VQA doesn't use similarity head
+        )
         return model_output, self.timing_raw
 
     def compute_loss(self, model, inputs, return_outputs=False, training=True, **kwargs):
@@ -111,7 +120,9 @@ class RFMVQATrainer(RFMHeadsTrainer):
         num_progress = inputs.get("num_progress", 0)
 
         # Initialize loss components and metadata
-        total_loss = 0.0
+        # Initialize as tensor to avoid issues when no samples exist
+        # Don't set requires_grad=True on leaf tensor - it will get gradients from operations
+        total_loss = torch.tensor(0.0, device=self.accelerator.device)
         log_metadata = {}
 
         # Compute VQA loss for each type of input
@@ -164,10 +175,14 @@ class RFMVQATrainer(RFMHeadsTrainer):
             second_per_grid_ts=inputs.get("second_per_grid_ts"),
         )
 
+        # RFMVQA has model directly, handle DDP wrapping
+        rfm_model = self.model.module if hasattr(self.model, 'module') else self.model
+        vocab_size = rfm_model.model.config.text_config.vocab_size
+        
         loss = ForCausalLMLoss(
             logits=outputs.logits,
             labels=inputs["labels"],
-            vocab_size=self.model.base_model.model.config.text_config.vocab_size,
+            vocab_size=vocab_size,
             reduction="none",
         )
         # reshape
@@ -182,7 +197,9 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
         # compute accuracy
         pred_ids = outputs.logits.argmax(dim=-1)
-        tokenizer = self.model.base_model.processor.tokenizer
+        # RFMVQA has tokenizer directly, handle DDP wrapping
+        rfm_model = self.model.module if hasattr(self.model, 'module') else self.model
+        tokenizer = rfm_model.tokenizer
         pred_texts = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
 
         if mode == "preference":
@@ -205,13 +222,22 @@ class RFMVQATrainer(RFMHeadsTrainer):
             predictions = [extract_answer_from_text(text) for text in pred_texts]
             gt_labels = inputs["target_progress"]
 
+            # Compute progress prediction accuracy (for logging)
             progress_losses = []
-            for prediction in predictions:
+            for i, prediction in enumerate(predictions):
                 try:
                     progress_pred = ast.literal_eval(prediction)
-                    progress_losses.append(F.mse_loss(torch.tensor(progress_pred), torch.tensor(gt_labels)))
-                except:
-                    progress_losses.append(torch.tensor(float(0)))
+                    # Ensure tensors are on correct device
+                    progress_pred_tensor = torch.tensor(progress_pred, device=self.accelerator.device, dtype=torch.float32)
+                    gt_tensor = torch.tensor(gt_labels[i], device=self.accelerator.device, dtype=torch.float32)
+                    progress_losses.append(F.mse_loss(progress_pred_tensor, gt_tensor).item())
+                except Exception:
+                    progress_losses.append(float('inf'))  # Mark failed predictions
+            
+            # Log average progress MSE if we have valid predictions
+            valid_losses = [l for l in progress_losses if l != float('inf')]
+            if valid_losses:
+                loss_dict.update({f"{prefix}/{mode}_mse": sum(valid_losses) / len(valid_losses)})
         else:
             pass
 
@@ -239,9 +265,9 @@ class RFMVQATrainer(RFMHeadsTrainer):
                     f"{prefix}_strat/{mode_name}_loss_{strat}": (loss_per_example[mask == 1]).mean().item()
                 })
 
-        data_source = inputs.get("data_source", [])
+        data_sources = inputs.get("data_source", [])
 
-        for data_source in set(data_source):
+        for data_source in set(data_sources):
             mask = [1 if s == data_source else 0 for s in inputs["data_source"]]
             mask = torch.tensor(mask, device=self.accelerator.device)
             loss_dict.update({

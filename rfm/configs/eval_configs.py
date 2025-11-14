@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 """
 Evaluation configuration for RFM.
-This file contains the EvaluationConfig dataclass for evaluation-specific parameters.
+This file contains evaluation configuration classes:
+- EvalServerConfig: For evaluation server runs (eval_server.py)
+- EvalOnlyConfig: For standalone evaluation runs (run_eval_only.py)
 """
 
 from dataclasses import dataclass, field
+from typing import Optional
 
 from rfm.configs.experiment_configs import CustomEvaluationConfig
 from rfm.configs.experiment_configs import DataConfig
 
 
 @dataclass
-class EvaluationConfig:
-    """Configuration for evaluation runs."""
+class EvalServerConfig:
+    """Configuration for evaluation server runs (eval_server.py)."""
 
     # Model path to load training config from
     model_path: str = field(
@@ -41,4 +44,39 @@ class EvaluationConfig:
 
     data: DataConfig = field(
         default_factory=DataConfig, metadata={"help": "Data configuration (reused from experiment_configs)"}
+    )
+
+
+# For backwards compatibility
+EvaluationConfig = EvalServerConfig
+
+
+@dataclass
+class EvalOnlyConfig:
+    """Configuration for standalone evaluation runs (run_eval_only.py)."""
+
+    # Model path (HuggingFace model ID or local checkpoint path)
+    model_path: str = field(
+        default="",
+        metadata={"help": "HuggingFace model ID (e.g., 'aliangdw/rfm_model') or local checkpoint path"},
+    )
+
+    # Optional experiment config override (pyrallis reserved "config_path", so using exp_config_path)
+    exp_config_path: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Path to experiment config file (if not provided, will try to load from HuggingFace repo or checkpoint/config.yaml)"
+        },
+    )
+
+    # Output directory for evaluation results
+    output_dir: Optional[str] = field(
+        default=None,
+        metadata={"help": "Output directory for evaluation results (defaults to checkpoint_path/eval_output)"},
+    )
+
+    # Custom evaluation configuration
+    custom_eval: CustomEvaluationConfig = field(
+        default_factory=CustomEvaluationConfig,
+        metadata={"help": "Custom evaluation configuration (reused from experiment_configs)"},
     )

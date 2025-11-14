@@ -12,7 +12,7 @@ class RFMVQA(PreTrainedModel):
 
     config_class = Qwen2_5_VLForConditionalGeneration.config_class
 
-    def __init__(self, config, processor, tokenizer, base_model=None, base_model_id=None):
+    def __init__(self, config, processor, tokenizer, base_model=None, base_model_id=None, model_config=None):
         super().__init__(config)
         # Use Qwen2_5_VLForConditionalGeneration for VQA (language generation)
         if base_model is not None:
@@ -41,6 +41,7 @@ class RFMVQA(PreTrainedModel):
         image_grid_thw=None,
         video_grid_thw=None,
         labels=None,
+        second_per_grid_ts=None,
         **kwargs,
     ):
         """
@@ -71,6 +72,9 @@ class RFMVQA(PreTrainedModel):
             labels (torch.LongTensor, optional):
                 Labels for computing the language modeling loss. Shape: [batch_size, sequence_length]
                 If provided, the model will compute the loss for VQA training.
+                
+            second_per_grid_ts (torch.FloatTensor, optional):
+                Time stamps for video grid processing
 
             **kwargs: Additional keyword arguments passed to the base model.
 
@@ -83,16 +87,21 @@ class RFMVQA(PreTrainedModel):
                 - attentions (tuple, optional): Attention weights from all layers
         """
         # Forward pass through the base VLM
-        outputs = self.model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            pixel_values=pixel_values,
-            pixel_values_videos=pixel_values_videos,
-            image_grid_thw=image_grid_thw,
-            video_grid_thw=video_grid_thw,
-            labels=labels,
-            **kwargs,
-        )
+        # Only pass second_per_grid_ts if it's not None (some models may not support it)
+        forward_kwargs = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "pixel_values": pixel_values,
+            "pixel_values_videos": pixel_values_videos,
+            "image_grid_thw": image_grid_thw,
+            "video_grid_thw": video_grid_thw,
+            "labels": labels,
+        }
+        
+        if second_per_grid_ts is not None:
+            forward_kwargs["second_per_grid_ts"] = second_per_grid_ts
+            
+        outputs = self.model(**forward_kwargs, **kwargs)
 
         # Return the outputs directly - this is the naive baseline approach
         # The base VLM's language modeling head will handle VQA generation

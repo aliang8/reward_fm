@@ -140,8 +140,8 @@ training:
   
   # Evaluation settings
   evaluation_strategy: "steps"  # Options: "no", "steps", "epoch"
-  eval_steps: 500  
-  custom_eval_steps: 500
+  eval_steps: 250  
+  custom_eval_steps: 250
   # eval_epochs: 100  
   per_device_eval_batch_size: 16  # Evaluation batch size per device
   do_eval: true  # Enable evaluation during training

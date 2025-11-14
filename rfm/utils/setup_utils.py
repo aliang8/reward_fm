@@ -167,7 +167,7 @@ def setup_model_and_processor(
     if has_flash_attn:
         extra_kwargs = {"attn_implementation": "flash_attention_2"}
     else:
-        extra_kwargs = {}
+        extra_kwargs = {"attn_implementation": "sdpa"}
 
     # Load processor and tokenizer
     if "SmolVLM" in cfg.base_model_id or "Qwen" in cfg.base_model_id:
@@ -204,6 +204,7 @@ def setup_model_and_processor(
                     dtype=torch_dtype,  # Set the dtype from config,
                     full_finetuning=True,
                     device_map=None,
+                    attn_implementation="sdpa",
                 )
                 if cfg.model_type == "default":
                     base_model = base_model.model
@@ -293,18 +294,53 @@ def setup_model_and_processor(
         )
 
         if hf_model_id:
-            # Check if this is a HuggingFace repo (not a local path) and find best tag
-            if "/" in hf_model_id and not hf_model_id.startswith("/") and not "@" in hf_model_id:
-                best_tag, best_score = find_best_model_tag(hf_model_id)
-                if best_tag:
-                    rank_0_print(f"Loading model from best tag: {hf_model_id} (score: {best_score})")
+            # Allow users to specify explicit revisions via repo@revision
+            if "@" in hf_model_id:
+                repo_id, explicit_revision = hf_model_id.split("@", 1)
             else:
-                rank_0_print(f"Loading model from {hf_model_id}")
+                repo_id, explicit_revision = hf_model_id, None
 
-            # before = model.model.visual.blocks[0].mlp.down_proj.weight
-            # before = model.preference_head.weight
+            revision_to_load = explicit_revision
+
+            # Check if this is a HuggingFace repo (not a local path) and find best tag
+            if "/" in repo_id and not repo_id.startswith("/"):
+                if revision_to_load:
+                    rank_0_print(f"Loading model {repo_id} at explicit revision '{revision_to_load}'")
+                else:
+                    best_tag, best_score = find_best_model_tag(repo_id)
+                    if best_tag:
+                        revision_to_load = best_tag
+                        rank_0_print(
+                            f"Loading model from best tag: {repo_id}@{revision_to_load} (score: {best_score})"
+                        )
+                    else:
+                        rank_0_print(f"No best tag found, loading latest revision of {repo_id}")
+                hf_repo_with_rev = repo_id
+            else:
+                hf_repo_with_rev = repo_id
+                rank_0_print(f"Loading local/explicit model from {hf_repo_with_rev}")
+
+            before = model.model.visual.blocks[0].mlp.down_proj.weight
+            before = model.preference_head[0].weight
             # load the model from the evaluation path
-            model = model_cls.from_pretrained(hf_model_id, processor=processor, tokenizer=tokenizer, base_model=base_model, base_model_id=cfg.base_model_id, model_config=cfg)
+            model = model_cls.from_pretrained(
+                hf_repo_with_rev,
+                processor=processor,
+                tokenizer=tokenizer,
+                base_model=base_model,
+                base_model_id=cfg.base_model_id,
+                model_config=cfg,
+                revision=revision_to_load,
+            )
+
+            after = model.model.visual.blocks[0].mlp.down_proj.weight
+            after = model.preference_head[0].weight
+            rank_0_print(f"Before: {before.shape}, {before.sum()} | After: {after.shape}, {after.sum()}")
+            # check that before and after are different 
+            if torch.allclose(before, after):
+                rank_0_print("Before and after are the same! Check if you loaded the pretrained model correctly")
+                import ipdb; ipdb.set_trace()
+
     elif "rewind_transformer" in cfg.base_model_id:
         # Initialize new model with encoders
         # Pretrained image and text encoders

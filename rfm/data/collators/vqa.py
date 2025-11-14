@@ -49,6 +49,7 @@ class VQABatchCollator(RFMBatchCollator):
             rejected_frames = convert_frames_to_pil_images(
                 sample.rejected_trajectory.frames, sample.rejected_trajectory.frames_shape
             )
+            #prompt = f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', evaluate which one better demonstrates successful completion of the task. Compare the trajectories and determine which is preferred."
             prompt = f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', which one best corresponds to solving the task? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags. For example, if you prefer trajectory A, your answer should be <ans>A</ans>."
 
             if "Qwen" in self.base_model_id:
@@ -124,11 +125,18 @@ class VQABatchCollator(RFMBatchCollator):
         if not self.inference:
             labels = batch_inputs["input_ids"].clone()
 
-            # mask out the prompt
+            # mask out the prompt - only train on assistant response
             assistant_id = self.processor.tokenizer.encode("assistant", add_special_tokens=False)[0]
             for i in range(len(labels)):
-                token_after_assistant = (labels[i] == assistant_id).nonzero()[0][0] + 1
-                labels[i][:token_after_assistant] = -100
+                # Find where assistant token appears
+                assistant_positions = (labels[i] == assistant_id).nonzero(as_tuple=False)
+                if len(assistant_positions) > 0:
+                    # Mask everything up to and including the token after "assistant"
+                    token_after_assistant = assistant_positions[0][0] + 1
+                    labels[i][:token_after_assistant] = -100
+                else:
+                    # If assistant token not found, mask entire sequence (shouldn't happen in normal training)
+                    labels[i][:] = -100
 
             batch_inputs["labels"] = labels
 
@@ -152,7 +160,6 @@ class VQABatchCollator(RFMBatchCollator):
             frames = convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
 
             prompt = f"For the task '{sample.trajectory.task}', estimate the progress at each frame in the trajectory. Give a list of numbers between 0 and 1 where 0 means no progress and 1 means successful completion of the task. Format your answer enclosed by <ans> and </ans> tags. For example, if you think the progress at each frame is [0.0, 0.1, 0.2, 0.3, 0.4, 0.5], your answer should be <ans>[0.0, 0.1, 0.2, 0.3, 0.4, 0.5]</ans>."
-
             if "Qwen" in self.base_model_id:
                 content_extras = {
                     "resized_height": self.resized_height,
@@ -194,11 +201,18 @@ class VQABatchCollator(RFMBatchCollator):
         if not self.inference:
             labels = batch_inputs["input_ids"].clone()
 
-            # mask out the prompt
+            # mask out the prompt - only train on assistant response
             assistant_id = self.processor.tokenizer.encode("assistant", add_special_tokens=False)[0]
             for i in range(len(labels)):
-                token_after_assistant = (labels[i] == assistant_id).nonzero()[0][0] + 1
-                labels[i][:token_after_assistant] = -100
+                # Find where assistant token appears
+                assistant_positions = (labels[i] == assistant_id).nonzero(as_tuple=False)
+                if len(assistant_positions) > 0:
+                    # Mask everything up to and including the token after "assistant"
+                    token_after_assistant = assistant_positions[0][0] + 1
+                    labels[i][:token_after_assistant] = -100
+                else:
+                    # If assistant token not found, mask entire sequence (shouldn't happen in normal training)
+                    labels[i][:] = -100
 
             batch_inputs["labels"] = labels
 

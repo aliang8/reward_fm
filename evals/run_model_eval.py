@@ -34,7 +34,7 @@ from rfm.configs.experiment_configs import CustomEvaluationConfig, DataConfig
 import aiohttp
 
 from evals.eval_utils import build_payload, post_batch, post_batch_npy, post_batch_npy_async
-from rfm.configs.eval_configs import EvaluationConfig
+from rfm.configs.eval_configs import EvalServerConfig, EvaluationConfig
 from rfm.data.dataset_types import SampleType
 from rfm.utils.timer import timer
 from rfm.utils.setup_utils import setup_dataset

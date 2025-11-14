@@ -102,9 +102,10 @@ def load_embeddings_from_path(embeddings_path: str) -> torch.Tensor:
         rfm_dataset_path = os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
         # HACK:
         rfm_dataset_path = rfm_dataset_path.replace("processed_datasets/", "")
+        rfm_dataset_path = rfm_dataset_path.replace("processed_datasets", "")
         if rfm_dataset_path:
             embeddings_path = os.path.join(rfm_dataset_path, embeddings_path)
-
+    
     with open(embeddings_path, "rb") as f:
         embeddings_data = torch.load(f, map_location="cpu")
     return embeddings_data

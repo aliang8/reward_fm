@@ -46,7 +46,6 @@ class RFM(PreTrainedModel):
         self.config_class = self.model_cls.config_class
         self.base_model_id = base_model_id
 
-        # Three prediction heads for different objectives
         self.progress_head = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
             nn.LayerNorm(hidden_size // 2),
@@ -64,20 +63,19 @@ class RFM(PreTrainedModel):
         )
         self.similarity_head = nn.Linear(hidden_size, 1)
 
-        # Ensure all heads have the same dtype as the base model
-        self.model_dtype = self.model.dtype
-        self.progress_head = self.progress_head.to(dtype=self.model_dtype)
-        self.preference_head = self.preference_head.to(dtype=self.model_dtype)
-        self.similarity_head = self.similarity_head.to(dtype=self.model_dtype)
-
-        # Success prediction head (binary logit per frame)
         self.success_head = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
             nn.LayerNorm(hidden_size // 2),
             nn.GELU(),
             nn.Dropout(0.1),
             nn.Linear(hidden_size // 2, 1),
-        ).to(dtype=self.model_dtype)
+        )
+
+        self.model_dtype = self.model.dtype
+        self.progress_head = self.progress_head.to(dtype=self.model_dtype)
+        self.preference_head = self.preference_head.to(dtype=self.model_dtype)
+        self.similarity_head = self.similarity_head.to(dtype=self.model_dtype)
+        self.success_head = self.success_head.to(dtype=self.model_dtype)
 
         self.processor = processor
         self.tokenizer = tokenizer

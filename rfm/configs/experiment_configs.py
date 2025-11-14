@@ -111,6 +111,15 @@ class DataConfig:
     resized_height: int = field(default=224, metadata={"help": "Height to resize video frames to"})
     resized_width: int = field(default=224, metadata={"help": "Width to resize video frames to"})
 
+    # Video/image processing mode
+    use_multi_image: bool = field(
+        default=False,
+        metadata={
+            "help": "If True, feed frames as a list of images instead of converting to video. "
+            "This avoids video encoding overhead and works for both SmolVLM and Qwen models."
+        },
+    )
+
     # Data generation parameters
     sample_type_ratio: List[float] = field(
         default_factory=lambda: [1, 1, 1], metadata={"help": "Ratio of pref, progress and similarity samples"}

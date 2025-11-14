@@ -176,8 +176,9 @@ def setup_model_and_processor(
                 cfg.base_model_id,
                 trust_remote_code=cfg.trust_remote_code,
                 # padding_side="left",
-                # size={"longest_edge": 512},
-                # max_image_size={"longest_edge": 512},
+                size={"longest_edge": 512},
+                max_image_size={"longest_edge": 512},
+                use_fast=False,
             )
 
             rank_0_print(f"SmolVLM Processor: {processor}")
@@ -419,9 +420,14 @@ def setup_model_and_processor(
             param.requires_grad = True
 
         if "SmolVLM" in cfg.base_model_id:
-            if "lm_head" in name:
+            if "text_model" in name:
                 param.requires_grad = cfg.train_language_model
-            # i think we want to train the connector head
+            if "vision_model" in name:
+                param.requires_grad = cfg.train_vision_encoder
+            # i think we want to train the connector head always
+            # we don't need the lm_head to be trainable
+            if "lm_head" in name:
+                param.requires_grad = False
 
     rank_0_print("Training configuration:")
     rank_0_print(f"  - Vision encoder: {cfg.train_vision_encoder}")
@@ -433,7 +439,8 @@ def setup_model_and_processor(
 
     for name, param in model.named_parameters():
         if param.requires_grad:
-            rank_0_print(f"{name:60} | {param.shape}")
+            rank_0_print(f"{name:60} | {param.shape} | RG: {param.requires_grad}")
+            
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     all_params = sum(p.numel() for p in model.parameters())
     rank_0_print(
@@ -553,6 +560,7 @@ def setup_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg
         "resized_height": cfg.data.resized_height,
         "resized_width": cfg.data.resized_width,
         "base_model_id": cfg.model.base_model_id,
+        "use_multi_image": cfg.data.use_multi_image,
     }
     if "Qwen" in cfg.model.base_model_id or "SmolVLM" in cfg.model.base_model_id:
         if cfg.model.model_type == "default":

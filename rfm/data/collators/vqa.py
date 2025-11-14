@@ -147,7 +147,8 @@ class VQABatchCollator(RFMBatchCollator):
             # Add assistant response only if not in inference mode and target_progress exists
             if not self.inference and target_progress is not None:
                 # Round target progress to 2 decimal places for the response
-                target_progress_rounded = np.round(target_progress, 2)
+                # Convert to Python list to get proper comma-separated format
+                target_progress_rounded = np.round(target_progress, 2).tolist()
                 conversation.append({"role": "assistant", "content": f"<ans>{target_progress_rounded}</ans>"})
 
             all_messages.append(conversation)

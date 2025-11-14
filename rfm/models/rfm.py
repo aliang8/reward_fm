@@ -94,17 +94,18 @@ class RFM(PreTrainedModel):
         """Delegates gradient checkpointing disabling to the base model."""
         self.model.gradient_checkpointing_disable(**kwargs)
 
-    def _extract_hidden_states_for_smolvlm(
+    def _extract_hidden_states_from_token_pairs(
         self,
         hidden_state: torch.Tensor,
         input_ids: torch.Tensor,
     ) -> torch.Tensor:
         """
-        Extract image/video frame embeddings from hidden states for SmolVLM.
+        Extract image/video frame embeddings from hidden states by finding token pairs and mean pooling.
         
-        SmolVLM uses <fake_token_around_image> tokens to wrap images/videos.
-        This function finds all pairs of these tokens and mean pools the hidden states
-        between them to get per-frame/image embeddings.
+        This is a general function that works for both SmolVLM and Qwen multi-image mode.
+        It automatically detects which model is being used based on the base_model_id:
+        - SmolVLM: Uses the same token for start and end: <fake_token_around_image>
+        - Qwen: Uses different tokens: <|vision_start|> and <|vision_end|>
         
         Args:
             hidden_state: Hidden states tensor [seq_len, hidden_dim]
@@ -114,30 +115,82 @@ class RFM(PreTrainedModel):
             frame_embeddings: Tensor [num_frames, hidden_dim] containing mean-pooled
                             embeddings for each frame/image between token pairs
         """
-        # Get the token ID for <fake_token_around_image>
-        fake_token_id = self.tokenizer.convert_tokens_to_ids("<fake_token_around_image>")
-                   
-        # Find all positions where the fake token appears
-        token_positions = (input_ids == fake_token_id).nonzero(as_tuple=True)[0]
+        # Detect model type and get appropriate tokenizer and tokens
+        if "SmolVLM" in self.base_model_id:
+            # SmolVLM mode: same token appears in pairs
+            tokenizer = self.tokenizer
+            start_token = "<fake_token_around_image>"
+            end_token = None  # Same token for both start and end
+            use_same_token = True
+        else:
+            # Qwen mode: different start and end tokens
+            tokenizer = self.processor.tokenizer
+            start_token = "<|vision_start|>"
+            end_token = "<|vision_end|>"
+            use_same_token = False
         
-        if len(token_positions) == 0:
+        # Get token IDs
+        start_token_id = tokenizer.convert_tokens_to_ids(start_token)
+        
+        # Find all positions where start tokens appear
+        start_positions = (input_ids == start_token_id).nonzero(as_tuple=True)[0]
+        
+        if len(start_positions) == 0:
             raise ValueError(
-                f"No <fake_token_around_image> tokens found in input_ids. "
-                f"Token ID {fake_token_id} not found in sequence."
+                f"No {start_token} tokens found in input_ids. "
+                f"Token ID {start_token_id} not found in sequence."
             )
         
-        if len(token_positions) % 2 != 0:
-            raise ValueError(
-                f"Expected even number of <fake_token_around_image> tokens (pairs), "
-                f"but found {len(token_positions)} tokens."
-            )
-        
-        # Group tokens into pairs and extract hidden states between them
-        frame_embeddings = []
-        for i in range(0, len(token_positions), 2):
-            start_pos = token_positions[i].item()
-            end_pos = token_positions[i + 1].item()
+        # Handle different pairing modes
+        if use_same_token:
+            # SmolVLM mode: same token appears in pairs
+            if len(start_positions) % 2 != 0:
+                raise ValueError(
+                    f"Expected even number of {start_token} tokens (pairs), "
+                    f"but found {len(start_positions)} tokens."
+                )
             
+            # Group tokens into pairs (every two consecutive tokens form a pair)
+            token_pairs = []
+            for i in range(0, len(start_positions), 2):
+                token_pairs.append((start_positions[i].item(), start_positions[i + 1].item()))
+        else:
+            # Qwen mode: different start and end tokens
+            end_token_id = tokenizer.convert_tokens_to_ids(end_token)
+            
+            # Find all positions where end tokens appear
+            end_positions = (input_ids == end_token_id).nonzero(as_tuple=True)[0]
+            
+            if len(end_positions) == 0:
+                raise ValueError(
+                    f"No {end_token} tokens found in input_ids. "
+                    f"Token ID {end_token_id} not found in sequence."
+                )
+            
+            if len(start_positions) != len(end_positions):
+                raise ValueError(
+                    f"Mismatched number of tokens: "
+                    f"found {len(start_positions)} {start_token} tokens "
+                    f"and {len(end_positions)} {end_token} tokens."
+                )
+            
+            # Pair up start and end tokens (they should appear in order: start, end, start, end, ...)
+            token_pairs = []
+            for i in range(len(start_positions)):
+                start_pos = start_positions[i].item()
+                end_pos = end_positions[i].item()
+                
+                if start_pos >= end_pos:
+                    raise ValueError(
+                        f"Invalid token pair at index {i}: "
+                        f"{start_token} at {start_pos}, {end_token} at {end_pos}. "
+                        f"Start must come before end."
+                    )
+                token_pairs.append((start_pos, end_pos))
+        
+        # Extract hidden states between token pairs
+        frame_embeddings = []
+        for start_pos, end_pos in token_pairs:
             # Extract hidden states between the token pair (exclusive of the tokens themselves)
             # Add 1 to start_pos to exclude the start token, end_pos is exclusive
             frame_tokens = hidden_state[start_pos + 1 : end_pos]
@@ -153,7 +206,7 @@ class RFM(PreTrainedModel):
             frame_embeddings.append(frame_embedding)
         
         if len(frame_embeddings) == 0:
-            return torch.empty(0, hidden_state.shape[-1], device=hidden_state.device)
+            return torch.empty(0, hidden_state.shape[-1], device=hidden_state.device, dtype=hidden_state.dtype)
         
         return torch.stack(frame_embeddings)  # [num_frames, hidden_dim]
 
@@ -328,9 +381,9 @@ class RFM(PreTrainedModel):
 
             with _timer("time/progress_logits", timing_raw=timing_raw):
                 for i in range(B):
-                    # Extract frame embeddings for this sample using <fake_token_around_image> tokens
+                    # Extract frame embeddings for this sample
                     # This returns embeddings for all frames from all videos in the sequence
-                    frame_embeddings = self._extract_hidden_states_for_smolvlm(
+                    frame_embeddings = self._extract_hidden_states_from_token_pairs(
                         hidden_state[i],  # [seq_len, hidden_dim]
                         input_ids[i],     # [seq_len]
                     )  # [num_frames, hidden_dim]
@@ -370,83 +423,135 @@ class RFM(PreTrainedModel):
             progress_logits = {"A": progress_logits_A, "B": progress_logits_B}
             success_logits = {"A": success_logits_A, "B": success_logits_B}
         else:
+            # Qwen2.5-VL path
             with _timer("time/rfm_forward", timing_raw=timing_raw):
                 outputs = self.model(**model_kwargs)
 
             # [batch_size, seq_len, hidden_size]
             hidden_state = outputs.last_hidden_state
 
-            # Original Qwen2.5-VL progress computation logic
-            # Find vision_start_token and split_token for trajectory separation
+            # Get token IDs for vision tokens
             vision_start_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|vision_start|>")
+            vision_end_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|vision_end|>")
+            split_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|split_token|>")
 
             progress_logits_A = []
             progress_logits_B = []
             success_logits_A = []
             success_logits_B = []
 
-            # temporal patch size
-            tps = self.processor.video_processor.temporal_patch_size
-            merge_size = self.processor.video_processor.merge_size
+            # temporal patch size (only needed for video mode)
+            tps = self.processor.video_processor.temporal_patch_size if hasattr(self.processor, 'video_processor') else 2
+            merge_size = self.processor.video_processor.merge_size if hasattr(self.processor, 'video_processor') else 14
 
             with _timer("time/progress_logits", timing_raw=timing_raw):
                 for i, seq_ids in enumerate(input_ids):
-                    # the input_ids is structured as follows
-                    # the split demarcates the end of trajectory A and the start of trajectory B
-                    # NOTE: base Qwen2.5_VL model has a temporal_patch_size of 2, so we can only
-                    # predict the progress for every 2 frames.
-                    # [vision_start, frame_1/2_tokens, ..., frame_N/2_tokens, split_token, frame_1/2_tokens, frame_2/2_tokens, ..., frame_N/2_tokens]
-                    # we want to extract the hidden_states at the frame boundaries for both trajectories
-                    # Find the position of the vision_start token
+                    # Find all vision token positions
                     vision_start_positions = (seq_ids == vision_start_token_id).nonzero(as_tuple=True)[0]
-                    if len(vision_start_positions) <= 0:
+                    vision_end_positions = (seq_ids == vision_end_token_id).nonzero(as_tuple=True)[0]
+                    
+                    if len(vision_start_positions) == 0:
                         raise ValueError(f"vision_start_token not found in sequence {i}")
-
-                    # Get video grid dimensions for this sample
-                    if video_grid_thw is None or i >= len(video_grid_thw):
-                        raise ValueError(f"video_grid_thw is required for progress prediction. Got: {video_grid_thw}")
-
-                    # For trajectory A: use video_grid_thw[i]
+                    
+                    # Detect multi-image mode: if we have multiple vision_start/end pairs
+                    # For progress samples: > 1 pair indicates multi-image mode
+                    # For preference/similarity: > 2 pairs indicates multi-image mode
+                    is_multi_image = False
                     if sample_type == "progress":
-                        current_video_grid_A = video_grid_thw[i]  # [T, H, W]
+                        is_multi_image = len(vision_start_positions) > 1
                     else:
-                        current_video_grid_A = video_grid_thw[i * tps]  # [T, H, W]
+                        is_multi_image = len(vision_start_positions) > 2
+                    
+                    if is_multi_image:
+                        # Multi-image mode: extract embeddings from each vision_start/end pair
+                        frame_embeddings = self._extract_hidden_states_from_token_pairs(
+                            hidden_state[i],  # [seq_len, hidden_dim]
+                            seq_ids,          # [seq_len]
+                        )  # [num_frames, hidden_dim]
+                        
+                        if frame_embeddings.shape[0] == 0:
+                            raise ValueError(f"No frame embeddings extracted for sample {i} in multi-image mode")
+                        
+                        # For progress samples, all frames belong to trajectory A
+                        if sample_type == "progress":
+                            trajectory_A_frames = frame_embeddings
+                            trajectory_B_frames = None
+                        else:
+                            # For preference/similarity, find the split token to separate trajectories
+                            split_positions = (seq_ids == split_token_id).nonzero(as_tuple=True)[0]
+                            if len(split_positions) == 0:
+                                raise ValueError(f"split_token not found in sequence {i} for preference/similarity sample")
+                            
+                            # Find which vision pairs belong to trajectory A vs B
+                            split_pos = split_positions[0].item()
+                            
+                            # Count vision pairs before and after split
+                            traj_a_pairs = sum(1 for pos in vision_start_positions if pos.item() < split_pos)
+                            trajectory_A_frames = frame_embeddings[:traj_a_pairs]
+                            trajectory_B_frames = frame_embeddings[traj_a_pairs:]
+                        
+                        # Apply heads to trajectory A frames
+                        progress_A = self.progress_head(trajectory_A_frames).squeeze(-1)  # [T_A]
+                        success_A = self.success_head(trajectory_A_frames).squeeze(-1)  # [T_A]
+                        progress_logits_A.append(progress_A)
+                        success_logits_A.append(success_A)
+                        
+                        # Apply heads to trajectory B frames (if available)
+                        if trajectory_B_frames is not None:
+                            progress_B = self.progress_head(trajectory_B_frames).squeeze(-1)  # [T_B]
+                            success_B = self.success_head(trajectory_B_frames).squeeze(-1)  # [T_B]
+                            progress_logits_B.append(progress_B)
+                            success_logits_B.append(success_B)
+                        else:
+                            progress_logits_B.append(None)
+                            success_logits_B.append(None)
+                    else:
+                        # Video mode: use existing temporal patch logic
+                        # Get video grid dimensions for this sample
+                        if video_grid_thw is None or i >= len(video_grid_thw):
+                            raise ValueError(f"video_grid_thw is required for progress prediction in video mode. Got: {video_grid_thw}")
 
-                    # Extract progress and success from trajectory A
-                    start_position_A = vision_start_positions[0].item()
-                    progress_A, success_A = self._extract_progress_from_trajectory(
-                        hidden_state[i],
-                        start_position_A,
-                        current_video_grid_A,
-                        merge_size,
-                    )
-                    progress_logits_A.append(progress_A)
-                    success_logits_A.append(success_A)
+                        # For trajectory A: use video_grid_thw[i]
+                        if sample_type == "progress":
+                            current_video_grid_A = video_grid_thw[i]  # [T, H, W]
+                        else:
+                            current_video_grid_A = video_grid_thw[i * tps]  # [T, H, W]
 
-                    # For progress-only samples, we don't need trajectory B
-                    if sample_type != "progress":
-                        # For trajectory B: use video_grid_thw[i+1]
-                        if (i * tps) + 1 >= len(video_grid_thw):
-                            raise ValueError(f"video_grid_thw index {(i * tps) + 1} out of bounds for trajectory B")
-                        current_video_grid_B = video_grid_thw[i * tps + 1]  # [T, H, W]
-
-                        # Extract progress and success from trajectory B
-                        start_position_B = vision_start_positions[1].item()
-                        progress_B, success_B = self._extract_progress_from_trajectory(
+                        # Extract progress and success from trajectory A
+                        start_position_A = vision_start_positions[0].item()
+                        progress_A, success_A = self._extract_progress_from_trajectory(
                             hidden_state[i],
-                            start_position_B,
-                            current_video_grid_B,
+                            start_position_A,
+                            current_video_grid_A,
                             merge_size,
                         )
-                        progress_logits_B.append(progress_B)
-                        success_logits_B.append(success_B)
-                    else:
-                        # For progress-only samples, trajectory B is None
-                        progress_logits_B.append(None)
-                        success_logits_B.append(None)
+                        progress_logits_A.append(progress_A)
+                        success_logits_A.append(success_A)
 
-                progress_logits = {"A": progress_logits_A, "B": progress_logits_B}
-                success_logits = {"A": success_logits_A, "B": success_logits_B}
+                        # For progress-only samples, we don't need trajectory B
+                        if sample_type != "progress":
+                            # For trajectory B: use video_grid_thw[i+1]
+                            if (i * tps) + 1 >= len(video_grid_thw):
+                                raise ValueError(f"video_grid_thw index {(i * tps) + 1} out of bounds for trajectory B")
+                            current_video_grid_B = video_grid_thw[i * tps + 1]  # [T, H, W]
+
+                            # Extract progress and success from trajectory B
+                            start_position_B = vision_start_positions[1].item()
+                            progress_B, success_B = self._extract_progress_from_trajectory(
+                                hidden_state[i],
+                                start_position_B,
+                                current_video_grid_B,
+                                merge_size,
+                            )
+                            progress_logits_B.append(progress_B)
+                            success_logits_B.append(success_B)
+                        else:
+                            # For progress-only samples, trajectory B is None
+                            progress_logits_B.append(None)
+                            success_logits_B.append(None)
+
+            progress_logits = {"A": progress_logits_A, "B": progress_logits_B}
+            success_logits = {"A": success_logits_A, "B": success_logits_B}
 
         # Create ModelOutput
         output = ModelOutput()

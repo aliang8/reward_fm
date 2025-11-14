@@ -8,6 +8,7 @@ for VQA-based reward modeling with different question types.
 import numpy as np
 import torch
 import tempfile
+import uuid
 from pathlib import Path
 
 from .rfm_heads import RFMBatchCollator
@@ -58,10 +59,13 @@ class VQABatchCollator(RFMBatchCollator):
                 }
             elif "SmolVLM" in self.base_model_id:
                 # we need to write the frames to a temporary file
-                tmp = Path(tempfile.gettempdir()) / f"tmp_chosen.mp4"
+                # Use UUID to avoid collisions when using multiple data workers
+                unique_id_chosen = uuid.uuid4().hex
+                unique_id_rejected = uuid.uuid4().hex
+                tmp = Path(tempfile.gettempdir()) / f"tmp_chosen_{unique_id_chosen}.mp4"
                 write_mp4(chosen_frames, tmp)
                 chosen_frames = str(tmp)
-                tmp = Path(tempfile.gettempdir()) / f"tmp_rejected.mp4"
+                tmp = Path(tempfile.gettempdir()) / f"tmp_rejected_{unique_id_rejected}.mp4"
                 write_mp4(rejected_frames, tmp)
                 rejected_frames = str(tmp)
                 content_extras = {}
@@ -160,7 +164,9 @@ class VQABatchCollator(RFMBatchCollator):
                 }
             elif "SmolVLM" in self.base_model_id:
                 # we need to write the frames to a temporary file
-                tmp = Path(tempfile.gettempdir()) / f"tmp_progress.mp4"
+                # Use UUID to avoid collisions when using multiple data workers
+                unique_id = uuid.uuid4().hex
+                tmp = Path(tempfile.gettempdir()) / f"tmp_progress_{unique_id}.mp4"
                 write_mp4(frames, tmp)
                 frames = str(tmp)
                 content_extras = {}

@@ -1,0 +1,9 @@
+data:
+  train_datasets:
+    - aliangdw_metaworld_metaworld_train
+  eval_datasets:
+    - aliangdw_metaworld_metaworld_eval
+
+custom_eval:
+  reward_alignment:
+    - aliangdw_metaworld_metaworld_eval

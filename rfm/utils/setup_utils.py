@@ -176,8 +176,8 @@ def setup_model_and_processor(
                 cfg.base_model_id,
                 trust_remote_code=cfg.trust_remote_code,
                 # padding_side="left",
-                # size={"longest_edge": 512},
-                # max_image_size={"longest_edge": 512},
+                size={"longest_edge": 512},
+                max_image_size={"longest_edge": 512},
             )
 
             rank_0_print(f"SmolVLM Processor: {processor}")

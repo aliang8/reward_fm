@@ -48,7 +48,7 @@ class VQABatchCollator(RFMBatchCollator):
                 sample.rejected_trajectory.frames, sample.rejected_trajectory.frames_shape
             )
             #prompt = f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', evaluate which one better demonstrates successful completion of the task. Compare the trajectories and determine which is preferred."
-            prompt = f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', which one best corresponds to solving the task? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags. For example, if you prefer trajectory A, your answer should be <ans>A</ans>."
+            prompt = f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', which one best corresponds to solving the task? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags."
 
             # Prepare frames for conversation (handles multi-image vs video conversion)
             chosen_video_field, content_extras = self._prepare_frames_for_conversation(
@@ -128,7 +128,7 @@ class VQABatchCollator(RFMBatchCollator):
             # Convert frames to appropriate format using stored shapes
             frames = convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
 
-            prompt = f"For the task '{sample.trajectory.task}', estimate task progress at each frame in the video trajectory. Give a list of numbers between 0 and 1 where 0 means no progress and 1 means successful completion of the task. Format your answer as a python list enclosed by <ans> and </ans> tags. For example, for 4 frames, your answer could be: <ans>[0.00, 0.10, 0.31, 0.44]</ans>"
+            prompt = f"For the task '{sample.trajectory.task}', estimate task progress at each frame in the video trajectory. Give a list of numbers between 0 and 1 where 0 means no progress and 1 means successful completion of the task. Format your answer as a python list enclosed by <ans> and </ans> tags."
             
             # Prepare frames for conversation (handles multi-image vs video conversion)
             video_field, content_extras = self._prepare_frames_for_conversation(frames, prefix="tmp_progress")
@@ -150,6 +150,8 @@ class VQABatchCollator(RFMBatchCollator):
                 # Convert to Python list to get proper comma-separated format
                 target_progress_rounded = np.round(target_progress, 2).tolist()
                 conversation.append({"role": "assistant", "content": f"<ans>{target_progress_rounded}</ans>"})
+            elif self.inference and target_progress is not None:
+                print(target_progress)
 
             all_messages.append(conversation)
 

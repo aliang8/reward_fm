@@ -515,7 +515,7 @@ class RFMHeadsTrainer(Trainer):
 
     def _make_eval_dataloader(self, dataset):
         """Create a distributed evaluation dataloader with proper sampling."""
-        collator = setup_batch_collator(self.model.processor, self.model.tokenizer, self.config)
+        collator = setup_batch_collator(self.model.processor, self.model.tokenizer, self.config, is_eval=True)
 
         dl = DataLoader(
             dataset,
@@ -561,6 +561,7 @@ class RFMHeadsTrainer(Trainer):
                 kwargs = {}
                 if eval_type == "reward_alignment":
                     kwargs["max_trajectories"] = 10
+                    kwargs["frame_step"] = 2 if self.config.trainer_cls == "rfm_heads" else 1
 
                 dataset = setup_custom_eval_dataset(
                     eval_cfg, sampler_type=eval_type, is_eval=True, verbose=False, **kwargs

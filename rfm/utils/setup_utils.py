@@ -552,7 +552,7 @@ def setup_custom_eval_dataset(cfg: DataConfig, sampler_type: str, is_eval: bool 
     return custom_eval_dataset
 
 
-def setup_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg: ExperimentConfig) -> BaseCollator:
+def setup_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg: ExperimentConfig, is_eval: bool = False) -> BaseCollator:
     """Shared function to create BatchCollator"""
     collator_kwargs = {
         "processor": processor,
@@ -566,7 +566,7 @@ def setup_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg
         if cfg.model.model_type == "default":
             batch_collator = RFMBatchCollator(**collator_kwargs)
         elif cfg.model.model_type == "vqa":
-            batch_collator = VQABatchCollator(**collator_kwargs, inference=cfg.mode == "eval")
+            batch_collator = VQABatchCollator(**collator_kwargs, inference=is_eval)
     elif "rewind_transformer" in cfg.model.base_model_id:
         batch_collator = ReWiNDBatchCollator(
             **collator_kwargs, tokenizer=tokenizer, load_embeddings=cfg.data.load_embeddings

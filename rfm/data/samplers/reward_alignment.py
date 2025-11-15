@@ -40,7 +40,7 @@ class RewardAlignmentSampler(RFMBaseSampler):
         is_evaluation=False,
         verbose=True,
         max_trajectories: int | None = None,
-        frame_step: int = 2,
+        frame_step: int = 1,
         **kwargs,
     ):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
@@ -70,7 +70,7 @@ class RewardAlignmentSampler(RFMBaseSampler):
         for traj_idx in trajectories_to_process:
             traj = self.dataset[traj_idx]
             num_frames = traj["num_frames"]
-            # Create subsequence indices: 0:2, 0:4, 0:6, etc.
+            # Create subsequence indices: 0:1, 0:2, 0:3, etc.
             for end_idx in range(self.frame_step, num_frames + 1, self.frame_step):
                 sample_indices.append({
                     "traj_idx": traj_idx,
@@ -98,7 +98,7 @@ class RewardAlignmentSampler(RFMBaseSampler):
 
         # Ground truth progress: linear from 0 to 1
         if self.config.progress_pred_type == "absolute":
-            gt_progress = end_idx / num_frames
+            gt_progress = (end_idx - 1) / (num_frames - 1)
         else:
             gt_progress = 1 / num_frames
 

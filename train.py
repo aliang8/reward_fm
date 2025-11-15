@@ -141,7 +141,7 @@ def train(cfg: ExperimentConfig):
         show_available_datasets()
 
     with _timer("time/setup_data", timing_raw=timing_raw):
-        batch_collator = setup_batch_collator(processor, tokenizer, cfg)
+        batch_collator = setup_batch_collator(processor, tokenizer, cfg, is_eval=False)
         train_dataset = setup_dataset(cfg.data, batch_size=cfg.training.per_device_train_batch_size)
 
     # Set up evaluation dataset if evaluation is enabled

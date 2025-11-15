@@ -239,7 +239,7 @@ def test():
         sample_type_ratio=[0, 1, 0],  # pref, progress, similarity
         dataset_preference_ratio=0.7,
         preference_strategy_ratio=[0.8, 0.1, 0.1, 0.0],
-        progress_strategy_ratio=[1, 0, 0], # default success, rewind, different task
+        progress_strategy_ratio=[1, 0, 0, 0], # [successful, rewind, different_task, subsequence]
         similarity_strategy_ratio=[1, 1, 1],  # rewind, suboptimal_same_task, paired_human_robot
         data_source_weights=None,
         shuffle=True,

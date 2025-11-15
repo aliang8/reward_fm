@@ -380,10 +380,10 @@ def compute_progress_from_segment(
         # Check if this index is at or after the cutoff and set progress to 1.0
         if cutoff_index is not None and cutoff_index > start_idx:
             # if it goes pass the cutoff, the progress will be set to 1
-            segment_progress.append(min(1.0, (i + 1) / (cutoff_index - start_idx)))
+            segment_progress.append(min(1.0, i / (cutoff_index - start_idx - 1)))
         else:
             # Normal progress calculation
-            segment_progress.append((i + 1) / (num_frames_total - start_idx))
+            segment_progress.append(i / (num_frames_total - start_idx - 1))
 
     # Determine progress at subsampled indices
     segment_progress = [segment_progress[idx] for idx in frame_indices]

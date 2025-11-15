@@ -91,6 +91,7 @@ class RFMBatchCollator(BaseCollator):
         base_model_id: str = None,
         load_embeddings: bool = False,
         use_multi_image: bool = False,
+        use_progress_token: bool = False,
         **kwargs,
     ):
         super().__init__(
@@ -104,6 +105,7 @@ class RFMBatchCollator(BaseCollator):
             **kwargs,
         )
         self.use_multi_image = use_multi_image
+        self.use_progress_token = use_progress_token
 
     def _prepare_frames_for_conversation(
         self, frames: List, prefix: str = "tmp"
@@ -240,6 +242,13 @@ class RFMBatchCollator(BaseCollator):
             # Build content list
             content_list = [{"type": "text", "text": prompt}]
             self._add_vision_content_to_list(content_list, video_field, content_extras)
+            
+            # Add progress and success tokens if use_progress_token is enabled (only works with pairwise_progress)
+            # For progress samples, we only use prog_token_A and succ_token_A (single trajectory)
+            if self.use_progress_token:
+                content_list.append({"type": "text", "text": "<|prog_token_A|>"})
+                content_list.append({"type": "text", "text": "<|succ_token_A|>"})
+            
             conversation = [
                 {
                     "role": "user",
@@ -329,11 +338,19 @@ class RFMBatchCollator(BaseCollator):
                 {"type": "text", "text": "This is Trajectory A. "},
             ]
             self._add_vision_content_to_list(content_list, traj_a_field, content_extras)
+            # Add progress and success tokens for trajectory A if use_progress_token is enabled
+            if self.use_progress_token:
+                content_list.append({"type": "text", "text": "<|prog_token_A|>"})
+                content_list.append({"type": "text", "text": "<|succ_token_A|>"})
             content_list.extend([
                 {"type": "text", "text": "<|split_token|>"},
                 {"type": "text", "text": "This is Trajectory B. "},
             ])
             self._add_vision_content_to_list(content_list, traj_b_field, content_extras)
+            # Add progress and success tokens for trajectory B if use_progress_token is enabled
+            if self.use_progress_token:
+                content_list.append({"type": "text", "text": "<|prog_token_B|>"})
+                content_list.append({"type": "text", "text": "<|succ_token_B|>"})
             content_list.append({"type": "text", "text": "<|pref_token|>"})
             
             conversation = [
@@ -490,11 +507,19 @@ class RFMBatchCollator(BaseCollator):
                 {"type": "text", "text": "This is the reference trajectory. "},
             ]
             self._add_vision_content_to_list(content_list_sim, ref_video, content_extras)
+            # Add progress and success tokens for trajectory A if use_progress_token is enabled
+            if self.use_progress_token:
+                content_list_sim.append({"type": "text", "text": "<|prog_token_A|>"})
+                content_list_sim.append({"type": "text", "text": "<|succ_token_A|>"})
             content_list_sim.extend([
                 {"type": "text", "text": "<|split_token|>"},
                 {"type": "text", "text": "This is the comparison trajectory. "},
             ])
             self._add_vision_content_to_list(content_list_sim, sim_video, content_extras)
+            # Add progress and success tokens for trajectory B if use_progress_token is enabled
+            if self.use_progress_token:
+                content_list_sim.append({"type": "text", "text": "<|prog_token_B|>"})
+                content_list_sim.append({"type": "text", "text": "<|succ_token_B|>"})
             content_list_sim.append({"type": "text", "text": "<|sim_token|>"})
             
             conversation_ref_sim = [
@@ -511,11 +536,19 @@ class RFMBatchCollator(BaseCollator):
                 {"type": "text", "text": "This is the reference trajectory. "},
             ]
             self._add_vision_content_to_list(content_list_diff, ref_video, content_extras)
+            # Add progress and success tokens for trajectory A if use_progress_token is enabled
+            if self.use_progress_token:
+                content_list_diff.append({"type": "text", "text": "<|prog_token_A|>"})
+                content_list_diff.append({"type": "text", "text": "<|succ_token_A|>"})
             content_list_diff.extend([
                 {"type": "text", "text": "<|split_token|>"},
                 {"type": "text", "text": "This is the comparison trajectory. "},
             ])
             self._add_vision_content_to_list(content_list_diff, diff_video, content_extras)
+            # Add progress and success tokens for trajectory B if use_progress_token is enabled
+            if self.use_progress_token:
+                content_list_diff.append({"type": "text", "text": "<|prog_token_B|>"})
+                content_list_diff.append({"type": "text", "text": "<|succ_token_B|>"})
             content_list_diff.append({"type": "text", "text": "<|sim_token|>"})
             
             conversation_ref_diff = [

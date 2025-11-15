@@ -981,7 +981,6 @@ class RFMHeadsTrainer(Trainer):
         progress_loss_mask=None,
         data_source=None,
         aggregate: bool = False,
-        padding_mask=None,
     ):
         """
         Helper function to compute success prediction loss.
@@ -998,7 +997,6 @@ class RFMHeadsTrainer(Trainer):
                 where we should compute progress/success loss (e.g., successful, rewound, different_task)
             data_source: Dataset source information for threshold lookup
             aggregate: Whether to return the mean of the losses and accuracies
-            padding_mask: Padding mask tensor of shape (batch_size, max_length) with 1.0 for valid frames
 
         Returns:
             tuple: (success_loss, success_accuracy)
@@ -1041,8 +1039,6 @@ class RFMHeadsTrainer(Trainer):
         # Ensure success_logits matches target_progress length after downsampling
         if "Qwen" in self.config.model.base_model_id and not self.config.data.use_multi_image:
             target_progress = target_progress[:, ::2]
-            if padding_mask is not None:
-                padding_mask = padding_mask[:, ::2]
 
         # Generate success labels and mask vectorized
         # combined_mask: 1.0 where we should compute loss (low or high progress), 0.0 otherwise
@@ -1050,8 +1046,6 @@ class RFMHeadsTrainer(Trainer):
         combined_mask = ((target_progress < min_success) | (target_progress > max_success_tensor.unsqueeze(1))).float()
         success_labels = (target_progress > max_success_tensor.unsqueeze(1)).float()
 
-        if padding_mask is not None:
-            combined_mask = combined_mask * padding_mask
         if progress_loss_mask is not None:
             progress_loss_mask_t = progress_loss_mask.to(device=combined_mask.device, dtype=combined_mask.dtype)
             # Expand mask from (batch_size,) to (batch_size, seq_len)
@@ -1093,7 +1087,6 @@ class RFMHeadsTrainer(Trainer):
         target_progress,
         mask,
         aggregate: bool = False,
-        padding_mask=None,
     ):
         """
         Helper function to compute progress loss.
@@ -1103,7 +1096,6 @@ class RFMHeadsTrainer(Trainer):
             target_progress: Target progress tensors (can be tensor or list of tensors) of shape (batch_size, seq_len)
             mask: Per-sample mask tensor of shape (batch_size,) with 1.0 for samples where we should compute loss
             aggregate: Whether to return the mean of the losses and correlations
-            padding_mask: Padding mask tensor of shape (batch_size, max_length) with 1.0 for valid frames
 
         Returns:
             tuple: (progress_loss, spearman_correlation)
@@ -1123,23 +1115,13 @@ class RFMHeadsTrainer(Trainer):
         # In multi_image mode, we already get one embedding per frame, so no downsampling needed
         if "Qwen" in self.config.model.base_model_id and not self.config.data.use_multi_image:
             target_progress = target_progress[:, ::2]
-            if padding_mask is not None:
-                padding_mask = padding_mask[:, ::2]
 
         # Apply all masks together at once
         combined_mask = torch.ones_like(target_progress, dtype=torch.float32)
-        if padding_mask is not None:
-            combined_mask = combined_mask * padding_mask
         if mask is not None:
             mask_t = mask.to(device=combined_mask.device, dtype=combined_mask.dtype)
             # Expand mask from (batch_size,) to (batch_size, seq_len)
             combined_mask = combined_mask * mask_t.unsqueeze(1)
-
-        if self.config.data.pairwise_progress:
-            # Take last frame for predictions and targets
-            progress_pred = progress_pred[:, -1:]  # Keep dim for consistency
-            target_progress = target_progress[:, -1:]
-            combined_mask = combined_mask[:, -1:]
 
         # Compute MSE loss per frame
         loss_per_frame = F.mse_loss(progress_pred.float(), target_progress.float(), reduction="none")
@@ -1194,7 +1176,6 @@ class RFMHeadsTrainer(Trainer):
         progress_pred = progress_logits["A"]
         progress_target = inputs["target_progress"]
         progress_target_mask = inputs["target_progress_mask"]
-        padding_mask = inputs["padding_mask"]
 
         # [B, T], [B]
         progress_loss_all, spearman_corr_all = self._compute_progress_loss_helper(
@@ -1202,7 +1183,6 @@ class RFMHeadsTrainer(Trainer):
             progress_target,
             progress_target_mask,
             aggregate=False,
-            padding_mask=padding_mask,
         )
 
         # Handle Qwen downsampling: take every 2nd frame if using Qwen and NOT using multi_image
@@ -1210,13 +1190,9 @@ class RFMHeadsTrainer(Trainer):
         # This downsampling is needed for creating the combined_mask that matches progress_loss_all shape
         if "Qwen" in self.config.model.base_model_id and not self.config.data.use_multi_image:
             progress_target = progress_target[:, ::2]
-            if padding_mask is not None:
-                padding_mask = padding_mask[:, ::2]
 
         # Apply all masks together at once
         combined_mask = torch.ones_like(progress_target, dtype=torch.float32)
-        if padding_mask is not None:
-            combined_mask = combined_mask * padding_mask
         if progress_target_mask is not None:
             mask_t = progress_target_mask.to(device=combined_mask.device, dtype=combined_mask.dtype)
             # Expand mask from (batch_size,) to (batch_size, seq_len)
@@ -1237,7 +1213,6 @@ class RFMHeadsTrainer(Trainer):
                 progress_loss_mask=progress_target_mask,
                 data_source=data_source,
                 aggregate=False,
-                padding_mask=padding_mask,
             )
             success_loss = success_loss_all.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
             success_accuracy = success_acc_all.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
@@ -1327,7 +1302,6 @@ class RFMHeadsTrainer(Trainer):
         target_progress_A_mask = inputs["target_progress_A_mask"]
         target_progress_A = inputs["target_progress_A"]
         data_source = inputs["data_source"]
-        padding_mask_A = inputs["padding_mask_A"]
 
         if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
             progress_pred_A = progress_logits["A"]
@@ -1336,7 +1310,6 @@ class RFMHeadsTrainer(Trainer):
                 progress_pred_A,
                 target_progress_A,
                 mask=target_progress_A_mask,
-                padding_mask=padding_mask_A,
                 aggregate=True,
             )
             final_loss = preference_loss + progress_loss
@@ -1350,7 +1323,6 @@ class RFMHeadsTrainer(Trainer):
                 target_progress_A,
                 progress_loss_mask=target_progress_A_mask,
                 data_source=data_source,
-                padding_mask=padding_mask_A,
                 aggregate=True,
             )
             final_loss = final_loss + success_loss
@@ -1476,7 +1448,6 @@ class RFMHeadsTrainer(Trainer):
         target_progress_ref_mask = inputs["target_progress_ref_mask"]
         target_progress_ref = inputs["target_progress_ref"]
         data_source = inputs["data_source"]
-        padding_mask_ref = inputs["padding_mask_ref"]
 
         if self.config.model.train_progress_head and self.config.training.predict_sim_progress:
             progress_logits_ref_sim = model_outputs_ref_sim.progress_logits
@@ -1486,7 +1457,6 @@ class RFMHeadsTrainer(Trainer):
                 progress_pred_ref_sim_A,
                 target_progress_ref,
                 mask=target_progress_ref_mask,
-                padding_mask=padding_mask_ref,
                 aggregate=True,
             )
             final_loss = similarity_loss + progress_loss
@@ -1500,7 +1470,6 @@ class RFMHeadsTrainer(Trainer):
                 target_progress_ref,
                 progress_loss_mask=target_progress_ref_mask,
                 data_source=data_source,
-                padding_mask=padding_mask_ref,
                 aggregate=True,
             )
             final_loss = final_loss + success_loss

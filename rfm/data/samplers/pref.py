@@ -113,7 +113,7 @@ class PrefSampler(RFMBaseSampler):
 
         chosen_progress = []
         for i in range(len(chosen_frames)):
-            chosen_progress.append((i + 1) / (len(frames_data) - chosen_start))
+            chosen_progress.append(i / (len(frames_data) - chosen_start - 1))
 
         # Extract frames from the rejected bin (this will be the "rejected" trajectory)
         rejected_start, rejected_end = bin_boundaries[rejected_bin_idx]
@@ -121,7 +121,7 @@ class PrefSampler(RFMBaseSampler):
 
         rejected_progress = []
         for i in range(len(rejected_frames)):
-            rejected_progress.append((i + 1) / (len(frames_data) - rejected_start))
+            rejected_progress.append(i / (len(frames_data) - rejected_start - 1))
 
         # Apply uniform subsampling to both bins to ensure consistent frame counts
         # Use uniform subsampling for real trajectories (not rewound)

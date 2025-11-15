@@ -580,20 +580,20 @@ def create_rewind_trajectory(
 
     # Step 6: Calculate absolute progress for each frame position in the combined trajectory
     forward_progress_abs = []
-    denom_norm = max(1, (num_frames - start_idx))
+    denom_norm = max(1, (num_frames - start_idx - 1))
     denom_cut = None
     if cutoff_index is not None and cutoff_index > start_idx:
-        denom_cut = max(1, (cutoff_index - start_idx))
+        denom_cut = max(1, (cutoff_index - start_idx - 1))
 
     for i in range(len(forward_indices)):  # 0 to len(forward_indices)-1
         current_abs_idx = start_idx + i
         if denom_cut is not None:
             if current_abs_idx < cutoff_index:
-                forward_progress_abs.append((i + 1) / denom_norm)
+                forward_progress_abs.append(i / denom_norm)
             else:
-                forward_progress_abs.append(min(1.0, (i + 1) / denom_cut))
+                forward_progress_abs.append(min(1.0, i / denom_cut))
         else:
-            forward_progress_abs.append((i + 1) / denom_norm)
+            forward_progress_abs.append(i / denom_norm)
 
     # Rewind progress is the reverse of forward progress
     rewind_progress_abs = forward_progress_abs[::-1][1 : rewind_length + 1]

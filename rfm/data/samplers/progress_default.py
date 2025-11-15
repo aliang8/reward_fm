@@ -65,7 +65,7 @@ class ProgressDefaultSampler(RFMBaseSampler):
 
         data, frame_indices = linspace_subsample_frames(data, max_frames)
         frames_shape_orig = data.shape
-        progress_abs = [(idx + 1) / total_frames for idx in frame_indices]
+        progress_abs = [idx / (total_frames - 1) for idx in frame_indices]
 
         if use_embeddings:
             video_embeddings, progress_abs = pad_trajectory_to_max_frames_torch(data, progress_abs, max_frames)

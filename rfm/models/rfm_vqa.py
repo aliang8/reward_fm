@@ -6,6 +6,7 @@ Contains the RFM class by using the standard Qwen2.5-VL model, training it with 
 
 from transformers import PreTrainedModel, Qwen2_5_VLForConditionalGeneration
 
+import torch
 
 class RFMVQA(PreTrainedModel):
     """RFM Model for VQA using base VLM outputs as naive baseline."""

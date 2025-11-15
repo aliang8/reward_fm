@@ -60,33 +60,57 @@ class RFMVQATrainer(RFMHeadsTrainer):
         self._ddp_static_graph_set = False
 
     def forward_model(self, model, inputs, sample_type="progress"):
+        """
+        Forward model for VQA - uses generate() for proper autoregressive prediction.
+        This is used during evaluation to get actual model predictions.
+        """
         with _timer("time/forward_vqa", timing_raw=self.timing_raw):
-            outputs = model(
-                input_ids=inputs["input_ids"],
-                attention_mask=inputs["attention_mask"],
-                pixel_values=inputs.get("pixel_values"),
-                pixel_values_videos=inputs.get("pixel_values_videos"),
-                image_grid_thw=inputs.get("image_grid_thw"),
-                video_grid_thw=inputs.get("video_grid_thw"),
-                second_per_grid_ts=inputs.get("second_per_grid_ts"),
-            )
-
-        if sample_type == "progress":
-            pred_ids = outputs.logits.argmax(dim=-1)
-            # RFMVQA has tokenizer directly, handle DDP wrapping
-            rfm_model = self.model.module if hasattr(self.model, 'module') else self.model
-            tokenizer = rfm_model.tokenizer
-            pred_texts = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
-            predictions = [extract_answer_from_text(text) for text in pred_texts]
-            progress_logits = []
-            for prediction in predictions:
-                try:
-                    progress_logits.append(ast.literal_eval(prediction))
-                except:
-                    progress_logits.append(None)
-            progress_logits = {"A": progress_logits, "B": None}
-        else:
-            progress_logits = None
+            if sample_type == "progress":
+                # Use generate() for proper autoregressive text generation
+                # Remove labels from inputs if present (we're doing inference)
+                gen_inputs = {
+                    "input_ids": inputs["input_ids"],
+                    "attention_mask": inputs["attention_mask"],
+                    "pixel_values": inputs.get("pixel_values"),
+                    "pixel_values_videos": inputs.get("pixel_values_videos"),
+                    "image_grid_thw": inputs.get("image_grid_thw"),
+                    "video_grid_thw": inputs.get("video_grid_thw"),
+                }
+                
+                # Generate with reasonable parameters for short structured answers
+                with torch.no_grad():
+                    generated_ids = model.generate(
+                        **gen_inputs,
+                        max_new_tokens=80,  # Enough for a list like [0.0, 0.1, ..., 1.0]
+                        do_sample=False,  # Greedy decoding for reproducibility
+                        pad_token_id=model.tokenizer.pad_token_id,
+                        eos_token_id=model.tokenizer.eos_token_id,
+                        use_cache=True,  # Enable KV caching for faster generation
+                    )
+                
+                # Decode only the generated part (not the input prompt)
+                rfm_model = self.model.module if hasattr(self.model, 'module') else self.model
+                tokenizer = rfm_model.tokenizer
+                
+                # Get input length to slice only generated tokens
+                input_len = inputs["input_ids"].shape[1]
+                generated_ids = generated_ids[:, input_len:]  # Only new tokens
+                
+                pred_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+                predictions = [extract_answer_from_text(text) for text in pred_texts]
+                
+                progress_logits = []
+                for prediction in predictions:
+                    try:
+                        progress_logits.append(ast.literal_eval(prediction))
+                    except Exception as e:
+                        # Log parsing failures for debugging
+                        if self.state.global_step % 100 == 0:
+                            rank_0_print(f"Failed to parse prediction: {prediction[:100]}")
+                        progress_logits.append(None)
+                progress_logits = {"A": progress_logits, "B": None}
+            else:
+                progress_logits = None
         
         # Create ModelOutput with all expected fields to match parent class expectations
         model_output = ModelOutput(
@@ -174,6 +198,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
             image_grid_thw=inputs.get("image_grid_thw"),
             video_grid_thw=inputs.get("video_grid_thw"),
             second_per_grid_ts=inputs.get("second_per_grid_ts"),
+            use_cache=False,  # Disable KV caching for training
         )
 
         # RFMVQA has model directly, handle DDP wrapping

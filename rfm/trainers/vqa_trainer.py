@@ -81,7 +81,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
                 with torch.no_grad():
                     generated_ids = model.generate(
                         **gen_inputs,
-                        max_new_tokens=80,  # Enough for a list like [0.0, 0.1, ..., 1.0]
+                        max_new_tokens=40,  # Enough for a list like [0.0, 0.1, ..., 1.0]
                         do_sample=False,  # Greedy decoding for reproducibility
                         pad_token_id=model.tokenizer.pad_token_id,
                         eos_token_id=model.tokenizer.eos_token_id,

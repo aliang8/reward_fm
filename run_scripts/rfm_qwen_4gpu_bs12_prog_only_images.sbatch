@@ -38,6 +38,7 @@ uv run accelerate launch \
     train.py \
     --config_paths rfm/configs/config.yaml \
     --data.sample_type_ratio '[0, 1, 0]' \
+    --data.progress_strategy_ratio '[1, 1, 1]' \
     --model.train_progress_head true \
     --model.train_preference_head false \
     --model.train_similarity_head false \
@@ -62,3 +63,29 @@ uv run accelerate launch \
 echo "End Time: $(date)"
 echo "Job completed successfully"
 
+
+
+uv run python train.py \
+    --config_paths rfm/configs/config.yaml \
+    --data.sample_type_ratio '[0, 1, 0]' \
+    --data.progress_strategy_ratio '[1, 1, 1]' \
+    --model.train_progress_head true \
+    --model.train_preference_head false \
+    --model.train_similarity_head false \
+    --model.train_success_head false \
+    --model.average_temporal_patches true \
+    --model.base_model_id Qwen/Qwen2.5-VL-3B-Instruct \
+    --data.resized_height 196 \
+    --data.resized_width 196 \
+    --data.use_multi_image true \
+    --training.max_steps 15000 \
+    --training.eval_steps 200 \
+    --training.custom_eval_steps 200 \
+    --training.per_device_train_batch_size $BS \
+    --training.per_device_eval_batch_size $BS \
+    --training.learning_rate 3e-6 \
+    --training.weight_decay 0.1 \
+    --training.overwrite_output_dir true \
+    --training.exp_name debug \
+    --logging.use_wandb false \
+    --debug true

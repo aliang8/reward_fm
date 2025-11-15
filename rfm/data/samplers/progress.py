@@ -21,20 +21,24 @@ class ProgressSampler(RFMBaseSampler):
     def _create_progress_sample(self, traj: dict):
         """Create a progress sample using normalized and rebalanced strategy selection.
 
-        Implements three strategies:
-        1. Successful: Use original trajectory as-is
-        2. Rewind Same Task: Create rewound trajectory from same task
+        Implements four strategies:
+        1. Successful: Linspace subsample with end_idx between cutoff and total
+        2. Rewind: Create rewound trajectory from same task
         3. Different Task: Use trajectory from different task (progress set to 0.0)
+        4. Subsequence: Segment subsampling (same as previous default)
         """
         # Initialize variables for strategy selection
         processed_traj = None
         strategy_used = None
+        subsample_strategy = None
 
         # Strategy setup with rebalancing on failure
+        # [successful, rewind, different_task, subsequence]
         strategies = [
-            ("successful", self.config.progress_strategy_ratio[0]),
+            (DataGenStrat.SUCCESSFUL, self.config.progress_strategy_ratio[0]),
             (DataGenStrat.REWIND_SAME_TASK, self.config.progress_strategy_ratio[1]),
             (DataGenStrat.DIFFERENT_TASK, self.config.progress_strategy_ratio[2]),
+            (DataGenStrat.SUBSEQUENCE, self.config.progress_strategy_ratio[3]),
         ]
 
         if self.config.pairwise_progress:
@@ -77,12 +81,20 @@ class ProgressSampler(RFMBaseSampler):
                     break
 
             # Execute selected strategy
-            if selected_strategy == "successful":
+            if selected_strategy == DataGenStrat.SUCCESSFUL:
+                # Successful strategy: use original trajectory, will be processed with "successful" subsample_strategy
                 processed_traj = traj
+                subsample_strategy = "successful"
+            elif selected_strategy == DataGenStrat.SUBSEQUENCE:
+                # Subsequence strategy: use original trajectory, will be processed with "subsequence" subsample_strategy
+                processed_traj = traj
+                subsample_strategy = "subsequence"
             elif selected_strategy == DataGenStrat.REWIND_SAME_TASK:
                 processed_traj = self._get_rewound_traj(traj)
+                subsample_strategy = None  # Rewound trajectories are already processed
             elif selected_strategy == DataGenStrat.DIFFERENT_TASK:
                 processed_traj = self._get_different_task(traj)
+                subsample_strategy = None  # Different task trajectories use default processing
             else:
                 raise ValueError(f"Invalid strategy selected: {selected_strategy}")
 
@@ -100,7 +112,8 @@ class ProgressSampler(RFMBaseSampler):
                 f"Failed to generate progress sample after {max_attempts} attempts - all strategies exhausted"
             )
 
-        progress_traj = self._get_traj_from_data(processed_traj)
+        # Process trajectory with appropriate subsample strategy
+        progress_traj = self._get_traj_from_data(processed_traj, subsample_strategy=subsample_strategy)
 
         # Handle special cases
         if strategy_used == DataGenStrat.DIFFERENT_TASK:

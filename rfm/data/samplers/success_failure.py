@@ -93,7 +93,7 @@ class PairedSuccessFailureSampler(RFMBaseSampler):
             success_frames, self.config.max_frames
         )
         success_progress = compute_progress_from_segment(
-            num_frames_total=len(success_frames),
+            num_frames_total=success_frames.shape[0],
             start_idx=start_idx_success,
             end_idx=end_idx_success,
             frame_indices=indices_success,
@@ -111,7 +111,7 @@ class PairedSuccessFailureSampler(RFMBaseSampler):
             failure_frames, self.config.max_frames
         )
         failure_progress = compute_progress_from_segment(
-            num_frames_total=len(failure_frames),
+            num_frames_total=failure_frames.shape[0],
             start_idx=start_idx_failure,
             end_idx=end_idx_failure,
             frame_indices=indices_failure,

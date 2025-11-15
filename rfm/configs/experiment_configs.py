@@ -36,6 +36,18 @@ class ModelConfig(PretrainedConfig):
         metadata={"help": "If True, average all tokens within each temporal patch group for progress prediction. If False, use the last token (boundary) of each temporal patch group."},
     )
 
+    pairwise_progress: bool = field(
+        default=False,
+        metadata={"help": "Whether to use pairwise progress sampling strategy for progress prediction"},
+    )
+    use_progress_token: bool = field(
+        default=False,
+        metadata={
+            "help": "If True and pairwise_progress is True, use <|prog_token|> to predict progress from hidden state at that token. "
+            "Otherwise, use average pooling of frame embeddings."
+        },
+    )
+
     use_peft: bool = field(default=False, metadata={"help": "Whether to use PEFT/LoRA or train full model"})
     peft_vision_encoder: bool = field(default=False, metadata={"help": "Whether to attach LoRA to the vision encoder"})
 

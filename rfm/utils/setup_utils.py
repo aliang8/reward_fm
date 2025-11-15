@@ -265,7 +265,7 @@ def setup_model_and_processor(
 
         # Add RFM special tokens if they don't exist
         if cfg.model_type == "default":
-            special_tokens = ["<|split_token|>", "<|reward_token|>", "<|pref_token|>", "<|sim_token|>"]
+            special_tokens = ["<|split_token|>", "<|reward_token|>", "<|pref_token|>", "<|sim_token|>", "<|prog_token_A|>", "<|prog_token_B|>", "<|succ_token_A|>", "<|succ_token_B|>"]
         else:
             special_tokens = []
 
@@ -561,6 +561,7 @@ def setup_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg
         "resized_width": cfg.data.resized_width,
         "base_model_id": cfg.model.base_model_id,
         "use_multi_image": cfg.data.use_multi_image,
+        "use_progress_token": cfg.model.use_progress_token,
     }
     if "Qwen" in cfg.model.base_model_id or "SmolVLM" in cfg.model.base_model_id:
         if cfg.model.model_type == "default":

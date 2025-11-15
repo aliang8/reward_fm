@@ -8,6 +8,7 @@ from rfm.data.datasets.helpers import (
     compute_progress_from_segment,
     pad_trajectory_to_max_frames_torch,
     pad_trajectory_to_max_frames_np,
+    subsample_pairs_and_progress,
 )
 from rfm.data.dataset_types import Trajectory
 from rfm.data.datasets.helpers import create_rewind_trajectory, load_embeddings_from_path
@@ -294,13 +295,15 @@ class RFMBaseSampler:
         )
 
     def _get_traj_from_data(self, traj: dict | Trajectory) -> Trajectory:
-        """Load, subsample, pad trajectory data and create a Trajectory object.
+        """Load, subsample, and optionally pad trajectory data and create a Trajectory object.
+
+        When pairwise_progress is enabled, padding is skipped as it's not needed.
 
         Args:
             traj: Trajectory dict or Trajectory object
 
         Returns:
-            Trajectory object with loaded, subsampled, and padded data
+            Trajectory object with loaded and subsampled data (padded only if not using pairwise_progress)
         """
         if isinstance(traj, Trajectory):
             return traj
@@ -309,64 +312,89 @@ class RFMBaseSampler:
         video_embeddings = None
         text_embedding = None
 
+        # Use pairwise subsampling if pairwise_progress is enabled
+        use_pairwise = self.config.pairwise_progress
+
         if self.config.load_embeddings and traj.get("embeddings_path"):
             embeddings = load_embeddings_from_path(traj["embeddings_path"])
             video_embeddings = embeddings["video_embeddings"]
             text_embedding = embeddings["text_embedding"]
 
-            # Get success cutoff from pre-loaded map
-            ds_key = traj["data_source"]
-            success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+            if use_pairwise:
+                # Use pairwise subsampling for pairwise progress
+                subsampled, progress, metadata = subsample_pairs_and_progress(
+                    video_embeddings,
+                    self.config.max_frames,
+                    progress_pred_type=self.config.progress_pred_type,
+                )
+                frames_shape = subsampled.shape
+                video_embeddings = subsampled
+            else:
+                # Get success cutoff from pre-loaded map
+                ds_key = traj["data_source"]
+                success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
 
-            subsampled, start_idx, end_idx, indices = subsample_segment_frames(video_embeddings, self.config.max_frames)
-            frames_shape = subsampled.shape
-            progress = compute_progress_from_segment(
-                num_frames_total=self.config.max_frames_after_preprocessing,
-                start_idx=start_idx,
-                end_idx=end_idx,
-                frame_indices=indices,
-                progress_pred_type=self.config.progress_pred_type,
-                success_cutoff=success_cutoff,
-            )
-            metadata = {
-                "start_idx": start_idx,
-                "end_idx": end_idx,
-                "subsampled_indices": indices,
-            }
-            video_embeddings = subsampled
+                subsampled, start_idx, end_idx, indices = subsample_segment_frames(video_embeddings, self.config.max_frames)
+                frames_shape = subsampled.shape
+                progress = compute_progress_from_segment(
+                    num_frames_total=self.config.max_frames_after_preprocessing,
+                    start_idx=start_idx,
+                    end_idx=end_idx,
+                    frame_indices=indices,
+                    progress_pred_type=self.config.progress_pred_type,
+                    success_cutoff=success_cutoff,
+                )
+                metadata = {
+                    "start_idx": start_idx,
+                    "end_idx": end_idx,
+                    "subsampled_indices": indices,
+                }
+                video_embeddings = subsampled
         else:
             if isinstance(traj["frames"], str):
                 frames = load_frames_from_npz(traj["frames"])
             else:
                 frames = traj["frames"]
 
-            # Get success cutoff from pre-loaded map
-            ds_key = traj["data_source"]
-            success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+            if use_pairwise:
+                # Use pairwise subsampling for pairwise progress
+                subsampled, progress, metadata = subsample_pairs_and_progress(
+                    frames,
+                    self.config.max_frames,
+                    progress_pred_type=self.config.progress_pred_type,
+                )
+                frames_shape = subsampled.shape
+                frames = subsampled
+            else:
+                # Get success cutoff from pre-loaded map
+                ds_key = traj["data_source"]
+                success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
 
-            subsampled, start_idx, end_idx, indices = subsample_segment_frames(frames, self.config.max_frames)
-            frames_shape = subsampled.shape
-            progress = compute_progress_from_segment(
-                num_frames_total=self.config.max_frames_after_preprocessing,
-                start_idx=start_idx,
-                end_idx=end_idx,
-                frame_indices=indices,
-                progress_pred_type=self.config.progress_pred_type,
-                success_cutoff=success_cutoff,
-            )
-            metadata = {
-                "start_idx": start_idx,
-                "end_idx": end_idx,
-                "subsampled_indices": indices,
-            }
-            frames = subsampled
+                subsampled, start_idx, end_idx, indices = subsample_segment_frames(frames, self.config.max_frames)
+                frames_shape = subsampled.shape
+                progress = compute_progress_from_segment(
+                    num_frames_total=self.config.max_frames_after_preprocessing,
+                    start_idx=start_idx,
+                    end_idx=end_idx,
+                    frame_indices=indices,
+                    progress_pred_type=self.config.progress_pred_type,
+                    success_cutoff=success_cutoff,
+                )
+                metadata = {
+                    "start_idx": start_idx,
+                    "end_idx": end_idx,
+                    "subsampled_indices": indices,
+                }
+                frames = subsampled
 
-        if self.config.load_embeddings:
-            video_embeddings, progress = pad_trajectory_to_max_frames_torch(
-                video_embeddings, progress, self.config.max_frames
-            )
-        else:
-            frames, progress = pad_trajectory_to_max_frames_np(frames, progress, self.config.max_frames)
+        # Only pad if not using pairwise progress (pairwise progress doesn't need padding)
+        if not use_pairwise:
+            if self.config.load_embeddings:
+                video_embeddings, progress = pad_trajectory_to_max_frames_torch(
+                    video_embeddings, progress, self.config.max_frames
+                )
+            else:
+                frames, progress = pad_trajectory_to_max_frames_np(frames, progress, self.config.max_frames)
 
         return Trajectory(
             frames=frames,

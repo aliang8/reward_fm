@@ -262,7 +262,6 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
     def _compute_vqa_loss(self, model, inputs, return_outputs=False, mode=None, training=True):
         B = inputs["input_ids"].shape[0]
-        rank_0_print(f"Generating with input_ids shape: {inputs['input_ids'].shape}")
         outputs = model(
             input_ids=inputs["input_ids"],
             attention_mask=inputs["attention_mask"],

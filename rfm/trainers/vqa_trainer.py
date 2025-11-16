@@ -1,4 +1,5 @@
 import ast
+import gc
 from rfm.utils.distributed import rank_0_print
 import torch
 import torch.nn as nn
@@ -8,6 +9,7 @@ from evals.eval_utils import extract_answer_from_text
 from .rfm_heads_trainer import RFMHeadsTrainer
 from rfm.utils.timer import _timer
 from rfm.models.utils import ModelOutput
+from rfm.models.rfm_vqa import RFMVQA
 from rfm.data.collators.vqa import IGNORE_INDEX
 
 
@@ -60,16 +62,33 @@ class RFMVQATrainer(RFMHeadsTrainer):
         super().__init__(config, *args, **kwargs)
         self._ddp_static_graph_set = False
 
+    def evaluate(self, eval_dataset=None, ignore_keys=None) -> dict[str, float]:
+        """Override evaluate to add aggressive memory cleanup after evaluation."""
+        # Run parent evaluation
+        metrics = super().evaluate(eval_dataset=eval_dataset, ignore_keys=ignore_keys)
+        
+        # Aggressive memory cleanup after evaluation to prevent OOM in next training step
+        if torch.cuda.is_available():
+            # Empty cache multiple times to ensure fragmented memory is freed
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            
+        # Force garbage collection
+        gc.collect()
+        
+        return metrics
+
     def forward_model(self, model, inputs, sample_type="progress"):
         """
         Forward model for VQA - uses generate() for proper autoregressive prediction.
         This is used during evaluation to get actual model predictions.
         """
+        assert isinstance(model, RFMVQA), "Model must be an instance of RFMVQA"
         progress_logits = None
         pref_logits = None
         with _timer("time/forward_vqa", timing_raw=self.timing_raw):
             # Use generate() for proper autoregressive text generation
-            # Remove labels from inputs if present (we're doing inference)
+            # Note: dtype casting is handled in trainer's _prepare_inputs
             gen_inputs = {
                 "input_ids": inputs["input_ids"],
                 "attention_mask": inputs["attention_mask"],
@@ -79,11 +98,16 @@ class RFMVQATrainer(RFMHeadsTrainer):
                 "video_grid_thw": inputs.get("video_grid_thw"),
             }
 
+            if gen_inputs["pixel_values"] is not None:
+                gen_inputs["pixel_values"] = gen_inputs["pixel_values"].to(dtype=model.model.dtype)
+            if gen_inputs["pixel_values_videos"] is not None:
+                gen_inputs["pixel_values_videos"] = gen_inputs["pixel_values_videos"].to(dtype=model.model.dtype)
+
             # Generate with reasonable parameters for short structured answers
             with torch.no_grad():
                 generated_ids = model.generate(
                     **gen_inputs,
-                    max_new_tokens=50,  # Enough for a list like [0.0, 0.1, ..., 1.0]
+                    max_new_tokens=100,  # enough for a list of 16 floats
                     do_sample=False,  # Greedy decoding for reproducibility
                     pad_token_id=model.tokenizer.pad_token_id,
                     eos_token_id=model.tokenizer.eos_token_id,
@@ -100,10 +124,8 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
             pred_texts = tokenizer.batch_decode(generated_ids_sliced, skip_special_tokens=True)
             predictions = [extract_answer_from_text(text) for text in pred_texts]
-            if sample_type == "progress":
-                # Explicitly free generation tensors to prevent memory accumulation
-                del generated_ids, generated_ids_sliced, gen_inputs
 
+            if sample_type == "progress":
                 progress_logits = []
                 for i, prediction in enumerate(predictions):
                     try:
@@ -116,12 +138,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
                         # insert fake progress logits
                         progress_logits.append([0] * len(inputs["target_progress"][i]))
                 progress_logits = {"A": progress_logits, "B": None}
-
-                # Clear CUDA cache after generation to free KV cache memory
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
             elif sample_type == "preference":
-                # TODO: finish this to match this logic with preference evals for "A" and "B"
                 pref_logits = []
                 for i, prediction in enumerate(predictions):
                     if prediction == "A":
@@ -131,6 +148,13 @@ class RFMVQATrainer(RFMHeadsTrainer):
                     else:
                         pref_logits.append(-1)
                 pref_logits = {"A": pref_logits, "B": None}
+            
+            # Explicitly free generation tensors to prevent memory accumulation (for all sample types)
+            del generated_ids, generated_ids_sliced, gen_inputs, pred_texts, predictions
+            
+            # Clear CUDA cache after generation to free KV cache memory
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
         # Create ModelOutput with all expected fields to match parent class expectations
         model_output = ModelOutput(
@@ -143,6 +167,8 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
     def compute_loss(self, model, inputs, return_outputs=False, training=True, **kwargs):
         """Compute loss for VQA tasks."""
+
+        assert isinstance(model, RFMVQA), "Model must be an instance of RFMVQA"
 
         # Set static graph for DDP on first training step to handle multiple forward passes. This is needed
         # when combining gradient checkpointing with multiple forward passes.
@@ -262,6 +288,11 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
     def _compute_vqa_loss(self, model, inputs, return_outputs=False, mode=None, training=True):
         B = inputs["input_ids"].shape[0]
+
+        if "pixel_values" in inputs and inputs["pixel_values"] is not None and inputs["pixel_values"].dtype != model.model.dtype:
+            inputs["pixel_values"] = inputs["pixel_values"].to(dtype=model.model.dtype)
+        if "pixel_values_videos" in inputs and inputs["pixel_values_videos"] is not None and inputs["pixel_values_videos"].dtype != model.model.dtype:
+            inputs["pixel_values_videos"] = inputs["pixel_values_videos"].to(dtype=model.model.dtype)
         outputs = model(
             input_ids=inputs["input_ids"],
             attention_mask=inputs["attention_mask"],
@@ -271,6 +302,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
             video_grid_thw=inputs.get("video_grid_thw"),
             second_per_grid_ts=inputs.get("second_per_grid_ts"),
             use_cache=False,  # Disable KV caching for training
+            return_dict=True,
         )
 
         # RFMVQA has model directly, handle DDP wrapping
@@ -278,7 +310,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
         vocab_size = rfm_model.model.config.text_config.vocab_size
 
         loss = ForCausalLMLoss(
-            logits=outputs.logits,
+            logits=outputs["logits"],
             labels=inputs["labels"],
             vocab_size=vocab_size,
             reduction="none",
@@ -314,7 +346,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
             mode_name = "pref" if mode == "preference" else "prog" if mode == "progress" else "sim"
         
         # compute accuracy
-        pred_ids = outputs.logits.argmax(dim=-1)
+        pred_ids = outputs["logits"].argmax(dim=-1)
         # RFMVQA has tokenizer directly, handle DDP wrapping
         rfm_model = self.model.module if hasattr(self.model, "module") else self.model
         tokenizer = rfm_model.tokenizer

@@ -18,7 +18,7 @@ import ast
 from transformers import TrainingArguments
 from rfm.configs.experiment_configs import ExperimentConfig, CustomEvaluationConfig
 from rfm.configs.eval_configs import EvalOnlyConfig
-from rfm.trainers import RFMHeadsTrainer
+from rfm.trainers import RFMHeadsTrainer, RFMVQATrainer
 from rfm.utils.setup_utils import (
     setup_model_and_processor,
     setup_batch_collator,
@@ -111,16 +111,25 @@ def create_eval_trainer(
     
     # Set up batch collator
     batch_collator = setup_batch_collator(processor, tokenizer, cfg)
-    
-    # Create trainer (no train_dataset needed for eval-only)
-    trainer = RFMHeadsTrainer(
-        model=model,
-        args=training_args,
-        train_dataset=None,  # Not needed for eval
-        eval_dataset=None,   # Will be created in _run_custom_evaluations
-        data_collator=batch_collator,
-        config=cfg,
-    )
+
+    if cfg.model.model_type == "vqa":
+        trainer = RFMVQATrainer(
+            model=model,
+            args=training_args,
+            train_dataset=None,  # Not needed for eval
+            eval_dataset=None,   # Will be created in _run_custom_evaluations
+            data_collator=batch_collator,
+            config=cfg,
+        )
+    else:
+        trainer = RFMHeadsTrainer(
+            model=model,
+            args=training_args,
+            train_dataset=None,  # Not needed for eval
+            eval_dataset=None,   # Will be created in _run_custom_evaluations
+            data_collator=batch_collator,
+            config=cfg,
+        )
     
     return trainer
 
@@ -182,9 +191,13 @@ def main():
     elif is_local_path:
         # Try to load from local checkpoint directory
         config_path = os.path.join(model_path, "config.yaml")
+        outside_config_path = os.path.join(model_path, "..", "config.yaml")
         if os.path.exists(config_path):
             exp_cfg = load_config_from_yaml(config_path)
             rank_0_print(f"Loaded experiment config from local checkpoint: {config_path}")
+        elif os.path.exists(outside_config_path):
+            exp_cfg = load_config_from_yaml(outside_config_path)
+            rank_0_print(f"Loaded experiment config from local checkpoint: {outside_config_path}")
         else:
             raise FileNotFoundError(
                 f"Config file not found at {config_path}. "
@@ -214,7 +227,7 @@ def main():
         )
     
     # Initialize wandb if enabled in experiment config (only on rank 0)
-    if exp_cfg.logging.use_wandb and is_rank_0():
+    if "wandb" in exp_cfg.logging.log_to and is_rank_0():
         from dataclasses import asdict
         config_dict = asdict(exp_cfg)
         model_name = model_path.replace("/", "_") if "/" in model_path else model_path
@@ -225,7 +238,7 @@ def main():
             config=config_dict
         )
         rank_0_print(f"Wandb initialized for evaluation: eval_{model_name}")
-    elif exp_cfg.logging.use_wandb:
+    elif "wandb" in exp_cfg.logging.log_to:
         rank_0_print("Wandb logging enabled but skipped on non-rank-0 processes")
     
     # Merge custom_eval from EvalOnlyConfig if provided

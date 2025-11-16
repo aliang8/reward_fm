@@ -179,7 +179,7 @@ def setup_model_and_processor(
                 # padding_side="left",
                 size={"longest_edge": 512},
                 max_image_size={"longest_edge": 512},
-                use_fast=False,
+                use_fast=True,
             )
 
             rank_0_print(f"SmolVLM Processor: {processor}")
@@ -191,7 +191,7 @@ def setup_model_and_processor(
                 quantization_config=bnb,
             )
 
-            model_cls = RFM
+            model_cls = RFM if cfg.model_type == "default" else RFMVQA
 
         elif "Qwen" in cfg.base_model_id:
             # Check if unsloth should be used
@@ -280,16 +280,17 @@ def setup_model_and_processor(
             special_tokens = []
 
         # Add special tokens to the tokenizer
-        for token in special_tokens:
-            if token not in processor.tokenizer.get_vocab():
-                processor.tokenizer.add_special_tokens({"additional_special_tokens": [token]})
-                rank_0_print(f"Added special token: {token}")
+        if cfg.model_type != "vqa":
+            for token in special_tokens:
+                if token not in processor.tokenizer.get_vocab():
+                    processor.tokenizer.add_special_tokens({"additional_special_tokens": [token]})
+                    rank_0_print(f"Added special token: {token}")
 
-        # Resize token embeddings if new tokens were added
-        if len(processor.tokenizer) != base_model.config.vocab_size:
-            rank_0_print(f"Resizing token embeddings from {base_model.config.vocab_size} to {len(processor.tokenizer)}")
-            base_model.resize_token_embeddings(len(processor.tokenizer))
-            rank_0_print(f"Resized token embeddings to {len(processor.tokenizer)}")
+            # Resize token embeddings if new tokens were added
+            if len(processor.tokenizer) != base_model.config.vocab_size:
+                rank_0_print(f"Resizing token embeddings from {base_model.config.vocab_size} to {len(processor.tokenizer)}")
+                base_model.resize_token_embeddings(len(processor.tokenizer))
+                rank_0_print(f"Resized token embeddings to {len(processor.tokenizer)}")
 
         # Initialize RFM model wrapper with the pre-loaded base model
         rank_0_print("Initializing RFM model...")
@@ -328,9 +329,9 @@ def setup_model_and_processor(
             else:
                 hf_repo_with_rev = repo_id
                 rank_0_print(f"Loading local/explicit model from {hf_repo_with_rev}")
-
-            before = model.model.visual.blocks[0].mlp.down_proj.weight
-            before = model.preference_head[0].weight
+            if cfg.model_type != "vqa":
+                before = model.model.visual.blocks[0].mlp.down_proj.weight
+                before = model.preference_head[0].weight
             # load the model from the evaluation path
             model = model_cls.from_pretrained(
                 hf_repo_with_rev,
@@ -341,16 +342,16 @@ def setup_model_and_processor(
                 model_config=cfg,
                 revision=revision_to_load,
             )
+            if cfg.model_type != "vqa":
+                after = model.model.visual.blocks[0].mlp.down_proj.weight
+                after = model.preference_head[0].weight
+                rank_0_print(f"Before: {before.shape}, {before.sum()} | After: {after.shape}, {after.sum()}")
+                # check that before and after are different
+                if torch.allclose(before, after):
+                    rank_0_print("Before and after are the same! Check if you loaded the pretrained model correctly")
+                    import ipdb
 
-            after = model.model.visual.blocks[0].mlp.down_proj.weight
-            after = model.preference_head[0].weight
-            rank_0_print(f"Before: {before.shape}, {before.sum()} | After: {after.shape}, {after.sum()}")
-            # check that before and after are different
-            if torch.allclose(before, after):
-                rank_0_print("Before and after are the same! Check if you loaded the pretrained model correctly")
-                import ipdb
-
-                ipdb.set_trace()
+                    ipdb.set_trace()
 
     elif "rewind_transformer" in cfg.base_model_id:
         # Initialize new model with encoders
@@ -538,7 +539,8 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
         base_args.update({
             "num_train_epochs": cfg.training.num_train_epochs if cfg.training.num_train_epochs is not None else 1,
             "max_steps": cfg.training.max_steps if cfg.training.max_steps is not None else -1,
-            "report_to": cfg.logging.log_to,
+            # Disable HuggingFace's automatic logging - we use custom Logger class instead
+            "report_to": "none",
         })
 
     return TrainingArguments(**base_args)

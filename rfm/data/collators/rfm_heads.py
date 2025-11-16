@@ -169,13 +169,13 @@ class RFMBatchCollator(BaseCollator):
                 **content_extras,
             })
 
-    def _process_conversation(self, conversations: List[List[Dict]]) -> Dict[str, torch.Tensor]:
+    def _process_conversation(self, conversations: List[List[Dict]], add_generation_prompt: bool = False) -> Dict[str, torch.Tensor]:
         """
         Process a list of conversations into a batch of inputs.
 
         Args:
             conversations: List of conversations
-
+            add_generation_prompt: Whether to add generation prompt (used for VQA inference otherwise conversation will be closed with </im_end> token)
         Returns:
             Batch of inputs
         """
@@ -186,7 +186,7 @@ class RFMBatchCollator(BaseCollator):
                 self.processor.apply_chat_template(
                     msg,
                     tokenize=False,
-                    add_generation_prompt=False,
+                    add_generation_prompt=add_generation_prompt,
                     add_vision_id=True,
                     fps=1,
                 )
@@ -209,7 +209,7 @@ class RFMBatchCollator(BaseCollator):
         elif "SmolVLM" in self.base_model_id:
             batch_inputs = self.processor.apply_chat_template(
                 conversations,
-                add_generation_prompt=False,
+                add_generation_prompt=add_generation_prompt,
                 tokenize=True,
                 padding=True,
                 truncation=False,

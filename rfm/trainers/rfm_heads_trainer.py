@@ -637,6 +637,7 @@ class RFMHeadsTrainer(Trainer):
                             eval_results.append(sample_result)
 
                     elif eval_type == "success_failure":
+                        # TODO: implement success failure evaluation on VQA
                         preference_samples = batch["preference_inputs"]
                         with torch.no_grad():
                             outputs, _ = self.forward_model(self.model, preference_samples, sample_type="preference")

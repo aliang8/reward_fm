@@ -288,7 +288,7 @@ class RFMHeadsTrainer(Trainer):
 
         self._update_resample_attempt_metrics(inputs)
 
-        # Log custom losses at specified intervals
+        # Log custom losses at specified intervals (using our custom logger only)
         if self.state.global_step % self.args.logging_steps == 0:
             self._log_metadata()
 
@@ -769,13 +769,16 @@ class RFMHeadsTrainer(Trainer):
                                     self.logger.log_video(
                                         f"{ds_name}/reward_alignment_video/{idx}",
                                         frames,
-                                        fps=10,
+                                        fps=2,
                                         step=self.state.global_step,
                                     )
                             for idx, plot in enumerate(plots):
                                 self.logger.log_figure(
                                     f"{ds_name}/reward_alignment_plot/{idx}", plot, step=self.state.global_step
                                 )
+                        # Close all plots to avoid accumulating open figures
+                        for plot in plots:
+                            plt.close(plot)
 
                     elif eval_type == "policy_ranking":
                         data = []

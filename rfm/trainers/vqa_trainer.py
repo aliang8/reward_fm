@@ -61,6 +61,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
     def __init__(self, config, *args, **kwargs):
         super().__init__(config, *args, **kwargs)
         self._ddp_static_graph_set = False
+        self.model_type_checked = False
 
     def evaluate(self, eval_dataset=None, ignore_keys=None) -> dict[str, float]:
         """Override evaluate to add aggressive memory cleanup after evaluation."""
@@ -78,14 +79,26 @@ class RFMVQATrainer(RFMHeadsTrainer):
         
         return metrics
 
+    def _check_model_type(self, model):
+        """
+        Check if the model is an instance of RFMVQA.
+        Works with DDP/FSDP by unwrapping the model first.
+        """
+        if self.model_type_checked:
+            return
+        # Unwrap DDP/FSDP wrapper to get the actual model
+        real_model = model.module if hasattr(model, "module") else model
+        assert isinstance(real_model, RFMVQA), f"Model must be an instance of RFMVQA, got {type(real_model)}"
+        self.model_type_checked = True
+
     def forward_model(self, model, inputs, sample_type="progress"):
         """
         Forward model for VQA - uses generate() for proper autoregressive prediction.
         This is used during evaluation to get actual model predictions.
         """
-        assert isinstance(model, RFMVQA), "Model must be an instance of RFMVQA"
         progress_logits = None
         pref_logits = None
+        self._check_model_type(model)
         with _timer("time/forward_vqa", timing_raw=self.timing_raw):
             # Use generate() for proper autoregressive text generation
             # Note: dtype casting is handled in trainer's _prepare_inputs
@@ -167,8 +180,8 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
     def compute_loss(self, model, inputs, return_outputs=False, training=True, **kwargs):
         """Compute loss for VQA tasks."""
-
-        assert isinstance(model, RFMVQA), "Model must be an instance of RFMVQA"
+        # check model is right type
+        self._check_model_type(model)
 
         # Set static graph for DDP on first training step to handle multiple forward passes. This is needed
         # when combining gradient checkpointing with multiple forward passes.

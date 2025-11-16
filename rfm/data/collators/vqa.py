@@ -12,6 +12,8 @@ from .rfm_heads import RFMBatchCollator
 from .utils import convert_frames_to_pil_images
 from rfm.data.dataset_types import PreferenceSample, ProgressSample
 
+IGNORE_INDEX = -100
+
 
 class VQABatchCollator(RFMBatchCollator):
     """Batch collator that processes Sample objects through the processor for VQA-based reward modeling."""
@@ -83,12 +85,25 @@ class VQABatchCollator(RFMBatchCollator):
                     "content": content_list,
                 },
             ]
+            # Only add assistant response during training, not inference
             if not self.inference:
-                conversation.append({"role": "assistant", "content": f"<ans>{answer}</ans>"})
+                # SmolVLM requires list format for all messages, Qwen accepts both but we use list for consistency
+                if "SmolVLM" in self.base_model_id:
+                    # SmolVLM requires content as list of dicts
+                    conversation.append({
+                        "role": "assistant", 
+                        "content": [{"type": "text", "text": f"<ans>{answer}</ans>"}]
+                    })
+                else:
+                    # Qwen accepts simple string content for text-only assistant messages
+                    conversation.append({
+                        "role": "assistant", 
+                        "content": f"<ans>{answer}</ans>"
+                    })
 
             all_messages.append(conversation)
 
-        batch_inputs = self._process_conversation(all_messages)
+        batch_inputs = self._process_conversation(all_messages, add_generation_prompt=self.inference)
         if not self.inference:
             labels = batch_inputs["input_ids"].clone()
 
@@ -100,10 +115,10 @@ class VQABatchCollator(RFMBatchCollator):
                 if len(assistant_positions) > 0:
                     # Mask everything up to and including the token after "assistant"
                     token_after_assistant = assistant_positions[0][0] + 1
-                    labels[i][:token_after_assistant] = -100
+                    labels[i][:token_after_assistant] = IGNORE_INDEX
                 else:
                     # If assistant token not found, mask entire sequence (shouldn't happen in normal training)
-                    labels[i][:] = -100
+                    labels[i][:] = IGNORE_INDEX
 
             batch_inputs["labels"] = labels
 
@@ -147,11 +162,23 @@ class VQABatchCollator(RFMBatchCollator):
                 # Round target progress to 2 decimal places for the response
                 # Convert to Python list to get proper comma-separated format
                 target_progress_rounded = np.round(target_progress, 2).tolist()
-                conversation.append({"role": "assistant", "content": f"<ans>{target_progress_rounded}</ans>"})
+                # SmolVLM requires list format for all messages, Qwen accepts both but we use string for simplicity
+                if "SmolVLM" in self.base_model_id:
+                    # SmolVLM requires content as list of dicts
+                    conversation.append({
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": f"<ans>{target_progress_rounded}</ans>"}]
+                    })
+                else:
+                    # Qwen accepts simple string content for text-only assistant messages
+                    conversation.append({
+                        "role": "assistant",
+                        "content": f"<ans>{target_progress_rounded}</ans>"
+                    })
 
             all_messages.append(conversation)
 
-        batch_inputs = self._process_conversation(all_messages)
+        batch_inputs = self._process_conversation(all_messages, add_generation_prompt=self.inference)
 
         if not self.inference:
             labels = batch_inputs["input_ids"].clone()
@@ -164,10 +191,10 @@ class VQABatchCollator(RFMBatchCollator):
                 if len(assistant_positions) > 0:
                     # Mask everything up to and including the token after "assistant"
                     token_after_assistant = assistant_positions[0][0] + 1
-                    labels[i][:token_after_assistant] = -100
+                    labels[i][:token_after_assistant] = IGNORE_INDEX
                 else:
                     # If assistant token not found, mask entire sequence (shouldn't happen in normal training)
-                    labels[i][:] = -100
+                    labels[i][:] = IGNORE_INDEX
 
             batch_inputs["labels"] = labels
 

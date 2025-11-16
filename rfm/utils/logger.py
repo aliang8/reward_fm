@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import wandb
 from torch.utils.tensorboard import SummaryWriter
+import matplotlib.pyplot as plt
 
 
 class Logger:
@@ -63,7 +64,12 @@ class Logger:
             self._tb_writer.add_figure(tag, figure, global_step=step)
 
     def log_video_table(
-        self, tag: str, videos_and_figures: List[tuple], columns: List[str], step: Optional[int] = None
+        self,
+        tag: str,
+        videos_and_figures: List[tuple],
+        columns: List[str],
+        step: Optional[int] = None,
+        fps: int = 10,
     ):
         """
         Log a table where first column can be video (wandb), second a figure, etc.
@@ -80,11 +86,29 @@ class Logger:
                     if x is None:
                         row.append(None)
                     else:
-                        # Heuristically wrap images/figures; assume pre-encoded videos passed as wandb.Video externally
+                        # Wrap images/figures
                         if hasattr(x, "savefig") or getattr(x, "__class__", type("x", (), {})).__name__ == "Figure":
                             row.append(wandb.Image(x))
+                            # Free matplotlib figure memory after wrapping
+                            plt.close(x)
+                        # Wrap file path as video
+                        elif isinstance(x, str):
+                            row.append(wandb.Video(x, fps=fps, format="gif"))
                         else:
-                            row.append(x)
+                            # Try to interpret as array/tensor video
+                            arr = None
+                            if isinstance(x, np.ndarray):
+                                arr = x
+                            elif isinstance(x, torch.Tensor):
+                                arr = x.detach().cpu().numpy()
+                            if arr is not None and arr.ndim == 4:
+                                # Convert T x H x W x C -> T x C x H x W if needed
+                                if arr.shape[-1] in (1, 3):
+                                    arr = np.transpose(arr, (0, 3, 1, 2))
+                                row.append(wandb.Video(arr, fps=fps, format="gif"))
+                            else:
+                                # Fallback: store raw value
+                                row.append(x)
                 rows.append(row)
             self._wandb_run.log({tag: wandb.Table(data=rows, columns=columns)}, step=step)
 

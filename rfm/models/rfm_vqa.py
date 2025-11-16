@@ -4,7 +4,7 @@ RFM (Reward Foundation Model) VQA version implementation.
 Contains the RFM class by using the standard Qwen2.5-VL model, training it with VQA data.
 """
 
-from transformers import PreTrainedModel, Qwen2_5_VLForConditionalGeneration
+from transformers import PreTrainedModel, Qwen2_5_VLForConditionalGeneration, SmolVLMForConditionalGeneration
 
 import torch
 
@@ -19,8 +19,12 @@ class RFMVQA(PreTrainedModel):
         # Use Qwen2_5_VLForConditionalGeneration for VQA (language generation)
         if base_model is not None:
             self.model = base_model
-        else:
+        elif "SmolVLM" in base_model_id:
+            self.model = SmolVLMForConditionalGeneration(config)
+        elif "Qwen" in base_model_id:
             self.model = Qwen2_5_VLForConditionalGeneration(config)
+        else:
+            raise ValueError(f"Base model id not supported in RFMVQA yet: {base_model_id}")
 
         self.processor = processor
         self.tokenizer = tokenizer
@@ -89,6 +93,7 @@ class RFMVQA(PreTrainedModel):
                 - attentions (tuple, optional): Attention weights from all layers
         """
         # Forward pass through the base VLM
+        # Note: dtype casting is handled in the trainer's _prepare_inputs method
         # Only pass second_per_grid_ts if it's not None (some models may not support it)
         forward_kwargs = {
             "input_ids": input_ids,
@@ -110,7 +115,10 @@ class RFMVQA(PreTrainedModel):
         return outputs
 
     def generate(self, *args, **kwargs):
-        """Generate VQA answers using the base VLM's language modeling head."""
+        """
+        Generate VQA answers using the base VLM's language modeling head.
+        Note: dtype casting is handled in the trainer's _prepare_inputs method.
+        """
         return self.model.generate(*args, **kwargs)
 
     def prepare_inputs_for_generation(self, *args, **kwargs):

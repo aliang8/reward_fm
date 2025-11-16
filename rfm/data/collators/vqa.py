@@ -150,8 +150,6 @@ class VQABatchCollator(RFMBatchCollator):
                 # Convert to Python list to get proper comma-separated format
                 target_progress_rounded = np.round(target_progress, 2).tolist()
                 conversation.append({"role": "assistant", "content": f"<ans>{target_progress_rounded}</ans>"})
-            elif self.inference and target_progress is not None:
-                print(target_progress)
 
             all_messages.append(conversation)
 

@@ -85,7 +85,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
                         do_sample=False,  # Greedy decoding for reproducibility
                         pad_token_id=model.tokenizer.pad_token_id,
                         eos_token_id=model.tokenizer.eos_token_id,
-                        #use_cache=True,  # Enable KV caching for faster generation
+                        use_cache=True,  # Enable KV caching for faster generation
                     )
                 
                 # Decode only the generated part (not the input prompt)
@@ -94,10 +94,13 @@ class RFMVQATrainer(RFMHeadsTrainer):
                 
                 # Get input length to slice only generated tokens
                 input_len = inputs["input_ids"].shape[1]
-                generated_ids = generated_ids[:, input_len:]  # Only new tokens
+                generated_ids_sliced = generated_ids[:, input_len:]  # Only new tokens
                 
-                pred_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+                pred_texts = tokenizer.batch_decode(generated_ids_sliced, skip_special_tokens=True)
                 predictions = [extract_answer_from_text(text) for text in pred_texts]
+                
+                # Explicitly free generation tensors to prevent memory accumulation
+                del generated_ids, generated_ids_sliced, gen_inputs
                 
                 progress_logits = []
                 for prediction in predictions:
@@ -109,6 +112,10 @@ class RFMVQATrainer(RFMHeadsTrainer):
                             rank_0_print(f"Failed to parse prediction: {prediction[:100]}")
                         progress_logits.append(None)
                 progress_logits = {"A": progress_logits, "B": None}
+                
+                # Clear CUDA cache after generation to free KV cache memory
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
             else:
                 progress_logits = None
         

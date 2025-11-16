@@ -588,76 +588,81 @@ class RFMHeadsTrainer(Trainer):
 
                         progress_logits = outputs.progress_logits
                         progress_pred = progress_logits["A"]
+                        
+                        # Convert predictions to tensor, using NaN for None values
                         if isinstance(progress_pred, list):
-                            if isinstance(progress_pred[0], torch.Tensor):
-                                progress_pred = torch.stack(progress_pred)
-                            elif any(p is None for p in progress_pred):
-                                continue
+                            # Get expected shape from target_progress or first valid prediction
+                            if any(p is not None for p in progress_pred):
+                                valid_pred = next(p for p in progress_pred if p is not None)
+                                pred_len = len(valid_pred) if isinstance(valid_pred, list) else valid_pred.shape[0]
                             else:
-                                progress_pred = torch.tensor(progress_pred, device=self.accelerator.device)
-
-                        # Gather predictions and targets across all ranks
+                                pred_len = progress_samples["target_progress"].shape[1]
+                            
+                            # Replace None with NaN lists
+                            sentinel = [float('nan')] * pred_len
+                            progress_pred = [p if p is not None else sentinel for p in progress_pred]
+                            progress_pred = torch.tensor(progress_pred, device=self.accelerator.device)
+                        
+                        # Gather everything
                         progress_pred = self.accelerator.gather_for_metrics(progress_pred)
                         target_progress = self.accelerator.gather_for_metrics(progress_samples["target_progress"])
-                        gathered_quality_labels = self.accelerator.gather_for_metrics(
-                            progress_samples["quality_labels"]
-                        )
-
-                        success_pred_gathered = None
-                        if self.config.model.train_success_head:
-                            success_logits = outputs.success_logits
-                            success_pred = success_logits["A"]
-                            # Normalize to a tensor [B, T]
-                            if isinstance(success_pred, list):
-                                if len(success_pred) > 0 and isinstance(success_pred[0], torch.Tensor):
-                                    success_pred = torch.stack(success_pred)
-                                else:
-                                    success_pred = torch.tensor(success_pred, device=self.accelerator.device)
-                            success_probs = torch.sigmoid(success_pred)
-                            success_binary = (success_probs > 0.5).float()
-                            success_pred_gathered = self.accelerator.gather_for_metrics(success_binary)
-
-                        # Gather non-tensor metadata using all_gather_object
+                        
+                        # Gather metadata fields
+                        metadata_fields = ["task", "data_source", "data_gen_strategy", "quality_labels", "metadata"]
+                        gathered_metadata_dict = {}
+                        
                         if dist.is_initialized():
                             world_size = dist.get_world_size()
-
-                            # Gather each metadata field separately
-                            gathered_task = [None] * world_size
-                            gathered_data_source = [None] * world_size
-                            gathered_data_gen_strategy = [None] * world_size
-                            gathered_metadata = [None] * world_size
-
-                            dist.all_gather_object(gathered_task, progress_samples["task"])
-                            dist.all_gather_object(gathered_data_source, progress_samples["data_source"])
-                            dist.all_gather_object(gathered_data_gen_strategy, progress_samples["data_gen_strategy"])
-                            dist.all_gather_object(gathered_metadata, progress_samples["metadata"])
-
-                            # Flatten gathered lists (each element is a list from one rank)
-                            gathered_task = [item for sublist in gathered_task for item in sublist]
-                            gathered_data_source = [item for sublist in gathered_data_source for item in sublist]
-                            gathered_data_gen_strategy = [
-                                item for sublist in gathered_data_gen_strategy for item in sublist
-                            ]
-                            gathered_metadata = [item for sublist in gathered_metadata for item in sublist]
+                            for field in metadata_fields:
+                                gathered = [None] * world_size
+                                dist.all_gather_object(gathered, progress_samples[field])
+                                gathered_metadata_dict[field] = [item for sublist in gathered for item in sublist]
                         else:
-                            # Single process - no gathering needed
-                            gathered_task = progress_samples["task"]
-                            gathered_data_source = progress_samples["data_source"]
-                            gathered_data_gen_strategy = progress_samples["data_gen_strategy"]
-                            gathered_metadata = progress_samples["metadata"]
+                            for field in metadata_fields:
+                                gathered_metadata_dict[field] = progress_samples[field]
+                        
+                        # Filter out invalid predictions (NaN sentinels)
+                        valid_mask = ~torch.isnan(progress_pred[:, 0])
+                        num_invalid = (~valid_mask).sum().item()
+                        
+                        if num_invalid == len(valid_mask):
+                            rank_0_print(f"[Warning] All predictions invalid - skipping batch")
+                            continue
+                        
+                        if num_invalid > 0:
+                            rank_0_print(f"[Info] Filtering out {num_invalid}/{len(valid_mask)} invalid predictions")
+                            progress_pred = progress_pred[valid_mask]
+                            target_progress = target_progress[valid_mask]
+                            valid_idx_list = valid_mask.cpu().tolist()
+                            for field in metadata_fields:
+                                gathered_metadata_dict[field] = [
+                                    gathered_metadata_dict[field][i] for i, v in enumerate(valid_idx_list) if v
+                                ]
+                        
+                        # Handle success predictions if needed
+                        success_pred_gathered = None
+                        if self.config.model.train_success_head:
+                            success_pred = outputs.success_logits["A"]
+                            if isinstance(success_pred, list):
+                                success_pred = torch.stack(success_pred) if isinstance(success_pred[0], torch.Tensor) else torch.tensor(success_pred, device=self.accelerator.device)
+                            success_binary = (torch.sigmoid(success_pred) > 0.5).float()
+                            success_pred_gathered = self.accelerator.gather_for_metrics(success_binary)
+                            if num_invalid > 0:
+                                success_pred_gathered = success_pred_gathered[valid_mask]
 
                         # Build eval_results on all processes for compute_eval_metrics
                         for i in range(len(progress_pred)):
+                            metadata = gathered_metadata_dict["metadata"][i]
                             sample_result = {
-                                "task": gathered_task[i],
+                                "task": gathered_metadata_dict["task"][i],
                                 "target_progress": target_progress[i].detach().to(dtype=torch.float32).cpu().numpy(),
                                 "progress_pred": progress_pred[i].detach().to(dtype=torch.float32).cpu().numpy(),
-                                "data_source": gathered_data_source[i],
-                                "data_gen_strategy": gathered_data_gen_strategy[i],
-                                "quality_label": gathered_quality_labels[i],
-                                "metadata": gathered_metadata[i],
-                                "id": gathered_metadata[i]["id"],
-                                "video_path": gathered_metadata[i]["video_path"],
+                                "data_source": gathered_metadata_dict["data_source"][i],
+                                "data_gen_strategy": gathered_metadata_dict["data_gen_strategy"][i],
+                                "quality_label": gathered_metadata_dict["quality_labels"][i],
+                                "metadata": metadata,
+                                "id": metadata["id"],
+                                "video_path": metadata["video_path"],
                             }
                             if success_pred_gathered is not None:
                                 sample_result["success_pred"] = (
@@ -732,6 +737,12 @@ class RFMHeadsTrainer(Trainer):
                                 "metadata": gathered_metadata[i],
                             }
                             eval_results.append(sample_result)
+                    
+                    # Clean up batch tensors and free memory after each batch
+                    # This is critical for VQA with generation to prevent OOM
+                    del batch, outputs
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
 
                 # Compute metrics on all processes
                 if eval_type == "reward_alignment":
@@ -798,6 +809,11 @@ class RFMHeadsTrainer(Trainer):
                         if self.log_wandb:
                             wandb.log({f"{ds_name}/confusion_matrix": wandb.Image(confusion_plot)})
                             plt.close(confusion_plot)
+                
+                # Clean up after each dataset to prevent memory accumulation
+                del dataset, dataloader, eval_results
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
         # Prepare metrics for callbacks (all processes)
         callback_metrics = {}

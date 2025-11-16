@@ -589,20 +589,6 @@ class RFMHeadsTrainer(Trainer):
                         progress_logits = outputs.progress_logits
                         progress_pred = progress_logits["A"]
                         
-                        # Convert predictions to tensor, using NaN for None values
-                        if isinstance(progress_pred, list):
-                            # Get expected shape from target_progress or first valid prediction
-                            if any(p is not None for p in progress_pred):
-                                valid_pred = next(p for p in progress_pred if p is not None)
-                                pred_len = len(valid_pred) if isinstance(valid_pred, list) else valid_pred.shape[0]
-                            else:
-                                pred_len = progress_samples["target_progress"].shape[1]
-                            
-                            # Replace None with NaN lists
-                            sentinel = [float('nan')] * pred_len
-                            progress_pred = [p if p is not None else sentinel for p in progress_pred]
-                            progress_pred = torch.tensor(progress_pred, device=self.accelerator.device)
-                        
                         # Gather everything
                         progress_pred = self.accelerator.gather_for_metrics(progress_pred)
                         target_progress = self.accelerator.gather_for_metrics(progress_samples["target_progress"])
@@ -621,24 +607,6 @@ class RFMHeadsTrainer(Trainer):
                             for field in metadata_fields:
                                 gathered_metadata_dict[field] = progress_samples[field]
                         
-                        # Filter out invalid predictions (NaN sentinels)
-                        valid_mask = ~torch.isnan(progress_pred[:, 0])
-                        num_invalid = (~valid_mask).sum().item()
-                        
-                        if num_invalid == len(valid_mask):
-                            rank_0_print(f"[Warning] All predictions invalid - skipping batch")
-                            continue
-                        
-                        if num_invalid > 0:
-                            rank_0_print(f"[Info] Filtering out {num_invalid}/{len(valid_mask)} invalid predictions")
-                            progress_pred = progress_pred[valid_mask]
-                            target_progress = target_progress[valid_mask]
-                            valid_idx_list = valid_mask.cpu().tolist()
-                            for field in metadata_fields:
-                                gathered_metadata_dict[field] = [
-                                    gathered_metadata_dict[field][i] for i, v in enumerate(valid_idx_list) if v
-                                ]
-                        
                         # Handle success predictions if needed
                         success_pred_gathered = None
                         if self.config.model.train_success_head:
@@ -647,8 +615,6 @@ class RFMHeadsTrainer(Trainer):
                                 success_pred = torch.stack(success_pred) if isinstance(success_pred[0], torch.Tensor) else torch.tensor(success_pred, device=self.accelerator.device)
                             success_binary = (torch.sigmoid(success_pred) > 0.5).float()
                             success_pred_gathered = self.accelerator.gather_for_metrics(success_binary)
-                            if num_invalid > 0:
-                                success_pred_gathered = success_pred_gathered[valid_mask]
 
                         # Build eval_results on all processes for compute_eval_metrics
                         for i in range(len(progress_pred)):

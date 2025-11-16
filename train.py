@@ -12,8 +12,6 @@ from rich.console import Console
 from rich.panel import Panel
 
 from peft import prepare_model_for_kbit_training
-
-import wandb
 from rfm.configs.experiment_configs import ExperimentConfig
 from rfm.trainers import ReWiNDTrainer, RFMHeadsTrainer, RFMVQATrainer
 from rfm.data.datasets.helpers import show_available_datasets
@@ -28,6 +26,7 @@ from rfm.utils.setup_utils import (
     setup_model_and_processor,
     setup_peft_model,
 )
+from rfm.utils.logger import Logger
 import datasets
 
 datasets.logging.set_verbosity_error()
@@ -42,17 +41,7 @@ def train(cfg: ExperimentConfig):
     if cfg.debug:
         run_name += "_debug"
 
-    # Initialize wandb if enabled (only on rank 0)
-    if cfg.logging.use_wandb and is_rank_0():
-        # Convert config to dict for wandb using dataclass asdict
-        config_dict = asdict(cfg)
-
-        wandb.init(
-            project=cfg.logging.wandb_project, entity=cfg.logging.wandb_entity, name=run_name, config=config_dict
-        )
-        rank_0_print(f"Wandb initialized: {run_name}")
-    elif cfg.logging.use_wandb:
-        rank_0_print("Wandb logging enabled but skipped on non-rank-0 processes")
+    # will initialize wandb later via logger (after logger is constructed)
 
     # Set memory management
     torch.backends.cudnn.benchmark = True
@@ -85,12 +74,12 @@ def train(cfg: ExperimentConfig):
     training_args = create_training_arguments(cfg, output_dir)
 
     # Handle output directory existence (works with accelerate/distributed training)
-    overwrite_output_dir = getattr(cfg.training, 'overwrite_output_dir', False)
-    
+    overwrite_output_dir = getattr(cfg.training, "overwrite_output_dir", False)
+
     # Check if distributed training is initialized (for proper synchronization)
     # This is important for accelerate/FSDP setups where multiple processes run
     dist_initialized = dist.is_available() and dist.is_initialized()
-    
+
     # Check if output directory exists (only on rank 0 to avoid race conditions)
     if is_rank_0() and os.path.exists(output_dir):
         if overwrite_output_dir:
@@ -101,39 +90,42 @@ def train(cfg: ExperimentConfig):
                 f"Output directory {output_dir} already exists. "
                 f"Set overwrite_output_dir=True in config to overwrite it, or use a different output directory."
             )
-    
+
     # Synchronize all processes before creating directory (important for distributed training)
     # This ensures rank 0 finishes checking/removing before other processes try to create it
     if dist_initialized:
         dist.barrier()
-    
+
     # Create output directory (all processes need to do this for distributed training)
     # os.makedirs is safe to call multiple times (exist_ok=True)
     os.makedirs(output_dir, exist_ok=True)
-    
+
     # Synchronize after directory creation to ensure all processes see it
     if dist_initialized:
         dist.barrier()
+
+    # Initialize logger (works with wandb/tensorboard)
+    log_to = cfg.logging.log_to
+    logger = Logger(log_to=log_to, output_dir=output_dir, is_main_process=is_rank_0())
     config_save_path = os.path.join(output_dir, "config.yaml")
     config_dict = asdict(cfg)
     with open(config_save_path, "w") as f:
         yaml.dump(config_dict, f, default_flow_style=False, indent=2)
     rank_0_print(f"Saved training config to: {config_save_path}")
 
-    # Save wandb run ID to a file for later reference (only on rank 0)
-    if cfg.logging.use_wandb and is_rank_0() and wandb.run is not None:
-        wandb_info = {
-            "wandb_id": wandb.run.id,
-            "wandb_name": run_name,
-            "wandb_project": wandb.run.project,
-            "wandb_entity": wandb.run.entity,
-            "wandb_url": wandb.run.url,
-        }
-        wandb_info_path = os.path.join(output_dir, "wandb_info.json")
-        with open(wandb_info_path, "w") as f:
-            json.dump(wandb_info, f, indent=2)
-        rank_0_print(f"Saved wandb run info to: {wandb_info_path}")
-        rank_0_print(f"Wandb ID: {wandb.run.id}")
+    # Initialize wandb via logger if requested
+    if "wandb" in (cfg.logging.log_to or []) and is_rank_0():
+        # Convert config to dict for wandb using dataclass asdict
+        config_dict = asdict(cfg)
+        logger.init_wandb(
+            project=cfg.logging.wandb_project,
+            entity=cfg.logging.wandb_entity,
+            name=run_name,
+            config=config_dict,
+        )
+        rank_0_print(f"Wandb initialized: {run_name}")
+
+    logger.write_wandb_info(output_dir, run_name)
 
     # Use the shared utilities for batch collator and dataset
 
@@ -178,6 +170,7 @@ def train(cfg: ExperimentConfig):
         eval_dataset=eval_dataset,
         data_collator=batch_collator,
         config=cfg,
+        logger=logger,
         callbacks=[save_callback],
     )
 
@@ -212,9 +205,9 @@ def train(cfg: ExperimentConfig):
             print("ERROR: Trainer has no 'accelerator' attribute yet. This check needs to be later.")
         print("=" * 80 + "\n")
 
-    # log timing_raw to wandb
-    if cfg.logging.use_wandb and is_rank_0():
-        wandb.log(timing_raw)
+    # log timing_raw via logger
+    if is_rank_0():
+        logger.log_scalars(timing_raw)
 
     rank_0_print(f"Timing raw: {timing_raw}")
     rank_0_print(f"Training from checkpoint: {cfg.training.resume_from_checkpoint}")

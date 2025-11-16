@@ -89,7 +89,9 @@ class BalancedRFMDataset(RFMDataset):
         ]
 
         # Remove samplers with zero probability or None samplers
-        available_samplers = [(name, prob, sampler) for name, prob, sampler in samplers if prob > 0 and sampler is not None]
+        available_samplers = [
+            (name, prob, sampler) for name, prob, sampler in samplers if prob > 0 and sampler is not None
+        ]
 
         # Fallback to progress sampler if no samplers have positive probability
         if not available_samplers:
@@ -114,8 +116,7 @@ class BalancedRFMDataset(RFMDataset):
 
             # Filter out already tried samplers if we haven't exhausted all options
             remaining_samplers = [
-                (name, prob, sampler) for name, prob, sampler in available_samplers
-                if name not in tried_samplers
+                (name, prob, sampler) for name, prob, sampler in available_samplers if name not in tried_samplers
             ]
 
             # If no remaining samplers, reset and try all again
@@ -156,11 +157,11 @@ class BalancedRFMDataset(RFMDataset):
             except (ValueError, RuntimeError) as e:
                 # If sampler raises an error, treat as None and try other samplers
                 sample = None
-            
+
             # If sample is not None, return it
             if sample is not None:
                 return sample
-            
+
             # Sample is None, mark this sampler as tried
             tried_samplers.add(selected_name)
 
@@ -277,7 +278,7 @@ def test():
         train_datasets=["jesbu1_oxe_rfm_oxe_jaco_play"],
         sample_type_ratio=[0, 1, 0],  # pref, progress, similarity
         preference_strategy_ratio=[6, 1, 1, 0],
-        progress_strategy_ratio=[1, 0, 0, 0], # [successful, rewind, different_task, subsequence]
+        progress_strategy_ratio=[1, 0, 0, 0],  # [successful, rewind, different_task, subsequence]
         similarity_strategy_ratio=[1, 1, 1],  # rewind, suboptimal_same_task, paired_human_robot
         dataset_preference_ratio=0.7,
         data_source_weights={

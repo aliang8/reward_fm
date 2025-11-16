@@ -33,7 +33,9 @@ class ModelConfig(PretrainedConfig):
 
     average_temporal_patches: bool = field(
         default=False,
-        metadata={"help": "If True, average all tokens within each temporal patch group for progress prediction. If False, use the last token (boundary) of each temporal patch group."},
+        metadata={
+            "help": "If True, average all tokens within each temporal patch group for progress prediction. If False, use the last token (boundary) of each temporal patch group."
+        },
     )
 
     pairwise_progress: bool = field(
@@ -118,7 +120,10 @@ class DataConfig:
     )
     max_frames: int = field(default=8, metadata={"help": "Maximum number of frames to extract from videos"})
     min_frames_per_trajectory: int = field(
-        default=10, metadata={"help": "Minimum number of frames required per trajectory (trajectories with fewer frames will be filtered out)"}
+        default=10,
+        metadata={
+            "help": "Minimum number of frames required per trajectory (trajectories with fewer frames will be filtered out)"
+        },
     )
     resized_height: int = field(default=224, metadata={"help": "Height to resize video frames to"})
     resized_width: int = field(default=224, metadata={"help": "Width to resize video frames to"})
@@ -233,7 +238,9 @@ class TrainingConfig:
     resume_from_checkpoint: Optional[str] = field(default=None)
     overwrite_output_dir: bool = field(
         default=False,
-        metadata={"help": "If True, overwrite the output directory if it exists. If False, raise an error if it exists."},
+        metadata={
+            "help": "If True, overwrite the output directory if it exists. If False, raise an error if it exists."
+        },
     )
 
     # Training arguments
@@ -324,8 +331,12 @@ class LoggingConfig:
 
     save_model: bool = field(default=True)
     save_processor: bool = field(default=True)
+    # Logging backends
+    log_to: List[str] = field(
+        default_factory=list,
+        metadata={"help": "List of logging backends to use, e.g., ['wandb', 'tensorboard']"},
+    )
     # Wandb configuration
-    use_wandb: bool = field(default=True, metadata={"help": "Whether to use Weights & Biases logging"})
     wandb_project: str = field(default="rfm-model", metadata={"help": "Wandb project name"})
     wandb_entity: Optional[str] = field(default=None, metadata={"help": "Wandb entity/username"})
 

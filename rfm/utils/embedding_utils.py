@@ -38,7 +38,7 @@ def compute_video_embeddings(
     num_frames = frames_array.shape[0]
 
     autocast_context = torch.cuda.amp.autocast(enabled=use_autocast and torch.cuda.is_available())
-    
+
     with torch.no_grad(), autocast_context:
         for i in tqdm(range(0, num_frames, batch_size), disable=not use_tqdm):
             end_idx = min(i + batch_size, num_frames)
@@ -89,7 +89,7 @@ def compute_text_embeddings(
         raise ValueError("Sentence model not initialized. Set precompute_embeddings=True in config.")
 
     autocast_context = torch.cuda.amp.autocast(enabled=use_autocast and torch.cuda.is_available())
-    
+
     with torch.no_grad(), autocast_context:
         embedding = sentence_model.encode(
             text,
@@ -98,4 +98,3 @@ def compute_text_embeddings(
             batch_size=1,
         )
         return embedding.cpu()
-

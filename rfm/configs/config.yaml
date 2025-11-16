@@ -186,7 +186,7 @@ training:
 logging:
   save_model: true
   save_processor: true
-  use_wandb: false
+  log_to: ["wandb"]
   wandb_project: "rfm"
   wandb_entity: clvr
   

@@ -109,10 +109,11 @@ def load_embeddings_from_path(embeddings_path: str) -> torch.Tensor:
         rfm_dataset_path = rfm_dataset_path.replace("processed_datasets", "")
         if rfm_dataset_path:
             embeddings_path = os.path.join(rfm_dataset_path, embeddings_path)
-    
+
     with open(embeddings_path, "rb") as f:
         embeddings_data = torch.load(f, map_location="cpu")
     return embeddings_data
+
 
 def pad_trajectory_to_max_frames_np(
     frames: np.ndarray, progress: list[float], max_frames: int, pad_from: str = "right"
@@ -197,7 +198,9 @@ def pad_trajectory_to_max_frames_torch(
     return padded_frames, padded_progress
 
 
-def linspace_subsample_frames(frames: np.ndarray, num_frames: int = 8, end_idx: int | None = None) -> tuple[np.ndarray, list[int]]:
+def linspace_subsample_frames(
+    frames: np.ndarray, num_frames: int = 8, end_idx: int | None = None
+) -> tuple[np.ndarray, list[int]]:
     """Uniformly subsample frames from a trajectory and return the indices.
 
     This method takes the full trajectory (e.g., 64 frames) and uniformly subsamples
@@ -222,7 +225,7 @@ def linspace_subsample_frames(frames: np.ndarray, num_frames: int = 8, end_idx: 
     # Use end_idx if provided, otherwise use full trajectory
     if end_idx is not None:
         end_idx = min(end_idx, total_frames - 1)
-        frames_to_subsample = frames[:end_idx + 1]
+        frames_to_subsample = frames[: end_idx + 1]
         effective_total = end_idx + 1
     else:
         frames_to_subsample = frames
@@ -252,68 +255,6 @@ def linspace_subsample_frames(frames: np.ndarray, num_frames: int = 8, end_idx: 
     subsampled_frames = frames_to_subsample[indices]
 
     return subsampled_frames, indices
-
-
-def linspace_subsample_with_cutoff(
-    frames: np.ndarray,
-    num_frames: int,
-    num_frames_total: int,
-    success_cutoff: float,
-) -> tuple[np.ndarray, list[int], int]:
-    """Uniformly subsample frames using linspace, with end_idx randomly between cutoff and total.
-
-    This is used for the "successful" strategy where we want to sample up to a random
-    point between the success cutoff and the end of the trajectory.
-
-    Args:
-        frames: Full trajectory frames (N frames)
-        num_frames: Number of frames to subsample
-        num_frames_total: Total number of frames in original trajectory
-        success_cutoff: Success cutoff percentage (0-1)
-
-    Returns:
-        Tuple of (subsampled_frames, subsampled_indices, end_idx)
-    """
-    # Calculate cutoff index
-    cutoff_index = int(success_cutoff * num_frames_total) if success_cutoff > 0 else 0
-    
-    # Randomly select end_idx between cutoff_index and num_frames_total
-    if cutoff_index >= num_frames_total - 1:
-        end_idx = num_frames_total - 1
-    else:
-        end_idx = random.randint(cutoff_index, num_frames_total - 1)
-    
-    # Use linspace subsampling up to end_idx
-    subsampled_frames, indices = linspace_subsample_frames(frames, num_frames, end_idx=end_idx)
-    
-    return subsampled_frames, indices, end_idx
-
-
-def compute_progress_from_linspace(
-    num_frames_total: int,
-    end_idx: int,
-    frame_indices: list[int],
-    progress_pred_type: str = "absolute",
-) -> list[float]:
-    """Compute progress values for linspace subsampling (used for successful strategy).
-
-    Args:
-        num_frames_total: Total number of frames in the original trajectory
-        end_idx: End index (inclusive) up to which we subsampled
-        frame_indices: Indices from linspace subsampling (0-based relative to [0, end_idx])
-        progress_pred_type: "absolute" for cumulative progress, "relative" for inter-frame deltas
-
-    Returns:
-        List of progress values
-    """
-    # Calculate absolute progress: normalize to full trajectory length
-    # frame_indices are already 0-based within [0, end_idx], so we normalize by num_frames_total
-    progress_values = [idx / (num_frames_total - 1) if num_frames_total > 1 else 0.0 for idx in frame_indices]
-    
-    if progress_pred_type == "relative":
-        return convert_absolute_to_relative_progress(progress_values)
-    
-    return progress_values
 
 
 def randomly_subsample_frames(
@@ -358,7 +299,11 @@ def randomly_subsample_frames(
 
 
 def subsample_segment_frames(
-    frames: np.ndarray, max_frames: int, method: str = "linspace"
+    frames: np.ndarray,
+    max_frames: int,
+    method: str = "linspace",
+    perc_start: float = 0.5,
+    perc_end: float = 2.0 / 3.0,
 ) -> tuple[np.ndarray, int, int, list[int]]:
     """Choose a random segment [start_idx, end_idx) and subsample frames.
 
@@ -370,17 +315,26 @@ def subsample_segment_frames(
     if num_frames_total < max_frames:
         return frames, 0, num_frames_total, list(range(num_frames_total))
 
+    # Clamp percentages to valid ranges
+    perc_start = max(0.0, min(1.0, perc_start))
+    perc_end = max(0.0, min(1.0, perc_end))
+
     # Select start and end indices for the chosen trajectory segment
-    start_idx = random.randint(0, num_frames_total // 2 - 1)
-    end = (2 * num_frames_total) // 3
-    end_idx = random.randint(end, num_frames_total)
+    start_bound = int(perc_start * num_frames_total)
+    end_bound = int(perc_end * num_frames_total)
+
+    # Ensure end_bound is at least start_bound + 1
+    end_bound = max(end_bound, start_bound + 1)
+
+    start_idx = random.randint(0, max(0, start_bound))
+    end_idx = random.randint(end_bound, num_frames_total)
 
     # Ensure we have enough frames between start and end
     attempts = 0
     max_attempts = 10
     while end_idx - start_idx < 5 and attempts < max_attempts:
-        start_idx = random.randint(0, num_frames_total // 2 - 1)
-        end_idx = random.randint(end, num_frames_total)
+        start_idx = random.randint(0, max(0, start_bound))
+        end_idx = random.randint(end_bound, num_frames_total)
         attempts += 1
 
     if end_idx - start_idx < 5:
@@ -437,7 +391,7 @@ def compute_progress_from_segment(
         progress_pred_type: "absolute" for cumulative segment progress, "relative" for inter-frame deltas.
 
     Behavior:
-        - absolute: progress[i] = (i+1) / (num_frames_total - start_idx), evaluated at each selected in-segment index.
+        - absolute: progress[i] = i / (num_frames_total - start_idx - 1), evaluated at each selected in-segment index.
         - relative: progress[0] = 0.0; progress[i] = (frame_indices[i] - frame_indices[i-1]) / (num_frames_total - start_idx).
     """
     # Calculate progress for the full segment first
@@ -448,15 +402,16 @@ def compute_progress_from_segment(
     if success_cutoff is not None and success_cutoff > 0:
         # Index of the first frame where progress exceeds the cutoff
         cutoff_index = int(success_cutoff * num_frames_total)
-    
+
     # Calculate progress at each frame in the segment
     # This is absolute progress
     segment_progress = []
     for i in range(segment_len):
-        # Check if this index is at or after the cutoff and set progress to 1.0
-        if cutoff_index is not None and cutoff_index > start_idx:
+        if cutoff_index is not None:
+            # ensure denominator is at least 1 to avoid division by zero
+            denominator = max(1, cutoff_index - start_idx - 1)
             # if it goes pass the cutoff, the progress will be set to 1
-            segment_progress.append(min(1.0, i / (cutoff_index - start_idx - 1)))
+            segment_progress.append(min(1.0, i / denominator))
         else:
             # Normal progress calculation
             segment_progress.append(i / (num_frames_total - start_idx - 1))
@@ -589,12 +544,13 @@ def create_rewind_trajectory(
     else:
         num_frames = len(frames_data)
 
-    if num_frames == 0 or (num_frames // 2 - 1) <= 0:
+    start = num_frames // 2
+    if num_frames == 0 or (start - 1) <= 0:
         return None
 
     # Step 1: Select start and end indices
     # Start index is in the first half of the trajectory
-    start_idx = random.randint(0, num_frames // 2 - 1)
+    start_idx = random.randint(0, start - 1)
     # End index is in the latter half of the trajectory
     end_idx = random.randint(num_frames // 2, num_frames)
 
@@ -602,13 +558,13 @@ def create_rewind_trajectory(
     attempts = 0
     max_attempts = 10
     while end_idx - start_idx < 5 and attempts < max_attempts:
-        start_idx = random.randint(0, num_frames // 2 - 1)
+        start_idx = random.randint(0, start - 1)
         end_idx = random.randint(num_frames // 2, num_frames)
         attempts += 1
 
     # If we still don't have enough frames after max attempts, return None and try a different strategy
     if end_idx - start_idx < 5:
-        return None 
+        return None
 
     # Step 2: Select rewind index between start and end
     if rewind_length is None:
@@ -747,18 +703,3 @@ def show_available_datasets():
     else:
         print("  ❌ Cache directory does not exist")
     print("=" * 100)
-
-
-def load_dataset_success_percent(cutoff_file_path):
-    """Load dataset-specific success percentage from file."""
-    success_percent_dict = {}
-    try:
-        with open(cutoff_file_path, "r") as f:
-            for line in f:
-                line = line.strip()
-                if line and "," in line:
-                    dataset_name, success_percent = line.split(",")
-                    success_percent_dict[dataset_name.strip()] = float(success_percent.strip())
-    except FileNotFoundError:
-        print(f"Warning: Success cutoff file {cutoff_file_path} not found. Using default thresholds.")
-    return success_percent_dict

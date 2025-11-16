@@ -9,8 +9,6 @@ from rfm.data.datasets.helpers import (
     pad_trajectory_to_max_frames_torch,
     pad_trajectory_to_max_frames_np,
     subsample_pairs_and_progress,
-    linspace_subsample_with_cutoff,
-    compute_progress_from_linspace,
 )
 from rfm.data.dataset_types import Trajectory
 from rfm.data.datasets.helpers import create_rewind_trajectory, load_embeddings_from_path
@@ -348,48 +346,22 @@ class RFMBaseSampler:
                 video_embeddings = subsampled
             else:
                 frames = subsampled
-        elif subsample_strategy == "successful":
-            # Successful strategy: linspace subsample with end_idx between cutoff and total
-            ds_key = traj["data_source"]
-            success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
-            
-            subsampled, indices, end_idx = linspace_subsample_with_cutoff(
-                data,
-                self.config.max_frames,
-                num_frames_total,
-                success_cutoff,
-            )
-            frames_shape = subsampled.shape
-            progress = compute_progress_from_linspace(
-                num_frames_total=num_frames_total,
-                end_idx=end_idx,
-                frame_indices=indices,
-                progress_pred_type=self.config.progress_pred_type,
-            )
-            metadata = {
-                "end_idx": end_idx,
-                "subsampled_indices": indices,
-                "strategy": "successful",
-            }
-            if self.config.load_embeddings:
-                video_embeddings = subsampled
-            else:
-                frames = subsampled
         else:
-            # Default/subsequence strategy: segment subsampling (same as before)
-            # Get success cutoff from pre-loaded map
             ds_key = traj["data_source"]
             success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
-
-            subsampled, start_idx, end_idx, indices = subsample_segment_frames(data, self.config.max_frames)
+            perc_end = success_cutoff if subsample_strategy == "successful" else 2.0 / 3.0
+            subsampled, start_idx, end_idx, indices = subsample_segment_frames(
+                data, self.config.max_frames, method="linspace", perc_end=perc_end
+            )
             frames_shape = subsampled.shape
+            # For successful, progress previously ignored success_cutoff in computation
             progress = compute_progress_from_segment(
                 num_frames_total=num_frames_total,
                 start_idx=start_idx,
                 end_idx=end_idx,
                 frame_indices=indices,
                 progress_pred_type=self.config.progress_pred_type,
-                success_cutoff=success_cutoff,
+                success_cutoff=None if subsample_strategy == "successful" else success_cutoff,
             )
             metadata = {
                 "start_idx": start_idx,

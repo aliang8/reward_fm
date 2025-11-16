@@ -3,6 +3,7 @@
 Shared setup utilities for RFM training.
 This file contains setup functions that can be reused across different training scripts.
 """
+
 from unsloth import FastVisionModel
 
 import re
@@ -265,7 +266,16 @@ def setup_model_and_processor(
 
         # Add RFM special tokens if they don't exist
         if cfg.model_type == "default":
-            special_tokens = ["<|split_token|>", "<|reward_token|>", "<|pref_token|>", "<|sim_token|>", "<|prog_token_A|>", "<|prog_token_B|>", "<|succ_token_A|>", "<|succ_token_B|>"]
+            special_tokens = [
+                "<|split_token|>",
+                "<|reward_token|>",
+                "<|pref_token|>",
+                "<|sim_token|>",
+                "<|prog_token_A|>",
+                "<|prog_token_B|>",
+                "<|succ_token_A|>",
+                "<|succ_token_B|>",
+            ]
         else:
             special_tokens = []
 
@@ -311,9 +321,7 @@ def setup_model_and_processor(
                     best_tag, best_score = find_best_model_tag(repo_id)
                     if best_tag:
                         revision_to_load = best_tag
-                        rank_0_print(
-                            f"Loading model from best tag: {repo_id}@{revision_to_load} (score: {best_score})"
-                        )
+                        rank_0_print(f"Loading model from best tag: {repo_id}@{revision_to_load} (score: {best_score})")
                     else:
                         rank_0_print(f"No best tag found, loading latest revision of {repo_id}")
                 hf_repo_with_rev = repo_id
@@ -337,10 +345,12 @@ def setup_model_and_processor(
             after = model.model.visual.blocks[0].mlp.down_proj.weight
             after = model.preference_head[0].weight
             rank_0_print(f"Before: {before.shape}, {before.sum()} | After: {after.shape}, {after.sum()}")
-            # check that before and after are different 
+            # check that before and after are different
             if torch.allclose(before, after):
                 rank_0_print("Before and after are the same! Check if you loaded the pretrained model correctly")
-                import ipdb; ipdb.set_trace()
+                import ipdb
+
+                ipdb.set_trace()
 
     elif "rewind_transformer" in cfg.base_model_id:
         # Initialize new model with encoders
@@ -440,7 +450,7 @@ def setup_model_and_processor(
     for name, param in model.named_parameters():
         if param.requires_grad:
             rank_0_print(f"{name:60} | {param.shape} | RG: {param.requires_grad}")
-            
+
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     all_params = sum(p.numel() for p in model.parameters())
     rank_0_print(
@@ -528,7 +538,7 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
         base_args.update({
             "num_train_epochs": cfg.training.num_train_epochs if cfg.training.num_train_epochs is not None else 1,
             "max_steps": cfg.training.max_steps if cfg.training.max_steps is not None else -1,
-            "report_to": ["wandb"] if cfg.logging.use_wandb else [],
+            "report_to": cfg.logging.log_to,
         })
 
     return TrainingArguments(**base_args)
@@ -552,7 +562,9 @@ def setup_custom_eval_dataset(cfg: DataConfig, sampler_type: str, is_eval: bool 
     return custom_eval_dataset
 
 
-def setup_batch_collator(processor: AutoProcessor, tokenizer: AutoTokenizer, cfg: ExperimentConfig, is_eval: bool = False) -> BaseCollator:
+def setup_batch_collator(
+    processor: AutoProcessor, tokenizer: AutoTokenizer, cfg: ExperimentConfig, is_eval: bool = False
+) -> BaseCollator:
     """Shared function to create BatchCollator"""
     collator_kwargs = {
         "processor": processor,

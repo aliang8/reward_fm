@@ -47,16 +47,14 @@ class VQABatchCollator(RFMBatchCollator):
             rejected_frames = convert_frames_to_pil_images(
                 sample.rejected_trajectory.frames, sample.rejected_trajectory.frames_shape
             )
-            #prompt = f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', evaluate which one better demonstrates successful completion of the task. Compare the trajectories and determine which is preferred."
+            # prompt = f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', evaluate which one better demonstrates successful completion of the task. Compare the trajectories and determine which is preferred."
             prompt = f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', which one best corresponds to solving the task? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags."
 
             # Prepare frames for conversation (handles multi-image vs video conversion)
             chosen_video_field, content_extras = self._prepare_frames_for_conversation(
                 chosen_frames, prefix="tmp_chosen"
             )
-            rejected_video_field, _ = self._prepare_frames_for_conversation(
-                rejected_frames, prefix="tmp_rejected"
-            )
+            rejected_video_field, _ = self._prepare_frames_for_conversation(rejected_frames, prefix="tmp_rejected")
 
             # Determine which trajectory is A and which is B based on preference label
             if preference_labels[i] == 1.0:
@@ -78,7 +76,7 @@ class VQABatchCollator(RFMBatchCollator):
             self._add_vision_content_to_list(content_list, traj_a_field, content_extras)
             content_list.append({"type": "text", "text": "This is Trajectory B. "})
             self._add_vision_content_to_list(content_list, traj_b_field, content_extras)
-            
+
             conversation = [
                 {
                     "role": "user",
@@ -129,7 +127,7 @@ class VQABatchCollator(RFMBatchCollator):
             frames = convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
 
             prompt = f"For the task '{sample.trajectory.task}', estimate task progress at each frame in the video trajectory. Give a list of numbers between 0 and 1 where 0 means no progress and 1 means successful completion of the task. Format your answer as a python list enclosed by <ans> and </ans> tags."
-            
+
             # Prepare frames for conversation (handles multi-image vs video conversion)
             video_field, content_extras = self._prepare_frames_for_conversation(frames, prefix="tmp_progress")
 
@@ -177,7 +175,7 @@ class VQABatchCollator(RFMBatchCollator):
         # Only call if target_progress exists (matches RFM batch collator behavior)
         if progress_samples[0].trajectory.target_progress is not None:
             batch_inputs = self._add_progress_meta(batch_inputs, progress_samples)
-        
+
         # Add resample_attempts (always added, like RFM batch collator)
         batch_inputs["resample_attempts"] = [sample.resample_attempts for sample in progress_samples]
 

@@ -107,16 +107,14 @@ class RFMBatchCollator(BaseCollator):
         self.use_multi_image = use_multi_image
         self.use_progress_token = use_progress_token
 
-    def _prepare_frames_for_conversation(
-        self, frames: List, prefix: str = "tmp"
-    ) -> tuple[Union[List, str], dict]:
+    def _prepare_frames_for_conversation(self, frames: List, prefix: str = "tmp") -> tuple[Union[List, str], dict]:
         """
         Prepare frames for conversation based on use_multi_image flag.
-        
+
         Args:
             frames: List of PIL Images
             prefix: Prefix for temporary video file (if needed)
-            
+
         Returns:
             tuple: (video_field, content_extras)
                 - video_field: Either list of PIL Images (if use_multi_image) or video file path (str)
@@ -149,7 +147,7 @@ class RFMBatchCollator(BaseCollator):
     ) -> None:
         """
         Add vision content (images or video) to a content list.
-        
+
         Args:
             content_list: List to append vision content to
             frames_or_video: Either list of PIL Images (if use_multi_image) or video file path (str)
@@ -206,7 +204,7 @@ class RFMBatchCollator(BaseCollator):
                 truncation=False,
                 max_length=self.max_length,
                 return_tensors="pt",
-                do_resize=False
+                do_resize=False,
             )
         elif "SmolVLM" in self.base_model_id:
             batch_inputs = self.processor.apply_chat_template(
@@ -238,17 +236,17 @@ class RFMBatchCollator(BaseCollator):
 
             # Create conversation for progress evaluation
             prompt = f"For the task '{sample.trajectory.task}', evaluate the progress shown in this trajectory video. Assess how well the trajectory demonstrates completion of the task at each frame."
-            
+
             # Build content list
             content_list = [{"type": "text", "text": prompt}]
             self._add_vision_content_to_list(content_list, video_field, content_extras)
-            
+
             # Add progress and success tokens if use_progress_token is enabled (only works with pairwise_progress)
             # For progress samples, we only use prog_token_A and succ_token_A (single trajectory)
             if self.use_progress_token:
                 content_list.append({"type": "text", "text": "<|prog_token_A|>"})
                 content_list.append({"type": "text", "text": "<|succ_token_A|>"})
-            
+
             conversation = [
                 {
                     "role": "user",
@@ -316,12 +314,10 @@ class RFMBatchCollator(BaseCollator):
             chosen_video_field, content_extras = self._prepare_frames_for_conversation(
                 chosen_frames, prefix="tmp_chosen"
             )
-            rejected_video_field, _ = self._prepare_frames_for_conversation(
-                rejected_frames, prefix="tmp_rejected"
-            )
+            rejected_video_field, _ = self._prepare_frames_for_conversation(rejected_frames, prefix="tmp_rejected")
 
             prompt = f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', evaluate which one better demonstrates successful completion of the task. Compare the trajectories and determine which is preferred."
-            
+
             # Determine which trajectory is A and which is B based on preference label
             if preference_labels[i] == 1.0:
                 # Chosen trajectory first: task + video A (chosen) + <|split_token|> + video B (rejected) + <|pref_token|>
@@ -331,7 +327,7 @@ class RFMBatchCollator(BaseCollator):
                 # Chosen trajectory second: task + video A (rejected) + <|split_token|> + video B (chosen) + <|pref_token|>
                 traj_a_field = rejected_video_field
                 traj_b_field = chosen_video_field
-            
+
             # Build content list
             content_list = [
                 {"type": "text", "text": prompt},
@@ -352,7 +348,7 @@ class RFMBatchCollator(BaseCollator):
                 content_list.append({"type": "text", "text": "<|prog_token_B|>"})
                 content_list.append({"type": "text", "text": "<|succ_token_B|>"})
             content_list.append({"type": "text", "text": "<|pref_token|>"})
-            
+
             conversation = [
                 {
                     "role": "user",
@@ -494,9 +490,7 @@ class RFMBatchCollator(BaseCollator):
             )
 
             # Prepare frames for conversation (handles multi-image vs video conversion)
-            ref_video, content_extras = self._prepare_frames_for_conversation(
-                reference_frames, prefix="tmp_ref"
-            )
+            ref_video, content_extras = self._prepare_frames_for_conversation(reference_frames, prefix="tmp_ref")
             sim_video, _ = self._prepare_frames_for_conversation(sim_frames, prefix="tmp_sim")
             diff_video, _ = self._prepare_frames_for_conversation(diff_frames, prefix="tmp_diff")
 
@@ -521,7 +515,7 @@ class RFMBatchCollator(BaseCollator):
                 content_list_sim.append({"type": "text", "text": "<|prog_token_B|>"})
                 content_list_sim.append({"type": "text", "text": "<|succ_token_B|>"})
             content_list_sim.append({"type": "text", "text": "<|sim_token|>"})
-            
+
             conversation_ref_sim = [
                 {
                     "role": "user",
@@ -550,7 +544,7 @@ class RFMBatchCollator(BaseCollator):
                 content_list_diff.append({"type": "text", "text": "<|prog_token_B|>"})
                 content_list_diff.append({"type": "text", "text": "<|succ_token_B|>"})
             content_list_diff.append({"type": "text", "text": "<|sim_token|>"})
-            
+
             conversation_ref_diff = [
                 {
                     "role": "user",

@@ -158,7 +158,7 @@ def main():
     for dataset_path, dataset_subsets in zip(train_datasets, train_subsets):
         for subset in dataset_subsets:
             all_datasets.append(("train", dataset_path, subset))
-    
+
     for dataset_path, dataset_subsets in zip(eval_datasets, eval_subsets):
         for subset in dataset_subsets:
             all_datasets.append(("eval", dataset_path, subset))
@@ -179,20 +179,20 @@ def main():
 
         for split, dataset_path, subset in all_datasets:
             progress.update(task, description=f"[cyan]Processing {dataset_path}/{subset}...")
-            
+
             individual_cache_dir = get_cache_dir_for_dataset(cache_dir, dataset_path, subset)
             result = compute_dataset_statistics(individual_cache_dir, dataset_path, subset)
-            
+
             if split == "train":
                 train_results.append(result)
             else:
                 eval_results.append(result)
-            
+
             progress.advance(task)
 
     # Create detailed tables
     console.print("\n")
-    
+
     # Training datasets table
     train_table = Table(
         title="Training Datasets - Detailed Statistics",
@@ -215,7 +215,7 @@ def main():
         if result["exists"] and result["error"] is None:
             traj_str = f"{result['num_trajectories']:,}"
             frames_str = f"{result['total_frames']:,}"
-            
+
             stats = result["frames_per_trajectory"]
             if stats:
                 mean_std_str = f"{stats['mean']:.1f}±{stats['std']:.1f}"
@@ -223,7 +223,7 @@ def main():
             else:
                 mean_std_str = "N/A"
                 min_max_str = "N/A"
-            
+
             status = "✓"
             status_style = "green"
             train_total_trajectories += result["num_trajectories"]
@@ -272,7 +272,7 @@ def main():
         if result["exists"] and result["error"] is None:
             traj_str = f"{result['num_trajectories']:,}"
             frames_str = f"{result['total_frames']:,}"
-            
+
             stats = result["frames_per_trajectory"]
             if stats:
                 mean_std_str = f"{stats['mean']:.1f}±{stats['std']:.1f}"
@@ -280,7 +280,7 @@ def main():
             else:
                 mean_std_str = "N/A"
                 min_max_str = "N/A"
-            
+
             status = "✓"
             status_style = "green"
             eval_total_trajectories += result["num_trajectories"]

@@ -29,13 +29,22 @@ class ConfusionMatrixSampler(RFMBaseSampler):
     how well the model can distinguish between different tasks.
     """
 
-    def __init__(self, config, dataset, combined_indices, dataset_success_cutoff_map=None, is_evaluation=False, verbose=True, **kwargs):
+    def __init__(
+        self,
+        config,
+        dataset,
+        combined_indices,
+        dataset_success_cutoff_map=None,
+        is_evaluation=False,
+        verbose=True,
+        **kwargs,
+    ):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
 
         # Load sentence transformer model and precompute embeddings for all unique tasks
         self.sentence_model = SentenceTransformer("sentence-transformers/all-MiniLM-L12-v2")
         self.sentence_model.eval()
-        
+
         # Precompute language embeddings for all unique tasks
         unique_tasks = list(self.task_indices.keys())
         rank_0_print(f"Precomputing language embeddings for {len(unique_tasks)} unique tasks", verbose=self.verbose)
@@ -44,7 +53,7 @@ class ConfusionMatrixSampler(RFMBaseSampler):
             embedding = self.sentence_model.encode(task)
             self.task_embeddings[task] = torch.tensor(embedding)
         rank_0_print(f"Precomputed {len(self.task_embeddings)} language embeddings", verbose=self.verbose)
-        
+
         # Free up the model after precomputation (no longer needed)
         del self.sentence_model
 

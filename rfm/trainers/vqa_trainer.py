@@ -64,46 +64,47 @@ class RFMVQATrainer(RFMHeadsTrainer):
         Forward model for VQA - uses generate() for proper autoregressive prediction.
         This is used during evaluation to get actual model predictions.
         """
+        progress_logits = None
+        pref_logits = None
         with _timer("time/forward_vqa", timing_raw=self.timing_raw):
+            # Use generate() for proper autoregressive text generation
+            # Remove labels from inputs if present (we're doing inference)
+            gen_inputs = {
+                "input_ids": inputs["input_ids"],
+                "attention_mask": inputs["attention_mask"],
+                "pixel_values": inputs.get("pixel_values"),
+                "pixel_values_videos": inputs.get("pixel_values_videos"),
+                "image_grid_thw": inputs.get("image_grid_thw"),
+                "video_grid_thw": inputs.get("video_grid_thw"),
+            }
+
+            # Generate with reasonable parameters for short structured answers
+            with torch.no_grad():
+                generated_ids = model.generate(
+                    **gen_inputs,
+                    max_new_tokens=30,  # Enough for a list like [0.0, 0.1, ..., 1.0]
+                    do_sample=False,  # Greedy decoding for reproducibility
+                    pad_token_id=model.tokenizer.pad_token_id,
+                    eos_token_id=model.tokenizer.eos_token_id,
+                    use_cache=True,  # Enable KV caching for faster generation
+                )
+
+            # Decode only the generated part (not the input prompt)
+            rfm_model = self.model.module if hasattr(self.model, "module") else self.model
+            tokenizer = rfm_model.tokenizer
+
+            # Get input length to slice only generated tokens
+            input_len = inputs["input_ids"].shape[1]
+            generated_ids_sliced = generated_ids[:, input_len:]  # Only new tokens
+
+            pred_texts = tokenizer.batch_decode(generated_ids_sliced, skip_special_tokens=True)
+            predictions = [extract_answer_from_text(text) for text in pred_texts]
             if sample_type == "progress":
-                # Use generate() for proper autoregressive text generation
-                # Remove labels from inputs if present (we're doing inference)
-                gen_inputs = {
-                    "input_ids": inputs["input_ids"],
-                    "attention_mask": inputs["attention_mask"],
-                    "pixel_values": inputs.get("pixel_values"),
-                    "pixel_values_videos": inputs.get("pixel_values_videos"),
-                    "image_grid_thw": inputs.get("image_grid_thw"),
-                    "video_grid_thw": inputs.get("video_grid_thw"),
-                }
-                
-                # Generate with reasonable parameters for short structured answers
-                with torch.no_grad():
-                    generated_ids = model.generate(
-                        **gen_inputs,
-                        max_new_tokens=30,  # Enough for a list like [0.0, 0.1, ..., 1.0]
-                        do_sample=False,  # Greedy decoding for reproducibility
-                        pad_token_id=model.tokenizer.pad_token_id,
-                        eos_token_id=model.tokenizer.eos_token_id,
-                        use_cache=True,  # Enable KV caching for faster generation
-                    )
-                
-                # Decode only the generated part (not the input prompt)
-                rfm_model = self.model.module if hasattr(self.model, 'module') else self.model
-                tokenizer = rfm_model.tokenizer
-                
-                # Get input length to slice only generated tokens
-                input_len = inputs["input_ids"].shape[1]
-                generated_ids_sliced = generated_ids[:, input_len:]  # Only new tokens
-                
-                pred_texts = tokenizer.batch_decode(generated_ids_sliced, skip_special_tokens=True)
-                predictions = [extract_answer_from_text(text) for text in pred_texts]
-                
                 # Explicitly free generation tensors to prevent memory accumulation
                 del generated_ids, generated_ids_sliced, gen_inputs
-                
+
                 progress_logits = []
-                for i,prediction in enumerate(predictions):
+                for i, prediction in enumerate(predictions):
                     try:
                         progress_logits.append(ast.literal_eval(prediction))
                     except Exception as e:
@@ -114,19 +115,28 @@ class RFMVQATrainer(RFMHeadsTrainer):
                         # insert fake progress logits
                         progress_logits.append([0] * len(inputs["target_progress"][i]))
                 progress_logits = {"A": progress_logits, "B": None}
-                
+
                 # Clear CUDA cache after generation to free KV cache memory
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
-            else:
-                progress_logits = None
-        
+            elif sample_type == "preference":
+                # TODO: finish this to match this logic with preference evals for "A" and "B"
+                pref_logits = []
+                for i, prediction in enumerate(predictions):
+                    if prediction == "A":
+                        pref_logits.append(1)
+                    elif prediction == "B":
+                        pref_logits.append(0)
+                    else:
+                        pref_logits.append(-1)
+                pref_logits = {"A": pref_logits, "B": None}
+
         # Create ModelOutput with all expected fields to match parent class expectations
         model_output = ModelOutput(
             progress_logits=progress_logits,
             success_logits=None,  # VQA doesn't use success head
-            pref_logits=None,     # VQA doesn't use preference head
-            sim_logits=None,      # VQA doesn't use similarity head
+            pref_logits=None,  # VQA doesn't use preference head
+            sim_logits=None,  # VQA doesn't use similarity head
         )
         return model_output, self.timing_raw
 
@@ -135,12 +145,14 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
         # Set static graph for DDP on first training step to handle multiple forward passes. This is needed
         # when combining gradient checkpointing with multiple forward passes.
-        if self.config.training.gradient_checkpointing and (training and not self._ddp_static_graph_set and hasattr(model, 'module')):
+        if self.config.training.gradient_checkpointing and (
+            training and not self._ddp_static_graph_set and hasattr(model, "module")
+        ):
             # Check if model is wrapped in DDP
-            if hasattr(model.module, '_set_static_graph'):
+            if hasattr(model.module, "_set_static_graph"):
                 model.module._set_static_graph()
                 self._ddp_static_graph_set = True
-            elif hasattr(model, '_set_static_graph'):
+            elif hasattr(model, "_set_static_graph"):
                 model._set_static_graph()
                 self._ddp_static_graph_set = True
 
@@ -189,10 +201,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
         if return_outputs:
             # Combine outputs from all loss functions
-            extra_info = {
-                **log_metadata,
-                "total_loss": total_loss.item()
-            }
+            extra_info = {**log_metadata, "total_loss": total_loss.item()}
             return total_loss, extra_info
 
         return total_loss
@@ -211,9 +220,9 @@ class RFMVQATrainer(RFMHeadsTrainer):
         )
 
         # RFMVQA has model directly, handle DDP wrapping
-        rfm_model = self.model.module if hasattr(self.model, 'module') else self.model
+        rfm_model = self.model.module if hasattr(self.model, "module") else self.model
         vocab_size = rfm_model.model.config.text_config.vocab_size
-        
+
         loss = ForCausalLMLoss(
             logits=outputs.logits,
             labels=inputs["labels"],
@@ -233,7 +242,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
         # compute accuracy
         pred_ids = outputs.logits.argmax(dim=-1)
         # RFMVQA has tokenizer directly, handle DDP wrapping
-        rfm_model = self.model.module if hasattr(self.model, 'module') else self.model
+        rfm_model = self.model.module if hasattr(self.model, "module") else self.model
         tokenizer = rfm_model.tokenizer
         pred_texts = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
 
@@ -263,14 +272,16 @@ class RFMVQATrainer(RFMHeadsTrainer):
                 try:
                     progress_pred = ast.literal_eval(prediction)
                     # Ensure tensors are on correct device
-                    progress_pred_tensor = torch.tensor(progress_pred, device=self.accelerator.device, dtype=torch.float32)
+                    progress_pred_tensor = torch.tensor(
+                        progress_pred, device=self.accelerator.device, dtype=torch.float32
+                    )
                     gt_tensor = torch.tensor(gt_labels[i], device=self.accelerator.device, dtype=torch.float32)
                     progress_losses.append(F.mse_loss(progress_pred_tensor, gt_tensor).item())
                 except Exception:
-                    progress_losses.append(float('inf'))  # Mark failed predictions
-            
+                    progress_losses.append(float("inf"))  # Mark failed predictions
+
             # Log average progress MSE if we have valid predictions
-            valid_losses = [l for l in progress_losses if l != float('inf')]
+            valid_losses = [l for l in progress_losses if l != float("inf")]
             if valid_losses:
                 loss_dict.update({f"{prefix}/{mode}_mse": sum(valid_losses) / len(valid_losses)})
         else:

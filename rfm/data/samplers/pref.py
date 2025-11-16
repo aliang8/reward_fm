@@ -20,14 +20,21 @@ from rfm.utils.timer import timer
 class PrefSampler(RFMBaseSampler):
     """Data generator for producing batches of preference prediction data."""
 
-    def __init__(self, config, dataset, combined_indices, dataset_success_cutoff_map=None, is_evaluation=False, verbose=True, **kwargs):
+    def __init__(
+        self,
+        config,
+        dataset,
+        combined_indices,
+        dataset_success_cutoff_map=None,
+        is_evaluation=False,
+        verbose=True,
+        **kwargs,
+    ):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
 
         self.dataset_preference_ratio = config.dataset_preference_ratio
         self.preference_strategy_ratio: list[float] = config.preference_strategy_ratio
-        self._has_suboptimal = any(
-            indices for indices in self.suboptimal_by_task.values()
-        )
+        self._has_suboptimal = any(indices for indices in self.suboptimal_by_task.values())
         if verbose and self.preference_strategy_ratio[1] > 0 and not self._has_suboptimal:
             rank_0_print("No suboptimal/failure data available; skipping suboptimal strategy for preferences.")
 
@@ -283,7 +290,7 @@ class PrefSampler(RFMBaseSampler):
 
             # Execute selected strategy with retry logic
             max_retries = 3  # Number of retry attempts for sampling
-            
+
             if selected_strategy == DataGenStrat.REWIND_SAME_TASK:
                 rejected_traj = None
                 for _ in range(max_retries):
@@ -323,12 +330,12 @@ class PrefSampler(RFMBaseSampler):
             else:
                 # Strategy failed - increment attempt count
                 strategy_attempt_counts[selected_strategy] = strategy_attempt_counts.get(selected_strategy, 0) + 1
-                
+
                 # Only remove strategy if it has failed max_strategy_attempts times
                 if strategy_attempt_counts[selected_strategy] >= max_strategy_attempts:
                     strategies = [(strat, prob) for strat, prob in strategies if strat != selected_strategy]
                     continue
-         
+
         # If we still don't have a sample after all attempts, raise an error
         if rejected_traj is None:
             raise ValueError(

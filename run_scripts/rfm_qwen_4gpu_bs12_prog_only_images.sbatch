@@ -65,10 +65,10 @@ echo "Job completed successfully"
 
 
 
-uv run python train.py \
+CUDA_VISIBLE_DEVICES=5 uv run python train.py \
     --config_paths rfm/configs/config.yaml \
     --data.sample_type_ratio '[0, 1, 0]' \
-    --data.progress_strategy_ratio '[1, 1, 1]' \
+    --data.progress_strategy_ratio '[1, 1, 1, 1]' \
     --model.train_progress_head true \
     --model.train_preference_head false \
     --model.train_similarity_head false \

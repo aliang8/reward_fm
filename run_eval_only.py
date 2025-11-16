@@ -3,17 +3,8 @@
 Script to load an existing model checkpoint and run custom evaluations.
 
 Usage:
-    # Using config file (recommended)
-    python run_eval_only.py --config_paths rfm/configs/eval_only_config.yaml
-    
     # Using command line arguments with HuggingFace model ID
     python run_eval_only.py --model_path aliangdw/rfm_model
-    
-    # Using local checkpoint path
-    python run_eval_only.py --model_path ./logs/my_run/checkpoint-1000
-    
-    # Override specific config values
-    python run_eval_only.py --config_paths rfm/configs/eval_only_config.yaml --custom_eval.eval_types='[\"reward_alignment\"]'
 """
 
 import os

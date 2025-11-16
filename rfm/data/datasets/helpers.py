@@ -25,6 +25,10 @@ class DataGenStrat(Enum):
     VIDEO_BINNED = "video_binned"
     PAIRED_HUMAN_ROBOT = "paired_human_robot"
 
+    # Progress generation strategies
+    SUCCESSFUL = "successful"
+    SUBSEQUENCE = "subsequence"
+
     # Evaluation-specific strategies
     CONFUSION_MATRIX = "confusion_matrix"
     WRONG_TASK_PREFERENCE = "wrong_task_preference"
@@ -193,7 +197,7 @@ def pad_trajectory_to_max_frames_torch(
     return padded_frames, padded_progress
 
 
-def linspace_subsample_frames(frames: np.ndarray, num_frames: int = 8) -> tuple[np.ndarray, list[int]]:
+def linspace_subsample_frames(frames: np.ndarray, num_frames: int = 8, end_idx: int | None = None) -> tuple[np.ndarray, list[int]]:
     """Uniformly subsample frames from a trajectory and return the indices.
 
     This method takes the full trajectory (e.g., 64 frames) and uniformly subsamples
@@ -202,6 +206,7 @@ def linspace_subsample_frames(frames: np.ndarray, num_frames: int = 8) -> tuple[
     Args:
         frames: Full trajectory frames (N frames)
         num_frames: Number of frames to subsample (default: 8)
+        end_idx: Optional end index to subsample up to (if None, uses total_frames - 1)
 
     Returns:
         Tuple[np.ndarray, List[int]: (subsampled_frames, subsampled_indices)
@@ -214,30 +219,101 @@ def linspace_subsample_frames(frames: np.ndarray, num_frames: int = 8) -> tuple[
     if total_frames <= 0:
         return frames, []
 
-    if total_frames <= num_frames:
-        # If we have fewer (or equal) frames than requested, return all frames
-        indices = list(range(total_frames))
-        return frames, indices
+    # Use end_idx if provided, otherwise use full trajectory
+    if end_idx is not None:
+        end_idx = min(end_idx, total_frames - 1)
+        frames_to_subsample = frames[:end_idx + 1]
+        effective_total = end_idx + 1
+    else:
+        frames_to_subsample = frames
+        effective_total = total_frames
 
-    # Evenly spaced indices from 0 to total_frames-1, inclusive
-    indices_np = np.linspace(0, total_frames - 1, num_frames)
+    if effective_total <= num_frames:
+        # If we have fewer (or equal) frames than requested, return all frames
+        indices = list(range(effective_total))
+        return frames_to_subsample, indices
+
+    # Evenly spaced indices from 0 to effective_total-1, inclusive
+    indices_np = np.linspace(0, effective_total - 1, num_frames)
     indices = np.rint(indices_np).astype(int).tolist()
 
     # Enforce first and last explicitly
     indices[0] = 0
-    indices[-1] = total_frames - 1
+    indices[-1] = effective_total - 1
 
     # Ensure indices are strictly non-decreasing and within bounds
     for k in range(1, len(indices)):
         if indices[k] < indices[k - 1]:
             indices[k] = indices[k - 1]
-        if indices[k] >= total_frames:
-            indices[k] = total_frames - 1
+        if indices[k] >= effective_total:
+            indices[k] = effective_total - 1
 
     # Subsample frames
-    subsampled_frames = frames[indices]
+    subsampled_frames = frames_to_subsample[indices]
 
     return subsampled_frames, indices
+
+
+def linspace_subsample_with_cutoff(
+    frames: np.ndarray,
+    num_frames: int,
+    num_frames_total: int,
+    success_cutoff: float,
+) -> tuple[np.ndarray, list[int], int]:
+    """Uniformly subsample frames using linspace, with end_idx randomly between cutoff and total.
+
+    This is used for the "successful" strategy where we want to sample up to a random
+    point between the success cutoff and the end of the trajectory.
+
+    Args:
+        frames: Full trajectory frames (N frames)
+        num_frames: Number of frames to subsample
+        num_frames_total: Total number of frames in original trajectory
+        success_cutoff: Success cutoff percentage (0-1)
+
+    Returns:
+        Tuple of (subsampled_frames, subsampled_indices, end_idx)
+    """
+    # Calculate cutoff index
+    cutoff_index = int(success_cutoff * num_frames_total) if success_cutoff > 0 else 0
+    
+    # Randomly select end_idx between cutoff_index and num_frames_total
+    if cutoff_index >= num_frames_total - 1:
+        end_idx = num_frames_total - 1
+    else:
+        end_idx = random.randint(cutoff_index, num_frames_total - 1)
+    
+    # Use linspace subsampling up to end_idx
+    subsampled_frames, indices = linspace_subsample_frames(frames, num_frames, end_idx=end_idx)
+    
+    return subsampled_frames, indices, end_idx
+
+
+def compute_progress_from_linspace(
+    num_frames_total: int,
+    end_idx: int,
+    frame_indices: list[int],
+    progress_pred_type: str = "absolute",
+) -> list[float]:
+    """Compute progress values for linspace subsampling (used for successful strategy).
+
+    Args:
+        num_frames_total: Total number of frames in the original trajectory
+        end_idx: End index (inclusive) up to which we subsampled
+        frame_indices: Indices from linspace subsampling (0-based relative to [0, end_idx])
+        progress_pred_type: "absolute" for cumulative progress, "relative" for inter-frame deltas
+
+    Returns:
+        List of progress values
+    """
+    # Calculate absolute progress: normalize to full trajectory length
+    # frame_indices are already 0-based within [0, end_idx], so we normalize by num_frames_total
+    progress_values = [idx / (num_frames_total - 1) if num_frames_total > 1 else 0.0 for idx in frame_indices]
+    
+    if progress_pred_type == "relative":
+        return convert_absolute_to_relative_progress(progress_values)
+    
+    return progress_values
 
 
 def randomly_subsample_frames(
@@ -372,7 +448,7 @@ def compute_progress_from_segment(
     if success_cutoff is not None and success_cutoff > 0:
         # Index of the first frame where progress exceeds the cutoff
         cutoff_index = int(success_cutoff * num_frames_total)
-
+    
     # Calculate progress at each frame in the segment
     # This is absolute progress
     segment_progress = []

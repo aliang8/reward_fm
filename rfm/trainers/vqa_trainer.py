@@ -103,14 +103,16 @@ class RFMVQATrainer(RFMHeadsTrainer):
                 del generated_ids, generated_ids_sliced, gen_inputs
                 
                 progress_logits = []
-                for prediction in predictions:
+                for i,prediction in enumerate(predictions):
                     try:
                         progress_logits.append(ast.literal_eval(prediction))
                     except Exception as e:
                         # Log parsing failures for debugging
                         if self.state.global_step % 100 == 0:
-                            rank_0_print(f"Failed to parse prediction: {prediction[:100]}")
-                        progress_logits.append(None)
+                            rank_0_print(f"Failed to parse prediction: {prediction[:100]}, inserting all 0s")
+
+                        # insert fake progress logits
+                        progress_logits.append([0] * len(inputs["target_progress"][i]))
                 progress_logits = {"A": progress_logits, "B": None}
                 
                 # Clear CUDA cache after generation to free KV cache memory

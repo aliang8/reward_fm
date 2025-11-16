@@ -112,9 +112,9 @@ class RFMVQATrainer(RFMHeadsTrainer):
             }
 
             if gen_inputs["pixel_values"] is not None:
-                gen_inputs["pixel_values"] = gen_inputs["pixel_values"].to(dtype=model.model.dtype)
+                gen_inputs["pixel_values"] = gen_inputs["pixel_values"].to(dtype=self._get_dtype(model))
             if gen_inputs["pixel_values_videos"] is not None:
-                gen_inputs["pixel_values_videos"] = gen_inputs["pixel_values_videos"].to(dtype=model.model.dtype)
+                gen_inputs["pixel_values_videos"] = gen_inputs["pixel_values_videos"].to(dtype=self._get_dtype(model))
 
             # Generate with reasonable parameters for short structured answers
             with torch.no_grad():
@@ -299,13 +299,21 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
         return total_loss
 
+    def _get_dtype(self, model):
+        """Get the dtype of the model."""
+        if hasattr(model, "module"):
+            return model.module.model.dtype
+        else:
+            return model.model.dtype
+
     def _compute_vqa_loss(self, model, inputs, return_outputs=False, mode=None, training=True):
         B = inputs["input_ids"].shape[0]
 
-        if "pixel_values" in inputs and inputs["pixel_values"] is not None and inputs["pixel_values"].dtype != model.model.dtype:
-            inputs["pixel_values"] = inputs["pixel_values"].to(dtype=model.model.dtype)
-        if "pixel_values_videos" in inputs and inputs["pixel_values_videos"] is not None and inputs["pixel_values_videos"].dtype != model.model.dtype:
-            inputs["pixel_values_videos"] = inputs["pixel_values_videos"].to(dtype=model.model.dtype)
+        # cast to correct dtype
+        if "pixel_values" in inputs and inputs["pixel_values"] is not None and inputs["pixel_values"].dtype != self._get_dtype(model):
+            inputs["pixel_values"] = inputs["pixel_values"].to(dtype=self._get_dtype(model))
+        if "pixel_values_videos" in inputs and inputs["pixel_values_videos"] is not None and inputs["pixel_values_videos"].dtype != self._get_dtype(model):
+            inputs["pixel_values_videos"] = inputs["pixel_values_videos"].to(dtype=self._get_dtype(model))
         outputs = model(
             input_ids=inputs["input_ids"],
             attention_mask=inputs["attention_mask"],
@@ -320,7 +328,14 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
         # RFMVQA has model directly, handle DDP wrapping
         rfm_model = self.model.module if hasattr(self.model, "module") else self.model
-        vocab_size = rfm_model.model.config.text_config.vocab_size
+        # Handle different config structures for different models
+        # Qwen has text_config.vocab_size, SmolVLM has vocab_size directly
+        if hasattr(rfm_model.model.config, "text_config"):
+            vocab_size = rfm_model.model.config.text_config.vocab_size
+        else:
+            vocab_size = rfm_model.model.config.vocab_size
+        
+        assert vocab_size is not None, "Vocab size is not set"
 
         loss = ForCausalLMLoss(
             logits=outputs["logits"],

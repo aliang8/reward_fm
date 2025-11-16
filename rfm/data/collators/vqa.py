@@ -107,17 +107,24 @@ class VQABatchCollator(RFMBatchCollator):
         if not self.inference:
             labels = batch_inputs["input_ids"].clone()
 
-            # mask out the prompt - only train on assistant response
-            assistant_id = self.processor.tokenizer.encode("assistant", add_special_tokens=False)[0]
+            # Mask out the prompt - only train on assistant response
+            # Locate <ans> tag positions directly in token space
             for i in range(len(labels)):
-                # Find where assistant token appears
-                assistant_positions = (labels[i] == assistant_id).nonzero(as_tuple=False)
-                if len(assistant_positions) > 0:
-                    # Mask everything up to and including the token after "assistant"
-                    token_after_assistant = assistant_positions[0][0] + 1
-                    labels[i][:token_after_assistant] = IGNORE_INDEX
+                seq_len = labels[i].shape[0]
+                max_window = 8  # number of tokens to decode when searching for <ans>
+                ans_token_positions: list[int] = []
+
+                for idx in range(seq_len):
+                    end_idx = min(seq_len, idx + max_window)
+                    window_tokens = labels[i][idx:end_idx]
+                    window_text = self.processor.tokenizer.decode(window_tokens, skip_special_tokens=False)
+                    if window_text.lstrip().startswith("<ans>"):
+                        ans_token_positions.append(idx)
+
+                if ans_token_positions:
+                    start_idx = ans_token_positions[-1]
+                    labels[i][:start_idx] = IGNORE_INDEX
                 else:
-                    # If assistant token not found, mask entire sequence (shouldn't happen in normal training)
                     labels[i][:] = IGNORE_INDEX
 
             batch_inputs["labels"] = labels
@@ -183,17 +190,24 @@ class VQABatchCollator(RFMBatchCollator):
         if not self.inference:
             labels = batch_inputs["input_ids"].clone()
 
-            # mask out the prompt - only train on assistant response
-            assistant_id = self.processor.tokenizer.encode("assistant", add_special_tokens=False)[0]
+            # Mask out the prompt - only train on assistant response
+            # Locate <ans> token positions directly
             for i in range(len(labels)):
-                # Find where assistant token appears
-                assistant_positions = (labels[i] == assistant_id).nonzero(as_tuple=False)
-                if len(assistant_positions) > 0:
-                    # Mask everything up to and including the token after "assistant"
-                    token_after_assistant = assistant_positions[0][0] + 1
-                    labels[i][:token_after_assistant] = IGNORE_INDEX
+                seq_len = labels[i].shape[0]
+                max_window = 8
+                ans_token_positions: list[int] = []
+
+                for idx in range(seq_len):
+                    end_idx = min(seq_len, idx + max_window)
+                    window_tokens = labels[i][idx:end_idx]
+                    window_text = self.processor.tokenizer.decode(window_tokens, skip_special_tokens=False)
+                    if window_text.lstrip().startswith("<ans>"):
+                        ans_token_positions.append(idx)
+
+                if ans_token_positions:
+                    start_idx = ans_token_positions[-1]
+                    labels[i][:start_idx] = IGNORE_INDEX
                 else:
-                    # If assistant token not found, mask entire sequence (shouldn't happen in normal training)
                     labels[i][:] = IGNORE_INDEX
 
             batch_inputs["labels"] = labels

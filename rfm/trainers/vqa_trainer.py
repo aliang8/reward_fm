@@ -8,6 +8,7 @@ from evals.eval_utils import extract_answer_from_text
 from .rfm_heads_trainer import RFMHeadsTrainer
 from rfm.utils.timer import _timer
 from rfm.models.utils import ModelOutput
+from rfm.data.collators.vqa import IGNORE_INDEX
 
 
 # copied because the original function forces the metric reduction
@@ -15,7 +16,7 @@ def fixed_cross_entropy(
     source: torch.Tensor,
     target: torch.Tensor,
     num_items_in_batch: torch.Tensor | None = None,
-    ignore_index: int = -100,
+    ignore_index: int = IGNORE_INDEX,
     reduction: str = "mean",
     **kwargs,
 ) -> torch.Tensor:
@@ -33,7 +34,7 @@ def ForCausalLMLoss(
     labels,
     vocab_size: int,
     num_items_in_batch: torch.Tensor | None = None,
-    ignore_index: int = -100,
+    ignore_index: int = IGNORE_INDEX,
     shift_labels: torch.Tensor | None = None,
     **kwargs,
 ) -> torch.Tensor:
@@ -82,7 +83,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
             with torch.no_grad():
                 generated_ids = model.generate(
                     **gen_inputs,
-                    max_new_tokens=30,  # Enough for a list like [0.0, 0.1, ..., 1.0]
+                    max_new_tokens=50,  # Enough for a list like [0.0, 0.1, ..., 1.0]
                     do_sample=False,  # Greedy decoding for reproducibility
                     pad_token_id=model.tokenizer.pad_token_id,
                     eos_token_id=model.tokenizer.eos_token_id,
@@ -110,7 +111,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
                     except Exception as e:
                         # Log parsing failures for debugging
                         if self.state.global_step % 100 == 0:
-                            rank_0_print(f"Failed to parse prediction: {prediction[:100]}, inserting all 0s")
+                            rank_0_print(f"Failed to parse prediction: {prediction[:50]}, inserting all 0s")
 
                         # insert fake progress logits
                         progress_logits.append([0] * len(inputs["target_progress"][i]))
@@ -165,49 +166,103 @@ class RFMVQATrainer(RFMHeadsTrainer):
         num_similarities = inputs.get("num_similarities", 0)
         num_progress = inputs.get("num_progress", 0)
 
-        # Initialize loss components and metadata
-        # Initialize as tensor to avoid issues when no samples exist
-        # Don't set requires_grad=True on leaf tensor - it will get gradients from operations
-        total_loss = torch.tensor(0.0, device=self.accelerator.device)
-        log_metadata = {}
+        # Simple combining: concatenate all non-empty batches into one
+        batches_to_combine = []
+        modes_per_sample = []  # Track mode for each sample
+        
+        if num_preferences > 0:
+            batches_to_combine.append(preference_inputs)
+            modes_per_sample.extend(['preference'] * num_preferences)
+        if num_similarities > 0:
+            batches_to_combine.append(similarity_inputs)
+            modes_per_sample.extend(['similarity'] * num_similarities)
+        if num_progress > 0:
+            batches_to_combine.append(progress_inputs)
+            modes_per_sample.extend(['progress'] * num_progress)
 
-        # Compute VQA loss for each type of input
-        if num_preferences > 0 and preference_inputs:
-            with _timer("time/compute_vqa_loss", timing_raw=self.timing_raw):
-                preference_loss, loss_dict = self._compute_vqa_loss(
-                    model, preference_inputs, return_outputs=True, mode="preference", training=training
-                )
-            total_loss += preference_loss
-            log_metadata.update(loss_dict)
+        if len(batches_to_combine) > 1:
+            # Combine all batches - pad and concatenate tensors, single forward pass
+            combined = {}
+            for key in batches_to_combine[0].keys():
+                if isinstance(batches_to_combine[0][key], torch.Tensor):
+                    tensors = [b[key] for b in batches_to_combine if key in b]
+                    
+                    # Check if tensors need padding (different sizes in dim 1)
+                    if len(tensors[0].shape) > 1 and any(t.shape[1] != tensors[0].shape[1] for t in tensors):
+                        # Pad to max length
+                        max_len = max(t.shape[1] for t in tensors)
+                        padded_tensors = []
+                        
+                        for t in tensors:
+                            if t.shape[1] < max_len:
+                                # Pad with zeros (or IGNORE_INDEX for labels)
+                                pad_value = IGNORE_INDEX if key == "labels" else 0
+                                padding = torch.full(
+                                    (t.shape[0], max_len - t.shape[1]) + t.shape[2:],
+                                    pad_value,
+                                    dtype=t.dtype,
+                                    device=t.device
+                                )
+                                padded_tensors.append(torch.cat([t, padding], dim=1))
+                            else:
+                                padded_tensors.append(t)
+                        
+                        combined[key] = torch.cat(padded_tensors, dim=0)
+                    else:
+                        # No padding needed
+                        combined[key] = torch.cat(tensors, dim=0)
+            
+            # Pass per-sample modes for reusing existing mode logic
+            combined['modes_per_sample'] = modes_per_sample
+            
+            with _timer("time/compute_vqa_loss_combined", timing_raw=self.timing_raw):
+                loss, loss_dict = self._compute_vqa_loss(model, combined, return_outputs=True, mode=modes_per_sample, training=training)
+            
+            self.log_metadata = loss_dict
+            if return_outputs:
+                return loss, {**loss_dict, "total_loss": loss.item()}
+            return loss
+        
+        else:
+            # Single batch type - use original code
+            total_loss = torch.tensor(0.0, device=self.accelerator.device)
+            log_metadata = {}
 
-        if num_similarities > 0 and similarity_inputs:
-            with _timer("time/compute_vqa_loss", timing_raw=self.timing_raw):
-                similarity_loss, loss_dict = self._compute_vqa_loss(
-                    model, similarity_inputs, return_outputs=True, mode="similarity", training=training
-                )
-            total_loss += similarity_loss
-            log_metadata.update(loss_dict)
+            if num_preferences > 0 and preference_inputs:
+                with _timer("time/compute_vqa_loss", timing_raw=self.timing_raw):
+                    preference_loss, loss_dict = self._compute_vqa_loss(
+                        model, preference_inputs, return_outputs=True, mode="preference", training=training
+                    )
+                total_loss += preference_loss
+                log_metadata.update(loss_dict)
 
-        if num_progress > 0 and progress_inputs:
-            with _timer("time/compute_vqa_loss", timing_raw=self.timing_raw):
-                progress_loss, loss_dict = self._compute_vqa_loss(
-                    model, progress_inputs, return_outputs=True, mode="progress", training=training
-                )
-            total_loss += progress_loss
-            log_metadata.update(loss_dict)
+            if num_similarities > 0 and similarity_inputs:
+                with _timer("time/compute_vqa_loss", timing_raw=self.timing_raw):
+                    similarity_loss, loss_dict = self._compute_vqa_loss(
+                        model, similarity_inputs, return_outputs=True, mode="similarity", training=training
+                    )
+                total_loss += similarity_loss
+                log_metadata.update(loss_dict)
 
-        # Always store custom losses for logging (even when return_outputs=False)
-        self.log_metadata = log_metadata
+            if num_progress > 0 and progress_inputs:
+                with _timer("time/compute_vqa_loss", timing_raw=self.timing_raw):
+                    progress_loss, loss_dict = self._compute_vqa_loss(
+                        model, progress_inputs, return_outputs=True, mode="progress", training=training
+                    )
+                total_loss += progress_loss
+                log_metadata.update(loss_dict)
 
-        if return_outputs:
-            # Combine outputs from all loss functions
-            extra_info = {**log_metadata, "total_loss": total_loss.item()}
-            return total_loss, extra_info
+            self.log_metadata = log_metadata
+
+            if return_outputs:
+                extra_info = {**log_metadata, "total_loss": total_loss.item()}
+                return total_loss, extra_info
 
         return total_loss
 
     def _compute_vqa_loss(self, model, inputs, return_outputs=False, mode=None, training=True):
         B = inputs["input_ids"].shape[0]
+        rank_0_print(f"Generating with input_ids shape: {inputs['input_ids'].shape}")
         outputs = model(
             input_ids=inputs["input_ids"],
             attention_mask=inputs["attention_mask"],
@@ -235,10 +290,30 @@ class RFMVQATrainer(RFMHeadsTrainer):
         loss = loss.mean()
 
         prefix = "train" if training else "eval"
-        loss_dict = {f"{prefix}/{mode}_loss": loss.item()}
-
-        mode_name = "pref" if mode == "preference" else "prog" if mode == "progress" else "sim"
-
+        loss_dict = {}
+        
+        # Check if mode is a list (per-sample modes from combined batch)
+        is_combined = isinstance(mode, list)
+        
+        if is_combined:
+            # Compute per-type losses using masks
+            modes_per_sample = mode
+            unique_modes = set(modes_per_sample)
+            
+            loss_dict[f"{prefix}/combined_loss"] = loss.item()
+            
+            for sample_mode in unique_modes:
+                mask = torch.tensor([m == sample_mode for m in modes_per_sample], device=loss_per_example.device)
+                type_loss = loss_per_example[mask].mean()
+                loss_dict[f"{prefix}/{sample_mode}_loss"] = type_loss.item()
+            
+            # For combined batches, skip detailed per-sample metrics (would be complex to parse)
+            return (loss, loss_dict) if return_outputs else loss
+        else:
+            # Single mode - use original logic
+            loss_dict[f"{prefix}/{mode}_loss"] = loss.item()
+            mode_name = "pref" if mode == "preference" else "prog" if mode == "progress" else "sim"
+        
         # compute accuracy
         pred_ids = outputs.logits.argmax(dim=-1)
         # RFMVQA has tokenizer directly, handle DDP wrapping

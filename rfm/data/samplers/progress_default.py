@@ -17,7 +17,16 @@ from rfm.utils.distributed import rank_0_print
 class ProgressDefaultSampler(RFMBaseSampler):
     """Dataset that generates progress samples by iterating through each trajectory in the dataset, used in policy ranking."""
 
-    def __init__(self, config, dataset, combined_indices, dataset_success_cutoff_map=None, is_evaluation=False, verbose=True, **kwargs):
+    def __init__(
+        self,
+        config,
+        dataset,
+        combined_indices,
+        dataset_success_cutoff_map=None,
+        is_evaluation=False,
+        verbose=True,
+        **kwargs,
+    ):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
         rank_0_print(
             f"ProgressDefaultSampler initialized with {len(self.robot_trajectories)} trajectories", verbose=self.verbose

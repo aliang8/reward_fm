@@ -70,4 +70,3 @@ def is_failure(dataset_name: str) -> bool:
 def is_success(dataset_name: str) -> bool:
     """Check if a dataset contains successful trajectories."""
     return dataset_name in DATASET_CATEGORY.get("success", [])
-

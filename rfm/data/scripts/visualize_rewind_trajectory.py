@@ -167,7 +167,7 @@ def create_video_from_trajectory(
 
     # Get frame dimensions before upscaling
     orig_height, orig_width = height, width
-    
+
     # Upscale frames if they're too small (minimum 512 pixels on shortest side)
     scale_factor = 1.0
     min_dimension = min(height, width)
@@ -241,7 +241,7 @@ def create_video_from_trajectory(
         # Add text overlay
         text_lines = metadata_lines.copy()
         text_lines.append("")  # Empty line for spacing
-        text_lines.append(f"Frame: {i+1}/{num_frames}")
+        text_lines.append(f"Frame: {i + 1}/{num_frames}")
         text_lines.append(f"Progress: {progress_values[i]:.3f}")
 
         frame_with_text = add_text_to_frame(frame_rgb, text_lines)
@@ -333,7 +333,7 @@ def main():
     if args.num_videos > 1:
         # If multiple videos, create a folder
         output_folder = args.output
-        if output_folder.endswith('.mp4'):
+        if output_folder.endswith(".mp4"):
             # Remove .mp4 extension if present
             output_folder = os.path.splitext(output_folder)[0]
         if not os.path.exists(output_folder):
@@ -346,19 +346,19 @@ def main():
     # Generate videos
     num_successful = 0
     num_failed = 0
-    
+
     for video_idx in range(args.num_videos):
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Creating video {video_idx + 1}/{args.num_videos}")
-        print(f"{'='*60}")
-        
+        print(f"{'=' * 60}")
+
         # Select trajectory (either use specified index or random)
         if args.num_videos == 1 and args.trajectory_idx >= 0:
             traj_idx = args.trajectory_idx
         else:
             # For multiple videos, use random trajectories
             traj_idx = random.randint(0, len(dataset) - 1)
-        
+
         if traj_idx >= len(dataset):
             print(f"Error: Trajectory index {traj_idx} is out of range (dataset has {len(dataset)} trajectories)")
             num_failed += 1
@@ -396,9 +396,9 @@ def main():
             output_path = os.path.join(output_folder, output_filename)
         else:
             # Single video: use specified path or default
-            if output_folder and not args.output.endswith('.mp4'):
+            if output_folder and not args.output.endswith(".mp4"):
                 output_path = os.path.join(output_folder, "rewind_trajectory.mp4")
-            elif not args.output.endswith('.mp4'):
+            elif not args.output.endswith(".mp4"):
                 output_path = args.output + ".mp4"
             else:
                 output_path = args.output
@@ -420,16 +420,15 @@ def main():
             num_failed += 1
 
     # Print summary
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Summary:")
     print(f"  Successful: {num_successful}/{args.num_videos}")
     print(f"  Failed: {num_failed}/{args.num_videos}")
     if args.num_videos > 1 and num_successful > 0:
         print(f"  Output folder: {os.path.abspath(output_folder)}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print("\n✅ Done!")
 
 
 if __name__ == "__main__":
     main()
-

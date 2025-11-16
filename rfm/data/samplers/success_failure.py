@@ -15,7 +15,16 @@ from rfm.utils.distributed import rank_0_print
 class PairedSuccessFailureSampler(RFMBaseSampler):
     """Dataset that generates preference samples by pairing successful and failed trajectories for the same task."""
 
-    def __init__(self, config, dataset, combined_indices, dataset_success_cutoff_map=None, is_evaluation=False, verbose=True, **kwargs):
+    def __init__(
+        self,
+        config,
+        dataset,
+        combined_indices,
+        dataset_success_cutoff_map=None,
+        is_evaluation=False,
+        verbose=True,
+        **kwargs,
+    ):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
 
         # Generate all possible sample indices upfront (not the actual samples)

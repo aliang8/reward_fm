@@ -1,4 +1,5 @@
 import collections
+import os
 
 import numpy as np
 import torch
@@ -6,6 +7,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 from transformers import Trainer
 import matplotlib.pyplot as plt
+from rfm.utils.logger import Logger
 
 import copy
 import wandb
@@ -109,14 +111,21 @@ def reduce_metrics_with_accelerate(metrics: dict, accelerator, aggregate_method=
 
 
 class RFMHeadsTrainer(Trainer):
-    def __init__(self, config, *args, **kwargs):
+    def __init__(self, config, *args, logger=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.config = config
         self.log_metadata = collections.defaultdict(float)
         self.global_metadata = collections.defaultdict(float)
         self.timing_raw = collections.defaultdict(float)
 
-        self.log_wandb = config.logging.use_wandb
+        if logger is not None:
+            self.logger = logger
+        else:
+            self.logger = Logger(
+                log_to=self.config.logging.log_to,
+                output_dir=getattr(self.args, "output_dir", "./logs"),
+                is_main_process=is_rank_0(),
+            )
 
         # Load dataset-specific success perfect percentage
         cutoff_file_path = config.data.dataset_success_cutoff_file
@@ -142,7 +151,7 @@ class RFMHeadsTrainer(Trainer):
         # NOTE: We don't clear optimizer.state or param_groups as that breaks the lr_scheduler
         try:
             # Zero out any existing gradients
-            if hasattr(self, 'optimizer') and self.optimizer is not None:
+            if hasattr(self, "optimizer") and self.optimizer is not None:
                 self.optimizer.zero_grad(set_to_none=True)
         except Exception as e:
             rank_0_print(f"Warning: Could not clear gradients: {e}")
@@ -159,14 +168,14 @@ class RFMHeadsTrainer(Trainer):
         Override to safely get learning rate, handling cases where scheduler hasn't been stepped yet.
         """
         try:
-            if hasattr(self, 'lr_scheduler') and self.lr_scheduler is not None:
+            if hasattr(self, "lr_scheduler") and self.lr_scheduler is not None:
                 last_lrs = self.lr_scheduler.get_last_lr()
                 if last_lrs:
                     return last_lrs[0]
             # Fallback to optimizer's learning rate
-            if hasattr(self, 'optimizer') and self.optimizer is not None:
+            if hasattr(self, "optimizer") and self.optimizer is not None:
                 if self.optimizer.param_groups:
-                    return self.optimizer.param_groups[0]['lr']
+                    return self.optimizer.param_groups[0]["lr"]
             # Last resort: return configured learning rate
             return self.args.learning_rate
         except Exception as e:
@@ -192,7 +201,7 @@ class RFMHeadsTrainer(Trainer):
         Perform a training step and log custom losses.
         """
         # Check if we just resumed from checkpoint (first step after resume)
-        if hasattr(self, '_just_resumed_from_checkpoint') and self._just_resumed_from_checkpoint:
+        if hasattr(self, "_just_resumed_from_checkpoint") and self._just_resumed_from_checkpoint:
             self._post_checkpoint_load_reset()
             self._just_resumed_from_checkpoint = False
 
@@ -207,7 +216,7 @@ class RFMHeadsTrainer(Trainer):
             model.train()
 
         # Clear any stale gradients before starting
-        if hasattr(self, 'optimizer') and self.optimizer is not None:
+        if hasattr(self, "optimizer") and self.optimizer is not None:
             self.optimizer.zero_grad(set_to_none=True)
 
         with _timer("time/training_step", timing_raw=self.timing_raw):
@@ -288,81 +297,80 @@ class RFMHeadsTrainer(Trainer):
     def _get_optimizer_stats(self):
         """Get optimizer and gradient statistics for logging."""
         optim_stats = {}
-        
-        if not hasattr(self, 'optimizer') or self.optimizer is None:
+
+        if not hasattr(self, "optimizer") or self.optimizer is None:
             return optim_stats
-        
+
         # Get learning rates for each parameter group
         for i, param_group in enumerate(self.optimizer.param_groups):
-            lr = param_group.get('lr', 0.0)
+            lr = param_group.get("lr", 0.0)
             optim_stats[f"optim/lr_group_{i}"] = lr
-        
+
         # If only one param group, also log as optim/lr for convenience
         if len(self.optimizer.param_groups) == 1:
-            optim_stats["optim/lr"] = self.optimizer.param_groups[0].get('lr', 0.0)
-        
+            optim_stats["optim/lr"] = self.optimizer.param_groups[0].get("lr", 0.0)
+
         # Compute gradient norms across all model parameters
         total_norm = 0.0
         num_params_with_grad = 0
         max_grad_norm = 0.0
-        min_grad_norm = float('inf')
-        
+        min_grad_norm = float("inf")
+
         for p in self.model.parameters():
             if p.grad is not None:
                 param_norm = p.grad.data.norm(2).item()
-                total_norm += param_norm ** 2
+                total_norm += param_norm**2
                 num_params_with_grad += 1
                 max_grad_norm = max(max_grad_norm, param_norm)
                 min_grad_norm = min(min_grad_norm, param_norm)
-        
+
         if num_params_with_grad > 0:
-            total_norm = total_norm ** 0.5
+            total_norm = total_norm**0.5
             optim_stats["optim/preclip_grad_norm"] = total_norm
             optim_stats["optim/preclip_grad_norm_max"] = max_grad_norm
-            optim_stats["optim/preclip_grad_norm_min"] = min_grad_norm if min_grad_norm != float('inf') else 0.0
+            optim_stats["optim/preclip_grad_norm_min"] = min_grad_norm if min_grad_norm != float("inf") else 0.0
             optim_stats["optim/num_params_with_grad"] = num_params_with_grad
-        
+
         # Compute parameter norms across all model parameters
         total_param_norm = 0.0
         max_param_norm = 0.0
-        min_param_norm = float('inf')
+        min_param_norm = float("inf")
         param_norms = []
-        
+
         for name, p in self.model.named_parameters():
             if not p.requires_grad or p.data is None:
                 continue
             param_norm = p.data.norm(2).item()
-            total_param_norm += param_norm ** 2
+            total_param_norm += param_norm**2
             max_param_norm = max(max_param_norm, param_norm)
             min_param_norm = min(min_param_norm, param_norm)
             param_norms.append((name, param_norm))
-        
+
         if param_norms:
-            total_param_norm = total_param_norm ** 0.5
+            total_param_norm = total_param_norm**0.5
             optim_stats["optim/param_norm"] = total_param_norm
             optim_stats["optim/param_norm_max"] = max_param_norm
-            optim_stats["optim/param_norm_min"] = min_param_norm if min_param_norm != float('inf') else 0.0
+            optim_stats["optim/param_norm_min"] = min_param_norm if min_param_norm != float("inf") else 0.0
 
-        
         # Get optimizer state statistics (e.g., momentum, variance for Adam)
-        if hasattr(self.optimizer, 'state') and len(self.optimizer.state) > 0:
+        if hasattr(self.optimizer, "state") and len(self.optimizer.state) > 0:
             # For Adam-like optimizers, log average momentum and variance
             exp_avg_norms = []
             exp_avg_sq_norms = []
-            
+
             for state in self.optimizer.state.values():
-                if 'exp_avg' in state:
-                    exp_avg_norms.append(state['exp_avg'].norm(2).item())
-                if 'exp_avg_sq' in state:
-                    exp_avg_sq_norms.append(state['exp_avg_sq'].norm(2).item())
-            
+                if "exp_avg" in state:
+                    exp_avg_norms.append(state["exp_avg"].norm(2).item())
+                if "exp_avg_sq" in state:
+                    exp_avg_sq_norms.append(state["exp_avg_sq"].norm(2).item())
+
             if exp_avg_norms:
                 optim_stats["optim/exp_avg_norm_mean"] = np.mean(exp_avg_norms)
                 optim_stats["optim/exp_avg_norm_max"] = np.max(exp_avg_norms)
             if exp_avg_sq_norms:
                 optim_stats["optim/exp_avg_sq_norm_mean"] = np.mean(exp_avg_sq_norms)
                 optim_stats["optim/exp_avg_sq_norm_max"] = np.max(exp_avg_sq_norms)
-        
+
         # Log top 10 parameters with largest gradient norms
         param_grad_norms = []
         for name, p in self.model.named_parameters():
@@ -370,24 +378,24 @@ class RFMHeadsTrainer(Trainer):
                 continue
             grad_norm = p.grad.data.norm(2).item()
             param_grad_norms.append((name, grad_norm))
-        
+
         if param_grad_norms:
             # Sort by gradient norm (descending) and take top 10
             param_grad_norms.sort(key=lambda x: x[1], reverse=True)
             for i, (name, grad_norm) in enumerate(param_grad_norms[:5]):
                 # Shorten parameter name for cleaner logging
                 short_name = name.replace("model.", "").replace("module.", "")
-                optim_stats[f"optim/top_preclip_grad_norm_{i+1}_{short_name}"] = grad_norm
-        
+                optim_stats[f"optim/top_preclip_grad_norm_{i + 1}_{short_name}"] = grad_norm
+
         if param_norms:
             # Sort by parameter norm (descending) and take top 10
             param_norms.sort(key=lambda x: x[1], reverse=True)
             for i, (name, param_norm) in enumerate(param_norms[:5]):
                 short_name = name.replace("model.", "").replace("module.", "")
-                optim_stats[f"optim/top_param_norm_{i+1}_{short_name}"] = param_norm
-        
+                optim_stats[f"optim/top_param_norm_{i + 1}_{short_name}"] = param_norm
+
         return optim_stats
-    
+
     def _update_resample_attempt_metrics(self, inputs: dict) -> None:
         """Aggregate resample attempt statistics across processes."""
         if not hasattr(self, "accelerator"):
@@ -424,9 +432,7 @@ class RFMHeadsTrainer(Trainer):
                     f"({len(strategies)}) for {sample_category} samples."
                 )
 
-            strategy_labels = [
-                f"{sample_category}/{str(strategy)}" for strategy in strategies
-            ]
+            strategy_labels = [f"{sample_category}/{str(strategy)}" for strategy in strategies]
 
             for attempt_value, strategy_label in zip(attempts_tensor.tolist(), strategy_labels):
                 local_pairs.append((strategy_label, float(attempt_value)))
@@ -481,23 +487,15 @@ class RFMHeadsTrainer(Trainer):
         global_metadata = reduce_metrics_with_accelerate(self.global_metadata, self.accelerator, aggregate_method="sum")
         log_global = {f"counts/{key}": global_metadata[key] for key in global_metadata}
         log_data.update(log_global)
-        
+
         # Log optimizer and gradient statistics
         optim_stats = self._get_optimizer_stats()
         log_data.update(optim_stats)
-        
+
         # make sure values are floats so they are loggable into wandb reports
         log_data = {k: float(v) for k, v in log_data.items()}
 
-        # Log to wandb if available and configured (only on rank 0)
-        if self.log_wandb and is_rank_0():
-            try:
-                import wandb
-
-                if wandb.run is not None:
-                    wandb.log(log_data)
-            except ImportError:
-                rank_0_print("Warning: wandb not available for logging custom losses")
+        self.logger.log_scalars(log_data, step=self.state.global_step)
 
         # Log to console on rank 0
         if is_rank_0():
@@ -508,7 +506,7 @@ class RFMHeadsTrainer(Trainer):
 
             rounded_times = {k: round(v, 2) for k, v in self.timing_raw.items()}
             rank_0_print(f"Timing raw: {rounded_times}")
-            
+
             # Log optimizer stats to console
             if optim_stats:
                 rank_0_print(f"Optimizer stats: {optim_stats}")
@@ -561,7 +559,9 @@ class RFMHeadsTrainer(Trainer):
                 kwargs = {}
                 if eval_type == "reward_alignment":
                     kwargs["max_trajectories"] = 10
-                    kwargs["frame_step"] = 2 if self.config.trainer_cls == "rfm_heads" else 1
+                    kwargs["frame_step"] = (
+                        2 if (self.config.trainer_cls == "rfm_heads" and not self.config.data.use_multi_image) else 1
+                    )
 
                 dataset = setup_custom_eval_dataset(
                     eval_cfg, sampler_type=eval_type, is_eval=True, verbose=False, **kwargs
@@ -571,7 +571,7 @@ class RFMHeadsTrainer(Trainer):
                 # Ensure model is in eval mode and clear any gradient buffers
                 self.model.eval()
                 # Explicitly zero any gradients that might exist (shouldn't, but safety measure)
-                if hasattr(self, 'optimizer') and self.optimizer is not None:
+                if hasattr(self, "optimizer") and self.optimizer is not None:
                     self.optimizer.zero_grad(set_to_none=True)
                 eval_results = []
 
@@ -588,15 +588,21 @@ class RFMHeadsTrainer(Trainer):
 
                         progress_logits = outputs.progress_logits
                         progress_pred = progress_logits["A"]
-                        
+
+                        if isinstance(progress_pred, list):
+                            if isinstance(progress_pred[0], torch.Tensor):
+                                progress_pred = torch.stack(progress_pred)
+                            else:
+                                progress_pred = torch.tensor(progress_pred, device=self.accelerator.device)
+
                         # Gather everything
                         progress_pred = self.accelerator.gather_for_metrics(progress_pred)
                         target_progress = self.accelerator.gather_for_metrics(progress_samples["target_progress"])
-                        
+
                         # Gather metadata fields
                         metadata_fields = ["task", "data_source", "data_gen_strategy", "quality_labels", "metadata"]
                         gathered_metadata_dict = {}
-                        
+
                         if dist.is_initialized():
                             world_size = dist.get_world_size()
                             for field in metadata_fields:
@@ -606,13 +612,17 @@ class RFMHeadsTrainer(Trainer):
                         else:
                             for field in metadata_fields:
                                 gathered_metadata_dict[field] = progress_samples[field]
-                        
+
                         # Handle success predictions if needed
                         success_pred_gathered = None
                         if self.config.model.train_success_head:
                             success_pred = outputs.success_logits["A"]
                             if isinstance(success_pred, list):
-                                success_pred = torch.stack(success_pred) if isinstance(success_pred[0], torch.Tensor) else torch.tensor(success_pred, device=self.accelerator.device)
+                                success_pred = (
+                                    torch.stack(success_pred)
+                                    if isinstance(success_pred[0], torch.Tensor)
+                                    else torch.tensor(success_pred, device=self.accelerator.device)
+                                )
                             success_binary = (torch.sigmoid(success_pred) > 0.5).float()
                             success_pred_gathered = self.accelerator.gather_for_metrics(success_binary)
 
@@ -704,7 +714,7 @@ class RFMHeadsTrainer(Trainer):
                                 "metadata": gathered_metadata[i],
                             }
                             eval_results.append(sample_result)
-                    
+
                     # Clean up batch tensors and free memory after each batch
                     # This is critical for VQA with generation to prevent OOM
                     del batch, outputs
@@ -740,21 +750,32 @@ class RFMHeadsTrainer(Trainer):
 
                     # Create wandb tables and log visualizations
                     if eval_type == "reward_alignment":
-                        data = []
-                        if self.log_wandb:
-                            for plot, frames in zip(plots, video_frames_list):
+                        # Build rows of (video, figure)
+                        rows = []
+                        for plot, frames in zip(plots, video_frames_list):
+                            if frames is not None:
+                                rows.append((frames, plot))
+                        if rows and self.logger.enabled("wandb"):
+                            self.logger.log_video_table(
+                                f"{ds_name}/reward_alignment_samples",
+                                videos_and_figures=rows,
+                                columns=["video", "progress_plot"],
+                                step=self.state.global_step,
+                            )
+                        # For tensorboard (no table support), log each video and its figure separately
+                        if self.logger.enabled("tensorboard"):
+                            for idx, frames in enumerate(video_frames_list):
                                 if frames is not None:
-                                    progress_plot = wandb.Image(plot)
-                                    plt.close(plot)  # Close to free memory
-                                    data.append([wandb.Video(frames, fps=10, format="gif"), progress_plot])
-
-                            columns = ["video", "progress_plot"]
-                            wandb.log({
-                                f"{ds_name}/reward_alignment_samples": wandb.Table(data=data, columns=columns),
-                            })
-                        else:
-                            for plot, frames in zip(plots, video_frames_list):
-                                plt.close(plot)
+                                    self.logger.log_video(
+                                        f"{ds_name}/reward_alignment_video/{idx}",
+                                        frames,
+                                        fps=10,
+                                        step=self.state.global_step,
+                                    )
+                            for idx, plot in enumerate(plots):
+                                self.logger.log_figure(
+                                    f"{ds_name}/reward_alignment_plot/{idx}", plot, step=self.state.global_step
+                                )
 
                     elif eval_type == "policy_ranking":
                         data = []
@@ -766,17 +787,19 @@ class RFMHeadsTrainer(Trainer):
                             data.append([task, quality_to_rews])
 
                         columns = ["task", "quality_and_rews"]
-                        if self.log_wandb:
-                            wandb.log({
-                                f"{ds_name}/policy_ranking_samples": wandb.Table(data=data, columns=columns),
-                            })
+                        self.logger.log_table(
+                            f"{ds_name}/policy_ranking_samples",
+                            data=data,
+                            columns=columns,
+                            step=self.state.global_step,
+                        )
 
                     elif eval_type == "confusion_matrix":
-                        # Log confusion matrix figure to wandb
-                        if self.log_wandb:
-                            wandb.log({f"{ds_name}/confusion_matrix": wandb.Image(confusion_plot)})
-                            plt.close(confusion_plot)
-                
+                        self.logger.log_figure(
+                            f"{ds_name}/confusion_matrix", confusion_plot, step=self.state.global_step
+                        )
+                        plt.close(confusion_plot)
+
                 # Clean up after each dataset to prevent memory accumulation
                 del dataset, dataloader, eval_results
                 if torch.cuda.is_available():
@@ -794,35 +817,32 @@ class RFMHeadsTrainer(Trainer):
                         callback_metrics[metric_name] = v
 
         # Prepare wandb metrics and log (only on main process)
-        if self.accelerator.is_main_process and self.log_wandb:
-            wandb_metrics = {}
+        if self.accelerator.is_main_process:
+            to_log = {}
             for ds_name, eval_type_metric in metrics.items():
                 for eval_type, metric in eval_type_metric.items():
                     eval_type_short = EVAL_TYPE_SHORT[eval_type]
-                    # Add to wandb metrics
                     for k, v in metric.items():
                         if isinstance(v, (int, float)):
                             metric_name = f"custom_eval/{eval_type_short}_{k}_{ds_name}"
-                            wandb_metrics[metric_name] = v
-
-            # Log to wandb
-            wandb.log(wandb_metrics)
+                            to_log[metric_name] = float(v)
+            self.logger.log_scalars(to_log, step=self.state.global_step)
 
         rank_0_print("=" * 50)
         rank_0_print("Finished running custom evaluations!")
         rank_0_print("=" * 50)
-        
+
         # Reset model to training mode and clear any cached states to prevent leakage
         self.model.train()
         # Ensure gradients are cleared before returning to training
-        if hasattr(self, 'optimizer') and self.optimizer is not None:
+        if hasattr(self, "optimizer") and self.optimizer is not None:
             self.optimizer.zero_grad(set_to_none=True)
         # Clear any cached computations that might persist from eval mode
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             # Synchronize to ensure all operations are complete
             torch.cuda.synchronize()
-        
+
         return callback_metrics
 
     def evaluate(self, eval_dataset=None, ignore_keys=None) -> dict[str, float]:
@@ -870,9 +890,7 @@ class RFMHeadsTrainer(Trainer):
                 rank_0_print("=" * 50)
 
             # Also log to wandb if available and configured (only on rank 0)
-            if self.args.report_to and "wandb" in self.args.report_to and is_rank_0():
-                if wandb.run is not None:
-                    wandb.log(metrics)
+            self.logger.log_scalars(metrics, step=self.state.global_step)
 
         # Run the custom evaluations
         custom_eval_should_run = (
@@ -886,18 +904,18 @@ class RFMHeadsTrainer(Trainer):
             # to trigger the callback handler
             # self.log(metrics)
             self.control = self.callback_handler.on_evaluate(self.args, self.state, self.control, metrics)
-        
+
         # Restore original training mode to prevent state leakage
         self.model.train(was_training)
         # Ensure gradients are cleared before returning to training
-        if hasattr(self, 'optimizer') and self.optimizer is not None:
+        if hasattr(self, "optimizer") and self.optimizer is not None:
             self.optimizer.zero_grad(set_to_none=True)
         # Clear any cached states that might persist from evaluation
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             # Synchronize to ensure all operations are complete
             torch.cuda.synchronize()
-        
+
         return metrics
 
     def compute_loss(self, model, inputs, return_outputs=False, training=True, **kwargs):
@@ -986,7 +1004,11 @@ class RFMHeadsTrainer(Trainer):
         """
         if success_logits is None or target_progress is None:
             # Return zero tensors instead of floats to maintain tensor consistency
-            device = success_logits.device if success_logits is not None else (target_progress.device if target_progress is not None else torch.device('cpu'))
+            device = (
+                success_logits.device
+                if success_logits is not None
+                else (target_progress.device if target_progress is not None else torch.device("cpu"))
+            )
             return torch.tensor(0.0, device=device), torch.tensor(0.0, device=device)
 
         # Normalize inputs to tensors
@@ -1085,7 +1107,11 @@ class RFMHeadsTrainer(Trainer):
         """
         if progress_pred is None or target_progress is None:
             # Return zero tensors instead of floats to maintain tensor consistency
-            device = progress_pred.device if progress_pred is not None else (target_progress.device if target_progress is not None else torch.device('cpu'))
+            device = (
+                progress_pred.device
+                if progress_pred is not None
+                else (target_progress.device if target_progress is not None else torch.device("cpu"))
+            )
             return torch.tensor(0.0, device=device), torch.tensor(0.0, device=device)
 
         # Normalize inputs to tensors
@@ -1267,7 +1293,7 @@ class RFMHeadsTrainer(Trainer):
 
         # Get preference scores from the preference head
         preference_scores = model_outputs.pref_logits.squeeze(-1)  # [batch_size]
-        
+
         # Clamp logits to prevent extreme values and gradient issues
         preference_scores = torch.clamp(preference_scores, min=-50.0, max=50.0)
 
@@ -1367,7 +1393,7 @@ class RFMHeadsTrainer(Trainer):
                     f"{prefix}/preference_accuracy": preference_accuracy.mean().item(),
                 })
                 return final_loss, outputs_dict
-                
+
         return final_loss
 
     def _compute_similarity_loss(self, model, inputs, return_outputs=False, training=True):
@@ -1411,7 +1437,7 @@ class RFMHeadsTrainer(Trainer):
 
         score_ref_sim = model_outputs_ref_sim.sim_logits.squeeze(-1)
         score_ref_diff = model_outputs_ref_diff.sim_logits.squeeze(-1)
-        
+
         # Clamp logits to prevent extreme values and gradient issues
         score_ref_sim = torch.clamp(score_ref_sim, min=-50.0, max=50.0)
         score_ref_diff = torch.clamp(score_ref_diff, min=-50.0, max=50.0)

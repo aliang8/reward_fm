@@ -12,7 +12,16 @@ from rfm.data.datasets.helpers import (
 class ProgressSampler(RFMBaseSampler):
     """Data generator for progress samples."""
 
-    def __init__(self, config, dataset, combined_indices, dataset_success_cutoff_map=None, is_evaluation=False, verbose=True, **kwargs):
+    def __init__(
+        self,
+        config,
+        dataset,
+        combined_indices,
+        dataset_success_cutoff_map=None,
+        is_evaluation=False,
+        verbose=True,
+        **kwargs,
+    ):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
 
     def _generate_sample(self, item: dict):
@@ -112,7 +121,6 @@ class ProgressSampler(RFMBaseSampler):
                 f"Failed to generate progress sample after {max_attempts} attempts - all strategies exhausted"
             )
 
-        # Process trajectory with appropriate subsample strategy
         progress_traj = self._get_traj_from_data(processed_traj, subsample_strategy=subsample_strategy)
 
         # Handle special cases

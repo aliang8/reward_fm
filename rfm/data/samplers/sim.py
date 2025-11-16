@@ -13,21 +13,30 @@ from rfm.utils.distributed import rank_0_print
 class SimSampler(RFMBaseSampler):
     """Data generator for producing batches for similarity scoring."""
 
-    def __init__(self, config, dataset, combined_indices, dataset_success_cutoff_map=None, is_evaluation=False, verbose=True, **kwargs):
+    def __init__(
+        self,
+        config,
+        dataset,
+        combined_indices,
+        dataset_success_cutoff_map=None,
+        is_evaluation=False,
+        verbose=True,
+        **kwargs,
+    ):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
         self.similarity_strategy_ratio: list[float] = config.similarity_strategy_ratio
         self._has_paired_human_robot = any(
             entry["robot"] and entry["human"] for entry in self.paired_human_robot_by_task.values()
         )
-        self._has_suboptimal = any(
-            indices for indices in self.suboptimal_by_task.values()
-        )
+        self._has_suboptimal = any(indices for indices in self.suboptimal_by_task.values())
         if verbose:
             if self.similarity_strategy_ratio[2] > 0 and not self._has_paired_human_robot:
                 rank_0_print("No paired human/robot data available; skipping paired strategy for similarity sampling.")
             if self.similarity_strategy_ratio[1] > 0 and not self._has_suboptimal:
-                rank_0_print("No suboptimal/failure data available; skipping suboptimal strategy for similarity sampling.")
-        
+                rank_0_print(
+                    "No suboptimal/failure data available; skipping suboptimal strategy for similarity sampling."
+                )
+
     def _generate_sample(self, item: dict):
         return self._create_similarity_sample(ref_traj=item)
 
@@ -69,7 +78,11 @@ class SimSampler(RFMBaseSampler):
             strategies.append((DataGenStrat.REWIND_SAME_TASK, self.similarity_strategy_ratio[0]))
         if self._has_suboptimal and len(self.similarity_strategy_ratio) > 1 and self.similarity_strategy_ratio[1] > 0:
             strategies.append((DataGenStrat.SUBOPTIMAL_SAME_TASK, self.similarity_strategy_ratio[1]))
-        if self._has_paired_human_robot and len(self.similarity_strategy_ratio) > 2 and self.similarity_strategy_ratio[2] > 0:
+        if (
+            self._has_paired_human_robot
+            and len(self.similarity_strategy_ratio) > 2
+            and self.similarity_strategy_ratio[2] > 0
+        ):
             strategies.append((DataGenStrat.PAIRED_HUMAN_ROBOT, self.similarity_strategy_ratio[2]))
 
         # Remove strategies with zero probability
@@ -127,7 +140,7 @@ class SimSampler(RFMBaseSampler):
             else:
                 # Strategy failed - increment attempt count
                 strategy_attempt_counts[selected_strategy] = strategy_attempt_counts.get(selected_strategy, 0) + 1
-                
+
                 # Only remove strategy if it has failed max_strategy_attempts times
                 if strategy_attempt_counts[selected_strategy] >= max_strategy_attempts:
                     strategies = [(strat, prob) for strat, prob in strategies if strat != selected_strategy]
@@ -165,20 +178,20 @@ class SimSampler(RFMBaseSampler):
             Tuple of (traj_sim, traj_diff) where both can be dict or Trajectory objects, or None if not available
         """
         max_retries = 3  # Number of retry attempts for sampling
-        
+
         # Try case 1: sim = rewound, diff = different task
         traj_sim = None
         for _ in range(max_retries):
             traj_sim = self._get_rewound_traj(ref_traj)
             if traj_sim is not None:
                 break
-        
+
         traj_diff = None
         for _ in range(max_retries):
             traj_diff = self._get_different_task(ref_traj)
             if traj_diff is not None:
                 break
-        
+
         if traj_sim is not None and traj_diff is not None:
             return traj_sim, traj_diff
 
@@ -188,13 +201,13 @@ class SimSampler(RFMBaseSampler):
             traj_sim = self._get_same_task_optimal(ref_traj)
             if traj_sim is not None:
                 break
-        
+
         traj_diff = None
         for _ in range(max_retries):
             traj_diff = self._get_rewound_traj(ref_traj)
             if traj_diff is not None:
                 break
-        
+
         if traj_sim is not None and traj_diff is not None:
             return traj_sim, traj_diff
 
@@ -212,21 +225,21 @@ class SimSampler(RFMBaseSampler):
             traj_diff is a trajectory from a different task
         """
         max_retries = 3  # Number of retry attempts for sampling
-        
+
         # Retry traj_sim separately
         traj_sim = None
         for _ in range(max_retries):
             traj_sim = self._get_paired_human_robot_traj(ref_traj)
             if traj_sim is not None:
                 break
-        
+
         # Retry traj_diff separately
         traj_diff = None
         for _ in range(max_retries):
             traj_diff = self._get_different_task(ref_traj)
             if traj_diff is not None:
                 break
-        
+
         if traj_sim is not None and traj_diff is not None:
             return traj_sim, traj_diff
 
@@ -242,21 +255,21 @@ class SimSampler(RFMBaseSampler):
             Tuple of (traj_sim, traj_diff) or None if not available. Both can be dict or Trajectory objects.
         """
         max_retries = 3  # Number of retry attempts for sampling
-        
+
         # Retry traj_sim separately
         traj_sim = None
         for _ in range(max_retries):
             traj_sim = self._get_same_task_optimal(ref_traj)
             if traj_sim is not None:
                 break
-        
+
         # Retry traj_diff separately
         traj_diff = None
         for _ in range(max_retries):
             traj_diff = self._get_same_task_suboptimal(ref_traj)
             if traj_diff is not None:
                 break
-        
+
         if traj_sim is not None and traj_diff is not None:
             return traj_sim, traj_diff
 

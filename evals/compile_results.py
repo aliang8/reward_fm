@@ -102,7 +102,7 @@ def run_reward_alignment_eval_per_trajectory(
     results: list[dict[str, Any]], progress_pred_type: str
 ) -> tuple[dict[str, Any], list, list]:
     """Run reward_alignment evaluation analysis and create plots for each trajectory.
-    
+
     For failure datasets, we visualize predictions but skip metric computation.
     """
     # Determine if this is a failure dataset by checking the data_source of the first result
@@ -110,7 +110,7 @@ def run_reward_alignment_eval_per_trajectory(
     if results and len(results) > 0:
         first_data_source = results[0].get("data_source", "")
         is_failure_dataset = is_failure(first_data_source)
-    
+
     unique_trajectory_ids = set()
     mse_per_trajectory = np.zeros(1)
     pearson_trajectories = []

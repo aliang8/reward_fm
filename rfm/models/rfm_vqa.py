@@ -8,6 +8,7 @@ from transformers import PreTrainedModel, Qwen2_5_VLForConditionalGeneration
 
 import torch
 
+
 class RFMVQA(PreTrainedModel):
     """RFM Model for VQA using base VLM outputs as naive baseline."""
 
@@ -73,7 +74,7 @@ class RFMVQA(PreTrainedModel):
             labels (torch.LongTensor, optional):
                 Labels for computing the language modeling loss. Shape: [batch_size, sequence_length]
                 If provided, the model will compute the loss for VQA training.
-                
+
             second_per_grid_ts (torch.FloatTensor, optional):
                 Time stamps for video grid processing
 
@@ -98,10 +99,10 @@ class RFMVQA(PreTrainedModel):
             "video_grid_thw": video_grid_thw,
             "labels": labels,
         }
-        
+
         if second_per_grid_ts is not None:
             forward_kwargs["second_per_grid_ts"] = second_per_grid_ts
-            
+
         outputs = self.model(**forward_kwargs, **kwargs)
 
         # Return the outputs directly - this is the naive baseline approach

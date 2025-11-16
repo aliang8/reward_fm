@@ -22,15 +22,33 @@ class RFMDataset(BaseDataset):
 
         if self.config.sample_type_ratio[0] > 0:
             self.pref_sampler = PrefSampler(
-                config, self.dataset, self._combined_indices, self.dataset_success_cutoff_map, is_evaluation, verbose=False, **kwargs
+                config,
+                self.dataset,
+                self._combined_indices,
+                self.dataset_success_cutoff_map,
+                is_evaluation,
+                verbose=False,
+                **kwargs,
             )
         if self.config.sample_type_ratio[1] > 0:
             self.progress_sampler = ProgressSampler(
-                config, self.dataset, self._combined_indices, self.dataset_success_cutoff_map, is_evaluation, verbose=False, **kwargs
+                config,
+                self.dataset,
+                self._combined_indices,
+                self.dataset_success_cutoff_map,
+                is_evaluation,
+                verbose=False,
+                **kwargs,
             )
         if self.config.sample_type_ratio[2] > 0:
             self.similarity_sampler = SimSampler(
-                config, self.dataset, self._combined_indices, self.dataset_success_cutoff_map, is_evaluation, verbose=False, **kwargs
+                config,
+                self.dataset,
+                self._combined_indices,
+                self.dataset_success_cutoff_map,
+                is_evaluation,
+                verbose=False,
+                **kwargs,
             )
 
         self.sample_type_ratio = config.sample_type_ratio
@@ -107,7 +125,9 @@ class RFMDataset(BaseDataset):
         ]
 
         # Remove samplers with zero probability or None samplers
-        available_samplers = [(name, prob, sampler) for name, prob, sampler in samplers if prob > 0 and sampler is not None]
+        available_samplers = [
+            (name, prob, sampler) for name, prob, sampler in samplers if prob > 0 and sampler is not None
+        ]
 
         # Fallback to progress sampler if no samplers have positive probability
         if not available_samplers:
@@ -131,8 +151,7 @@ class RFMDataset(BaseDataset):
 
             # Filter out already tried samplers if we haven't exhausted all options
             remaining_samplers = [
-                (name, prob, sampler) for name, prob, sampler in available_samplers
-                if name not in tried_samplers
+                (name, prob, sampler) for name, prob, sampler in available_samplers if name not in tried_samplers
             ]
 
             # If no remaining samplers, reset and try all again
@@ -173,7 +192,7 @@ class RFMDataset(BaseDataset):
             # If sample is not None, return it
             if sample is not None:
                 return self._set_resample_attempts(sample, attempt)
-            
+
             # Sample is None, mark this sampler as tried
             tried_samplers.add(selected_name)
 
@@ -239,7 +258,7 @@ def test():
         sample_type_ratio=[0, 1, 0],  # pref, progress, similarity
         dataset_preference_ratio=0.7,
         preference_strategy_ratio=[0.8, 0.1, 0.1, 0.0],
-        progress_strategy_ratio=[1, 0, 0, 0], # [successful, rewind, different_task, subsequence]
+        progress_strategy_ratio=[1, 0, 0, 0],  # [successful, rewind, different_task, subsequence]
         similarity_strategy_ratio=[1, 1, 1],  # rewind, suboptimal_same_task, paired_human_robot
         data_source_weights=None,
         shuffle=True,
@@ -260,7 +279,7 @@ def test():
     rank_0_print("Initializing RFMDataset...")
     init_start = time.time()
     generator = RFMDataset(config=mock_data_config, batch_size=64)
-    #import ipdb; ipdb.set_trace()
+    # import ipdb; ipdb.set_trace()
     init_time = time.time() - init_start
     rank_0_print(f"Dataset initialization took {init_time:.2f} seconds")
 

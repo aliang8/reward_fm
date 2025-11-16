@@ -334,8 +334,6 @@ class RFMVQATrainer(RFMHeadsTrainer):
             vocab_size = rfm_model.model.config.text_config.vocab_size
         else:
             vocab_size = rfm_model.model.config.vocab_size
-        
-        assert vocab_size is not None, "Vocab size is not set"
 
         loss = ForCausalLMLoss(
             logits=outputs["logits"],

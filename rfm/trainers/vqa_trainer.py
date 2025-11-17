@@ -1,16 +1,18 @@
 import ast
 import gc
+import math
 from rfm.utils.distributed import rank_0_print
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+import statistics
 from evals.eval_utils import extract_answer_from_text
 from .rfm_heads_trainer import RFMHeadsTrainer
 from rfm.utils.timer import _timer
 from rfm.models.utils import ModelOutput
 from rfm.models.rfm_vqa import RFMVQA
 from rfm.data.collators.vqa import IGNORE_INDEX
+import numpy as np
 
 
 # copied because the original function forces the metric reduction
@@ -79,6 +81,32 @@ class RFMVQATrainer(RFMHeadsTrainer):
         
         return metrics
 
+    def _aggregate_progress_logits(self, progress_logits, target_progress) -> list[list[float]]:
+        # ensures all progress logits are the same length as each other
+
+        # get the mode of the target progress lengths
+        target_progress_lengths = []
+        for progress in target_progress:
+            if hasattr(progress, "shape"):
+                if progress.shape[-1] > 0:
+                    target_progress_lengths.append(progress.shape[-1])
+            else:
+                target_progress_lengths.append(len(progress))
+
+        if not target_progress_lengths:
+            return []
+
+        target_progress_length_mode = statistics.mode(target_progress_lengths)
+
+        # aggregate by padding and truncating to the mode length
+        aggregated_progress_logits = []
+        for prediction in progress_logits:
+            parsed = self._parse_progress_prediction(prediction)
+            normalized = self._pad_or_truncate_progress(parsed, target_progress_length_mode)
+            aggregated_progress_logits.append(normalized)
+        return aggregated_progress_logits
+        
+
     def _check_model_type(self, model):
         """
         Check if the model is an instance of RFMVQA.
@@ -139,17 +167,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
             predictions = [extract_answer_from_text(text) for text in pred_texts]
 
             if sample_type == "progress":
-                progress_logits = []
-                for i, prediction in enumerate(predictions):
-                    try:
-                        progress_logits.append(ast.literal_eval(prediction))
-                    except Exception as e:
-                        # Log parsing failures for debugging
-                        if self.state.global_step % 100 == 0:
-                            rank_0_print(f"Failed to parse prediction: {prediction[:50]}, inserting all 0s")
-
-                        # insert fake progress logits
-                        progress_logits.append([0] * len(inputs["target_progress"][i]))
+                progress_logits = self._aggregate_progress_logits(predictions, inputs["target_progress"])
                 progress_logits = {"A": progress_logits, "B": None}
             elif sample_type == "preference":
                 pref_logits = []
@@ -305,6 +323,135 @@ class RFMVQATrainer(RFMHeadsTrainer):
             return model.module.model.dtype
         else:
             return model.model.dtype
+    
+    def _pad_or_truncate_progress(self, values: list[float], expected_len: int | None) -> list[float]:
+        if not values:
+            values = [0.0]
+
+        if expected_len is None or expected_len <= 0:
+            return values
+
+        if len(values) < expected_len:
+            pad_val = values[-1]
+            values = values + [pad_val] * (expected_len - len(values))
+        elif len(values) > expected_len:
+            values = values[:expected_len]
+        return values
+
+    def _update_preference_metrics(
+        self,
+        sample_indices: list[int],
+        index_tensor: torch.Tensor,
+        extracted_answers: list[str],
+        inputs: dict,
+        mode_loss_examples: torch.Tensor,
+        loss_dict: dict,
+        prefix: str,
+        mode_name: str,
+    ) -> None:
+        device = self.accelerator.device
+        mode_predictions = [extracted_answers[idx] for idx in sample_indices]
+
+        label_map = {"A": 1, "B": 0}
+        predictions_num_labels = torch.tensor(
+            [label_map.get(pred, -1) for pred in mode_predictions],
+            device=device,
+            dtype=torch.long,
+        )
+
+        gt_labels = inputs["preference_labels"].index_select(
+            0, index_tensor.to(inputs["preference_labels"].device)
+        )
+
+        preference_correct = (predictions_num_labels == gt_labels).float()
+        loss_dict[f"{prefix}/preference_acc"] = preference_correct.mean().item()
+
+        rejected_strategy = inputs.get("rejected_data_gen_strategy")
+        if rejected_strategy:
+            subset_strats = [rejected_strategy[idx] for idx in sample_indices]
+            for strat in set(subset_strats):
+                mask = torch.tensor(
+                    [s == strat for s in subset_strats],
+                    device=mode_loss_examples.device,
+                    dtype=torch.bool,
+                )
+                if mask.any():
+                    loss_dict[f"{prefix}_strat/{mode_name}_loss_{strat}"] = mode_loss_examples[mask].mean().item()
+                    pref_mask = mask.to(preference_correct.device)
+                    loss_dict[f"{prefix}_strat/{mode_name}_acc_{strat}"] = preference_correct[pref_mask].mean().item()
+
+        data_sources = inputs.get("data_source")
+        if data_sources:
+            subset_sources = [data_sources[idx] for idx in sample_indices]
+            for source in set(subset_sources):
+                mask = torch.tensor(
+                    [s == source for s in subset_sources],
+                    device=mode_loss_examples.device,
+                    dtype=torch.bool,
+                )
+                if mask.any():
+                    loss_dict[f"{prefix}_ds/{mode_name}_loss_{source}"] = mode_loss_examples[mask].mean().item()
+                    pref_mask = mask.to(preference_correct.device)
+                    loss_dict[f"{prefix}_ds/{mode_name}_acc_{source}"] = preference_correct[pref_mask].mean().item()
+
+    def _update_progress_metrics(
+        self,
+        sample_indices: list[int],
+        index_tensor: torch.Tensor,
+        extracted_answers: list[str],
+        inputs: dict,
+        mode_loss_examples: torch.Tensor,
+        loss_dict: dict,
+        prefix: str,
+        mode_name: str,
+    ) -> None:
+        mode_predictions = [extracted_answers[idx] for idx in sample_indices]
+        target_progress = inputs["target_progress"].index_select(
+            0, index_tensor.to(inputs["target_progress"].device)
+        )
+
+        progress_losses = []
+        for rel_idx, prediction in enumerate(mode_predictions):
+            expected_len = target_progress[rel_idx].shape[-1] if target_progress[rel_idx].ndim > 0 else None
+            # parse 
+            try:
+                parsed = ast.literal_eval(prediction)
+                normalized = self._pad_or_truncate_progress(parsed, expected_len)
+
+                progress_pred_tensor = torch.tensor(
+                    normalized,
+                    dtype=torch.float32,
+                )
+                gt_tensor = target_progress[rel_idx]
+
+                progress_losses.append(F.mse_loss(progress_pred_tensor, gt_tensor).item())
+
+            except Exception:
+                rank_0_print(f"Warning: Failed to parse progress prediction for sample {rel_idx}: {prediction}")
+                continue
+
+        if progress_losses:
+            loss_dict[f"{prefix}/progress_mse"] = np.mean(progress_losses)
+
+        data_gen_strategy = inputs.get("data_gen_strategy")
+        if data_gen_strategy:
+            subset_strats = [data_gen_strategy[idx] for idx in sample_indices]
+            for strat in set(subset_strats):
+                mask = torch.tensor(
+                    [s == strat for s in subset_strats],
+                )
+                if mask.any():
+                    loss_dict[f"{prefix}_strat/{mode_name}_loss_{strat}"] = mode_loss_examples[mask].mean().item()
+
+        data_sources = inputs.get("data_source")
+        if data_sources:
+            subset_sources = [data_sources[idx] for idx in sample_indices]
+            for source in set(subset_sources):
+                mask = torch.tensor(
+                    [s == source for s in subset_sources],
+                )
+                if mask.any():
+                    loss_dict[f"{prefix}_ds/{mode_name}_loss_{source}"] = mode_loss_examples[mask].mean().item()
 
     def _compute_vqa_loss(self, model, inputs, return_outputs=False, mode=None, training=True):
         B = inputs["input_ids"].shape[0]
@@ -348,113 +495,54 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
         prefix = "train" if training else "eval"
         loss_dict = {}
-        
-        # Check if mode is a list (per-sample modes from combined batch)
-        is_combined = isinstance(mode, list)
-        
-        if is_combined:
-            # Compute per-type losses using masks
-            modes_per_sample = mode
-            unique_modes = set(modes_per_sample)
-            
+        combined_batch = isinstance(mode, list)
+        modes_per_sample = mode if combined_batch else [mode] * B
+
+        if combined_batch:
             loss_dict[f"{prefix}/combined_loss"] = loss.item()
-            
-            for sample_mode in unique_modes:
-                mask = torch.tensor([m == sample_mode for m in modes_per_sample], device=loss_per_example.device)
-                type_loss = loss_per_example[mask].mean()
-                loss_dict[f"{prefix}/{sample_mode}_loss"] = type_loss.item()
-            
-            # For combined batches, skip detailed per-sample metrics (would be complex to parse)
-            return (loss, loss_dict) if return_outputs else loss
-        else:
-            # Single mode - use original logic
-            loss_dict[f"{prefix}/{mode}_loss"] = loss.item()
-            mode_name = "pref" if mode == "preference" else "prog" if mode == "progress" else "sim"
-        
-        # compute accuracy
+
+        mode_name_map = {"preference": "pref", "progress": "prog", "similarity": "sim"}
+
         pred_ids = outputs["logits"].argmax(dim=-1)
-        # RFMVQA has tokenizer directly, handle DDP wrapping
         rfm_model = self.model.module if hasattr(self.model, "module") else self.model
         tokenizer = rfm_model.tokenizer
         pred_texts = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
+        extracted_answers = [extract_answer_from_text(text) for text in pred_texts]
 
-        if mode == "preference":
-            predictions = [extract_answer_from_text(text) for text in pred_texts]
-            predictions_num_labels = []
-            for prediction in predictions:
-                if prediction == "A":
-                    predictions_num_labels.append(1)
-                elif prediction == "B":
-                    predictions_num_labels.append(0)
-                else:
-                    predictions_num_labels.append(-1)
+        unique_modes = sorted(set(modes_per_sample))
 
-            predictions_num_labels = torch.tensor(predictions_num_labels, device=self.accelerator.device)
-            gt_labels = inputs["preference_labels"]
+        for sample_mode in unique_modes:
+            sample_indices = [idx for idx, m in enumerate(modes_per_sample) if m == sample_mode]
+            if not sample_indices:
+                continue
 
-            preference_correct = (predictions_num_labels == gt_labels).float()
-            loss_dict.update({f"{prefix}/{mode}_acc": preference_correct.mean().item()})
-        elif mode == "progress":
-            predictions = [extract_answer_from_text(text) for text in pred_texts]
-            gt_labels = inputs["target_progress"]
+            index_tensor = torch.tensor(sample_indices, device=loss_per_example.device, dtype=torch.long)
+            mode_loss_examples = loss_per_example.index_select(0, index_tensor)
+            loss_dict[f"{prefix}/{sample_mode}_loss"] = mode_loss_examples.mean().item()
 
-            # Compute progress prediction accuracy (for logging)
-            progress_losses = []
-            for i, prediction in enumerate(predictions):
-                try:
-                    progress_pred = ast.literal_eval(prediction)
-                    # Ensure tensors are on correct device
-                    progress_pred_tensor = torch.tensor(
-                        progress_pred, device=self.accelerator.device, dtype=torch.float32
-                    )
-                    gt_tensor = torch.tensor(gt_labels[i], device=self.accelerator.device, dtype=torch.float32)
-                    progress_losses.append(F.mse_loss(progress_pred_tensor, gt_tensor).item())
-                except Exception:
-                    progress_losses.append(float("inf"))  # Mark failed predictions
+            mode_name = mode_name_map.get(sample_mode, sample_mode[:4])
 
-            # Log average progress MSE if we have valid predictions
-            valid_losses = [l for l in progress_losses if l != float("inf")]
-            if valid_losses:
-                loss_dict.update({f"{prefix}/{mode}_mse": sum(valid_losses) / len(valid_losses)})
-        else:
-            pass
-
-        # split the acc and loss by data gen strategy and data source
-        if mode == "preference":
-            rejected_data_gen_strategy = inputs.get("rejected_data_gen_strategy", None)
-
-            for strat in set(rejected_data_gen_strategy):
-                mask = [1 if s == strat else 0 for s in rejected_data_gen_strategy]
-                mask = torch.tensor(mask, device=self.accelerator.device)
-                loss_dict.update({
-                    f"{prefix}_strat/{mode_name}_loss_{strat}": (loss_per_example[mask == 1]).mean().item()
-                })
-                loss_dict.update({
-                    f"{prefix}_strat/{mode_name}_acc_{strat}": (preference_correct[mask == 1]).mean().item()
-                })
-
-        elif mode == "progress":
-            data_gen_strategy = inputs["data_gen_strategy"]
-
-            for strat in set(data_gen_strategy):
-                mask = [1 if s == strat else 0 for s in data_gen_strategy]
-                mask = torch.tensor(mask, device=self.accelerator.device)
-                loss_dict.update({
-                    f"{prefix}_strat/{mode_name}_loss_{strat}": (loss_per_example[mask == 1]).mean().item()
-                })
-
-        data_sources = inputs.get("data_source", [])
-
-        for data_source in set(data_sources):
-            mask = [1 if s == data_source else 0 for s in inputs["data_source"]]
-            mask = torch.tensor(mask, device=self.accelerator.device)
-            loss_dict.update({
-                f"{prefix}_ds/{mode_name}_loss_{data_source}": (loss_per_example[mask == 1]).mean().item()
-            })
-
-            if mode == "preference":
-                loss_dict.update({
-                    f"{prefix}_ds/{mode_name}_acc_{data_source}": (preference_correct[mask == 1]).mean().item()
-                })
+            if sample_mode == "preference":
+                self._update_preference_metrics(
+                    sample_indices,
+                    index_tensor,
+                    extracted_answers,
+                    inputs,
+                    mode_loss_examples,
+                    loss_dict,
+                    prefix,
+                    mode_name,
+                )
+            elif sample_mode == "progress":
+                self._update_progress_metrics(
+                    sample_indices,
+                    index_tensor,
+                    extracted_answers,
+                    inputs,
+                    mode_loss_examples,
+                    loss_dict,
+                    prefix,
+                    mode_name,
+                )
 
         return (loss, loss_dict) if return_outputs else loss

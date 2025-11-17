@@ -1,4 +1,5 @@
 import collections
+import gc
 import os
 
 import numpy as np
@@ -779,6 +780,10 @@ class RFMHeadsTrainer(Trainer):
                         # Close all plots to avoid accumulating open figures
                         for plot in plots:
                             plt.close(plot)
+                        
+                        # Explicitly delete to free memory
+                        del plots, video_frames_list, rows
+                        gc.collect()
 
                     elif eval_type == "policy_ranking":
                         data = []
@@ -796,17 +801,38 @@ class RFMHeadsTrainer(Trainer):
                             columns=columns,
                             step=self.state.global_step,
                         )
+                        del data, task_groups, task_details
+                        gc.collect()
 
                     elif eval_type == "confusion_matrix":
                         self.logger.log_figure(
                             f"{ds_name}/confusion_matrix", confusion_plot, step=self.state.global_step
                         )
                         plt.close(confusion_plot)
+                        del confusion_plot, confusion_matrix
+                        gc.collect()
 
                 # Clean up after each dataset to prevent memory accumulation
                 del dataset, dataloader, eval_results
+                # Also clean up eval-specific outputs
+                if 'plots' in locals():
+                    del plots
+                if 'video_frames_list' in locals():
+                    del video_frames_list
+                if 'task_groups' in locals():
+                    del task_groups
+                if 'task_details' in locals():
+                    del task_details
+                if 'confusion_plot' in locals():
+                    del confusion_plot
+                if 'confusion_matrix' in locals():
+                    del confusion_matrix
+                    
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                import gc
+                gc.collect()
 
         # Prepare metrics for callbacks (all processes)
         callback_metrics = {}
@@ -840,11 +866,22 @@ class RFMHeadsTrainer(Trainer):
         # Ensure gradients are cleared before returning to training
         if hasattr(self, "optimizer") and self.optimizer is not None:
             self.optimizer.zero_grad(set_to_none=True)
-        # Clear any cached computations that might persist from eval mode
+        
+        # Aggressive cleanup to prevent OOM after evaluation
+        import gc
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-            # Synchronize to ensure all operations are complete
             torch.cuda.synchronize()
+            torch.cuda.empty_cache()  # Call twice
+        gc.collect()
+        gc.collect()
+        
+        # Clean up large objects
+        del metrics
+        if 'plots' in locals():
+            del plots
+        if 'video_frames_list' in locals():
+            del video_frames_list
 
         return callback_metrics
 

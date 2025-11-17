@@ -1062,7 +1062,7 @@ class RFMHeadsTrainer(Trainer):
         # Clamp logits to prevent extreme values and gradient issues
         success_logits = torch.clamp(success_logits, min=-50.0, max=50.0)
 
-        positive_weight_value = float(getattr(self.config.training, "success_positive_weight", 1.0))
+        positive_weight_value = float(getattr(self.config.loss, "success_positive_weight", 1.0))
         pos_weight_tensor = torch.tensor(
             positive_weight_value, device=success_logits.device, dtype=success_logits.dtype
         )
@@ -1134,6 +1134,13 @@ class RFMHeadsTrainer(Trainer):
             mask_t = mask.to(device=combined_mask.device, dtype=combined_mask.dtype)
             # Expand mask from (batch_size,) to (batch_size, seq_len)
             combined_mask = combined_mask * mask_t.unsqueeze(1)
+
+        # If predict_last_frame_progress is True, only compute loss for the last frame
+        if self.config.loss.predict_last_frame_progress:
+            # Create a mask that only selects the last frame for each sequence
+            last_frame_mask = torch.zeros_like(combined_mask, dtype=torch.float32)
+            last_frame_mask[:, -1] = 1.0  # Set last frame to 1.0 for all sequences
+            combined_mask = combined_mask * last_frame_mask
 
         # Compute MSE loss per frame
         loss_per_frame = F.mse_loss(progress_pred.float(), target_progress.float(), reduction="none")

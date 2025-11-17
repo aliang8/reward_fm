@@ -275,11 +275,6 @@ class TrainingConfig:
     do_eval: bool = field(default=False, metadata={"help": "Whether to run evaluation during training"})
     prediction_loss_only: bool = field(default=True, metadata={"help": "Only compute loss for the prediction head"})
 
-    success_positive_weight: float = field(
-        default=1.0,
-        metadata={"help": "Positive class weight for BCEWithLogits loss in success prediction (pos_weight)."},
-    )
-
     # Optimizer settings
     lr_scheduler_type: str = field(default="cosine")
     warmup_steps: int = field(default=0)
@@ -293,6 +288,20 @@ class TrainingConfig:
     )
     predict_sim_progress: bool = field(
         default=False, metadata={"help": "Whether to predict progress for similarity samples"}
+    )
+
+
+@dataclass
+class LossConfig:
+    """Config for loss computation settings"""
+
+    success_positive_weight: float = field(
+        default=1.0,
+        metadata={"help": "Positive class weight for BCEWithLogits loss in success prediction (pos_weight)."},
+    )
+    predict_last_frame_progress: bool = field(
+        default=False,
+        metadata={"help": "If True, only compute progress loss for the last frame in the sequence"},
     )
 
 
@@ -357,6 +366,7 @@ class ExperimentConfig:
     peft: PEFTConfig = field(default_factory=PEFTConfig)
     data: DataConfig = field(default_factory=DataConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
+    loss: LossConfig = field(default_factory=LossConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     custom_eval: CustomEvaluationConfig = field(default_factory=CustomEvaluationConfig)
 
@@ -372,6 +382,9 @@ class ExperimentConfig:
 
         if isinstance(self.training, dict):
             self.training = TrainingConfig(**self.training)
+
+        if isinstance(self.loss, dict):
+            self.loss = LossConfig(**self.loss)
 
         if isinstance(self.logging, dict):
             self.logging = LoggingConfig(**self.logging)

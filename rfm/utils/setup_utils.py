@@ -176,7 +176,7 @@ def setup_model_and_processor(
             processor = AutoProcessor.from_pretrained(
                 cfg.base_model_id,
                 trust_remote_code=cfg.trust_remote_code,
-                # padding_side="left",
+                padding_side="left",
                 size={"longest_edge": 512},
                 max_image_size={"longest_edge": 512},
                 use_fast=True,

@@ -28,5 +28,5 @@ groups:
     sweep_overrides:
       model.train_progress_head: [True]
       model.train_success_head: [False, True]
-      logging.use_wandb: [True]
+      logging.log_to '["wandb"]': [True]
 

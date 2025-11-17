@@ -157,6 +157,7 @@ class VQABatchCollator(RFMBatchCollator):
             content_list = [{"type": "text", "text": prompt}]
             self._add_vision_content_to_list(content_list, video_field, content_extras)
 
+
             # Create conversation for progress evaluation
             conversation = [
                 {

@@ -4,6 +4,7 @@ import shutil
 from dataclasses import dataclass, field
 from typing import Optional, List, Tuple
 import numpy as np
+import gc
 import torch
 from transformers import TrainerCallback, TrainerState, TrainerControl, TrainingArguments, Trainer
 from transformers.trainer_utils import get_last_checkpoint
@@ -160,8 +161,6 @@ class SaveBestCallback(TrainerCallback):
                 shutil.copy(os.path.join(args.output_dir, "trainer_state.json"), ckpt_dir)
             
             # Memory cleanup after saving model
-            import gc
-            import torch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             gc.collect()
@@ -227,8 +226,6 @@ class SaveBestCallback(TrainerCallback):
                         rank_0_print(f"✅ Deleted tag: {old_tag}")
                     
                     # Aggressive memory cleanup after upload to prevent OOM
-                    import gc
-                    import torch
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
                         torch.cuda.synchronize()
@@ -236,8 +233,6 @@ class SaveBestCallback(TrainerCallback):
                     rank_0_print("🧹 Cleaned up memory after Hub upload")
         
         # Additional cleanup on all ranks after the entire on_evaluate callback
-        import gc
-        import torch
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.synchronize()

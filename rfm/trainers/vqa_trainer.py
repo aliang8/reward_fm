@@ -75,9 +75,14 @@ class RFMVQATrainer(RFMHeadsTrainer):
             # Empty cache multiple times to ensure fragmented memory is freed
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
+            torch.cuda.empty_cache()  # Call twice for better fragmentation cleanup
             
-        # Force garbage collection
+        # Force garbage collection multiple times
         gc.collect()
+        gc.collect()
+        
+        # Put model back in training mode
+        self.model.train()
         
         return metrics
 
@@ -166,6 +171,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
             if gen_inputs["pixel_values_videos"] is not None:
                 gen_inputs["pixel_values_videos"] = gen_inputs["pixel_values_videos"].to(dtype=self._get_dtype(model))
 
+
             # Generate with reasonable parameters for short structured answers
             with torch.no_grad():
                 generated_ids = model.generate(
@@ -177,6 +183,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
                     use_cache=True,  # Enable KV caching for faster generation
                 )
 
+
             # Decode only the generated part (not the input prompt)
             rfm_model = self.model.module if hasattr(self.model, "module") else self.model
             tokenizer = rfm_model.tokenizer
@@ -187,7 +194,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
             pred_texts = tokenizer.batch_decode(generated_ids_sliced, skip_special_tokens=True)
             predictions = [extract_answer_from_text(text) for text in pred_texts]
-
+            
             if sample_type == "progress":
                 progress_logits = self._aggregate_progress_logits(predictions, inputs["target_progress"])
                 progress_logits = {"A": progress_logits, "B": None}
@@ -205,9 +212,14 @@ class RFMVQATrainer(RFMHeadsTrainer):
             # Explicitly free generation tensors to prevent memory accumulation (for all sample types)
             del generated_ids, generated_ids_sliced, gen_inputs, pred_texts, predictions
             
-            # Clear CUDA cache after generation to free KV cache memory
+            # Aggressive CUDA cache cleanup after generation to free KV cache memory
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()  # Call twice for better cleanup
+            
+            # Force garbage collection
+            gc.collect()
 
         # Create ModelOutput with all expected fields to match parent class expectations
         model_output = ModelOutput(
@@ -402,23 +414,15 @@ class RFMVQATrainer(RFMHeadsTrainer):
                 mse = None
                 try:
                     parsed = ast.literal_eval(pred)
-                    expected_len = gt.shape[-1] if gt.ndim > 0 else None
-                    if not parsed:
-                        parsed = [0.0]
-                    if expected_len and len(parsed) < expected_len:
-                        pad_val = parsed[-1] if parsed else 0.0
-                        parsed = parsed + [pad_val] * (expected_len - len(parsed))
-                    elif expected_len and len(parsed) > expected_len:
-                        parsed = parsed[:expected_len]
                     pred_tensor = torch.tensor(parsed, dtype=torch.float32)
                     mse = F.mse_loss(pred_tensor, gt).item()
                 except Exception:
                     mse = None
                 
-                    # Get metadata
-                    source = prog_inputs.get("data_source", [None] * len(prog_inputs["target_progress"]))[prog_idx]
-                    strategy = prog_inputs.get("data_gen_strategy", [None] * len(prog_inputs["target_progress"]))[prog_idx]
-                    prog_data.append(dict(loss=mode_loss, mse=mse, source=source, strategy=strategy))
+                # Get metadata
+                source = prog_inputs.get("data_source", [None] * len(prog_inputs["target_progress"]))[prog_idx]
+                strategy = prog_inputs.get("data_gen_strategy", [None] * len(prog_inputs["target_progress"]))[prog_idx]
+                prog_data.append(dict(loss=mode_loss, mse=mse, source=source, strategy=strategy))
         
         # Aggregate overall metrics
         if pref_data:

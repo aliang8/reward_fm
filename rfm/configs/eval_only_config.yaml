@@ -4,7 +4,7 @@
 
 # Model path (required) - HuggingFace model ID or local checkpoint path
 #model_path: "aliangdw/rfm_model"  # HuggingFace model ID
-model_path: "logs/rfm_st_4gpu_bs32_oxe_mw-1_1_1_1_pref-f_prog-t_succ-f_vqa/ckpt-avg-6metrics=nan_step=500"  # HuggingFace model ID
+model_path: "logs/rfm_st_smolvlm_4gpu_bs48_oxe_mw-1_5_1_1_pref-f_prog-t_vqa_3/ckpt-avg-6metrics=nan_step=250"  # HuggingFace model ID
 # model_path: "./logs/my_run/checkpoint-1000"  # Local checkpoint path
 
 # Optional experiment config override (if not provided, will load from HuggingFace repo or checkpoint/config.yaml)

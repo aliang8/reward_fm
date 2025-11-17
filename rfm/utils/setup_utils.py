@@ -493,6 +493,7 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
         "output_dir": output_dir,
         "per_device_train_batch_size": cfg.training.per_device_train_batch_size,
         "gradient_accumulation_steps": cfg.training.gradient_accumulation_steps,
+        "ddp_find_unused_parameters": cfg.training.ddp_find_unused_parameters,
         "learning_rate": cfg.training.learning_rate,
         "save_strategy": cfg.training.save_strategy,
         "logging_steps": cfg.training.logging_steps,

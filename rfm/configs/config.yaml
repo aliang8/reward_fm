@@ -164,7 +164,7 @@ training:
   gradient_checkpointing: true  # Re-enabled since FSDP is handled by accelerate config
     
   # Distributed training settings
-  ddp_find_unused_parameters: false
+  ddp_find_unused_parameters: true
   ddp_bucket_cap_mb: 25
 
   # Optimizer settings

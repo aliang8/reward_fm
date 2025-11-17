@@ -1,7 +1,7 @@
 uv run accelerate launch --config_file rfm/configs/fsdp.yaml --num_processes=2 \
     train.py \
     --config_paths rfm/configs/config.yaml rfm/configs/data/oxe_mw.yaml \
-    --logging.use_wandb true \
+    --logging.log_to '["wandb"]' \
     --debug false \
     --data.sample_type_ratio '[0, 1, 0]' \
     --model.train_progress_head true \

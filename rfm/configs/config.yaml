@@ -177,8 +177,13 @@ training:
   predict_pref_progress: true
   predict_sim_progress: false
 
+# =====================================================================================
+# Loss Configuration
+# =====================================================================================
+loss:
   # 6:1 ratio of success to failure for BCEWithLogits loss
-  success_positive_weight: 6 
+  success_positive_weight: 6
+  predict_last_frame_progress: false  # If true, only compute progress loss for the last frame
 
 # =====================================================================================
 # Logging and Output Configuration

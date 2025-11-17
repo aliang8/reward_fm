@@ -55,7 +55,7 @@ uv run accelerate launch \
     --training.weight_decay 0.1 \
     --training.overwrite_output_dir true \
     --training.exp_name rfm_smolvlm_prog_only_bs12_prog_only \
-    --logging.use_wandb true
+    --logging.log_to '["wandb"]'
 
 # Print completion time
 echo "End Time: $(date)"

@@ -99,7 +99,7 @@ def run_reward_alignment_eval(results: list[dict[str, Any]], progress_pred_type:
 
 
 def run_reward_alignment_eval_per_trajectory(
-    results: list[dict[str, Any]], progress_pred_type: str
+    results: list[dict[str, Any]], progress_pred_type: str, last_frame_only: bool = False
 ) -> tuple[dict[str, Any], list, list]:
     """Run reward_alignment evaluation analysis and create plots for each trajectory.
 
@@ -144,14 +144,27 @@ def run_reward_alignment_eval_per_trajectory(
 
         # Determine success availability from the first result only
         have_success = results_for_trajectory[0].get("success_pred", None) is not None
-        for r in results_for_trajectory:
+
+        for timestep, r in enumerate(results_for_trajectory):
             pred = r.get("progress_pred")
             tgt = r.get("target_progress")
             r.get("metadata", {})
             if pred is not None:
-                last_preds.append(float(pred[-1]))
+                # here we use the last frame prediction 
+                # even if we do right padding during training
+                if last_frame_only:
+                    last_preds.append(float(pred[-1]))
+                else:
+                    # here we use the prediction at the current timestep
+                    # unless we are past the max frame length
+                    if timestep >= 15:
+                        indx = -1 
+                    else:
+                        indx = timestep
+                    last_preds.append(float(pred[indx]))
             else:
                 last_preds.append(0.0)
+
             if tgt is not None:
                 last_targets.append(float(tgt[-1]))
             else:

@@ -32,7 +32,7 @@ uv run accelerate launch \
     train.py \
     --config_paths rfm/configs/config.yaml rfm/configs/data/oxe_mw.yaml \
     --data.sample_type_ratio '[0, 1, 0]' \
-    --data.progress_strategy_ratio '[1, 4, 1, 1]' \
+    --data.progress_strategy_ratio '[1, 10, 1, 1]' \
     --model.train_progress_head true \
     --model.train_preference_head false \
     --model.train_similarity_head false \
@@ -41,6 +41,7 @@ uv run accelerate launch \
     --model.train_vision_encoder false \
     --model.average_temporal_patches true \
     --model.base_model_id Qwen/Qwen2.5-VL-3B-Instruct \
+    --loss.predict_last_frame_progress false \
     --data.resized_height 196 \
     --data.resized_width 196 \
     --data.use_multi_image true \
@@ -50,11 +51,42 @@ uv run accelerate launch \
     --training.per_device_train_batch_size $BS \
     --training.per_device_eval_batch_size $BS \
     --training.learning_rate 5e-5 \
-    --training.weight_decay 0.1 \
+    --training.weight_decay 0.05 \
     --training.overwrite_output_dir true \
-    --training.exp_name ant_rfm_qwen_prog_only_images_bs12_prog_only_more_rewind \
-    --logging.use_wandb true
+    --training.exp_name ant_rfm_qwen_prog_only_images_bs12_prog_10rewind \
+    --logging.log_to '["wandb"]'
 
 # Print completion time
 echo "End Time: $(date)"
 echo "Job completed successfully"
+
+
+# CUDA_VISIBLE_DEVICES=0 uv run accelerate launch \
+#     --config_file rfm/configs/distributed/ddp.yaml \
+#     --num_processes=1 \
+#     train.py \
+#     --config_paths rfm/configs/config.yaml rfm/configs/data/oxe_mw.yaml \
+#     --data.sample_type_ratio '[0, 1, 0]' \
+#     --data.progress_strategy_ratio '[1, 4, 1, 1]' \
+#     --model.train_progress_head true \
+#     --model.train_preference_head false \
+#     --model.train_similarity_head false \
+#     --model.train_success_head false \
+#     --model.train_language_model true \
+#     --model.train_vision_encoder false \
+#     --model.average_temporal_patches true \
+#     --model.base_model_id Qwen/Qwen2.5-VL-3B-Instruct \
+#     --loss.predict_last_frame_progress true \
+#     --data.resized_height 196 \
+#     --data.resized_width 196 \
+#     --data.use_multi_image true \
+#     --training.max_steps 15000 \
+#     --training.eval_steps 200 \
+#     --training.custom_eval_steps 200 \
+#     --training.per_device_train_batch_size 8 \
+#     --training.per_device_eval_batch_size 8 \
+#     --training.learning_rate 5e-5 \
+#     --training.weight_decay 0.1 \
+#     --training.overwrite_output_dir true \
+#     --training.exp_name debug \
+#     --logging.log_to '[]'

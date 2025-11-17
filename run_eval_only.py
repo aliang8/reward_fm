@@ -4,7 +4,9 @@ Script to load an existing model checkpoint and run custom evaluations.
 
 Usage:
     # Using command line arguments with HuggingFace model ID
-    python run_eval_only.py --model_path aliangdw/rfm_model
+    uv run python run_eval_only.py \
+        --config_path rfm/configs/eval_only_config.yaml \
+        --model_path rewardfm/ant-rfm-qwen-prog-only-images-bs12-prog-only-more-rewind
 """
 
 import os

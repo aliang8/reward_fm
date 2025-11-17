@@ -65,25 +65,41 @@ class RFMVQATrainer(RFMHeadsTrainer):
         self._ddp_static_graph_set = False
         self.model_type_checked = False
 
+    def _get_model(self):
+        # Clear any existing past_key_values in model if present
+        return self.model.module if hasattr(self.model, "module") else self.model
+
+
     def evaluate(self, eval_dataset=None, ignore_keys=None) -> dict[str, float]:
         """Override evaluate to add aggressive memory cleanup after evaluation."""
         # Run parent evaluation
         metrics = super().evaluate(eval_dataset=eval_dataset, ignore_keys=ignore_keys)
         
-        # Aggressive memory cleanup after evaluation to prevent OOM in next training step
+        # Aggressive memory cleanup after evaluation
+        # Don't move model to CPU with DDP/FSDP as it can cause issues
+        rank_0_print("🧹 Aggressive CUDA memory cleanup after evaluation...")
+
+        rfm_model = self._get_model()
+        if hasattr(rfm_model.model, "past_key_values"):
+            rfm_model.model.past_key_values = None
+        
         if torch.cuda.is_available():
-            # Empty cache multiple times to ensure fragmented memory is freed
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
-            torch.cuda.empty_cache()  # Call twice for better fragmentation cleanup
+            torch.cuda.reset_peak_memory_stats()
+            gc.collect()
             
-        # Force garbage collection multiple times
-        gc.collect()
-        gc.collect()
         
-        # Put model back in training mode
+        # Put model back in training mode (this can help clear eval-specific state)
         self.model.train()
         
+        # Final cleanup
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+        
+        rank_0_print("✅ Memory cleanup complete")
+
         return metrics
 
     def _aggregate_progress_logits(self, progress_logits, target_progress) -> list[list[float]]:
@@ -165,35 +181,34 @@ class RFMVQATrainer(RFMHeadsTrainer):
                 "image_grid_thw": inputs.get("image_grid_thw"),
                 "video_grid_thw": inputs.get("video_grid_thw"),
             }
-
-            if gen_inputs["pixel_values"] is not None:
-                gen_inputs["pixel_values"] = gen_inputs["pixel_values"].to(dtype=self._get_dtype(model))
-            if gen_inputs["pixel_values_videos"] is not None:
-                gen_inputs["pixel_values_videos"] = gen_inputs["pixel_values_videos"].to(dtype=self._get_dtype(model))
-
-
             # Generate with reasonable parameters for short structured answers
             with torch.no_grad():
+                
                 generated_ids = model.generate(
                     **gen_inputs,
-                    max_new_tokens=100,  # enough for a list of 16 floats
+                    max_new_tokens=100,  # Reduced from 100 to save memory - enough for structured answers
                     do_sample=False,  # Greedy decoding for reproducibility
                     pad_token_id=model.tokenizer.pad_token_id,
                     eos_token_id=model.tokenizer.eos_token_id,
-                    use_cache=True,  # Enable KV caching for faster generation
+                    use_cache=True,  # Disable KV caching to prevent OOM - slower but memory safe
                 )
-
+                
 
             # Decode only the generated part (not the input prompt)
-            rfm_model = self.model.module if hasattr(self.model, "module") else self.model
-            tokenizer = rfm_model.tokenizer
+            tokenizer = self._get_model().tokenizer
 
             # Get input length to slice only generated tokens
             input_len = inputs["input_ids"].shape[1]
-            generated_ids_sliced = generated_ids[:, input_len:]  # Only new tokens
-
+            generated_ids_sliced = generated_ids[:, input_len:].clone()  # Clone to break any references
+            
+            # Free original generated_ids immediately
+            del generated_ids
+            
             pred_texts = tokenizer.batch_decode(generated_ids_sliced, skip_special_tokens=True)
             predictions = [extract_answer_from_text(text) for text in pred_texts]
+            
+            # Free intermediate tensors immediately
+            del generated_ids_sliced, pred_texts
             
             if sample_type == "progress":
                 progress_logits = self._aggregate_progress_logits(predictions, inputs["target_progress"])
@@ -209,17 +224,8 @@ class RFMVQATrainer(RFMHeadsTrainer):
                         pref_logits.append(-1)
                 pref_logits = {"A": pref_logits, "B": None}
             
-            # Explicitly free generation tensors to prevent memory accumulation (for all sample types)
-            del generated_ids, generated_ids_sliced, gen_inputs, pred_texts, predictions
-            
-            # Aggressive CUDA cache cleanup after generation to free KV cache memory
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
-                torch.cuda.empty_cache()  # Call twice for better cleanup
-            
-            # Force garbage collection
-            gc.collect()
+            # Explicitly free all remaining references
+            del gen_inputs, predictions
 
         # Create ModelOutput with all expected fields to match parent class expectations
         model_output = ModelOutput(
@@ -339,6 +345,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
             inputs["pixel_values"] = inputs["pixel_values"].to(dtype=self._get_dtype(model))
         if "pixel_values_videos" in inputs and inputs["pixel_values_videos"] is not None and inputs["pixel_values_videos"].dtype != self._get_dtype(model):
             inputs["pixel_values_videos"] = inputs["pixel_values_videos"].to(dtype=self._get_dtype(model))
+
         outputs = model(
             input_ids=inputs["input_ids"],
             attention_mask=inputs["attention_mask"],
@@ -418,7 +425,6 @@ class RFMVQATrainer(RFMHeadsTrainer):
                     mse = F.mse_loss(pred_tensor, gt).item()
                 except Exception:
                     mse = None
-                
                 # Get metadata
                 source = prog_inputs.get("data_source", [None] * len(prog_inputs["target_progress"]))[prog_idx]
                 strategy = prog_inputs.get("data_gen_strategy", [None] * len(prog_inputs["target_progress"]))[prog_idx]

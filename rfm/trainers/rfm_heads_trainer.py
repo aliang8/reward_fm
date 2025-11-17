@@ -1,5 +1,4 @@
 import collections
-import gc
 import os
 
 import numpy as np
@@ -610,6 +609,8 @@ class RFMHeadsTrainer(Trainer):
                                 gathered = [None] * world_size
                                 dist.all_gather_object(gathered, progress_samples[field])
                                 gathered_metadata_dict[field] = [item for sublist in gathered for item in sublist]
+                                # Clean up gathered list immediately
+                                del gathered
                         else:
                             for field in metadata_fields:
                                 gathered_metadata_dict[field] = progress_samples[field]
@@ -626,6 +627,8 @@ class RFMHeadsTrainer(Trainer):
                                 )
                             success_binary = (torch.sigmoid(success_pred) > 0.5).float()
                             success_pred_gathered = self.accelerator.gather_for_metrics(success_binary)
+                            # Clean up intermediate tensors
+                            del success_pred, success_binary
 
                         # Build eval_results on all processes for compute_eval_metrics
                         for i in range(len(progress_pred)):
@@ -646,6 +649,11 @@ class RFMHeadsTrainer(Trainer):
                                     success_pred_gathered[i].detach().to(dtype=torch.float32).cpu().numpy()
                                 )
                             eval_results.append(sample_result)
+                        
+                        # Clean up gathered tensors and metadata after building results
+                        del progress_pred, target_progress, gathered_metadata_dict
+                        if success_pred_gathered is not None:
+                            del success_pred_gathered
 
                     elif eval_type == "success_failure":
                         # TODO: implement success failure evaluation on VQA
@@ -715,6 +723,11 @@ class RFMHeadsTrainer(Trainer):
                                 "metadata": gathered_metadata[i],
                             }
                             eval_results.append(sample_result)
+                        
+                        # Clean up gathered tensors and metadata after building results
+                        del pref_logits, preference_labels
+                        del gathered_task, gathered_data_source, gathered_chosen_data_gen_strategy
+                        del gathered_rejected_data_gen_strategy, gathered_metadata
 
                     # Clean up batch tensors and free memory after each batch
                     # This is critical for VQA with generation to prevent OOM
@@ -723,6 +736,14 @@ class RFMHeadsTrainer(Trainer):
                         torch.cuda.empty_cache()
 
                 # Compute metrics on all processes
+                # Initialize variables to None to ensure they exist for cleanup
+                plots = None
+                video_frames_list = None
+                task_groups = None
+                task_details = None
+                confusion_plot = None
+                confusion_matrix = None
+                
                 if eval_type == "reward_alignment":
                     eval_metrics, plots, video_frames_list = compute_eval_metrics(
                         eval_type, eval_results, self.config.data.progress_pred_type
@@ -781,9 +802,10 @@ class RFMHeadsTrainer(Trainer):
                         for plot in plots:
                             plt.close(plot)
                         
-                        # Explicitly delete to free memory
+                        # Explicitly delete to free memory and set to None for outer cleanup
                         del plots, video_frames_list, rows
-                        gc.collect()
+                        plots = None
+                        video_frames_list = None
 
                     elif eval_type == "policy_ranking":
                         data = []
@@ -802,7 +824,8 @@ class RFMHeadsTrainer(Trainer):
                             step=self.state.global_step,
                         )
                         del data, task_groups, task_details
-                        gc.collect()
+                        task_groups = None
+                        task_details = None
 
                     elif eval_type == "confusion_matrix":
                         self.logger.log_figure(
@@ -810,23 +833,26 @@ class RFMHeadsTrainer(Trainer):
                         )
                         plt.close(confusion_plot)
                         del confusion_plot, confusion_matrix
-                        gc.collect()
+                        confusion_plot = None
+                        confusion_matrix = None
 
                 # Clean up after each dataset to prevent memory accumulation
-                del dataset, dataloader, eval_results
-                # Also clean up eval-specific outputs
-                if 'plots' in locals():
+                # Clean up eval-specific outputs (now properly scoped)
+                if plots is not None:
                     del plots
-                if 'video_frames_list' in locals():
+                if video_frames_list is not None:
                     del video_frames_list
-                if 'task_groups' in locals():
+                if task_groups is not None:
                     del task_groups
-                if 'task_details' in locals():
+                if task_details is not None:
                     del task_details
-                if 'confusion_plot' in locals():
+                if confusion_plot is not None:
                     del confusion_plot
-                if 'confusion_matrix' in locals():
+                if confusion_matrix is not None:
                     del confusion_matrix
+                
+                # Clean up dataset, dataloader, and eval_results
+                del dataset, dataloader, eval_results
                     
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
@@ -878,10 +904,6 @@ class RFMHeadsTrainer(Trainer):
         
         # Clean up large objects
         del metrics
-        if 'plots' in locals():
-            del plots
-        if 'video_frames_list' in locals():
-            del video_frames_list
 
         return callback_metrics
 
@@ -1122,8 +1144,12 @@ class RFMHeadsTrainer(Trainer):
             mean_accuracy = masked_correct.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
             success_loss = success_loss.mean()
             mean_accuracy = mean_accuracy.mean()
+            # Don't delete tensors that might be part of autograd graph
+            # They will be cleaned up automatically after backward pass
             return success_loss, mean_accuracy
 
+        # For non-aggregate case, return the tensors as-is
+        # Don't delete intermediate tensors as they may be needed for backward pass
         return masked_loss, masked_correct
 
     def _compute_progress_loss_helper(
@@ -1167,12 +1193,14 @@ class RFMHeadsTrainer(Trainer):
 
         # Apply all masks together at once
         combined_mask = torch.ones_like(target_progress, dtype=torch.float32)
+        mask_t = None
         if mask is not None:
             mask_t = mask.to(device=combined_mask.device, dtype=combined_mask.dtype)
             # Expand mask from (batch_size,) to (batch_size, seq_len)
             combined_mask = combined_mask * mask_t.unsqueeze(1)
 
         # If predict_last_frame_progress is True, only compute loss for the last frame
+        last_frame_mask = None
         if self.config.loss.predict_last_frame_progress:
             # Create a mask that only selects the last frame for each sequence
             last_frame_mask = torch.zeros_like(combined_mask, dtype=torch.float32)
@@ -1191,8 +1219,12 @@ class RFMHeadsTrainer(Trainer):
             progress_losses = masked_loss.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
             progress_loss = progress_losses.mean()
             mean_spearman = spearman_correlations.mean()
+            # Don't delete tensors that might be part of autograd graph
+            # They will be cleaned up automatically after backward pass
             return progress_loss, mean_spearman
 
+        # For non-aggregate case, return the tensors as-is
+        # Don't delete intermediate tensors as they may be needed for backward pass
         return masked_loss, spearman_correlations
 
     def forward_model(self, model, inputs, sample_type="progress"):
@@ -1325,10 +1357,25 @@ class RFMHeadsTrainer(Trainer):
                     f"{prefix}/success_loss": success_loss.item(),
                     f"{prefix}/success_accuracy": success_accuracy.item(),
                 })
+            
+            # Only clean up intermediate tensors during evaluation (not training)
+            # During training, these tensors are part of the autograd graph and must remain
+            # until backward completes. DDP will fail if we delete them prematurely.
+            if not training:
+                # Safe to clean up during evaluation
+                del combined_mask
+                if progress_target_mask is not None:
+                    del mask_t
+                # Clean up temporary mask tensors created in loops
+                if 'mask' in locals():
+                    del mask
 
-            return final_loss, outputs_dict
+        # Don't delete tensors that are part of the computation graph during training
+        # They will be cleaned up automatically after backward pass completes
+        if not return_outputs:
+            return final_loss
 
-        return final_loss
+        return final_loss, outputs_dict
 
     def _compute_preference_loss(self, model, inputs, return_outputs=False, training=True):
         """Compute preference prediction loss using Bradley-Terry model."""

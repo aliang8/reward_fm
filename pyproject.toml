@@ -7,7 +7,7 @@ name = "reward-fm"
 version = "0.0.1" # You can update this as you release new versions
 description = "PyTorch implementation of a Reward Foundation Model (RFM)"
 readme = "README.md"
-requires-python = "==3.10" # Based on your GitHub repo's setup
+requires-python = "==3.10.*" # Based on your GitHub repo's setup
 authors = [
     { name = "Anthony Liang", email = "aliang80@usc.edu" }
 ]
@@ -32,7 +32,7 @@ dependencies = [
     "pyrallis>=0.3.0",
     "safetensors>=0.6.0rc0",
     "sentence-transformers>=2.0.0",
-    "transformers==4.53.2", # Pinning to a specific version you use
+    "transformers>=4.57", # Pinning to a specific version you use
     "tqdm>=4.67.1",
     "wandb>=0.20.1",
     "pyyaml>=6.0.0",
@@ -64,14 +64,14 @@ dependencies = [
     "wandb[media]",
     "torchcodec",
     "decord>=0.6.0",
-    "unsloth==2025.10.11",
+    "unsloth>=2025.10",
     "gymnasium>=1.2.2",
     "metaworld>=3.0.0",
     "loguru>=0.7.3",
     "xformers==0.0.32.post2",
     "trl==0.20.0",
     "tensorboard",
-    "requests"
+    "requests",
 ]
 
 [project.urls]

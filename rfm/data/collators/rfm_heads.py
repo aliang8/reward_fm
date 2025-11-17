@@ -179,7 +179,6 @@ class RFMBatchCollator(BaseCollator):
         Returns:
             Batch of inputs
         """
-
         if "Qwen" in self.base_model_id:
             # Process all messages in one batch
             texts = [
@@ -193,19 +192,62 @@ class RFMBatchCollator(BaseCollator):
                 for msg in conversations
             ]
 
-            image_inputs, video_inputs, _video_kwargs = process_vision_info(conversations, return_video_kwargs=True)
+            is_qwen3 = "Qwen3" in self.base_model_id
+            
+            # For Qwen3, pass image_patch_size to process_vision_info
+            process_kwargs = {
+                "return_video_kwargs": True,
+                "return_video_metadata": is_qwen3,
+            }
+            if is_qwen3 and hasattr(self.processor, 'image_processor') and hasattr(self.processor.image_processor, 'patch_size'):
+                process_kwargs["image_patch_size"] = self.processor.image_processor.patch_size
+            
+            image_inputs, video_inputs, video_kwargs = process_vision_info(
+                conversations, 
+                **process_kwargs
+            )
+
+            # For Qwen3, video_inputs is a list of (video, video_metadata) tuples
+            # that need to be split before passing to processor
+            if is_qwen3 and video_inputs is not None and len(video_inputs) > 0:
+                # Check if video_inputs contains tuples (Qwen3 format) or is already split
+                if isinstance(video_inputs[0], tuple) and len(video_inputs[0]) == 2:
+                    videos, video_metadatas = zip(*video_inputs)
+                    videos, video_metadatas = list(videos), list(video_metadatas)
+                else:
+                    # Already in the correct format
+                    videos = video_inputs
+                    video_metadatas = None
+            else:
+                videos = video_inputs if video_inputs else None
+                video_metadatas = None
 
             # Process through the processor in one batch
-            batch_inputs = self.processor(
-                text=texts,
-                images=image_inputs,
-                videos=video_inputs,
-                padding=True,
-                truncation=False,
-                max_length=self.max_length,
-                return_tensors="pt",
-                do_resize=False,
-            )
+            processor_kwargs = {
+                "text": texts,
+                "images": image_inputs,
+                "padding": True,
+                "truncation": False,
+                "max_length": self.max_length,
+                "return_tensors": "pt",
+                "do_resize": False,
+            }
+            
+            # Only add videos if they exist
+            if videos is not None:
+                processor_kwargs["videos"] = videos
+            
+            # Add video_metadata and video_kwargs for Qwen3
+            # Note: video_kwargs may contain keys like 'videos_kwargs' that need special handling
+            if is_qwen3:
+                if video_metadatas is not None:
+                    processor_kwargs["video_metadata"] = video_metadatas
+                # Pass video_kwargs - these contain important metadata for video processing
+                # The processor will handle 'videos_kwargs' internally if present
+                if video_kwargs:
+                    processor_kwargs.update(video_kwargs)
+            
+            batch_inputs = self.processor(**processor_kwargs)
         elif "SmolVLM" in self.base_model_id:
             batch_inputs = self.processor.apply_chat_template(
                 conversations,

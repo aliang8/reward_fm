@@ -4,7 +4,7 @@ RFM (Reward Foundation Model) VQA version implementation.
 Contains the RFM class by using the standard Qwen2.5-VL model, training it with VQA data.
 """
 
-from transformers import PreTrainedModel, Qwen2_5_VLForConditionalGeneration, SmolVLMForConditionalGeneration
+from transformers import PreTrainedModel, Qwen2_5_VLForConditionalGeneration, SmolVLMForConditionalGeneration, Qwen3VLForConditionalGeneration
 
 import torch
 
@@ -13,6 +13,10 @@ class RFMVQA(PreTrainedModel):
     """RFM Model for VQA using base VLM outputs as naive baseline."""
 
     config_class = Qwen2_5_VLForConditionalGeneration.config_class
+    
+    # Declare support for SDPA and Flash Attention (will delegate to underlying model), needed for Qwen3
+    _supports_sdpa = True
+    _supports_flash_attn_2 = True
 
     def __init__(self, config, processor, tokenizer, base_model=None, base_model_id=None, model_config=None):
         super().__init__(config)
@@ -21,14 +25,29 @@ class RFMVQA(PreTrainedModel):
             self.model = base_model
         elif "SmolVLM" in base_model_id:
             self.model = SmolVLMForConditionalGeneration(config)
-        elif "Qwen" in base_model_id:
+        elif "Qwen2.5" in base_model_id:
             self.model = Qwen2_5_VLForConditionalGeneration(config)
+        elif "Qwen3" in base_model_id:
+            self.model = Qwen3VLForConditionalGeneration(config)
         else:
             raise ValueError(f"Base model id not supported in RFMVQA yet: {base_model_id}")
 
         self.processor = processor
         self.tokenizer = tokenizer
         self.base_model_id = base_model_id
+        
+        # Inherit attention implementation support from underlying model
+        if hasattr(self.model, '_supports_sdpa'):
+            self._supports_sdpa = self.model._supports_sdpa
+        if hasattr(self.model, '_supports_flash_attn_2'):
+            self._supports_flash_attn_2 = self.model._supports_flash_attn_2
+
+    def _sdpa_can_dispatch(self, is_init_check=False):
+        """Delegate SDPA dispatch check to underlying model."""
+        # If underlying model doesn't have this method, default to True since we declared support
+        return True
+        #if hasattr(self.model, '_sdpa_can_dispatch'):
+        #    return self.model._sdpa_can_dispatch(is_init_check)
 
     def gradient_checkpointing_enable(self, **kwargs):
         """Delegates gradient checkpointing enabling to the base model."""

@@ -332,7 +332,8 @@ class RFMBatchCollator(BaseCollator):
             )
             for sample in progress_samples
         ]
-        batch_inputs["target_progress_mask"] = torch.tensor(target_progress_mask, dtype=torch.float32)
+        # Explicitly set requires_grad=False since this is a mask/label, not a model output
+        batch_inputs["target_progress_mask"] = torch.tensor(target_progress_mask, dtype=torch.float32, requires_grad=False)
         return batch_inputs
 
     def _process_preference_batch(self, preference_samples: list[PreferenceSample]) -> dict[str, torch.Tensor]:

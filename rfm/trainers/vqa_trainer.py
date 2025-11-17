@@ -242,8 +242,11 @@ class RFMVQATrainer(RFMHeadsTrainer):
         self._check_model_type(model)
 
         # Set static graph for DDP on first training step
-        if self.config.training.gradient_checkpointing and (
-            training and not self._ddp_static_graph_set and hasattr(model, "module")
+        if (
+            training
+            and not self._ddp_static_graph_set
+            and getattr(self.accelerator.gradient_state, "sync_gradients", True)
+            and hasattr(model, "module")
         ):
             if hasattr(model.module, "_set_static_graph"):
                 model.module._set_static_graph()

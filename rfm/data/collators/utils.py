@@ -38,7 +38,8 @@ def pad_target_progress(progress_list):
         else:
             padded_progress = progress
         padded_list.append(padded_progress)
-    return torch.tensor(padded_list, dtype=torch.float32)
+    # Explicitly set requires_grad=False since these are labels, not model outputs
+    return torch.tensor(padded_list, dtype=torch.float32, requires_grad=False)
 
 
 def convert_frames_to_pil_images(frames, frames_shape=None):

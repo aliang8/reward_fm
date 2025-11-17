@@ -135,6 +135,7 @@ class RFMHeadsTrainer(Trainer):
         for k, v in self.dataset_success_percent.items():
             rank_0_print(f"  {k} - {v}")
         rank_0_print(f"=" * 100)
+        rank_0_print(f"DDP find_unused_parameters: {getattr(self.args, 'ddp_find_unused_parameters', 'N/A')}")
 
     def _post_checkpoint_load_reset(self):
         """
@@ -1276,12 +1277,18 @@ class RFMHeadsTrainer(Trainer):
         # Handle Qwen downsampling: take every 2nd frame if using Qwen and NOT using multi_image
         # In multi_image mode, we already get one embedding per frame, so no downsampling needed
         # This downsampling is needed for creating the combined_mask that matches progress_loss_all shape
+        # progress_target should already have requires_grad=False (set in collator), but clone to avoid view issues
         if "Qwen" in self.config.model.base_model_id and not self.config.data.use_multi_image:
-            progress_target = progress_target[:, ::2]
+            # Create downsampled version - use contiguous() to ensure it's not a view that breaks DDP
+            progress_target_for_mask = progress_target[:, ::2].contiguous()
+        else:
+            progress_target_for_mask = progress_target
 
         # Apply all masks together at once
-        combined_mask = torch.ones_like(progress_target, dtype=torch.float32)
+        # Create combined_mask without requires_grad to ensure it's not part of computation graph
+        combined_mask = torch.ones_like(progress_target_for_mask, dtype=torch.float32, requires_grad=False)
         if progress_target_mask is not None:
+            # progress_target_mask should already have requires_grad=False (set in collator)
             mask_t = progress_target_mask.to(device=combined_mask.device, dtype=combined_mask.dtype)
             # Expand mask from (batch_size,) to (batch_size, seq_len)
             combined_mask = combined_mask * mask_t.unsqueeze(1)
@@ -1295,9 +1302,11 @@ class RFMHeadsTrainer(Trainer):
             success_logits = model_output.success_logits
             success_pred = success_logits["A"]
             data_source = inputs["data_source"]
+            # Use the same downsampled target for success loss
+            progress_target_for_success = progress_target_for_mask if ("Qwen" in self.config.model.base_model_id and not self.config.data.use_multi_image) else progress_target
             success_loss_all, success_acc_all = self._compute_success_loss_helper(
                 success_pred,
-                progress_target,
+                progress_target_for_success,
                 progress_loss_mask=progress_target_mask,
                 data_source=data_source,
                 aggregate=False,
@@ -1322,20 +1331,26 @@ class RFMHeadsTrainer(Trainer):
             strats = set(inputs["data_gen_strategy"])
             for strat in strats:
                 mask = [1 if s == strat else 0 for s in inputs["data_gen_strategy"]]
-                mask = torch.tensor(mask, device=self.accelerator.device)
+                mask = torch.tensor(mask, device=self.accelerator.device, requires_grad=False)
+                # Detach indexed tensors to avoid DDP hook issues with boolean indexing
+                masked_spearman = spearman_corr_all[mask == 1].detach() if training else spearman_corr_all[mask == 1]
+                masked_loss = progress_loss_all[mask == 1].detach() if training else progress_loss_all[mask == 1]
                 outputs_dict.update({
-                    f"{prefix}_strat_spearman_corr/{strat}": (spearman_corr_all[mask == 1]).mean().item(),
-                    f"{prefix}_strat_prog_loss/{strat}": (progress_loss_all[mask == 1]).mean().item(),
+                    f"{prefix}_strat_spearman_corr/{strat}": masked_spearman.mean().item(),
+                    f"{prefix}_strat_prog_loss/{strat}": masked_loss.mean().item(),
                 })
 
             # split spearman by data source
             data_sources = set(inputs["data_source"])
             for data_source in data_sources:
                 mask = [1 if s == data_source else 0 for s in inputs["data_source"]]
-                mask = torch.tensor(mask, device=self.accelerator.device)
+                mask = torch.tensor(mask, device=self.accelerator.device, requires_grad=False)
+                # Detach indexed tensors to avoid DDP hook issues with boolean indexing
+                masked_spearman = spearman_corr_all[mask == 1].detach() if training else spearman_corr_all[mask == 1]
+                masked_loss = progress_loss_all[mask == 1].detach() if training else progress_loss_all[mask == 1]
                 outputs_dict.update({
-                    f"{prefix}_ds_spearman_corr/{data_source}": (spearman_corr_all[mask == 1]).mean().item(),
-                    f"{prefix}_ds_prog_loss/{data_source}": (progress_loss_all[mask == 1]).mean().item(),
+                    f"{prefix}_ds_spearman_corr/{data_source}": masked_spearman.mean().item(),
+                    f"{prefix}_ds_prog_loss/{data_source}": masked_loss.mean().item(),
                 })
 
             # Compute average Spearman correlation across trajectories A and B
@@ -1358,19 +1373,12 @@ class RFMHeadsTrainer(Trainer):
                     f"{prefix}/success_accuracy": success_accuracy.item(),
                 })
             
-            # Only clean up intermediate tensors during evaluation (not training)
-            # During training, these tensors are part of the autograd graph and must remain
-            # until backward completes. DDP will fail if we delete them prematurely.
-            if not training:
-                # Safe to clean up during evaluation
-                del combined_mask
-                if progress_target_mask is not None:
-                    del mask_t
-                # Clean up temporary mask tensors created in loops
-                if 'mask' in locals():
-                    del mask
+            # DO NOT delete any tensors during training - they are part of the autograd graph
+            # and must remain until backward completes. DDP will fail if we delete them prematurely.
+            # Even during evaluation, be cautious - only delete if absolutely necessary and
+            # after confirming they're not part of any computation graph.
 
-        # Don't delete tensors that are part of the computation graph during training
+        # Don't delete tensors that are part of the computation graph
         # They will be cleaned up automatically after backward pass completes
         if not return_outputs:
             return final_loss
@@ -1463,21 +1471,26 @@ class RFMHeadsTrainer(Trainer):
                 rejected_strats = set(rejected_data_gen_strategy)
                 for strat in rejected_strats:
                     mask = [1 if s == strat else 0 for s in rejected_data_gen_strategy]
-                    mask = torch.tensor(mask, device=self.accelerator.device)
-
+                    mask = torch.tensor(mask, device=self.accelerator.device, requires_grad=False)
+                    # Detach indexed tensors to avoid DDP hook issues with boolean indexing
+                    masked_acc = preference_accuracy[mask == 1].detach() if training else preference_accuracy[mask == 1]
+                    masked_loss = preference_loss_all[mask == 1].detach() if training else preference_loss_all[mask == 1]
                     outputs_dict.update({
-                        f"{prefix}_strat_pref_acc/{strat}": (preference_accuracy[mask == 1]).mean().item(),
-                        f"{prefix}_strat_pref_loss/{strat}": (preference_loss_all[mask == 1]).mean().item(),
+                        f"{prefix}_strat_pref_acc/{strat}": masked_acc.mean().item(),
+                        f"{prefix}_strat_pref_loss/{strat}": masked_loss.mean().item(),
                     })
 
                 # split acc by data source
                 data_sources = set(inputs["data_source"])
                 for data_source in data_sources:
                     mask = [1 if s == data_source else 0 for s in inputs["data_source"]]
-                    mask = torch.tensor(mask, device=self.accelerator.device)
+                    mask = torch.tensor(mask, device=self.accelerator.device, requires_grad=False)
+                    # Detach indexed tensors to avoid DDP hook issues with boolean indexing
+                    masked_acc = preference_accuracy[mask == 1].detach() if training else preference_accuracy[mask == 1]
+                    masked_loss = preference_loss_all[mask == 1].detach() if training else preference_loss_all[mask == 1]
                     outputs_dict.update({
-                        f"{prefix}_ds/pref_acc_{data_source}": (preference_accuracy[mask == 1]).mean().item(),
-                        f"{prefix}_ds/pref_loss_{data_source}": (preference_loss_all[mask == 1]).mean().item(),
+                        f"{prefix}_ds/pref_acc_{data_source}": masked_acc.mean().item(),
+                        f"{prefix}_ds/pref_loss_{data_source}": masked_loss.mean().item(),
                     })
 
                 outputs_dict.update({
@@ -1598,21 +1611,26 @@ class RFMHeadsTrainer(Trainer):
                 strats = set(data_gen_strategy)
                 for strat in strats:
                     mask = [1 if s == strat else 0 for s in data_gen_strategy]
-                    mask = torch.tensor(mask, device=self.accelerator.device)
-
+                    mask = torch.tensor(mask, device=self.accelerator.device, requires_grad=False)
+                    # Detach indexed tensors to avoid DDP hook issues with boolean indexing
+                    masked_acc = similarity_correct[mask == 1].detach() if training else similarity_correct[mask == 1]
+                    masked_loss = similarity_loss_all[mask == 1].detach() if training else similarity_loss_all[mask == 1]
                     outputs_dict.update({
-                        f"{prefix}_strat_sim_acc/{strat}": (similarity_correct[mask == 1]).mean().item(),
-                        f"{prefix}_strat_sim_loss/{strat}": (similarity_loss_all[mask == 1]).mean().item(),
+                        f"{prefix}_strat_sim_acc/{strat}": masked_acc.mean().item(),
+                        f"{prefix}_strat_sim_loss/{strat}": masked_loss.mean().item(),
                     })
 
             # Split metrics by data source
             data_sources = set(inputs["data_source"])
             for data_source in data_sources:
                 mask = [1 if s == data_source else 0 for s in inputs["data_source"]]
-                mask = torch.tensor(mask, device=self.accelerator.device)
+                mask = torch.tensor(mask, device=self.accelerator.device, requires_grad=False)
+                # Detach indexed tensors to avoid DDP hook issues with boolean indexing
+                masked_acc = similarity_correct[mask == 1].detach() if training else similarity_correct[mask == 1]
+                masked_loss = similarity_loss_all[mask == 1].detach() if training else similarity_loss_all[mask == 1]
                 outputs_dict.update({
-                    f"{prefix}_ds_sim_acc/{data_source}": (similarity_correct[mask == 1]).mean().item(),
-                    f"{prefix}_ds_sim_loss/{data_source}": (similarity_loss_all[mask == 1]).mean().item(),
+                    f"{prefix}_ds_sim_acc/{data_source}": masked_acc.mean().item(),
+                    f"{prefix}_ds_sim_loss/{data_source}": masked_loss.mean().item(),
                 })
 
             # Add main metrics

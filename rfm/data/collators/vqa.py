@@ -151,14 +151,20 @@ class VQABatchCollator(RFMBatchCollator):
             # Shuffle frames and their corresponding target progress values
             if target_progress is not None:
                 num_frames = len(frames)
-                shuffle_indices = np.random.permutation(range(1, num_frames))
-                frames = [frames[0]] + [frames[idx] for idx in shuffle_indices]
-                target_progress = [0.0] + [target_progress[idx] for idx in shuffle_indices]
+                shuffle_indices = np.random.permutation(1, num_frames)
+                frames = [frames[idx] for idx in shuffle_indices]
+                if len(target_progress) > 1:
+                    target_progress = [target_progress[0]] + [target_progress[idx] for idx in shuffle_indices]
+                elif len(target_progress) == 1:
+                    target_progress = [0.0]
+                else:
+                    raise ValueError(f"Target progress must be a list of at least 1 float for shuffling, got {len(target_progress)}")
+                
 
             prompt = f"For the task '{sample.trajectory.task}', estimate task progress at each frame in the video trajectory."
             prompt += " These frames are in random order, so pay attention to individual frames when reasoning about progress."
             prompt += " The first frame is the starting frame, with 0 progress."
-            prompt += " Format your answer as a python list with floats between 0 and 1 enclosed by <ans> and </ans> tags."
+            prompt += "  your answer aswer as a python list with floats between 0 and 1 enclosed by <ans> and </ans> tags."
 
             # Prepare frames for conversation (handles multi-image vs video conversion)
             video_field, content_extras = self._prepare_frames_for_conversation(frames, prefix="tmp_progress")

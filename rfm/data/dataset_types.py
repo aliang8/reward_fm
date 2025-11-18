@@ -32,7 +32,7 @@ class Trajectory(BaseModel):
 
     # Progress and metadata
     target_progress: list[float] | None = None
-    partial_reward: float | None = None
+    partial_success: float | None = None
     metadata: dict[str, Any] | None = None
 
     class Config:

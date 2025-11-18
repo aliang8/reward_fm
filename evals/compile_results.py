@@ -440,21 +440,20 @@ def run_policy_ranking_eval_roboarena(results: list[dict[str, Any]], progress_pr
     """Run policy_ranking evaluation for RoboArena dataset.
     
     Groups trajectories by language instruction and compares:
-    - partial_reward (ground truth from partial_success in metadata) 
+    - partial_success (ground truth from partial_success in metadata) 
     - final_predicted_reward (from model's final progress prediction)
     
     Args:
         results: List of evaluation results, each containing:
             - task: Language instruction
             - progress_pred: Model's progress predictions
-            - metadata: Contains partial_reward field (from partial_success)
+            - metadata: Contains partial_success field (from partial_success)
         progress_pred_type: "absolute" or "relative"
     
     Returns:
         Tuple of (metrics_dict, task_groups, task_details)
     """
     task_groups = {}
-    import ipdb; ipdb.set_trace()
     
     for r in results:
         task = r["task"]
@@ -467,19 +466,15 @@ def run_policy_ranking_eval_roboarena(results: list[dict[str, Any]], progress_pr
             progress_pred = np.cumsum(progress_pred)
         final_predicted_reward = float(progress_pred[-1])
         
-        # Extract partial_reward from metadata (stored as partial_reward in metadata)
+        # Extract partial_success from metadata (stored as partial_success in metadata)
         metadata = r.get("metadata", {})
-        partial_reward = metadata.get("partial_reward", None)
-        
-        if partial_reward is None:
-            # Skip if we don't have partial_reward
-            continue
+        partial_success = r.get("partial_success")
         
         if task not in task_groups:
             task_groups[task] = []
         
         task_groups[task].append({
-            "partial_reward": float(partial_reward),  # Ground truth
+            "partial_success": float(partial_success),  # Ground truth
             "final_predicted_reward": final_predicted_reward,  # Model prediction
             "video_path": r.get("video_path") if "video_path" in r else None,
             "id": r.get("id"),
@@ -496,18 +491,18 @@ def run_policy_ranking_eval_roboarena(results: list[dict[str, Any]], progress_pr
             continue
         
         # Extract ground truth and predicted rewards
-        partial_rewards = [t["partial_reward"] for t in trajectories]
+        partial_successes = [t["partial_success"] for t in trajectories]
         predicted_rewards = [t["final_predicted_reward"] for t in trajectories]
         
-        # Compute Spearman correlation between partial_reward and final_predicted_reward
-        spearman_corr = compute_spearman(partial_rewards, predicted_rewards)
+        # Compute Spearman correlation between partial_success and final_predicted_reward
+        spearman_corr = compute_spearman(partial_successes, predicted_rewards)
         
         if not np.isnan(spearman_corr):
             all_spearman.append(spearman_corr)
             task_details[task] = {
                 "spearman": spearman_corr,
                 "num_trajectories": len(trajectories),
-                "partial_rewards": partial_rewards,
+                "partial_successes": partial_successes,
                 "predicted_rewards": predicted_rewards,
             }
     

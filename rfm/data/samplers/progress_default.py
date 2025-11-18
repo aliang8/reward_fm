@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-
+import random
 from rfm.data.dataset_types import ProgressSample, Trajectory
 from rfm.data.samplers.base import RFMBaseSampler
 from rfm.data.datasets.helpers import (
@@ -25,9 +25,12 @@ class ProgressDefaultSampler(RFMBaseSampler):
         dataset_success_cutoff_map=None,
         is_evaluation=False,
         verbose=True,
+        max_trajectories: int | None = None,
         **kwargs,
     ):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
+
+        self.max_trajectories = max_trajectories
         rank_0_print(
             f"ProgressDefaultSampler initialized with {len(self.robot_trajectories)} trajectories", verbose=self.verbose
         )
@@ -38,10 +41,22 @@ class ProgressDefaultSampler(RFMBaseSampler):
 
     def _generate_all_sample_indices(self) -> list[dict]:
         """Generate all possible sample indices."""
-        return [
-            {"traj_idx": i, "video_path": self.dataset[i]["frames"], "id": self.dataset[i]["id"]}
-            for i in range(len(self.robot_trajectories))
-        ]
+        trajectories_to_process = self.robot_trajectories
+        if self.max_trajectories is not None and self.max_trajectories < len(self.robot_trajectories):
+            trajectories_to_process = random.sample(self.robot_trajectories, self.max_trajectories)
+
+        rank_0_print(
+            f"Generating progress default samples for {len(trajectories_to_process)} trajectories", verbose=self.verbose
+        )
+
+        sample_indices = []
+        for i in trajectories_to_process:
+            sample_indices.append({
+                "traj_idx": i,
+                "video_path": self.dataset[i]["frames"],
+                "id": self.dataset[i]["id"]
+            })
+        return sample_indices
 
     def _generate_sample_from_indices(self, sample_idx_info: dict) -> ProgressSample:
         """Generate a single progress sample from trajectory index."""
@@ -107,6 +122,7 @@ class ProgressDefaultSampler(RFMBaseSampler):
             quality_label=traj["quality_label"],
             is_robot=traj["is_robot"],
             target_progress=progress,
+            partial_success=traj.get("partial_success"),
             metadata=metadata,
         )
 

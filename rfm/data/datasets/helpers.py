@@ -670,6 +670,7 @@ def create_rewind_trajectory(
         quality_label="rewound",
         is_robot=original_traj["is_robot"],
         target_progress=subsampled_progress,
+        partial_success=original_traj.get("partial_success"),
         metadata=metadata,
     )
 

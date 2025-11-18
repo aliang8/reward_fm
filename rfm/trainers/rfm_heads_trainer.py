@@ -564,8 +564,8 @@ class RFMHeadsTrainer(Trainer):
                         2 if (self.config.trainer_cls == "rfm_heads" and not self.config.data.use_multi_image) else 1
                     )
 
-                if eval_type == "policy_ranking":
-                    kwargs["max_trajectories"] = 100
+                # if eval_type == "policy_ranking":
+                #     kwargs["max_trajectories"] = 500
 
                 dataset = setup_custom_eval_dataset(
                     eval_cfg, sampler_type=eval_type, is_eval=True, verbose=False, **kwargs
@@ -608,7 +608,7 @@ class RFMHeadsTrainer(Trainer):
                         target_progress = self.accelerator.gather_for_metrics(progress_samples["target_progress"])
 
                         # Gather metadata fields
-                        metadata_fields = ["task", "data_source", "data_gen_strategy", "quality_labels", "metadata", "partial_reward"]
+                        metadata_fields = ["task", "data_source", "data_gen_strategy", "quality_labels", "metadata", "partial_success"]
                         gathered_metadata_dict = {}
 
                         if dist.is_initialized():
@@ -651,7 +651,7 @@ class RFMHeadsTrainer(Trainer):
                                 "metadata": metadata,
                                 "id": metadata["id"],
                                 "video_path": metadata["video_path"],
-                                "partial_reward": metadata["partial_reward"],
+                                "partial_success": gathered_metadata_dict["partial_success"][i],
                             }
                             if success_pred_gathered is not None:
                                 sample_result["success_pred"] = (
@@ -821,23 +821,23 @@ class RFMHeadsTrainer(Trainer):
                         is_roboarena = False
                         if task_groups:
                             first_group = next(iter(task_groups.values()))
-                            if first_group and "partial_reward" in first_group[0]:
+                            if first_group and "partial_success" in first_group[0]:
                                 is_roboarena = True
                         
                         data = []
                         if is_roboarena:
                             # RoboArena visualization: show partial vs predicted rewards
                             for task, group in task_groups.items():
-                                partial_rewards = [round(t["partial_reward"], 3) for t in group]
+                                partial_successes = [round(t["partial_success"], 3) for t in group]
                                 predicted_rewards = [round(t["final_predicted_reward"], 3) for t in group]
                                 spearman = task_details.get(task, {}).get("spearman", 0.0)
                                 data.append([
                                     task,
-                                    f"partial:{partial_rewards}",
+                                    f"partial:{partial_successes}",
                                     f"predicted:{predicted_rewards}",
                                     round(spearman, 3),
                                 ])
-                            columns = ["task", "partial_rewards", "predicted_rewards", "spearman"]
+                            columns = ["task", "partial_successes", "predicted_rewards", "spearman"]
                             table_name = f"{ds_name}/policy_ranking_roboarena_samples"
                         else:
                             # Standard policy ranking visualization: show quality labels and rewards

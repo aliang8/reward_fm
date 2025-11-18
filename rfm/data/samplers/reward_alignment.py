@@ -155,6 +155,7 @@ class RewardAlignmentSampler(RFMBaseSampler):
             quality_label=original_traj["quality_label"],
             data_gen_strategy="reward_alignment",
             target_progress=[gt_progress],
+            partial_success=original_traj.get("partial_success"),
             metadata=metadata,
         )
 

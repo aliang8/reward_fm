@@ -156,6 +156,7 @@ class ConfusionMatrixSampler(RFMBaseSampler):
             target_progress=[
                 1.0
             ],  # Assume trajectory is complete for confusion matrix, also don't really care about progress here
+            partial_success=video_traj.get("partial_success"),
             metadata=metadata,
         )
 

@@ -395,6 +395,6 @@ class RFMBaseSampler:
             quality_label=traj.get("quality_label"),
             is_robot=traj["is_robot"],
             target_progress=progress,
-            partial_reward=traj.get("partial_reward") or traj.get("partial_success"),
+            partial_success=traj.get("partial_success"),
             metadata=metadata,
         )

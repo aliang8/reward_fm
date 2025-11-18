@@ -144,6 +144,7 @@ class PairedSuccessFailureSampler(RFMBaseSampler):
             quality_label=success_traj["quality_label"],
             is_robot=success_traj["is_robot"],
             target_progress=success_progress,
+            partial_success=success_traj.get("partial_success"),
             metadata=success_metadata,
         )
 
@@ -157,6 +158,7 @@ class PairedSuccessFailureSampler(RFMBaseSampler):
             quality_label=failure_traj["quality_label"],
             is_robot=failure_traj["is_robot"],
             target_progress=failure_progress,
+            partial_success=failure_traj.get("partial_success"),
             metadata=failure_metadata,
         )
 

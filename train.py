@@ -148,6 +148,7 @@ def train(cfg: ExperimentConfig):
         "rfm_heads": RFMHeadsTrainer,
         "rewind_transformer": ReWiNDTrainer,
         "rfm_vqa": RFMVQATrainer,
+        "rewind_scale_transformer": ReWiNDTrainer,
     }[cfg.trainer_cls]
     rank_0_print(f"Trainer class: {trainer_cls}")
 

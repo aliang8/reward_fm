@@ -582,7 +582,11 @@ class RFMHeadsTrainer(Trainer):
                 ):
                     batch = self._prepare_inputs(batch)
 
-                    if eval_type in ["reward_alignment", "policy_ranking", "confusion_matrix"]:
+                    if eval_type in [
+                        "reward_alignment",
+                        "policy_ranking",
+                        "confusion_matrix",
+                    ]:
                         progress_samples = batch["progress_inputs"]
                         with torch.no_grad():
                             outputs, _ = self.forward_model(self.model, progress_samples, sample_type="progress")
@@ -750,7 +754,7 @@ class RFMHeadsTrainer(Trainer):
                         eval_type, eval_results, self.config.data.progress_pred_type
                     )
                 elif eval_type == "policy_ranking":
-                    # create task groups from eval_results
+                    # create task groups from eval_results (handles roboarena automatically)
                     eval_metrics, task_groups, task_details = compute_eval_metrics(
                         eval_type, eval_results, self.config.data.progress_pred_type
                     )
@@ -809,17 +813,41 @@ class RFMHeadsTrainer(Trainer):
                         video_frames_list = None
 
                     elif eval_type == "policy_ranking":
+                        # Check if this is roboarena by checking if task_groups have partial_reward field
+                        is_roboarena = False
+                        if task_groups:
+                            first_group = next(iter(task_groups.values()))
+                            if first_group and "partial_reward" in first_group[0]:
+                                is_roboarena = True
+                        
                         data = []
-                        for task, group in task_groups.items():
-                            quality_to_rews = collections.defaultdict(list)
-                            for t in group:
-                                quality_to_rews[t["quality_label"]].append(round(t["final_reward"], 2))
-                            quality_to_rews = ",".join([f"{q}:{r}" for q, r in quality_to_rews.items()])
-                            data.append([task, quality_to_rews])
-
-                        columns = ["task", "quality_and_rews"]
+                        if is_roboarena:
+                            # RoboArena visualization: show partial vs predicted rewards
+                            for task, group in task_groups.items():
+                                partial_rewards = [round(t["partial_reward"], 3) for t in group]
+                                predicted_rewards = [round(t["final_predicted_reward"], 3) for t in group]
+                                spearman = task_details.get(task, {}).get("spearman", 0.0)
+                                data.append([
+                                    task,
+                                    f"partial:{partial_rewards}",
+                                    f"predicted:{predicted_rewards}",
+                                    round(spearman, 3),
+                                ])
+                            columns = ["task", "partial_rewards", "predicted_rewards", "spearman"]
+                            table_name = f"{ds_name}/policy_ranking_roboarena_samples"
+                        else:
+                            # Standard policy ranking visualization: show quality labels and rewards
+                            for task, group in task_groups.items():
+                                quality_to_rews = collections.defaultdict(list)
+                                for t in group:
+                                    quality_to_rews[t["quality_label"]].append(round(t["final_reward"], 2))
+                                quality_to_rews = ",".join([f"{q}:{r}" for q, r in quality_to_rews.items()])
+                                data.append([task, quality_to_rews])
+                            columns = ["task", "quality_and_rews"]
+                            table_name = f"{ds_name}/policy_ranking_samples"
+                        
                         self.logger.log_table(
-                            f"{ds_name}/policy_ranking_samples",
+                            table_name,
                             data=data,
                             columns=columns,
                             step=self.state.global_step,

@@ -46,8 +46,10 @@ custom_eval:
     - jesbu1_oxe_rfm_oxe_droid
   policy_ranking:
     - aliangdw_metaworld_metaworld_eval
+  confusion_matrix:
+    - aliangdw_metaworld_metaworld_eval
 
 logging:
   save_best:
-    metric_names: ["custom_eval/rew_align_pearson_jesbu1_oxe_rfm_eval_oxe_berkeley_cable_routing_eval", "custom_eval/rew_align_pearson_jesbu1_oxe_rfm_eval_oxe_bridge_v2_eval", "custom_eval/rew_align_pearson_jesbu1_oxe_rfm_eval_oxe_jaco_play_eval", "custom_eval/rew_align_pearson_jesbu1_oxe_rfm_eval_oxe_toto_eval", "custom_eval/rew_align_pearson_jesbu1_oxe_rfm_eval_oxe_viola_eval", "custom_eval/rew_align_pearson_abraranwar_usc_koch_rewind_rfm_usc_koch_rewind"] 
-    greater_is_better: [true, true, true, true, true, true]
+    metric_names: ["custom_eval/rew_align_pearson_jesbu1_oxe_rfm_eval_oxe_berkeley_cable_routing_eval", "custom_eval/rew_align_pearson_jesbu1_oxe_rfm_eval_oxe_bridge_v2_eval", "custom_eval/rew_align_pearson_jesbu1_oxe_rfm_eval_oxe_jaco_play_eval", "custom_eval/rew_align_pearson_jesbu1_oxe_rfm_eval_oxe_toto_eval", "custom_eval/rew_align_pearson_jesbu1_oxe_rfm_eval_oxe_viola_eval", "custom_eval/rew_align_pearson_abraranwar_usc_koch_rewind_rfm_usc_koch_rewind", "custom_eval/p_rank_spearman_mw_eval"] 
+    greater_is_better: [true, true, true, true, true, true, true]

@@ -416,7 +416,7 @@ def compute_progress_from_segment(
             # ensure denominator is at least 1 to avoid division by zero
             denominator = max(1, num_frames_total - start_idx - 1)
             # Normal progress calculation
-            segment_progress.append(i / (num_frames_total - start_idx - 1))
+            segment_progress.append(i / denominator)
 
     # Determine progress at subsampled indices
     segment_progress = [segment_progress[idx] for idx in frame_indices]

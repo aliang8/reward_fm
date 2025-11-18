@@ -454,6 +454,7 @@ def run_policy_ranking_eval_roboarena(results: list[dict[str, Any]], progress_pr
         Tuple of (metrics_dict, task_groups, task_details)
     """
     task_groups = {}
+    import ipdb; ipdb.set_trace()
     
     for r in results:
         task = r["task"]

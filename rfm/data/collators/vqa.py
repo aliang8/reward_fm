@@ -148,7 +148,17 @@ class VQABatchCollator(RFMBatchCollator):
             # Convert frames to appropriate format using stored shapes
             frames = convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
 
-            prompt = f"For the task '{sample.trajectory.task}', estimate task progress at each frame in the video trajectory. Give a list of numbers between 0 and 1 where 0 means no progress and 1 means successful completion of the task. Format your answer as a python list enclosed by <ans> and </ans> tags."
+            # Shuffle frames and their corresponding target progress values
+            if target_progress is not None:
+                num_frames = len(frames)
+                shuffle_indices = np.random.permutation(range(1, num_frames))
+                frames = [frames[0]] + [frames[idx] for idx in shuffle_indices]
+                target_progress = [0.0] + [target_progress[idx] for idx in shuffle_indices]
+
+            prompt = f"For the task '{sample.trajectory.task}', estimate task progress at each frame in the video trajectory."
+            prompt += " These frames are in random order, so pay attention to individual frames when reasoning about progress."
+            prompt += " The first frame is the starting frame, with 0 progress."
+            prompt += " Format your answer as a python list with floats between 0 and 1 enclosed by <ans> and </ans> tags."
 
             # Prepare frames for conversation (handles multi-image vs video conversion)
             video_field, content_extras = self._prepare_frames_for_conversation(frames, prefix="tmp_progress")

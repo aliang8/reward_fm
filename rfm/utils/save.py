@@ -159,7 +159,7 @@ class SaveBestCallback(TrainerCallback):
                 self._trainer.save_state()  # trainer_state.json etc. in output_dir
                 # save the trainer_state.json to the actual checkpoint directory
                 shutil.copy(os.path.join(args.output_dir, "trainer_state.json"), ckpt_dir)
-            
+
             # Memory cleanup after saving model
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
@@ -224,14 +224,14 @@ class SaveBestCallback(TrainerCallback):
                         rank_0_print(f"🗑️ Removing old Hub tag: {old_tag}")
                         api.delete_tag(repo_id=hub_model_id, repo_type="model", tag=old_tag)
                         rank_0_print(f"✅ Deleted tag: {old_tag}")
-                    
+
                     # Aggressive memory cleanup after upload to prevent OOM
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
                         torch.cuda.synchronize()
                     gc.collect()
                     rank_0_print("🧹 Cleaned up memory after Hub upload")
-        
+
         # Additional cleanup on all ranks after the entire on_evaluate callback
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

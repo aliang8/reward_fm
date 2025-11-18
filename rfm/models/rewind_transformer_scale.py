@@ -82,15 +82,20 @@ class ReWiNDScaleTransformer(PreTrainedModel):
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=config.num_layers)
 
-
         # postion embeddings for video and prediction tokens
-        self.front_position_embedding_A = nn.Parameter(torch.randn(1, config.max_len, hidden_dim)) # for input video position
-        self.back_position_embedding_A = nn.Parameter(torch.randn(1, config.max_len, hidden_dim)) # for output video position
-        self.front_position_embedding_B = nn.Parameter(torch.randn(1, config.max_len, hidden_dim)) # for input video position
-        self.back_position_embedding_B = nn.Parameter(torch.randn(1, config.max_len, hidden_dim)) # for output video position
-        self.text_position_embedding = nn.Parameter(torch.randn(1, 1, hidden_dim)) # for text position
-
-
+        self.front_position_embedding_A = nn.Parameter(
+            torch.randn(1, config.max_len, hidden_dim)
+        )  # for input video position
+        self.back_position_embedding_A = nn.Parameter(
+            torch.randn(1, config.max_len, hidden_dim)
+        )  # for output video position
+        self.front_position_embedding_B = nn.Parameter(
+            torch.randn(1, config.max_len, hidden_dim)
+        )  # for input video position
+        self.back_position_embedding_B = nn.Parameter(
+            torch.randn(1, config.max_len, hidden_dim)
+        )  # for output video position
+        self.text_position_embedding = nn.Parameter(torch.randn(1, 1, hidden_dim))  # for text position
 
         # Prediction tokens
         self.preference_token = nn.Parameter(torch.randn(1, 1, config.hidden_dim))
@@ -176,7 +181,7 @@ class ReWiNDScaleTransformer(PreTrainedModel):
             video_embeddings = video_embeddings.view(B, T, -1)  # [B, T, D]
 
         output = ModelOutput()
-        
+
         if sample_type == "preference" or sample_type == "similarity":
             assert NotImplementedError("preference/similarity forward pass not implemented yet")
             # video_embeddings_A = video_embeddings[:, : T // 2].clone()
@@ -190,7 +195,7 @@ class ReWiNDScaleTransformer(PreTrainedModel):
             # # video_embeddings_B[:, 0:1] += first_frame_emb_B
 
             # # Add position embeddings
-            
+
             # if sample_type == "preference":
             #     pred_token = einops.repeat(self.preference_token, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
             # else:
@@ -235,25 +240,29 @@ class ReWiNDScaleTransformer(PreTrainedModel):
         elif sample_type == "progress":
             # first_frame_emb = einops.repeat(self.first_embedding_A, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
 
-        # self.front_position_embedding_A = nn.Parameter(torch.randn(1, config.max_len, hidden_dim)) # for input video position
-        # self.back_position_embedding_A = nn.Parameter(torch.randn(1, config.max_len, hidden_dim)) # for output video position
-        # self.front_position_embedding_B = nn.Parameter(torch.randn(1, config.max_len, hidden_dim)) # for input video position
-        # self.back_position_embedding_B = nn.Parameter(torch.randn(1, config.max_len, hidden_dim)) # for output video position
-        # self.text_position_embedding = nn.Parameter(torch.randn(1, 1, hidden_dim)) # for text position
-            text_pos_emb = einops.repeat(self.text_position_embedding, "1 1 d -> b 1 d", b=B) # [B, 1, D]
-            video_pos_emb = einops.repeat(self.front_position_embedding_A[:, :T, :], "1 t d -> b t d", b=B) # [B, T, D]
+            # self.front_position_embedding_A = nn.Parameter(torch.randn(1, config.max_len, hidden_dim)) # for input video position
+            # self.back_position_embedding_A = nn.Parameter(torch.randn(1, config.max_len, hidden_dim)) # for output video position
+            # self.front_position_embedding_B = nn.Parameter(torch.randn(1, config.max_len, hidden_dim)) # for input video position
+            # self.back_position_embedding_B = nn.Parameter(torch.randn(1, config.max_len, hidden_dim)) # for output video position
+            # self.text_position_embedding = nn.Parameter(torch.randn(1, 1, hidden_dim)) # for text position
+            text_pos_emb = einops.repeat(self.text_position_embedding, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
+            video_pos_emb = einops.repeat(self.front_position_embedding_A[:, :T, :], "1 t d -> b t d", b=B)  # [B, T, D]
             # [B, T, D]
             video_embeddings = video_embeddings.clone()
             video_embeddings += video_pos_emb
             text_embeddings = text_embeddings.unsqueeze(1).clone()
             text_embeddings += text_pos_emb
-            output_empty_tokens = einops.repeat(self.back_position_embedding_A[:, :T, :], "1 t d -> b t d", b=B) # [B, T, D]
+            output_empty_tokens = einops.repeat(
+                self.back_position_embedding_A[:, :T, :], "1 t d -> b t d", b=B
+            )  # [B, T, D]
             # 0, text, 1:T video, 1:T empty
-            token_sequence = torch.cat([text_embeddings, video_embeddings, output_empty_tokens], dim=1)  # shape: [B, 2T + 1, D] 
-            
+            token_sequence = torch.cat(
+                [text_embeddings, video_embeddings, output_empty_tokens], dim=1
+            )  # shape: [B, 2T + 1, D]
+
             token_embeddings = self.transformer(token_sequence)
             D = token_embeddings.shape[-1]
-            final_embeddings = token_embeddings[:, 1+ T :, :]  # take the output empty token embeddings
+            final_embeddings = token_embeddings[:, 1 + T :, :]  # take the output empty token embeddings
 
             # Progress prediction for all frames
             progress_logits = self.progress_head(final_embeddings)

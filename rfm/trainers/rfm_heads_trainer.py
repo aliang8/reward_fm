@@ -650,7 +650,7 @@ class RFMHeadsTrainer(Trainer):
                                     success_pred_gathered[i].detach().to(dtype=torch.float32).cpu().numpy()
                                 )
                             eval_results.append(sample_result)
-                        
+
                         # Clean up gathered tensors and metadata after building results
                         del progress_pred, target_progress, gathered_metadata_dict
                         if success_pred_gathered is not None:
@@ -724,7 +724,7 @@ class RFMHeadsTrainer(Trainer):
                                 "metadata": gathered_metadata[i],
                             }
                             eval_results.append(sample_result)
-                        
+
                         # Clean up gathered tensors and metadata after building results
                         del pref_logits, preference_labels
                         del gathered_task, gathered_data_source, gathered_chosen_data_gen_strategy
@@ -744,7 +744,7 @@ class RFMHeadsTrainer(Trainer):
                 task_details = None
                 confusion_plot = None
                 confusion_matrix = None
-                
+
                 if eval_type == "reward_alignment":
                     eval_metrics, plots, video_frames_list = compute_eval_metrics(
                         eval_type, eval_results, self.config.data.progress_pred_type
@@ -802,7 +802,7 @@ class RFMHeadsTrainer(Trainer):
                         # Close all plots to avoid accumulating open figures
                         for plot in plots:
                             plt.close(plot)
-                        
+
                         # Explicitly delete to free memory and set to None for outer cleanup
                         del plots, video_frames_list, rows
                         plots = None
@@ -851,14 +851,15 @@ class RFMHeadsTrainer(Trainer):
                     del confusion_plot
                 if confusion_matrix is not None:
                     del confusion_matrix
-                
+
                 # Clean up dataset, dataloader, and eval_results
                 del dataset, dataloader, eval_results
-                    
+
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                     torch.cuda.synchronize()
                 import gc
+
                 gc.collect()
 
         # Prepare metrics for callbacks (all processes)
@@ -893,16 +894,17 @@ class RFMHeadsTrainer(Trainer):
         # Ensure gradients are cleared before returning to training
         if hasattr(self, "optimizer") and self.optimizer is not None:
             self.optimizer.zero_grad(set_to_none=True)
-        
+
         # Aggressive cleanup to prevent OOM after evaluation
         import gc
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
             torch.cuda.empty_cache()  # Call twice
         gc.collect()
         gc.collect()
-        
+
         # Clean up large objects
         del metrics
 
@@ -1303,7 +1305,11 @@ class RFMHeadsTrainer(Trainer):
             success_pred = success_logits["A"]
             data_source = inputs["data_source"]
             # Use the same downsampled target for success loss
-            progress_target_for_success = progress_target_for_mask if ("Qwen" in self.config.model.base_model_id and not self.config.data.use_multi_image) else progress_target
+            progress_target_for_success = (
+                progress_target_for_mask
+                if ("Qwen" in self.config.model.base_model_id and not self.config.data.use_multi_image)
+                else progress_target
+            )
             success_loss_all, success_acc_all = self._compute_success_loss_helper(
                 success_pred,
                 progress_target_for_success,
@@ -1372,7 +1378,7 @@ class RFMHeadsTrainer(Trainer):
                     f"{prefix}/success_loss": success_loss.item(),
                     f"{prefix}/success_accuracy": success_accuracy.item(),
                 })
-            
+
             # DO NOT delete any tensors during training - they are part of the autograd graph
             # and must remain until backward completes. DDP will fail if we delete them prematurely.
             # Even during evaluation, be cautious - only delete if absolutely necessary and
@@ -1474,7 +1480,9 @@ class RFMHeadsTrainer(Trainer):
                     mask = torch.tensor(mask, device=self.accelerator.device, requires_grad=False)
                     # Detach indexed tensors to avoid DDP hook issues with boolean indexing
                     masked_acc = preference_accuracy[mask == 1].detach() if training else preference_accuracy[mask == 1]
-                    masked_loss = preference_loss_all[mask == 1].detach() if training else preference_loss_all[mask == 1]
+                    masked_loss = (
+                        preference_loss_all[mask == 1].detach() if training else preference_loss_all[mask == 1]
+                    )
                     outputs_dict.update({
                         f"{prefix}_strat_pref_acc/{strat}": masked_acc.mean().item(),
                         f"{prefix}_strat_pref_loss/{strat}": masked_loss.mean().item(),
@@ -1487,7 +1495,9 @@ class RFMHeadsTrainer(Trainer):
                     mask = torch.tensor(mask, device=self.accelerator.device, requires_grad=False)
                     # Detach indexed tensors to avoid DDP hook issues with boolean indexing
                     masked_acc = preference_accuracy[mask == 1].detach() if training else preference_accuracy[mask == 1]
-                    masked_loss = preference_loss_all[mask == 1].detach() if training else preference_loss_all[mask == 1]
+                    masked_loss = (
+                        preference_loss_all[mask == 1].detach() if training else preference_loss_all[mask == 1]
+                    )
                     outputs_dict.update({
                         f"{prefix}_ds/pref_acc_{data_source}": masked_acc.mean().item(),
                         f"{prefix}_ds/pref_loss_{data_source}": masked_loss.mean().item(),
@@ -1614,7 +1624,9 @@ class RFMHeadsTrainer(Trainer):
                     mask = torch.tensor(mask, device=self.accelerator.device, requires_grad=False)
                     # Detach indexed tensors to avoid DDP hook issues with boolean indexing
                     masked_acc = similarity_correct[mask == 1].detach() if training else similarity_correct[mask == 1]
-                    masked_loss = similarity_loss_all[mask == 1].detach() if training else similarity_loss_all[mask == 1]
+                    masked_loss = (
+                        similarity_loss_all[mask == 1].detach() if training else similarity_loss_all[mask == 1]
+                    )
                     outputs_dict.update({
                         f"{prefix}_strat_sim_acc/{strat}": masked_acc.mean().item(),
                         f"{prefix}_strat_sim_loss/{strat}": masked_loss.mean().item(),

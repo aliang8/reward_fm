@@ -34,6 +34,7 @@ data:
     # - jesbu1_oxe_rfm_eval_oxe_viola_eval
     
 custom_eval:
+  eval_types: ["reward_alignment", "policy_ranking", "confusion_matrix"]
   reward_alignment:
     - aliangdw_metaworld_metaworld_eval
     - jesbu1_oxe_rfm_eval_oxe_bc_z_eval

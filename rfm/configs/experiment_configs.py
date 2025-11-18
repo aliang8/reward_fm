@@ -60,15 +60,22 @@ class ModelConfig(PretrainedConfig):
     use_unsloth: bool = field(
         default=False, metadata={"help": "Whether to use unsloth for faster vision model training"}
     )
-
+    rewind_scale_model: bool = field(
+        default=False,
+        metadata={"help": "Use ReWINDScaleTransformer instead of standard ReWINDTransformer"},
+    )
     # rewind sub-config
     rewind: Optional[Dict[str, Any]] = field(default=None)
 
     def __post_init__(self):
         from rfm.models.rewind_transformer import ReWINDTransformerConfig
-
+        from rfm.models.rewind_transformer_scale import ReWINDScaleTransformerConfig
         if self.rewind is not None and isinstance(self.rewind, dict):
-            self.rewind = ReWINDTransformerConfig(**self.rewind)
+            if self.rewind_scale_model:
+                self.rewind = ReWINDScaleTransformerConfig(**self.rewind)
+            else:
+                self.rewind = ReWINDTransformerConfig(**self.rewind)
+
 
 
 @dataclass
@@ -360,7 +367,7 @@ class ExperimentConfig:
     mode: str = field(default="train", metadata={"help": "Mode: 'train' or 'evaluate'"})
     debug: bool = field(default=False, metadata={"help": "Whether to run in debug mode"})
     trainer_cls: str = field(
-        default="rfm_heads", metadata={"help": "Trainer class: 'rfm_heads', 'rewind_transformer', 'rfm_vqa'"}
+        default="rfm_heads", metadata={"help": "Trainer class: 'rfm_heads', 'rewind_transformer', 'rfm_vqa', 'rewind_scale_transformer'"}
     )
     model: ModelConfig = field(default_factory=ModelConfig)
     peft: PEFTConfig = field(default_factory=PEFTConfig)

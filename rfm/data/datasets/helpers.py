@@ -413,6 +413,8 @@ def compute_progress_from_segment(
             # if it goes pass the cutoff, the progress will be set to 1
             segment_progress.append(min(1.0, i / denominator))
         else:
+            # ensure denominator is at least 1 to avoid division by zero
+            denominator = max(1, num_frames_total - start_idx - 1)
             # Normal progress calculation
             segment_progress.append(i / (num_frames_total - start_idx - 1))
 

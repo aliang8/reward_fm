@@ -157,7 +157,7 @@ def run_reward_alignment_eval_per_trajectory(
                 else:
                     # here we use the prediction at the current timestep
                     # unless we are past the max frame length
-                    if timestep >= 15:
+                    if timestep >= len(pred) - 1:
                         indx = -1
                     else:
                         indx = timestep

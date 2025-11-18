@@ -28,6 +28,7 @@ class DataGenStrat(Enum):
     # Progress generation strategies
     SUCCESSFUL = "successful"
     SUBSEQUENCE = "subsequence"
+    REVERSE_PROGRESS = "reverse_progress"
 
     # Evaluation-specific strategies
     CONFUSION_MATRIX = "confusion_matrix"

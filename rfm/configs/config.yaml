@@ -78,8 +78,8 @@ data:
   dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
   # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task], video binned no longer used
   preference_strategy_ratio: [6, 1, 1, 0]
-  # Tunable strategy ratios for progress generation: [default, rewind_same_task, different_task]
-  progress_strategy_ratio: [1, 6, 1, 1]  # [successful, rewind, different_task, subsequence]
+  # Tunable strategy ratios for progress generation: [successful, rewind, different_task, subsequence, reverse_progress]
+  progress_strategy_ratio: [1, 6, 1, 1, 0]  # [successful, rewind, different_task, subsequence, reverse_progress]
   similarity_strategy_ratio: [1, 1, 1] # rewind, suboptimal_same_task, paired_human_robot
   shuffle: true
   seed: 42

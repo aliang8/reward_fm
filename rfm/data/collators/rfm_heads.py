@@ -358,6 +358,7 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["padding_mask"] = create_padding_mask(batch_inputs["frames_shape"], max_length)
 
         batch_inputs["data_source"] = [sample.trajectory.data_source for sample in progress_samples]
+        batch_inputs["partial_reward"] = [sample.trajectory.partial_reward for sample in progress_samples]
         batch_inputs["data_gen_strategy"] = [sample.data_gen_strategy for sample in progress_samples]
         target_progress_mask = [
             should_compute_progress(

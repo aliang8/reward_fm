@@ -564,6 +564,9 @@ class RFMHeadsTrainer(Trainer):
                         2 if (self.config.trainer_cls == "rfm_heads" and not self.config.data.use_multi_image) else 1
                     )
 
+                if eval_type == "policy_ranking":
+                    kwargs["max_trajectories"] = 100
+
                 dataset = setup_custom_eval_dataset(
                     eval_cfg, sampler_type=eval_type, is_eval=True, verbose=False, **kwargs
                 )
@@ -605,7 +608,7 @@ class RFMHeadsTrainer(Trainer):
                         target_progress = self.accelerator.gather_for_metrics(progress_samples["target_progress"])
 
                         # Gather metadata fields
-                        metadata_fields = ["task", "data_source", "data_gen_strategy", "quality_labels", "metadata"]
+                        metadata_fields = ["task", "data_source", "data_gen_strategy", "quality_labels", "metadata", "partial_reward"]
                         gathered_metadata_dict = {}
 
                         if dist.is_initialized():
@@ -648,6 +651,7 @@ class RFMHeadsTrainer(Trainer):
                                 "metadata": metadata,
                                 "id": metadata["id"],
                                 "video_path": metadata["video_path"],
+                                "partial_reward": metadata["partial_reward"],
                             }
                             if success_pred_gathered is not None:
                                 sample_result["success_pred"] = (

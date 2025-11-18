@@ -232,9 +232,9 @@ class CustomEvaluationConfig:
     """Config for custom evaluation settings"""
 
     eval_types: List[str] = field(default_factory=lambda: ["policy_ranking", "confusion_matrix", "reward_alignment"])
-    policy_ranking: List[str] = field(default_factory=lambda: ["aliangdw/metaworld_rfm"])
-    confusion_matrix: List[str] = field(default_factory=lambda: ["aliangdw/metaworld_rfm"])
-    reward_alignment: List[str] = field(default_factory=lambda: ["HenryZhang/metaworld_rewind_rfm_eval"])
+    policy_ranking: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
+    confusion_matrix: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
+    reward_alignment: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
 
 
 @dataclass

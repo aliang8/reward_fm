@@ -603,7 +603,7 @@ def setup_batch_collator(
         if cfg.model.model_type == "default":
             batch_collator = RFMBatchCollator(**collator_kwargs)
         elif cfg.model.model_type == "vqa":
-            batch_collator = VQABatchCollator(**collator_kwargs, inference=is_eval)
+            batch_collator = VQABatchCollator(**collator_kwargs)
     # elif "rewind_transformer" in cfg.model.base_model_id:
     elif "rewind" in cfg.model.base_model_id:
         batch_collator = ReWiNDBatchCollator(

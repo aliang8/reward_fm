@@ -18,7 +18,7 @@ IGNORE_INDEX = -100
 class VQABatchCollator(RFMBatchCollator):
     """Batch collator that processes Sample objects through the processor for VQA-based reward modeling."""
 
-    def __init__(self, training: bool = True, inference: bool = False, **kwargs):
+    def __init__(self, training: bool = True, inference: bool = False, shuffle_progress_frames: bool = False, **kwargs):
         """
         Initialize the VQA batch collator.
 
@@ -31,7 +31,7 @@ class VQABatchCollator(RFMBatchCollator):
         """
         self.training = training
         self.inference = inference
-        super().__init__(inference=inference, **kwargs)
+        super().__init__(inference=inference, shuffle_progress_frames=shuffle_progress_frames, **kwargs)
 
     def _process_preference_batch(self, preference_samples: list[PreferenceSample]) -> dict[str, torch.Tensor]:
         """Process a batch of preference samples with VQA-style question."""
@@ -146,7 +146,7 @@ class VQABatchCollator(RFMBatchCollator):
             frames = convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
 
             # Shuffle frames and their corresponding target progress values (only during training)
-            if target_progress is not None and not self.inference:
+            if self.shuffle_progress_frames and target_progress is not None and not self.inference:
                 if len(target_progress) > 1 and len(target_progress) == len(frames):
                     shuffle_indices = np.random.permutation(range(1, len(frames)))
                     frames = [frames[0]] + [frames[idx] for idx in shuffle_indices]
@@ -157,7 +157,8 @@ class VQABatchCollator(RFMBatchCollator):
                     )
 
             prompt = f"For the task '{sample.trajectory.task}', estimate task progress at each frame in the video trajectory."
-            prompt += " These frames are possibly shuffled, so pay attention to individual frames when reasoning about progress."
+            if self.shuffle_progress_frames:
+                prompt += " These frames are possibly shuffled, so pay attention to individual frames when reasoning about progress."
             prompt += " The first frame is the starting frame, with 0 progress."
             prompt += (
                 " Format your answer as a python list with floats between 0 and 1 enclosed by <ans> and </ans> tags."

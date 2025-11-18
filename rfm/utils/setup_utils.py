@@ -288,7 +288,11 @@ def setup_model_and_processor(
                     rank_0_print(f"Added special token: {token}")
 
             # Resize token embeddings if new tokens were added
-            vocab_size = base_model.config.text_config.vocab_size if "Qwen3" in cfg.base_model_id else base_model.config.vocab_size
+            vocab_size = (
+                base_model.config.text_config.vocab_size
+                if "Qwen3" in cfg.base_model_id
+                else base_model.config.vocab_size
+            )
 
             if len(processor.tokenizer) != vocab_size:
                 rank_0_print(f"Resizing token embeddings from {vocab_size} to {len(processor.tokenizer)}")
@@ -592,6 +596,8 @@ def setup_batch_collator(
         "base_model_id": cfg.model.base_model_id,
         "use_multi_image": cfg.data.use_multi_image,
         "use_progress_token": cfg.model.use_progress_token,
+        "shuffle_progress_frames": cfg.data.shuffle_progress_frames,
+        "inference": is_eval,
     }
     if "Qwen" in cfg.model.base_model_id or "SmolVLM" in cfg.model.base_model_id:
         if cfg.model.model_type == "default":

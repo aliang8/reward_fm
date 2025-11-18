@@ -71,6 +71,7 @@ data:
   load_embeddings: false
   min_frames_per_trajectory: 5 # Minimum number of frames required per trajectory (trajectories with fewer frames will be filtered out)
   use_multi_image: false  # If True, feed frames as a list of images instead of converting to video (avoids encoding overhead)
+  shuffle_progress_frames: false  # If True, shuffle progress frames (except the first frame) and labels during training
 
   # Data generation settings
   sample_type_ratio: [1, 0, 0]  # Ratio of preference, progress (no longer used, it's absorbed in preference if predict_pref_progress is true), and similarity samples

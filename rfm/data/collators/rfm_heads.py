@@ -92,6 +92,8 @@ class RFMBatchCollator(BaseCollator):
         load_embeddings: bool = False,
         use_multi_image: bool = False,
         use_progress_token: bool = False,
+        shuffle_progress_frames: bool = False,
+        inference: bool = False,
         **kwargs,
     ):
         super().__init__(
@@ -106,6 +108,8 @@ class RFMBatchCollator(BaseCollator):
         )
         self.use_multi_image = use_multi_image
         self.use_progress_token = use_progress_token
+        self.shuffle_progress_frames = shuffle_progress_frames
+        self.inference = inference
 
     def _prepare_frames_for_conversation(self, frames: List, prefix: str = "tmp") -> tuple[Union[List, str], dict]:
         """
@@ -169,7 +173,9 @@ class RFMBatchCollator(BaseCollator):
                 **content_extras,
             })
 
-    def _process_conversation(self, conversations: List[List[Dict]], add_generation_prompt: bool = False) -> Dict[str, torch.Tensor]:
+    def _process_conversation(
+        self, conversations: List[List[Dict]], add_generation_prompt: bool = False
+    ) -> Dict[str, torch.Tensor]:
         """
         Process a list of conversations into a batch of inputs.
 
@@ -193,19 +199,20 @@ class RFMBatchCollator(BaseCollator):
             ]
 
             is_qwen3 = "Qwen3" in self.base_model_id
-            
+
             # For Qwen3, pass image_patch_size to process_vision_info
             process_kwargs = {
                 "return_video_kwargs": True,
                 "return_video_metadata": is_qwen3,
             }
-            if is_qwen3 and hasattr(self.processor, 'image_processor') and hasattr(self.processor.image_processor, 'patch_size'):
+            if (
+                is_qwen3
+                and hasattr(self.processor, "image_processor")
+                and hasattr(self.processor.image_processor, "patch_size")
+            ):
                 process_kwargs["image_patch_size"] = self.processor.image_processor.patch_size
-            
-            image_inputs, video_inputs, video_kwargs = process_vision_info(
-                conversations, 
-                **process_kwargs
-            )
+
+            image_inputs, video_inputs, video_kwargs = process_vision_info(conversations, **process_kwargs)
 
             # For Qwen3, video_inputs is a list of (video, video_metadata) tuples
             # that need to be split before passing to processor
@@ -232,11 +239,11 @@ class RFMBatchCollator(BaseCollator):
                 "return_tensors": "pt",
                 "do_resize": False,
             }
-            
+
             # Only add videos if they exist
             if videos is not None:
                 processor_kwargs["videos"] = videos
-            
+
             # Add video_metadata and video_kwargs for Qwen3
             # Note: video_kwargs may contain keys like 'videos_kwargs' that need special handling
             if is_qwen3:
@@ -246,7 +253,7 @@ class RFMBatchCollator(BaseCollator):
                 # The processor will handle 'videos_kwargs' internally if present
                 if video_kwargs:
                     processor_kwargs.update(video_kwargs)
-            
+
             batch_inputs = self.processor(**processor_kwargs)
         elif "SmolVLM" in self.base_model_id:
             batch_inputs = self.processor.apply_chat_template(
@@ -270,9 +277,26 @@ class RFMBatchCollator(BaseCollator):
         # Collect all messages for batch processing
         all_messages = []
 
+        target_progress_overrides: list[list[float] | None] = []
+
         for sample in progress_samples:
             # Convert frames to appropriate format using stored shapes
             frames = convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
+            target_progress = sample.trajectory.target_progress
+
+            # Optionally shuffle frames (except the first frame) and keep target progress aligned
+            if self.shuffle_progress_frames and target_progress is not None and not self.inference:
+                if len(target_progress) > 1 and len(target_progress) == len(frames):
+                    shuffle_indices = np.random.permutation(range(1, len(frames)))
+                    frames = [frames[0]] + [frames[idx] for idx in shuffle_indices]
+                    target_progress = [target_progress[0]] + [target_progress[idx] for idx in shuffle_indices]
+                else:
+                    raise ValueError(
+                        "Target progress must be a list with at least 1 element and match the number of frames "
+                        f"for shuffling, got {len(target_progress)} entries for {len(frames)} frames"
+                    )
+
+            target_progress_overrides.append(target_progress)
 
             video_field, content_extras = self._prepare_frames_for_conversation(frames, prefix="tmp_progress")
 
@@ -299,20 +323,31 @@ class RFMBatchCollator(BaseCollator):
             all_messages.append(conversation)
 
         batch_inputs = self._process_conversation(all_messages)
-        if progress_samples[0].trajectory.target_progress is not None:
-            batch_inputs = self._add_progress_meta(batch_inputs, progress_samples)
+        all_have_target_progress = all(tp is not None for tp in target_progress_overrides)
+        if all_have_target_progress:
+            batch_inputs = self._add_progress_meta(
+                batch_inputs,
+                progress_samples,
+                target_progress_override=target_progress_overrides,
+            )
         batch_inputs["resample_attempts"] = [sample.resample_attempts for sample in progress_samples]
         return batch_inputs
 
     def _add_progress_meta(
-        self, batch_inputs: dict[str, torch.Tensor], progress_samples: list[ProgressSample]
+        self,
+        batch_inputs: dict[str, torch.Tensor],
+        progress_samples: list[ProgressSample],
+        target_progress_override: list[list[float] | None] | None = None,
     ) -> dict[str, torch.Tensor]:
         batch_inputs["sample_type"] = ["progress"] * len(progress_samples)
         batch_inputs["task"] = [sample.trajectory.task for sample in progress_samples]
         batch_inputs["metadata"] = [sample.trajectory.metadata for sample in progress_samples]
 
         # Pad target progress tensors to max length in last dimension
-        target_progress_list = [sample.trajectory.target_progress for sample in progress_samples]
+        if target_progress_override is not None:
+            target_progress_list = target_progress_override
+        else:
+            target_progress_list = [sample.trajectory.target_progress for sample in progress_samples]
         batch_inputs["target_progress"] = pad_target_progress(target_progress_list)
         batch_inputs["quality_labels"] = [sample.trajectory.quality_label for sample in progress_samples]
 
@@ -333,7 +368,9 @@ class RFMBatchCollator(BaseCollator):
             for sample in progress_samples
         ]
         # Explicitly set requires_grad=False since this is a mask/label, not a model output
-        batch_inputs["target_progress_mask"] = torch.tensor(target_progress_mask, dtype=torch.float32, requires_grad=False)
+        batch_inputs["target_progress_mask"] = torch.tensor(
+            target_progress_mask, dtype=torch.float32, requires_grad=False
+        )
         return batch_inputs
 
     def _process_preference_batch(self, preference_samples: list[PreferenceSample]) -> dict[str, torch.Tensor]:

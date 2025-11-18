@@ -31,7 +31,7 @@ class VQABatchCollator(RFMBatchCollator):
         """
         self.training = training
         self.inference = inference
-        super().__init__(**kwargs)
+        super().__init__(inference=inference, **kwargs)
 
     def _process_preference_batch(self, preference_samples: list[PreferenceSample]) -> dict[str, torch.Tensor]:
         """Process a batch of preference samples with VQA-style question."""
@@ -91,15 +91,12 @@ class VQABatchCollator(RFMBatchCollator):
                 if "SmolVLM" in self.base_model_id:
                     # SmolVLM requires content as list of dicts
                     conversation.append({
-                        "role": "assistant", 
-                        "content": [{"type": "text", "text": f"<ans>{answer}</ans>"}]
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": f"<ans>{answer}</ans>"}],
                     })
                 else:
                     # Qwen accepts simple string content for text-only assistant messages
-                    conversation.append({
-                        "role": "assistant", 
-                        "content": f"<ans>{answer}</ans>"
-                    })
+                    conversation.append({"role": "assistant", "content": f"<ans>{answer}</ans>"})
 
             all_messages.append(conversation)
 
@@ -155,12 +152,16 @@ class VQABatchCollator(RFMBatchCollator):
                     frames = [frames[0]] + [frames[idx] for idx in shuffle_indices]
                     target_progress = [target_progress[0]] + [target_progress[idx] for idx in shuffle_indices]
                 else:
-                    raise ValueError(f"Target progress must be a list of at least 1 float for shuffling, got {len(target_progress)}")
+                    raise ValueError(
+                        f"Target progress must be a list of at least 1 float for shuffling, got {len(target_progress)}"
+                    )
 
             prompt = f"For the task '{sample.trajectory.task}', estimate task progress at each frame in the video trajectory."
             prompt += " These frames are possibly shuffled, so pay attention to individual frames when reasoning about progress."
             prompt += " The first frame is the starting frame, with 0 progress."
-            prompt += " Format your answer as a python list with floats between 0 and 1 enclosed by <ans> and </ans> tags."
+            prompt += (
+                " Format your answer as a python list with floats between 0 and 1 enclosed by <ans> and </ans> tags."
+            )
 
             # Prepare frames for conversation (handles multi-image vs video conversion)
             video_field, content_extras = self._prepare_frames_for_conversation(frames, prefix="tmp_progress")
@@ -168,7 +169,6 @@ class VQABatchCollator(RFMBatchCollator):
             # Build content list
             content_list = [{"type": "text", "text": prompt}]
             self._add_vision_content_to_list(content_list, video_field, content_extras)
-
 
             # Create conversation for progress evaluation
             conversation = [
@@ -187,14 +187,11 @@ class VQABatchCollator(RFMBatchCollator):
                     # SmolVLM requires content as list of dicts
                     conversation.append({
                         "role": "assistant",
-                        "content": [{"type": "text", "text": f"<ans>{target_progress_rounded}</ans>"}]
+                        "content": [{"type": "text", "text": f"<ans>{target_progress_rounded}</ans>"}],
                     })
                 else:
                     # Qwen accepts simple string content for text-only assistant messages
-                    conversation.append({
-                        "role": "assistant",
-                        "content": f"<ans>{target_progress_rounded}</ans>"
-                    })
+                    conversation.append({"role": "assistant", "content": f"<ans>{target_progress_rounded}</ans>"})
 
             all_messages.append(conversation)
 

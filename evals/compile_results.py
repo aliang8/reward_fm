@@ -150,7 +150,7 @@ def run_reward_alignment_eval_per_trajectory(
             tgt = r.get("target_progress")
             r.get("metadata", {})
             if pred is not None:
-                # here we use the last frame prediction 
+                # here we use the last frame prediction
                 # even if we do right padding during training
                 if last_frame_only:
                     last_preds.append(float(pred[-1]))
@@ -158,7 +158,7 @@ def run_reward_alignment_eval_per_trajectory(
                     # here we use the prediction at the current timestep
                     # unless we are past the max frame length
                     if timestep >= 15:
-                        indx = -1 
+                        indx = -1
                     else:
                         indx = timestep
                     last_preds.append(float(pred[indx]))

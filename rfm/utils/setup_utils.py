@@ -287,8 +287,10 @@ def setup_model_and_processor(
                     rank_0_print(f"Added special token: {token}")
 
             # Resize token embeddings if new tokens were added
-            if len(processor.tokenizer) != base_model.config.vocab_size:
-                rank_0_print(f"Resizing token embeddings from {base_model.config.vocab_size} to {len(processor.tokenizer)}")
+            vocab_size = base_model.config.text_config.vocab_size if "Qwen3" in cfg.base_model_id else base_model.config.vocab_size
+
+            if len(processor.tokenizer) != vocab_size:
+                rank_0_print(f"Resizing token embeddings from {vocab_size} to {len(processor.tokenizer)}")
                 base_model.resize_token_embeddings(len(processor.tokenizer))
                 rank_0_print(f"Resized token embeddings to {len(processor.tokenizer)}")
 

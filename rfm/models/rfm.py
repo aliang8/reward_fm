@@ -9,7 +9,7 @@ heads or there will be some problems with FSDP sharding.
 
 import torch
 import torch.nn as nn
-from transformers import PreTrainedModel, Qwen2_5_VLModel
+from transformers import PreTrainedModel, Qwen2_5_VLModel, Qwen3VLModel
 from transformers import SmolVLMModel
 
 from rfm.models.utils import ModelOutput
@@ -26,7 +26,9 @@ class RFM(PreTrainedModel):
 
     config_class = Qwen2_5_VLModel.config_class
 
-    config_class = Qwen2_5_VLModel.config_class
+    # Declare support for SDPA and Flash Attention (will delegate to underlying model), needed for Qwen3
+    _supports_sdpa = True
+    _supports_flash_attn_2 = True
 
     def __init__(self, config, processor, tokenizer, base_model=None, base_model_id=None, model_config=None):
         super().__init__(config)
@@ -34,9 +36,12 @@ class RFM(PreTrainedModel):
         if "SmolVLM" in base_model_id:
             hidden_size = config.text_config.hidden_size
             self.model_cls = SmolVLMModel
-        else:
+        elif "Qwen2.5" in base_model_id:
             hidden_size = config.hidden_size
             self.model_cls = Qwen2_5_VLModel
+        elif "Qwen3" in base_model_id:
+            hidden_size = config.text_config.hidden_size
+            self.model_cls = Qwen3VLModel
 
         if base_model is not None:
             self.model = base_model

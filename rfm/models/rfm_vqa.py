@@ -4,7 +4,8 @@ RFM (Reward Foundation Model) VQA version implementation.
 Contains the RFM class by using the standard Qwen2.5-VL model, training it with VQA data.
 """
 
-from transformers import PreTrainedModel, Qwen2_5_VLForConditionalGeneration, SmolVLMForConditionalGeneration, Qwen3VLForConditionalGeneration
+from transformers import PreTrainedModel, Qwen2_5_VLForConditionalGeneration, SmolVLMForConditionalGeneration
+# , Qwen3VLForConditionalGeneration
 
 import torch
 

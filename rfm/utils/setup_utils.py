@@ -45,6 +45,7 @@ from rfm.data.datasets import (
 from rfm.data.datasets.custom_eval import CustomEvalDataset
 from rfm.models import RFM, RFMVQA, ReWiNDTransformer
 from rfm.models.rewind_transformer import ReWINDTransformerConfig
+from rfm.models.rewind_transformer_scale import ReWINDScaleTransformerConfig, ReWiNDScaleTransformer
 from rfm.utils.distributed import rank_0_print
 
 
@@ -353,7 +354,8 @@ def setup_model_and_processor(
 
                     ipdb.set_trace()
 
-    elif "rewind_transformer" in cfg.base_model_id:
+    # elif "rewind_transformer" in cfg.base_model_id or "rewind_scale_transformer" in cfg.base_model_id:
+    elif "rewind" in cfg.base_model_id:
         # Initialize new model with encoders
         # Pretrained image and text encoders
         image_encoder = AutoModel.from_pretrained("facebook/dinov2-base")
@@ -389,14 +391,25 @@ def setup_model_and_processor(
                 p.requires_grad = train_text
 
             rank_0_print("Initializing ReWiND model...")
+
             rewind_config = cfg.rewind if cfg.rewind is not None else ReWINDTransformerConfig()
-            model = ReWiNDTransformer(
-                config=rewind_config,
-                processor=processor,
-                tokenizer=tokenizer,
-                image_encoder=image_encoder,
-                text_encoder=text_encoder,
-            )
+            if cfg.rewind_scale_model:
+                rewind_config = ReWINDScaleTransformerConfig()
+                model = ReWiNDScaleTransformer(
+                    config=rewind_config,
+                    processor=processor,
+                    tokenizer=tokenizer,
+                    image_encoder=image_encoder,
+                    text_encoder=text_encoder,
+                )
+            else:
+                model = ReWiNDTransformer(
+                    config=rewind_config,
+                    processor=processor,
+                    tokenizer=tokenizer,
+                    image_encoder=image_encoder,
+                    text_encoder=text_encoder,
+                )
 
     rank_0_print("Model architecture initialized")
     rank_0_print(f"Model architecture: {model}")
@@ -583,7 +596,8 @@ def setup_batch_collator(
             batch_collator = RFMBatchCollator(**collator_kwargs)
         elif cfg.model.model_type == "vqa":
             batch_collator = VQABatchCollator(**collator_kwargs, inference=is_eval)
-    elif "rewind_transformer" in cfg.model.base_model_id:
+    # elif "rewind_transformer" in cfg.model.base_model_id:
+    elif "rewind" in cfg.model.base_model_id:
         batch_collator = ReWiNDBatchCollator(
             **collator_kwargs, tokenizer=tokenizer, load_embeddings=cfg.data.load_embeddings
         )

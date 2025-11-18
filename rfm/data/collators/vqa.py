@@ -150,12 +150,12 @@ class VQABatchCollator(RFMBatchCollator):
 
             # Shuffle frames and their corresponding target progress values
             if target_progress is not None:
-                num_frames = len(frames)
-                shuffle_indices = np.random.permutation(1, num_frames)
-                frames = [frames[idx] for idx in shuffle_indices]
-                if len(target_progress) > 1:
+                shuffle_indices = np.random.permutation(range(1, len(frames)))
+                frames = [frames[0]] + [frames[idx] for idx in shuffle_indices]
+                if len(target_progress) > 1 and len(target_progress) == len(frames):
                     target_progress = [target_progress[0]] + [target_progress[idx] for idx in shuffle_indices]
                 elif len(target_progress) == 1:
+                    # evaluation of things like reward alignment
                     target_progress = [0.0]
                 else:
                     raise ValueError(f"Target progress must be a list of at least 1 float for shuffling, got {len(target_progress)}")

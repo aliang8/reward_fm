@@ -46,7 +46,7 @@ uv run accelerate launch \
     --data.resized_height 196 \
     --data.resized_width 196 \
     --data.use_multi_image true \
-    --data.shuffle_progress_frames false \
+    --data.shuffle_progress_frames true \
     --training.max_steps 15000 \
     --training.eval_steps 200 \
     --training.custom_eval_steps 200 \
@@ -55,7 +55,7 @@ uv run accelerate launch \
     --training.learning_rate 5e-5 \
     --training.weight_decay 0.05 \
     --training.overwrite_output_dir true \
-    --training.exp_name ant_rfm_qwen3_prog_only_images_bs12_prog \
+    --training.exp_name ant_rfm_qwen3_prog_only_images_bs12_prog_shuffled \
     --logging.log_to '["wandb"]'
 
 # Print completion time

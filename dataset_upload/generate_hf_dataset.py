@@ -707,6 +707,28 @@ def main(cfg: GenerateConfig):
         print(f"Loading AutoEval dataset from: {cfg.dataset.dataset_path}")
         task_data = load_autoeval_dataset(cfg.dataset.dataset_path)
         trajectories = flatten_task_data(task_data)
+    elif "usc_xarm_policy_ranking" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.usc_xarm_policy_ranking_loader import (
+            load_usc_xarm_policy_ranking_dataset,
+        )
+
+        print(f"Loading USC xArm Policy Ranking dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_usc_xarm_policy_ranking_dataset(
+            cfg.dataset.dataset_path,
+            max_trajectories=cfg.output.max_trajectories,
+        )
+        trajectories = flatten_task_data(task_data)
+    elif "usc_franka_policy_ranking" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.usc_franka_policy_ranking_loader import (
+            load_usc_franka_policy_ranking_dataset,
+        )
+
+        print(f"Loading USC Franka Policy Ranking dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_usc_franka_policy_ranking_dataset(
+            cfg.dataset.dataset_path,
+            max_trajectories=cfg.output.max_trajectories,
+        )
+        trajectories = flatten_task_data(task_data)
     elif "soar" in cfg.dataset.dataset_name.lower():
         from dataset_upload.dataset_loaders.soar_loader import convert_soar_dataset_to_hf
 

@@ -138,6 +138,9 @@ class ProgressSampler(RFMBaseSampler):
             progress_traj.task = traj["task"]
             progress_traj.target_progress = [0.0] * len(progress_traj.target_progress)
 
+        if strategy_used == DataGenStrat.DIFFERENT_TASK_INSTRUCTION:
+            progress_traj.target_progress = [0.0] * len(progress_traj.target_progress)
+
         strategy_value = strategy_used.value if isinstance(strategy_used, DataGenStrat) else strategy_used
         sample = ProgressSample(
             trajectory=progress_traj,

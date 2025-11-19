@@ -50,6 +50,7 @@ eval_datasets:
   - "jesbu1/racer_rfm"
   - "jesbu1/egodex_rfm"
   - "abraranwar/usc_koch_rewind_rfm"
+  - "aliangdw/usc_xarm_policy_ranking"
 
 eval_subsets:
   - ["libero256_10"]
@@ -59,6 +60,7 @@ eval_subsets:
   - ["racer_val"]
   - ["egodex_test"]
   - ["usc_koch_rewind"]
+  - ["usc_xarm_policy_ranking"]
 
 max_frames_for_preprocessing: 32
 video_frame_sampling: "uniform"

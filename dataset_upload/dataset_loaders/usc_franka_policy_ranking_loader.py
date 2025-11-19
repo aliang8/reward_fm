@@ -4,7 +4,9 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Iterable
 
+import re
 import numpy as np
+import cv2
 from PIL import Image
 
 from dataset_upload.helpers import generate_unique_id
@@ -28,6 +30,19 @@ QUALITY_LABEL_MAP = {
 CAMERA_PATTERN = "camera_south_color*.png"
 
 
+def _extract_frame_number(path: str) -> int:
+    """Extract the numeric frame number from a filename like 'camera_south_color_1.png'."""
+    # Extract the number before .png
+    match = re.search(r'_(\d+)\.png$', path)
+    if match:
+        return int(match.group(1))
+    # Fallback: try to extract any number from the filename
+    match = re.search(r'(\d+)', Path(path).stem)
+    if match:
+        return int(match.group(1))
+    return 0  # Default to 0 if no number found
+
+
 class USCFrankaFrameLoader:
     """Lazy loader that stitches RGB frames from PNG files."""
 
@@ -35,13 +50,25 @@ class USCFrankaFrameLoader:
         image_paths = list(image_paths)
         if not image_paths:
             raise ValueError("USCFrankaFrameLoader requires at least one image path")
-        self.image_paths = sorted(image_paths)
+        # Sort by frame number to ensure sequential ordering
+        self.image_paths = sorted(image_paths, key=_extract_frame_number)
 
     def _load_frame(self, path: str) -> np.ndarray:
         with Image.open(path) as img:
-            frame = np.array(img.convert("RGB"), dtype=np.uint8)
+            # Explicitly convert to RGB to ensure correct color format
+            img_rgb = img.convert("RGB")
+            frame = np.array(img_rgb, dtype=np.uint8)
         if frame.ndim != 3:
             raise ValueError(f"Expected 3D RGB frame, got shape {frame.shape} for {path}")
+        if frame.shape[2] != 3:
+            raise ValueError(f"Expected RGB frame with 3 channels, got {frame.shape[2]} channels for {path}")
+        # Ensure frame is in HWC format (height, width, channels) with RGB order
+        if frame.shape[0] == 3 and frame.shape[2] != 3:
+            # If channel-first, convert to channel-last
+            frame = np.transpose(frame, (1, 2, 0))
+        # Ensure the array is contiguous for efficient processing
+        if not frame.flags['C_CONTIGUOUS']:
+            frame = np.ascontiguousarray(frame)
         return frame
 
     def __call__(self) -> np.ndarray:
@@ -93,7 +120,9 @@ def load_usc_franka_policy_ranking_dataset(
             raise ValueError(f"Unknown optimality label '{optimality_key}' in folder {folder.name}")
 
         images_dir = folder / "images"
-        image_paths = sorted(str(p) for p in images_dir.glob(CAMERA_PATTERN))
+        image_paths = [str(p) for p in images_dir.glob(CAMERA_PATTERN)]
+        # Sort by frame number to ensure sequential ordering
+        image_paths = sorted(image_paths, key=_extract_frame_number)
         if not image_paths:
             print(f"⚠️  Skipping {folder} (no matching {CAMERA_PATTERN} files found)")
             continue
@@ -104,12 +133,11 @@ def load_usc_franka_policy_ranking_dataset(
         trajectory = {
             "id": generate_unique_id(),
             "task": task_description,
-            "frames": frame_loader,
+            "frames": frame_loader(),
             "is_robot": True,
             "quality_label": QUALITY_LABEL_MAP[optimality_key],
             "data_source": "usc_franka_policy_ranking",
         }
-        import ipdb; ipdb.set_trace()
 
         task_data[task_description].append(trajectory)
         total += 1

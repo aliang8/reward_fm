@@ -20,10 +20,11 @@ RGB_CAMERA_PRIORITY = (
 
 TASK_DESCRIPTION_MAP = {
     "close_drawer": "Close the drawer",
-    "open_drawer": "Open the drawer",
     "fold_towel": "Fold the towel in half",
     "pick_blue_cup": "Put blue cup in sink",
     "put_banana_on_red_plate": "Put the banana on the red plate",
+    "put_eggplant_black_bowl": "Put the eggplant in the black bowl",
+    "stack_green_on_red": "Stack the green shape on the red cylinder",
 }
 
 QUALITY_LABEL_MAP = {

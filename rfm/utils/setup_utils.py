@@ -336,9 +336,15 @@ def setup_model_and_processor(
             else:
                 hf_repo_with_rev = repo_id
                 rank_0_print(f"Loading local/explicit model from {hf_repo_with_rev}")
+
             if cfg.model_type != "vqa":
-                before = model.model.visual.blocks[0].mlp.down_proj.weight
-                before = model.preference_head[0].weight
+                if "Qwen2.5" in cfg.base_model_id:
+                    before = model.model.visual.blocks[0].mlp.down_proj.weight
+                    before_progress_head = model.progress_head[0].weight
+                elif "Qwen3" in cfg.base_model_id:
+                    before = model.model.visual.blocks[0].mlp.linear_fc1.weight
+                    before_progress_head = model.progress_head[0].weight
+
             # load the model from the evaluation path
             model = model_cls.from_pretrained(
                 hf_repo_with_rev,
@@ -350,15 +356,20 @@ def setup_model_and_processor(
                 revision=revision_to_load,
             )
             if cfg.model_type != "vqa":
-                after = model.model.visual.blocks[0].mlp.down_proj.weight
-                after = model.preference_head[0].weight
+                if "Qwen2.5" in cfg.base_model_id:
+                    after = model.model.visual.blocks[0].mlp.down_proj.weight
+                    after_progress_head = model.progress_head[0].weight
+                elif "Qwen3" in cfg.base_model_id:
+                    after = model.model.visual.blocks[0].mlp.linear_fc1.weight
+                    after_progress_head = model.progress_head[0].weight
+
                 rank_0_print(f"Before: {before.shape}, {before.sum()} | After: {after.shape}, {after.sum()}")
+                rank_0_print(f"Before progress head: {before_progress_head.shape}, {before_progress_head.sum()} | After progress head: {after_progress_head.shape}, {after_progress_head.sum()}")
                 # check that before and after are different
                 if torch.allclose(before, after):
                     rank_0_print("Before and after are the same! Check if you loaded the pretrained model correctly")
-                    import ipdb
-
-                    ipdb.set_trace()
+                if torch.allclose(before_progress_head, after_progress_head):
+                    rank_0_print("Before and after progress head are the same! Check if you loaded the pretrained model correctly")
 
     # elif "rewind_transformer" in cfg.base_model_id or "rewind_scale_transformer" in cfg.base_model_id:
     elif "rewind" in cfg.base_model_id:

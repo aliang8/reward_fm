@@ -729,6 +729,17 @@ def main(cfg: GenerateConfig):
             max_trajectories=cfg.output.max_trajectories,
         )
         trajectories = flatten_task_data(task_data)
+    elif "utd_koch_arm_policy_ranking" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.koch_arm_ut_dallas_loader import (
+            load_koch_arm_ut_dallas_dataset,
+        )
+
+        print(f"Loading Koch Arm UT Dallas dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_koch_arm_ut_dallas_dataset(
+            cfg.dataset.dataset_path,
+            max_trajectories=cfg.output.max_trajectories,
+        )
+        trajectories = flatten_task_data(task_data)
     elif "soar" in cfg.dataset.dataset_name.lower():
         from dataset_upload.dataset_loaders.soar_loader import convert_soar_dataset_to_hf
 

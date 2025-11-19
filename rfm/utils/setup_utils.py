@@ -203,7 +203,7 @@ def setup_model_and_processor(
                 base_model, tokenizer = FastVisionModel.from_pretrained(
                     cfg.base_model_id,
                     load_in_4bit=cfg.quantization,  # Use 4bit if quantization is enabled
-                    use_gradient_checkpointing="unsloth",  # Use unsloth's optimized checkpointing
+                    # use_gradient_checkpointing="unsloth",  # Use unsloth's optimized checkpointing
                     dtype=torch_dtype,  # Set the dtype from config,
                     full_finetuning=True,
                     device_map=None,

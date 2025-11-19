@@ -306,7 +306,7 @@ class PrefSampler(RFMBaseSampler):
             elif selected_strategy == DataGenStrat.DIFFERENT_TASK:
                 rejected_traj = None
                 for _ in range(max_retries):
-                    rejected_traj = self._get_different_task(chosen_traj)
+                    rejected_traj = self._get_different_video_traj(chosen_traj)
                     if rejected_traj is not None:
                         break
             elif selected_strategy == DataGenStrat.VIDEO_BINNED:

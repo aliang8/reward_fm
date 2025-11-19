@@ -29,6 +29,7 @@ class DataGenStrat(Enum):
     SUCCESSFUL = "successful"
     SUBSEQUENCE = "subsequence"
     REVERSE_PROGRESS = "reverse_progress"
+    DIFFERENT_TASK_INSTRUCTION = "different_task_instruction"
 
     # Evaluation-specific strategies
     CONFUSION_MATRIX = "confusion_matrix"

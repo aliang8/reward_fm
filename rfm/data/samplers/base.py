@@ -207,7 +207,7 @@ class RFMBaseSampler:
 
         return self.dataset[random_idx]
 
-    def _get_different_task(self, ref_traj: dict) -> dict | None:
+    def _get_different_video_traj(self, ref_traj: dict) -> dict | None:
         """Get trajectory from different task.
 
         Args:
@@ -227,6 +227,25 @@ class RFMBaseSampler:
 
         other_idx = random.choice(other_task_indices)
         return self.dataset[other_idx]
+
+    def _get_different_task_instruction(self, ref_traj: dict) -> dict | None:
+        """Get the same trajectory but with a different task instruction.
+
+        Args:
+            ref_traj: Reference trajectory
+
+        Returns:
+            Trajectory dict with different task instruction or None if not available
+        """
+        other_tasks = [task for task in self.optimal_by_task.keys() if task != ref_traj["task"]]
+        if not other_tasks:
+            return None
+
+        other_task = random.choice(other_tasks)
+        # Create a copy of the trajectory with the task changed
+        new_traj = ref_traj.copy()
+        new_traj["task"] = other_task
+        return new_traj
 
     def _get_paired_human_robot_traj(self, ref_traj: dict) -> dict | None:
         """Get paired human/robot trajectory for the same task.

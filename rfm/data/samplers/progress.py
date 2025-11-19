@@ -43,12 +43,12 @@ class ProgressSampler(RFMBaseSampler):
         subsample_strategy = None
 
         # Strategy setup with rebalancing on failure
-        # [successful, rewind, different_task, subsequence, reverse_progress]
+        # [successful, rewind, different_task, subsequence, reverse_progress, different_task_instruction]
         strategies = [
             (DataGenStrat.SUCCESSFUL, self.config.progress_strategy_ratio[0]),
             (DataGenStrat.REWIND_SAME_TASK, self.config.progress_strategy_ratio[1]),
-            (DataGenStrat.DIFFERENT_TASK, self.config.progress_strategy_ratio[2]),
-            (DataGenStrat.SUBSEQUENCE, self.config.progress_strategy_ratio[3]),
+            (DataGenStrat.DIFFERENT_TASK_INSTRUCTION, self.config.progress_strategy_ratio[2] if len(self.config.progress_strategy_ratio) > 2 else 0.0),
+            (DataGenStrat.SUBSEQUENCE, self.config.progress_strategy_ratio[3] if len(self.config.progress_strategy_ratio) > 3 else 0.0),
             (DataGenStrat.REVERSE_PROGRESS, self.config.progress_strategy_ratio[4] if len(self.config.progress_strategy_ratio) > 4 else 0.0),
         ]
 
@@ -107,9 +107,9 @@ class ProgressSampler(RFMBaseSampler):
             elif selected_strategy == DataGenStrat.REWIND_SAME_TASK:
                 processed_traj = self._get_rewound_traj(traj)
                 subsample_strategy = None  # Rewound trajectories are already processed
-            elif selected_strategy == DataGenStrat.DIFFERENT_TASK:
-                processed_traj = self._get_different_task(traj)
-                subsample_strategy = None  # Different task trajectories use default processing
+            elif selected_strategy == DataGenStrat.DIFFERENT_TASK_INSTRUCTION:
+                processed_traj = self._get_different_task_instruction(traj)
+                subsample_strategy = None  # Different task instruction uses same trajectory with different task
             else:
                 raise ValueError(f"Invalid strategy selected: {selected_strategy}")
 

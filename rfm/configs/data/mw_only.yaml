@@ -12,6 +12,14 @@ data:
     # - jesbu1_oxe_rfm_eval_oxe_viola_eval
     
 custom_eval:
+  eval_types: ["reward_alignment", "policy_ranking", "confusion_matrix"]
   reward_alignment:
     - aliangdw_metaworld_metaworld_train
     - aliangdw_metaworld_metaworld_eval
+
+logging:
+  save_best:
+    metric_names: ["custom_eval/p_rank_spearman_mw_eval", "custom_eval/rew_align_pearson_mw_eval"]
+    greater_is_better: [true, true]
+    keep_top_k: 5
+    upload_to_hub: true

@@ -32,7 +32,7 @@ uv run accelerate launch \
     train.py \
     --config_paths rfm/configs/config.yaml rfm/configs/data/oxe_mw.yaml \
     --data.sample_type_ratio '[0, 1, 0]' \
-    --data.progress_strategy_ratio '[1, 8, 1, 1]' \
+    --data.progress_strategy_ratio '[1, 5, 1, 1]' \
     --model.train_progress_head true \
     --model.train_preference_head false \
     --model.train_similarity_head false \
@@ -46,7 +46,7 @@ uv run accelerate launch \
     --data.resized_height 196 \
     --data.resized_width 196 \
     --data.use_multi_image true \
-    --data.shuffle_progress_frames true \
+    --data.shuffle_progress_frames false \
     --training.max_steps 15000 \
     --training.eval_steps 200 \
     --training.custom_eval_steps 200 \
@@ -55,7 +55,7 @@ uv run accelerate launch \
     --training.learning_rate 5e-5 \
     --training.weight_decay 0.05 \
     --training.overwrite_output_dir true \
-    --training.exp_name ant_rfm_qwen3_prog_only_images_bs12_prog_shuffled \
+    --training.exp_name ant_rfm_qwen3_prog_only_images_bs12_prog \
     --logging.log_to '["wandb"]'
 
 # Print completion time
@@ -93,5 +93,4 @@ echo "Job completed successfully"
 #     --training.exp_name debug \
 #     --model.use_unsloth true \
 #     --debug true \
-#     --data.shuffle_progress_frames true \
 #     --logging.log_to '[]'

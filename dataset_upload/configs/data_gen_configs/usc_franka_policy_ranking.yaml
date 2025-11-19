@@ -15,5 +15,5 @@ output:
 
 hub:
   push_to_hub: false
-  hub_repo_id:
+  hub_repo_id: usc_franka_policy_ranking
 

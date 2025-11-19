@@ -66,6 +66,8 @@ class USCFrankaFrameLoader:
         if frame.shape[0] == 3 and frame.shape[2] != 3:
             # If channel-first, convert to channel-last
             frame = np.transpose(frame, (1, 2, 0))
+        # Rotate 90 degrees clockwise
+        frame = np.rot90(frame, k=-1)
         # Ensure the array is contiguous for efficient processing
         if not frame.flags['C_CONTIGUOUS']:
             frame = np.ascontiguousarray(frame)

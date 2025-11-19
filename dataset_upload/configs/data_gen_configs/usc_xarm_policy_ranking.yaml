@@ -11,7 +11,7 @@ output:
   fps: 10
   shortest_edge_size: 240
   center_crop: false
-  num_workers: 1
+  num_workers: 2
 
 hub:
   push_to_hub: false

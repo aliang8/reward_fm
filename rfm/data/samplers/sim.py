@@ -188,7 +188,7 @@ class SimSampler(RFMBaseSampler):
 
         traj_diff = None
         for _ in range(max_retries):
-            traj_diff = self._get_different_task(ref_traj)
+            traj_diff = self._get_different_video_traj(ref_traj)
             if traj_diff is not None:
                 break
 
@@ -236,7 +236,7 @@ class SimSampler(RFMBaseSampler):
         # Retry traj_diff separately
         traj_diff = None
         for _ in range(max_retries):
-            traj_diff = self._get_different_task(ref_traj)
+            traj_diff = self._get_different_video_traj(ref_traj)
             if traj_diff is not None:
                 break
 

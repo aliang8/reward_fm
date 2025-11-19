@@ -1,4 +1,5 @@
 train_datasets:
+  - "aliangdw/metaworld"
   - "jesbu1/molmoact_rfm" 
   - "abraranwar/libero_rfm"
   - "abraranwar/agibotworld_alpha_rfm"
@@ -16,11 +17,11 @@ train_datasets:
   - "jesbu1/auto_eval_rfm"
   - "jesbu1/soar_rfm"
   - "jesbu1/fino_net_rfm"
-  - "aliangdw/metaworld"
   - "jesbu1/racer_rfm"
   - "jesbu1/egodex_rfm"
 
 train_subsets:
+  - ["metaworld_train"]
   - ["molmoact_dataset_household", "molmoact_dataset_tabletop"]
   - ["libero256_90"]
   - ["agibotworld"]
@@ -38,7 +39,6 @@ train_subsets:
   - ["auto_eval_rfm"]
   - ["soar_rfm"]
   - ["fino_net"]
-  - ["metaworld_train"]
   - ["racer_train"]
   - ["egodex_part1", "egodex_part2", "egodex_part3", "egodex_part4", "egodex_part5"]
 
@@ -52,6 +52,7 @@ eval_datasets:
   - "abraranwar/usc_koch_rewind_rfm"
   - "aliangdw/usc_xarm_policy_ranking"
   - "aliangdw/usc_franka_policy_ranking"
+  - "aliangdw/utd_so101_arm_policy_ranking"
 
 eval_subsets:
   - ["libero256_10"]
@@ -63,6 +64,7 @@ eval_subsets:
   - ["usc_koch_rewind"]
   - ["usc_xarm_policy_ranking"]
   - ["usc_franka_policy_ranking"]
+  - ["utd_so101_arm_policy_ranking"]
 
 max_frames_for_preprocessing: 32
 video_frame_sampling: "uniform"

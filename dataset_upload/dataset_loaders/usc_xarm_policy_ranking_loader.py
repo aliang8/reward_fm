@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Iterable
 
 import numpy as np
+import cv2
 
 from dataset_upload.helpers import generate_unique_id
 
@@ -65,6 +66,15 @@ class USCXArmFrameLoader:
                 frame = (frame * scale).astype(np.uint8)
             else:
                 frame = frame.astype(np.uint8, copy=False)
+        
+        # Convert BGR to RGB (frames from pickle files are stored as BGR)
+        if frame.shape[2] == 3:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # Ensure the array is contiguous for efficient processing
+        if not frame.flags['C_CONTIGUOUS']:
+            frame = np.ascontiguousarray(frame)
+        
         return frame
 
     def __call__(self) -> np.ndarray:
@@ -139,7 +149,7 @@ def load_usc_xarm_policy_ranking_dataset(
         trajectory = {
             "id": generate_unique_id(),
             "task": task_description,
-            "frames": frame_loader,
+            "frames": frame_loader(),
             "is_robot": True,
             "quality_label": QUALITY_LABEL_MAP[optimality_key],
             "data_source": "usc_xarm_policy_ranking",

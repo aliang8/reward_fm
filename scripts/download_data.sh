@@ -127,7 +127,8 @@ repos=(
   #jesbu1/soar_rfm 
   #jesbu1/racer_rfm
   #jesbu1/egodex_rfm
-  aliangdw/usc_xarm_policy_ranking
+  #aliangdw/usc_xarm_policy_ranking
+  aliangdw/usc_franka_policy_ranking
 )
 
 # ------------------------------

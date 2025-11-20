@@ -425,12 +425,38 @@ def run_policy_ranking_eval_per_ranked_set(results: list[dict[str, Any]], progre
                     spearman.append(spearman_corr)
 
         avg_spearman_corr = np.mean(spearman)
-        task_details[task] = {"spearman": avg_spearman_corr, "num_triplets": len(spearman)}
+        
+        # Compute old metric: average rewards per quality group
+        avg_rewards_per_quality = {}
+        quality_ranks = []
+        avg_reward_values = []
+        for q in present_labels:
+            rewards = quality_to_rewards[q]
+            if rewards:
+                avg_reward = np.mean(rewards)
+                avg_rewards_per_quality[q] = avg_reward
+                quality_ranks.append(quality_order[q])
+                avg_reward_values.append(avg_reward)
+        
+        spearman_rewind = None
+        if len(quality_ranks) >= 2:
+            spearman_rewind = compute_spearman(quality_ranks, avg_reward_values)
+            if np.isnan(spearman_rewind):
+                spearman_rewind = None
+        
+        task_details[task] = {
+            "spearman": avg_spearman_corr,
+            "num_triplets": len(spearman),
+            "spearman_rewind": spearman_rewind,
+            "avg_rewards_per_quality": avg_rewards_per_quality,
+        }
 
     # average metrics across all task details
+    spearman_rewind_values = [t["spearman_rewind"] for t in task_details.values() if t["spearman_rewind"] is not None]
     policy_ranking_metrics = {
         "spearman": np.mean([t["spearman"] for t in task_details.values()]).item(),
-        "num_triplets": np.mean([t["num_triplets"] for t in task_details.values()]).item(),
+        # "num_triplets": np.mean([t["num_triplets"] for t in task_details.values()]).item(),
+        "spearman_rewind": np.mean(spearman_rewind_values).item() if spearman_rewind_values else None,
     }
 
     return policy_ranking_metrics, task_groups, task_details
@@ -486,6 +512,8 @@ def run_policy_ranking_eval_roboarena(results: list[dict[str, Any]], progress_pr
     task_details = {}
     all_spearman = []
 
+    all_spearman_rewind = []
+
     for task, trajectories in task_groups.items():
         if len(trajectories) < 2:
             continue
@@ -497,6 +525,33 @@ def run_policy_ranking_eval_roboarena(results: list[dict[str, Any]], progress_pr
         # Compute Spearman correlation between partial_success and final_predicted_reward
         spearman_corr = compute_spearman(partial_successes, predicted_rewards)
 
+        # Compute old metric: average rewards per partial_success value
+        # Group by unique partial_success values and compute average predicted reward for each
+        partial_success_to_rewards = {}
+        for ps, pr in zip(partial_successes, predicted_rewards):
+            if ps not in partial_success_to_rewards:
+                partial_success_to_rewards[ps] = []
+            partial_success_to_rewards[ps].append(pr)
+        
+        avg_rewards_per_partial_success = {}
+        unique_partial_successes = []
+        avg_reward_values = []
+        for ps in sorted(partial_success_to_rewards.keys()):
+            rewards = partial_success_to_rewards[ps]
+            if rewards:
+                avg_reward = np.mean(rewards)
+                avg_rewards_per_partial_success[ps] = avg_reward
+                unique_partial_successes.append(ps)
+                avg_reward_values.append(avg_reward)
+        
+        spearman_rewind = None
+        if len(unique_partial_successes) >= 2:
+            spearman_rewind = compute_spearman(unique_partial_successes, avg_reward_values)
+            if not np.isnan(spearman_rewind):
+                all_spearman_rewind.append(spearman_rewind)
+            else:
+                spearman_rewind = None
+
         if not np.isnan(spearman_corr):
             all_spearman.append(spearman_corr)
             task_details[task] = {
@@ -504,6 +559,8 @@ def run_policy_ranking_eval_roboarena(results: list[dict[str, Any]], progress_pr
                 "num_trajectories": len(trajectories),
                 "partial_successes": partial_successes,
                 "predicted_rewards": predicted_rewards,
+                "spearman_rewind": spearman_rewind,
+                "avg_rewards_per_partial_success": avg_rewards_per_partial_success,
             }
 
     if len(all_spearman) == 0:
@@ -512,6 +569,7 @@ def run_policy_ranking_eval_roboarena(results: list[dict[str, Any]], progress_pr
     # Average metrics across all tasks
     policy_ranking_metrics = {
         "spearman": np.mean(all_spearman).item(),
+        "spearman_rewind": np.mean(all_spearman_rewind).item() if all_spearman_rewind else None,
         # "num_tasks": len(task_details),
         # "num_trajectories": sum(t["num_trajectories"] for t in task_details.values()),
     }

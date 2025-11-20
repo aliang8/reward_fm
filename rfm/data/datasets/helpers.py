@@ -18,27 +18,14 @@ except ImportError:
 class DataGenStrat(Enum):
     """Enum for different data generation strategies used in preference generation."""
 
-    # Preference generation strategies
-    REWIND_SAME_TASK = "rewind_same_task"
-    SUBOPTIMAL_SAME_TASK = "suboptimal_same_task"
-    DIFFERENT_TASK = "different_task"
-    VIDEO_BINNED = "video_binned"
-    PAIRED_HUMAN_ROBOT = "paired_human_robot"
-
-    # Progress generation strategies
     SUCCESSFUL = "successful"
     SUBSEQUENCE = "subsequence"
     REVERSE_PROGRESS = "reverse_progress"
-    DIFFERENT_TASK_INSTRUCTION = "different_task_instruction"
-
-    # Evaluation-specific strategies
-    CONFUSION_MATRIX = "confusion_matrix"
-    WRONG_TASK_PREFERENCE = "wrong_task_preference"
-
-    # General strategies
-    SUBSAMPLE_TASK = "subsample_task"
+    SUBOPTIMAL = "suboptimal"
     REWOUND = "rewound"
-    DEFAULT = "default"
+    DIFFERENT_TASK = "different_task"
+    DIFFERENT_TASK_INSTRUCTION = "different_task_instruction"
+    PAIRED_HUMAN_ROBOT = "paired_human_robot"
 
 
 def load_dataset_success_percent(cutoff_file_path):

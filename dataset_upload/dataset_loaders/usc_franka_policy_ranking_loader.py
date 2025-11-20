@@ -33,11 +33,11 @@ CAMERA_PATTERN = "camera_south_color*.png"
 def _extract_frame_number(path: str) -> int:
     """Extract the numeric frame number from a filename like 'camera_south_color_1.png'."""
     # Extract the number before .png
-    match = re.search(r'_(\d+)\.png$', path)
+    match = re.search(r"_(\d+)\.png$", path)
     if match:
         return int(match.group(1))
     # Fallback: try to extract any number from the filename
-    match = re.search(r'(\d+)', Path(path).stem)
+    match = re.search(r"(\d+)", Path(path).stem)
     if match:
         return int(match.group(1))
     return 0  # Default to 0 if no number found
@@ -69,7 +69,7 @@ class USCFrankaFrameLoader:
         # Rotate 90 degrees clockwise
         frame = np.rot90(frame, k=-1)
         # Ensure the array is contiguous for efficient processing
-        if not frame.flags['C_CONTIGUOUS']:
+        if not frame.flags["C_CONTIGUOUS"]:
             frame = np.ascontiguousarray(frame)
         return frame
 
@@ -146,6 +146,3 @@ def load_usc_franka_policy_ranking_dataset(
 
     print(f"Loaded {total} trajectories from {len(task_data)} tasks in USC Franka Policy Ranking dataset")
     return task_data
-
-
-

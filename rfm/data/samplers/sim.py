@@ -75,9 +75,9 @@ class SimSampler(RFMBaseSampler):
         # Strategy selection with rebalancing on failure
         strategies = []
         if self.similarity_strategy_ratio[0] > 0:
-            strategies.append((DataGenStrat.REWIND_SAME_TASK, self.similarity_strategy_ratio[0]))
+            strategies.append((DataGenStrat.REWOUND, self.similarity_strategy_ratio[0]))
         if self._has_suboptimal and len(self.similarity_strategy_ratio) > 1 and self.similarity_strategy_ratio[1] > 0:
-            strategies.append((DataGenStrat.SUBOPTIMAL_SAME_TASK, self.similarity_strategy_ratio[1]))
+            strategies.append((DataGenStrat.SUBOPTIMAL, self.similarity_strategy_ratio[1]))
         if (
             self._has_paired_human_robot
             and len(self.similarity_strategy_ratio) > 2
@@ -124,9 +124,9 @@ class SimSampler(RFMBaseSampler):
                     break
 
             # Execute selected strategy
-            if selected_strategy == DataGenStrat.REWIND_SAME_TASK:
+            if selected_strategy == DataGenStrat.REWOUND:
                 result = self._get_traj_dicts_for_rewind(ref_traj)
-            elif selected_strategy == DataGenStrat.SUBOPTIMAL_SAME_TASK:
+            elif selected_strategy == DataGenStrat.SUBOPTIMAL:
                 result = self._get_traj_dicts_for_suboptimal(ref_traj)
             elif selected_strategy == DataGenStrat.PAIRED_HUMAN_ROBOT:
                 result = self._get_traj_dicts_for_paired_human_robot(ref_traj)

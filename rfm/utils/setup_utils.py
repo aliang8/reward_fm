@@ -364,12 +364,16 @@ def setup_model_and_processor(
                     after_progress_head = model.progress_head[0].weight
 
                 rank_0_print(f"Before: {before.shape}, {before.sum()} | After: {after.shape}, {after.sum()}")
-                rank_0_print(f"Before progress head: {before_progress_head.shape}, {before_progress_head.sum()} | After progress head: {after_progress_head.shape}, {after_progress_head.sum()}")
+                rank_0_print(
+                    f"Before progress head: {before_progress_head.shape}, {before_progress_head.sum()} | After progress head: {after_progress_head.shape}, {after_progress_head.sum()}"
+                )
                 # check that before and after are different
                 if torch.allclose(before, after):
                     rank_0_print("Before and after are the same! Check if you loaded the pretrained model correctly")
                 if torch.allclose(before_progress_head, after_progress_head):
-                    rank_0_print("Before and after progress head are the same! Check if you loaded the pretrained model correctly")
+                    rank_0_print(
+                        "Before and after progress head are the same! Check if you loaded the pretrained model correctly"
+                    )
 
     # elif "rewind_transformer" in cfg.base_model_id or "rewind_scale_transformer" in cfg.base_model_id:
     elif "rewind" in cfg.base_model_id:

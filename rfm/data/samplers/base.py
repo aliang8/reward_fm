@@ -275,9 +275,24 @@ class RFMBaseSampler:
             return None
 
         other_task = random.choice(candidate_tasks)
+        
+        # Get embeddings_path and lang_vector from a random trajectory with the other_task
+        other_task_indices = self.optimal_by_task.get(other_task, [])
+        if not other_task_indices:
+            return None
+        
+        other_task_idx = random.choice(other_task_indices)
+        other_task_traj = self.dataset[other_task_idx]
+        
         # Create a copy of the trajectory with the task changed
+        # Use embeddings_path and lang_vector from the other_task trajectory
         new_traj = ref_traj.copy()
         new_traj["task"] = other_task
+        # Get embeddings_path and lang_vector from a random trajectory with the other_task
+        if "embeddings_path" in other_task_traj:
+            new_traj["embeddings_path"] = other_task_traj["embeddings_path"]
+        if "lang_vector" in other_task_traj:
+            new_traj["lang_vector"] = other_task_traj["lang_vector"]
         return new_traj
 
     def _get_paired_human_robot_traj(self, ref_traj: dict) -> dict | None:
@@ -414,7 +429,7 @@ class RFMBaseSampler:
                 end_idx=end_idx,
                 frame_indices=indices,
                 progress_pred_type=self.config.progress_pred_type,
-                success_cutoff=None if subsample_strategy == "successful" else success_cutoff,
+                success_cutoff=success_cutoff,
             )
 
             # Handle reverse_progress strategy: reverse both frames and progress

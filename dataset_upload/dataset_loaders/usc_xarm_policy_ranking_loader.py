@@ -36,6 +36,7 @@ QUALITY_LABEL_MAP = {
     "failure": "failure",
 }
 
+
 class USCXArmFrameLoader:
     """Lazy loader that stitches RGB frames from timestep pickle files."""
 
@@ -67,15 +68,15 @@ class USCXArmFrameLoader:
                 frame = (frame * scale).astype(np.uint8)
             else:
                 frame = frame.astype(np.uint8, copy=False)
-        
+
         # Convert BGR to RGB (frames from pickle files are stored as BGR)
         if frame.shape[2] == 3:
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        
+
         # Ensure the array is contiguous for efficient processing
-        if not frame.flags['C_CONTIGUOUS']:
+        if not frame.flags["C_CONTIGUOUS"]:
             frame = np.ascontiguousarray(frame)
-        
+
         return frame
 
     def __call__(self) -> np.ndarray:
@@ -161,5 +162,3 @@ def load_usc_xarm_policy_ranking_dataset(
 
     print(f"Loaded {total} trajectories from {len(task_data)} tasks in USC xArm Policy Ranking dataset")
     return task_data
-
-

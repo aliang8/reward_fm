@@ -73,27 +73,25 @@ def _default_task_description(task_key: str) -> str:
 
 def _parse_video_metadata(video_filename: str) -> tuple[str, str, str]:
     """Parse video filename to extract task, optimality, and demo_idx.
-    
+
     Expected format: {task}_{optimality}_{demo_idx}.mp4
     Example: pick_blue_cup_success_1.mp4
     """
     # Remove .mp4 extension
     name_without_ext = video_filename.replace(".mp4", "")
     parts = name_without_ext.split("_")
-    
+
     if len(parts) < 3:
         raise ValueError(f"Unexpected video filename format: {video_filename}")
-    
+
     demo_idx = parts[-1]
     optimality_key = parts[-2].lower()
     task_key = "_".join(parts[:-2])
-    
+
     return task_key, optimality_key, demo_idx
 
 
-def load_koch_arm_ut_dallas_dataset(
-    dataset_path: str, max_trajectories: int | None = None
-) -> dict[str, list[dict]]:
+def load_koch_arm_ut_dallas_dataset(dataset_path: str, max_trajectories: int | None = None) -> dict[str, list[dict]]:
     """Load Koch Arm UT Dallas trajectories grouped by language task."""
 
     root = Path(dataset_path).expanduser()
@@ -143,4 +141,3 @@ def load_koch_arm_ut_dallas_dataset(
 
     print(f"Loaded {total} trajectories from {len(task_data)} tasks in Koch Arm UT Dallas dataset")
     return task_data
-

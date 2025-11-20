@@ -51,11 +51,7 @@ class ProgressDefaultSampler(RFMBaseSampler):
 
         sample_indices = []
         for i in trajectories_to_process:
-            sample_indices.append({
-                "traj_idx": i,
-                "video_path": self.dataset[i]["frames"],
-                "id": self.dataset[i]["id"]
-            })
+            sample_indices.append({"traj_idx": i, "video_path": self.dataset[i]["frames"], "id": self.dataset[i]["id"]})
         return sample_indices
 
     def _generate_sample_from_indices(self, sample_idx_info: dict) -> ProgressSample:

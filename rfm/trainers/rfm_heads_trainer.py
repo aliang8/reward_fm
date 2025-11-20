@@ -608,7 +608,14 @@ class RFMHeadsTrainer(Trainer):
                         target_progress = self.accelerator.gather_for_metrics(progress_samples["target_progress"])
 
                         # Gather metadata fields
-                        metadata_fields = ["task", "data_source", "data_gen_strategy", "quality_labels", "metadata", "partial_success"]
+                        metadata_fields = [
+                            "task",
+                            "data_source",
+                            "data_gen_strategy",
+                            "quality_labels",
+                            "metadata",
+                            "partial_success",
+                        ]
                         gathered_metadata_dict = {}
 
                         if dist.is_initialized():
@@ -823,7 +830,7 @@ class RFMHeadsTrainer(Trainer):
                             first_group = next(iter(task_groups.values()))
                             if first_group and "partial_success" in first_group[0]:
                                 is_roboarena = True
-                        
+
                         data = []
                         if is_roboarena:
                             # RoboArena visualization: show partial vs predicted rewards
@@ -849,7 +856,7 @@ class RFMHeadsTrainer(Trainer):
                                 data.append([task, quality_to_rews])
                             columns = ["task", "quality_and_rews"]
                             table_name = f"{ds_name}/policy_ranking_samples"
-                        
+
                         self.logger.log_table(
                             table_name,
                             data=data,

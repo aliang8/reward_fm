@@ -46,16 +46,25 @@ class ProgressSampler(RFMBaseSampler):
         # [successful, rewind, different_task, subsequence, reverse_progress, different_task_instruction]
         strategies = [
             (DataGenStrat.SUCCESSFUL, self.config.progress_strategy_ratio[0]),
-            (DataGenStrat.REWIND_SAME_TASK, self.config.progress_strategy_ratio[1]),
-            (DataGenStrat.DIFFERENT_TASK_INSTRUCTION, self.config.progress_strategy_ratio[2] if len(self.config.progress_strategy_ratio) > 2 else 0.0),
-            (DataGenStrat.SUBSEQUENCE, self.config.progress_strategy_ratio[3] if len(self.config.progress_strategy_ratio) > 3 else 0.0),
-            (DataGenStrat.REVERSE_PROGRESS, self.config.progress_strategy_ratio[4] if len(self.config.progress_strategy_ratio) > 4 else 0.0),
+            (DataGenStrat.REWOUND, self.config.progress_strategy_ratio[1]),
+            (
+                DataGenStrat.DIFFERENT_TASK_INSTRUCTION,
+                self.config.progress_strategy_ratio[2] if len(self.config.progress_strategy_ratio) > 2 else 0.0,
+            ),
+            (
+                DataGenStrat.SUBSEQUENCE,
+                self.config.progress_strategy_ratio[3] if len(self.config.progress_strategy_ratio) > 3 else 0.0,
+            ),
+            (
+                DataGenStrat.REVERSE_PROGRESS,
+                self.config.progress_strategy_ratio[4] if len(self.config.progress_strategy_ratio) > 4 else 0.0,
+            ),
         ]
 
         if self.config.pairwise_progress:
             # remove rewind same task strategy for pairwise progress
             strategies[1] = (
-                DataGenStrat.REWIND_SAME_TASK,
+                DataGenStrat.REWOUND,
                 0.0,
             )
 
@@ -104,7 +113,7 @@ class ProgressSampler(RFMBaseSampler):
                 # Reverse progress strategy: use original trajectory, will be processed with "reverse_progress" subsample_strategy
                 processed_traj = traj
                 subsample_strategy = "reverse_progress"
-            elif selected_strategy == DataGenStrat.REWIND_SAME_TASK:
+            elif selected_strategy == DataGenStrat.REWOUND:
                 processed_traj = self._get_rewound_traj(traj)
                 subsample_strategy = None  # Rewound trajectories are already processed
             elif selected_strategy == DataGenStrat.DIFFERENT_TASK_INSTRUCTION:

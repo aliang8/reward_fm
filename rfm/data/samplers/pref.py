@@ -247,9 +247,9 @@ class PrefSampler(RFMBaseSampler):
         # Strategy selection with rebalancing on failure
         strategies = []
         if self.preference_strategy_ratio[0] > 0:
-            strategies.append((DataGenStrat.REWIND_SAME_TASK, self.preference_strategy_ratio[0]))
+            strategies.append((DataGenStrat.REWOUND, self.preference_strategy_ratio[0]))
         if self._has_suboptimal and self.preference_strategy_ratio[1] > 0:
-            strategies.append((DataGenStrat.SUBOPTIMAL_SAME_TASK, self.preference_strategy_ratio[1]))
+            strategies.append((DataGenStrat.SUBOPTIMAL, self.preference_strategy_ratio[1]))
         if self.preference_strategy_ratio[2] > 0:
             strategies.append((DataGenStrat.DIFFERENT_TASK, self.preference_strategy_ratio[2]))
         if len(self.preference_strategy_ratio) > 3 and self.preference_strategy_ratio[3] > 0:
@@ -291,13 +291,13 @@ class PrefSampler(RFMBaseSampler):
             # Execute selected strategy with retry logic
             max_retries = 3  # Number of retry attempts for sampling
 
-            if selected_strategy == DataGenStrat.REWIND_SAME_TASK:
+            if selected_strategy == DataGenStrat.REWOUND:
                 rejected_traj = None
                 for _ in range(max_retries):
                     rejected_traj = self._get_rewound_traj(chosen_traj)
                     if rejected_traj is not None:
                         break
-            elif selected_strategy == DataGenStrat.SUBOPTIMAL_SAME_TASK:
+            elif selected_strategy == DataGenStrat.SUBOPTIMAL:
                 rejected_traj = None
                 for _ in range(max_retries):
                     rejected_traj = self._get_same_task_suboptimal(chosen_traj)

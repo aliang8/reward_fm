@@ -383,7 +383,7 @@ class RFMBaseSampler:
                 progress_pred_type=self.config.progress_pred_type,
                 success_cutoff=None if subsample_strategy == "successful" else success_cutoff,
             )
-            
+
             # Handle reverse_progress strategy: reverse both frames and progress
             if subsample_strategy == "reverse_progress":
                 # Reverse the frames/embeddings along the time dimension (first dimension)
@@ -393,7 +393,7 @@ class RFMBaseSampler:
                     subsampled = np.flip(subsampled, axis=0)
                 # Reverse the progress list
                 progress = list(reversed(progress))
-            
+
             metadata = {
                 "start_idx": start_idx,
                 "end_idx": end_idx,

@@ -21,7 +21,7 @@ def should_compute_progress(quality_label: str, data_gen_strategy: str, data_sou
     """
     Check if progress should be computed for a trajectory.
 
-    Includes if it is successful, rewound, rewind_same_task, or different_task,
+    Includes if it is successful or rewound
     but NOT suboptimal or failure. Also masks out progress if data_source is in preference_only category.
 
     Args:
@@ -39,12 +39,7 @@ def should_compute_progress(quality_label: str, data_gen_strategy: str, data_sou
     if quality_label in ["suboptimal", "failure"]:
         return 0.0
 
-    if (
-        quality_label == "successful"
-        or quality_label == "rewound"
-        or data_gen_strategy == "rewind_same_task"
-        or data_gen_strategy == "different_task"
-    ):
+    if quality_label == "successful" or quality_label == "rewound":
         return 1.0
 
     return 0.0
@@ -301,7 +296,7 @@ class RFMBatchCollator(BaseCollator):
             video_field, content_extras = self._prepare_frames_for_conversation(frames, prefix="tmp_progress")
 
             # Create conversation for progress evaluation
-            prompt = f"For the task '{sample.trajectory.task}', evaluate the progress shown in this trajectory video. Assess how well the trajectory demonstrates completion of the task at each frame."
+            prompt = f"The task for the robot is '{sample.trajectory.task}'. Given the trajectory video, predict the task progress at each frame, how far along the robot is towards completing the task, a float between 0 and 1, where 0 is the starting state and 1 is when the task is completed. If the robot is not performing the same task, predict 0 progress."
 
             # Build content list
             content_list = [{"type": "text", "text": prompt}]

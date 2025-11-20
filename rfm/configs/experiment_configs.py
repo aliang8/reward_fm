@@ -143,6 +143,13 @@ class DataConfig:
             "This avoids video encoding overhead and works for both SmolVLM and Qwen models."
         },
     )
+    task_instruction_same_source_prob: float = field(
+        default=0.5,
+        metadata={
+            "help": "Probability of sampling a different task instruction from the same data source "
+            "when generating negative instructions. Remaining probability samples across all sources."
+        },
+    )
     shuffle_progress_frames: bool = field(
         default=False,
         metadata={

@@ -71,6 +71,26 @@ class RFMBaseSampler:
         # Build paired_human_robot_by_task from task_indices after concatenation
         self._build_paired_human_robot_index()
 
+        # Build mapping from data source -> available task instructions
+        self._build_tasks_by_data_source()
+
+    def _build_tasks_by_data_source(self):
+        """Cache mapping from data_source to available task instructions."""
+        self.tasks_by_data_source: dict[str, list[str]] = {}
+
+        all_tasks = self.dataset["task"]
+        all_sources = self.dataset["data_source"]
+
+        source_to_tasks: dict[str, set[str]] = {}
+        for task, source in zip(all_tasks, all_sources):
+            if task is None or source is None:
+                continue
+            if source not in source_to_tasks:
+                source_to_tasks[source] = set()
+            source_to_tasks[source].add(task)
+
+        self.tasks_by_data_source = {source: list(tasks) for source, tasks in source_to_tasks.items()}
+
     def _generate_sample(self, item):
         """Generate a sample from an item.
 
@@ -237,11 +257,24 @@ class RFMBaseSampler:
         Returns:
             Trajectory dict with different task instruction or None if not available
         """
-        other_tasks = [task for task in self.optimal_by_task.keys() if task != ref_traj["task"]]
-        if not other_tasks:
+        same_source_prob = self.config.task_instruction_same_source_prob
+        data_source = ref_traj.get("data_source")
+        candidate_tasks = []
+
+        if (
+            data_source
+            and data_source in self.tasks_by_data_source
+            and random.random() < same_source_prob
+        ):
+            candidate_tasks = [task for task in self.tasks_by_data_source[data_source] if task != ref_traj["task"]]
+
+        if not candidate_tasks:
+            candidate_tasks = [task for task in self.optimal_by_task.keys() if task != ref_traj["task"]]
+
+        if not candidate_tasks:
             return None
 
-        other_task = random.choice(other_tasks)
+        other_task = random.choice(candidate_tasks)
         # Create a copy of the trajectory with the task changed
         new_traj = ref_traj.copy()
         new_traj["task"] = other_task

@@ -242,6 +242,7 @@ class CustomEvaluationConfig:
     policy_ranking: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
     confusion_matrix: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
     reward_alignment: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
+    quality_preference: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
 
 
 @dataclass

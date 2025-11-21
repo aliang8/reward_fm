@@ -9,6 +9,7 @@ from itertools import combinations, product
 from pathlib import Path
 from typing import Any
 import yaml
+from collections import defaultdict
 
 from rfm.configs.eval_configs import EvalServerConfig, EvaluationConfig
 from rfm.configs.experiment_configs import DataConfig
@@ -30,6 +31,8 @@ def load_results(results_path: str) -> list[dict[str, Any]]:
 def compute_eval_metrics(eval_type: str, results: list[dict[str, Any]], progress_pred_type: str):
     if eval_type == "success_failure_preference" or eval_type == "success_failure":
         return run_success_failure_eval(results, progress_pred_type)
+    elif eval_type == "quality_preference":
+        return run_quality_preference_eval(results, progress_pred_type)
     elif eval_type == "reward_alignment_progress" or eval_type == "reward_alignment":
         return run_reward_alignment_eval_per_trajectory(results, progress_pred_type)
     elif eval_type == "confusion_matrix_progress" or eval_type == "confusion_matrix":
@@ -74,6 +77,83 @@ def run_success_failure_eval(results: list[dict[str, Any]], progress_pred_type: 
         "num_skipped": pref_acc_sf["num_skipped"],
         "num_samples": len(results),
     }
+
+
+def run_quality_preference_eval(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:
+    """Run quality_preference evaluation analysis.
+    
+    Groups results by task and quality labels, computes preference accuracy per group and aggregate.
+    Returns metrics, task_groups, and task_details similar to policy_ranking.
+    """    
+
+    # Convert preference_pred logits to binary predictions for compute_preference_accuracy
+    # preference_pred is logits, preference_labels is the ground truth label
+    for r in results:
+        pred = r.get("preference_pred")
+        label = r.get("preference_labels")
+        if pred is not None and label is not None:
+            # Convert logit to binary prediction (1 if pred > 0, else 0)
+            if isinstance(pred, np.ndarray):
+                pred = float(pred.item()) if pred.size == 1 else float(pred[0])
+            binary_pred = 1.0 if pred > 0 else 0.0
+            if isinstance(label, np.ndarray):
+                label = float(label.item()) if label.size == 1 else float(label[0])
+            r["predicted_preference"] = binary_pred
+            r["preference_label"] = float(label)
+    
+    # Group results by task
+    task_groups = defaultdict(list)
+    for r in results:
+        task = r["task"]
+        task_groups[task].append(r)
+    
+    # Compute preference accuracy per task group
+    task_details = {}
+    all_correct = 0
+    all_total = 0
+    
+    for task, task_results in task_groups.items():
+        # Group by quality label combinations
+        quality_combos = defaultdict(list)
+        for r in task_results:
+            chosen_meta = r["metadata"].get("chosen_metadata", {}) or {}
+            rejected_meta = r["metadata"].get("rejected_metadata", {}) or {}
+            chosen_quality = chosen_meta["quality_label"]
+            rejected_quality = rejected_meta["quality_label"]
+            
+            # Create a key for this quality pair
+            combo_key = tuple(sorted([chosen_quality, rejected_quality]))
+            quality_combos[combo_key].append(r)
+        
+        # Compute preference accuracy for this task
+        pref_acc_task = compute_preference_accuracy(task_results)
+        pref_acc = pref_acc_task["preference_accuracy"]
+        
+        # Compute accuracy per quality combination
+        quality_accs = {}
+        for combo_key, combo_results in quality_combos.items():
+            pref_acc_combo = compute_preference_accuracy(combo_results)
+            combo_acc = pref_acc_combo["preference_accuracy"]
+            quality_accs[f"{combo_key[0]}_vs_{combo_key[1]}"] = combo_acc
+        
+        task_details[task] = {
+            "preference_accuracy": pref_acc,
+            "num_correct": pref_acc_task["num_correct"],
+            "num_total": pref_acc_task["num_total"],
+            "quality_accuracies": quality_accs,
+        }
+        
+        all_correct += pref_acc_task["num_correct"]
+        all_total += pref_acc_task["num_total"]
+    
+    # Aggregate metrics
+    aggregate_acc = all_correct / all_total if all_total > 0 else 0.0
+    
+    metrics = {
+        "preference_accuracy": aggregate_acc,
+    }
+    
+    return metrics, task_groups, task_details
 
 
 def run_reward_alignment_eval(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:

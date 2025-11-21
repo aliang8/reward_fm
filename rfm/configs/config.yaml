@@ -120,6 +120,8 @@ custom_eval:
     - aliangdw_metaworld_metaworld_eval
   reward_alignment: 
     - aliangdw_metaworld_metaworld_eval
+  quality_preference:
+    - aliangdw_metaworld_metaworld_eval
 
 # =====================================================================================
 # Training Configuration

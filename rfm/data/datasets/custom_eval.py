@@ -25,6 +25,7 @@ class CustomEvalDataset(BaseDataset):
             "reward_alignment": RewardAlignmentSampler,
             "policy_ranking": ProgressDefaultSampler,
             "success_failure": PairedSuccessFailureSampler,
+            "quality_preference": QualityPreferenceSampler,
         }
 
         if sampler_type not in sampler_cls:

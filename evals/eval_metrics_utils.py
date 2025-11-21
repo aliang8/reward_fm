@@ -50,7 +50,7 @@ def compute_preference_accuracy(results: list[dict[str, Any]]) -> dict[str, Any]
         if pred == label:
             correct += 1
         total += 1
-    acc = (correct / total) if total > 0 else None
+    acc = (correct / total) if total > 0 else 0.0
     return {
         "preference_accuracy": acc,
         "num_correct": correct,

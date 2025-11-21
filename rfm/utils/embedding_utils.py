@@ -37,7 +37,7 @@ def compute_video_embeddings(
     # Process frames in batches
     num_frames = frames_array.shape[0]
 
-    autocast_context = torch.cuda.amp.autocast(enabled=use_autocast and torch.cuda.is_available())
+    autocast_context = torch.amp.autocast(enabled=use_autocast and torch.cuda.is_available())
 
     with torch.no_grad(), autocast_context:
         for i in tqdm(range(0, num_frames, batch_size), disable=not use_tqdm):

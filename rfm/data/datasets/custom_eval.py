@@ -24,8 +24,8 @@ class CustomEvalDataset(BaseDataset):
             "confusion_matrix": ConfusionMatrixSampler,
             "reward_alignment": RewardAlignmentSampler,
             "policy_ranking": ProgressDefaultSampler,
-            "success_failure": PairedSuccessFailureSampler,
             "quality_preference": QualityPreferenceSampler,
+            "quality_preference_roboarena": RoboArenaQualityPreferenceSampler,
         }
 
         if sampler_type not in sampler_cls:

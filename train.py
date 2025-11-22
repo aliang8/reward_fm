@@ -10,14 +10,28 @@ import yaml
 from rich import print as rprint
 from rich.console import Console
 from rich.panel import Panel
+from omegaconf import OmegaConf, DictConfig
+from hydra import compose, initialize
+from hydra.core.global_hydra import GlobalHydra
+from hydra.core.config_store import ConfigStore
+from hydra import main as hydra_main
 
 from peft import prepare_model_for_kbit_training
-from rfm.configs.experiment_configs import ExperimentConfig
+from rfm.configs.experiment_configs import (
+    ExperimentConfig,
+    ModelConfig,
+    PEFTConfig,
+    DataConfig,
+    TrainingConfig,
+    LossConfig,
+    LoggingConfig,
+    SaveBestConfig,
+    CustomEvaluationConfig,
+)
 from rfm.trainers import ReWiNDTrainer, RFMHeadsTrainer, RFMVQATrainer
 from rfm.data.datasets.helpers import show_available_datasets
 from rfm.utils.distributed import is_rank_0, rank_0_print
 from rfm.utils.timer import _timer
-from rfm.utils.parser import parse_multiple
 from rfm.utils.save import SaveBestCallback
 from rfm.utils.setup_utils import (
     create_training_arguments,
@@ -32,6 +46,18 @@ import datasets
 datasets.logging.set_verbosity_error()
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 torch.autograd.set_detect_anomaly(True)
+
+# Register structured configs with Hydra
+cs = ConfigStore.instance()
+cs.store(name="base_config", node=ExperimentConfig)
+cs.store(group="model", name="model_config", node=ModelConfig)
+cs.store(group="peft", name="peft_config", node=PEFTConfig)
+cs.store(group="data", name="data_config", node=DataConfig)
+cs.store(group="training", name="training_config", node=TrainingConfig)
+cs.store(group="loss", name="loss_config", node=LossConfig)
+cs.store(group="logging", name="logging_config", node=LoggingConfig)
+cs.store(group="logging/save_best", name="save_best_config", node=SaveBestConfig)
+cs.store(group="custom_eval", name="custom_eval_config", node=CustomEvaluationConfig)
 
 
 def train(cfg: ExperimentConfig):
@@ -230,18 +256,32 @@ def display_config(cfg: ExperimentConfig):
     console.print(cfg)
 
 
-def main(cfg: ExperimentConfig):
-    # Display the configuration in a nice Rich format
-    display_config(cfg)
+def convert_hydra_to_dataclass(cfg: DictConfig) -> ExperimentConfig:
+    """Convert Hydra DictConfig to ExperimentConfig dataclass."""
+    # Convert to dict and then to dataclass
+    # Use structured config if available, otherwise convert manually
+    if OmegaConf.is_struct(cfg):
+        cfg_dict = OmegaConf.to_container(cfg, resolve=True, structured_config_mode="convert")
+    else:
+        cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+    return ExperimentConfig(**cfg_dict)
 
-    if cfg.mode == "train":
+
+@hydra_main(version_base=None, config_path="rfm/configs", config_name="config")
+def main(cfg: DictConfig):
+    # Convert Hydra config to dataclass
+    exp_cfg = convert_hydra_to_dataclass(cfg)
+
+    # Display the configuration in a nice Rich format
+    display_config(exp_cfg)
+
+    if exp_cfg.mode == "train":
         if is_rank_0():
             rprint(Panel.fit("🚀 Starting RFM Training", style="bold green"))
-        train(cfg)
+        train(exp_cfg)
     else:
-        raise ValueError(f"Unknown mode: {cfg.mode}. Must be 'train' or 'evaluate'")
+        raise ValueError(f"Unknown mode: {exp_cfg.mode}. Must be 'train' or 'evaluate'")
 
 
 if __name__ == "__main__":
-    cfg = parse_multiple(ExperimentConfig)
-    main(cfg)
+    main()

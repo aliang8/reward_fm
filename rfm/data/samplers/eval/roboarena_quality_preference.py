@@ -6,7 +6,7 @@ from rfm.utils.distributed import rank_0_print
 
 class RoboArenaQualityPreferenceSampler(BaseQualityPreferenceSampler):
     """Dataset that generates preference samples by pairing trajectories with different partial_rewards for the same task.
-    
+
     For RoboArena dataset, pairs trajectories from the same task where the chosen trajectory
     has a higher partial_reward (partial_success) than the rejected trajectory.
     """
@@ -31,7 +31,9 @@ class RoboArenaQualityPreferenceSampler(BaseQualityPreferenceSampler):
 
         # Generate all possible sample indices upfront (not the actual samples)
         self.sample_indices = self._generate_all_sample_indices()
-        rank_0_print(f"Generated {len(self.sample_indices)} RoboArena quality preference sample indices", verbose=self.verbose)
+        rank_0_print(
+            f"Generated {len(self.sample_indices)} RoboArena quality preference sample indices", verbose=self.verbose
+        )
 
     def _generate_all_sample_indices(self) -> list[dict]:
         """Generate all possible quality preference sample indices based on partial_reward (partial_success)."""
@@ -48,8 +50,10 @@ class RoboArenaQualityPreferenceSampler(BaseQualityPreferenceSampler):
         for traj_idx in self.robot_trajectories:
             # Use cached arrays for efficient access
             task = self._cached_tasks[traj_idx]
-            partial_success = self._cached_partial_success[traj_idx] if traj_idx < len(self._cached_partial_success) else None
-            
+            partial_success = (
+                self._cached_partial_success[traj_idx] if traj_idx < len(self._cached_partial_success) else None
+            )
+
             # Ensure partial_success exists
             if partial_success is None:
                 rank_0_print(
@@ -108,4 +112,3 @@ class RoboArenaQualityPreferenceSampler(BaseQualityPreferenceSampler):
                     })
 
         return sample_indices
-

@@ -13,7 +13,7 @@ from rfm.data.datasets.helpers import (
 )
 from rfm.data.dataset_types import Trajectory
 from rfm.data.datasets.helpers import create_rewind_trajectory, load_embeddings_from_path
-from rfm.data.datasets.base import PAIRED_DATA_SOURCES
+from rfm.data.dataset_category import DATA_SOURCE_MAP
 from rfm.utils.distributed import rank_0_print
 
 
@@ -116,7 +116,7 @@ class RFMBaseSampler:
 
         # Filter indices for paired data sources
         paired_data_source_indices = set()
-        for data_source in PAIRED_DATA_SOURCES:
+        for data_source in DATA_SOURCE_MAP["paired"]:
             if data_source in self.source_indices:
                 paired_data_source_indices.update(self.source_indices[data_source])
 
@@ -261,11 +261,7 @@ class RFMBaseSampler:
         data_source = ref_traj.get("data_source")
         candidate_tasks = []
 
-        if (
-            data_source
-            and data_source in self.tasks_by_data_source
-            and random.random() < same_source_prob
-        ):
+        if data_source and data_source in self.tasks_by_data_source and random.random() < same_source_prob:
             candidate_tasks = [task for task in self.tasks_by_data_source[data_source] if task != ref_traj["task"]]
 
         if not candidate_tasks:
@@ -275,15 +271,15 @@ class RFMBaseSampler:
             return None
 
         other_task = random.choice(candidate_tasks)
-        
+
         # Get embeddings_path and lang_vector from a random trajectory with the other_task
         other_task_indices = self.optimal_by_task.get(other_task, [])
         if not other_task_indices:
             return None
-        
+
         other_task_idx = random.choice(other_task_indices)
         other_task_traj = self.dataset[other_task_idx]
-        
+
         # Create a copy of the trajectory with the task changed
         # Use embeddings_path and lang_vector from the other_task trajectory
         new_traj = ref_traj.copy()

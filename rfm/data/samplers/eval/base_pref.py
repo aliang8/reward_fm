@@ -14,7 +14,7 @@ from rfm.data.datasets.helpers import (
 
 class BaseQualityPreferenceSampler(RFMBaseSampler):
     """Base class for quality preference samplers.
-    
+
     Subclasses should implement `_generate_all_sample_indices` to define how
     trajectories are paired. This base class provides the common `_generate_sample_from_indices`
     method that loads and processes the trajectories.
@@ -45,7 +45,11 @@ class BaseQualityPreferenceSampler(RFMBaseSampler):
             chosen_video_embeddings = embeddings["video_embeddings"]
             chosen_text_embedding = embeddings["text_embedding"]
             data = chosen_video_embeddings
-            total_frames = chosen_video_embeddings.shape[0] if hasattr(chosen_video_embeddings, "shape") else len(chosen_video_embeddings)
+            total_frames = (
+                chosen_video_embeddings.shape[0]
+                if hasattr(chosen_video_embeddings, "shape")
+                else len(chosen_video_embeddings)
+            )
             use_embeddings = True
         else:
             chosen_frames = load_frames_from_npz(chosen_traj["frames"])
@@ -84,7 +88,11 @@ class BaseQualityPreferenceSampler(RFMBaseSampler):
             rejected_video_embeddings = embeddings["video_embeddings"]
             rejected_text_embedding = embeddings["text_embedding"]
             data = rejected_video_embeddings
-            total_frames = rejected_video_embeddings.shape[0] if hasattr(rejected_video_embeddings, "shape") else len(rejected_video_embeddings)
+            total_frames = (
+                rejected_video_embeddings.shape[0]
+                if hasattr(rejected_video_embeddings, "shape")
+                else len(rejected_video_embeddings)
+            )
             use_embeddings = True
         else:
             rejected_frames = load_frames_from_npz(rejected_traj["frames"])
@@ -167,4 +175,3 @@ class BaseQualityPreferenceSampler(RFMBaseSampler):
 
     def __getitem__(self, idx):
         return self._generate_sample_from_indices(self.sample_indices[idx])
-

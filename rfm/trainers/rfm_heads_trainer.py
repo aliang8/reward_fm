@@ -913,7 +913,7 @@ class RFMHeadsTrainer(Trainer):
                                 ])
                             columns = ["task", "preference_accuracy", "quality_accuracies", "num_correct/total"]
                             table_name = f"{ds_name}/quality_preference_samples"
-                        
+
                         self.logger.log_table(
                             table_name,
                             data=data,

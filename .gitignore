@@ -54,3 +54,4 @@ unsloth_compiled_cache/*
 *.txt
 slurm_logs/*
 xarm_policy_ranking/*
+outputs/*

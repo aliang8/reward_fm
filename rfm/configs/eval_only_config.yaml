@@ -1,6 +1,12 @@
+# @package _global_
+
 # Evaluation Only Configuration for RFM
 # This config is used specifically for running evaluations on existing checkpoints
 # Used by run_eval_only.py
+
+defaults:
+  - eval_only_config
+  - _self_
 
 # Model path (required) - HuggingFace model ID or local checkpoint path
 #model_path: "aliangdw/rfm_model"  # HuggingFace model ID

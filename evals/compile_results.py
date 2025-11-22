@@ -59,10 +59,10 @@ def compute_eval_metrics(eval_type: str, results: list[dict[str, Any]], progress
 
 def run_quality_preference_eval(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:
     """Run quality_preference evaluation analysis.
-    
+
     Groups results by task and quality labels, computes preference accuracy per group and aggregate.
     Returns metrics, task_groups, and task_details similar to policy_ranking.
-    """    
+    """
 
     # Convert preference_pred logits to binary predictions for compute_preference_accuracy
     # preference_pred is logits, preference_labels is the ground truth label
@@ -78,18 +78,18 @@ def run_quality_preference_eval(results: list[dict[str, Any]], progress_pred_typ
                 label = float(label.item()) if label.size == 1 else float(label[0])
             r["predicted_preference"] = binary_pred
             r["preference_label"] = float(label)
-    
+
     # Group results by task
     task_groups = defaultdict(list)
     for r in results:
         task = r["task"]
         task_groups[task].append(r)
-    
+
     # Compute preference accuracy per task group
     task_details = {}
     all_correct = 0
     all_total = 0
-    
+
     for task, task_results in task_groups.items():
         # Group by quality label combinations
         quality_combos = defaultdict(list)
@@ -98,48 +98,48 @@ def run_quality_preference_eval(results: list[dict[str, Any]], progress_pred_typ
             rejected_meta = r["metadata"].get("rejected_metadata", {}) or {}
             chosen_quality = chosen_meta["quality_label"]
             rejected_quality = rejected_meta["quality_label"]
-            
+
             # Create a key for this quality pair
             combo_key = tuple(sorted([chosen_quality, rejected_quality]))
             quality_combos[combo_key].append(r)
-        
+
         # Compute preference accuracy for this task
         pref_acc_task = compute_preference_accuracy(task_results)
         pref_acc = pref_acc_task["preference_accuracy"]
-        
+
         # Compute accuracy per quality combination
         quality_accs = {}
         for combo_key, combo_results in quality_combos.items():
             pref_acc_combo = compute_preference_accuracy(combo_results)
             combo_acc = pref_acc_combo["preference_accuracy"]
             quality_accs[f"{combo_key[0]}_vs_{combo_key[1]}"] = combo_acc
-        
+
         task_details[task] = {
             "preference_accuracy": pref_acc,
             "num_correct": pref_acc_task["num_correct"],
             "num_total": pref_acc_task["num_total"],
             "quality_accuracies": quality_accs,
         }
-        
+
         all_correct += pref_acc_task["num_correct"]
         all_total += pref_acc_task["num_total"]
-    
+
     # Aggregate metrics
     aggregate_acc = all_correct / all_total if all_total > 0 else 0.0
-    
+
     metrics = {
         "preference_accuracy": aggregate_acc,
     }
-    
+
     return metrics, task_groups, task_details
 
 
 def run_quality_preference_eval_roboarena(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:
     """Run quality_preference evaluation analysis for RoboArena dataset.
-    
+
     Groups results by task and partial_success values, computes preference accuracy per group and aggregate.
     Returns metrics, task_groups, and task_details similar to quality_preference but using partial_success.
-    """    
+    """
 
     # Convert preference_pred logits to binary predictions for compute_preference_accuracy
     # preference_pred is logits, preference_labels is the ground truth label
@@ -155,18 +155,18 @@ def run_quality_preference_eval_roboarena(results: list[dict[str, Any]], progres
                 label = float(label.item()) if label.size == 1 else float(label[0])
             r["predicted_preference"] = binary_pred
             r["preference_label"] = float(label)
-    
+
     # Group results by task
     task_groups = defaultdict(list)
     for r in results:
         task = r["task"]
         task_groups[task].append(r)
-    
+
     # Compute preference accuracy per task group
     task_details = {}
     all_correct = 0
     all_total = 0
-    
+
     for task, task_results in task_groups.items():
         # Group by partial_success combinations
         partial_combos = defaultdict(list)
@@ -175,43 +175,43 @@ def run_quality_preference_eval_roboarena(results: list[dict[str, Any]], progres
             rejected_meta = r["metadata"].get("rejected_metadata", {}) or {}
             chosen_partial = chosen_meta.get("partial_success")
             rejected_partial = rejected_meta.get("partial_success")
-            
+
             # Skip if partial_success is missing
             if chosen_partial is None or rejected_partial is None:
                 continue
-            
+
             # Create a key for this partial_success pair (sorted for consistency)
             combo_key = tuple(sorted([float(chosen_partial), float(rejected_partial)]))
             partial_combos[combo_key].append(r)
-        
+
         # Compute preference accuracy for this task
         pref_acc_task = compute_preference_accuracy(task_results)
         pref_acc = pref_acc_task["preference_accuracy"]
-        
+
         # Compute accuracy per partial_success combination
         partial_accs = {}
         for combo_key, combo_results in partial_combos.items():
             pref_acc_combo = compute_preference_accuracy(combo_results)
             combo_acc = pref_acc_combo["preference_accuracy"]
             partial_accs[f"{combo_key[0]:.3f}_vs_{combo_key[1]:.3f}"] = combo_acc
-        
+
         task_details[task] = {
             "preference_accuracy": pref_acc,
             "num_correct": pref_acc_task["num_correct"],
             "num_total": pref_acc_task["num_total"],
             "partial_success_accuracies": partial_accs,
         }
-        
+
         all_correct += pref_acc_task["num_correct"]
         all_total += pref_acc_task["num_total"]
-    
+
     # Aggregate metrics
     aggregate_acc = all_correct / all_total if all_total > 0 else 0.0
-    
+
     metrics = {
         "preference_accuracy": aggregate_acc,
     }
-    
+
     return metrics, task_groups, task_details
 
 
@@ -564,7 +564,7 @@ def run_policy_ranking_eval_per_ranked_set(results: list[dict[str, Any]], progre
                     spearman.append(spearman_corr)
 
         avg_spearman_corr = np.mean(spearman)
-        
+
         # Compute old metric: average rewards per quality group
         avg_rewards_per_quality = {}
         quality_ranks = []
@@ -576,13 +576,13 @@ def run_policy_ranking_eval_per_ranked_set(results: list[dict[str, Any]], progre
                 avg_rewards_per_quality[q] = avg_reward
                 quality_ranks.append(quality_order[q])
                 avg_reward_values.append(avg_reward)
-        
+
         spearman_rewind = None
         if len(quality_ranks) >= 2:
             spearman_rewind = compute_spearman(quality_ranks, avg_reward_values)
             if np.isnan(spearman_rewind):
                 spearman_rewind = None
-        
+
         task_details[task] = {
             "spearman": avg_spearman_corr,
             "num_triplets": len(spearman),
@@ -671,7 +671,7 @@ def run_policy_ranking_eval_roboarena(results: list[dict[str, Any]], progress_pr
             if ps not in partial_success_to_rewards:
                 partial_success_to_rewards[ps] = []
             partial_success_to_rewards[ps].append(pr)
-        
+
         avg_rewards_per_partial_success = {}
         unique_partial_successes = []
         avg_reward_values = []
@@ -682,7 +682,7 @@ def run_policy_ranking_eval_roboarena(results: list[dict[str, Any]], progress_pr
                 avg_rewards_per_partial_success[ps] = avg_reward
                 unique_partial_successes.append(ps)
                 avg_reward_values.append(avg_reward)
-        
+
         spearman_rewind = None
         if len(unique_partial_successes) >= 2:
             spearman_rewind = compute_spearman(unique_partial_successes, avg_reward_values)

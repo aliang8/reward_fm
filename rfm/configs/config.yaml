@@ -77,8 +77,8 @@ data:
   # Data generation settings
   sample_type_ratio: [1, 0, 0]  # Ratio of preference, progress (no longer used, it's absorbed in preference if predict_pref_progress is true), and similarity samples
   dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
-  # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task], video binned no longer used
-  preference_strategy_ratio: [6, 1, 1, 0]
+  # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task]
+  preference_strategy_ratio: [6, 1, 1]
   # Tunable strategy ratios for progress generation: [successful, rewind, different_task, subsequence, reverse_progress]
   progress_strategy_ratio: [1, 6, 1, 1, 0]  # [successful, rewind, different_task, subsequence, reverse_progress]
   similarity_strategy_ratio: [1, 1, 1] # rewind, suboptimal_same_task, paired_human_robot
@@ -88,14 +88,12 @@ data:
   dataset_type: rfm
   
   data_source_weights:
-    metaworld_train: 100
+    metaworld_train: 10
 
   # Data loading settings
   dataloader_pin_memory: True
   dataloader_num_workers: 8
 
-  # Video binned dataset parameters
-  num_bins: 10
   progress_pred_type: "absolute" # "absolute" or "relative", relative is delta progress between frames
   pairwise_progress: false
 

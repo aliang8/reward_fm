@@ -729,15 +729,30 @@ def main(cfg: GenerateConfig):
             max_trajectories=cfg.output.max_trajectories,
         )
         trajectories = flatten_task_data(task_data)
-    elif "utd_koch_arm_policy_ranking" in cfg.dataset.dataset_name.lower():
-        from dataset_upload.dataset_loaders.koch_arm_ut_dallas_loader import (
-            load_koch_arm_ut_dallas_dataset,
+    elif "utd_so101_policy_ranking" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.utd_so101_loader import (
+            load_utd_so101_dataset,
         )
 
-        print(f"Loading Koch Arm UT Dallas dataset from: {cfg.dataset.dataset_path}")
-        task_data = load_koch_arm_ut_dallas_dataset(
+        print(f"Loading UTD SO101 robot dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_utd_so101_dataset(
             cfg.dataset.dataset_path,
             max_trajectories=cfg.output.max_trajectories,
+            is_robot=True,
+            data_source="utd_so101",
+        )
+        trajectories = flatten_task_data(task_data)
+    elif "utd_so101_human" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.utd_so101_loader import (
+            load_utd_so101_dataset,
+        )
+
+        print(f"Loading UTD SO101 human dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_utd_so101_dataset(
+            cfg.dataset.dataset_path,
+            max_trajectories=cfg.output.max_trajectories,
+            is_robot=False,
+            data_source="utd_so101_human",
         )
         trajectories = flatten_task_data(task_data)
     elif "soar" in cfg.dataset.dataset_name.lower():

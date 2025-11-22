@@ -1,10 +1,10 @@
 # Koch Arm UT Dallas dataset config
 dataset:
-  dataset_path: ./utd_koch_arm_policy_ranking
-  dataset_name: utd_koch_arm_policy_ranking
+  dataset_path: ./raw_data/RFM_UTD_Eval
+  dataset_name: utd_so101_policy_ranking
 
 output:
-  output_dir: ./rfm_dataset/utd_koch_arm_policy_ranking
+  output_dir: ./rfm_dataset/utd_so101_policy_ranking
   max_trajectories: -1
   max_frames: 64
   use_video: true
@@ -15,5 +15,5 @@ output:
 
 hub:
   push_to_hub: false
-  hub_repo_id: utd_koch_arm_policy_ranking
+  hub_repo_id: utd_so101_policy_ranking
 

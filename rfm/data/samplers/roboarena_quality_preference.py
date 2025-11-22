@@ -19,7 +19,7 @@ from rfm.utils.distributed import rank_0_print
 
 class RoboArenaQualityPreferenceSampler(RFMBaseSampler):
     """Dataset that generates preference samples by pairing trajectories with different partial_rewards for the same task.
-    
+
     For RoboArena dataset, pairs trajectories from the same task where the chosen trajectory
     has a higher partial_reward (partial_success) than the rejected trajectory.
     """
@@ -41,7 +41,9 @@ class RoboArenaQualityPreferenceSampler(RFMBaseSampler):
 
         # Generate all possible sample indices upfront (not the actual samples)
         self.sample_indices = self._generate_all_sample_indices()
-        rank_0_print(f"Generated {len(self.sample_indices)} RoboArena quality preference sample indices", verbose=self.verbose)
+        rank_0_print(
+            f"Generated {len(self.sample_indices)} RoboArena quality preference sample indices", verbose=self.verbose
+        )
 
     def _generate_all_sample_indices(self) -> list[dict]:
         """Generate all possible quality preference sample indices based on partial_reward (partial_success)."""
@@ -58,8 +60,10 @@ class RoboArenaQualityPreferenceSampler(RFMBaseSampler):
         for traj_idx in self.robot_trajectories:
             # Use cached arrays for efficient access
             task = self._cached_tasks[traj_idx]
-            partial_success = self._cached_partial_success[traj_idx] if traj_idx < len(self._cached_partial_success) else None
-            
+            partial_success = (
+                self._cached_partial_success[traj_idx] if traj_idx < len(self._cached_partial_success) else None
+            )
+
             # Ensure partial_success exists
             if partial_success is None:
                 rank_0_print(
@@ -144,7 +148,11 @@ class RoboArenaQualityPreferenceSampler(RFMBaseSampler):
             chosen_video_embeddings = embeddings["video_embeddings"]
             chosen_text_embedding = embeddings["text_embedding"]
             data = chosen_video_embeddings
-            total_frames = chosen_video_embeddings.shape[0] if hasattr(chosen_video_embeddings, "shape") else len(chosen_video_embeddings)
+            total_frames = (
+                chosen_video_embeddings.shape[0]
+                if hasattr(chosen_video_embeddings, "shape")
+                else len(chosen_video_embeddings)
+            )
             use_embeddings = True
         else:
             chosen_frames = load_frames_from_npz(chosen_traj["frames"])
@@ -181,7 +189,11 @@ class RoboArenaQualityPreferenceSampler(RFMBaseSampler):
             rejected_video_embeddings = embeddings["video_embeddings"]
             rejected_text_embedding = embeddings["text_embedding"]
             data = rejected_video_embeddings
-            total_frames = rejected_video_embeddings.shape[0] if hasattr(rejected_video_embeddings, "shape") else len(rejected_video_embeddings)
+            total_frames = (
+                rejected_video_embeddings.shape[0]
+                if hasattr(rejected_video_embeddings, "shape")
+                else len(rejected_video_embeddings)
+            )
             use_embeddings = True
         else:
             rejected_frames = load_frames_from_npz(rejected_traj["frames"])
@@ -259,4 +271,3 @@ class RoboArenaQualityPreferenceSampler(RFMBaseSampler):
 
     def __getitem__(self, idx):
         return self._generate_sample_from_indices(self.sample_indices[idx])
-

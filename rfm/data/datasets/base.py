@@ -5,17 +5,32 @@ import torch
 
 from datasets import Dataset, concatenate_datasets
 from rfm.data.datasets.helpers import load_dataset_success_percent
+from rfm.data.dataset_category import DATASET_MAP
 from rfm.utils.distributed import rank_0_print
 
-# Global list of data sources that contain paired human/robot trajectories
-PAIRED_DATA_SOURCES = [
-    # "ph2d",
-    "h2r",
-    "motif_rfm",
-    "rh20t_human",
-    "rh20t_robot",
-    # "rh20t"
-]
+def resolve_dataset_keys(dataset_keys: list[str], split: str) -> list[str]:
+    """
+    Resolve dataset keys through DATASET_MAP.
+
+    Args:
+        dataset_keys: List of dataset keys (e.g., ["mw", "oxe"]) or actual dataset names
+        split: Either "train" or "eval"
+
+    Returns:
+        List of resolved dataset names, combining all datasets from the keys
+    """
+    resolved_datasets = []
+    for key in dataset_keys:
+        if key in DATASET_MAP:
+            # Key found in DATASET_MAP, resolve it
+            if split in DATASET_MAP[key]:
+                resolved_datasets.extend(DATASET_MAP[key][split])
+            else:
+                rank_0_print(f"Warning: Key '{key}' found in DATASET_MAP but no '{split}' split defined. Skipping.")
+        else:
+            # Not a key, assume it's already a dataset name
+            resolved_datasets.append(key)
+    return resolved_datasets
 
 
 class BaseDataset(torch.utils.data.Dataset):
@@ -26,9 +41,13 @@ class BaseDataset(torch.utils.data.Dataset):
 
         # Choose datasets based on whether this is for evaluation or training
         if is_evaluation and config.eval_datasets:
-            self.datasets = config.eval_datasets
+            dataset_keys = config.eval_datasets
+            split = "eval"
         else:
-            self.datasets = config.train_datasets
+            dataset_keys = config.train_datasets
+            split = "train"
+
+        self.datasets = resolve_dataset_keys(dataset_keys, split)
 
         # Initialize dataset
         self.dataset = None

@@ -3,10 +3,16 @@
 Script to load an existing model checkpoint and run custom evaluations.
 
 Usage:
-    # Using command line arguments with HuggingFace model ID
+    # Using default config
+    uv run python run_eval_only.py model_path=rewardfm/ant-rfm-qwen-prog-only-images-bs12-prog-only-more-rewind
+    
+    # Override config values
     uv run python run_eval_only.py \
-        --config_path rfm/configs/eval_only_config.yaml \
-        --model_path rewardfm/ant-rfm-qwen-prog-only-images-bs12-prog-only-more-rewind
+        model_path=rewardfm/ant-rfm-qwen-prog-only-images-bs12-prog-only-more-rewind \
+        custom_eval.eval_types=[policy_ranking,reward_alignment]
+    
+    # Use a different config file
+    uv run python run_eval_only.py --config-name my_eval_config model_path=path/to/model
 """
 
 import os
@@ -18,6 +24,10 @@ import argparse
 import ast
 
 from transformers import TrainingArguments
+from omegaconf import OmegaConf, DictConfig
+from hydra import main as hydra_main
+from hydra.core.config_store import ConfigStore
+
 from rfm.configs.experiment_configs import ExperimentConfig, CustomEvaluationConfig
 from rfm.configs.eval_configs import EvalOnlyConfig
 from rfm.trainers import RFMHeadsTrainer, RFMVQATrainer
@@ -27,8 +37,11 @@ from rfm.utils.setup_utils import (
     create_training_arguments,
 )
 from rfm.utils.distributed import is_rank_0, rank_0_print
-from rfm.utils.parser import parse_multiple
 import wandb
+
+# Register structured configs with Hydra
+cs = ConfigStore.instance()
+cs.store(name="eval_only_config", node=EvalOnlyConfig)
 
 
 def load_config_from_yaml(config_path: str) -> ExperimentConfig:
@@ -160,9 +173,19 @@ def run_custom_evaluations(trainer: RFMHeadsTrainer):
     return custom_metrics
 
 
-def main():
-    # Parse EvalOnlyConfig using pyrallis (supports --config_paths and CLI overrides)
-    eval_only_cfg = parse_multiple(EvalOnlyConfig)
+def convert_hydra_to_dataclass(cfg: DictConfig) -> EvalOnlyConfig:
+    """Convert Hydra DictConfig to EvalOnlyConfig dataclass."""
+    if OmegaConf.is_struct(cfg):
+        cfg_dict = OmegaConf.to_container(cfg, resolve=True, structured_config_mode="convert")
+    else:
+        cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+    return EvalOnlyConfig(**cfg_dict)
+
+
+@hydra_main(version_base=None, config_path="rfm/configs", config_name="eval_only_config")
+def main(cfg: DictConfig):
+    # Convert Hydra config to dataclass
+    eval_only_cfg = convert_hydra_to_dataclass(cfg)
 
     # Validate model_path is provided
     if not eval_only_cfg.model_path:

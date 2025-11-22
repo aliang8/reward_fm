@@ -1,8 +1,0 @@
-data:
-  train_datasets:
-    - jesbu1_roboarena_0825_rfm_roboarena
-    # - jesbu1_auto_eval_rfm_auto_eval_rfm
-    # - jesbu1_racer_rfm_racer_train
-    - jesbu1_fino_net_rfm_fino_net
-    - jesbu1_failsafe_rfm_failsafe
-    - jesbu1_soar_rfm_soar_rfm

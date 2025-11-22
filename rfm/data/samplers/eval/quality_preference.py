@@ -19,7 +19,7 @@ class QualityPreferenceSampler(BaseQualityPreferenceSampler):
         **kwargs,
     ):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
-        
+
         # Set data_gen_strategy for this sampler
         self.data_gen_strategy = "quality_preference"
 

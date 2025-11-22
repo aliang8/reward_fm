@@ -548,7 +548,7 @@ class RFMBatchCollator(BaseCollator):
             [sample.rejected_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
         )
         batch_inputs["resample_attempts"] = [sample.resample_attempts for sample in preference_samples]
-        
+
         # Add metadata structure for evaluation
         metadata_list = []
         for sample in preference_samples:
@@ -557,18 +557,22 @@ class RFMBatchCollator(BaseCollator):
                     "quality_label": sample.chosen_trajectory.quality_label,
                     "data_gen_strategy": "subsample_task",
                     "id": sample.chosen_trajectory.id,
-                    "video_path": sample.chosen_trajectory.metadata.get("video_path") if sample.chosen_trajectory.metadata else None,
+                    "video_path": sample.chosen_trajectory.metadata.get("video_path")
+                    if sample.chosen_trajectory.metadata
+                    else None,
                 },
                 "rejected_metadata": {
                     "quality_label": sample.rejected_trajectory.quality_label,
                     "data_gen_strategy": sample.data_gen_strategy,
                     "id": sample.rejected_trajectory.id,
-                    "video_path": sample.rejected_trajectory.metadata.get("video_path") if sample.rejected_trajectory.metadata else None,
+                    "video_path": sample.rejected_trajectory.metadata.get("video_path")
+                    if sample.rejected_trajectory.metadata
+                    else None,
                 },
             }
             metadata_list.append(metadata)
         batch_inputs["metadata"] = metadata_list
-        
+
         return batch_inputs
 
     def _process_similarity_batch(self, similarity_samples: list[SimilaritySample]) -> dict[str, torch.Tensor]:

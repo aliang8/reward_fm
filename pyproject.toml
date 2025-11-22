@@ -72,6 +72,8 @@ dependencies = [
     "trl==0.20.0",
     "tensorboard",
     "requests",
+    "hydra-core",
+    "omegaconf"
 ]
 
 [project.urls]

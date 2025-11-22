@@ -536,9 +536,8 @@ class RFMHeadsTrainer(Trainer):
             "reward_alignment": "rew_align",
             "confusion_matrix": "cm",
             "policy_ranking": "p_rank",
-            "success_failure": "succ_fail",
-            "wrong_task": "wrong_task",
             "quality_preference": "pref",
+            "quality_preference_roboarena": "pref_robo",
         }
 
         rank_0_print(f"\n\n\n\n")
@@ -672,8 +671,8 @@ class RFMHeadsTrainer(Trainer):
                         if success_pred_gathered is not None:
                             del success_pred_gathered
 
-                    elif eval_type == "success_failure" or eval_type == "quality_preference":
-                        # Process preference samples for success_failure or quality_preference evaluation
+                    elif eval_type == "quality_preference" or eval_type == "quality_preference_roboarena":
+                        # Process preference samples for quality_preference evaluation
                         preference_samples = batch["preference_inputs"]
                         with torch.no_grad():
                             outputs, _ = self.forward_model(self.model, preference_samples, sample_type="preference")
@@ -774,7 +773,7 @@ class RFMHeadsTrainer(Trainer):
                     confusion_plot, confusion_matrix = compute_eval_metrics(
                         eval_type, eval_results, self.config.data.progress_pred_type
                     )
-                elif eval_type == "quality_preference":
+                elif eval_type == "quality_preference" or eval_type == "quality_preference_roboarena":
                     # quality_preference returns metrics, task_groups, and task_details
                     eval_metrics, task_groups, task_details = compute_eval_metrics(
                         eval_type, eval_results, self.config.data.progress_pred_type
@@ -873,23 +872,47 @@ class RFMHeadsTrainer(Trainer):
                         task_groups = None
                         task_details = None
 
-                    elif eval_type == "quality_preference":
-                        # Create table showing preference accuracy per task and quality combinations
+                    elif eval_type == "quality_preference" or eval_type == "quality_preference_roboarena":
+                        # Check if this is roboarena by checking if task_details have partial_success_accuracies
+                        is_roboarena = False
+                        if task_details:
+                            first_task_details = next(iter(task_details.values()))
+                            if "partial_success_accuracies" in first_task_details:
+                                is_roboarena = True
+
                         data = []
-                        for task, details in task_details.items():
-                            task_acc = details["preference_accuracy"]
-                            quality_accs = details["quality_accuracies"]
-                            quality_accs_str = ",".join([f"{k}:{round(v, 3)}" for k, v in quality_accs.items()])
-                            num_correct = details["num_correct"]
-                            num_total = details["num_total"]
-                            data.append([
-                                task,
-                                round(task_acc, 3),
-                                quality_accs_str if quality_accs_str else "N/A",
-                                f"{num_correct}/{num_total}",
-                            ])
-                        columns = ["task", "preference_accuracy", "quality_accuracies", "num_correct/total"]
-                        table_name = f"{ds_name}/quality_preference_samples"
+                        if is_roboarena:
+                            # RoboArena visualization: show partial_success accuracies
+                            for task, details in task_details.items():
+                                task_acc = details["preference_accuracy"]
+                                partial_accs = details.get("partial_success_accuracies", {})
+                                partial_accs_str = ",".join([f"{k}:{round(v, 3)}" for k, v in partial_accs.items()])
+                                num_correct = details["num_correct"]
+                                num_total = details["num_total"]
+                                data.append([
+                                    task,
+                                    round(task_acc, 3),
+                                    partial_accs_str if partial_accs_str else "N/A",
+                                    f"{num_correct}/{num_total}",
+                                ])
+                            columns = ["task", "preference_accuracy", "partial_success_accuracies", "num_correct/total"]
+                            table_name = f"{ds_name}/quality_preference_roboarena_samples"
+                        else:
+                            # Standard quality_preference visualization: show quality label accuracies
+                            for task, details in task_details.items():
+                                task_acc = details["preference_accuracy"]
+                                quality_accs = details["quality_accuracies"]
+                                quality_accs_str = ",".join([f"{k}:{round(v, 3)}" for k, v in quality_accs.items()])
+                                num_correct = details["num_correct"]
+                                num_total = details["num_total"]
+                                data.append([
+                                    task,
+                                    round(task_acc, 3),
+                                    quality_accs_str if quality_accs_str else "N/A",
+                                    f"{num_correct}/{num_total}",
+                                ])
+                            columns = ["task", "preference_accuracy", "quality_accuracies", "num_correct/total"]
+                            table_name = f"{ds_name}/quality_preference_samples"
                         
                         self.logger.log_table(
                             table_name,

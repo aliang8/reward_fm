@@ -33,7 +33,7 @@ QUALITY_LABEL_MAP = {
 }
 
 
-class KochArmUTDallasFrameLoader:
+class UTDSO101FrameLoader:
     """Lazy loader that extracts RGB frames from MP4 video files."""
 
     def __init__(self, video_path: str) -> None:
@@ -91,8 +91,17 @@ def _parse_video_metadata(video_filename: str) -> tuple[str, str, str]:
     return task_key, optimality_key, demo_idx
 
 
-def load_koch_arm_ut_dallas_dataset(dataset_path: str, max_trajectories: int | None = None) -> dict[str, list[dict]]:
-    """Load Koch Arm UT Dallas trajectories grouped by language task."""
+def load_utd_so101_dataset(
+    dataset_path: str, max_trajectories: int | None = None, is_robot: bool = True, data_source: str = "utd_so101"
+) -> dict[str, list[dict]]:
+    """Load UTD SO101 trajectories grouped by language task.
+
+    Args:
+        dataset_path: Path to the dataset directory
+        max_trajectories: Maximum number of trajectories to load
+        is_robot: Whether trajectories are robot (True) or human (False)
+        data_source: Data source identifier for the dataset
+    """
 
     root = Path(dataset_path).expanduser()
     if not root.exists():
@@ -120,24 +129,30 @@ def load_koch_arm_ut_dallas_dataset(dataset_path: str, max_trajectories: int | N
             print(f"⚠️  Skipping {video_path.name}: {e}")
             continue
 
-        if optimality_key not in QUALITY_LABEL_MAP:
+        # For human videos, always set quality_label to "successful"
+        if not is_robot:
+            quality_label = "successful"
+        elif optimality_key not in QUALITY_LABEL_MAP:
             print(f"⚠️  Skipping {video_path.name}: Unknown optimality label '{optimality_key}'")
             continue
+        else:
+            quality_label = QUALITY_LABEL_MAP[optimality_key]
 
-        frame_loader = KochArmUTDallasFrameLoader(str(video_path))
+        frame_loader = UTDSO101FrameLoader(str(video_path))
         task_description = _default_task_description(task_key)
 
         trajectory = {
             "id": generate_unique_id(),
             "task": task_description,
             "frames": frame_loader,
-            "is_robot": True,
-            "quality_label": QUALITY_LABEL_MAP[optimality_key],
-            "data_source": "koch_arm_ut_dallas",
+            "is_robot": is_robot,
+            "quality_label": quality_label,
+            "data_source": data_source,
         }
 
         task_data[task_description].append(trajectory)
         total += 1
 
-    print(f"Loaded {total} trajectories from {len(task_data)} tasks in Koch Arm UT Dallas dataset")
+    dataset_type = "robot" if is_robot else "human"
+    print(f"Loaded {total} {dataset_type} trajectories from {len(task_data)} tasks in UTD SO101 dataset")
     return task_data

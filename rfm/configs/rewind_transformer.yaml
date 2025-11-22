@@ -47,9 +47,7 @@ data:
   
   # this is based on the subset name
   data_source_weights:
-    metaworld_train: 20
-    libero256_90: 1
-    libero_90_failure: 1
+    metaworld_train: 10
 
   load_embeddings: true
   progress_pred_type: absolute 

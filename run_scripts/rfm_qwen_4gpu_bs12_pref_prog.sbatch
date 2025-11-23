@@ -31,6 +31,8 @@ uv run accelerate launch \
     data.sample_type_ratio=[1,0,0] \
     data.progress_strategy_ratio=[1,6,1,1,1] \
     data.preference_strategy_ratio=[6,1,1] \
+    data.train_datasets=[mw,oxe,others] \
+    data.eval_datasets=[mw] \
     model.train_progress_head=true \
     model.train_preference_head=true \
     model.train_similarity_head=false \

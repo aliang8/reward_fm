@@ -91,7 +91,7 @@ data:
   dataset_type: rfm
   
   data_source_weights:
-    metaworld_train: 10
+    metaworld_train: 20
 
   # Data loading settings
   dataloader_pin_memory: True
@@ -200,7 +200,7 @@ logging:
   
   # SaveBestCallback configuration
   save_best:
-    metric_names: ["custom_eval/p_rank_spearman_mw_eval", "custom_eval/rew_align_spearman_mw_eval"]  # List of metrics to monitor (will be averaged)
+    metric_names: ["custom_eval/p_rank_spearman_rewind_mw_eval", "custom_eval/rew_align_pearson_mw_eval"]  # List of metrics to monitor (will be averaged)
     greater_is_better: [true, true]  # Whether higher values are better for each metric (must match metric_names length)
     keep_top_k: 5  # Number of best checkpoints and uploads to keep
     

@@ -28,17 +28,14 @@ uv run accelerate launch \
     --config_file rfm/configs/distributed/ddp.yaml \
     --num_processes=1 \
     train.py \
-    --config-name rfm/configs/rewind_transformer.yaml \
+    --config-name=rewind_transformer \
     data.sample_type_ratio=[1,0,0] \
     model.train_preference_head=true \
     model.train_progress_head=true \
     model.train_success_head=false \
-    data.train_datasets=[mw] \
+    data.train_datasets=[oxe,mw,others] \
     data.eval_datasets=[mw] \
-    data.resized_height=196 \
-    data.resized_width=196 \
-    data.use_multi_image=true \
-    data.dataset_type=data_source_balance \
+    data.dataset_type=rfm \
     training.max_steps=20000 \
     training.eval_steps=200 \
     training.custom_eval_steps=200 \
@@ -47,6 +44,11 @@ uv run accelerate launch \
     training.overwrite_output_dir=true \
     training.predict_pref_progress=true \
     training.exp_name=ant_rfm_rewind_bs1024_pref_prog \
+    custom_eval.eval_types=[quality_preference,reward_alignment,policy_ranking,confusion_matrix] \
+    custom_eval.quality_preference=[quality_preference] \
+    custom_eval.reward_alignment=[reward_alignment] \
+    custom_eval.policy_ranking=[policy_ranking] \
+    custom_eval.confusion_matrix=[mw] \
     logging.log_to=[wandb]
 
 # Print completion time

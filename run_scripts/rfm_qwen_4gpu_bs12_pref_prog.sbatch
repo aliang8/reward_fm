@@ -19,7 +19,7 @@ echo "Working Directory: $(pwd)"
 
 # Set environment variables
 export RFM_PROCESSED_DATASETS_PATH=/scr/shared/reward_fm/processed_datasets/
-BS=8
+export BS=8
 
 # Run training with accelerate
 # Using FSDP config with 4 processes for 4 GPUs
@@ -56,7 +56,12 @@ uv run accelerate launch \
     training.overwrite_output_dir=true \
     training.predict_pref_progress=true \
     training.ddp_find_unused_parameters=false \
-    training.exp_name=ant_rfm_qwen_4gpu_bs12_pref_prog_rfm \
+    training.exp_name=ant_rfm_qwen_4gpu_bs12_pref_prog_rfm_2 \
+    custom_eval.eval_types=[quality_preference,reward_alignment,policy_ranking,confusion_matrix] \
+    custom_eval.quality_preference=[quality_preference] \
+    custom_eval.reward_alignment=[reward_alignment] \
+    custom_eval.policy_ranking=[policy_ranking] \
+    custom_eval.confusion_matrix=[mw] \
     logging.log_to=[wandb]
 
 # Print completion time

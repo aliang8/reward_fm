@@ -32,6 +32,13 @@ DATASET_CATEGORY = {
 }
 
 DATASET_MAP = {
+    "others": {
+        "train": [
+            "jesbu1_molmoact_rfm_molmoact_dataset_household",
+            "jesbu1_molmoact_rfm_molmoact_dataset_tabletop",
+        ],
+        "eval": [""],
+    },
     "oxe": {
         "train": [
             "jesbu1_oxe_rfm_oxe_aloha_mobile",
@@ -73,6 +80,29 @@ DATASET_MAP = {
         "eval": [
             "aliangdw_metaworld_metaworld_eval",
         ],
+    },
+    "reward_alignment": {
+        "eval": [
+            "aliangdw_metaworld_metaworld_eval",
+            "abraranwar_usc_koch_rewind_rfm_usc_koch_rewind"
+        ]
+    },
+    "quality_preference": {
+        "eval": [
+            "aliangdw_metaworld_metaworld_eval",
+            "jesbu1_roboarena_0825_rfm_roboarena",
+            "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",
+            "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
+            "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
+        ]
+    },
+    "policy_ranking": {
+        "eval": [
+            "aliangdw_metaworld_metaworld_eval",
+            "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",
+            "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
+            "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
+        ]
     },
     "paired": {
         "train": [

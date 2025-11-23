@@ -129,7 +129,8 @@ repos=(
   #jesbu1/egodex_rfm
   #aliangdw/usc_xarm_policy_ranking
   #aliangdw/usc_franka_policy_ranking
-  aliangdw/utd_so101_arm_policy_ranking
+  aliangdw/utd_so101_policy_ranking
+  aliangdw/utd_so101_human
 )
 
 # ------------------------------

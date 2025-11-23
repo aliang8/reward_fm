@@ -1,14 +1,13 @@
 import argparse
 import os
 import tempfile
-from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any
 
 import pyrallis
 import yaml
 
 
-def deep_merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
+def deep_merge(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     """Recursively merge b into a (mutates a). Scalars and non-dicts in b overwrite."""
     for k, v in b.items():
         if k in a and isinstance(a[k], dict) and isinstance(v, dict):
@@ -25,9 +24,9 @@ def parse_multiple(config_class):
     parsed, remaining_argv = tmp.parse_known_args()
 
     # 2) load & deep-merge YAMLs in order (later files override earlier ones)
-    merged: Dict[str, Any] = {}
+    merged: dict[str, Any] = {}
     for path in parsed.config_paths:
-        with open(path, "r") as f:
+        with open(path) as f:
             doc = yaml.safe_load(f) or {}
         deep_merge(merged, doc)
 

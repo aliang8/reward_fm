@@ -1,9 +1,7 @@
 #!/bin/bash
 
-CUDA_VISIBLE_DEVICES=6 uv run accelerate launch \
-    --config_file rfm/configs/fsdp_single.yaml \
-    train.py \
+CUDA_VISIBLE_DEVICES=0 python train.py \
     --config_paths rfm/configs/config.yaml rfm/configs/vqa_config.yaml \
-    --logging.use_wandb true \
+    --logging.log_to '["wandb"]' \
     --debug false \
-    --training.output_dir ./logs/rfm_vqa
+    --training.exp_name rfm_vqa_mw 

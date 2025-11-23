@@ -5,14 +5,13 @@ Contains utility functions for processing frames, saving images, and managing da
 """
 
 import os
+import subprocess as sp
+import uuid
+
+import cv2
 import numpy as np
 from PIL import Image
-from typing import List, Dict, Any, Tuple
-from pathlib import Path
-import uuid
 from sentence_transformers import SentenceTransformer
-import cv2
-import subprocess as sp
 
 
 def save_frame_as_image(frame_data: np.ndarray, output_path: str) -> str:
@@ -26,7 +25,7 @@ def save_frame_as_image(frame_data: np.ndarray, output_path: str) -> str:
     return output_path
 
 
-def downsample_frames(frames: np.ndarray, max_frames: int = 32) -> np.ndarray:
+def downsample_frames(frames: np.ndarray | list, max_frames: int = 32) -> np.ndarray | list:
     """Downsample frames to at most max_frames using linear interpolation."""
     # If max_frames is -1, don't downsample
     if max_frames == -1:
@@ -40,7 +39,12 @@ def downsample_frames(frames: np.ndarray, max_frames: int = 32) -> np.ndarray:
 
     # keep unique frames
     unique_indices = np.unique(indices)
-    return frames[unique_indices]
+
+    # Handle both list and numpy array inputs
+    if isinstance(frames, list):
+        return [frames[i] for i in unique_indices]
+    else:
+        return frames[unique_indices]
 
 
 def motion_aware_downsample(frames: np.ndarray, max_frames: int = 32) -> np.ndarray:
@@ -61,7 +65,15 @@ def motion_aware_downsample(frames: np.ndarray, max_frames: int = 32) -> np.ndar
     gray = [_prep(f) for f in frames]
 
     scores = np.zeros(T, dtype=np.float32)
-    fb_args = dict(pyr_scale=0.5, levels=3, winsize=15, iterations=3, poly_n=5, poly_sigma=1.2, flags=0)
+    fb_args = {
+        "pyr_scale": 0.5,
+        "levels": 3,
+        "winsize": 15,
+        "iterations": 3,
+        "poly_n": 5,
+        "poly_sigma": 1.2,
+        "flags": 0,
+    }
     for i in range(T - 1):
         flow = cv2.calcOpticalFlowFarneback(gray[i], gray[i + 1], None, **fb_args)
         scores[i + 1] = np.linalg.norm(flow, axis=-1).mean()
@@ -86,7 +98,6 @@ def create_trajectory_video(
     center_crop: bool = False,
 ) -> str:
     """Create a trajectory video from frames and save as MP4 file."""
-
     # Handle numpy array of frames (traditional case)
     if not isinstance(frames, np.ndarray):
         frames = np.array(frames)
@@ -119,14 +130,14 @@ def create_trajectory_video(
         target_width = width
 
     # Create sequence directory and video file path
-    video_path = os.path.join(output_dir, f"trajectory.mp4")
+    video_path = os.path.join(output_dir, "trajectory.mp4")
     print(f"Saving video to: {video_path}")
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     video_writer = cv2.VideoWriter(video_path, fourcc, fps, (target_width, target_height))
 
     if not video_writer.isOpened():
-        raise Exception(f"Could not create video writer with any codec")
+        raise Exception("Could not create video writer with any codec")
 
     # Write frames to video
     for frame in frames:
@@ -172,9 +183,7 @@ def create_trajectory_video_optimized(
     Returns:
         str: The path to the created video file.
     """
-
     # print(f"Saving optimized video to: {video_path}")
-
     if os.path.exists(video_path):
         # print(f"Video already exists at: {video_path}, skipping video creation")
         return video_path
@@ -189,6 +198,7 @@ def create_trajectory_video_optimized(
         return None
     if len(frames) == 0:
         raise ValueError("No frames provided for video creation")
+
     # Downsample frames by selecting indices, which is memory-cheap
     processed_frames = downsample_frames(frames, max_frames)
 
@@ -244,7 +254,14 @@ def create_trajectory_video_optimized(
     # Start the FFmpeg subprocess
     process = sp.Popen(command, stdin=sp.PIPE, stdout=sp.PIPE, stderr=sp.PIPE)
 
-    for frame in processed_frames:
+    # Check if process started successfully
+    if process.poll() is not None:
+        stderr = process.stderr.read().decode()
+        print(f"FFmpeg failed to start. Command: {' '.join(command)}")
+        print(f"Error: {stderr}")
+        raise RuntimeError("FFmpeg process failed to start")
+
+    for i, frame in enumerate(processed_frames):
         # Ensure frame is in uint8 format
         if frame.dtype != np.uint8:
             frame = (frame * 255).astype(np.uint8)
@@ -262,7 +279,13 @@ def create_trajectory_video_optimized(
             frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
         # Write the raw frame data to the process's stdin
-        process.stdin.write(frame.tobytes())
+        try:
+            process.stdin.write(frame.tobytes())
+        except BrokenPipeError as e:
+            stderr = process.stderr.read().decode()
+            print(f"BrokenPipeError writing frame. FFmpeg stderr: {stderr}")
+            print(f"Frame shape: {frame.shape}, dtype: {frame.dtype}")
+            raise RuntimeError(f"Failed to write frame to FFmpeg: {e}")
 
     # Close the pipe and finish the process
     process.stdin.close()
@@ -280,8 +303,8 @@ def create_trajectory_video_optimized(
 
 
 def create_trajectory_sequence(
-    frames: List[str], output_dir: str, sequence_name: str, max_frames: int = -1
-) -> List[str]:
+    frames: list[str], output_dir: str, sequence_name: str, max_frames: int = -1
+) -> list[str]:
     """Create a trajectory sequence from frames and save as images."""
 
     sequence_dir = os.path.join(output_dir, sequence_name)
@@ -305,7 +328,7 @@ def generate_unique_id() -> str:
 
 
 def create_hf_trajectory(
-    traj_dict: Dict,
+    traj_dict: dict,
     video_path: str,
     lang_vector: np.ndarray,
     max_frames: int = -1,
@@ -314,8 +337,8 @@ def create_hf_trajectory(
     fps: int = 10,
     shortest_edge_size: int = 240,
     center_crop: bool = False,
-    hub_repo_id: str = None,
-) -> Dict:
+    hub_repo_id: str | None = None,
+) -> dict:
     """Create a HuggingFace dataset trajectory with unified frame loading."""
 
     # Handle frames - could be np.array, callable, or missing
@@ -338,6 +361,7 @@ def create_hf_trajectory(
     quality_label: str = str(traj_dict.get("quality_label", "successful"))
     preference_group_id = traj_dict.get("preference_group_id", None)
     preference_rank = traj_dict.get("preference_rank", None)
+    partial_success = traj_dict.get("partial_success", None)
 
     # Create dataset trajectory
     trajectory = {
@@ -350,6 +374,7 @@ def create_hf_trajectory(
         "quality_label": quality_label,
         "preference_group_id": preference_group_id,
         "preference_rank": preference_rank,
+        "partial_success": partial_success,
     }
 
     return trajectory
@@ -365,7 +390,7 @@ def create_output_directory(output_dir: str) -> None:
     os.makedirs(output_dir, exist_ok=True)
 
 
-def flatten_task_data(task_data: Dict[str, List[Dict]]) -> List[Dict]:
+def flatten_task_data(task_data: dict[str, list[dict]]) -> list[dict]:
     """Flatten task data into a list of trajectories."""
     all_trajectories = []
     for task_name, trajectories in task_data.items():

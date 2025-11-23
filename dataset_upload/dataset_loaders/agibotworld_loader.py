@@ -4,30 +4,26 @@ This module contains AgiBotWorld-specific logic for loading and processing data 
 HuggingFace streaming to efficiently handle large datasets.
 """
 
-import os
 import json
+import os
+from functools import partial
+from multiprocessing import Pool, cpu_count
+from pathlib import Path
+from typing import Any
+
 import h5py
 import numpy as np
-import cv2
-import tempfile
-from typing import List, Dict, Tuple, Optional, Callable, Any, Iterable
-from pathlib import Path
-from datasets import load_dataset, Dataset
-import datasets as hfds
-import datasets as hfds
-from tqdm import tqdm
 from helpers import (
-    downsample_frames,
+    create_hf_trajectory,
     create_trajectory_video_optimized,
     load_sentence_transformer_model,
-    create_hf_trajectory,
 )
-import subprocess
-import shutil
-from multiprocessing import Pool, cpu_count
-from functools import partial
-from rfm.data.helpers import generate_unique_id
+from dataset_upload.helpers import generate_unique_id
 from rfm.data.video_helpers import load_video_frames
+from tqdm import tqdm
+
+import datasets as hfds
+from datasets import Dataset, load_dataset
 
 # Episode/task helpers built earlier
 try:
@@ -63,7 +59,7 @@ def _stable_shard_for_episode(episode_id: str, shard_modulus: int = 1000) -> str
     return f"shard_{shard_index:04d}"
 
 
-def _parse_episode_and_camera(key: str) -> Tuple[str, Optional[str]]:
+def _parse_episode_and_camera(key: str) -> tuple[str, str | None]:
     """Parse __key__ like '678985/videos/head_color' -> ('678985', 'head_color')."""
     parts = key.split("/")
     if len(parts) < 3:
@@ -77,7 +73,7 @@ def _build_video_paths(
     episode_id: str,
     subtask_idx: int,
     camera: str,
-) -> Tuple[str, str]:
+) -> tuple[str, str]:
     """Return (full_path, relative_path) using a two-level shard + per-episode layout.
 
     Layout:
@@ -93,9 +89,9 @@ def _build_video_paths(
     return full_path, rel_path
 
 
-def _collect_unique_texts_for_batch(records: List[Tuple[str, dict]]) -> List[str]:
+def _collect_unique_texts_for_batch(records: list[tuple[str, dict]]) -> list[str]:
     """Collect unique instruction texts from a list of (episode_id, record) pairs."""
-    texts: List[str] = []
+    texts: list[str] = []
     seen: set = set()
     for _episode_id, rec in records:
         # Full trajectory instruction
@@ -114,12 +110,12 @@ def _collect_unique_texts_for_batch(records: List[Tuple[str, dict]]) -> List[str
     return texts
 
 
-def _encode_texts(texts: List[str], model) -> Dict[str, Any]:
+def _encode_texts(texts: list[str], model) -> dict[str, Any]:
     """Encode a list of texts to vectors using a preloaded model, with caching."""
     if not texts:
         return {}
     vectors = model.encode(texts)
-    return {t: v for t, v in zip(texts, vectors)}
+    return dict(zip(texts, vectors, strict=False))
 
 
 def _frames_for_subrange(frames: np.ndarray, start: int, end: int) -> np.ndarray:
@@ -132,20 +128,20 @@ def _frames_for_subrange(frames: np.ndarray, start: int, end: int) -> np.ndarray
 
 
 def _process_single_stream_sample(
-    sample: Dict[str, Any],
-    embeddings: Dict[str, Any],
+    sample: dict[str, Any],
+    embeddings: dict[str, Any],
     output_dir: str,
     dataset_name: str,
     max_frames: int,
     fps: int,
-) -> List[Dict]:
+) -> list[dict]:
     """Process one streaming sample: returns zero or more HF entries.
 
     This function does not load any language model; it expects embeddings for
     the relevant instruction texts to be provided.
     """
 
-    result_entries: List[Dict] = []
+    result_entries: list[dict] = []
 
     # Extract key and keep only camera samples we care about
     key = sample.get("__key__") or ""
@@ -261,7 +257,7 @@ def convert_agibotworld_streaming_to_hf(
     dataset_name: str,
     output_dir: str,
     dataset_label: str = "agibotworld",
-    max_trajectories: Optional[int] = None,
+    max_trajectories: int | None = None,
     max_frames: int = 64,
     fps: int = 10,
     num_workers: int = -1,
@@ -276,14 +272,12 @@ def convert_agibotworld_streaming_to_hf(
     ds = load_dataset(dataset_name, streaming=True, split="train")
     # Some shards expose PNG frames instead of MP4. Widen features so casting
     # does not fail during iteration; we'll simply skip non-MP4 samples.
-    widened = hfds.Features(
-        {
-            "__key__": hfds.Value("string"),
-            "__url__": hfds.Value("string"),
-            "mp4": hfds.Value("binary"),
-            "png": hfds.Value("binary"),
-        }
-    )
+    widened = hfds.Features({
+        "__key__": hfds.Value("string"),
+        "__url__": hfds.Value("string"),
+        "mp4": hfds.Value("binary"),
+        "png": hfds.Value("binary"),
+    })
     try:
         ds = ds.cast(widened)
     except Exception:
@@ -298,19 +292,18 @@ def convert_agibotworld_streaming_to_hf(
     # Language model for batch embedding
     lang_model = load_sentence_transformer_model()
 
-    entries: List[Dict] = []
+    entries: list[dict] = []
     processed = 0  # number of streaming samples actually flushed/processed
     default_batch_size = 64
     batch_size = default_batch_size if (max_trajectories is None) else min(default_batch_size, max_trajectories)
-    batch_samples: List[Dict[str, Any]] = []
-    batch_records: List[Tuple[str, dict]] = []
+    batch_samples: list[dict[str, Any]] = []
+    batch_records: list[tuple[str, dict]] = []
 
     # Simple live stats
     seen_samples = 0
     skipped_camera = 0
     skipped_no_record = 0
     skipped_no_mp4 = 0
-    decode_fail = 0
 
     def flush_batch():
         nonlocal entries, processed, batch_samples, batch_records
@@ -399,19 +392,17 @@ def convert_agibotworld_streaming_to_hf(
 
     # Build HF dataset from entries
     if not entries:
-        return Dataset.from_dict(
-            {
-                "id": [],
-                "task": [],
-                "lang_vector": [],
-                "data_source": [],
-                "frames": [],
-                "is_robot": [],
-                "quality_label": [],
-                "preference_group_id": [],
-                "preference_rank": [],
-            }
-        )
+        return Dataset.from_dict({
+            "id": [],
+            "task": [],
+            "lang_vector": [],
+            "data_source": [],
+            "frames": [],
+            "is_robot": [],
+            "quality_label": [],
+            "preference_group_id": [],
+            "preference_rank": [],
+        })
 
     # datasets can infer features; rely on default
     print(
@@ -422,7 +413,7 @@ def convert_agibotworld_streaming_to_hf(
     return Dataset.from_list(entries)
 
 
-def load_agibotworld_dataset(dataset_name_or_path: str, max_trajectories: int = 100) -> Dict[str, List[Dict]]:
+def load_agibotworld_dataset(dataset_name_or_path: str, max_trajectories: int = 100) -> dict[str, list[dict]]:
     """Load AgiBotWorld dataset using HuggingFace streaming and extract head_color.mp4 files.
 
     Args:
@@ -455,7 +446,7 @@ def load_agibotworld_dataset(dataset_name_or_path: str, max_trajectories: int = 
 
 
 # NOTE: As the dataset is too large, we did not test this function extensively and it may be out of date.
-def _load_local_agibotworld(base_path: str, max_trajectories: int = 100, max_frames: int = 32) -> Dict[str, List[Dict]]:
+def _load_local_agibotworld(base_path: str, max_trajectories: int = 100, max_frames: int = 32) -> dict[str, list[dict]]:
     """Load AgiBotWorld dataset from local files, starting with task_info JSON files."""
     base_path = Path(base_path)
     task_data = {}
@@ -499,10 +490,9 @@ def _load_local_agibotworld(base_path: str, max_trajectories: int = 100, max_fra
         if task_info and len(task_info) > 0:
             first_episode = task_info[0]
             task_name = first_episode.get("task_name", f"Task {task_id}")
-            task_description = first_episode.get("task_description", f"AgiBotWorld Task {task_id}")
+            first_episode.get("task_description", f"AgiBotWorld Task {task_id}")
         else:
             task_name = f"Task {task_id}"
-            task_description = f"AgiBotWorld Task {task_id}"
 
         print(f"Processing task {task_id}: '{task_name}'")
 
@@ -569,19 +559,19 @@ def _load_local_agibotworld(base_path: str, max_trajectories: int = 100, max_fra
     return task_data
 
 
-def _load_streaming_agibotworld(dataset_name: str, max_trajectories: int = 100) -> Dict[str, List[Dict]]:
+def _load_streaming_agibotworld(dataset_name: str, max_trajectories: int = 100) -> dict[str, list[dict]]:
     """Legacy helper no longer used. Kept for compatibility."""
     raise NotImplementedError("Use convert_agibotworld_streaming_to_hf() for streaming conversion.")
 
 
-def _load_task_info(task_info_file: Path) -> List[Dict]:
+def _load_task_info(task_info_file: Path) -> list[dict]:
     """Load task information from JSON file."""
     if not task_info_file.exists():
         print(f"Task info file not found: {task_info_file}")
         return []
 
     try:
-        with open(task_info_file, "r") as f:
+        with open(task_info_file) as f:
             task_info = json.load(f)
         return task_info if isinstance(task_info, list) else [task_info]
     except Exception as e:

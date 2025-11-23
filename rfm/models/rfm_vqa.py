@@ -4,12 +4,10 @@ RFM (Reward Foundation Model) VQA version implementation.
 Contains the RFM class by using the standard Qwen2.5-VL model, training it with VQA data.
 """
 
+from transformers import PreTrainedModel, Qwen2_5_VLForConditionalGeneration, SmolVLMForConditionalGeneration
+# , Qwen3VLForConditionalGeneration
+
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from transformers import PreTrainedModel, Qwen2_5_VLForConditionalGeneration
-from transformers.modeling_outputs import CausalLMOutputWithPast
-from transformers.generation.utils import GenerationMixin
 
 
 class RFMVQA(PreTrainedModel):
@@ -17,15 +15,40 @@ class RFMVQA(PreTrainedModel):
 
     config_class = Qwen2_5_VLForConditionalGeneration.config_class
 
-    def __init__(self, config, processor, base_model=None):
+    # Declare support for SDPA and Flash Attention (will delegate to underlying model), needed for Qwen3
+    _supports_sdpa = True
+    _supports_flash_attn_2 = True
+
+    def __init__(self, config, processor, tokenizer, base_model=None, base_model_id=None, model_config=None):
         super().__init__(config)
         # Use Qwen2_5_VLForConditionalGeneration for VQA (language generation)
         if base_model is not None:
             self.model = base_model
-        else:
+        elif "SmolVLM" in base_model_id:
+            self.model = SmolVLMForConditionalGeneration(config)
+        elif "Qwen2.5" in base_model_id:
             self.model = Qwen2_5_VLForConditionalGeneration(config)
+        elif "Qwen3" in base_model_id:
+            self.model = Qwen3VLForConditionalGeneration(config)
+        else:
+            raise ValueError(f"Base model id not supported in RFMVQA yet: {base_model_id}")
 
         self.processor = processor
+        self.tokenizer = tokenizer
+        self.base_model_id = base_model_id
+
+        # Inherit attention implementation support from underlying model
+        if hasattr(self.model, "_supports_sdpa"):
+            self._supports_sdpa = self.model._supports_sdpa
+        if hasattr(self.model, "_supports_flash_attn_2"):
+            self._supports_flash_attn_2 = self.model._supports_flash_attn_2
+
+    def _sdpa_can_dispatch(self, is_init_check=False):
+        """Delegate SDPA dispatch check to underlying model."""
+        # If underlying model doesn't have this method, default to True since we declared support
+        return True
+        # if hasattr(self.model, '_sdpa_can_dispatch'):
+        #    return self.model._sdpa_can_dispatch(is_init_check)
 
     def gradient_checkpointing_enable(self, **kwargs):
         """Delegates gradient checkpointing enabling to the base model."""
@@ -44,6 +67,7 @@ class RFMVQA(PreTrainedModel):
         image_grid_thw=None,
         video_grid_thw=None,
         labels=None,
+        second_per_grid_ts=None,
         **kwargs,
     ):
         """
@@ -75,6 +99,9 @@ class RFMVQA(PreTrainedModel):
                 Labels for computing the language modeling loss. Shape: [batch_size, sequence_length]
                 If provided, the model will compute the loss for VQA training.
 
+            second_per_grid_ts (torch.FloatTensor, optional):
+                Time stamps for video grid processing
+
             **kwargs: Additional keyword arguments passed to the base model.
 
         Returns:
@@ -86,23 +113,32 @@ class RFMVQA(PreTrainedModel):
                 - attentions (tuple, optional): Attention weights from all layers
         """
         # Forward pass through the base VLM
-        outputs = self.model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            pixel_values=pixel_values,
-            pixel_values_videos=pixel_values_videos,
-            image_grid_thw=image_grid_thw,
-            video_grid_thw=video_grid_thw,
-            labels=labels,
-            **kwargs,
-        )
+        # Note: dtype casting is handled in the trainer's _prepare_inputs method
+        # Only pass second_per_grid_ts if it's not None (some models may not support it)
+        forward_kwargs = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "pixel_values": pixel_values,
+            "pixel_values_videos": pixel_values_videos,
+            "image_grid_thw": image_grid_thw,
+            "video_grid_thw": video_grid_thw,
+            "labels": labels,
+        }
+
+        if second_per_grid_ts is not None:
+            forward_kwargs["second_per_grid_ts"] = second_per_grid_ts
+
+        outputs = self.model(**forward_kwargs, **kwargs)
 
         # Return the outputs directly - this is the naive baseline approach
         # The base VLM's language modeling head will handle VQA generation
         return outputs
 
     def generate(self, *args, **kwargs):
-        """Generate VQA answers using the base VLM's language modeling head."""
+        """
+        Generate VQA answers using the base VLM's language modeling head.
+        Note: dtype casting is handled in the trainer's _prepare_inputs method.
+        """
         return self.model.generate(*args, **kwargs)
 
     def prepare_inputs_for_generation(self, *args, **kwargs):

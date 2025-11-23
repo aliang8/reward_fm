@@ -1,65 +1,73 @@
-import pyrallis
-import warnings
-import torch
-from datasets import Dataset
-from transformers import (
-    AutoProcessor,
-    Qwen2_5_VLModel,
-    TrainingArguments,
-)
-
-from PIL import Image
 import json
 import os
-import yaml
-from rfm.utils.logging import is_rank_0, rank_0_print
-from pyrallis import wrap
-import wandb
-import numpy as np
-from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
-from rich import print as rprint
+import warnings
 from dataclasses import asdict
-import yaml
+import shutil
 
-# Import shared configs and utilities
-from rfm.configs.experiment_configs import ExperimentConfig
-from rfm.trainers import RFMHeadsTrainer, RFMVQATrainer, ReWiNDTrainer
+import torch
+import torch.distributed as dist
+import yaml
+from rich import print as rprint
+from rich.console import Console
+from rich.panel import Panel
+from omegaconf import OmegaConf, DictConfig
+from hydra import compose, initialize
+from hydra.core.global_hydra import GlobalHydra
+from hydra.core.config_store import ConfigStore
+from hydra import main as hydra_main
+
+from peft import prepare_model_for_kbit_training
+from rfm.configs.experiment_configs import (
+    ExperimentConfig,
+    ModelConfig,
+    PEFTConfig,
+    DataConfig,
+    TrainingConfig,
+    LossConfig,
+    LoggingConfig,
+    SaveBestConfig,
+    CustomEvaluationConfig,
+)
+from rfm.trainers import ReWiNDTrainer, RFMHeadsTrainer, RFMVQATrainer
+from rfm.data.datasets.helpers import show_available_datasets
+from rfm.utils.distributed import is_rank_0, rank_0_print
+from rfm.utils.timer import _timer
+from rfm.utils.save import SaveBestCallback
 from rfm.utils.setup_utils import (
+    create_training_arguments,
+    setup_batch_collator,
+    setup_dataset,
     setup_model_and_processor,
     setup_peft_model,
-    create_training_arguments,
-    setup_dataset,
-    setup_batch_collator,
 )
-from rfm.utils.parser import parse_multiple
-from rfm.utils.logging import _timer
+from rfm.utils.logger import Logger
+import datasets
 
-# Suppress FSDP ShardedTensor deprecation warning
-warnings.filterwarnings("ignore", message="Please use DTensor instead and we are deprecating ShardedTensor")
-
+datasets.logging.set_verbosity_error()
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+torch.autograd.set_detect_anomaly(True)
+
+# Register structured configs with Hydra
+cs = ConfigStore.instance()
+cs.store(name="base_config", node=ExperimentConfig)
+cs.store(group="model", name="model_config", node=ModelConfig)
+cs.store(group="peft", name="peft_config", node=PEFTConfig)
+cs.store(group="data", name="data_config", node=DataConfig)
+cs.store(group="training", name="training_config", node=TrainingConfig)
+cs.store(group="loss", name="loss_config", node=LossConfig)
+cs.store(group="logging", name="logging_config", node=LoggingConfig)
+cs.store(group="logging/save_best", name="save_best_config", node=SaveBestConfig)
+cs.store(group="custom_eval", name="custom_eval_config", node=CustomEvaluationConfig)
 
 
 def train(cfg: ExperimentConfig):
     timing_raw = {}
 
-    run_name = f"{cfg.logging.wandb_run_name}"
+    run_name = cfg.training.exp_name
     if cfg.debug:
         run_name += "_debug"
 
-    # Initialize wandb if enabled (only on rank 0)
-    if cfg.logging.use_wandb and is_rank_0():
-        # Convert config to dict for wandb using dataclass asdict
-        config_dict = asdict(cfg)
-
-        wandb.init(
-            project=cfg.logging.wandb_project, entity=cfg.logging.wandb_entity, name=run_name, config=config_dict
-        )
-        rank_0_print(f"Wandb initialized: {wandb.run.name}")
-    elif cfg.logging.use_wandb:
-        rank_0_print("Wandb logging enabled but skipped on non-rank-0 processes")
+    # will initialize wandb later via logger (after logger is constructed)
 
     # Set memory management
     torch.backends.cudnn.benchmark = True
@@ -68,47 +76,91 @@ def train(cfg: ExperimentConfig):
 
     # Use the shared function to set up model and processor
     with _timer("time/setup_model_and_processor", timing_raw=timing_raw):
-        tokenizer, processor, rfm_model = setup_model_and_processor(cfg.model)
+        tokenizer, processor, rfm_model = setup_model_and_processor(cfg.model, peft_config=cfg.peft)
 
     # Apply PEFT if enabled
-    peft_rfm_model = setup_peft_model(rfm_model, cfg)
+    if cfg.model.use_peft:
+        peft_rfm_model = setup_peft_model(rfm_model, cfg.peft)
+    else:
+        peft_rfm_model = rfm_model
+        rank_0_print("PEFT not enabled, using full model")
+
+    if cfg.model.quantization:
+        peft_rfm_model = prepare_model_for_kbit_training(peft_rfm_model)
 
     # Create training arguments from config
     if cfg.debug:
-        cfg.training.save_steps = 2
         cfg.training.logging_steps = 2
         cfg.training.eval_steps = 2
         cfg.data.eval_subset_size = 10
+        cfg.training.custom_eval_steps = 2
 
-    training_args = create_training_arguments(cfg, cfg.training.output_dir)
+    output_dir = os.path.join(cfg.training.output_dir, run_name)
 
-    # Save config to output directory
-    os.makedirs(cfg.training.output_dir, exist_ok=True)
-    config_save_path = os.path.join(cfg.training.output_dir, "config.yaml")
+    training_args = create_training_arguments(cfg, output_dir)
+
+    # Handle output directory existence (works with accelerate/distributed training)
+    overwrite_output_dir = getattr(cfg.training, "overwrite_output_dir", False)
+
+    # Check if distributed training is initialized (for proper synchronization)
+    # This is important for accelerate/FSDP setups where multiple processes run
+    dist_initialized = dist.is_available() and dist.is_initialized()
+
+    # Check if output directory exists (only on rank 0 to avoid race conditions)
+    if is_rank_0() and os.path.exists(output_dir):
+        if overwrite_output_dir:
+            rank_0_print(f"Output directory {output_dir} already exists. Overwriting (overwrite_output_dir=True)...")
+            shutil.rmtree(output_dir)
+        else:
+            raise ValueError(
+                f"Output directory {output_dir} already exists. "
+                f"Set overwrite_output_dir=True in config to overwrite it, or use a different output directory."
+            )
+
+    # Synchronize all processes before creating directory (important for distributed training)
+    # This ensures rank 0 finishes checking/removing before other processes try to create it
+    if dist_initialized:
+        dist.barrier()
+
+    # Create output directory (all processes need to do this for distributed training)
+    # os.makedirs is safe to call multiple times (exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Synchronize after directory creation to ensure all processes see it
+    if dist_initialized:
+        dist.barrier()
+
+    # Initialize logger (works with wandb/tensorboard)
+    log_to = cfg.logging.log_to
+    logger = Logger(log_to=log_to, output_dir=output_dir, is_main_process=is_rank_0())
+    config_save_path = os.path.join(output_dir, "config.yaml")
     config_dict = asdict(cfg)
     with open(config_save_path, "w") as f:
         yaml.dump(config_dict, f, default_flow_style=False, indent=2)
     rank_0_print(f"Saved training config to: {config_save_path}")
 
-    # Save wandb run ID to a file for later reference (only on rank 0)
-    if cfg.logging.use_wandb and is_rank_0() and wandb.run is not None:
-        wandb_info = {
-            "wandb_id": wandb.run.id,
-            "wandb_name": wandb.run.name,
-            "wandb_project": wandb.run.project,
-            "wandb_entity": wandb.run.entity,
-            "wandb_url": wandb.run.url,
-        }
-        wandb_info_path = os.path.join(cfg.training.output_dir, "wandb_info.json")
-        with open(wandb_info_path, "w") as f:
-            json.dump(wandb_info, f, indent=2)
-        rank_0_print(f"Saved wandb run info to: {wandb_info_path}")
-        rank_0_print(f"Wandb ID: {wandb.run.id}")
+    # Initialize wandb via logger if requested
+    if "wandb" in (cfg.logging.log_to or []) and is_rank_0():
+        # Convert config to dict for wandb using dataclass asdict
+        config_dict = asdict(cfg)
+        logger.init_wandb(
+            project=cfg.logging.wandb_project,
+            entity=cfg.logging.wandb_entity,
+            name=run_name,
+            config=config_dict,
+        )
+        rank_0_print(f"Wandb initialized: {run_name}")
+
+    logger.write_wandb_info(output_dir, run_name)
 
     # Use the shared utilities for batch collator and dataset
+
+    if is_rank_0():
+        show_available_datasets()
+
     with _timer("time/setup_data", timing_raw=timing_raw):
-        batch_collator = setup_batch_collator(processor, tokenizer, cfg)
-        train_dataset = setup_dataset(cfg.data)
+        batch_collator = setup_batch_collator(processor, tokenizer, cfg, is_eval=False)
+        train_dataset = setup_dataset(cfg.data, batch_size=cfg.training.per_device_train_batch_size)
 
     # Set up evaluation dataset if evaluation is enabled
     eval_dataset = None
@@ -122,8 +174,21 @@ def train(cfg: ExperimentConfig):
         "rfm_heads": RFMHeadsTrainer,
         "rewind_transformer": ReWiNDTrainer,
         "rfm_vqa": RFMVQATrainer,
+        "rewind_scale_transformer": ReWiNDTrainer,
     }[cfg.trainer_cls]
     rank_0_print(f"Trainer class: {trainer_cls}")
+
+    # Add SaveBestCallback to automatically save and upload best models
+    save_best_cfg = cfg.logging.save_best
+    save_callback = SaveBestCallback(
+        metric_names=save_best_cfg.metric_names,
+        greater_is_better=save_best_cfg.greater_is_better,
+        keep_top_k=save_best_cfg.keep_top_k,
+        upload_to_hub=save_best_cfg.upload_to_hub,
+        hub_token=save_best_cfg.hub_token,
+        hub_private=save_best_cfg.hub_private,
+        base_model=cfg.model.base_model_id,
+    )
 
     trainer = trainer_cls(
         model=peft_rfm_model,
@@ -132,16 +197,33 @@ def train(cfg: ExperimentConfig):
         eval_dataset=eval_dataset,
         data_collator=batch_collator,
         config=cfg,
+        logger=logger,
+        callbacks=[save_callback],
     )
+
+    # Set trainer reference in the callback so it can access trainer methods
+    save_callback.setup_trainer_reference(trainer)
+
+    # Debug: Check if callback was added
+    rank_0_print(f"🔧 DEBUG: Trainer callbacks: {[type(cb).__name__ for cb in trainer.callback_handler.callbacks]}")
+
+    metrics_info = []
+    for name, is_better in zip(save_best_cfg.metric_names, save_best_cfg.greater_is_better):
+        direction = "↗️ higher" if is_better else "↘️ lower"
+        metrics_info.append(f"{name} ({direction})")
+
+    rank_0_print(f"💾 SaveBest monitoring: {', '.join(metrics_info)}")
+    rank_0_print(f"📁 Keeping top {save_best_cfg.keep_top_k} checkpoint(s) and upload(s)")
+
     if is_rank_0():
         print("\n" + "=" * 80)
         print("--- PRE-TRAINING FSDP DIAGNOSTICS ---")
         # The Trainer creates its own Accelerator instance. Let's check its state.
         if hasattr(trainer, "accelerator"):
-            print(f"Trainer's Accelerator object found.")
+            print("Trainer's Accelerator object found.")
             fsdp_plugin = getattr(trainer.accelerator.state, "fsdp_plugin", None)
             if fsdp_plugin:
-                print(f"FSDP Plugin found in Accelerator state.")
+                print("FSDP Plugin found in Accelerator state.")
                 # This is the configuration the accelerator will ACTUALLY use for wrapping.
                 print(f"VERIFY: Actual FSDP plugin config being used: {fsdp_plugin}")
             else:
@@ -150,12 +232,16 @@ def train(cfg: ExperimentConfig):
             print("ERROR: Trainer has no 'accelerator' attribute yet. This check needs to be later.")
         print("=" * 80 + "\n")
 
-    # log timing_raw to wandb
-    if cfg.logging.use_wandb and is_rank_0():
-        wandb.log(timing_raw)
+    # log timing_raw via logger
+    if is_rank_0():
+        logger.log_scalars(timing_raw)
 
     rank_0_print(f"Timing raw: {timing_raw}")
     rank_0_print(f"Training from checkpoint: {cfg.training.resume_from_checkpoint}")
+
+    if cfg.debug:
+        rank_0_print("🐛 DEBUG MODE: eval_steps=2, custom_eval_steps=2, eval_subset_size=10")
+
     trainer.train(resume_from_checkpoint=cfg.training.resume_from_checkpoint)
     trainer.save_model(cfg.training.output_dir)
     rank_0_print(f"Training complete! Check {cfg.training.output_dir} for checkpoints and final model.")
@@ -170,18 +256,32 @@ def display_config(cfg: ExperimentConfig):
     console.print(cfg)
 
 
-def main(cfg: ExperimentConfig):
-    # Display the configuration in a nice Rich format
-    display_config(cfg)
+def convert_hydra_to_dataclass(cfg: DictConfig) -> ExperimentConfig:
+    """Convert Hydra DictConfig to ExperimentConfig dataclass."""
+    # Convert to dict and then to dataclass
+    # Use structured config if available, otherwise convert manually
+    if OmegaConf.is_struct(cfg):
+        cfg_dict = OmegaConf.to_container(cfg, resolve=True, structured_config_mode="convert")
+    else:
+        cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+    return ExperimentConfig(**cfg_dict)
 
-    if cfg.mode == "train":
+
+@hydra_main(version_base=None, config_path="rfm/configs", config_name="config")
+def main(cfg: DictConfig):
+    # Convert Hydra config to dataclass
+    exp_cfg = convert_hydra_to_dataclass(cfg)
+
+    # Display the configuration in a nice Rich format
+    display_config(exp_cfg)
+
+    if exp_cfg.mode == "train":
         if is_rank_0():
             rprint(Panel.fit("🚀 Starting RFM Training", style="bold green"))
-        train(cfg)
+        train(exp_cfg)
     else:
-        raise ValueError(f"Unknown mode: {cfg.mode}. Must be 'train' or 'evaluate'")
+        raise ValueError(f"Unknown mode: {exp_cfg.mode}. Must be 'train' or 'evaluate'")
 
 
 if __name__ == "__main__":
-    cfg = parse_multiple(ExperimentConfig)
-    main(cfg)
+    main()

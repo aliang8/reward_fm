@@ -1,27 +1,9 @@
-#!/bin/bash
-
-NUM_GPUS=2
-CUDA_VISIBLE_DEVICES=0,1
-USE_ACCELERATE=true
-OUTPUT_DIR=./logs/rfm_prefprog
-
-if [ "${USE_ACCELERATE}" = true ]; then
-    CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} uv run accelerate launch \
-        --config_file rfm/configs/fsdp.yaml \
-        --num_processes=${NUM_GPUS} \
-        train.py \
-        --config rfm/configs/config.yaml \
-        --logging.use_wandb true \
-        --debug false \
-        --model.train_preference_head true \
-        --model.train_progress_head true \
-        --training.output_dir ${OUTPUT_DIR} 
-else
-    CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} uv run python train.py \
-        --config rfm/configs/config.yaml \
-        --logging.use_wandb true \
-        --debug false \
-        --model.train_preference_head true \
-        --model.train_progress_head true \
-        --training.output_dir ${OUTPUT_DIR} 
-fi
+uv run accelerate launch --config_file rfm/configs/fsdp.yaml --num_processes=2 \
+    train.py \
+    --config_paths rfm/configs/config.yaml rfm/configs/data/oxe_mw.yaml \
+    --logging.log_to '["wandb"]' \
+    --debug false \
+    --data.sample_type_ratio '[0, 1, 0]' \
+    --model.train_progress_head true \
+    --model.train_success_head false \
+    --training.exp_name rfm_st-0_1_0_pref-f_prog-t_succ-f

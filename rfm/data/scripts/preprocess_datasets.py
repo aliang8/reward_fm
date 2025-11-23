@@ -5,37 +5,78 @@ Uses HuggingFace's .map() for efficient processing and saves trajectory indices.
 Creates one unified cache for each dataset/subset split.
 """
 
-import os
-import json
-import shutil
 import datetime
-from pathlib import Path
-from typing import Dict, List, Optional, Any
-import torch
-from datasets import Dataset, DatasetDict, load_dataset, Video
-import numpy as np
-from tqdm import tqdm
-from omegaconf import OmegaConf
+import shutil
+import json
+import os
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 from dataclasses import dataclass, field
-from rfm.utils.logging import rank_0_print
+from typing import Any
+
+import numpy as np
+import decord  # type: ignore
+import torch
 from pyrallis import wrap
+from tqdm import tqdm
+from sentence_transformers import SentenceTransformer
+from transformers import AutoModel, AutoImageProcessor
+from PIL import Image
+
+from datasets import Dataset, DatasetDict, Video, load_dataset
+from rfm.utils.distributed import rank_0_print
+from rfm.utils.embedding_utils import compute_video_embeddings, compute_text_embeddings
+
+# VIDEO_ERROR_PRINTED = False
+# maps subsets to functions that filter the dataset. If true, the example is dropped.
+soar_bad_trajectories = [
+    "b180805a-638e-4055-bc72-3a8d4808a289",
+    "3b82f7dd-7b6d-4488-b296-4354ad7af945",
+    "4aef32ef-2ebe-42c0-8563-96b0ec22a551",
+    "3f7291df-502a-4a4c-acca-2c776cbfaccc",
+    "9785b54a-39ed-48e6-93b5-b8ce589d477b",
+    "c00f8523-1301-47be-b10b-fc3ee32d6c02",
+    "8d1c4509-3d7b-4b00-837c-efa9351ca234",
+    "647060e8-92dd-48db-933b-ee716421a354",
+    "0493e8a2-5520-4f42-b30f-8e67eb0088de",
+]
+filters = {
+    "jesbu1/molmoact_rfm/molmoact_dataset_tabletop": lambda x: "load the bowl" in x["task"].lower(),
+    "jesbu1/galaxea_rfm/galaxea_part1_r1_lite": lambda x: all(
+        word in x["task"].lower() for word in ["return", "to", "initial", "position"]
+    ),
+    "jesbu1/galaxea_rfm/galaxea_part2_r1_lite": lambda x: all(
+        word in x["task"].lower() for word in ["return", "to", "initial", "position"]
+    ),
+    "jesbu1/galaxea_rfm/galaxea_part3_r1_lite": lambda x: all(
+        word in x["task"].lower() for word in ["return", "to", "initial", "position"]
+    ),
+    "jesbu1/galaxea_rfm/galaxea_part4_r1_lite": lambda x: all(
+        word in x["task"].lower() for word in ["return", "to", "initial", "position"]
+    ),
+    "jesbu1/galaxea_rfm/galaxea_part5_r1_lite": lambda x: all(
+        word in x["task"].lower() for word in ["return", "to", "initial", "position"]
+    ),
+    "jesbu1/soar_rfm/soar_rfm": lambda x: x["id"] in soar_bad_trajectories,
+    "jesbu1/auto_eval_rfm/auto_eval_rfm": lambda x: x["frames_shape"][0]
+    <= 5,  # some episodes are too short and are likely poor/faulty success detections
+    "anqil/rh20t_subset_rfm/rh20t_human": lambda x: x["frames_shape"][0] < 16,  # some episodes are too short
+    "anqil/rh20t_subset_rfm/rh20t_robot": lambda x: x["frames_shape"][0] < 16,  # some episodes are too short
+}
+
 
 @dataclass
 class DataPreprocessConfig:
     """Configuration for data loading and processing."""
 
     # Dataset paths and subsets
-    train_datasets: List[str] = field(
-        default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of training dataset names"}
+    train_datasets: list[str] = field(default_factory=lambda: [], metadata={"help": "List of training dataset names"})
+    train_subsets: list[list[str]] = field(
+        default_factory=lambda: [[]], metadata={"help": "List of training dataset subsets"}
     )
-    train_subsets: List[List[str]] = field(
-        default_factory=lambda: [["libero_90"]], metadata={"help": "List of training dataset subsets"}
-    )
-    eval_datasets: List[str] = field(
-        default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of evaluation dataset names"}
-    )
-    eval_subsets: List[List[str]] = field(
-        default_factory=lambda: [["libero_10"]], metadata={"help": "List of evaluation dataset subsets"}
+    eval_datasets: list[str] = field(default_factory=lambda: [], metadata={"help": "List of evaluation dataset names"})
+    eval_subsets: list[list[str]] = field(
+        default_factory=lambda: [[]], metadata={"help": "List of evaluation dataset subsets"}
     )
 
     # Video processing parameters
@@ -52,6 +93,21 @@ class DataPreprocessConfig:
     num_threads: int = field(default=36, metadata={"help": "Number of threads for dataset processing"})
     cache_dir: str = field(default="", metadata={"help": "Directory to store processed dataset caches"})
 
+    # Embedding preprocessing parameters
+    precompute_embeddings: bool = field(
+        default=False, metadata={"help": "Whether to precompute DINOv2 and sentence transformer embeddings"}
+    )
+    embeddings_cache_dir: str = field(
+        default="embeddings_cache", metadata={"help": "Directory to save precomputed embeddings"}
+    )
+    dinov2_model: str = field(default="facebook/dinov2-base", metadata={"help": "DINOv2 model for video embeddings"})
+    sentence_model: str = field(
+        default="sentence-transformers/all-MiniLM-L12-v2",
+        metadata={"help": "Sentence transformer model for text embeddings"},
+    )
+    embedding_batch_size: int = field(default=32, metadata={"help": "Batch size for embedding computation"})
+
+
 class DatasetPreprocessor:
     """Unified preprocessor for all datasets with individual caching per dataset/subset."""
 
@@ -59,25 +115,48 @@ class DatasetPreprocessor:
         self.config = config
 
         # Dataset storage - store individual datasets
-        self.datasets: Dict[str, Dataset] = {}  # key: "dataset_path/subset"
-        self.dataset_indices: Dict[str, Dict] = {}  # key: "dataset_path/subset", value: index mappings
+        self.datasets: dict[str, Dataset] = {}  # key: "dataset_path/subset"
+        self.dataset_indices: dict[str, dict] = {}  # key: "dataset_path/subset", value: index mappings
+
+        # Initialize embedding models if precompute_embeddings is enabled
+        self.dinov2_model = None
+        self.dinov2_processor = None
+        self.sentence_model = None
+
+        if config.precompute_embeddings:
+            rank_0_print("🚀 Initializing embedding models...")
+
+            # Initialize DINOv2 for video embeddings
+            self.dinov2_model = AutoModel.from_pretrained(config.dinov2_model)
+            self.dinov2_processor = AutoImageProcessor.from_pretrained(config.dinov2_model, use_fast=True)
+            self.dinov2_model.eval()
+
+            # Initialize Sentence Transformer for text embeddings
+            self.sentence_model = SentenceTransformer(config.sentence_model)
+
+            # Move to GPU if available
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            self.dinov2_model = self.dinov2_model.to(device)
+            self.sentence_model = self.sentence_model.to(device)
+
+            rank_0_print(f"✅ Embedding models initialized on {device}")
 
     def preprocess_datasets(self):
-        """Preprocess each dataset/subset pair individually and create index-based caches."""
-        rank_0_print(f"\n🔧 Preprocessing all datasets...")
+        """Preprocess each dataset individually and create index-based caches."""
+        rank_0_print("\n🔧 Preprocessing all datasets...")
 
         # Collect all dataset/subset combinations
         all_datasets = []
 
         # Add training datasets
-        for dataset_path, dataset_subsets in zip(self.config.train_datasets, self.config.train_subsets):
+        for dataset_path, dataset_subsets in zip(self.config.train_datasets, self.config.train_subsets, strict=False):
             if isinstance(dataset_subsets, str):
                 dataset_subsets = [dataset_subsets]
             for subset in dataset_subsets:
                 all_datasets.append((dataset_path, subset))
 
         # Add evaluation datasets
-        for dataset_path, dataset_subsets in zip(self.config.eval_datasets, self.config.eval_subsets):
+        for dataset_path, dataset_subsets in zip(self.config.eval_datasets, self.config.eval_subsets, strict=False):
             if isinstance(dataset_subsets, str):
                 dataset_subsets = [dataset_subsets]
             for subset in dataset_subsets:
@@ -99,6 +178,10 @@ class DatasetPreprocessor:
                 rank_0_print(f"    ✅ Cache already exists at {individual_cache_dir}, loading...")
                 self._load_individual_cache(individual_cache_dir, cache_key)
                 continue
+
+            if os.path.exists(individual_cache_dir) and self.config.force_reprocess:
+                rank_0_print(f"    ❌ Force reprocessing enabled, deleting cache at {individual_cache_dir}")
+                shutil.rmtree(individual_cache_dir)
 
             # Load and process individual dataset
             try:
@@ -124,10 +207,10 @@ class DatasetPreprocessor:
                 # Save individual cache
                 self._save_individual_cache(individual_cache_dir, processed_dataset, indices, dataset_path, subset)
 
-                rank_0_print(f"    ✅ Successfully processed and cached {dataset_path}/{subset}")
+                rank_0_print(f"    ✅ Successfully processed and cached {dataset_path}")
 
             except Exception as e:
-                rank_0_print(f"    ❌ Failed to process {dataset_path}/{subset}: {e}")
+                rank_0_print(f"    ❌ Failed to process {dataset_path}: {e}")
                 continue
 
         if not self.datasets:
@@ -151,99 +234,104 @@ class DatasetPreprocessor:
         # Only cast to Video with decode=True for the .map path. The threaded path will
         # open and close readers per-sample to avoid keeping many files open at once.
         if self.config.num_threads > 1:
-            processed_dataset, indices = self._process_dataset_videos_threaded(dataset, cache_key)
+            processed_dataset, indices = self._process_dataset_videos_threaded(dataset, cache_dir, cache_key)
         else:
             dataset = dataset.cast_column("frames_video", Video(decode=True))
-            processed_dataset, indices = self._process_dataset_videos_map(dataset, cache_key)
+            processed_dataset, indices = self._process_dataset_videos_map(dataset, cache_dir, cache_key)
 
         return processed_dataset, indices
 
-    def _preprocess_videos(self, frames, num_frames: int = None) -> np.ndarray:
+    def _compute_video_embeddings(self, frames_array: np.ndarray) -> torch.Tensor:
         """
-        Process video frames from VideoReader objects into numpy arrays with downsampling.
+        Compute DINOv2 embeddings for video frames.
 
         Args:
-            frames: VideoReader object from HuggingFace Video feature
-            num_frames: Number of frames to extract
+            frames_array: Video frames as numpy array (T, H, W, C)
 
         Returns:
-            frames as numpy arrays with shape (max_frames, H, W, C) where T is time dimension
+            Video embeddings as torch tensor (T, D) where D is embedding dimension
         """
-        if num_frames is None:
-            num_frames = self.max_frames_for_preprocessing
+        return compute_video_embeddings(
+            frames_array,
+            self.dinov2_model,
+            self.dinov2_processor,
+            batch_size=self.config.embedding_batch_size,
+            use_autocast=True,
+        )
 
-        if frames is None:
-            return np.array([])
+    def _compute_text_embeddings(self, text: str) -> torch.Tensor:
+        """
+        Compute sentence transformer embeddings for text.
 
-        try:
-            # Convert VideoReader to list of frames
-            all_frames = list(frames)
-            # print(f"Total frames: {len(all_frames)}, num_frames: {num_frames}")
+        Args:
+            text: Text description
 
-            total_frames = len(all_frames)
+        Returns:
+            Text embedding as torch tensor (D,) where D is embedding dimension
+        """
+        return compute_text_embeddings(
+            text,
+            self.sentence_model,
+            use_autocast=True,
+            show_progress_bar=False,
+        )
 
-            if total_frames == 0:
-                return np.array([])
+    def _save_embeddings(self, video_embeddings: torch.Tensor, text_embedding: torch.Tensor, embeddings_path: str):
+        """
+        Save video and text embeddings to a .pt file.
 
-            # Extract frame data from VideoReader objects
-            frames_list = []
-            for frame in all_frames:
-                if hasattr(frame, "get") and "data" in frame:
-                    # VideoReader frame format
-                    frame_data = frame["data"]
-                    if hasattr(frame_data, "numpy"):
-                        frame_data = frame_data.numpy()
-                    frames_list.append(frame_data)
-                else:
-                    # Direct frame data
-                    if hasattr(frame, "numpy"):
-                        frame_data = frame.numpy()
-                    else:
-                        frame_data = frame
-                    frames_list.append(frame_data)
+        Args:
+            video_embeddings: Video embeddings tensor (T, D)
+            text_embedding: Text embedding tensor (D,)
+            embeddings_path: Path to save the .pt file
+        """
+        os.makedirs(os.path.dirname(embeddings_path), exist_ok=True)
 
-            # Stack frames into numpy array
-            if frames_list and hasattr(frames_list[0], "shape"):
-                frames_array = np.stack(frames_list)
-            else:
-                frames_array = np.array(frames_list)
+        embeddings_data = {
+            "video_embeddings": video_embeddings,
+            "text_embedding": text_embedding,
+            "video_shape": video_embeddings.shape,
+            "text_shape": text_embedding.shape,
+        }
 
-            # Ensure we have the correct shape: (T, H, W, C)
-            if len(frames_array.shape) != 4:
-                raise ValueError(f"Expected 4D array (T, H, W, C), got shape {frames_array.shape}")
+        torch.save(embeddings_data, embeddings_path)
 
-            # Convert from CxHxW to HxWxC if needed
-            if frames_array.shape[1] == 3:
-                frames_array = np.transpose(frames_array, (0, 2, 3, 1))
+    def _process_embeddings_for_example(
+        self, frames_array: np.ndarray, task_text: str, idx: int, example_id: str, embeddings_dir: str
+    ) -> tuple[str, tuple, tuple]:
+        """
+        Process embeddings for a single example.
 
-            # Downsample frames to max_frames
-            if total_frames <= num_frames:
-                # If video has fewer frames than requested, pad with last frame
-                if total_frames < num_frames:
-                    last_frame = frames_array[-1]  # Get the last frame
-                    padding_frames = np.repeat(last_frame[np.newaxis, :, :, :], num_frames - total_frames, axis=0)
-                    frames_array = np.concatenate([frames_array, padding_frames], axis=0)
-            else:
-                # Uniform sampling across the video
-                frame_indices = [int(i * total_frames / num_frames) for i in range(num_frames)]
-                frames_array = frames_array[frame_indices]
+        Args:
+            frames_array: Video frames as numpy array
+            task_text: Task description text
+            idx: Example index
+            example_id: Example ID
+            embeddings_dir: Directory to save embeddings
 
-            return frames_array
+        Returns:
+            Tuple of (embeddings_filepath, video_embedding_shape, text_embedding_shape)
+        """
+        if not self.config.precompute_embeddings:
+            return None, None, None
 
-        except Exception as e:
-            rank_0_print(f"Error in _preprocess_videos: {e}")
-            return np.array([])
-        finally:
-            # Ensure underlying video resources are released
-            try:
-                if hasattr(frames, "close"):
-                    frames.close()
-                elif hasattr(frames, "reader") and hasattr(frames.reader, "close"):
-                    frames.reader.close()
-            except Exception:
-                pass
+        # Create embeddings directory
+        os.makedirs(embeddings_dir, exist_ok=True)
 
-    def _process_dataset_videos_map(self, dataset, cache_key: str):
+        # Compute video embeddings
+        video_embeddings = self._compute_video_embeddings(frames_array)
+
+        # Compute text embeddings
+        text_embedding = self._compute_text_embeddings(task_text)
+
+        # Save embeddings
+        embeddings_filename = f"trajectory_{idx:06d}_{example_id}_embeddings.pt"
+        embeddings_filepath = os.path.join(embeddings_dir, embeddings_filename)
+        self._save_embeddings(video_embeddings, text_embedding, embeddings_filepath)
+
+        return embeddings_filepath, video_embeddings.shape, text_embedding.shape
+
+    def _process_dataset_videos_map(self, dataset, cache_dir: str, cache_key: str):
         """
         Process dataset frames using .map() method for efficient on-the-fly processing.
         Also builds index mappings during the same pass to avoid multiple iterations.
@@ -255,6 +343,7 @@ class DatasetPreprocessor:
         Returns:
             Dataset with processed frame paths and metadata
         """
+        raise NotImplementedError("This method is not properly implemented rn, use threaded version with 1 process.")
         # Check if frames are already processed (npz file paths)
         sample_item = dataset[0]
         frames_data = sample_item.get("frames")
@@ -280,16 +369,24 @@ class DatasetPreprocessor:
         quality_indices = {}
         task_indices = {}
         source_indices = {}
+        partial_success_indices = {}
 
-        # Create frames directory for npz files
-        frames_dir = os.path.join(self.config.cache_dir, "frames")
+        frames_dir = os.path.join(cache_dir, "frames")
+        embeddings_dir = os.path.join(cache_dir, self.config.embeddings_cache_dir)
         os.makedirs(frames_dir, exist_ok=True)
+        os.makedirs(embeddings_dir, exist_ok=True)
 
         def process_videos_and_build_indices(example, idx):
             """Process frames and build index mappings in a single pass."""
             # Debug: Log what we're processing
             if idx < 3:  # Only log first 5 examples to avoid spam
                 rank_0_print(f"Processing example {idx}: {example['id']} - {example['task']}")
+
+            # filter the example if needed
+            should_drop = filters.get(cache_key, lambda x: False)(example)
+            if should_drop:
+                rank_0_print(f"Dropping example {idx}: {example['id']} - {example['task']}")
+                return {"frames": None, "frames_processed": False}
 
             # Get the video reader object from the Video feature
             frames = example.get("frames_video")
@@ -305,22 +402,25 @@ class DatasetPreprocessor:
                 return {"frames": None, "frames_processed": False}
 
             # Save frames as npz file
-            frames_filename = f"trajectory_{idx:06d}_{example['id']}.npz"
+            frames_filename = f"trajectory_{example['id']}.npz"
             frames_filepath = os.path.join(frames_dir, frames_filename)
-
-            # Save frames with metadata
-            np.savez_compressed(
-                frames_filepath,
-                frames=frames_array,
-                shape=frames_array.shape,
-                num_frames=frames_array.shape[0] if len(frames_array.shape) > 0 else 0,
-            )
 
             # Store file path and metadata in dataset (not the actual frames)
             example["frames"] = frames_filepath  # Store path to npz file
             example["frames_shape"] = frames_array.shape
             example["num_frames"] = frames_array.shape[0] if len(frames_array.shape) > 0 else 0
             example["frames_processed"] = True
+
+            # Compute and save embeddings if enabled
+            embeddings_filepath, video_emb_shape, text_emb_shape = self._process_embeddings_for_example(
+                frames_array, example.get("task", ""), idx, example["id"], embeddings_dir
+            )
+
+            if embeddings_filepath is not None:
+                # Store embeddings path in dataset
+                example["embeddings_path"] = embeddings_filepath
+                example["video_embedding_shape"] = video_emb_shape
+                example["text_embedding_shape"] = text_emb_shape
 
             # BUILD INDEX MAPPINGS DURING THE SAME PASS
             # Debug: Log the values we're extracting
@@ -353,6 +453,13 @@ class DatasetPreprocessor:
                 source_indices[source] = []
             source_indices[source].append(idx)
 
+            # Partial success-based indices
+            partial_success = example.get("partial_success", None)
+            if partial_success is not None and quality == "failure":  # only record partial success for failure cases
+                if partial_success not in partial_success_indices:
+                    partial_success_indices[partial_success] = []
+                partial_success_indices[partial_success].append(idx)
+
             # Optimal/Suboptimal by task
             if task not in optimal_by_task:
                 optimal_by_task[task] = []
@@ -366,6 +473,14 @@ class DatasetPreprocessor:
             elif quality in ["suboptimal", "failed", "failure"]:
                 suboptimal_by_task[task].append(idx)
 
+            # Save frames with metadata
+            np.savez_compressed(
+                frames_filepath,
+                frames=frames_array,
+                shape=frames_array.shape,
+                num_frames=frames_array.shape[0] if len(frames_array.shape) > 0 else 0,
+            )
+
             return example
 
         # Apply the mapping function to the dataset
@@ -376,6 +491,59 @@ class DatasetPreprocessor:
             num_proc=self.config.num_proc,
         )
 
+        # Filter out dropped examples (those with frames=None and frames_processed=False)
+        original_length = len(processed_dataset)
+
+        # Build a list of which indices were kept (had frames_processed=True)
+        kept_indices = []
+        for idx in range(original_length):
+            if processed_dataset[idx].get("frames_processed", False):
+                kept_indices.append(idx)
+
+        # Filter the dataset
+        processed_dataset = processed_dataset.filter(lambda x: x.get("frames_processed", False))
+        num_filtered = original_length - len(processed_dataset)
+
+        if num_filtered > 0:
+            rank_0_print(f"Filtered out {num_filtered} trajectories")
+
+            # Build mapping from old indices to new indices
+            old_to_new_idx = {old_idx: new_idx for new_idx, old_idx in enumerate(kept_indices)}
+
+            # Remap all indices
+            robot_trajectories = [old_to_new_idx[idx] for idx in robot_trajectories if idx in old_to_new_idx]
+            human_trajectories = [old_to_new_idx[idx] for idx in human_trajectories if idx in old_to_new_idx]
+
+            quality_indices = {
+                key: [old_to_new_idx[idx] for idx in indices if idx in old_to_new_idx]
+                for key, indices in quality_indices.items()
+            }
+
+            task_indices = {
+                key: [old_to_new_idx[idx] for idx in indices if idx in old_to_new_idx]
+                for key, indices in task_indices.items()
+            }
+
+            source_indices = {
+                key: [old_to_new_idx[idx] for idx in indices if idx in old_to_new_idx]
+                for key, indices in source_indices.items()
+            }
+
+            partial_success_indices = {
+                key: [old_to_new_idx[idx] for idx in indices if idx in old_to_new_idx]
+                for key, indices in partial_success_indices.items()
+            }
+
+            optimal_by_task = {
+                key: [old_to_new_idx[idx] for idx in indices if idx in old_to_new_idx]
+                for key, indices in optimal_by_task.items()
+            }
+
+            suboptimal_by_task = {
+                key: [old_to_new_idx[idx] for idx in indices if idx in old_to_new_idx]
+                for key, indices in suboptimal_by_task.items()
+            }
+
         # Log the built indices
         rank_0_print(f"Built index mappings for {cache_key}:")
         rank_0_print(f"  Robot trajectories: {len(robot_trajectories)}")
@@ -383,6 +551,7 @@ class DatasetPreprocessor:
         rank_0_print(f"  Tasks: {len(task_indices)}")
         rank_0_print(f"  Quality labels: {len(quality_indices)}")
         rank_0_print(f"  Data sources: {len(source_indices)}")
+        rank_0_print(f"  Partial success indices: {len(partial_success_indices)}")
 
         return processed_dataset, {
             "robot_trajectories": robot_trajectories,
@@ -392,13 +561,15 @@ class DatasetPreprocessor:
             "quality_indices": quality_indices,
             "task_indices": task_indices,
             "source_indices": source_indices,
+            "partial_success_indices": partial_success_indices,
         }
 
-    def _process_dataset_videos_threaded(self, dataset, cache_key: str):
+    def _process_dataset_videos_threaded(self, dataset, cache_dir: str, cache_key: str):
         """
         Threaded implementation to process frames and build indices, saving npz files concurrently.
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
+
         from datasets import Sequence, Value
 
         # Initialize index mappings
@@ -409,88 +580,47 @@ class DatasetPreprocessor:
         quality_indices = {}
         task_indices = {}
         source_indices = {}
+        partial_success_indices = {}
 
-        frames_dir = os.path.join(self.config.cache_dir, "frames")
+        frames_dir = os.path.join(cache_dir, "frames")
+        embeddings_dir = os.path.join(cache_dir, self.config.embeddings_cache_dir)
         os.makedirs(frames_dir, exist_ok=True)
+        os.makedirs(embeddings_dir, exist_ok=True)
 
         def process_one(idx: int):
+            global VIDEO_ERROR_PRINTED
             # Fetch example inside the worker to avoid holding many decoded readers
-            example: Dict[str, Any] = dataset[idx]
+            example: dict[str, Any] = dataset[idx]
             frames_src = example.get("frames_video")
             if frames_src is None:
-                return idx, None, None
+                return idx, None, None, None, None, None
 
             # If the source is a path string, open with a lightweight reader
-            if isinstance(frames_src, str):
-                reader = None
-                try:
-                    try:
-                        import imageio.v2 as iio  # type: ignore
-                        reader = iio.get_reader(frames_src)
-                        frames_iter = (frame for frame in reader)
-                        frames_array = self._preprocess_videos(frames_iter, self.config.max_frames_for_preprocessing)
-                    except Exception:
-                        try:
-                            import imageio as iio  # type: ignore
-                            reader = iio.get_reader(frames_src)
-                            frames_iter = (frame for frame in reader)
-                            frames_array = self._preprocess_videos(frames_iter, self.config.max_frames_for_preprocessing)
-                        except Exception as e2:
-                            # Fallback to OpenCV
-                            try:
-                                import cv2  # type: ignore
-                                cap = cv2.VideoCapture(frames_src)
-                                
-                                # Check if video file can be opened
-                                if not cap.isOpened():
-                                    rank_0_print(f"Warning: Cannot open video file {frames_src} with OpenCV")
-                                    frames_array = np.array([])
-                                else:
-                                    # Get video properties
-                                    total_frames_cv = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                                    fps = cap.get(cv2.CAP_PROP_FPS)
-                                    
-                                    if total_frames_cv <= 0:
-                                        rank_0_print(f"Warning: Invalid frame count ({total_frames_cv}) for video {frames_src}")
-                                        frames_array = np.array([])
-                                    else:
-                                        frames_list = []
-                                        frame_count = 0
-                                        max_attempts = min(total_frames_cv, 1000)  # Limit attempts for corrupted files
-                                        
-                                        while frame_count < max_attempts:
-                                            ret, frame = cap.read()
-                                            if not ret:
-                                                break
-                                            # Convert BGR to RGB
-                                            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                                            frames_list.append(frame_rgb)
-                                            frame_count += 1
-                                        
-                                        cap.release()
-                                        
-                                        if frames_list:
-                                            frames_array = np.stack(frames_list)
-                                            frames_array = self._preprocess_videos(frames_array, self.config.max_frames_for_preprocessing)
-                                        else:
-                                            frames_array = np.array([])
-                            except Exception as e3:
-                                rank_0_print(f"Warning: All video reading methods failed for {frames_src}: imageio error: {e2}, OpenCV error: {e3}")
-                                frames_array = np.array([])
-                finally:
-                    try:
-                        if reader is not None:
-                            reader.close()
-                    except Exception:
-                        pass
-            else:
-                frames_array = self._preprocess_videos(frames_src, self.config.max_frames_for_preprocessing)
+            try:
+                # Try decord first (fastest for video decoding)
+                vr = decord.VideoReader(frames_src, num_threads=1)
+                total_frames = len(vr)
 
-            if frames_array.size == 0:
-                return idx, None, None
+                # Sample frames efficiently
+                if total_frames <= self.config.max_frames_for_preprocessing:
+                    frame_indices = list(range(total_frames))
+                else:
+                    # Uniform sampling
+                    frame_indices = [
+                        int(i * total_frames / self.config.max_frames_for_preprocessing)
+                        for i in range(self.config.max_frames_for_preprocessing)
+                    ]
+
+                frames_array = vr.get_batch(frame_indices).asnumpy()
+
+                del vr
+
+            except Exception as e:
+                rank_0_print(f"Error in _process_one: {e}")
+                return idx, None, None, None, None, None
 
             # Save frames as npz file
-            frames_filename = f"trajectory_{idx:06d}_{example['id']}.npz"
+            frames_filename = f"trajectory_{example['id']}.npz"
             frames_filepath = os.path.join(frames_dir, frames_filename)
             np.savez_compressed(
                 frames_filepath,
@@ -499,8 +629,13 @@ class DatasetPreprocessor:
                 num_frames=frames_array.shape[0] if len(frames_array.shape) > 0 else 0,
             )
 
+            # Process embeddings if enabled
+            embeddings_filepath, video_emb_shape, text_emb_shape = self._process_embeddings_for_example(
+                frames_array, example.get("task", ""), idx, example["id"], embeddings_dir
+            )
+
             # Return minimal info to update record and indices
-            return idx, frames_filepath, frames_array.shape
+            return idx, frames_filepath, frames_array.shape, embeddings_filepath, video_emb_shape, text_emb_shape
 
         # Prepare indices only; fetch rows inside workers to limit open file handles
         indices_only = list(range(len(dataset)))
@@ -508,56 +643,88 @@ class DatasetPreprocessor:
         _ = tqdm(indices_only, total=len(indices_only), desc=f"Indexing {cache_key}", unit="traj", leave=False)
 
         # Concurrently convert and write npz for all examples, collecting results
-        idx_to_npz = {}
+        idx_to_data = {}
         with ThreadPoolExecutor(max_workers=self.config.num_threads) as executor:
             futures = [executor.submit(process_one, i) for i in indices_only]
             for fut in tqdm(
                 as_completed(futures), total=len(futures), desc=f"Processing {cache_key}", unit="traj", leave=False
             ):
-                idx, frames_path, shape = fut.result()
+                idx, frames_path, shape, embeddings_path, video_emb_shape, text_emb_shape = fut.result()
+
                 if frames_path is not None:
-                    idx_to_npz[idx] = (frames_path, shape)
+                    idx_to_data[idx] = (frames_path, shape, embeddings_path, video_emb_shape, text_emb_shape)
 
         # Update dataset with saved paths and build indices
         updated_rows = []
+        kept_indices = []  # Track which original indices were kept
+
         for i in tqdm(indices_only, total=len(indices_only), desc=f"Finalizing {cache_key}", unit="traj", leave=False):
             ex = dataset[i]
-            if i in idx_to_npz:
-                frames_path, shape = idx_to_npz[i]
+            if i in idx_to_data:
+                frames_path, shape, embeddings_path, video_emb_shape, text_emb_shape = idx_to_data[i]
                 ex = dict(ex)
                 ex["frames"] = frames_path
                 ex["frames_shape"] = shape
                 ex["num_frames"] = shape[0] if len(shape) > 0 else 0
                 ex["frames_processed"] = True
 
-                # Build indices
+                should_drop = filters.get(cache_key, lambda x: False)(ex)
+                if should_drop:
+                    # remove the frames_path and then continue processing others
+                    os.remove(frames_path)
+                    print(f"Removed frames_path {frames_path} for {ex['id']} because it was filtered out")
+                    continue
+
+                # Add embedding information if available
+                if embeddings_path is not None:
+                    ex["embeddings_path"] = embeddings_path
+                    ex["video_embedding_shape"] = video_emb_shape
+                    ex["text_embedding_shape"] = text_emb_shape
+
+                # Track that this index was kept
+                kept_indices.append(i)
+
+                # Build indices using the NEW index (position in updated_rows)
+                new_idx = len(updated_rows)
+
                 if ex.get("is_robot", True):
-                    robot_trajectories.append(i)
+                    robot_trajectories.append(new_idx)
                 else:
-                    human_trajectories.append(i)
+                    human_trajectories.append(new_idx)
 
                 quality = ex.get("quality_label", "successful")
-                quality_indices.setdefault(quality, []).append(i)
+                quality_indices.setdefault(quality, []).append(new_idx)
 
                 task = ex.get("task", "unknown")
-                task_indices.setdefault(task, []).append(i)
+                task_indices.setdefault(task, []).append(new_idx)
 
                 source = ex.get("data_source", "unknown")
-                source_indices.setdefault(source, []).append(i)
+                source_indices.setdefault(source, []).append(new_idx)
+
+                partial_success = ex.get("partial_success", None)
+                if (
+                    partial_success is not None and quality == "failure"
+                ):  # only record partial success for failure cases
+                    partial_success_indices.setdefault(partial_success, []).append(new_idx)
 
                 if task not in optimal_by_task:
                     optimal_by_task[task] = []
                     suboptimal_by_task[task] = []
                 if quality in ["successful", "optimal"]:
-                    optimal_by_task[task].append(i)
+                    optimal_by_task[task].append(new_idx)
                 elif quality in ["suboptimal", "failed", "failure"]:
-                    suboptimal_by_task[task].append(i)
+                    suboptimal_by_task[task].append(new_idx)
 
-            # Drop any lingering video readers from rows to free FDs
-            if isinstance(ex, dict):
-                ex.pop("frames_video", None)
+                # Drop any lingering video readers from rows to free FDs
+                if isinstance(ex, dict):
+                    ex.pop("frames_video", None)
 
-            updated_rows.append(ex)
+                updated_rows.append(ex)
+
+        # Report filtering stats
+        num_filtered = len(indices_only) - len(kept_indices)
+        if num_filtered > 0:
+            rank_0_print(f"Filtered out {num_filtered} trajectories")
 
         # Create a new Dataset from updated_rows
         processed_dataset = Dataset.from_list(updated_rows)
@@ -570,6 +737,7 @@ class DatasetPreprocessor:
         rank_0_print(f"  Tasks: {len(task_indices)}")
         rank_0_print(f"  Quality labels: {len(quality_indices)}")
         rank_0_print(f"  Data sources: {len(source_indices)}")
+        rank_0_print(f"  Partial success indices: {len(partial_success_indices)}")
 
         return processed_dataset, {
             "robot_trajectories": robot_trajectories,
@@ -579,17 +747,18 @@ class DatasetPreprocessor:
             "quality_indices": quality_indices,
             "task_indices": task_indices,
             "source_indices": source_indices,
+            "partial_success_indices": partial_success_indices,
         }
 
     def _save_individual_cache(
         self,
         cache_dir: str,
         processed_dataset: Dataset,
-        indices: Dict,
+        indices: dict,
         dataset_path: str,
         subset: str,
     ):
-        """Save the processed dataset and index mappings for an individual dataset/subset."""
+        """Save the processed dataset and index mappings for an individual dataset."""
         # Create cache directory
         os.makedirs(cache_dir, exist_ok=True)
 
@@ -622,6 +791,7 @@ class DatasetPreprocessor:
     def _get_config_hash(self) -> str:
         """Generate a hash of the relevant config parameters."""
         import hashlib
+
         config_str = str(self.config.max_frames_for_preprocessing)
         return hashlib.md5(config_str.encode()).hexdigest()
 
@@ -639,7 +809,7 @@ class DatasetPreprocessor:
         if not os.path.exists(mappings_file):
             raise FileNotFoundError(f"Index mappings not found at {mappings_file}")
 
-        with open(mappings_file, "r") as f:
+        with open(mappings_file) as f:
             self.dataset_indices[cache_key] = json.load(f)
 
         # Log loaded cache
@@ -659,6 +829,7 @@ class DatasetPreprocessor:
             "quality_indices": {},
             "task_indices": {},
             "source_indices": {},
+            "partial_success_indices": {},
         }
 
         # Track offset for each dataset
@@ -686,11 +857,11 @@ class DatasetPreprocessor:
 
         return combined_indices
 
-    def _load_dataset_from_path(self, dataset_path: str, subset: str = None):
+    def _load_dataset_from_path(self, dataset_path: str, subset: str):
         """Load dataset from path with proper video handling."""
         if "/" in dataset_path and not os.path.exists(dataset_path):
             # Loading from HuggingFace Hub - handle video paths
-            rank_0_print(f"Loading from HuggingFace Hub: {dataset_path}")
+            rank_0_print(f"Loading dataset: {dataset_path}")
 
             # Check if RFM_DATASET_PATH is set
             rfm_dataset_path = os.environ.get("RFM_DATASET_PATH")
@@ -708,11 +879,8 @@ class DatasetPreprocessor:
                 root_dir = f"{rfm_dataset_path}/{dataset_name}"
                 return f"{root_dir}/{old_path}"  # e.g., "./videos/trajectory_0000.mp4"
 
-            # Load dataset with subset
-            if subset:
-                dataset = load_dataset(dataset_path, name=subset, split="train")
-            else:
-                dataset = load_dataset(dataset_path, split="train")
+            # Load dataset
+            dataset = load_dataset(dataset_path, name=subset, split="train")
 
             # dataset = dataset.select(range(100))
 
@@ -723,18 +891,15 @@ class DatasetPreprocessor:
             return dataset
         else:
             # Load from local disk
-            if subset:
-                dataset = load_dataset(dataset_path, name=subset)
-            else:
-                dataset = load_dataset(dataset_path)
+            dataset = load_dataset(dataset_path)
             return dataset
 
-    def _show_preprocessed_datasets(self, all_datasets: List[tuple]):
+    def _show_preprocessed_datasets(self, all_datasets: list[str]):
         """
         Show which datasets are already preprocessed and which are not.
         This helps avoid re-processing already cached datasets.
         """
-        rank_0_print(f"\n🔍 Checking for pre-existing caches...")
+        rank_0_print("\n🔍 Checking for pre-existing caches...")
 
         cached_count = 0
         total_count = len(all_datasets)
@@ -749,7 +914,7 @@ class DatasetPreprocessor:
                 info_file = os.path.join(individual_cache_dir, "dataset_info.json")
                 if os.path.exists(info_file):
                     try:
-                        with open(info_file, "r") as f:
+                        with open(info_file) as f:
                             info = json.load(f)
                         trajectories = info.get("total_trajectories", "unknown")
                         timestamp = info.get("cache_timestamp", "unknown")
@@ -764,22 +929,22 @@ class DatasetPreprocessor:
                 rank_0_print(f"  ❌ {dataset_path}/{subset}: No cache found")
 
         # Show summary
-        rank_0_print(f"\n📊 Cache Status Summary:")
+        rank_0_print("\n📊 Cache Status Summary:")
         rank_0_print(f"  ✅ Already cached: {cached_count}/{total_count} dataset/subset pairs")
         rank_0_print(f"  🔄 Need processing: {total_count - cached_count}/{total_count} dataset/subset pairs")
 
         if cached_count == total_count:
-            rank_0_print(f"  🎉 All dataset/subset pairs are already cached! Use --force-reprocess to reprocess.")
+            rank_0_print("  🎉 All dataset/subset pairs are already cached! Use --force-reprocess to reprocess.")
         elif cached_count > 0:
-            rank_0_print(f"  💡 Some dataset/subset pairs are cached. Only uncached ones will be processed.")
+            rank_0_print("  💡 Some dataset/subset pairs are cached. Only uncached ones will be processed.")
         else:
-            rank_0_print(f"  🚀 No dataset/subset pairs are cached. All will be processed.")
+            rank_0_print("  🚀 No dataset/subset pairs are cached. All will be processed.")
 
-    def _show_final_status_summary(self, all_datasets: List[tuple]):
+    def _show_final_status_summary(self, all_datasets: list[tuple[str, str]]):
         """
         Show a summary of which datasets were processed and which were loaded from cache.
         """
-        rank_0_print(f"\n📊 Final Status Summary for Dataset Preprocessing:")
+        rank_0_print("\n📊 Final Status Summary for Dataset Preprocessing:")
 
         processed_count = 0
         loaded_count = 0
@@ -804,11 +969,12 @@ class DatasetPreprocessor:
                 rank_0_print(f"  ❌ {dataset_path}/{subset}: Failed to load/process")
 
         # Show summary counts
-        rank_0_print(f"\n📈 Processing Summary:")
+        rank_0_print("\n📈 Processing Summary:")
         rank_0_print(f"  🔄 Newly processed: {processed_count} dataset/subset pairs")
         rank_0_print(f"  ✅ Loaded from cache: {loaded_count} dataset/subset pairs")
         rank_0_print(f"  ❌ Failed: {total_count - processed_count - loaded_count} dataset/subset pairs")
         rank_0_print(f"  📊 Total available: {processed_count + loaded_count}/{total_count} dataset/subset pairs")
+
 
 @wrap()
 def main(config: DataPreprocessConfig):
@@ -827,7 +993,7 @@ def main(config: DataPreprocessConfig):
     # Show dataset structure info
     print("\n🏗️  Dataset Configuration Structure:")
     print("Training datasets:")
-    for dataset_path, dataset_subsets in zip(config.train_datasets, config.train_subsets):
+    for dataset_path, dataset_subsets in zip(config.train_datasets, config.train_subsets, strict=False):
         if isinstance(dataset_subsets, str):
             dataset_subsets = [dataset_subsets]
         print(f"  📚 {dataset_path}: {len(dataset_subsets)} subset(s)")
@@ -835,7 +1001,7 @@ def main(config: DataPreprocessConfig):
             print(f"    📂 {subset}")
 
     print("Evaluation datasets:")
-    for dataset_path, dataset_subsets in zip(config.eval_datasets, config.eval_subsets):
+    for dataset_path, dataset_subsets in zip(config.eval_datasets, config.eval_subsets, strict=False):
         if isinstance(dataset_subsets, str):
             dataset_subsets = [dataset_subsets]
         print(f"  📚 {dataset_path}: {len(dataset_subsets)} subset(s)")
@@ -858,7 +1024,7 @@ def main(config: DataPreprocessConfig):
     print("\n=== Testing Caches ===")
 
     if preprocessor.datasets:
-        print(f"\n📚 All Datasets:")
+        print("\n📚 All Datasets:")
         total_trajectories = sum(len(dataset) for dataset in preprocessor.datasets.values())
         print(f"  Total trajectories: {total_trajectories}")
 
@@ -877,15 +1043,15 @@ def main(config: DataPreprocessConfig):
                 print(f"  Sample trajectory: {test_traj['id']} - {test_traj['task']}")
 
     # Show individual dataset info
-    print(f"\n📊 Individual Dataset Summary:")
+    print("\n📊 Individual Dataset Summary:")
     print(f"Total datasets processed: {len(preprocessor.datasets)}")
     for cache_key, dataset in preprocessor.datasets.items():
         print(f"  ✅ {cache_key}: {len(dataset)} trajectories")
 
     # Show dataset structure
-    print(f"\n🏗️  Dataset Structure:")
-    print(f"Training datasets:")
-    for dataset_path, dataset_subsets in zip(config.train_datasets, config.train_subsets):
+    print("\n🏗️  Dataset Structure:")
+    print("Training datasets:")
+    for dataset_path, dataset_subsets in zip(config.train_datasets, config.train_subsets, strict=False):
         if isinstance(dataset_subsets, str):
             dataset_subsets = [dataset_subsets]
         print(f"  📚 {dataset_path}: {len(dataset_subsets)} subset(s)")
@@ -896,8 +1062,8 @@ def main(config: DataPreprocessConfig):
             else:
                 print(f"    ❌ {subset}: Failed to load")
 
-    print(f"Evaluation datasets:")
-    for dataset_path, dataset_subsets in zip(config.eval_datasets, config.eval_subsets):
+    print("Evaluation datasets:")
+    for dataset_path, dataset_subsets in zip(config.eval_datasets, config.eval_subsets, strict=False):
         if isinstance(dataset_subsets, str):
             dataset_subsets = [dataset_subsets]
         print(f"  📚 {dataset_path}: {len(dataset_subsets)} subset(s)")

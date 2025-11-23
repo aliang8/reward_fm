@@ -1,24 +1,24 @@
 import os
-import itertools
-from tqdm import tqdm
-from typing import Dict, List, Tuple, Optional, Any
-from pathlib import Path
-import numpy as np
+import cv2
 from multiprocessing import cpu_count
-from rfm.data.dataset_helpers.oxe_helper import OXE_DATASET_CONFIGS
-from datasets import Dataset
-from rfm.data.helpers import (
-    create_trajectory_video_optimized,
-    load_sentence_transformer_model,
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+from dataset_upload.dataset_helpers.oxe_helper import OXE_DATASET_CONFIGS
+from dataset_upload.helpers import (
     create_hf_trajectory,
     generate_unique_id,
+    load_sentence_transformer_model,
 )
+from tqdm import tqdm
+
+from datasets import Dataset
 
 # Disable GPUs for TensorFlow in this loader to avoid CUDA context issues in workers
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
 import tensorflow_datasets as tfds
-import tensorflow as tf
 
 OXE_VALID_DATASETS = [
     "austin_buds_dataset_converted_externally_to_rlds",
@@ -41,6 +41,15 @@ OXE_VALID_DATASETS = [
     "ucsd_kitchen_dataset_converted_externally_to_rlds",
     "utaustin_mutex",
     "viola",
+    # not in original
+    "robo_set",
+    "aloha_mobile",
+    "imperialcollege_sawyer_wrist_cam",
+    "kaist_nonprehensile_converted_externally_to_rlds",
+    "berkeley_mvp_converted_externally_to_rlds",
+    "berkeley_rpt_converted_externally_to_rlds",
+    "nyu_rot_dataset_converted_externally_to_rlds",
+    "tokyo_u_lsmo_converted_externally_to_rlds",
 ]
 POSSIBLE_LANG_INSTRUCTION_KEYS = [  # valid keys for language instruction in OXE
     "natural_language_instruction",
@@ -70,7 +79,7 @@ def _build_oxe_video_paths(
     dataset_label: str,
     episode_idx: int,
     view_key: str,
-) -> Tuple[str, str]:
+) -> tuple[str, str]:
     shard_dir = _stable_shard_for_index(episode_idx)
     episode_dir = os.path.join(output_dir, dataset_label.lower(), shard_dir, f"episode_{episode_idx:06d}")
     os.makedirs(episode_dir, exist_ok=True)
@@ -99,8 +108,13 @@ def _process_single_oxe_episode(args):
             continue
 
         frames = [s["observation"][img_key] for s in episode if img_key in s["observation"]]
+
         if not frames:
             continue
+
+        if "nyu_rot_dataset_converted_externally_to_rlds" in dataset_name:
+            # convert each frame from bgr to rgb
+            frames = [cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) for frame in frames]
 
         full_path, rel_path = _build_oxe_video_paths(
             output_dir=output_dir,
@@ -111,7 +125,7 @@ def _process_single_oxe_episode(args):
 
         traj_dict = {
             "id": generate_unique_id(),
-            "frames": np.stack(frames) if isinstance(frames[0], np.ndarray) else frames,
+            "frames": frames,
             "task": task,
             "is_robot": True,
             "quality_label": "successful",
@@ -139,7 +153,7 @@ def convert_oxe_dataset_to_hf(
     dataset_path: str,
     dataset_name: str,
     output_dir: str,
-    max_trajectories: Optional[int] = None,
+    max_trajectories: int | None = None,
     max_frames: int = 64,
     fps: int = 10,
     num_workers: int = -1,
@@ -226,9 +240,9 @@ def convert_oxe_dataset_to_hf(
 
     # Language model and cache
     lang_model = load_sentence_transformer_model()
-    lang_cache: Dict[str, Any] = {}
+    lang_cache: dict[str, Any] = {}
 
-    entries: List[Dict[str, Any]] = []
+    entries: list[dict[str, Any]] = []
     produced = 0
     max_limit = float("inf") if (max_trajectories is None or max_trajectories == -1) else int(max_trajectories)
 
@@ -236,7 +250,7 @@ def convert_oxe_dataset_to_hf(
         max_limit = MAX_LANGTABLE_EPISODES
 
         # Process episodes in batches to avoid OOM
-    batch_size = 64  # Process episodes in smaller batches
+    batch_size = 16  # Process episodes in smaller batches
     entries = []
     produced = 0
 
@@ -257,7 +271,7 @@ def convert_oxe_dataset_to_hf(
             continue
 
         # Extract task/instruction
-        task: Optional[str] = None
+        task: str | None = None
         for key in POSSIBLE_LANG_INSTRUCTION_KEYS:
             if key in first_step.get("observation", {}):
                 if base_ds_name == "language_table":
@@ -283,7 +297,7 @@ def convert_oxe_dataset_to_hf(
             episode_np = tfds.as_numpy(episode)
 
             # iterate through all steps and just store as a list
-            episode_np = [s for s in episode_np["steps"]]
+            episode_np = list(episode_np["steps"])
 
             episode_batch.append(episode_np)
             episode_info_batch.append((ep_idx, task, lang_vec))
@@ -308,6 +322,7 @@ def convert_oxe_dataset_to_hf(
                     [max_frames] * len(episode_batch),
                     [fps] * len(episode_batch),
                     [valid_img_keys] * len(episode_batch),
+                    strict=False,
                 ):
                     episode_entries = _process_single_oxe_episode(args)
                     entries.extend(episode_entries)
@@ -328,6 +343,7 @@ def convert_oxe_dataset_to_hf(
                         [max_frames] * len(episode_batch),
                         [fps] * len(episode_batch),
                         [valid_img_keys] * len(episode_batch),
+                        strict=False,
                     )
                 )
 
@@ -357,19 +373,66 @@ def convert_oxe_dataset_to_hf(
         if base_ds_name == "language_table" and ep_idx + 1 >= MAX_LANGTABLE_EPISODES:
             break
 
+    # After iterating all episodes, process any remaining batch
+    if episode_batch:
+        if num_workers == 1:
+            for args in zip(
+                episode_batch,
+                [info[0] for info in episode_info_batch],
+                [info[1] for info in episode_info_batch],
+                [info[2] for info in episode_info_batch],
+                [output_dir] * len(episode_batch),
+                [dataset_name] * len(episode_batch),
+                [max_frames] * len(episode_batch),
+                [fps] * len(episode_batch),
+                [valid_img_keys] * len(episode_batch),
+                strict=False,
+            ):
+                episode_entries = _process_single_oxe_episode(args)
+                entries.extend(episode_entries)
+                produced += len(episode_entries)
+        else:
+            from multiprocessing import Pool
+
+            worker_args = list(
+                zip(
+                    episode_batch,
+                    [info[0] for info in episode_info_batch],
+                    [info[1] for info in episode_info_batch],
+                    [info[2] for info in episode_info_batch],
+                    [output_dir] * len(episode_batch),
+                    [dataset_name] * len(episode_batch),
+                    [max_frames] * len(episode_batch),
+                    [fps] * len(episode_batch),
+                    [valid_img_keys] * len(episode_batch),
+                    strict=False,
+                )
+            )
+            with Pool(processes=num_workers) as pool:
+                results = list(
+                    tqdm(
+                        pool.imap_unordered(_process_single_oxe_episode, worker_args),
+                        total=len(worker_args),
+                        desc=f"Processing batch (workers={num_workers})",
+                    )
+                )
+            for episode_entries in results:
+                entries.extend(episode_entries)
+                produced += len(episode_entries)
+                if produced >= max_limit:
+                    break
+
     if not entries:
-        return Dataset.from_dict(
-            {
-                "id": [],
-                "task": [],
-                "lang_vector": [],
-                "data_source": [],
-                "frames": [],
-                "is_robot": [],
-                "quality_label": [],
-                "preference_group_id": [],
-                "preference_rank": [],
-            }
-        )
+        return Dataset.from_dict({
+            "id": [],
+            "task": [],
+            "lang_vector": [],
+            "data_source": [],
+            "frames": [],
+            "is_robot": [],
+            "quality_label": [],
+            "preference_group_id": [],
+            "preference_rank": [],
+        })
 
     return Dataset.from_list(entries)

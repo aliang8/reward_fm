@@ -1,11 +1,10 @@
 import os
 from collections import defaultdict
-from typing import Dict, List
-import yaml
-import numpy as np
-import cv2
-from rfm.data.helpers import generate_unique_id
 
+import cv2
+import numpy as np
+import yaml
+from dataset_upload.helpers import generate_unique_id
 
 trajectory_info_template = {
     "id": [],
@@ -72,9 +71,8 @@ def create_new_trajectory(video_path: str, partial_success: int, task_name: str)
     return trajectory_info
 
 
-def load_roboarena_dataset(dataset_path: str) -> Dict[str, List[Dict]]:
-    path_to_roboarena = "test_datasets/DataDump_08-05-2025"
-    eval_folder = os.path.join(path_to_roboarena, "evaluation_sessions")
+def load_roboarena_dataset(dataset_path: str) -> dict[str, list[dict]]:
+    eval_folder = os.path.join(dataset_path, "evaluation_sessions")
     eval_sessions = os.listdir(eval_folder)
 
     # tasks_to_videos = dict()
@@ -85,7 +83,7 @@ def load_roboarena_dataset(dataset_path: str) -> Dict[str, List[Dict]]:
         eval_session_path = os.path.join(eval_folder, eval_session)
         metadata_path = os.path.join(eval_session_path, "metadata.yaml")
         # load metadata
-        with open(metadata_path, "r") as f:
+        with open(metadata_path) as f:
             metadata = yaml.load(f, Loader=yaml.FullLoader)
         task = metadata["language_instruction"]
         # if task in tasks_to_videos:
@@ -103,6 +101,7 @@ def load_roboarena_dataset(dataset_path: str) -> Dict[str, List[Dict]]:
             files_in_policy_folder = os.listdir(policy_folder_path)
             video_left = [f for f in files_in_policy_folder if f.endswith("_left.mp4")]
             video_right = [f for f in files_in_policy_folder if f.endswith("_right.mp4")]
+            video_wrist = [f for f in files_in_policy_folder if f.endswith("_wrist.mp4")]
             if len(video_left) > 0:
                 video_path = os.path.join(policy_folder_path, video_left[0])
                 task_data[task].append(
@@ -110,6 +109,11 @@ def load_roboarena_dataset(dataset_path: str) -> Dict[str, List[Dict]]:
                 )
             if len(video_right) > 0:
                 video_path = os.path.join(policy_folder_path, video_right[0])
+                task_data[task].append(
+                    create_new_trajectory(video_path, partial_success=partial_success, task_name=task)
+                )
+            if len(video_wrist) > 0:
+                video_path = os.path.join(policy_folder_path, video_wrist[0])
                 task_data[task].append(
                     create_new_trajectory(video_path, partial_success=partial_success, task_name=task)
                 )

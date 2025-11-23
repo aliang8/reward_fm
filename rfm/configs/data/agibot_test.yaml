@@ -1,0 +1,24 @@
+data:
+  train_datasets:
+  - abraranwar_agibotworld_alpha_rfm_agibotworld
+  eval_datasets:
+    # not used, doesn't matter for now
+    - aliangdw_metaworld_metaworld_eval
+    # - jesbu1_oxe_rfm_eval_oxe_bc_z_eval
+    # - jesbu1_oxe_rfm_eval_oxe_berkeley_cable_routing_eval
+    # - jesbu1_oxe_rfm_eval_oxe_bridge_v2_eval
+    # - jesbu1_oxe_rfm_eval_oxe_jaco_play_eval
+    # - jesbu1_oxe_rfm_eval_oxe_toto_eval
+    # - jesbu1_oxe_rfm_eval_oxe_viola_eval
+    
+custom_eval:
+  reward_alignment:
+    - aliangdw_metaworld_metaworld_eval
+    - abraranwar_usc_koch_rewind_rfm_usc_koch_rewind
+    - jesbu1_egodex_rfm_egodex_test
+    - jesbu1_oxe_rfm_eval_oxe_bc_z_eval
+    - jesbu1_oxe_rfm_eval_oxe_berkeley_cable_routing_eval
+    - jesbu1_oxe_rfm_eval_oxe_bridge_v2_eval
+    - jesbu1_oxe_rfm_eval_oxe_jaco_play_eval
+    - jesbu1_oxe_rfm_eval_oxe_toto_eval
+    - jesbu1_oxe_rfm_eval_oxe_viola_eval

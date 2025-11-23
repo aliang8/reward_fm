@@ -9,11 +9,12 @@ import argparse
 import os
 import tempfile
 from pathlib import Path
-from datasets import load_from_disk
+
 import cv2
-import numpy as np
-from PIL import Image
 import matplotlib.pyplot as plt
+import numpy as np
+
+from datasets import load_from_disk
 
 
 def _reencode_video_for_compatibility(video_bytes: bytes) -> bytes:
@@ -92,7 +93,7 @@ def extract_video_frames(video_bytes: bytes, num_frames: int = 5) -> list:
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
         if total_frames == 0:
-            print(f"⚠️ Warning: Could not read frames from video")
+            print("⚠️ Warning: Could not read frames from video")
             return []
 
         # Extract evenly spaced frames
@@ -130,7 +131,7 @@ def visualize_dataset(dataset_path: str, max_samples: int = 3):
         print(f"✅ Successfully loaded dataset with {len(dataset)} entries")
 
         # Display dataset info
-        print(f"\n📊 Dataset Information:")
+        print("\n📊 Dataset Information:")
         print(f"  - Number of samples: {len(dataset)}")
         print(f"  - Features: {list(dataset.features.keys())}")
 
@@ -167,11 +168,11 @@ def visualize_dataset(dataset_path: str, max_samples: int = 3):
                     print(f"Extracted {len(frames)} frames from video")
 
                     # Create visualization
-                    fig, axes = plt.subplots(1, len(frames), figsize=(15, 5))
+                    _fig, axes = plt.subplots(1, len(frames), figsize=(15, 5))
                     if len(frames) == 1:
                         axes = [axes]
 
-                    for j, (frame, ax) in enumerate(zip(frames, axes)):
+                    for j, (frame, ax) in enumerate(zip(frames, axes, strict=False)):
                         ax.imshow(frame)
                         ax.set_title(f"Frame {j + 1}")
                         ax.axis("off")
@@ -222,7 +223,7 @@ def visualize_dataset(dataset_path: str, max_samples: int = 3):
                 print(f"Text embedding shape: {embedding_array.shape}")
 
         # Dataset statistics
-        print(f"\n📈 Dataset Statistics:")
+        print("\n📈 Dataset Statistics:")
         tasks = [sample.get("task", "Unknown") for sample in dataset]
         unique_tasks = list(set(tasks))
         print(f"  - Unique tasks: {len(unique_tasks)}")

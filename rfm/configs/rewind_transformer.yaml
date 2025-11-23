@@ -1,4 +1,11 @@
+# @package _global_
+
 # ReWIND Transformer Configuration
+# Inherits from config.yaml and overrides specific settings
+defaults:
+  - config 
+  - _self_
+
 trainer_cls: rewind_transformer
 
 # =====================================================================================
@@ -17,11 +24,7 @@ model:
     dropout: 0.1  
     max_len: 16
 
-  train_vision_encoder: false
-  train_language_model: false
-
 training:
-  output_dir: "./logs"
   gradient_checkpointing: false
 
   bf16: false
@@ -36,25 +39,6 @@ training:
   custom_eval_steps: 200
   max_steps: 20000
 
-data:
-  # sample_type_ratio: [0, 1, 0] # only progress samples 
-  # progress_strategy_ratio: [1, 1, 1] # default success, rewind, different task
-  sample_type_ratio: [1, 1, 0] # preference, progress, similarity 
-  preference_strategy_ratio: [6, 1, 1, 0] # rewind, suboptimal_same_task, different_task, video_binned 
-  progress_strategy_ratio: [1, 6, 1, 1] # default success, rewind, different task
-  
-  dataset_type: rfm
-  
-  # this is based on the subset name
-  data_source_weights:
-    metaworld_train: 10
-
+data:  
   load_embeddings: true
   progress_pred_type: absolute 
-
-# =====================================================================================
-# Logging and Output Configuration
-# =====================================================================================
-logging:
-  wandb_project: rfm
-  wandb_entity: clvr

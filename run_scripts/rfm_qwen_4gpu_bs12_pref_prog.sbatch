@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J ant_rfm_qwen_prog_only_images
+#SBATCH -J ant_rfm_qwen_4gpu_bs12_pref_prog
 #SBATCH --gres=gpu:4               # number of GPUs to reserve
 #SBATCH --cpus-per-task=32         # CPUs for data loading (8 per GPU is reasonable)
 #SBATCH --mem=128G                 # Memory allocation (adjust based on your cluster)
@@ -19,7 +19,7 @@ echo "Working Directory: $(pwd)"
 
 # Set environment variables
 export RFM_PROCESSED_DATASETS_PATH=/scr/shared/reward_fm/processed_datasets/
-BS=12
+BS=8
 
 # Run training with accelerate
 # Using FSDP config with 4 processes for 4 GPUs
@@ -28,10 +28,11 @@ uv run accelerate launch \
     --config_file rfm/configs/distributed/ddp.yaml \
     --num_processes=4 \
     train.py \
-    data.sample_type_ratio=[0,1,0] \
+    data.sample_type_ratio=[1,0,0] \
     data.progress_strategy_ratio=[1,6,1,1,1] \
+    data.preference_strategy_ratio=[6,1,1] \
     model.train_progress_head=true \
-    model.train_preference_head=false \
+    model.train_preference_head=true \
     model.train_similarity_head=false \
     model.train_success_head=false \
     model.train_language_model=true \
@@ -44,7 +45,7 @@ uv run accelerate launch \
     data.resized_width=196 \
     data.use_multi_image=true \
     data.shuffle_progress_frames=false \
-    data.dataset_type=data_source_balance \
+    data.dataset_type=rfm \
     training.max_steps=15000 \
     training.eval_steps=200 \
     training.custom_eval_steps=200 \
@@ -53,7 +54,9 @@ uv run accelerate launch \
     training.learning_rate=5e-5 \
     training.weight_decay=0.05 \
     training.overwrite_output_dir=true \
-    training.exp_name=ant_rfm_qwen_4gpu_bs12_oxe_mw_prog \
+    training.predict_pref_progress=true \
+    training.ddp_find_unused_parameters=false \
+    training.exp_name=ant_rfm_qwen_4gpu_bs12_pref_prog_rfm \
     logging.log_to=[wandb]
 
 # Print completion time

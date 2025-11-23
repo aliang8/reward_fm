@@ -8,6 +8,7 @@ from rfm.data.datasets.helpers import load_dataset_success_percent
 from rfm.data.dataset_category import DATASET_MAP
 from rfm.utils.distributed import rank_0_print
 
+
 def resolve_dataset_keys(dataset_keys: list[str], split: str) -> list[str]:
     """
     Resolve dataset keys through DATASET_MAP.

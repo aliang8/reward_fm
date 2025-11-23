@@ -20,6 +20,7 @@ from rfm.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
 from evals.compile_results import compute_eval_metrics
 from rfm.data.datasets.helpers import load_dataset_success_percent
 import torch.distributed as dist
+from rfm.data.datasets.base import resolve_dataset_keys
 
 
 def seed_worker(worker_id):
@@ -549,7 +550,7 @@ class RFMHeadsTrainer(Trainer):
             rank_0_print(f"Running evaluation for: {eval_type}")
 
             datasets = getattr(self.config.custom_eval, eval_type)
-            eval_datasets_name = datasets
+            eval_datasets_name = resolve_dataset_keys(datasets, split="eval")
 
             for eval_dataset in eval_datasets_name:
                 eval_cfg = copy.deepcopy(self.config.data)
@@ -563,9 +564,6 @@ class RFMHeadsTrainer(Trainer):
                     kwargs["frame_step"] = (
                         2 if (self.config.trainer_cls == "rfm_heads" and not self.config.data.use_multi_image) else 1
                     )
-
-                # if eval_type == "policy_ranking":
-                #     kwargs["max_trajectories"] = 500
 
                 dataset = setup_custom_eval_dataset(
                     eval_cfg, sampler_type=eval_type, is_eval=True, verbose=False, **kwargs

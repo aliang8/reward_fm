@@ -33,7 +33,8 @@ The RoboArena dataset consists of real robot demonstrations, primarily focusing 
         │   ├── metadata.yaml
         │   └── <policy_id_1>_<policy_name_1>/
         │       ├── <video_name>_left.mp4
-        │       └── <video_name>_right.mp4
+        │       ├── <video_name>_right.mp4
+        │       └── <video_name>_wrist.mp4
         ├── <session_id_2>/
         │   └── ...
     ```
@@ -65,7 +66,7 @@ data_path: "test_datasets/DataDump_08-05-2025" # Adjust this to your dataset pat
 Once your configuration is set up, you can generate the HuggingFace dataset using the `generate_hf_dataset.py` script:
 
 ```bash
-uv run python -m rfm.data.generate_hf_dataset --config_path=rfm/configs/data_gen_configs/roboarena.yaml
+uv run python -m dataset_upload.generate_hf_dataset --config_path=dataset_upload/configs/data_gen_configs/roboarena.yaml
 ```
 
 This command will:

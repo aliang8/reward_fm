@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import re
+import torch
 import io
 import json
-from typing import Any, Dict, List, Union, Tuple
+import re
+from typing import Any
 
+import aiohttp
 import numpy as np
 import requests
-import aiohttp
-from rfm.data.dataset_types import PreferenceSample, SimilaritySample
+
+from rfm.data.dataset_types import PreferenceSample, SimilaritySample, ProgressSample
 
 
 def extract_answer_from_text(text):
     m = re.search(r"<ans>(.*?)</ans>", text, re.DOTALL)
-    return m.group(1).strip() if m else ""
+    ans = m.group(1).strip() if m else ""
+    return ans
 
-def extract_answer_from_text(text):
-    m = re.search(r"<ans>(.*?)</ans>", text, re.DOTALL)
-    return m.group(1).strip() if m else ""
 
-def post_batch(url: str, payload: Dict[str, Any], timeout_s: float = 120.0) -> Dict[str, Any]:
+def post_batch(url: str, payload: dict[str, Any], timeout_s: float = 120.0) -> dict[str, Any]:
     """POST a batch payload to the evaluation server and return parsed JSON."""
     resp = requests.post(url.rstrip("/") + "/evaluate_batch", json=payload, timeout=timeout_s)
     resp.raise_for_status()
@@ -28,8 +28,8 @@ def post_batch(url: str, payload: Dict[str, Any], timeout_s: float = 120.0) -> D
 
 
 def build_payload(
-    samples: List[Union[PreferenceSample, SimilaritySample]],
-) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    samples: list[PreferenceSample | SimilaritySample | ProgressSample],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Build a payload with numpy array handling.
 
     Args:
@@ -58,23 +58,26 @@ def build_payload(
         ]:
             if key in processed_sample and isinstance(processed_sample[key], dict):
                 trajectory = processed_sample[key]
-                if "frames" in trajectory and isinstance(trajectory["frames"], np.ndarray):
-                    # Convert frames to .npy file
-                    buf = io.BytesIO()
-                    np.save(buf, trajectory["frames"])
-                    buf.seek(0)
-                    file_key = f"sample_{sample_idx}_{key}_frames"
-                    files[file_key] = (f"sample_{sample_idx}_{key}_frames.npy", buf, "application/octet-stream")
-                    trajectory["frames"] = {"__numpy_file__": file_key}
 
-                if "lang_vector" in trajectory and isinstance(trajectory["lang_vector"], np.ndarray):
-                    # Convert lang_vector to .npy file
-                    buf = io.BytesIO()
-                    np.save(buf, trajectory["lang_vector"])
-                    buf.seek(0)
-                    file_key = f"sample_{sample_idx}_{key}_lang_vector"
-                    files[file_key] = (f"sample_{sample_idx}_{key}_lang_vector.npy", buf, "application/octet-stream")
-                    trajectory["lang_vector"] = {"__numpy_file__": file_key}
+                # Convert numpy arrays to .npy files
+                numpy_fields = ["frames", "lang_vector", "video_embeddings", "text_embedding"]
+                for field_name in numpy_fields:
+                    # if it is a tensor, first convert it to a numpy array
+                    if field_name in trajectory and isinstance(trajectory[field_name], torch.Tensor):
+                        trajectory[field_name] = trajectory[field_name].numpy()
+
+                    if field_name in trajectory and isinstance(trajectory[field_name], np.ndarray):
+                        # Convert numpy array to .npy file
+                        buf = io.BytesIO()
+                        np.save(buf, trajectory[field_name])
+                        buf.seek(0)
+                        file_key = f"sample_{sample_idx}_{key}_{field_name}"
+                        files[file_key] = (
+                            f"sample_{sample_idx}_{key}_{field_name}.npy",
+                            buf,
+                            "application/octet-stream",
+                        )
+                        trajectory[field_name] = {"__numpy_file__": file_key}
 
         sample_data.append(processed_sample)
 
@@ -82,8 +85,8 @@ def build_payload(
 
 
 def post_batch_npy(
-    url: str, files: Dict[str, Any], sample_data: List[Dict[str, Any]], timeout_s: float = 120.0
-) -> Dict[str, Any]:
+    url: str, files: dict[str, Any], sample_data: list[dict[str, Any]], timeout_s: float = 120.0
+) -> dict[str, Any]:
     """POST batch using .npy format for numpy arrays."""
     # Convert sample_data to form data
     data = {f"sample_{i}": json.dumps(sample) for i, sample in enumerate(sample_data)}
@@ -97,10 +100,10 @@ def post_batch_npy(
 async def post_batch_npy_async(
     session: aiohttp.ClientSession,
     url: str,
-    files: Dict[str, Any],
-    sample_data: List[Dict[str, Any]],
+    files: dict[str, Any],
+    sample_data: list[dict[str, Any]],
     timeout_s: float = 120.0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Async version of post_batch_npy using aiohttp."""
     # Create FormData for aiohttp
     form_data = aiohttp.FormData()

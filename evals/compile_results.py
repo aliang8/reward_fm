@@ -5,365 +5,534 @@ Script to compile evaluation results from JSON files.
 
 import argparse
 import json
-import os
+from itertools import combinations, product
+from pathlib import Path
+from typing import Any
+import yaml
+from collections import defaultdict
+
+from rfm.configs.eval_configs import EvalServerConfig, EvaluationConfig
+from rfm.configs.experiment_configs import DataConfig
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.stats import spearmanr
-from typing import Dict, List, Any
-import matplotlib.patches as patches
-from itertools import combinations, product
-from PIL import Image
-import io
-import base64
-from pathlib import Path
-from evals.eval_metrics_utils import compute_pearson, compute_spearman, compute_preference_accuracy
+import seaborn as sns
+import cv2
+from rfm.data.datasets.helpers import load_frames_from_npz
+from rfm.data.dataset_category import is_failure
+from evals.eval_metrics_utils import compute_pearson, compute_preference_accuracy, compute_spearman
 
 
-def load_results(results_path: str) -> List[Dict[str, Any]]:
+def load_results(results_path: str) -> list[dict[str, Any]]:
     """Load results from JSON file."""
-    with open(results_path, "r") as f:
+    with open(results_path) as f:
         return json.load(f)
 
 
-def analyze_evaluation_type(eval_type: str, results: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Analyze results based on evaluation type."""
-    if eval_type == "success_failure_preference":
-        return run_success_failure_eval(results)
-    elif eval_type == "reward_alignment_progress":
-        return run_reward_alignment_eval(results)
-    elif eval_type == "confusion_matrix":
-        return run_confusion_matrix_eval(results)
-    elif eval_type == "wrong_task_preference":
-        return run_success_failure_eval(results)
-    elif eval_type == "policy_ranking_progress":
-        return run_policy_ranking_eval(results)
+def compute_eval_metrics(eval_type: str, results: list[dict[str, Any]], progress_pred_type: str):
+    if eval_type == "quality_preference" or eval_type == "quality_preference_roboarena":
+        # Check if this is a roboarena dataset
+        is_roboarena = False
+        if results and len(results) > 0:
+            first_data_source = results[0].get("data_source", "")
+            is_roboarena = first_data_source == "roboarena"
+
+        if is_roboarena:
+            return run_quality_preference_eval_roboarena(results, progress_pred_type)
+        else:
+            return run_quality_preference_eval(results, progress_pred_type)
+    elif eval_type == "reward_alignment_progress" or eval_type == "reward_alignment":
+        return run_reward_alignment_eval_per_trajectory(results, progress_pred_type)
+    elif eval_type == "confusion_matrix_progress" or eval_type == "confusion_matrix":
+        return run_confusion_matrix_eval(results, progress_pred_type)
+    elif eval_type == "policy_ranking_progress" or eval_type == "policy_ranking":
+        # Check if this is a roboarena dataset
+        is_roboarena = False
+        if results and len(results) > 0:
+            first_data_source = results[0].get("data_source", "")
+            is_roboarena = first_data_source == "roboarena"
+
+        if is_roboarena:
+            return run_policy_ranking_eval_roboarena(results, progress_pred_type)
+        else:
+            return run_policy_ranking_eval_per_ranked_set(results, progress_pred_type)
 
 
-def run_success_failure_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Run success_failure evaluation analysis."""
+def run_quality_preference_eval(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:
+    """Run quality_preference evaluation analysis.
 
-    def _extract_series(results: List[Dict[str, Any]]):
-        y_true_all = []
-        y_pred_all = []
-        for r in results:
-            pred = r.get("progress_pred_chosen")
-            meta = r.get("chosen_metadata", {}) or {}
-            tgt = meta.get("target_progress")
-            if pred is not None and tgt is not None:
-                y_pred_all.extend(list(pred))
-                y_true_all.extend(list(tgt))
-        return y_true_all, y_pred_all
+    Groups results by task and quality labels, computes preference accuracy per group and aggregate.
+    Returns metrics, task_groups, and task_details similar to policy_ranking.
+    """
 
-    y_true_sf, y_pred_sf = _extract_series(results)
-    pref_acc_sf = compute_preference_accuracy(results)
+    # Convert preference_pred logits to binary predictions for compute_preference_accuracy
+    # preference_pred is logits, preference_labels is the ground truth label
+    for r in results:
+        pred = r.get("preference_pred")
+        label = r.get("preference_labels")
+        if pred is not None and label is not None:
+            # Convert logit to binary prediction (1 if pred > 0, else 0)
+            if isinstance(pred, np.ndarray):
+                pred = float(pred.item()) if pred.size == 1 else float(pred[0])
+            binary_pred = 1.0 if pred > 0 else 0.0
+            if isinstance(label, np.ndarray):
+                label = float(label.item()) if label.size == 1 else float(label[0])
+            r["predicted_preference"] = binary_pred
+            r["preference_label"] = float(label)
 
-    return {
-        "preference_accuracy": pref_acc_sf["preference_accuracy"],
-        "num_correct": pref_acc_sf["num_correct"],
-        "num_total": pref_acc_sf["num_total"],
-        "num_skipped": pref_acc_sf["num_skipped"],
-        "num_samples": len(results),
+    # Group results by task
+    task_groups = defaultdict(list)
+    for r in results:
+        task = r["task"]
+        task_groups[task].append(r)
+
+    # Compute preference accuracy per task group
+    task_details = {}
+    all_correct = 0
+    all_total = 0
+
+    for task, task_results in task_groups.items():
+        # Group by quality label combinations
+        quality_combos = defaultdict(list)
+        for r in task_results:
+            chosen_meta = r["metadata"].get("chosen_metadata", {}) or {}
+            rejected_meta = r["metadata"].get("rejected_metadata", {}) or {}
+            chosen_quality = chosen_meta["quality_label"]
+            rejected_quality = rejected_meta["quality_label"]
+
+            # Create a key for this quality pair
+            combo_key = tuple(sorted([chosen_quality, rejected_quality]))
+            quality_combos[combo_key].append(r)
+
+        # Compute preference accuracy for this task
+        pref_acc_task = compute_preference_accuracy(task_results)
+        pref_acc = pref_acc_task["preference_accuracy"]
+
+        # Compute accuracy per quality combination
+        quality_accs = {}
+        for combo_key, combo_results in quality_combos.items():
+            pref_acc_combo = compute_preference_accuracy(combo_results)
+            combo_acc = pref_acc_combo["preference_accuracy"]
+            quality_accs[f"{combo_key[0]}_vs_{combo_key[1]}"] = combo_acc
+
+        task_details[task] = {
+            "preference_accuracy": pref_acc,
+            "num_correct": pref_acc_task["num_correct"],
+            "num_total": pref_acc_task["num_total"],
+            "quality_accuracies": quality_accs,
+        }
+
+        all_correct += pref_acc_task["num_correct"]
+        all_total += pref_acc_task["num_total"]
+
+    # Aggregate metrics
+    aggregate_acc = all_correct / all_total if all_total > 0 else 0.0
+
+    metrics = {
+        "preference_accuracy": aggregate_acc,
     }
 
+    return metrics, task_groups, task_details
 
-def run_reward_alignment_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+
+def run_quality_preference_eval_roboarena(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:
+    """Run quality_preference evaluation analysis for RoboArena dataset.
+
+    Groups results by task and partial_success values, computes preference accuracy per group and aggregate.
+    Returns metrics, task_groups, and task_details similar to quality_preference but using partial_success.
+    """
+
+    # Convert preference_pred logits to binary predictions for compute_preference_accuracy
+    # preference_pred is logits, preference_labels is the ground truth label
+    for r in results:
+        pred = r.get("preference_pred")
+        label = r.get("preference_labels")
+        if pred is not None and label is not None:
+            # Convert logit to binary prediction (1 if pred > 0, else 0)
+            if isinstance(pred, np.ndarray):
+                pred = float(pred.item()) if pred.size == 1 else float(pred[0])
+            binary_pred = 1.0 if pred > 0 else 0.0
+            if isinstance(label, np.ndarray):
+                label = float(label.item()) if label.size == 1 else float(label[0])
+            r["predicted_preference"] = binary_pred
+            r["preference_label"] = float(label)
+
+    # Group results by task
+    task_groups = defaultdict(list)
+    for r in results:
+        task = r["task"]
+        task_groups[task].append(r)
+
+    # Compute preference accuracy per task group
+    task_details = {}
+    all_correct = 0
+    all_total = 0
+
+    for task, task_results in task_groups.items():
+        # Group by partial_success combinations
+        partial_combos = defaultdict(list)
+        for r in task_results:
+            chosen_meta = r["metadata"].get("chosen_metadata", {}) or {}
+            rejected_meta = r["metadata"].get("rejected_metadata", {}) or {}
+            chosen_partial = chosen_meta.get("partial_success")
+            rejected_partial = rejected_meta.get("partial_success")
+
+            # Skip if partial_success is missing
+            if chosen_partial is None or rejected_partial is None:
+                continue
+
+            # Create a key for this partial_success pair (sorted for consistency)
+            combo_key = tuple(sorted([float(chosen_partial), float(rejected_partial)]))
+            partial_combos[combo_key].append(r)
+
+        # Compute preference accuracy for this task
+        pref_acc_task = compute_preference_accuracy(task_results)
+        pref_acc = pref_acc_task["preference_accuracy"]
+
+        # Compute accuracy per partial_success combination
+        partial_accs = {}
+        for combo_key, combo_results in partial_combos.items():
+            pref_acc_combo = compute_preference_accuracy(combo_results)
+            combo_acc = pref_acc_combo["preference_accuracy"]
+            partial_accs[f"{combo_key[0]:.3f}_vs_{combo_key[1]:.3f}"] = combo_acc
+
+        task_details[task] = {
+            "preference_accuracy": pref_acc,
+            "num_correct": pref_acc_task["num_correct"],
+            "num_total": pref_acc_task["num_total"],
+            "partial_success_accuracies": partial_accs,
+        }
+
+        all_correct += pref_acc_task["num_correct"]
+        all_total += pref_acc_task["num_total"]
+
+    # Aggregate metrics
+    aggregate_acc = all_correct / all_total if all_total > 0 else 0.0
+
+    metrics = {
+        "preference_accuracy": aggregate_acc,
+    }
+
+    return metrics, task_groups, task_details
+
+
+def run_reward_alignment_eval(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:
     """Run reward_alignment evaluation analysis."""
     last_preds = []
     last_targets = []
     for r in results:
-        pred = r.get("progress_pred_A")
+        pred = r.get("progress_pred")
+        if len(pred) == 0:
+            continue
         tgt = r.get("target_progress")
-        meta = r.get("metadata", {})
-        if pred and len(pred) > 0 and tgt and len(tgt) > 0:
-            last_preds.append(float(pred[-1]))
-            last_targets.append(float(tgt[-1]))
+        last_preds.append(float(pred[-1]))
+        last_targets.append(float(tgt[-1]))
 
     if not last_preds or not last_targets:
         return {"error": "No valid predictions or targets found"}
 
+    if progress_pred_type == "relative":
+        last_preds = np.cumsum(last_preds)
+        last_targets = np.cumsum(last_targets)
+
     mse = np.mean((np.array(last_targets) - np.array(last_preds)) ** 2)
-    pearson_last = compute_pearson(last_targets, last_preds)
-    spearman_last = compute_spearman(last_targets, last_preds)
+    pearson = compute_pearson(last_targets, last_preds)
+    spearman = compute_spearman(last_targets, last_preds)
 
     return {
-        "mse": mse,
-        "pearson_correlation": pearson_last if not np.isnan(pearson_last) else None,
-        "spearman_correlation": spearman_last if not np.isnan(spearman_last) else None,
-        "num_samples": len(last_preds),
+        "mse": mse.item(),
+        "pearson": pearson.item() if not np.isnan(pearson) else 0.0,
+        "spearman": spearman.item() if not np.isnan(spearman) else 0.0,
+        # "num_samples": len(last_preds),
     }
 
 
-def run_reward_alignment_eval_per_trajectory(results: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Run reward_alignment evaluation analysis."""
+def run_reward_alignment_eval_per_trajectory(
+    results: list[dict[str, Any]], progress_pred_type: str, last_frame_only: bool = False
+) -> tuple[dict[str, Any], list, list]:
+    """Run reward_alignment evaluation analysis and create plots for each trajectory.
+
+    For failure datasets, we visualize predictions but skip metric computation.
+    """
+    # Determine if this is a failure dataset by checking the data_source of the first result
+    is_failure_dataset = False
+    if results and len(results) > 0:
+        first_data_source = results[0].get("data_source", "")
+        is_failure_dataset = is_failure(first_data_source)
+
     unique_trajectory_ids = set()
-    mse_per_trajectory = 0
+    mse_per_trajectory = np.zeros(1)
     pearson_trajectories = []
     spearman_trajectories = []
+    plots = []
+    video_frames_list = []
+
     for r in results:
         trajectory_id = r.get("id")
         if trajectory_id:
             unique_trajectory_ids.add(trajectory_id)
+
     for trajectory_id in unique_trajectory_ids:
         last_preds = []
         last_targets = []
+        last_success = []
+        progress_preds = []
         results_for_trajectory = [r for r in results if r.get("id") == trajectory_id]
         results_for_trajectory.sort(key=lambda r: r["metadata"]["subsequence_end"])
-        for r in results_for_trajectory:
-            pred = r.get("progress_pred_A")
+
+        # Get task and quality label from first result
+        task = results_for_trajectory[0].get("task", "unknown")
+        quality_label = results_for_trajectory[0].get("quality_label", "unknown")
+
+        # For failure datasets, visualize all trajectories; otherwise only successful ones
+        if not is_failure_dataset and quality_label != "successful":
+            continue
+
+        # Try to get video_path from results, if not available, we'll return None for frames
+        video_path = results_for_trajectory[0].get("video_path", None)
+
+        # Determine success availability from the first result only
+        have_success = results_for_trajectory[0].get("success_pred", None) is not None
+
+        for timestep, r in enumerate(results_for_trajectory):
+            pred = r.get("progress_pred")
             tgt = r.get("target_progress")
-            meta = r.get("metadata", {})
-            if pred and len(pred) > 0 and tgt and len(tgt) > 0:
-                last_preds.append(float(pred[-1]))
+            r.get("metadata", {})
+            if pred is not None:
+                # here we use the last frame prediction
+                # even if we do right padding during training
+                if last_frame_only:
+                    last_preds.append(float(pred[-1]))
+                else:
+                    # here we use the prediction at the current timestep
+                    # unless we are past the max frame length
+                    if timestep >= len(pred) - 1:
+                        indx = -1
+                    else:
+                        indx = timestep
+                    last_preds.append(float(pred[indx]))
+            else:
+                last_preds.append(0.0)
+
+            if tgt is not None:
                 last_targets.append(float(tgt[-1]))
-        if not last_preds or not last_targets:
+            else:
+                last_targets.append(0.0)
+
+            # Optional success prediction (binary) from trainer outputs
+            succ = r.get("success_pred", None)
+            if succ is not None:
+                last_success.append(float(succ[-1]))
+
+        if len(last_preds) == 0 or len(last_targets) == 0:
             print("No valid predictions or targets found for trajectory: ", trajectory_id)
             continue
 
-        mse_per_trajectory += np.mean((np.array(last_targets) - np.array(last_preds)) ** 2)
-        pearson = compute_pearson(last_targets, last_preds)
-        if not np.isnan(pearson):
-            pearson_trajectories.append(pearson)
-        spearman = compute_spearman(last_targets, last_preds)
-        if not np.isnan(spearman):
-            spearman_trajectories.append(spearman)
+        # Load video frames if video path exists
+        frames = None
+        if video_path:
+            try:
+                frames = load_frames_from_npz(video_path)
+                frames = frames.transpose(0, 3, 1, 2)
 
-    # import pdb; pdb.set_trace()
-    mse_per_trajectory = mse_per_trajectory / len(unique_trajectory_ids)
-    pearson_per_trajectory = np.mean(pearson_trajectories)
-    spearman_per_trajectory = np.mean(spearman_trajectories)
+                # Resize frames to make them smaller for wandb table display
+                resized_frames = []
+                for frame in frames:
+                    frame_resized = cv2.resize(frame.transpose(1, 2, 0), (64, 64))
+                    resized_frames.append(frame_resized.transpose(2, 0, 1))
+                frames = np.array(resized_frames)
+            except Exception as e:
+                print(f"Error loading video {video_path}: {e}")
+                frames = None
 
-    return {
+        video_frames_list.append(frames)
+
+        if progress_pred_type == "relative":
+            last_preds = np.cumsum(last_preds)
+            last_targets = np.cumsum(last_targets)
+
+        # Calculate metrics for this trajectory (skip for failure datasets)
+        if is_failure_dataset:
+            traj_mse = 0.0
+            traj_pearson = 0.0
+            traj_spearman = 0.0
+        else:
+            traj_mse = np.mean((np.array(last_targets) - np.array(last_preds)) ** 2)
+            traj_pearson = compute_pearson(last_targets, last_preds)
+            traj_spearman = compute_spearman(last_targets, last_preds)
+
+            # Handle NaN values
+            traj_pearson = traj_pearson if not np.isnan(traj_pearson) else 0.0
+            traj_spearman = traj_spearman if not np.isnan(traj_spearman) else 0.0
+
+        # Create a wandb plot for progress predictions and, if available, success predictions
+        if have_success and len(last_success) == len(last_preds):
+            fig, axs = plt.subplots(1, 2, figsize=(10, 3.5))
+            # Progress subplot
+            ax = axs[0]
+            ax.plot(last_preds, linewidth=2)
+            ax.set_ylabel("Progress")
+            ax.set_title(
+                f"Progress - {task} - {quality_label}\nMSE: {traj_mse:.2f}, r: {traj_pearson:.2f}, sp: {traj_spearman:.2f}"
+            )
+            ax.set_ylim(0, 1)
+            ax.spines["right"].set_visible(False)
+            ax.spines["top"].set_visible(False)
+            ax.set_yticks([])
+
+            # Success subplot (binary)
+            ax2 = axs[1]
+            ax2.step(range(len(last_success)), last_success, where="post", linewidth=2)
+            ax2.set_ylabel("Success")
+            ax2.set_title("Success (final per slice)")
+            ax2.set_ylim(-0.05, 1.05)
+            ax2.spines["right"].set_visible(False)
+            ax2.spines["top"].set_visible(False)
+            ax2.set_yticks([0, 1])
+        else:
+            fig, ax = plt.subplots(figsize=(6, 3.5))
+            ax.plot(last_preds, linewidth=2)
+            ax.set_ylabel("Progress")
+            ax.set_title(
+                f"Progress Pred - {task} - {quality_label}\nMSE: {traj_mse:.2f}, Pearson: {traj_pearson:.2f}, Spearman: {traj_spearman:.2f}"
+            )
+            ax.set_ylim(0, 1)
+            # remove right and top spines
+            ax.spines["right"].set_visible(False)
+            ax.spines["top"].set_visible(False)
+            # remove y ticks
+            ax.set_yticks([])
+
+        plots.append(fig)
+
+        # Only accumulate metrics for non-failure datasets
+        if not is_failure_dataset:
+            mse_per_trajectory += np.mean((np.array(last_targets) - np.array(last_preds)) ** 2)
+            pearson = compute_pearson(last_targets, last_preds)
+            if not np.isnan(pearson):
+                pearson_trajectories.append(pearson)
+            spearman = compute_spearman(last_targets, last_preds)
+            if not np.isnan(spearman):
+                spearman_trajectories.append(spearman)
+
+    if len(unique_trajectory_ids) == 0:
+        mse_per_trajectory = np.nan
+        pearson_per_trajectory = np.nan
+        # spearman_per_trajectory = np.nan
+    else:
+        mse_per_trajectory = (mse_per_trajectory / len(unique_trajectory_ids)).item()
+        pearson_per_trajectory = np.mean(pearson_trajectories).item()
+        # spearman_per_trajectory = np.mean(spearman_trajectories).item()
+
+    metrics = {
         "mse": mse_per_trajectory,
-        "pearson_correlation": pearson_per_trajectory,
-        "spearman_correlation": spearman_per_trajectory,
-        "num_samples": len(unique_trajectory_ids),
+        "pearson": pearson_per_trajectory,
+        # "spearman": spearman_per_trajectory,
+        # "num_samples": len(unique_trajectory_ids),
     }
 
+    return metrics, plots, video_frames_list
 
-def run_confusion_matrix_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+
+def run_confusion_matrix_eval(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:
     """Run confusion_matrix evaluation analysis."""
     # Group results by confusion matrix task
-    task_groups = {}
-    trajectory_rewards = {}
+    uniq_tasks = set()
 
     for r in results:
-        # Get the confusion matrix task (the task we're testing with)
-        chosen_meta = r.get("chosen_meta", {}) or {}
-        cm_task = chosen_meta.get("confusion_matrix_task")
-        trajectory_original_task = chosen_meta.get("trajectory_original_task")
-        trajectory_id = chosen_meta.get("id", "unknown")
+        meta = r["metadata"]
+        lang_task = meta["lang_task"]
+        video_task = meta["video_task"]
+        uniq_tasks.add(lang_task)
+        uniq_tasks.add(video_task)
 
-        if cm_task is None:
-            continue
+    task_to_idx = {task: idx for idx, task in enumerate(uniq_tasks)}
+
+    num_tasks = len(uniq_tasks)
+    confusion_matrix = np.zeros((num_tasks, num_tasks))
+    count_matrix = np.zeros((num_tasks, num_tasks))
+
+    for r in results:
+        meta = r["metadata"]
+        lang_task = meta["lang_task"]
+        video_task = meta["video_task"]
 
         # Get the final progress prediction as the reward
-        progress_pred = r.get("progress_pred_chosen", [])
-        if not progress_pred or len(progress_pred) == 0:
+        progress_pred = r["progress_pred"]
+        if len(progress_pred) == 0:
             continue
-
+        if progress_pred_type == "relative":
+            progress_pred = np.cumsum(progress_pred)
         final_reward = float(progress_pred[-1])
 
-        # Group by confusion matrix task
-        if cm_task not in task_groups:
-            task_groups[cm_task] = []
-        task_groups[cm_task].append(
-            {
-                "trajectory_id": trajectory_id,
-                "trajectory_original_task": trajectory_original_task,
-                "final_reward": final_reward,
-                "is_matching": cm_task == trajectory_original_task,
-            }
+        lang_task_idx = task_to_idx[lang_task]
+        video_task_idx = task_to_idx[video_task]
+        confusion_matrix[lang_task_idx, video_task_idx] += final_reward
+        count_matrix[lang_task_idx, video_task_idx] += 1
+
+    if np.sum(count_matrix) == 0:
+        return {"error": "No valid confusion matrix data found"}, np.zeros((num_tasks, num_tasks))
+
+    # Calculate average rewards (avoid division by zero)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        confusion_matrix = np.divide(
+            confusion_matrix, count_matrix, out=np.zeros_like(confusion_matrix), where=count_matrix != 0
         )
 
-        # Track trajectory rewards across all tasks
-        if trajectory_id not in trajectory_rewards:
-            trajectory_rewards[trajectory_id] = {}
-        trajectory_rewards[trajectory_id][cm_task] = final_reward
+    # Create the plot
+    fig = plt.figure(figsize=(10, 8))
 
-    if not task_groups:
-        return {"error": "No valid confusion matrix data found"}
+    # Create heatmap showing average final rewards
+    sns.heatmap(
+        confusion_matrix,
+        # annot=True,
+        # fmt='.3f',
+        cmap="Blues",  # White to dark blue colormap
+        # xticklabels=list(uniq_tasks),
+        # yticklabels=list(uniq_tasks),
+        # cbar_kws={"label": "Average Final Reward (5 trajs)"},
+    )
+    plt.xlabel("Language Task", fontsize=12)
+    plt.ylabel("Video Task", fontsize=12)
+    # plt.xticks(rotation=45, ha="right")
+    # plt.yticks(rotation=0)
+    # Remove xticks and yticks
+    plt.xticks([])
+    plt.yticks([])
 
-    # Calculate task discrimination metrics
-    task_discrimination = {}
-    overall_discrimination_scores = []
+    # Remove the legend
+    plt.legend([])
 
-    for task in task_groups:
-        matching_rewards = [r["final_reward"] for r in task_groups[task] if r["is_matching"]]
-        non_matching_rewards = [r["final_reward"] for r in task_groups[task] if not r["is_matching"]]
+    plt.tight_layout()
 
-        if matching_rewards and non_matching_rewards:
-            avg_matching = np.mean(matching_rewards)
-            avg_non_matching = np.mean(non_matching_rewards)
-            discrimination_score = avg_matching - avg_non_matching
-
-            task_discrimination[task] = {
-                "avg_matching_reward": avg_matching,
-                "avg_non_matching_reward": avg_non_matching,
-                "discrimination_score": discrimination_score,
-                "num_matching": len(matching_rewards),
-                "num_non_matching": len(non_matching_rewards),
-            }
-            overall_discrimination_scores.append(discrimination_score)
-
-    # Overall metrics
-    overall_metrics = {}
-    if overall_discrimination_scores:
-        overall_metrics = {
-            "mean_discrimination_score": np.mean(overall_discrimination_scores),
-            "std_discrimination_score": np.std(overall_discrimination_scores),
-            "min_discrimination_score": np.min(overall_discrimination_scores),
-            "max_discrimination_score": np.max(overall_discrimination_scores),
-        }
-
-    return {
-        "num_tasks": len(task_groups),
-        "num_trajectories": len(trajectory_rewards),
-        "num_samples": len(results),
-        "task_discrimination": task_discrimination,
-        "overall_metrics": overall_metrics,
-    }
+    return fig, confusion_matrix
 
 
-def run_policy_ranking_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Run policy_ranking evaluation analysis."""
-    # Group results by task
-    task_groups = {}
-
-    for r in results:
-        # Get task and quality label from metadata
-        meta = r.get("metadata", {}) or {}
-        task = meta.get("task")
-        quality_label = meta.get("quality_label")
-
-        if task is None or quality_label is None:
-            continue
-
-        # Only consider failure, successful, suboptimal
-        if quality_label not in ["failure", "successful", "suboptimal"]:
-            continue
-
-        # Get final reward (last value of progress_pred_A)
-        progress_pred = r.get("progress_pred_A", [])
-        if not progress_pred or len(progress_pred) == 0:
-            continue
-
-        final_reward = float(progress_pred[-1])
-
-        # Group by task
-        if task not in task_groups:
-            task_groups[task] = []
-        task_groups[task].append(
-            {
-                "quality_label": quality_label,
-                "final_reward": final_reward,
-            }
-        )
-
-    if not task_groups:
-        return {"error": "No valid policy ranking data found"}
-
-    # For each task, compute ranking correlation
-    task_correlations = []
-    task_details = {}
-
-    for task, trajectories in task_groups.items():
-        # Create gold ranking: failure=1, suboptimal=2, successful=3
-        gold_ranks = []
-        predicted_ranks = []
-
-        for traj in trajectories:
-            quality = traj["quality_label"]
-            reward = traj["final_reward"]
-
-            # Gold ranking
-            if quality == "failure":
-                gold_rank = 1
-            elif quality == "suboptimal":
-                gold_rank = 2
-            elif quality == "successful":
-                gold_rank = 3
-            else:
-                continue  # Skip unknown quality labels
-
-            gold_ranks.append(gold_rank)
-            predicted_ranks.append(reward)
-
-        # Skip if we don't have at least 2 different quality levels
-        unique_qualities = set(traj["quality_label"] for traj in trajectories)
-        if len(unique_qualities) < 2:
-            continue
-
-        # Compute Spearman correlation
-        if len(gold_ranks) >= 2:
-            spearman_corr = compute_spearman(gold_ranks, predicted_ranks)
-            if not np.isnan(spearman_corr):
-                task_correlations.append(spearman_corr)
-                task_details[task] = {
-                    "spearman_correlation": spearman_corr,
-                    "num_trajectories": len(trajectories),
-                    "quality_distribution": {
-                        q: sum(1 for t in trajectories if t["quality_label"] == q) for q in unique_qualities
-                    },
-                    "gold_ranks": gold_ranks,
-                    "predicted_rewards": predicted_ranks,
-                }
-
-    # Overall metrics
-    overall_metrics = {}
-    if task_correlations:
-        overall_metrics = {
-            "mean_spearman_correlation": np.mean(task_correlations),
-            "std_spearman_correlation": np.std(task_correlations),
-            "min_spearman_correlation": np.min(task_correlations),
-            "max_spearman_correlation": np.max(task_correlations),
-            "num_tasks_with_valid_correlation": len(task_correlations),
-        }
-
-    return {
-        "num_tasks": len(task_groups),
-        "num_samples": len(results),
-        "num_tasks_with_valid_correlation": len(task_correlations),
-        "task_details": task_details,
-        "overall_metrics": overall_metrics,
-    }
-
-
-def run_policy_ranking_eval_per_ranked_set(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def run_policy_ranking_eval_per_ranked_set(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:
     """Run policy_ranking evaluation analysis per ranked set."""
-    # Group results by task
     task_groups = {}
 
     for r in results:
-        meta = r.get("metadata", {}) or {}
-        task = meta.get("task")
-        quality_label = meta.get("quality_label")
-
-        if task is None or quality_label is None:
+        task = r["task"]
+        quality_label = r["quality_label"]
+        progress_pred = r["progress_pred"]
+        if len(progress_pred) == 0:
             continue
-
-        if quality_label not in ["failure", "successful", "suboptimal"]:
-            continue
-
-        progress_pred = r.get("progress_pred_A", [])
-        if not progress_pred or len(progress_pred) == 0:
-            continue
-
+        if progress_pred_type == "relative":
+            progress_pred = np.cumsum(progress_pred)
         final_reward = float(progress_pred[-1])
 
         if task not in task_groups:
             task_groups[task] = []
-        task_groups[task].append(
-            {
-                "quality_label": quality_label,
-                "final_reward": final_reward,
-            }
-        )
+
+        task_groups[task].append({
+            "quality_label": quality_label,
+            "final_reward": final_reward,
+            "video_path": r["video_path"] if "video_path" in r else None,
+        })
 
     if not task_groups:
         return {"error": "No valid policy ranking data found"}
 
-    # For each task, compute ranking correlation
-    task_correlations = []
     task_details = {}
 
     quality_order = {"failure": 1, "suboptimal": 2, "successful": 3}
@@ -376,72 +545,189 @@ def run_policy_ranking_eval_per_ranked_set(results: List[Dict[str, Any]]) -> Dic
             quality_to_rewards[t["quality_label"]].append(t["final_reward"])
 
         present_labels = [q for q in all_labels if quality_to_rewards[q]]
+
         if len(present_labels) < 2:
             continue
 
         # Use triplets if all three present, else pairs
         k = len(present_labels)
 
-        spearman_corrs = []
+        spearman = []
 
         for labels_combo in combinations(present_labels, k):
             gold_ranks = [quality_order[q] for q in labels_combo]
+
             # All ways to pick one reward per selected quality
             for rewards_tuple in product(*(quality_to_rewards[q] for q in labels_combo)):
                 spearman_corr = compute_spearman(gold_ranks, list(rewards_tuple))
                 if not np.isnan(spearman_corr):
-                    spearman_corrs.append(spearman_corr)
+                    spearman.append(spearman_corr)
 
-        if spearman_corrs:
-            avg_spearman_corr = np.mean(spearman_corrs)
-            task_correlations.append(avg_spearman_corr)
-            task_details[task] = {
-                "average_spearman_correlation": avg_spearman_corr,
-                "num_triplets/tuples": len(spearman_corrs),
-                "quality_distribution": {
-                    "failure": len(quality_to_rewards["failure"]),
-                    "suboptimal": len(quality_to_rewards["suboptimal"]),
-                    "successful": len(quality_to_rewards["successful"]),
-                },
-            }
+        avg_spearman_corr = np.mean(spearman)
 
-    overall_metrics = {}
-    if task_correlations:
-        overall_metrics = {
-            "mean_spearman_correlation": np.mean(task_correlations),
-            "std_spearman_correlation": np.std(task_correlations),
-            "min_spearman_correlation": np.min(task_correlations),
-            "max_spearman_correlation": np.max(task_correlations),
-            "num_tasks_with_valid_correlation": len(task_correlations),
+        # Compute old metric: average rewards per quality group
+        avg_rewards_per_quality = {}
+        quality_ranks = []
+        avg_reward_values = []
+        for q in present_labels:
+            rewards = quality_to_rewards[q]
+            if rewards:
+                avg_reward = np.mean(rewards)
+                avg_rewards_per_quality[q] = avg_reward
+                quality_ranks.append(quality_order[q])
+                avg_reward_values.append(avg_reward)
+
+        spearman_rewind = None
+        if len(quality_ranks) >= 2:
+            spearman_rewind = compute_spearman(quality_ranks, avg_reward_values)
+            if np.isnan(spearman_rewind):
+                spearman_rewind = None
+
+        task_details[task] = {
+            "spearman": avg_spearman_corr,
+            "num_triplets": len(spearman),
+            "spearman_rewind": spearman_rewind,
+            "avg_rewards_per_quality": avg_rewards_per_quality,
         }
 
-    return {
-        "num_tasks": len(task_groups),
-        "num_samples": len(results),
-        "num_tasks_with_valid_correlation": len(task_correlations),
-        "task_details": task_details,
-        "overall_metrics": overall_metrics,
+    # average metrics across all task details
+    spearman_rewind_values = [t["spearman_rewind"] for t in task_details.values() if t["spearman_rewind"] is not None]
+    policy_ranking_metrics = {
+        "spearman": np.mean([t["spearman"] for t in task_details.values()]).item(),
+        # "num_triplets": np.mean([t["num_triplets"] for t in task_details.values()]).item(),
+        "spearman_rewind": np.mean(spearman_rewind_values).item() if spearman_rewind_values else None,
     }
+
+    return policy_ranking_metrics, task_groups, task_details
+
+
+def run_policy_ranking_eval_roboarena(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:
+    """Run policy_ranking evaluation for RoboArena dataset.
+
+    Groups trajectories by language instruction and compares:
+    - partial_success (ground truth from partial_success in metadata)
+    - final_predicted_reward (from model's final progress prediction)
+
+    Args:
+        results: List of evaluation results, each containing:
+            - task: Language instruction
+            - progress_pred: Model's progress predictions
+            - metadata: Contains partial_success field (from partial_success)
+        progress_pred_type: "absolute" or "relative"
+
+    Returns:
+        Tuple of (metrics_dict, task_groups, task_details)
+    """
+    task_groups = {}
+
+    for r in results:
+        task = r["task"]
+        progress_pred = r["progress_pred"]
+        if len(progress_pred) == 0:
+            continue
+
+        # Extract final predicted reward
+        if progress_pred_type == "relative":
+            progress_pred = np.cumsum(progress_pred)
+        final_predicted_reward = float(progress_pred[-1])
+
+        # Extract partial_success from metadata (stored as partial_success in metadata)
+        metadata = r.get("metadata", {})
+        partial_success = r.get("partial_success")
+
+        if task not in task_groups:
+            task_groups[task] = []
+
+        task_groups[task].append({
+            "partial_success": float(partial_success),  # Ground truth
+            "final_predicted_reward": final_predicted_reward,  # Model prediction
+            "video_path": r.get("video_path") if "video_path" in r else None,
+            "id": r.get("id"),
+        })
+
+    if not task_groups:
+        return {"error": "No valid policy ranking data found"}, {}, {}
+
+    task_details = {}
+    all_spearman = []
+
+    all_spearman_rewind = []
+
+    for task, trajectories in task_groups.items():
+        if len(trajectories) < 2:
+            continue
+
+        # Extract ground truth and predicted rewards
+        partial_successes = [t["partial_success"] for t in trajectories]
+        predicted_rewards = [t["final_predicted_reward"] for t in trajectories]
+
+        # Compute Spearman correlation between partial_success and final_predicted_reward
+        spearman_corr = compute_spearman(partial_successes, predicted_rewards)
+
+        # Compute old metric: average rewards per partial_success value
+        # Group by unique partial_success values and compute average predicted reward for each
+        partial_success_to_rewards = {}
+        for ps, pr in zip(partial_successes, predicted_rewards):
+            if ps not in partial_success_to_rewards:
+                partial_success_to_rewards[ps] = []
+            partial_success_to_rewards[ps].append(pr)
+
+        avg_rewards_per_partial_success = {}
+        unique_partial_successes = []
+        avg_reward_values = []
+        for ps in sorted(partial_success_to_rewards.keys()):
+            rewards = partial_success_to_rewards[ps]
+            if rewards:
+                avg_reward = np.mean(rewards)
+                avg_rewards_per_partial_success[ps] = avg_reward
+                unique_partial_successes.append(ps)
+                avg_reward_values.append(avg_reward)
+
+        spearman_rewind = None
+        if len(unique_partial_successes) >= 2:
+            spearman_rewind = compute_spearman(unique_partial_successes, avg_reward_values)
+            if not np.isnan(spearman_rewind):
+                all_spearman_rewind.append(spearman_rewind)
+            else:
+                spearman_rewind = None
+
+        if not np.isnan(spearman_corr):
+            all_spearman.append(spearman_corr)
+            task_details[task] = {
+                "spearman": spearman_corr,
+                "num_trajectories": len(trajectories),
+                "partial_successes": partial_successes,
+                "predicted_rewards": predicted_rewards,
+                "spearman_rewind": spearman_rewind,
+                "avg_rewards_per_partial_success": avg_rewards_per_partial_success,
+            }
+
+    if len(all_spearman) == 0:
+        return {"error": "No valid correlations computed"}, {}, {}
+
+    # Average metrics across all tasks
+    policy_ranking_metrics = {
+        "spearman": np.mean(all_spearman).item(),
+        "spearman_rewind": np.mean(all_spearman_rewind).item() if all_spearman_rewind else None,
+        # "num_tasks": len(task_details),
+        # "num_trajectories": sum(t["num_trajectories"] for t in task_details.values()),
+    }
+
+    return policy_ranking_metrics, task_groups, task_details
 
 
 def main():
-    import yaml
-    from rfm.configs.experiment_configs import DataConfig
-    from rfm.configs.eval_configs import EvaluationConfig
-    from pathlib import Path
-
     parser = argparse.ArgumentParser(description="Compile evaluation results and create visualizations")
     parser.add_argument(
         "--config", type=str, default="rfm/configs/eval_config.yaml", help="Path to evaluation configuration file"
     )
     parser.add_argument("--results_dir", type=str, default=None, help="Directory containing multiple results JSONs")
     parser.add_argument("--eval_logs_dir", type=str, default=None, help="Root directory containing eval_logs structure")
-    parser.add_argument("--max_samples", type=int, default=5, help="Maximum number of samples to visualize")
     args = parser.parse_args()
 
     # Load evaluation config manually
     print(f"Loading evaluation config from: {args.config}")
-    with open(args.config, "r") as f:
+    with open(args.config) as f:
         config_dict = yaml.safe_load(f)
 
     cfg = EvaluationConfig(**config_dict)
@@ -485,16 +771,18 @@ def main():
 
                 for eval_file in eval_files:
                     eval_type = eval_file.stem  # filename without extension
-                    print(f"    Analyzing {eval_type}...")
 
-                    try:
-                        results = load_results(str(eval_file))
-                        metrics = analyze_evaluation_type(eval_type, results)
+                    results = load_results(str(eval_file))
+                    metrics = compute_eval_metrics(eval_type, results, cfg.data.progress_pred_type)
+
+                    if eval_type == "confusion_matrix_progress" or eval_type == "confusion_matrix":
+                        # save the figure
+                        fig, confusion_matrix = metrics
+                        fig.savefig(eval_file.with_suffix(".png"))
+                        # save the confusion matrix
+                        np.save(eval_file.with_suffix(".npy"), confusion_matrix)
+                    else:
                         dataset_results[eval_type] = metrics
-                        print(f"      ✓ Completed {eval_type} analysis")
-                    except Exception as e:
-                        print(f"      ✗ Failed to analyze {eval_type}: {e}")
-                        dataset_results[eval_type] = {"error": str(e)}
 
                 model_results[dataset_name] = dataset_results
 
@@ -502,6 +790,7 @@ def main():
 
         # Save comprehensive results
         results_summary_path = eval_logs_path / "evaluation_summary.json"
+
         with open(results_summary_path, "w") as f:
             json.dump(all_results, f, indent=2)
         print(f"\nSaved comprehensive evaluation summary to: {results_summary_path}")
@@ -532,82 +821,23 @@ def main():
         print("\nDone!")
         return
 
-    # Directory mode: process known files with tailored analyses (legacy mode)
     if args.results_dir is not None:
-        dir_path = Path(args.results_dir)
-        if not dir_path.exists() or not dir_path.is_dir():
-            raise FileNotFoundError(f"results_dir not found or not a directory: {dir_path}")
+        results_dir = Path(args.results_dir)
+        if not results_dir.exists():
+            print(f"results_dir not found: {results_dir}")
+            return
 
-        print(f"Scanning results directory: {dir_path}")
-        available = {p.name: p for p in dir_path.glob("*.json")}
-        print(f"Found JSON files: {sorted(list(available.keys()))}")
+        print(f"Loading results from: {results_dir}")
+        eval_files = list(results_dir.glob("*.json"))
+        print(f"Found evaluation files: {[f.stem for f in eval_files]}")
 
-        # Helper to safely load a file
-        def _load_if_exists(name: str) -> List[Dict[str, Any]]:
-            if name in available:
-                print(f"Loading {name}...")
-                return load_results(str(available[name]))
-            print(f"Skipping {name}: file not found")
-            return []
-
-        # success_failure.json: compute Pearson/Spearman for success trajectory + preference accuracy
-        sf_results = _load_if_exists("success_failure_preference.json")
-        if sf_results:
-            print("Running analyses for success_failure_preference.json:")
-            metrics = run_success_failure_eval(sf_results)
-            for metric_name, value in metrics.items():
-                if isinstance(value, float):
-                    print(f"  - {metric_name}: {value:.4f}")
-                else:
-                    print(f"  - {metric_name}: {value}")
-
-        # reward_alignment_progress.json: reuse compute_metrics and summaries
-        ra_results = _load_if_exists("reward_alignment_progress.json")
-        if ra_results:
-            print("Running analyses for reward_alignment_progress.json:")
-            metrics = run_reward_alignment_eval(ra_results)
-            for metric_name, value in metrics.items():
-                if isinstance(value, float):
-                    print(f"  - {metric_name}: {value:.4f}")
-                else:
-                    print(f"  - {metric_name}: {value}")
-        else:
-            print("No analyses run for reward_alignment_progress.json")
-
-        # confusion_matrix.json: create confusion matrix analysis
-        cm_results = _load_if_exists("confusion_matrix.json")
-        if cm_results:
-            print("Running analyses for confusion_matrix.json:")
-            metrics = run_confusion_matrix_eval(cm_results)
-            for metric_name, value in metrics.items():
-                if isinstance(value, float):
-                    print(f"  - {metric_name}: {value:.4f}")
-                elif isinstance(value, dict):
-                    print(f"  - {metric_name}:")
-                    for sub_metric, sub_value in value.items():
-                        if isinstance(sub_value, float):
-                            print(f"    {sub_metric}: {sub_value:.4f}")
-                        else:
-                            print(f"    {sub_metric}: {sub_value}")
-                else:
-                    print(f"  - {metric_name}: {value}")
-        else:
-            print("No analyses run for confusion_matrix.json")
-
-        # policy_ranking_progress.json: create policy ranking analysis
-        pr_results = _load_if_exists("policy_ranking_progress.json")
-        if pr_results:
-            print("Running analyses for policy_ranking_progress.json:")
-            metrics = run_policy_ranking_eval_per_ranked_set(pr_results)
-            for metric_name, value in metrics.items():
-                if isinstance(value, float):
-                    print(f"  - {metric_name}: {value:.4f}")
-                else:
-                    print(f"  - {metric_name}: {value}")
-        else:
-            print("No analyses run for policy_ranking_progress.json")
-
-        print("Directory processing complete.")
+        for eval_file in eval_files:
+            eval_type = eval_file.stem  # filename without extension
+            print(f"    Analyzing {eval_type}...")
+            results = load_results(str(eval_file))
+            metrics = compute_eval_metrics(eval_type, results, cfg.data.progress_pred_type)
+            print(f"      ✓ Completed {eval_type} analysis")
+            print(f"      ✓ Metrics: {metrics}")
         print("Done!")
         return
 

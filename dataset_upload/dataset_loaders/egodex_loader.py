@@ -9,13 +9,14 @@ This module provides a simple, readable loader inspired by the LIBERO loader:
 """
 
 import os
+from pathlib import Path
+from re import A
+
 import h5py
 import numpy as np
-from typing import Dict, Tuple, Optional, List
-from pathlib import Path
+from dataset_upload.helpers import generate_unique_id
+from dataset_upload.video_helpers import load_video_frames
 from tqdm import tqdm
-from rfm.data.helpers import generate_unique_id
-from rfm.data.video_helpers import load_video_frames
 
 
 class EgoDexFrameLoader:
@@ -26,12 +27,12 @@ class EgoDexFrameLoader:
 
     def __call__(self) -> np.ndarray:
         """Load frames from the MP4 file when called."""
-        return load_video_frames(Path(self.mp4_path))
+        return load_video_frames(Path(self.mp4_path), max_frames=1800)  # 30hz * 60s = 1800 frames
 
 
-def _discover_trajectory_files(dataset_path: Path) -> List[Tuple[Path, Path, str]]:
+def _discover_trajectory_files(dataset_path: Path) -> list[tuple[Path, Path, str]]:
     """Discover all (HDF5, MP4) pairs grouped by task directory."""
-    trajectory_files: List[Tuple[Path, Path, str]] = []
+    trajectory_files: list[tuple[Path, Path, str]] = []
     for task_dir in dataset_path.iterdir():
         if not task_dir.is_dir():
             continue
@@ -45,7 +46,7 @@ def _discover_trajectory_files(dataset_path: Path) -> List[Tuple[Path, Path, str
     return trajectory_files
 
 
-def _load_hdf5_data(hdf5_path: Path) -> Tuple[np.ndarray, str]:
+def _load_hdf5_data(hdf5_path: Path) -> tuple[np.ndarray, str]:
     """Load pose data and task description from EgoDex HDF5 file."""
     with h5py.File(hdf5_path, "r") as f:
         task_description = ""
@@ -71,7 +72,7 @@ def _load_hdf5_data(hdf5_path: Path) -> Tuple[np.ndarray, str]:
 
 def _extract_pose_actions(hdf5_file) -> np.ndarray:
     """Extract pose actions (positions) from EgoDex HDF5."""
-    actions: List[np.ndarray] = []
+    actions: list[np.ndarray] = []
     pose_keys = [
         "transforms/leftHand",
         "transforms/rightHand",
@@ -95,7 +96,7 @@ def _extract_pose_actions(hdf5_file) -> np.ndarray:
     return np.concatenate(actions, axis=1)
 
 
-def load_egodex_dataset(dataset_path: str, max_trajectories: int = 100) -> Dict[str, List[Dict]]:
+def load_egodex_dataset(dataset_path: str, max_trajectories: int = 100) -> dict[str, list[dict]]:
     """Load EgoDex dataset and organize by task, without a separate iterator class."""
     print(f"Loading EgoDex dataset from: {dataset_path}")
     print("=" * 100)
@@ -109,33 +110,35 @@ def load_egodex_dataset(dataset_path: str, max_trajectories: int = 100) -> Dict[
     traj_files = _discover_trajectory_files(dataset_path)
     print(f"Found {len(traj_files)} trajectory pairs")
 
-    task_data: Dict[str, List[Dict]] = {}
+    task_data: dict[str, list[dict]] = {}
     loaded_count = 0
 
     for hdf5_path, mp4_path, task_name in tqdm(traj_files, desc="Processing trajectories"):
         if max_trajectories is not None and loaded_count >= max_trajectories and max_trajectories != -1:
             break
-        try:
-            pose_data, task_description = _load_hdf5_data(hdf5_path)
-            frame_loader = EgoDexFrameLoader(str(mp4_path))
+        pose_data, task_description = _load_hdf5_data(hdf5_path)
 
-            trajectory = {
-                "frames": frame_loader,
-                "actions": pose_data,
-                "is_robot": False,
-                "task": task_description or f"EgoDex {task_name}",
-                "quality_label": "successful",
-                "preference_group_id": None,
-                "preference_rank": None,
-                "task_name": task_name,
-                "id": generate_unique_id(),
-            }
-
-            task_data.setdefault(task_name, []).append(trajectory)
-            loaded_count += 1
-        except Exception as e:
-            print(f"Error loading trajectory {hdf5_path}: {e}")
+        if "description unavailable" in task_description.lower():
+            print(f"Skipping task {hdf5_path} because description is: {task_description}")
             continue
+        frame_loader = EgoDexFrameLoader(str(mp4_path))
+
+        assert task_description is not None
+
+        trajectory = {
+            "frames": frame_loader,
+            # "actions": pose_data,
+            "is_robot": False,
+            "task": task_description,
+            "quality_label": "successful",
+            "preference_group_id": None,
+            "preference_rank": None,
+            "task_name": task_name,
+            "id": generate_unique_id(),
+        }
+
+        task_data.setdefault(task_name, []).append(trajectory)
+        loaded_count += 1
 
     total_trajectories = sum(len(v) for v in task_data.values())
     print(f"Loaded {total_trajectories} trajectories from {len(task_data)} tasks")

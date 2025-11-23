@@ -1,0 +1,36 @@
+# @package _global_
+
+# Evaluation Only Configuration for RFM
+# This config is used specifically for running evaluations on existing checkpoints
+# Used by run_eval_only.py
+
+defaults:
+  - eval_only_config
+  - _self_
+
+# Model path (required) - HuggingFace model ID or local checkpoint path
+#model_path: "aliangdw/rfm_model"  # HuggingFace model ID
+model_path: "logs/rfm_st_2gpu_bs16_oxe_mw_rewind5x_vqa/ckpt-avg-6metrics=0.7242_step=500"  # HuggingFace model ID
+# model_path: "./logs/my_run/checkpoint-1000"  # Local checkpoint path
+
+# Optional experiment config override (if not provided, will load from HuggingFace repo or checkpoint/config.yaml)
+# exp_config_path: "rfm/configs/config.yaml"
+
+# Output directory for evaluation results (defaults to ./eval_output/<model_name> or checkpoint_path/eval_output)
+# output_dir: "./eval_results"
+
+# Custom evaluation configuration
+# This will override the custom_eval settings from the checkpoint's config.yaml
+custom_eval:
+  eval_types: ["policy_ranking", "confusion_matrix"]  # Options: ["reward_alignment", "policy_ranking", "confusion_matrix"]
+  #reward_alignment:
+  #  - "jesbu1_oxe_rfm_eval_oxe_bridge_v2_eval"
+  #  - "jesbu1_oxe_rfm_eval_oxe_jaco_play_eval"
+  #  - "aliangdw_metaworld_metaworld_train"
+  #  - "aliangdw_metaworld_metaworld_eval"
+    # - "abraranwar_agibotworld_alpha_rfm_agibotworld"
+  policy_ranking:
+    - "aliangdw_metaworld_metaworld_eval"
+  confusion_matrix:
+    - "aliangdw_metaworld_metaworld_eval"
+

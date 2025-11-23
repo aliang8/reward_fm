@@ -4,17 +4,25 @@ Video helper utilities for robust loading of videos with codec handling and
 backend fallbacks. Centralized here to be reused across dataset loaders.
 """
 
+import gc
 import os
-import tempfile
 import shutil
-from typing import Optional, List
-
-import numpy as np
-import cv2
 import subprocess
+import tempfile
+import time
+from signal import SIGTERM
+from typing import Optional
+
+import cv2
+import numpy as np
+
+# Configuration constants
+DEFAULT_SUBPROCESS_TIMEOUT = 30  # seconds for ffprobe/ffmpeg operations
+DEFAULT_FRAME_READ_TIMEOUT = 60  # seconds for reading all frames from a video
+MAX_FRAMES_SANITY_CHECK = 10000  # maximum number of frames to prevent infinite loops
 
 
-def _ffprobe_codec_name(path: str) -> Optional[str]:
+def _ffprobe_codec_name(path: str, timeout: int = DEFAULT_SUBPROCESS_TIMEOUT) -> str | None:
     """Return codec_name for the first video stream using ffprobe, or None on failure."""
     if shutil.which("ffprobe") is None:
         return None
@@ -32,18 +40,22 @@ def _ffprobe_codec_name(path: str) -> Optional[str]:
                 "default=nk=1:nw=1",
                 path,
             ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             check=True,
             text=True,
+            timeout=timeout,
         )
         codec_name = completed.stdout.strip().splitlines()[0] if completed.stdout.strip() else None
         return codec_name
-    except Exception:
+    except subprocess.TimeoutExpired:
+        print(f"Warning: ffprobe timed out after {timeout}s for {path}")
+        return None
+    except Exception as e:
+        print(f"Warning: ffprobe failed for {path}: {e}")
         return None
 
 
-def _reencode_to_h264(input_path: str) -> Optional[str]:
+def _reencode_to_h264(input_path: str, timeout: int = DEFAULT_SUBPROCESS_TIMEOUT) -> str | None:
     """Re-encode input video to H.264 yuv420p if ffmpeg is available. Returns output path or None."""
     if shutil.which("ffmpeg") is None:
         return None
@@ -67,9 +79,18 @@ def _reencode_to_h264(input_path: str) -> Optional[str]:
                 output_path,
             ],
             check=True,
+            timeout=timeout,
         )
         return output_path
-    except Exception:
+    except subprocess.TimeoutExpired:
+        print(f"Warning: ffmpeg re-encode timed out after {timeout}s for {input_path}")
+        try:
+            os.unlink(output_path)
+        except Exception:
+            pass
+        return None
+    except Exception as e:
+        print(f"Warning: ffmpeg re-encode failed for {input_path}: {e}")
         try:
             os.unlink(output_path)
         except Exception:
@@ -77,9 +98,9 @@ def _reencode_to_h264(input_path: str) -> Optional[str]:
         return None
 
 
-def _open_with_best_backend(path: str) -> Optional[cv2.VideoCapture]:
+def _open_with_best_backend(path: str) -> cv2.VideoCapture | None:
     """Try multiple OpenCV backends and return an opened capture or None."""
-    backends: List[int] = [getattr(cv2, "CAP_FFMPEG", cv2.CAP_ANY), cv2.CAP_ANY]
+    backends: list[int] = [getattr(cv2, "CAP_FFMPEG", cv2.CAP_ANY), cv2.CAP_ANY]
     for backend in backends:
         try:
             cap_try = cv2.VideoCapture(path, backend)
@@ -98,15 +119,30 @@ def _open_with_best_backend(path: str) -> Optional[cv2.VideoCapture]:
     return None
 
 
-def load_video_frames(video_input) -> np.ndarray:
+def load_video_frames(
+    video_input,
+    timeout: Optional[int] = DEFAULT_FRAME_READ_TIMEOUT,
+    max_frames: int = MAX_FRAMES_SANITY_CHECK,
+) -> np.ndarray:
     """Load video frames (RGB uint8) from a file path (str/Path) or video bytes.
 
     - For byte inputs, detect AV1 and re-encode to H.264 for compatibility
     - Uses OpenCV with FFMPEG backend when available
     - Returns numpy array of shape (T, H, W, 3) in RGB order
+    - Protected by timeout and maximum frame count to prevent hangs
+
+    Args:
+        video_input: Path to video file or video bytes
+        timeout: Maximum time in seconds to spend reading frames (None to disable)
+        max_frames: Maximum number of frames to read (sanity check against infinite loops)
+
+    Raises:
+        TimeoutError: If frame reading exceeds the timeout
+        ValueError: If video cannot be opened or no frames extracted
     """
-    temp_files_to_cleanup: List[str] = []
-    cap: Optional[cv2.VideoCapture] = None
+    temp_files_to_cleanup: list[str] = []
+    cap: cv2.VideoCapture | None = None
+    video_path_str = str(video_input) if isinstance(video_input, (str, os.PathLike)) else "bytes"
 
     if isinstance(video_input, (str, os.PathLike)):
         video_path = str(video_input)
@@ -129,13 +165,34 @@ def load_video_frames(video_input) -> np.ndarray:
         cap = _open_with_best_backend(decodable_path)
 
     try:
-        frames: List[np.ndarray] = []
+        frames: list[np.ndarray] = []
         if cap is None or not cap.isOpened():
             raise ValueError(
-                "Could not open video file with available backends. If the source is AV1, install AV1 support or enable ffmpeg re-encode."
+                f"Could not open video file {video_path_str} with available backends. "
+                "If the source is AV1, install AV1 support or enable ffmpeg re-encode."
             )
 
+        start_time = time.time()
+        frame_count = 0
+
         while True:
+            # Check timeout
+            if timeout is not None and (time.time() - start_time) > timeout:
+                raise TimeoutError(
+                    f"Video frame reading timed out after {timeout}s for {video_path_str}. "
+                    f"Read {frame_count} frames before timeout."
+                )
+
+            # Check max frames sanity limit
+            if frame_count >= max_frames:
+                print(
+                    f"Warning: Reached maximum frame limit ({max_frames}) for {video_path_str}. "
+                    f"This might indicate a corrupted or unusually long video."
+                )
+                frames = []
+                gc.collect()
+                break
+
             ret, frame = cap.read()
             if not ret:
                 break
@@ -143,7 +200,7 @@ def load_video_frames(video_input) -> np.ndarray:
             # Convert BGR to RGB for consistency
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             frames.append(rgb_frame)
-
+            frame_count += 1
         cap.release()
 
         # Clean up temp file(s) if we created any
@@ -154,7 +211,7 @@ def load_video_frames(video_input) -> np.ndarray:
                 pass
 
         if len(frames) == 0:
-            raise ValueError("No frames could be extracted from video")
+            raise ValueError(f"No frames could be extracted from video {video_path_str}")
 
         return np.array(frames)
 
@@ -167,4 +224,7 @@ def load_video_frames(video_input) -> np.ndarray:
                 os.unlink(path)
             except Exception:
                 pass
-        raise e
+        # Add more context to the error
+        if isinstance(e, (TimeoutError, ValueError)):
+            raise
+        raise RuntimeError(f"Error loading video {video_path_str}: {e}") from e

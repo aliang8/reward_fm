@@ -1,13 +1,14 @@
-from huggingface_hub import snapshot_download
 import os
 import sys
+
+from huggingface_hub import snapshot_download
 
 # Support running as a module (python -m rfm.data.data_scripts.agibot.download_task_jsons)
 # and running directly as a script (python rfm/data/data_scripts/agibot/download_task_jsons.py)
 try:
     from .agibot_helper import (
-        DEFAULT_TASK_INFO_DIR,
         DEFAULT_DATASET_ROOT,
+        DEFAULT_TASK_INFO_DIR,
         build_episode_to_task_index,
     )
 except Exception:  # pragma: no cover - fallback for direct execution
@@ -16,8 +17,8 @@ except Exception:  # pragma: no cover - fallback for direct execution
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
     from rfm.data.data_scripts.agibot.agibot_helper import (  # type: ignore
-        DEFAULT_TASK_INFO_DIR,
         DEFAULT_DATASET_ROOT,
+        DEFAULT_TASK_INFO_DIR,
         build_episode_to_task_index,
     )
 

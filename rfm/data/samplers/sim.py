@@ -1,0 +1,276 @@
+#!/usr/bin/env python3
+
+
+import random
+import torch
+
+from rfm.data.dataset_types import SimilaritySample, Trajectory
+from rfm.data.samplers.base import RFMBaseSampler
+from rfm.data.datasets.helpers import DataGenStrat
+from rfm.utils.distributed import rank_0_print
+
+
+class SimSampler(RFMBaseSampler):
+    """Data generator for producing batches for similarity scoring."""
+
+    def __init__(
+        self,
+        config,
+        dataset,
+        combined_indices,
+        dataset_success_cutoff_map=None,
+        is_evaluation=False,
+        verbose=True,
+        **kwargs,
+    ):
+        super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
+        self.similarity_strategy_ratio: list[float] = config.similarity_strategy_ratio
+        self._has_paired_human_robot = any(
+            entry["robot"] and entry["human"] for entry in self.paired_human_robot_by_task.values()
+        )
+        self._has_suboptimal = any(indices for indices in self.suboptimal_by_task.values())
+        if verbose:
+            if self.similarity_strategy_ratio[2] > 0 and not self._has_paired_human_robot:
+                rank_0_print("No paired human/robot data available; skipping paired strategy for similarity sampling.")
+            if self.similarity_strategy_ratio[1] > 0 and not self._has_suboptimal:
+                rank_0_print(
+                    "No suboptimal/failure data available; skipping suboptimal strategy for similarity sampling."
+                )
+
+    def _generate_sample(self, item: dict):
+        return self._create_similarity_sample(ref_traj=item)
+
+    def _create_similarity_sample(self, ref_traj: dict | None = None) -> SimilaritySample:
+        """Create a similarity scoring sample: o^1 and o^2 ranked against o^ref.
+
+        Two modes:
+        1. Rewind mode: o^1 is rewound from same task, o^2 is from different task
+            - here o^1 is preferred and should be ranked higher than o^2
+        2. Optimal/Suboptimal mode: o^1 is optimal/suboptimal from same task, o^2 varies
+            - here o^1 is preferred and should be ranked higher than o^2
+
+        Args:
+            ref_traj: Optional reference trajectory. If None, samples from optimal trajectories.
+        """
+
+        # Use provided reference trajectory if given; otherwise sample one
+        if ref_traj is None:
+            # Use preprocessed optimal trajectories from index maps
+            if not self.optimal_by_task:
+                raise ValueError("No optimal trajectories found for similarity sample generation")
+
+            # Get a random task and optimal trajectory from it
+            task_name = random.choice(list(self.optimal_by_task.keys()))
+            optimal_indices = self.optimal_by_task[task_name]
+            while not optimal_indices:
+                task_name = random.choice(list(self.optimal_by_task.keys()))
+                optimal_indices = self.optimal_by_task[task_name]
+
+            optimal_idx = random.choice(optimal_indices)
+            ref_traj = self.dataset[optimal_idx]
+
+        traj_sim, traj_diff = None, None
+        strategy_used = None
+
+        # Strategy selection with rebalancing on failure
+        strategies = []
+        if self.similarity_strategy_ratio[0] > 0:
+            strategies.append((DataGenStrat.REWOUND, self.similarity_strategy_ratio[0]))
+        if self._has_suboptimal and len(self.similarity_strategy_ratio) > 1 and self.similarity_strategy_ratio[1] > 0:
+            strategies.append((DataGenStrat.SUBOPTIMAL, self.similarity_strategy_ratio[1]))
+        if (
+            self._has_paired_human_robot
+            and len(self.similarity_strategy_ratio) > 2
+            and self.similarity_strategy_ratio[2] > 0
+        ):
+            strategies.append((DataGenStrat.PAIRED_HUMAN_ROBOT, self.similarity_strategy_ratio[2]))
+
+        # Remove strategies with zero probability
+        strategies = [(strat, prob) for strat, prob in strategies if prob > 0]
+
+        max_attempts = 10  # Limit retry attempts to prevent infinite loops
+        max_strategy_attempts = 4  # Maximum attempts per strategy before removing it
+        attempt = 0
+
+        strategies_tried = []
+        # Track attempts per strategy
+        strategy_attempt_counts = {strat: 0 for strat, _ in strategies}
+
+        while traj_sim is None and attempt < max_attempts:
+            attempt += 1
+
+            # Check if we have any strategies left
+            if not strategies:
+                raise ValueError("No strategies available - all strategies failed to generate samples")
+
+            # Rebalance probabilities based on remaining strategies
+            total_prob = sum(prob for _, prob in strategies)
+            if total_prob == 0:
+                raise ValueError("No strategies with positive probability available")
+
+            # Normalize probabilities
+            normalized_strategies = [(strat, prob / total_prob) for strat, prob in strategies]
+
+            # Select strategy based on rebalanced probabilities
+            prob = random.random()
+            cumulative_prob = 0.0
+            selected_strategy = None
+
+            for strat, normalized_prob in normalized_strategies:
+                cumulative_prob += normalized_prob
+                if prob <= cumulative_prob:
+                    selected_strategy = strat
+                    strategies_tried.append(selected_strategy)
+                    break
+
+            # Execute selected strategy
+            if selected_strategy == DataGenStrat.REWOUND:
+                result = self._get_traj_dicts_for_rewind(ref_traj)
+            elif selected_strategy == DataGenStrat.SUBOPTIMAL:
+                result = self._get_traj_dicts_for_suboptimal(ref_traj)
+            elif selected_strategy == DataGenStrat.PAIRED_HUMAN_ROBOT:
+                result = self._get_traj_dicts_for_paired_human_robot(ref_traj)
+            else:
+                raise ValueError(f"Invalid strategy selected: {selected_strategy}")
+
+            # Check if strategy succeeded
+            if result is not None:
+                traj_sim, traj_diff = result
+                strategy_used = selected_strategy
+            else:
+                # Strategy failed - increment attempt count
+                strategy_attempt_counts[selected_strategy] = strategy_attempt_counts.get(selected_strategy, 0) + 1
+
+                # Only remove strategy if it has failed max_strategy_attempts times
+                if strategy_attempt_counts[selected_strategy] >= max_strategy_attempts:
+                    strategies = [(strat, prob) for strat, prob in strategies if strat != selected_strategy]
+                    continue
+
+        # If we still don't have a sample after all attempts, raise an error
+        if traj_sim is None or traj_diff is None:
+            rank_0_print(f"Strategies tried: {strategies_tried}")
+            rank_0_print(f"Strategy attempt counts: {strategy_attempt_counts}")
+            # import ipdb; ipdb.set_trace()
+            raise ValueError(
+                f"Failed to generate similarity sample after {max_attempts} attempts - all strategies exhausted"
+            )
+
+        sample = SimilaritySample(
+            ref_trajectory=self._get_traj_from_data(ref_traj),
+            sim_trajectory=self._get_traj_from_data(traj_sim),
+            diff_trajectory=self._get_traj_from_data(traj_diff),
+            data_gen_strategy=strategy_used.value,
+        )
+        sample.resample_attempts = attempt
+        return sample
+
+    def _get_traj_dicts_for_rewind(self, ref_traj: dict) -> tuple[dict | Trajectory, dict] | None:
+        """Get traj_sim and traj_diff for rewind strategy.
+
+        Two cases:
+        1) sim = rewound, diff = different task
+        2) sim = same task optimal, diff = rewound
+
+        Args:
+            ref_traj: Reference trajectory
+
+        Returns:
+            Tuple of (traj_sim, traj_diff) where both can be dict or Trajectory objects, or None if not available
+        """
+        max_retries = 3  # Number of retry attempts for sampling
+
+        # Try case 1: sim = rewound, diff = different task
+        traj_sim = None
+        for _ in range(max_retries):
+            traj_sim = self._get_rewound_traj(ref_traj)
+            if traj_sim is not None:
+                break
+
+        traj_diff = None
+        for _ in range(max_retries):
+            traj_diff = self._get_different_video_traj(ref_traj)
+            if traj_diff is not None:
+                break
+
+        if traj_sim is not None and traj_diff is not None:
+            return traj_sim, traj_diff
+
+        # Case 1 failed, try case 2: sim = same task optimal, diff = rewound
+        traj_sim = None
+        for _ in range(max_retries):
+            traj_sim = self._get_same_task_optimal(ref_traj)
+            if traj_sim is not None:
+                break
+
+        traj_diff = None
+        for _ in range(max_retries):
+            traj_diff = self._get_rewound_traj(ref_traj)
+            if traj_diff is not None:
+                break
+
+        if traj_sim is not None and traj_diff is not None:
+            return traj_sim, traj_diff
+
+        return None
+
+    def _get_traj_dicts_for_paired_human_robot(self, ref_traj: dict) -> tuple[dict, dict | Trajectory] | None:
+        """Get traj_sim and traj_diff for paired human/robot strategy.
+
+        Args:
+            ref_traj: Reference trajectory
+
+        Returns:
+            Tuple of (traj_sim, traj_diff) or None if not available. Both can be dict or Trajectory objects.
+            traj_sim is the paired human/robot trajectory (opposite type, same task)
+            traj_diff is a trajectory from a different task
+        """
+        max_retries = 3  # Number of retry attempts for sampling
+
+        # Retry traj_sim separately
+        traj_sim = None
+        for _ in range(max_retries):
+            traj_sim = self._get_paired_human_robot_traj(ref_traj)
+            if traj_sim is not None:
+                break
+
+        # Retry traj_diff separately
+        traj_diff = None
+        for _ in range(max_retries):
+            traj_diff = self._get_different_video_traj(ref_traj)
+            if traj_diff is not None:
+                break
+
+        if traj_sim is not None and traj_diff is not None:
+            return traj_sim, traj_diff
+
+        return None
+
+    def _get_traj_dicts_for_suboptimal(self, ref_traj: dict) -> tuple[dict, dict | Trajectory] | None:
+        """Get traj_sim and traj_diff for suboptimal strategy.
+
+        Args:
+            ref_traj: Reference trajectory
+
+        Returns:
+            Tuple of (traj_sim, traj_diff) or None if not available. Both can be dict or Trajectory objects.
+        """
+        max_retries = 3  # Number of retry attempts for sampling
+
+        # Retry traj_sim separately
+        traj_sim = None
+        for _ in range(max_retries):
+            traj_sim = self._get_same_task_optimal(ref_traj)
+            if traj_sim is not None:
+                break
+
+        # Retry traj_diff separately
+        traj_diff = None
+        for _ in range(max_retries):
+            traj_diff = self._get_same_task_suboptimal(ref_traj)
+            if traj_diff is not None:
+                break
+
+        if traj_sim is not None and traj_diff is not None:
+            return traj_sim, traj_diff
+
+        return None

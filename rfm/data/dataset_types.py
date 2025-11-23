@@ -4,29 +4,36 @@ Dataclasses for RFM model dataset trajectory structures.
 Defines the standard format for HuggingFace dataset trajectories.
 """
 
-from pydantic import BaseModel
-from typing import Optional, Union, List, Dict, Any
+from typing import Any, Union
+
 import numpy as np
+from pydantic import BaseModel
+import torch
 
 
 class Trajectory(BaseModel):
     """Trajectory structure containing frames, metadata, and progress information."""
 
     # Core trajectory fields
-    frames: Optional[Union[List[str], np.ndarray]] = None
-    frames_shape: Optional[tuple] = None
-    id: Optional[str] = None
-    task: Optional[str] = None
-    lang_vector: Optional[Union[np.ndarray, List[float]]] = None
-    data_source: Optional[str] = None
-    quality_label: Optional[str] = None
-    is_robot: Optional[bool] = None
+    frames: list[str] | np.ndarray | None = None
+    frames_shape: tuple | None = None
 
-    data_gen_strategy: Optional[str] = None
+    # If embeddings are precomputed
+    embeddings_path: str | None = None
+    video_embeddings: torch.Tensor | np.ndarray | None = None
+    text_embedding: torch.Tensor | np.ndarray | None = None
+
+    id: str | None = None
+    task: str | None = None
+    lang_vector: np.ndarray | list[float] | None = None
+    data_source: str | None = None
+    quality_label: str | None = None
+    is_robot: bool | None = None
 
     # Progress and metadata
-    target_progress: Optional[List[float]] = None
-    metadata: Optional[Dict[str, Any]] = None
+    target_progress: list[float] | None = None
+    partial_success: float | None = None
+    metadata: dict[str, Any] | None = None
 
     class Config:
         arbitrary_types_allowed = True
@@ -37,6 +44,8 @@ class ProgressSample(BaseModel):
 
     trajectory: Trajectory
     sample_type: str = "progress"
+    data_gen_strategy: str | None = None
+    resample_attempts: int = 1
 
 
 class PreferenceSample(BaseModel):
@@ -47,17 +56,21 @@ class PreferenceSample(BaseModel):
     rejected_trajectory: Trajectory
 
     sample_type: str = "preference"
+    data_gen_strategy: str | None = None
+    resample_attempts: int = 1
 
 
 class SimilaritySample(BaseModel):
     """Sample structure for similarity scoring: traj_sim and traj_diff ranked against o^ref."""
 
     # Trajectories
-    reference_trajectory: Trajectory  # o^ref
-    traj_sim_trajectory: Trajectory  # Similar trajectory
-    traj_diff_trajectory: Trajectory  # Different trajectory
+    ref_trajectory: Trajectory  # o^ref
+    sim_trajectory: Trajectory  # Similar trajectory
+    diff_trajectory: Trajectory  # Different trajectory
 
     sample_type: str = "similarity"
+    data_gen_strategy: str | None = None
+    resample_attempts: int = 1
 
 
 SampleType = Union[PreferenceSample, SimilaritySample, ProgressSample]

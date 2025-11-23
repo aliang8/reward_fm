@@ -4,13 +4,13 @@ LIBERO dataset loader for the generic dataset converter for RFM model training.
 This module contains LIBERO-specific logic for loading and processing HDF5 files.
 """
 
-import h5py
 import os
-import numpy as np
-from typing import List, Dict
 from pathlib import Path
+
+import h5py
+import numpy as np
+from dataset_upload.helpers import generate_unique_id
 from tqdm import tqdm
-from rfm.data.helpers import generate_unique_id
 
 
 class LiberoFrameLoader:
@@ -53,7 +53,7 @@ class LiberoFrameLoader:
         return frames
 
 
-def load_libero_dataset(base_path: str) -> Dict[str, List[Dict]]:
+def load_libero_dataset(base_path: str) -> dict[str, list[dict]]:
     """Load LIBERO dataset from HDF5 files and organize by task.
 
     Args:

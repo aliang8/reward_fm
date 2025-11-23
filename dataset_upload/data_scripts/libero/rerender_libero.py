@@ -30,25 +30,15 @@ sys.path.append("deps/libero/LIBERO")
 import argparse
 import json
 import os
-import time
 from datetime import datetime
 
 import h5py
+import imageio
 import numpy as np
 import robosuite.utils.transform_utils as T
 import tqdm
-from libero.libero import benchmark
-
-import math
-import os
-
-import imageio
-import numpy as np
-
-
-from libero.libero import get_libero_path
+from libero.libero import benchmark, get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
-
 
 IMAGE_RESOLUTION = 256
 
@@ -220,12 +210,10 @@ def main(args):
                     gripper_states.append(obs["robot0_gripper_qpos"])
                 joint_states.append(obs["robot0_joint_pos"])
                 ee_states.append(
-                    np.hstack(
-                        (
-                            obs["robot0_eef_pos"],
-                            T.quat2axisangle(obs["robot0_eef_quat"]),
-                        )
-                    )
+                    np.hstack((
+                        obs["robot0_eef_pos"],
+                        T.quat2axisangle(obs["robot0_eef_quat"]),
+                    ))
                 )
                 agentview_images.append(obs["agentview_image"])
                 eye_in_hand_images.append(obs["robot0_eye_in_hand_image"])
@@ -235,7 +223,7 @@ def main(args):
                     rollout_images.append(obs["agentview_image"])
 
                 # Execute demo action in environment
-                obs, reward, done, info = env.step(action.tolist())
+                obs, _reward, done, _info = env.step(action.tolist())
 
             # At end of episode, save replayed trajectories to new HDF5 files (only keep FAILURES)
             if done:  # Changed from 'if done:' to 'if not done:' to save failures
@@ -263,7 +251,7 @@ def main(args):
                 # Save failure video if debugging is enabled
                 if args.debug_mode:
                     save_failure_video(rollout_images, task_id, i, task_description)
-                    print(f"Saved failure video")
+                    print("Saved failure video")
                     exit()
 
                 num_failures += 1

@@ -1,11 +1,1 @@
-#!/bin/bash
-
-CUDA_VISIBLE_DEVICES=0 uv run accelerate launch \
-    --num_processes=1 \
-    train.py \
-    --config_paths rfm/configs/config.yaml rfm/configs/rewind_transformer_config.yaml \
-    --logging.use_wandb false \
-    --debug true \
-    --model.train_preference_head true \
-    --model.train_progress_head true \
-    --training.output_dir ./logs/rewind_debug
+uv run python3 train.py --config_paths rfm/configs/config.yaml rfm/configs/rewind_transformer_config.yaml rfm/configs/data/oxe_mw.yaml --data.sample_type_ratio '[1, 0, 0]' --model.train_preference_head true --loss.predict_pref_progress true --model.train_progress_head true --model.train_success_head false --logging.log_to '["wandb"]' false --training.exp_name rewind_st-1_0_0_pref-t_prog-t_succ-f

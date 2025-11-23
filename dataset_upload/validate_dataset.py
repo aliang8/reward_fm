@@ -4,16 +4,15 @@ Simple validation script for the RFM dataset format.
 Checks fields and data types only.
 """
 
-import os
-import json
-import numpy as np
-from datasets import load_from_disk, Dataset
-from typing import Dict, List, Any
 import argparse
-from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from datasets import Dataset, load_from_disk
 
 
-def validate_dataset_fields_and_types(dataset: Dataset, sample_size: int = 10) -> Dict[str, Any]:
+def validate_dataset_fields_and_types(dataset: Dataset, sample_size: int = 10) -> dict[str, Any]:
     """Validate dataset fields and data types."""
 
     print(f"Validating dataset fields and data types on {sample_size} sample entries...")
@@ -120,7 +119,7 @@ def validate_dataset_fields_and_types(dataset: Dataset, sample_size: int = 10) -
 
             # Print sample task for first trajectory
             if idx == sample_indices[0]:
-                print(f"\nSample task from first trajectory:")
+                print("\nSample task from first trajectory:")
                 print(f"  Task: {trajectory['task']}")
                 print(f"  ID: {trajectory['id']}")
 
@@ -133,7 +132,7 @@ def validate_dataset_fields_and_types(dataset: Dataset, sample_size: int = 10) -
     return validation_results
 
 
-def print_validation_summary(validation_results: Dict[str, Any]):
+def print_validation_summary(validation_results: dict[str, Any]):
     """Print validation summary."""
 
     print("\n" + "=" * 50)
@@ -180,7 +179,7 @@ def main():
         print(f"Error loading dataset: {e}")
         return
 
-    print(f"Dataset loaded successfully.")
+    print("Dataset loaded successfully.")
 
     # Run validation
     validation_results = validate_dataset_fields_and_types(dataset, args.sample_size)

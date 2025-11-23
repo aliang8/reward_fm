@@ -52,7 +52,8 @@ eval_datasets:
   - "abraranwar/usc_koch_rewind_rfm"
   - "aliangdw/usc_xarm_policy_ranking"
   - "aliangdw/usc_franka_policy_ranking"
-  - "aliangdw/utd_so101_arm_policy_ranking"
+  - "aliangdw/utd_so101_policy_ranking"
+  - "aliangdw/utd_so101_human"
 
 eval_subsets:
   - ["libero256_10"]
@@ -64,7 +65,8 @@ eval_subsets:
   - ["usc_koch_rewind"]
   - ["usc_xarm_policy_ranking"]
   - ["usc_franka_policy_ranking"]
-  - ["utd_koch_arm_policy_ranking"]
+  - ["utd_so101_policy_ranking"]
+  - ["utd_so101_human"]
 
 max_frames_for_preprocessing: 32
 video_frame_sampling: "uniform"

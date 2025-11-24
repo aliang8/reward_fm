@@ -645,31 +645,33 @@ class RFMHeadsTrainer(Trainer):
                             success_binary = (success_probs > 0.5).float()
                             success_pred_gathered = self.accelerator.gather_for_metrics(success_binary)
                             success_probs_gathered = self.accelerator.gather_for_metrics(success_probs)
-                            
+
                             # Compute success labels from target_progress for AUPRC
                             # Use the same logic as in _compute_success_loss_helper
                             min_success = self.config.data.min_success
                             max_success_default = self.config.data.max_success
-                            
+
                             # Handle Qwen downsampling if needed
                             target_progress_for_success = target_progress
                             if "Qwen" in self.config.model.base_model_id and not self.config.data.use_multi_image:
                                 target_progress_for_success = target_progress[:, ::2]
-                            
+
                             # Compute per-sample max_success thresholds
                             data_sources_list = gathered_metadata_dict["data_source"]
                             max_success_tensor = torch.tensor(
                                 [
-                                    self.dataset_success_percent.get(ds if isinstance(ds, str) else str(ds), max_success_default)
+                                    self.dataset_success_percent.get(
+                                        ds if isinstance(ds, str) else str(ds), max_success_default
+                                    )
                                     for ds in data_sources_list
                                 ],
                                 dtype=target_progress_for_success.dtype,
                                 device=target_progress_for_success.device,
                             )
-                            
+
                             # Generate success labels: 1.0 for success, 0.0 for failure
                             success_labels = (target_progress_for_success > max_success_tensor.unsqueeze(1)).float()
-                            
+
                             # Ensure shapes match - target_progress must be a sequence to compute frame-level success
                             if success_probs_gathered.shape != target_progress_for_success.shape:
                                 raise ValueError(
@@ -679,23 +681,30 @@ class RFMHeadsTrainer(Trainer):
                                     f"target_progress must be a sequence (frame-level) to compute frame-level success AUPRC. "
                                     f"If target_progress is scalar [batch, 1], frame-level success cannot be computed."
                                 )
-                            
+
                             # Compute AUPRC across all valid frames
                             # Flatten tensors for AUPRC computation
                             success_probs_flat = success_probs_gathered.flatten()
                             success_labels_flat = success_labels.flatten()
-                            
+
                             if success_probs_flat.numel() > 0 and len(torch.unique(success_labels_flat)) > 1:
                                 auprc_value = average_precision_score(
                                     success_labels_flat.detach().cpu().numpy(),
-                                    success_probs_flat.detach().cpu().numpy()
+                                    success_probs_flat.detach().cpu().numpy(),
                                 )
                                 success_auprc = float(auprc_value)
                             else:
                                 success_auprc = 0.0
-                            
+
                             # Clean up intermediate tensors
-                            del success_pred, success_binary, success_probs, target_progress_for_success, max_success_tensor, success_labels
+                            del (
+                                success_pred,
+                                success_binary,
+                                success_probs,
+                                target_progress_for_success,
+                                max_success_tensor,
+                                success_labels,
+                            )
 
                         # Build eval_results on all processes for compute_eval_metrics
                         for i in range(len(progress_pred)):
@@ -836,7 +845,11 @@ class RFMHeadsTrainer(Trainer):
                     raise ValueError(f"Unsupported eval type: {eval_type}")
 
                 # Add success_auprc to metrics if computed (for eval types with success predictions)
-                if success_auprc is not None and eval_type in ["reward_alignment", "policy_ranking", "confusion_matrix"]:
+                if success_auprc is not None and eval_type in [
+                    "reward_alignment",
+                    "policy_ranking",
+                    "confusion_matrix",
+                ]:
                     if not isinstance(eval_metrics, dict):
                         eval_metrics = {}
                     eval_metrics["success_auprc"] = success_auprc
@@ -1304,23 +1317,22 @@ class RFMHeadsTrainer(Trainer):
         success_probs = torch.sigmoid(success_logits)
         success_probs_flat = success_probs[combined_mask > 0]
         success_labels_flat = success_labels[combined_mask > 0]
-        
+
         if aggregate:
             success_loss = masked_loss.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
             mean_accuracy = masked_correct.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
             success_loss = success_loss.mean()
             mean_accuracy = mean_accuracy.mean()
-            
+
             # Compute AUPRC across all valid frames
             if success_probs_flat.numel() > 0 and len(torch.unique(success_labels_flat)) > 1:
                 auprc = average_precision_score(
-                    success_labels_flat.detach().cpu().numpy(),
-                    success_probs_flat.detach().cpu().numpy()
+                    success_labels_flat.detach().cpu().numpy(), success_probs_flat.detach().cpu().numpy()
                 )
                 mean_auprc = torch.tensor(auprc, device=success_loss.device, dtype=torch.float32)
             else:
                 mean_auprc = torch.tensor(0.0, device=success_loss.device, dtype=torch.float32)
-            
+
             # Don't delete tensors that might be part of autograd graph
             # They will be cleaned up automatically after backward pass
             return success_loss, mean_accuracy, mean_auprc
@@ -1329,7 +1341,7 @@ class RFMHeadsTrainer(Trainer):
         # Compute AUPRC per sample (per sequence)
         batch_size = success_logits.shape[0]
         masked_auprc = torch.zeros(batch_size, device=success_logits.device, dtype=torch.float32)
-        
+
         for i in range(batch_size):
             sample_mask = combined_mask[i] > 0
             if sample_mask.sum() > 0:
@@ -1337,11 +1349,10 @@ class RFMHeadsTrainer(Trainer):
                 sample_labels = success_labels[i][sample_mask]
                 if len(torch.unique(sample_labels)) > 1:
                     auprc = average_precision_score(
-                        sample_labels.detach().cpu().numpy(),
-                        sample_probs.detach().cpu().numpy()
+                        sample_labels.detach().cpu().numpy(), sample_probs.detach().cpu().numpy()
                     )
                     masked_auprc[i] = auprc
-        
+
         # Don't delete intermediate tensors as they may be needed for backward pass
         return masked_loss, masked_correct, masked_auprc
 

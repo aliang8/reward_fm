@@ -194,7 +194,7 @@ loss:
 logging:
   save_model: true
   save_processor: true
-  log_to: ["wandb"]
+  log_to: []
   wandb_project: "rfm"
   wandb_entity: clvr
   

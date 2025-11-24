@@ -29,13 +29,14 @@ class SimSampler(RFMBaseSampler):
             entry["robot"] and entry["human"] for entry in self.paired_human_robot_by_task.values()
         )
         self._has_suboptimal = any(indices for indices in self.suboptimal_by_task.values())
-        if verbose:
-            if self.similarity_strategy_ratio[2] > 0 and not self._has_paired_human_robot:
-                rank_0_print("No paired human/robot data available; skipping paired strategy for similarity sampling.")
-            if self.similarity_strategy_ratio[1] > 0 and not self._has_suboptimal:
-                rank_0_print(
-                    "No suboptimal/failure data available; skipping suboptimal strategy for similarity sampling."
-                )
+        if self.similarity_strategy_ratio[2] > 0 and not self._has_paired_human_robot:
+            rank_0_print(
+                "[SIM SAMPLER] No paired human/robot data available; skipping paired strategy for similarity sampling."
+            )
+        if self.similarity_strategy_ratio[1] > 0 and not self._has_suboptimal:
+            rank_0_print(
+                "[SIM SAMPLER] No suboptimal/failure data available; skipping suboptimal strategy for similarity sampling."
+            )
 
     def _generate_sample(self, item: dict):
         return self._create_similarity_sample(ref_traj=item)
@@ -57,7 +58,7 @@ class SimSampler(RFMBaseSampler):
         if ref_traj is None:
             # Use preprocessed optimal trajectories from index maps
             if not self.optimal_by_task:
-                raise ValueError("No optimal trajectories found for similarity sample generation")
+                return None
 
             # Get a random task and optimal trajectory from it
             task_name = random.choice(list(self.optimal_by_task.keys()))
@@ -101,12 +102,12 @@ class SimSampler(RFMBaseSampler):
 
             # Check if we have any strategies left
             if not strategies:
-                raise ValueError("No strategies available - all strategies failed to generate samples")
+                return None
 
             # Rebalance probabilities based on remaining strategies
             total_prob = sum(prob for _, prob in strategies)
             if total_prob == 0:
-                raise ValueError("No strategies with positive probability available")
+                return None
 
             # Normalize probabilities
             normalized_strategies = [(strat, prob / total_prob) for strat, prob in strategies]
@@ -131,7 +132,7 @@ class SimSampler(RFMBaseSampler):
             elif selected_strategy == DataGenStrat.PAIRED_HUMAN_ROBOT:
                 result = self._get_traj_dicts_for_paired_human_robot(ref_traj)
             else:
-                raise ValueError(f"Invalid strategy selected: {selected_strategy}")
+                return None
 
             # Check if strategy succeeded
             if result is not None:
@@ -146,14 +147,12 @@ class SimSampler(RFMBaseSampler):
                     strategies = [(strat, prob) for strat, prob in strategies if strat != selected_strategy]
                     continue
 
-        # If we still don't have a sample after all attempts, raise an error
+        # If we still don't have a sample after all attempts, return None
         if traj_sim is None or traj_diff is None:
-            rank_0_print(f"Strategies tried: {strategies_tried}")
-            rank_0_print(f"Strategy attempt counts: {strategy_attempt_counts}")
-            # import ipdb; ipdb.set_trace()
-            raise ValueError(
-                f"Failed to generate similarity sample after {max_attempts} attempts - all strategies exhausted"
+            rank_0_print(
+                f"[SIM SAMPLER] Failed to generate similarity sample after {max_attempts} attempts - all strategies exhausted"
             )
+            return None
 
         sample = SimilaritySample(
             ref_trajectory=self._get_traj_from_data(ref_traj),

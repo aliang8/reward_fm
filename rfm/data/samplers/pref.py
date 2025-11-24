@@ -33,8 +33,9 @@ class PrefSampler(RFMBaseSampler):
         self.dataset_preference_ratio = config.dataset_preference_ratio
         self.preference_strategy_ratio: list[float] = config.preference_strategy_ratio
         self._has_suboptimal = any(indices for indices in self.suboptimal_by_task.values())
-        if verbose and self.preference_strategy_ratio[1] > 0 and not self._has_suboptimal:
-            rank_0_print("No suboptimal/failure data available; skipping suboptimal strategy for preferences.")
+        rank_0_print(
+            f"[PREF SAMPLER] No suboptimal/failure data available; skipping suboptimal strategy for preferences. Has suboptimal: {self._has_suboptimal}"
+        )
 
         # Initialize preference dataset
         self._load_preference_dataset()
@@ -45,14 +46,14 @@ class PrefSampler(RFMBaseSampler):
     def _create_pref_sample_from_dataset(self) -> PreferenceSample:
         """Create a preference sample from the loaded preference dataset."""
         if not self.preferences:
-            raise ValueError("No preferences loaded from dataset")
+            return None
 
         # For now, return a simple preference sample
         # This can be enhanced later when we have actual preference data
         random.choice(self.preferences)
 
         # This is a placeholder - would need to be implemented based on actual preference data structure
-        raise NotImplementedError("Preference sample creation from dataset not yet implemented")
+        return None
 
     def _load_preference_dataset(self):
         """Load the preference dataset from disk or hub if provided."""
@@ -60,7 +61,7 @@ class PrefSampler(RFMBaseSampler):
 
         # For now, we'll use empty preferences since the config structure has changed
         # This can be updated later if needed
-        rank_0_print("No preference dataset provided, will use random sampling for preferences")
+        rank_0_print("[PREF SAMPLER] No preference dataset provided, will use random sampling for preferences")
         return
 
     def _create_preference_sample(self) -> PreferenceSample:
@@ -104,7 +105,7 @@ class PrefSampler(RFMBaseSampler):
         if chosen_traj is None:
             # Use preprocessed chosen trajectories from index maps
             if not self.optimal_by_task:
-                raise ValueError("No chosen trajectories found for preference generation")
+                return None
 
             # Get a random task and chosen trajectory from it
             task_name = random.choice(list(self.optimal_by_task.keys()))
@@ -142,12 +143,12 @@ class PrefSampler(RFMBaseSampler):
 
             # Check if we have any strategies left
             if not strategies:
-                raise ValueError("No strategies available - all strategies failed to generate samples")
+                return None
 
             # Rebalance probabilities based on remaining strategies
             total_prob = sum(prob for _, prob in strategies)
             if total_prob == 0:
-                raise ValueError("No strategies with positive probability available")
+                return None
 
             # Normalize probabilities
             normalized_strategies = [(strat, prob / total_prob) for strat, prob in strategies]
@@ -185,7 +186,7 @@ class PrefSampler(RFMBaseSampler):
                     if rejected_traj is not None:
                         break
             else:
-                raise ValueError(f"Invalid strategy selected: {selected_strategy}")
+                return None
 
             # Check if strategy succeeded
             if rejected_traj is not None:
@@ -199,11 +200,10 @@ class PrefSampler(RFMBaseSampler):
                     strategies = [(strat, prob) for strat, prob in strategies if strat != selected_strategy]
                     continue
 
-        # If we still don't have a sample after all attempts, raise an error
+        # If we still don't have a sample after all attempts, return None
         if rejected_traj is None:
-            raise ValueError(
-                f"Failed to generate preference sample after {max_attempts} attempts - all strategies exhausted"
-            )
+            rank_0_print(f"[PREF SAMPLER] Failed to generate preference sample after {max_attempts} attempts - all strategies exhausted")
+            return None
 
         chosen_trajectory = self._get_traj_from_data(chosen_traj)
         rejected_trajectory = self._get_traj_from_data(rejected_traj)

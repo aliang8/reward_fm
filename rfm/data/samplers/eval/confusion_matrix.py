@@ -118,17 +118,25 @@ class ConfusionMatrixSampler(RFMBaseSampler):
         if self.config.load_embeddings and video_traj.get("embeddings_path"):
             embeddings = load_embeddings_from_path(video_traj["embeddings_path"])
             video_embeddings = embeddings["video_embeddings"]
-            video_embeddings, _ = linspace_subsample_frames(video_embeddings, max_frames)
+            video_embeddings, frame_indices = linspace_subsample_frames(video_embeddings, max_frames)
             frames_shape_orig = video_embeddings.shape
-            video_embeddings, _ = pad_trajectory_to_max_frames_torch(video_embeddings, [0], max_frames)
         else:
             frames = load_frames_from_npz(video_traj["frames"])
             if frames is None or len(frames) == 0:
                 return None
 
-            frames, _ = linspace_subsample_frames(frames, max_frames)
+            frames, frame_indices = linspace_subsample_frames(frames, max_frames)
             frames_shape_orig = frames.shape
-            frames, _ = pad_trajectory_to_max_frames_np(frames, [0], max_frames)
+
+        # Create progress values for each subsampled frame (all 1.0 since trajectory is complete)
+        num_subsampled = len(frame_indices)
+        progress_values = [1.0] * num_subsampled
+
+        # Pad trajectory and progress
+        if self.config.load_embeddings and video_traj.get("embeddings_path"):
+            video_embeddings, padded_progress = pad_trajectory_to_max_frames_torch(video_embeddings, progress_values, max_frames)
+        else:
+            frames, padded_progress = pad_trajectory_to_max_frames_np(frames, progress_values, max_frames)
 
         # Look up precomputed embedding instead of encoding
         text_embedding = self.task_embeddings[lang_task]
@@ -153,9 +161,7 @@ class ConfusionMatrixSampler(RFMBaseSampler):
             is_robot=video_traj["is_robot"],
             quality_label=video_traj["quality_label"],
             data_gen_strategy=DataGenStrat.SUCCESSFUL.value,
-            target_progress=[
-                1.0
-            ],  # Assume trajectory is complete for confusion matrix, also don't really care about progress here
+            target_progress=padded_progress,  # Padded progress sequence (all 1.0 since trajectory is complete)
             partial_success=video_traj.get("partial_success"),
             metadata=metadata,
         )

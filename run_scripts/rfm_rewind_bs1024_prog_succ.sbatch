@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J ant_rfm_rewind_bs1024_prog_only
+#SBATCH -J ant_rfm_rewind_bs1024_prog_succ
 #SBATCH --gres=gpu:1               # number of GPUs to reserve
 #SBATCH --cpus-per-task=8         # CPUs for data loading (8 per GPU is reasonable)
 #SBATCH --mem=64G                 # Memory allocation (adjust based on your cluster)
@@ -32,7 +32,7 @@ uv run accelerate launch \
     data.sample_type_ratio=[0,1,0] \
     model.train_preference_head=false \
     model.train_progress_head=true \
-    model.train_success_head=false \
+    model.train_success_head=true \
     data.train_datasets=[oxe,mw,others] \
     data.eval_datasets=[mw] \
     data.dataset_type=data_source_balance \
@@ -44,7 +44,7 @@ uv run accelerate launch \
     training.per_device_eval_batch_size=$BS \
     training.overwrite_output_dir=true \
     training.predict_pref_progress=false \
-    training.exp_name=ant_rfm_rewind_bs1024_prog_only \
+    training.exp_name=ant_rfm_rewind_bs1024_prog_succ \
     custom_eval.eval_types=[reward_alignment,policy_ranking,confusion_matrix] \
     custom_eval.reward_alignment=[reward_alignment] \
     custom_eval.policy_ranking=[policy_ranking] \

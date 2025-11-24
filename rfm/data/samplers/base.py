@@ -56,6 +56,7 @@ class RFMBaseSampler:
         self.source_indices = combined_indices["source_indices"]
         self.partial_success_indices = combined_indices["partial_success_indices"]
         self.paired_human_robot_by_task = combined_indices["paired_human_robot_by_task"]
+        self.tasks_with_multiple_quality_labels = combined_indices["tasks_with_multiple_quality_labels"]
 
         # Build mapping from data source -> available task instructions
         self._build_tasks_by_data_source()

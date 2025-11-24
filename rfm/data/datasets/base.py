@@ -226,6 +226,13 @@ class BaseDataset(torch.utils.data.Dataset):
         # Add it to combined_indices so samplers can access it
         combined_indices["paired_human_robot_by_task"] = self.paired_human_robot_by_task
 
+        # Find tasks that have both optimal and suboptimal trajectories
+        self.tasks_with_multiple_quality_labels = set(combined_indices["optimal_by_task"].keys()) & set(
+            combined_indices["suboptimal_by_task"].keys()
+        )
+        # Add it to combined_indices so samplers can access it
+        combined_indices["tasks_with_multiple_quality_labels"] = list(self.tasks_with_multiple_quality_labels)
+
         dataset_type = "training" if is_training else "evaluation"
         rank_0_print(
             f"✅ Loaded {len(self.dataset)} total trajectories from preprocessed {dataset_type} datasets",
@@ -249,7 +256,11 @@ class BaseDataset(torch.utils.data.Dataset):
             rank_0_print(f"  {quality_label}: {len(combined_indices['quality_indices'][quality_label])}", verbose=self.verbose)
         rank_0_print(f"Data sources available: {combined_indices['source_indices'].keys()}", verbose=self.verbose)
         rank_0_print(f"Number of paired tasks: {len(combined_indices['paired_human_robot_by_task'])}", verbose=self.verbose)
-
+        rank_0_print(
+            f"Number of tasks with both multiple quality labels: {len(self.tasks_with_multiple_quality_labels)}",
+            verbose=self.verbose,
+        )
+        
     def _build_paired_human_robot_index(self):
         """Build paired_human_robot_by_task index from task_indices by checking is_robot field.
 

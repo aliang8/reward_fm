@@ -7,6 +7,7 @@ import torch
 from rfm.data.dataset_types import SimilaritySample, Trajectory
 from rfm.data.samplers.base import RFMBaseSampler
 from rfm.data.datasets.helpers import DataGenStrat
+from rfm.data.dataset_category import is_failure_ds, is_paired_ds
 from rfm.utils.distributed import rank_0_print
 
 
@@ -73,18 +74,39 @@ class SimSampler(RFMBaseSampler):
         traj_sim, traj_diff = None, None
         strategy_used = None
 
-        # Strategy selection with rebalancing on failure
+        # Get data_source from ref_traj to filter and boost strategies
+        data_source = ref_traj["data_source"]
+        is_failure_source = is_failure_ds(data_source) if data_source else False
+        is_paired_source = is_paired_ds(data_source) if data_source else False
+
+        # Strategy selection with data_source-based filtering and boosting
         strategies = []
+        
+        # Always include REWOUND if ratio > 0
         if self.similarity_strategy_ratio[0] > 0:
             strategies.append((DataGenStrat.REWOUND, self.similarity_strategy_ratio[0]))
-        if self._has_suboptimal and len(self.similarity_strategy_ratio) > 1 and self.similarity_strategy_ratio[1] > 0:
-            strategies.append((DataGenStrat.SUBOPTIMAL, self.similarity_strategy_ratio[1]))
+        
+        # SUBOPTIMAL: only include if data_source is in failure category
+        if (
+            self._has_suboptimal
+            and len(self.similarity_strategy_ratio) > 1
+            and self.similarity_strategy_ratio[1] > 0
+            and is_failure_source
+        ):
+            # Boost probability by 2x if data_source is in failure category
+            boosted_prob = self.similarity_strategy_ratio[1] * 2.0
+            strategies.append((DataGenStrat.SUBOPTIMAL, boosted_prob))
+        
+        # PAIRED_HUMAN_ROBOT: only include if data_source is in paired category
         if (
             self._has_paired_human_robot
             and len(self.similarity_strategy_ratio) > 2
             and self.similarity_strategy_ratio[2] > 0
+            and is_paired_source
         ):
-            strategies.append((DataGenStrat.PAIRED_HUMAN_ROBOT, self.similarity_strategy_ratio[2]))
+            # Boost probability by 2x if data_source is in paired category
+            boosted_prob = self.similarity_strategy_ratio[2] * 2.0
+            strategies.append((DataGenStrat.PAIRED_HUMAN_ROBOT, boosted_prob))
 
         # Remove strategies with zero probability
         strategies = [(strat, prob) for strat, prob in strategies if prob > 0]

@@ -13,7 +13,6 @@ from rfm.data.datasets.helpers import (
 )
 from rfm.data.dataset_types import Trajectory
 from rfm.data.datasets.helpers import create_rewind_trajectory, load_embeddings_from_path
-from rfm.data.dataset_category import DATA_SOURCE_MAP
 from rfm.utils.distributed import rank_0_print
 
 
@@ -41,17 +40,6 @@ class RFMBaseSampler:
         # Build indices from combined_indices
         self._build_indices(combined_indices)
 
-        if verbose:
-            available_tasks = list(self.task_indices.keys())
-            rank_0_print(f"  Robot trajectories: {len(self.robot_trajectories)}", verbose=self.verbose)
-            rank_0_print(f"  Human trajectories: {len(self.human_trajectories)}", verbose=self.verbose)
-            rank_0_print(f"  Tasks: {len(self.task_indices)}", verbose=self.verbose)
-            rank_0_print(f"  Quality labels: {len(self.quality_indices)}", verbose=self.verbose)
-            rank_0_print(f"  Data sources: {len(self.source_indices)}", verbose=self.verbose)
-            rank_0_print(f"  Tasks available: {available_tasks[:50]} ...", verbose=self.verbose)
-            rank_0_print(f"  Quality labels available: {self.quality_indices.keys()}", verbose=self.verbose)
-            rank_0_print(f"  Data sources available: {self.source_indices.keys()}", verbose=self.verbose)
-
     def _build_indices(self, combined_indices):
         """Build all index mappings from combined_indices.
 
@@ -67,9 +55,7 @@ class RFMBaseSampler:
         self.task_indices = combined_indices["task_indices"]
         self.source_indices = combined_indices["source_indices"]
         self.partial_success_indices = combined_indices["partial_success_indices"]
-
-        # Build paired_human_robot_by_task from task_indices after concatenation
-        self._build_paired_human_robot_index()
+        self.paired_human_robot_by_task = combined_indices["paired_human_robot_by_task"]
 
         # Build mapping from data source -> available task instructions
         self._build_tasks_by_data_source()
@@ -104,56 +90,6 @@ class RFMBaseSampler:
             A sample object (e.g., PreferenceSample, SimilaritySample, ProgressSample)
         """
         raise NotImplementedError("Subclasses must implement _generate_sample")
-
-    def _build_paired_human_robot_index(self):
-        """Build paired_human_robot_by_task index from task_indices by checking is_robot field.
-
-        This builds the index after concatenation by iterating through task_indices
-        and checking the is_robot field for each trajectory. Only includes trajectories
-        from PAIRED data sources.
-        """
-        self.paired_human_robot_by_task = {}
-
-        # Filter indices for paired data sources
-        paired_data_source_indices = set()
-        for data_source in DATA_SOURCE_MAP["paired"]:
-            if data_source in self.source_indices:
-                paired_data_source_indices.update(self.source_indices[data_source])
-
-        if not paired_data_source_indices:
-            if self.verbose:
-                rank_0_print("  No paired data sources found, skipping paired index building", verbose=self.verbose)
-            return
-
-        # Build index from task_indices using cached is_robot field, but only for paired data sources
-        for task, indices in self.task_indices.items():
-            # Filter to only paired data sources
-            task_indices_paired = [idx for idx in indices if idx in paired_data_source_indices]
-
-            if not task_indices_paired:
-                continue
-
-            self.paired_human_robot_by_task[task] = {"robot": [], "human": []}
-
-            for idx in task_indices_paired:
-                is_robot = self._cached_is_robot[idx] if idx < len(self._cached_is_robot) else True
-                if is_robot:
-                    self.paired_human_robot_by_task[task]["robot"].append(idx)
-                else:
-                    self.paired_human_robot_by_task[task]["human"].append(idx)
-
-        if self.verbose:
-            # Count tasks with both robot and human trajectories
-            tasks_with_pairs = [
-                task
-                for task, task_dict in self.paired_human_robot_by_task.items()
-                if task_dict["robot"] and task_dict["human"]
-            ]
-            num_tasks_with_pairs = len(tasks_with_pairs)
-            rank_0_print(
-                f"  Built paired_human_robot_by_task index: {num_tasks_with_pairs} tasks with both robot and human trajectories (from paired data sources only)",
-                verbose=self.verbose,
-            )
 
     def _get_same_task_optimal(self, ref_traj: dict) -> dict | None:
         """Get optimal trajectory from same task (different from ref).

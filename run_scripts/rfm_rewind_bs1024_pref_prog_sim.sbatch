@@ -3,7 +3,7 @@
 #SBATCH --gres=gpu:1               # number of GPUs to reserve
 #SBATCH --cpus-per-task=8         # CPUs for data loading (8 per GPU is reasonable)
 #SBATCH --mem=64G                 # Memory allocation (adjust based on your cluster)
-#SBATCH --time=5:00:00            # Time limit (adjust as needed)
+#SBATCH --time=10:00:00            # Time limit (adjust as needed)
 #SBATCH --output=slurm_logs/slurm_%j.out # Standard output
 #SBATCH --error=slurm_logs/slurm_%j.err  # Standard error
 
@@ -64,30 +64,30 @@ echo "Job completed successfully"
 
 
 
-uv run accelerate launch \
-    --config_file rfm/configs/distributed/ddp.yaml \
-    --num_processes=1 \
-    train.py \
-    --config-name=rewind_transformer \
-    data.sample_type_ratio=[0,1,0] \
-    model.train_preference_head=false \
-    model.train_progress_head=true \
-    model.train_success_head=false \
-    data.train_datasets=[mw,oxe,others] \
-    data.eval_datasets=[mw] \
-    data.dataset_type=data_source_balance \
-    data.data_source_weights.metaworld_train=100 \
-    training.max_steps=20000 \
-    training.eval_steps=200 \
-    training.custom_eval_steps=200 \
-    training.per_device_train_batch_size=$BS \
-    training.per_device_eval_batch_size=$BS \
-    training.overwrite_output_dir=true \
-    training.predict_pref_progress=true \
-    training.exp_name=ant_rfm_rewind_bs1024_prog_balanced \
-    custom_eval.eval_types=[quality_preference,reward_alignment,policy_ranking,confusion_matrix] \
-    custom_eval.quality_preference=[quality_preference] \
-    custom_eval.reward_alignment=[reward_alignment] \
-    custom_eval.policy_ranking=[policy_ranking] \
-    custom_eval.confusion_matrix=[mw] \
-    logging.log_to=[wandb]
+# uv run accelerate launch \
+#     --config_file rfm/configs/distributed/ddp.yaml \
+#     --num_processes=1 \
+#     train.py \
+#     --config-name=rewind_transformer \
+#     data.sample_type_ratio=[0,1,0] \
+#     model.train_preference_head=false \
+#     model.train_progress_head=true \
+#     model.train_success_head=false \
+#     data.train_datasets=[mw,oxe,others] \
+#     data.eval_datasets=[mw] \
+#     data.dataset_type=data_source_balance \
+#     data.data_source_weights.metaworld_train=100 \
+#     training.max_steps=20000 \
+#     training.eval_steps=200 \
+#     training.custom_eval_steps=200 \
+#     training.per_device_train_batch_size=$BS \
+#     training.per_device_eval_batch_size=$BS \
+#     training.overwrite_output_dir=true \
+#     training.predict_pref_progress=true \
+#     training.exp_name=ant_rfm_rewind_bs1024_prog_balanced \
+#     custom_eval.eval_types=[quality_preference,reward_alignment,policy_ranking,confusion_matrix] \
+#     custom_eval.quality_preference=[quality_preference] \
+#     custom_eval.reward_alignment=[reward_alignment] \
+#     custom_eval.policy_ranking=[policy_ranking] \
+#     custom_eval.confusion_matrix=[mw] \
+#     logging.log_to=[wandb]

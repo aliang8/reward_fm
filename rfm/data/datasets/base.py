@@ -6,7 +6,7 @@ import torch
 
 from datasets import Dataset, concatenate_datasets
 from rfm.data.datasets.helpers import load_dataset_success_percent
-from rfm.data.dataset_category import DATASET_MAP, DATA_SOURCE_MAP
+from rfm.data.dataset_category import DATASET_MAP, DATA_SOURCE_CATEGORY, get_paired_ds
 from rfm.utils.distributed import rank_0_print, banner
 
 
@@ -272,7 +272,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         # Filter indices for paired data sources
         paired_data_source_indices = set()
-        for data_source in DATA_SOURCE_MAP["paired"]:
+        for data_source in get_paired_ds():
             if data_source in self._combined_indices["source_indices"]:
                 paired_data_source_indices.update(self._combined_indices["source_indices"][data_source])
 

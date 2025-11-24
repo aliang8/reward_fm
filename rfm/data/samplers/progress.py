@@ -7,6 +7,7 @@ from rfm.data.datasets.helpers import (
     DataGenStrat,
     load_embeddings_from_path,
 )
+from rfm.utils.distributed import rank_0_print
 
 
 class ProgressSampler(RFMBaseSampler):
@@ -79,12 +80,12 @@ class ProgressSampler(RFMBaseSampler):
 
             # Check if we have any strategies left
             if not strategies:
-                raise ValueError("No strategies available - all strategies failed to generate samples")
+                return None
 
             # Rebalance probabilities based on remaining strategies
             total_prob = sum(prob for _, prob in strategies)
             if total_prob == 0:
-                raise ValueError("No strategies with positive probability available")
+                return None
 
             # Normalize probabilities
             normalized_strategies = [(strat, prob / total_prob) for strat, prob in strategies]
@@ -120,7 +121,7 @@ class ProgressSampler(RFMBaseSampler):
                 processed_traj = self._get_different_task_instruction(traj)
                 subsample_strategy = None  # Different task instruction uses same trajectory with different task
             else:
-                raise ValueError(f"Invalid strategy selected: {selected_strategy}")
+                return None
 
             # Check if strategy succeeded
             if processed_traj is not None:
@@ -130,11 +131,12 @@ class ProgressSampler(RFMBaseSampler):
                 strategies = [(strat, prob) for strat, prob in strategies if strat != selected_strategy]
                 continue
 
-        # If we still don't have a sample after all attempts, raise an error
+        # If we still don't have a sample after all attempts, return None
         if processed_traj is None:
-            raise ValueError(
-                f"Failed to generate progress sample after {max_attempts} attempts - all strategies exhausted"
+            rank_0_print(
+                f"[PROGRESS SAMPLER] Failed to generate progress sample after {max_attempts} attempts - all strategies exhausted"
             )
+            return None
 
         progress_traj = self._get_traj_from_data(processed_traj, subsample_strategy=subsample_strategy)
 

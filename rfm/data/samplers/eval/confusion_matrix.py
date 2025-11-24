@@ -134,7 +134,9 @@ class ConfusionMatrixSampler(RFMBaseSampler):
 
         # Pad trajectory and progress
         if self.config.load_embeddings and video_traj.get("embeddings_path"):
-            video_embeddings, padded_progress = pad_trajectory_to_max_frames_torch(video_embeddings, progress_values, max_frames)
+            video_embeddings, padded_progress = pad_trajectory_to_max_frames_torch(
+                video_embeddings, progress_values, max_frames
+            )
         else:
             frames, padded_progress = pad_trajectory_to_max_frames_np(frames, progress_values, max_frames)
 

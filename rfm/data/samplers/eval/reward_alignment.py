@@ -109,7 +109,9 @@ class RewardAlignmentSampler(RFMBaseSampler):
 
             video_embeddings = video_embeddings[:end_idx]
 
-            subsequence_video_embeddings, frame_indices = linspace_subsample_frames(video_embeddings, self.config.max_frames)
+            subsequence_video_embeddings, frame_indices = linspace_subsample_frames(
+                video_embeddings, self.config.max_frames
+            )
             frames_shape_orig = subsequence_video_embeddings.shape
         else:
             frames = load_frames_from_npz(original_traj["frames"])

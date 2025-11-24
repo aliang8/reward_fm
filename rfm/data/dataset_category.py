@@ -129,7 +129,7 @@ DATASET_MAP = {
         ],
     },
     "reward_alignment": {
-        "eval": ["aliangdw_metaworld_metaworld_eval", "abraranwar_usc_koch_rewind_rfm_usc_koch_rewind"]
+        "eval": ["aliangdw_metaworld_metaworld_eval", "abraranwar_usc_koch_rewind_rfm_usc_koch_rewind", "jesbu1_egodex_rfm_egodex_test"]
     },
     "quality_preference": {
         "eval": [

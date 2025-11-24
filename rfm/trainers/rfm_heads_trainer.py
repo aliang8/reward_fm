@@ -22,6 +22,7 @@ from evals.compile_results import compute_eval_metrics
 from rfm.data.datasets.helpers import load_dataset_success_percent
 import torch.distributed as dist
 from rfm.data.datasets.base import resolve_dataset_keys
+from rfm.utils.distributed import banner
 
 
 def seed_worker(worker_id):
@@ -542,10 +543,7 @@ class RFMHeadsTrainer(Trainer):
             "quality_preference_roboarena": "pref_robo",
         }
 
-        rank_0_print(f"\n\n\n\n")
-        rank_0_print(f"=" * 100)
-        rank_0_print(f"Running custom evaluations: {eval_types}")
-        rank_0_print(f"=" * 100)
+        banner("Running custom evaluations", f"Custom evaluations: {eval_types}")
 
         for eval_type in eval_types:
             rank_0_print(f"Running evaluation for: {eval_type}")
@@ -863,9 +861,7 @@ class RFMHeadsTrainer(Trainer):
 
                 # Only log and visualize on main process
                 if self.accelerator.is_main_process:
-                    rank_0_print(f"Completed {eval_type} evaluation: {len(eval_results)} samples")
-                    rank_0_print(f"Metrics: {metrics[ds_name][eval_type]}")
-                    rank_0_print("=" * 50)
+                    banner("Completed evaluation", f"{eval_type} evaluation: {len(eval_results)} samples", "Metrics", f"{metrics[ds_name][eval_type]}", inner_padding=1)
 
                     # Create wandb tables and log visualizations
                     if eval_type == "reward_alignment":
@@ -1057,9 +1053,7 @@ class RFMHeadsTrainer(Trainer):
                             to_log[metric_name] = float(v)
             self.logger.log_scalars(to_log, step=self.state.global_step)
 
-        rank_0_print("=" * 50)
-        rank_0_print("Finished running custom evaluations!")
-        rank_0_print("=" * 50)
+        banner("Finished running custom evaluations!")
 
         # Reset model to training mode and clear any cached states to prevent leakage
         self.model.train()
@@ -1121,7 +1115,7 @@ class RFMHeadsTrainer(Trainer):
 
             # Log metrics
             if is_rank_0():
-                rank_0_print("\n=== Custom RFM Evaluation Results (Aggregated) ===")
+                banner("Custom RFM Evaluation Results (Aggregated)", inner_padding=1)
                 for key, value in metrics.items():
                     rank_0_print(f"{key}: {value:.6f}")
                 rank_0_print("=" * 50)

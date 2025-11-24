@@ -7,7 +7,7 @@ import torch
 from datasets import Dataset, concatenate_datasets
 from rfm.data.datasets.helpers import load_dataset_success_percent
 from rfm.data.dataset_category import DATASET_MAP, DATA_SOURCE_MAP
-from rfm.utils.distributed import rank_0_print
+from rfm.utils.distributed import rank_0_print, banner
 
 
 def resolve_dataset_keys(dataset_keys: list[str], split: str) -> list[str]:
@@ -237,6 +237,8 @@ class BaseDataset(torch.utils.data.Dataset):
         )
         rank_0_print(f"  📊 Missing datasets: {len(missing_datasets)}", verbose=self.verbose)
 
+        if self.verbose:
+            banner("Dataset statistics")
         rank_0_print(f"Robot trajectories: {len(combined_indices['robot_trajectories'])}", verbose=self.verbose)
         rank_0_print(f"Human trajectories: {len(combined_indices['human_trajectories'])}", verbose=self.verbose)
         rank_0_print(f"Number of different tasks: {len(combined_indices['task_indices'])}", verbose=self.verbose)

@@ -28,7 +28,7 @@ uv run accelerate launch \
     --config_file rfm/configs/distributed/ddp.yaml \
     --num_processes=4 \
     train.py \
-    data.sample_type_ratio=[1,0,0] \
+    data.sample_type_ratio=[1,0,1] \
     data.progress_strategy_ratio=[1,6,1,1,1] \
     data.preference_strategy_ratio=[6,1,1] \
     data.similarity_strategy_ratio=[1,1,1] \
@@ -60,7 +60,7 @@ uv run accelerate launch \
     training.predict_pref_progress=true \
     training.predict_sim_progress=true \
     training.ddp_find_unused_parameters=false \
-    training.gradient_accumulation_steps=2 \
+    training.gradient_accumulation_steps=1 \
     training.exp_name=ant_rfm_qwen_4gpu_bs12_pref_prog_sim \
     custom_eval.eval_types=[quality_preference,reward_alignment,policy_ranking,confusion_matrix] \
     custom_eval.quality_preference=[quality_preference] \

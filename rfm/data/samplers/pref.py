@@ -202,7 +202,9 @@ class PrefSampler(RFMBaseSampler):
 
         # If we still don't have a sample after all attempts, return None
         if rejected_traj is None:
-            rank_0_print(f"[PREF SAMPLER] Failed to generate preference sample after {max_attempts} attempts - all strategies exhausted")
+            rank_0_print(
+                f"[PREF SAMPLER] Failed to generate preference sample after {max_attempts} attempts - all strategies exhausted"
+            )
             return None
 
         chosen_trajectory = self._get_traj_from_data(chosen_traj)

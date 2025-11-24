@@ -9,6 +9,45 @@ This module defines categories for datasets to control sampling behavior:
 - paired: Datasets containing paired human/robot trajectories
 """
 
+ALL_DATASOURCES = [
+    "auto_eval_rfm",
+    "failsafe",
+    "fino_net",
+    "h2r",
+    "metaworld_train",
+    "molmoact_dataset_household",
+    "molmoact_dataset_tabletop",
+    "motif_rfm",
+    "oxe_aloha_mobile",
+    "oxe_austin_buds_dataset_converted_externally_to_rlds",
+    "oxe_bc_z",
+    "oxe_berkeley_cable_routing",
+    "oxe_berkeley_fanuc_manipulation",
+    "oxe_berkeley_mvp_converted_externally_to_rlds",
+    "oxe_berkeley_rpt_converted_externally_to_rlds",
+    "oxe_bridge_v2",
+    "oxe_dlr_edan_shared_control_converted_externally_to_rlds",
+    "oxe_droid",
+    "oxe_fractal20220817_data",
+    "oxe_furniture_bench_dataset_converted_externally_to_rlds",
+    "oxe_iamlab_cmu_pickup_insert_converted_externally_to_rlds",
+    "oxe_imperialcollege_sawyer_wrist_cam",
+    "oxe_language_table",
+    "oxe_nyu_rot_dataset_converted_externally_to_rlds",
+    "oxe_robo_set",
+    "oxe_stanford_hydra_dataset_converted_externally_to_rlds",
+    "oxe_tokyo_u_lsmo_converted_externally_to_rlds",
+    "oxe_toto",
+    "oxe_ucsd_kitchen_dataset_converted_externally_to_rlds",
+    "oxe_utaustin_mutex",
+    "ph2d",
+    "racer_train",
+    "rh20t_human",
+    "rh20t_robot",
+    "roboarena",
+    "soar_rfm",
+]
+
 DATASET_CATEGORY = {
     "success": [
         # Most datasets are success by default, so this list is intentionally minimal
@@ -103,11 +142,11 @@ DATASET_MAP = {
     },
     "paired": {
         "train": [
-            # "jesbu1_h2r_rfm_h2r",
-            # "jesbu1_motif_rfm_motif_rfm",
+            "jesbu1_h2r_rfm_h2r",
+            "jesbu1_motif_rfm_motif_rfm",
             "anqil_rh20t_subset_rfm_rh20t_human",
             "anqil_rh20t_subset_rfm_rh20t_robot",
-            # "jesbu1_ph2d_rfm_ph2d",
+            "jesbu1_ph2d_rfm_ph2d",
         ],
         "eval": [
             "utd_so101_policy_ranking",
@@ -120,14 +159,46 @@ DATASET_MAP = {
             "jesbu1_fino_net_rfm_fino_net",
             "jesbu1_failsafe_rfm_failsafe",
             "jesbu1_soar_rfm_soar_rfm",
-            # "jesbu1_auto_eval_rfm_auto_eval_rfm",
-            # "jesbu1_racer_rfm_racer_train",
+            "jesbu1_auto_eval_rfm_auto_eval_rfm",
+            "jesbu1_racer_rfm_racer_train",
         ],
         "eval": [
             "jesbu1_roboarena_0825_rfm_roboarena",
         ],
     },
 }
+
+
+DATA_SOURCE_CATEGORY = {
+    "success": [
+        # All datasets are success by default, so this list is intentionally minimal
+        # Only explicitly list if needed for special handling
+    ],
+    "failure": [
+        "libero_90_failure",
+        "libero_10_failure",
+        "libero_object_failure",
+        "libero_spatial_failure",
+        "libero_goal_failure",
+    ],
+    "preference_only": ["oxe_bc_z", "oxe_dlr_edan_shared_control_converted_externally_to_rlds"],
+    "paired": [
+        "h2r",
+        "motif_rfm",
+        "rh20t_human",
+        "rh20t_robot",
+        "ph2d",
+    ],
+    "suboptimal_fail": [
+        "roboarena",
+        "fino_net",
+        "failsafe",
+        "soar_rfm",
+        "auto_eval_rfm",
+        "racer_train",
+    ],
+}
+
 
 DATA_SOURCE_MAP = {
     "paired": ["h2r", "motif_rfm", "rh20t_human", "rh20t_robot"],
@@ -168,6 +239,7 @@ DATA_SOURCE_MAP = {
     "preference_only": ["oxe_bc_z", "oxe_dlr_edan_shared_control_converted_externally_to_rlds"],
 }
 
+# DATASET helper functions
 
 def get_preference_only_datasets() -> list[str]:
     """Get list of datasets that should only generate preference samples."""
@@ -207,3 +279,40 @@ def is_failure(dataset_name: str) -> bool:
 def is_success(dataset_name: str) -> bool:
     """Check if a dataset contains successful trajectories."""
     return dataset_name in DATASET_CATEGORY.get("success", [])
+
+# DATA_SOURCE helper functions
+
+def get_preference_only_ds() -> list[str]:
+    """Get list of data sources that should only generate preference samples."""
+    return DATA_SOURCE_CATEGORY.get("preference_only", [])
+
+
+def get_paired_ds() -> list[str]:
+    """Get list of data sources containing paired human/robot trajectories."""
+    return DATA_SOURCE_CATEGORY.get("paired", [])
+
+def get_failure_ds() -> list[str]:
+    """Get list of data sources containing failure trajectories."""
+    return DATA_SOURCE_CATEGORY.get("failure", [])
+
+
+def get_success_ds() -> list[str]:
+    """Get list of data sources containing successful trajectories."""
+    return DATA_SOURCE_CATEGORY.get("success", [])
+
+
+def is_preference_only_ds(data_source_name: str) -> bool:  
+    """Check if a data source should only generate preference samples."""
+    return data_source_name in DATA_SOURCE_CATEGORY.get("preference_only", [])
+
+def is_paired_ds(data_source_name: str) -> bool:
+    """Check if a data source contains paired human/robot trajectories."""
+    return data_source_name in DATA_SOURCE_CATEGORY.get("paired", [])
+
+def is_failure_ds(data_source_name: str) -> bool:
+    """Check if a data source contains failure trajectories."""
+    return data_source_name in DATA_SOURCE_CATEGORY.get("failure", [])
+
+def is_success_ds(data_source_name: str) -> bool:
+    """Check if a data source contains successful trajectories."""
+    return data_source_name in DATA_SOURCE_CATEGORY.get("success", [])

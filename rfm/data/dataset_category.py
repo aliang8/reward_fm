@@ -75,8 +75,16 @@ DATASET_MAP = {
         "train": [
             "jesbu1_molmoact_rfm_molmoact_dataset_household",
             "jesbu1_molmoact_rfm_molmoact_dataset_tabletop",
+            "jesbu1_egodex_rfm_egodex_part1",
+            "jesbu1_egodex_rfm_egodex_part2",
+            "jesbu1_egodex_rfm_egodex_part3",
+            "jesbu1_egodex_rfm_egodex_part4",
+            "jesbu1_egodex_rfm_egodex_part5",
+            "abraranwar_agibotworld_alpha_rfm_agibotworld",
         ],
-        "eval": [""],
+        "eval": [
+            "jesbu1_egodex_rfm_egodex_test",
+        ],
     },
     "oxe": {
         "train": [

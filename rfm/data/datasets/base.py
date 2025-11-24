@@ -62,15 +62,14 @@ class BaseDataset(torch.utils.data.Dataset):
         # Load trajectory dataset
         self._load_trajectory_dataset()
 
-        # Filter dataset
-        # We only want to iterate through successful trajectories
-        # self.filtered_dataset = self.dataset.filter(lambda x: x["quality_label"] == "successful")
-        self.filtered_dataset = self.dataset
+        # Filter out tasks containing excluded keywords
+        excluded_keywords = ["rings", "hands", "flick"]
+        self._filter_dataset_by_task_keywords(excluded_keywords, self._combined_indices)
 
         rank_0_print(f"Dataset loaded with {len(self.dataset)} total trajectories", verbose=self.verbose)
 
     def __len__(self):
-        return len(self.filtered_dataset)
+        return len(self.dataset)
 
     def _load_trajectory_dataset(self):
         """Load trajectory dataset using preprocessed index-based cache."""
@@ -221,17 +220,14 @@ class BaseDataset(torch.utils.data.Dataset):
         self._cached_ids = self.dataset["id"]
         self._cached_is_robot = self.dataset["is_robot"]
 
-        # Build paired_human_robot_by_task index after loading all indices
-        self._build_paired_human_robot_index()
-        # Add it to combined_indices so samplers can access it
-        combined_indices["paired_human_robot_by_task"] = self.paired_human_robot_by_task
+        combined_indices["paired_human_robot_by_task"] = self._build_paired_human_robot_index()
 
         # Find tasks that have both optimal and suboptimal trajectories
-        self.tasks_with_multiple_quality_labels = set(combined_indices["optimal_by_task"].keys()) & set(
+        tasks_with_multiple_quality_labels = set(combined_indices["optimal_by_task"].keys()) & set(
             combined_indices["suboptimal_by_task"].keys()
         )
         # Add it to combined_indices so samplers can access it
-        combined_indices["tasks_with_multiple_quality_labels"] = list(self.tasks_with_multiple_quality_labels)
+        combined_indices["tasks_with_multiple_quality_labels"] = list(tasks_with_multiple_quality_labels)
 
         dataset_type = "training" if is_training else "evaluation"
         rank_0_print(
@@ -257,10 +253,63 @@ class BaseDataset(torch.utils.data.Dataset):
         rank_0_print(f"Data sources available: {combined_indices['source_indices'].keys()}", verbose=self.verbose)
         rank_0_print(f"Number of paired tasks: {len(combined_indices['paired_human_robot_by_task'])}", verbose=self.verbose)
         rank_0_print(
-            f"Number of tasks with both multiple quality labels: {len(self.tasks_with_multiple_quality_labels)}",
+            f"Number of tasks with both multiple quality labels: {len(tasks_with_multiple_quality_labels)}",
             verbose=self.verbose,
         )
+
+    def _filter_dataset_by_task_keywords(self, excluded_keywords: list[str], combined_indices: dict):
+        """Filter out dataset rows where task contains any of the excluded keywords.
         
+        Args:
+            excluded_keywords: List of keywords to exclude (case-insensitive)
+            combined_indices: Dictionary of combined indices to update after filtering
+        """
+        task_column = self.dataset["task"]
+        
+        # Create boolean mask: True for rows to keep (task doesn't contain excluded keywords)
+        keep_mask = []
+        for task in task_column:
+            if task is None:
+                keep_mask.append(True)  # Keep rows with None tasks
+            else:
+                task_lower = task.lower()
+                should_keep = not any(keyword in task_lower for keyword in excluded_keywords)
+                keep_mask.append(should_keep)
+        
+        # Filter dataset using the mask
+        if not all(keep_mask):
+            num_filtered = sum(1 for x in keep_mask if not x)
+            if self.verbose:
+                rank_0_print(
+                    f"  Filtering out {num_filtered} trajectories with excluded task keywords: {excluded_keywords}",
+                    verbose=self.verbose,
+                )
+            # Use select to efficiently filter by indices
+            keep_indices = [i for i, keep in enumerate(keep_mask) if keep]
+            self.dataset = self.dataset.select(keep_indices)
+            
+            # Update cached fields
+            self._cached_ids = self.dataset["id"]
+            self._cached_is_robot = self.dataset["is_robot"]
+            
+            # Update combined_indices by filtering out excluded indices
+            # Create a mapping from old index to new index
+            old_to_new = {old_idx: new_idx for new_idx, old_idx in enumerate(keep_indices)}
+            
+            # Filter all index lists and dicts
+            for key in combined_indices:
+                if isinstance(combined_indices[key], list):
+                    # Filter list indices
+                    combined_indices[key] = [old_to_new[idx] for idx in combined_indices[key] if idx in old_to_new]
+                elif isinstance(combined_indices[key], dict):
+                    # Filter dict indices
+                    filtered_dict = {}
+                    for subkey, subindices in combined_indices[key].items():
+                        filtered_indices = [old_to_new[idx] for idx in subindices if idx in old_to_new]
+                        if filtered_indices:  # Only keep keys with remaining indices
+                            filtered_dict[subkey] = filtered_indices
+                    combined_indices[key] = filtered_dict
+
     def _build_paired_human_robot_index(self):
         """Build paired_human_robot_by_task index from task_indices by checking is_robot field.
 
@@ -268,7 +317,7 @@ class BaseDataset(torch.utils.data.Dataset):
         and checking the is_robot field for each trajectory. Only includes trajectories
         from PAIRED data sources.
         """
-        self.paired_human_robot_by_task = {}
+        paired_human_robot_by_task = {}
 
         # Filter indices for paired data sources
         paired_data_source_indices = set()
@@ -279,7 +328,7 @@ class BaseDataset(torch.utils.data.Dataset):
         if not paired_data_source_indices:
             if self.verbose:
                 rank_0_print("  No paired data sources found, skipping paired index building", verbose=self.verbose)
-            return
+            return {}
 
         # Build index from task_indices using cached is_robot field, but only for paired data sources
         for task, indices in self._combined_indices["task_indices"].items():
@@ -289,20 +338,20 @@ class BaseDataset(torch.utils.data.Dataset):
             if not task_indices_paired:
                 continue
 
-            self.paired_human_robot_by_task[task] = {"robot": [], "human": []}
+            paired_human_robot_by_task[task] = {"robot": [], "human": []}
 
             for idx in task_indices_paired:
                 is_robot = self._cached_is_robot[idx] if idx < len(self._cached_is_robot) else True
                 if is_robot:
-                    self.paired_human_robot_by_task[task]["robot"].append(idx)
+                    paired_human_robot_by_task[task]["robot"].append(idx)
                 else:
-                    self.paired_human_robot_by_task[task]["human"].append(idx)
+                    paired_human_robot_by_task[task]["human"].append(idx)
 
         if self.verbose:
             # Count tasks with both robot and human trajectories
             tasks_with_pairs = [
                 task
-                for task, task_dict in self.paired_human_robot_by_task.items()
+                for task, task_dict in paired_human_robot_by_task.items()
                 if task_dict["robot"] and task_dict["human"]
             ]
             num_tasks_with_pairs = len(tasks_with_pairs)
@@ -310,3 +359,5 @@ class BaseDataset(torch.utils.data.Dataset):
                 f"  Built paired_human_robot_by_task index: {num_tasks_with_pairs} tasks with both robot and human trajectories (from paired data sources only)",
                 verbose=self.verbose,
             )
+
+        return paired_human_robot_by_task

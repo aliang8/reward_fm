@@ -55,7 +55,7 @@ class RFMDataset(BaseDataset):
         self.max_samples = max_samples
         self.batch_size = batch_size
 
-        self.data_len = len(self.filtered_dataset)
+        self.data_len = len(self.dataset)
         self._resample_attempt_stats: dict[str, collections.defaultdict[str, list[int]]] = {
             "preference": collections.defaultdict(list),
             "progress": collections.defaultdict(list),
@@ -108,7 +108,7 @@ class RFMDataset(BaseDataset):
         idx = idx % self.data_len
 
         # Get the item from the filtered dataset
-        item = self.filtered_dataset[idx]
+        item = self.dataset[idx]
 
         # Preference-only override by data_source using raw filtered dataset entry
         data_source = item["data_source"]

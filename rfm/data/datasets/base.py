@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 import json
 import os
+from typing import Any
 import torch
 
 from datasets import Dataset, concatenate_datasets
 from rfm.data.datasets.helpers import load_dataset_success_percent
-from rfm.data.dataset_category import DATASET_MAP
+from rfm.data.dataset_category import DATASET_MAP, DATA_SOURCE_MAP
 from rfm.utils.distributed import rank_0_print
 
 
@@ -66,8 +67,7 @@ class BaseDataset(torch.utils.data.Dataset):
         # self.filtered_dataset = self.dataset.filter(lambda x: x["quality_label"] == "successful")
         self.filtered_dataset = self.dataset
 
-        if verbose:
-            rank_0_print(f"Dataset loaded with {len(self.dataset)} total trajectories", verbose=self.verbose)
+        rank_0_print(f"Dataset loaded with {len(self.dataset)} total trajectories", verbose=self.verbose)
 
     def __len__(self):
         return len(self.filtered_dataset)
@@ -221,6 +221,11 @@ class BaseDataset(torch.utils.data.Dataset):
         self._cached_ids = self.dataset["id"]
         self._cached_is_robot = self.dataset["is_robot"]
 
+        # Build paired_human_robot_by_task index after loading all indices
+        self._build_paired_human_robot_index()
+        # Add it to combined_indices so samplers can access it
+        combined_indices["paired_human_robot_by_task"] = self.paired_human_robot_by_task
+
         dataset_type = "training" if is_training else "evaluation"
         rank_0_print(
             f"✅ Loaded {len(self.dataset)} total trajectories from preprocessed {dataset_type} datasets",
@@ -231,3 +236,64 @@ class BaseDataset(torch.utils.data.Dataset):
             verbose=self.verbose,
         )
         rank_0_print(f"  📊 Missing datasets: {len(missing_datasets)}", verbose=self.verbose)
+
+        rank_0_print(f"Robot trajectories: {len(combined_indices['robot_trajectories'])}", verbose=self.verbose)
+        rank_0_print(f"Human trajectories: {len(combined_indices['human_trajectories'])}", verbose=self.verbose)
+        rank_0_print(f"Number of different tasks: {len(combined_indices['task_indices'])}", verbose=self.verbose)
+        rank_0_print(f"Data sources: {len(combined_indices['source_indices'])}", verbose=self.verbose)
+        rank_0_print(f"Tasks available: {list[Any](combined_indices['task_indices'].keys())[:10]} ...", verbose=self.verbose)
+        rank_0_print(f"Number of quality labels: {len(combined_indices['quality_indices'])}", verbose=self.verbose)
+        for quality_label in combined_indices['quality_indices']:
+            rank_0_print(f"  {quality_label}: {len(combined_indices['quality_indices'][quality_label])}", verbose=self.verbose)
+        rank_0_print(f"Data sources available: {combined_indices['source_indices'].keys()}", verbose=self.verbose)
+        rank_0_print(f"Number of paired tasks: {len(combined_indices['paired_human_robot_by_task'])}", verbose=self.verbose)
+
+    def _build_paired_human_robot_index(self):
+        """Build paired_human_robot_by_task index from task_indices by checking is_robot field.
+
+        This builds the index after concatenation by iterating through task_indices
+        and checking the is_robot field for each trajectory. Only includes trajectories
+        from PAIRED data sources.
+        """
+        self.paired_human_robot_by_task = {}
+
+        # Filter indices for paired data sources
+        paired_data_source_indices = set()
+        for data_source in DATA_SOURCE_MAP["paired"]:
+            if data_source in self._combined_indices["source_indices"]:
+                paired_data_source_indices.update(self._combined_indices["source_indices"][data_source])
+
+        if not paired_data_source_indices:
+            if self.verbose:
+                rank_0_print("  No paired data sources found, skipping paired index building", verbose=self.verbose)
+            return
+
+        # Build index from task_indices using cached is_robot field, but only for paired data sources
+        for task, indices in self._combined_indices["task_indices"].items():
+            # Filter to only paired data sources
+            task_indices_paired = [idx for idx in indices if idx in paired_data_source_indices]
+
+            if not task_indices_paired:
+                continue
+
+            self.paired_human_robot_by_task[task] = {"robot": [], "human": []}
+
+            for idx in task_indices_paired:
+                is_robot = self._cached_is_robot[idx] if idx < len(self._cached_is_robot) else True
+                if is_robot:
+                    self.paired_human_robot_by_task[task]["robot"].append(idx)
+                else:
+                    self.paired_human_robot_by_task[task]["human"].append(idx)
+
+        if self.verbose:
+            # Count tasks with both robot and human trajectories
+            tasks_with_pairs = [
+                task
+                for task, task_dict in self.paired_human_robot_by_task.items()
+                if task_dict["robot"] and task_dict["human"]
+            ]
+            num_tasks_with_pairs = len(tasks_with_pairs)
+            rank_0_print(
+                f"  Built paired_human_robot_by_task index: {num_tasks_with_pairs} tasks with both robot and human trajectories (from paired data sources only)",
+                verbose=self.verbose,
+            )

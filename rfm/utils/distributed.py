@@ -24,3 +24,21 @@ def rank_0_print(*args, verbose=True, **kwargs):
     """Print only if on rank 0."""
     if is_rank_0() and verbose:
         rprint(*args, **kwargs)
+
+
+def banner(*lines, inner_padding=3):
+    rank_0_print("\n" + "#" * 60)
+
+    # top inner padding
+    for _ in range(inner_padding):
+        rank_0_print("#")
+
+    # content lines
+    for line in lines:
+        rank_0_print("# " + line)
+
+    # bottom inner padding
+    for _ in range(inner_padding):
+        rank_0_print("#")
+
+    rank_0_print("#" * 60 + "\n")

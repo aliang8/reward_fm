@@ -41,6 +41,7 @@ from rfm.utils.setup_utils import (
     setup_peft_model,
 )
 from rfm.utils.logger import Logger
+from rfm.utils.distributed import banner
 import datasets
 
 datasets.logging.set_verbosity_error()
@@ -73,7 +74,8 @@ def train(cfg: ExperimentConfig):
     torch.backends.cudnn.benchmark = True
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-
+    
+    banner("Setting up model and processor")
     # Use the shared function to set up model and processor
     with _timer("time/setup_model_and_processor", timing_raw=timing_raw):
         tokenizer, processor, rfm_model = setup_model_and_processor(cfg.model, peft_config=cfg.peft)
@@ -122,6 +124,7 @@ def train(cfg: ExperimentConfig):
     if dist_initialized:
         dist.barrier()
 
+    banner("Creating output directory", f"Logging to: {output_dir}")
     # Create output directory (all processes need to do this for distributed training)
     # os.makedirs is safe to call multiple times (exist_ok=True)
     os.makedirs(output_dir, exist_ok=True)
@@ -158,6 +161,7 @@ def train(cfg: ExperimentConfig):
     if is_rank_0():
         show_available_datasets()
 
+    banner("Setting up training and evaluation datasets and collator")
     with _timer("time/setup_data", timing_raw=timing_raw):
         batch_collator = setup_batch_collator(processor, tokenizer, cfg, is_eval=False)
         train_dataset = setup_dataset(cfg.data, batch_size=cfg.training.per_device_train_batch_size)
@@ -170,13 +174,14 @@ def train(cfg: ExperimentConfig):
         eval_dataset = setup_dataset(cfg.data, is_eval=True, **dataset_kwargs)
         rank_0_print(f"Evaluation dataset created with {cfg.data.eval_subset_size} samples")
 
+
+    banner("Setting up trainer", f"Trainer class: {cfg.trainer_cls}")
     trainer_cls = {
         "rfm_heads": RFMHeadsTrainer,
         "rewind_transformer": ReWiNDTrainer,
         "rfm_vqa": RFMVQATrainer,
         "rewind_scale_transformer": ReWiNDTrainer,
     }[cfg.trainer_cls]
-    rank_0_print(f"Trainer class: {trainer_cls}")
 
     # Add SaveBestCallback to automatically save and upload best models
     save_best_cfg = cfg.logging.save_best
@@ -269,6 +274,8 @@ def convert_hydra_to_dataclass(cfg: DictConfig) -> ExperimentConfig:
 
 @hydra_main(version_base=None, config_path="rfm/configs", config_name="config")
 def main(cfg: DictConfig):
+    banner("Starting RFM Training")
+
     # Convert Hydra config to dataclass
     exp_cfg = convert_hydra_to_dataclass(cfg)
 

@@ -109,11 +109,8 @@ class RewardAlignmentSampler(RFMBaseSampler):
 
             video_embeddings = video_embeddings[:end_idx]
 
-            subsequence_video_embeddings, _ = linspace_subsample_frames(video_embeddings, self.config.max_frames)
+            subsequence_video_embeddings, frame_indices = linspace_subsample_frames(video_embeddings, self.config.max_frames)
             frames_shape_orig = subsequence_video_embeddings.shape
-            video_embeddings, _ = pad_trajectory_to_max_frames_torch(
-                subsequence_video_embeddings, [gt_progress], self.config.max_frames
-            )
         else:
             frames = load_frames_from_npz(original_traj["frames"])
             if frames is None or len(frames) == 0:
@@ -126,11 +123,25 @@ class RewardAlignmentSampler(RFMBaseSampler):
             max_frames = self.config.max_frames
 
             # Uniform subsample to max_frames
-            subsequence_frames, _ = linspace_subsample_frames(subsequence_frames, max_frames)
+            subsequence_frames, frame_indices = linspace_subsample_frames(subsequence_frames, max_frames)
             frames_shape_orig = subsequence_frames.shape
 
-            # Use the existing helper function to pad/subsample frames
-            frames, _ = pad_trajectory_to_max_frames_np(subsequence_frames, [0], max_frames)
+        # Create progress values for each subsampled frame
+        # Progress should linearly interpolate from 0 to gt_progress across the frames
+        num_subsampled = len(frame_indices)
+        if num_subsampled > 1:
+            # Linear interpolation from 0 to gt_progress
+            progress_values = [gt_progress * (idx / (num_subsampled - 1)) for idx in range(num_subsampled)]
+        else:
+            progress_values = [gt_progress]
+
+        # Pad trajectory and progress
+        if self.config.load_embeddings and original_traj.get("embeddings_path"):
+            video_embeddings, padded_progress = pad_trajectory_to_max_frames_torch(
+                subsequence_video_embeddings, progress_values, self.config.max_frames
+            )
+        else:
+            frames, padded_progress = pad_trajectory_to_max_frames_np(subsequence_frames, progress_values, max_frames)
 
         # Create metadata for the subsequence
         metadata = {
@@ -154,7 +165,7 @@ class RewardAlignmentSampler(RFMBaseSampler):
             is_robot=original_traj["is_robot"],
             quality_label=original_traj["quality_label"],
             data_gen_strategy="reward_alignment",
-            target_progress=[gt_progress],
+            target_progress=padded_progress,
             partial_success=original_traj.get("partial_success"),
             metadata=metadata,
         )

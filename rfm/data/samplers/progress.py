@@ -43,7 +43,7 @@ class ProgressSampler(RFMBaseSampler):
         subsample_strategy = None
 
         # Strategy setup with rebalancing on failure
-        # [successful, rewind, different_task, subsequence, reverse_progress, different_task_instruction]
+        # [successful, rewind, different_task_instruction, subsequence, reverse_progress]
         strategies = [
             (DataGenStrat.SUCCESSFUL, self.config.progress_strategy_ratio[0]),
             (DataGenStrat.REWOUND, self.config.progress_strategy_ratio[1]),
@@ -139,15 +139,12 @@ class ProgressSampler(RFMBaseSampler):
         progress_traj = self._get_traj_from_data(processed_traj, subsample_strategy=subsample_strategy)
 
         # Handle special cases
-        if strategy_used == DataGenStrat.DIFFERENT_TASK:
+        if strategy_used in [DataGenStrat.DIFFERENT_TASK, DataGenStrat.DIFFERENT_TASK_INSTRUCTION]:
             # We need to use the original task embeddings instead of the different task embeddings
             if self.config.load_embeddings and traj.get("embeddings_path"):
                 progress_traj.text_embedding = load_embeddings_from_path(traj["embeddings_path"])["text_embedding"]
             progress_traj.lang_vector = traj["lang_vector"]
             progress_traj.task = traj["task"]
-            progress_traj.target_progress = [0.0] * len(progress_traj.target_progress)
-
-        if strategy_used == DataGenStrat.DIFFERENT_TASK_INSTRUCTION:
             progress_traj.target_progress = [0.0] * len(progress_traj.target_progress)
 
         strategy_value = strategy_used.value if isinstance(strategy_used, DataGenStrat) else strategy_used

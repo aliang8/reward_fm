@@ -1324,7 +1324,7 @@ class RFMHeadsTrainer(Trainer):
             # Compute AUPRC across all valid frames
             if success_probs_flat.numel() > 0 and len(torch.unique(success_labels_flat)) > 1:
                 auprc = average_precision_score(
-                    success_labels_flat.detach().cpu().numpy(), success_probs_flat.detach().cpu().numpy()
+                    success_labels_flat.float().detach().cpu().numpy(), success_probs_flat.float().detach().cpu().numpy()
                 )
                 mean_auprc = torch.tensor(auprc, device=success_loss.device, dtype=torch.float32)
             else:

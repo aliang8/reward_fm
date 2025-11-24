@@ -164,6 +164,7 @@ DATASET_MAP = {
         ],
         "eval": [
             "jesbu1_roboarena_0825_rfm_roboarena",
+            "jesbu1_racer_rfm_racer_val",
         ],
     },
 }
@@ -196,47 +197,8 @@ DATA_SOURCE_CATEGORY = {
         "soar_rfm",
         "auto_eval_rfm",
         "racer_train",
+        "racer_val",
     ],
-}
-
-
-DATA_SOURCE_MAP = {
-    "paired": ["h2r", "motif_rfm", "rh20t_human", "rh20t_robot"],
-    "oxe": [
-        "oxe_aloha_mobile",
-        "oxe_austin_buds_dataset_converted_externally_to_rlds",
-        "oxe_bc_z",
-        "oxe_berkeley_cable_routing",
-        "oxe_berkeley_fanuc_manipulation",
-        "oxe_berkeley_mvp_converted_externally_to_rlds",
-        "oxe_berkeley_rpt_converted_externally_to_rlds",
-        "oxe_bridge_v2",
-        "oxe_dlr_edan_shared_control_converted_externally_to_rlds",
-        "oxe_droid",
-        "oxe_fractal20220817_data",
-        "oxe_furniture_bench_dataset_converted_externally_to_rlds",
-        "oxe_iamlab_cmu_pickup_insert_converted_externally_to_rlds",
-        "oxe_imperialcollege_sawyer_wrist_cam",
-        "oxe_jaco_play",
-        "oxe_language_table",
-        "oxe_nyu_rot_dataset_converted_externally_to_rlds",
-        "oxe_robo_set",
-        "oxe_stanford_hydra_dataset_converted_externally_to_rlds",
-        "oxe_tokyo_u_lsmo_converted_externally_to_rlds",
-        "oxe_toto",
-        "oxe_ucsd_kitchen_dataset_converted_externally_to_rlds",
-        "oxe_utaustin_mutex",
-    ],
-    "mw": ["metaworld_train"],
-    "suboptimal_fail": ["roboarena_0825_rfm", "fino_net_rfm", "failsafe_rfm", "soar_rfm"],
-    "failure": [
-        "libero_90_failure",
-        "libero_10_failure",
-        "libero_object_failure",
-        "libero_spatial_failure",
-        "libero_goal_failure",
-    ],
-    "preference_only": ["oxe_bc_z", "oxe_dlr_edan_shared_control_converted_externally_to_rlds"],
 }
 
 # DATASET helper functions

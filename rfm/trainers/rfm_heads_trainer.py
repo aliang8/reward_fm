@@ -1767,6 +1767,7 @@ class RFMHeadsTrainer(Trainer):
         diff_scores = torch.clamp(diff_scores, min=-50.0, max=50.0)
         similarity_loss_all = F.softplus(-diff_scores)
         similarity_loss = similarity_loss_all.mean()
+        similarity_margin = (score_ref_sim - score_ref_diff).detach()
         final_loss = similarity_loss
 
         # =========================================================================================
@@ -1814,6 +1815,7 @@ class RFMHeadsTrainer(Trainer):
             # If score_ref_sim > score_ref_diff, model correctly ranks sim as more similar
             similarity_correct = (score_ref_sim > score_ref_diff).float()
             similarity_accuracy = similarity_correct.mean()
+            avg_similarity_margin = similarity_margin.mean()
 
             data_gen_strategy = inputs["data_gen_strategy"]
 
@@ -1828,9 +1830,13 @@ class RFMHeadsTrainer(Trainer):
                     masked_loss = (
                         similarity_loss_all[mask == 1].detach() if training else similarity_loss_all[mask == 1]
                     )
+                    masked_margin = (
+                        similarity_margin[mask == 1] if not training else similarity_margin[mask == 1]
+                    )
                     outputs_dict.update({
                         f"{prefix}_strat_sim_acc/{strat}": masked_acc.mean().item(),
                         f"{prefix}_strat_sim_loss/{strat}": masked_loss.mean().item(),
+                        f"{prefix}_strat_sim_margin/{strat}": masked_margin.mean().item() if masked_margin.numel() > 0 else 0.0,
                     })
 
             # Split metrics by data source
@@ -1841,15 +1847,18 @@ class RFMHeadsTrainer(Trainer):
                 # Detach indexed tensors to avoid DDP hook issues with boolean indexing
                 masked_acc = similarity_correct[mask == 1].detach() if training else similarity_correct[mask == 1]
                 masked_loss = similarity_loss_all[mask == 1].detach() if training else similarity_loss_all[mask == 1]
+                masked_margin = similarity_margin[mask == 1]
                 outputs_dict.update({
                     f"{prefix}_ds_sim_acc/{data_source}": masked_acc.mean().item(),
                     f"{prefix}_ds_sim_loss/{data_source}": masked_loss.mean().item(),
+                    f"{prefix}_ds_sim_margin/{data_source}": masked_margin.mean().item() if masked_margin.numel() > 0 else 0.0,
                 })
 
             # Add main metrics
             outputs_dict.update({
                 f"{prefix}/similarity_loss": similarity_loss.item(),
                 f"{prefix}/similarity_accuracy": similarity_accuracy.item(),
+                f"{prefix}/similarity_margin": avg_similarity_margin.item(),
             })
 
             # Add progress loss metrics if computed

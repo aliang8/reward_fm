@@ -578,6 +578,9 @@ class RFMHeadsTrainer(Trainer):
                     self.optimizer.zero_grad(set_to_none=True)
                 eval_results = []
 
+                # Initialize success_auprc to None for all eval types
+                success_auprc = None
+
                 for batch in tqdm(
                     dataloader,
                     desc=f"Running {eval_type}, ds: {eval_dataset}, batch size: {self.config.training.per_device_eval_batch_size}",
@@ -632,7 +635,7 @@ class RFMHeadsTrainer(Trainer):
                         # Handle success predictions if needed
                         success_pred_gathered = None
                         success_probs_gathered = None
-                        success_auprc = None
+                        # success_auprc is initialized before the loop, only update it here if computing
                         if self.config.model.train_success_head:
                             success_pred = outputs.success_logits["A"]
                             if isinstance(success_pred, list):

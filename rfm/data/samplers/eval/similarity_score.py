@@ -41,7 +41,7 @@ class SimilarityScoreSampler(RFMBaseSampler):
         dataset_success_cutoff_map=None,
         is_evaluation=False,
         verbose=True,
-        num_negatives: int = 5,
+        num_negatives: int = 2,
         **kwargs,
     ):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
@@ -58,7 +58,6 @@ class SimilarityScoreSampler(RFMBaseSampler):
         """Generate all possible similarity score sample indices."""
         sample_indices = []
         
-        import ipdb; ipdb.set_trace()
         # Iterate through all tasks with paired human-robot data
         for task, paired_info in self.paired_human_robot_by_task.items():
             human_indices = paired_info["human"]

@@ -698,8 +698,8 @@ class RFMHeadsTrainer(Trainer):
 
                             if success_probs_flat.numel() > 0 and len(torch.unique(success_labels_flat)) > 1:
                                 auprc_value = average_precision_score(
-                                    success_labels_flat.detach().cpu().numpy(),
-                                    success_probs_flat.detach().cpu().numpy(),
+                                    success_labels_flat.detach().cpu().float().numpy(),
+                                    success_probs_flat.detach().cpu().float().numpy(),
                                 )
                                 success_auprc = float(auprc_value)
                             else:
@@ -1470,7 +1470,7 @@ class RFMHeadsTrainer(Trainer):
                 sample_labels = success_labels[i][sample_mask]
                 if len(torch.unique(sample_labels)) > 1:
                     auprc = average_precision_score(
-                        sample_labels.detach().cpu().numpy(), sample_probs.detach().cpu().numpy()
+                        sample_labels.detach().cpu().float().numpy(), sample_probs.detach().cpu().float().numpy()
                     )
                     masked_auprc[i] = auprc
 

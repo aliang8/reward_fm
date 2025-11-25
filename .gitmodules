@@ -1,6 +1,6 @@
 [submodule "visualizer"]
 	path = visualizer
-	url = git@hf.co:spaces/rewardfm/visualizer
+	url = https://huggingface.co/spaces/rewardfm/visualizer
 [submodule "deps/libero/LIBERO"]
 	path = deps/libero/LIBERO
 	url = https://github.com/Lifelong-Robot-Learning/LIBERO.git

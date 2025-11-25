@@ -120,6 +120,7 @@ class RFMHeadsTrainer(Trainer):
         self.log_metadata = collections.defaultdict(float)
         self.global_metadata = collections.defaultdict(float)
         self.timing_raw = collections.defaultdict(float)
+        self._ddp_static_graph_set = False  # Flag to track if DDP static graph has been set
 
         if logger is not None:
             self.logger = logger
@@ -1151,6 +1152,23 @@ class RFMHeadsTrainer(Trainer):
 
     def compute_loss(self, model, inputs, return_outputs=False, training=True, **kwargs):
         """Compute loss for separate preference and similarity batches."""
+
+        # Set static graph for DDP on first training step to handle multiple forward passes
+        # This is necessary because similarity loss does 2 forward passes (ref_sim and ref_diff)
+        if (
+            training
+            and not self._ddp_static_graph_set
+            and getattr(self.accelerator.gradient_state, "sync_gradients", True)
+            and hasattr(model, "module")
+        ):
+            if hasattr(model.module, "_set_static_graph"):
+                rank_0_print("Setting DDP static graph mode for multiple forward passes")
+                model.module._set_static_graph()
+                self._ddp_static_graph_set = True
+            elif hasattr(model, "_set_static_graph"):
+                rank_0_print("Setting DDP static graph mode for multiple forward passes")
+                model._set_static_graph()
+                self._ddp_static_graph_set = True
 
         # Extract the separate batches
         preference_inputs = inputs.get("preference_inputs", {})

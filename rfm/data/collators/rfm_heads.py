@@ -736,5 +736,10 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["padding_mask_sim"] = create_padding_mask(batch_inputs["traj_sim_frames_shape"], max_length_sim)
         batch_inputs["padding_mask_diff"] = create_padding_mask(batch_inputs["traj_diff_frames_shape"], max_length_diff)
         batch_inputs["resample_attempts"] = [sample.resample_attempts for sample in similarity_samples]
+        
+        batch_inputs["metadata"] = [
+            sample.ref_trajectory.metadata if sample.ref_trajectory.metadata else {}
+            for sample in similarity_samples
+        ]
 
         return batch_inputs

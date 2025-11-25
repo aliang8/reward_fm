@@ -10,17 +10,41 @@ from rfm.data.dataset_category import DATASET_MAP, DATA_SOURCE_CATEGORY, get_pai
 from rfm.utils.distributed import rank_0_print, banner
 
 
-def resolve_dataset_keys(dataset_keys: list[str], split: str) -> list[str]:
+def resolve_dataset_keys(dataset_keys: list[str] | list[list[str]], split: str) -> list[str] | list[list[str]]:
     """
     Resolve dataset keys through DATASET_MAP.
 
     Args:
-        dataset_keys: List of dataset keys (e.g., ["mw", "oxe"]) or actual dataset names
+        dataset_keys: List of dataset keys (e.g., ["mw", "oxe"]) or actual dataset names.
+                     Can also be a list of lists for cases like similarity_score where multiple
+                     datasets need to be grouped together (e.g., [["human_ds", "robot_ds"], ["other_ds"]]).
         split: Either "train" or "eval"
 
     Returns:
-        List of resolved dataset names, combining all datasets from the keys
+        List of resolved dataset names, combining all datasets from the keys.
+        If input is a list of lists, returns a list of lists (each inner list resolved separately).
+        If input is a flat list, returns a flat list.
     """
+    # Check if this is a list of lists (nested structure)
+    if dataset_keys and isinstance(dataset_keys[0], list):
+        # Handle nested lists: resolve each inner list separately
+        resolved_datasets = []
+        for key_group in dataset_keys:
+            resolved_group = []
+            for key in key_group:
+                if key in DATASET_MAP:
+                    # Key found in DATASET_MAP, resolve it
+                    if split in DATASET_MAP[key]:
+                        resolved_group.extend(DATASET_MAP[key][split])
+                    else:
+                        rank_0_print(f"Warning: Key '{key}' found in DATASET_MAP but no '{split}' split defined. Skipping.")
+                else:
+                    # Not a key, assume it's already a dataset name
+                    resolved_group.append(key)
+            resolved_datasets.append(resolved_group)
+        return resolved_datasets
+    
+    # Handle flat list (original behavior)
     resolved_datasets = []
     for key in dataset_keys:
         if key in DATASET_MAP:
@@ -50,29 +74,36 @@ class BaseDataset(torch.utils.data.Dataset):
             split = "train"
 
         self.datasets = resolve_dataset_keys(dataset_keys, split)
-
-        # Initialize dataset
-        self.dataset = None
-
+        
         # Load dataset-specific success cutoff map if available
         self.dataset_success_cutoff_map = {}
         if hasattr(config, "dataset_success_cutoff_file") and config.dataset_success_cutoff_file:
             self.dataset_success_cutoff_map = load_dataset_success_percent(config.dataset_success_cutoff_file)
 
         # Load trajectory dataset
-        self._load_trajectory_dataset()
+        self.dataset, self._combined_indices = self._load_all_datasets()
 
         # Filter out tasks containing excluded keywords
         excluded_keywords = ["rings", "hands", "flick"]
-        self._filter_dataset_by_task_keywords(excluded_keywords, self._combined_indices)
+        self.dataset, self._combined_indices = self._filter_dataset_by_task_keywords(excluded_keywords, self.dataset, self._combined_indices)
+        
+        # Set cached fields after filtering
+        self._cached_ids = self.dataset["id"]
+        self._cached_is_robot = self.dataset["is_robot"]
 
         rank_0_print(f"Dataset loaded with {len(self.dataset)} total trajectories", verbose=self.verbose)
 
     def __len__(self):
         return len(self.dataset)
 
-    def _load_trajectory_dataset(self):
-        """Load trajectory dataset using preprocessed index-based cache."""
+    def _load_all_datasets(self):
+        """Load trajectory dataset using preprocessed index-based cache.
+        
+        Returns:
+            tuple: (dataset, combined_indices)
+                - dataset: The loaded and concatenated dataset
+                - combined_indices: Dictionary of combined indices
+        """
         cache_dir = os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
         if not cache_dir:
             raise ValueError(
@@ -86,12 +117,14 @@ class BaseDataset(torch.utils.data.Dataset):
                 f"Found preprocessed cache at {cache_dir}, loading {cache_type} datasets...", verbose=self.verbose
             )
 
-            self._load_preprocessed_cache(cache_dir, is_training=not self.is_evaluation)
+            dataset, combined_indices = self._load_preprocessed_cache(cache_dir, is_training=not self.is_evaluation)
 
             rank_0_print(
-                f"Successfully loaded preprocessed {cache_type} datasets with {len(self.dataset)} trajectory indices",
+                f"Successfully loaded preprocessed {cache_type} datasets with {len(dataset)} trajectory indices",
                 verbose=self.verbose,
             )
+            
+            return dataset, combined_indices
         else:
             # If no cache exists, we need to run the preprocessor first
             rank_0_print(
@@ -104,9 +137,14 @@ class BaseDataset(torch.utils.data.Dataset):
                 "This will create the necessary index-based cache for efficient data loading."
             )
 
-    def _load_preprocessed_cache(self, cache_dir: str, is_training: bool = True):
-        """Load the preprocessed cache with index mappings for datasets."""
-        # Check which datasets are available
+    def _get_available_datasets(self, cache_dir: str):
+        """Check which datasets are available in the cache.
+        
+        Returns:
+            tuple: (available_datasets, missing_datasets)
+                - available_datasets: List of (dataset_path, individual_cache_dir) tuples
+                - missing_datasets: List of dataset_path strings that are missing
+        """
         available_datasets = []
         missing_datasets = []
 
@@ -156,20 +194,21 @@ class BaseDataset(torch.utils.data.Dataset):
             f"\nSummary: {len(available_datasets)} available, {len(missing_datasets)} missing", verbose=self.verbose
         )
 
-        # Load available datasets
-        loaded_datasets = []
-        combined_indices = {
-            "robot_trajectories": [],
-            "human_trajectories": [],
-            "optimal_by_task": {},
-            "suboptimal_by_task": {},
-            "quality_indices": {},
-            "task_indices": {},
-            "source_indices": {},
-            "partial_success_indices": {},
-        }
+        return available_datasets, missing_datasets
 
-        offset = 0
+    def _load_datasets(self, available_datasets: list[tuple[str, str]]):
+        """Load datasets from cache and return them along with per-dataset index mappings.
+        
+        Args:
+            available_datasets: List of (dataset_path, individual_cache_dir) tuples
+            
+        Returns:
+            tuple: (loaded_datasets, dataset_indices_list)
+                - loaded_datasets: List of loaded Dataset objects
+                - dataset_indices_list: List of index dictionaries, one per dataset (with original indices, not offset)
+        """
+        loaded_datasets = []
+        dataset_indices_list = []
 
         for dataset_path, individual_cache_dir in available_datasets:
             # Load the processed dataset
@@ -184,44 +223,65 @@ class BaseDataset(torch.utils.data.Dataset):
             loaded_datasets.append(dataset)
 
             # Load index mappings
+            indices = {}
             mappings_file = os.path.join(individual_cache_dir, "index_mappings.json")
             if os.path.exists(mappings_file):
                 with open(mappings_file) as f:
                     indices = json.load(f)
-
-                # Adjust indices by adding offset and combine
-                for key in combined_indices:
-                    if key in indices:
-                        if isinstance(indices[key], list):
-                            # For list indices, add offset
-                            combined_indices[key].extend([idx + offset for idx in indices[key]])
-                        elif isinstance(indices[key], dict):
-                            # For regular dict indices, add offset to values
-                            for subkey, subindices in indices[key].items():
-                                if subkey not in combined_indices[key]:
-                                    combined_indices[key][subkey] = []
-                                combined_indices[key][subkey].extend([idx + offset for idx in subindices])
+            
+            dataset_indices_list.append(indices)
 
             if self.verbose:
                 rank_0_print(f"  ✅ Loaded {len(dataset)} trajectories from {dataset_path}", verbose=self.verbose)
-            offset += len(dataset)
 
         if not loaded_datasets:
             raise RuntimeError("No datasets could be loaded from the cache")
 
-        # Concatenate datasets if multiple
-        if len(loaded_datasets) == 1:
-            self.dataset = loaded_datasets[0]
-        else:
-            self.dataset = concatenate_datasets(loaded_datasets)
+        return loaded_datasets, dataset_indices_list
 
-        # Store the combined index mappings
-        self._combined_indices = combined_indices
-        self._cached_ids = self.dataset["id"]
-        self._cached_is_robot = self.dataset["is_robot"]
+    def _build_indices(self, loaded_datasets: list[Dataset], dataset_indices_list: list[dict], cached_is_robot: list):
+        """Build combined indices from loaded datasets and their index mappings.
+        
+        Args:
+            loaded_datasets: List of loaded Dataset objects
+            dataset_indices_list: List of index dictionaries, one per dataset (with original indices, not offset)
+            cached_is_robot: List of is_robot flags for the concatenated dataset
+            
+        Returns:
+            dict: Combined indices dictionary with all index mappings
+        """
+        combined_indices = {
+            "robot_trajectories": [],
+            "human_trajectories": [],
+            "optimal_by_task": {},
+            "suboptimal_by_task": {},
+            "quality_indices": {},
+            "task_indices": {},
+            "source_indices": {},
+            "partial_success_indices": {},
+        }
 
-        combined_indices["paired_human_robot_by_task"] = self._build_paired_human_robot_index()
+        offset = 0
 
+        for dataset, indices in zip(loaded_datasets, dataset_indices_list):
+            # Adjust indices by adding offset and combine
+            for key in combined_indices:
+                if key in indices:
+                    if isinstance(indices[key], list):
+                        # For list indices, add offset
+                        combined_indices[key].extend([idx + offset for idx in indices[key]])
+                    elif isinstance(indices[key], dict):
+                        # For regular dict indices, add offset to values
+                        for subkey, subindices in indices[key].items():
+                            if subkey not in combined_indices[key]:
+                                combined_indices[key][subkey] = []
+                            combined_indices[key][subkey].extend([idx + offset for idx in subindices])
+
+            offset += len(dataset)
+
+        # Build paired human robot index (needs cached_is_robot)
+        combined_indices["paired_human_robot_by_task"] = self._build_paired_human_robot_index(combined_indices, cached_is_robot)
+        
         # Find tasks that have both optimal and suboptimal trajectories
         tasks_with_multiple_quality_labels = set(combined_indices["optimal_by_task"].keys()) & set(
             combined_indices["suboptimal_by_task"].keys()
@@ -229,9 +289,34 @@ class BaseDataset(torch.utils.data.Dataset):
         # Add it to combined_indices so samplers can access it
         combined_indices["tasks_with_multiple_quality_labels"] = list(tasks_with_multiple_quality_labels)
 
+        return combined_indices
+
+    def _load_preprocessed_cache(self, cache_dir: str, is_training: bool = True):
+        """Load the preprocessed cache with index mappings for datasets.
+        
+        Returns:
+            tuple: (dataset, combined_indices)
+                - dataset: The loaded and concatenated dataset
+                - combined_indices: Dictionary of combined indices
+        """
+        # Get available datasets
+        available_datasets, missing_datasets = self._get_available_datasets(cache_dir)
+        
+        # Load datasets
+        loaded_datasets, dataset_indices_list = self._load_datasets(available_datasets)
+        
+        # Concatenate datasets if multiple
+        if len(loaded_datasets) == 1:
+            dataset = loaded_datasets[0]
+        else:
+            dataset = concatenate_datasets(loaded_datasets)
+
+        # Build combined indices
+        combined_indices = self._build_indices(loaded_datasets, dataset_indices_list, dataset["is_robot"])
+
         dataset_type = "training" if is_training else "evaluation"
         rank_0_print(
-            f"✅ Loaded {len(self.dataset)} total trajectories from preprocessed {dataset_type} datasets",
+            f"✅ Loaded {len(dataset)} total trajectories from preprocessed {dataset_type} datasets",
             verbose=self.verbose,
         )
         rank_0_print(
@@ -253,18 +338,26 @@ class BaseDataset(torch.utils.data.Dataset):
         rank_0_print(f"Data sources available: {combined_indices['source_indices'].keys()}", verbose=self.verbose)
         rank_0_print(f"Number of paired tasks: {len(combined_indices['paired_human_robot_by_task'])}", verbose=self.verbose)
         rank_0_print(
-            f"Number of tasks with both multiple quality labels: {len(tasks_with_multiple_quality_labels)}",
+            f"Number of tasks with both multiple quality labels: {len(combined_indices['tasks_with_multiple_quality_labels'])}",
             verbose=self.verbose,
         )
 
-    def _filter_dataset_by_task_keywords(self, excluded_keywords: list[str], combined_indices: dict):
+        return dataset, combined_indices
+
+    def _filter_dataset_by_task_keywords(self, excluded_keywords: list[str], dataset, combined_indices: dict):
         """Filter out dataset rows where task contains any of the excluded keywords.
         
         Args:
             excluded_keywords: List of keywords to exclude (case-insensitive)
+            dataset: The dataset to filter
             combined_indices: Dictionary of combined indices to update after filtering
+        
+        Returns:
+            tuple: (filtered_dataset, filtered_combined_indices)
+                - filtered_dataset: The filtered dataset
+                - filtered_combined_indices: The filtered combined indices
         """
-        task_column = self.dataset["task"]
+        task_column = dataset["task"]
         
         # Create boolean mask: True for rows to keep (task doesn't contain excluded keywords)
         keep_mask = []
@@ -286,52 +379,83 @@ class BaseDataset(torch.utils.data.Dataset):
                 )
             # Use select to efficiently filter by indices
             keep_indices = [i for i, keep in enumerate(keep_mask) if keep]
-            self.dataset = self.dataset.select(keep_indices)
-            
-            # Update cached fields
-            self._cached_ids = self.dataset["id"]
-            self._cached_is_robot = self.dataset["is_robot"]
+            filtered_dataset = dataset.select(keep_indices)
             
             # Update combined_indices by filtering out excluded indices
             # Create a mapping from old index to new index
             old_to_new = {old_idx: new_idx for new_idx, old_idx in enumerate(keep_indices)}
             
+            # Create a copy of combined_indices to avoid mutating the input
+            filtered_combined_indices = {}
+            
             # Filter all index lists and dicts
             for key in combined_indices:
                 if isinstance(combined_indices[key], list):
                     # Filter list indices
-                    combined_indices[key] = [old_to_new[idx] for idx in combined_indices[key] if idx in old_to_new]
+                    filtered_combined_indices[key] = [old_to_new[idx] for idx in combined_indices[key] if idx in old_to_new]
                 elif isinstance(combined_indices[key], dict):
                     # Filter dict indices
                     filtered_dict = {}
                     for subkey, subindices in combined_indices[key].items():
-                        filtered_indices = [old_to_new[idx] for idx in subindices if idx in old_to_new]
-                        if filtered_indices:  # Only keep keys with remaining indices
-                            filtered_dict[subkey] = filtered_indices
-                    combined_indices[key] = filtered_dict
+                        # Handle nested dict structure (e.g., paired_human_robot_by_task has {"robot": [...], "human": [...]})
+                        if isinstance(subindices, dict):
+                            # This is a nested dict like {"robot": [...], "human": [...]}
+                            filtered_nested_dict = {}
+                            for nested_key, nested_list in subindices.items():
+                                if isinstance(nested_list, list):
+                                    filtered_nested_list = [old_to_new[idx] for idx in nested_list if idx in old_to_new]
+                                    if filtered_nested_list:  # Only keep if there are remaining indices
+                                        filtered_nested_dict[nested_key] = filtered_nested_list
+                            # Only keep the task if it has at least one non-empty list (robot or human)
+                            if filtered_nested_dict:
+                                filtered_dict[subkey] = filtered_nested_dict
+                        elif isinstance(subindices, list):
+                            # Regular dict with list values (e.g., task_indices, source_indices)
+                            filtered_indices = [old_to_new[idx] for idx in subindices if idx in old_to_new]
+                            if filtered_indices:  # Only keep keys with remaining indices
+                                filtered_dict[subkey] = filtered_indices
+                    filtered_combined_indices[key] = filtered_dict
+                elif isinstance(combined_indices[key], set):
+                    # Filter set indices
+                    filtered_combined_indices[key] = {old_to_new[idx] for idx in combined_indices[key] if idx in old_to_new}
+                else:
+                    # Keep other types as-is (e.g., strings, numbers)
+                    filtered_combined_indices[key] = combined_indices[key]
+        else:
+            # No filtering needed, return original dataset and indices
+            filtered_dataset = dataset
+            filtered_combined_indices = combined_indices
+        
+        return filtered_dataset, filtered_combined_indices
 
-    def _build_paired_human_robot_index(self):
+    def _build_paired_human_robot_index(self, combined_indices: dict, cached_is_robot: list):
         """Build paired_human_robot_by_task index from task_indices by checking is_robot field.
 
         This builds the index after concatenation by iterating through task_indices
         and checking the is_robot field for each trajectory. Only includes trajectories
         from PAIRED data sources.
+        
+        Args:
+            combined_indices: Dictionary of combined indices
+            cached_is_robot: List of is_robot flags for the concatenated dataset
+            
+        Returns:
+            dict: paired_human_robot_by_task dictionary
         """
         paired_human_robot_by_task = {}
 
         # Filter indices for paired data sources
         paired_data_source_indices = set()
         for data_source in get_paired_ds():
-            if data_source in self._combined_indices["source_indices"]:
-                paired_data_source_indices.update(self._combined_indices["source_indices"][data_source])
+            if data_source in combined_indices["source_indices"]:
+                paired_data_source_indices.update(combined_indices["source_indices"][data_source])
 
         if not paired_data_source_indices:
-            if self.verbose:
-                rank_0_print("  No paired data sources found, skipping paired index building", verbose=self.verbose)
+            rank_0_print("  No paired data sources found, skipping paired index building", verbose=self.verbose)
             return {}
 
         # Build index from task_indices using cached is_robot field, but only for paired data sources
-        for task, indices in self._combined_indices["task_indices"].items():
+        for task, indices in combined_indices["task_indices"].items():
             # Filter to only paired data sources
             task_indices_paired = [idx for idx in indices if idx in paired_data_source_indices]
 
@@ -341,7 +465,7 @@ class BaseDataset(torch.utils.data.Dataset):
             paired_human_robot_by_task[task] = {"robot": [], "human": []}
 
             for idx in task_indices_paired:
-                is_robot = self._cached_is_robot[idx] if idx < len(self._cached_is_robot) else True
+                is_robot = cached_is_robot[idx] if idx < len(cached_is_robot) else True
                 if is_robot:
                     paired_human_robot_by_task[task]["robot"].append(idx)
                 else:
@@ -359,5 +483,5 @@ class BaseDataset(torch.utils.data.Dataset):
                 f"  Built paired_human_robot_by_task index: {num_tasks_with_pairs} tasks with both robot and human trajectories (from paired data sources only)",
                 verbose=self.verbose,
             )
-
+            
         return paired_human_robot_by_task

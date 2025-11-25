@@ -243,6 +243,7 @@ class CustomEvaluationConfig:
     confusion_matrix: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
     reward_alignment: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
     quality_preference: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
+    similarity_score: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
 
 
 @dataclass

@@ -157,8 +157,9 @@ DATASET_MAP = {
             "jesbu1_ph2d_rfm_ph2d",
         ],
         "eval": [
-            "utd_so101_policy_ranking",
-            "utd_so101_human",
+            "jesbu1_egodex_rfm_egodex_test",
+            "aliangdw_utd_so101_human_utd_so101_human",
+            "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
         ],
     },
     "suboptimal_fail": {
@@ -174,6 +175,18 @@ DATASET_MAP = {
             "jesbu1_roboarena_0825_rfm_roboarena",
             "jesbu1_racer_rfm_racer_val",
         ],
+    },
+    "similarity_score": {
+        "eval": [
+            [
+                "anqil_rh20t_subset_rfm_rh20t_human",
+                "anqil_rh20t_subset_rfm_rh20t_robot",
+            ],
+            [
+                "aliangdw_utd_so101_human_utd_so101_human",
+                "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
+            ],
+        ]
     },
 }
 

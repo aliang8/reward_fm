@@ -543,6 +543,7 @@ class RFMHeadsTrainer(Trainer):
             "policy_ranking": "p_rank",
             "quality_preference": "pref",
             "quality_preference_roboarena": "pref_robo",
+            "similarity_score": "sim_score",
         }
 
         banner("Running custom evaluations", f"Custom evaluations: {eval_types}")
@@ -555,7 +556,12 @@ class RFMHeadsTrainer(Trainer):
 
             for eval_dataset in eval_datasets_name:
                 eval_cfg = copy.deepcopy(self.config.data)
-                eval_cfg.eval_datasets = [eval_dataset]
+                # For similarity_score, eval_dataset is a list of datasets that should be loaded together
+                # For other eval types, eval_dataset is a single dataset name
+                if eval_type == "similarity_score" and isinstance(eval_dataset, list):
+                    eval_cfg.eval_datasets = eval_dataset
+                else:
+                    eval_cfg.eval_datasets = [eval_dataset]
 
                 # Create custom eval dataset with the appropriate sampler
                 # set max_trajectories to 10 for reward_alignment per eval dataset
@@ -811,6 +817,72 @@ class RFMHeadsTrainer(Trainer):
                         del gathered_task, gathered_data_source, gathered_chosen_data_gen_strategy
                         del gathered_rejected_data_gen_strategy, gathered_metadata
 
+                    elif eval_type == "similarity_score":
+                        # Process similarity samples for similarity_score evaluation
+                        similarity_samples = batch["similarity_inputs"]
+                        with torch.no_grad():
+                            outputs, _ = self.forward_model(self.model, similarity_samples, sample_type="similarity")
+                        sim_logits = outputs.sim_logits
+
+                        # Gather predictions across all ranks
+                        sim_logits = self.accelerator.gather_for_metrics(sim_logits)
+
+                        # Gather non-tensor metadata using all_gather_object
+                        if dist.is_initialized():
+                            world_size = dist.get_world_size()
+
+                            # Gather each metadata field separately
+                            gathered_task = [None] * world_size
+                            gathered_data_source = [None] * world_size
+                            gathered_data_gen_strategy = [None] * world_size
+                            gathered_metadata = [None] * world_size
+
+                            dist.all_gather_object(gathered_task, similarity_samples["task"])
+                            dist.all_gather_object(gathered_data_source, similarity_samples["data_source"])
+                            dist.all_gather_object(gathered_data_gen_strategy, similarity_samples["data_gen_strategy"])
+                            dist.all_gather_object(gathered_metadata, similarity_samples["metadata"])
+
+                            # Flatten gathered lists (each element is a list from one rank)
+                            gathered_task = [item for sublist in gathered_task for item in sublist]
+                            gathered_data_source = [item for sublist in gathered_data_source for item in sublist]
+                            gathered_data_gen_strategy = [
+                                item for sublist in gathered_data_gen_strategy for item in sublist
+                            ]
+                            gathered_metadata = [item for sublist in gathered_metadata for item in sublist]
+                        else:
+                            # Single process - no gathering needed
+                            gathered_task = similarity_samples["task"]
+                            gathered_data_source = similarity_samples["data_source"]
+                            gathered_data_gen_strategy = similarity_samples["data_gen_strategy"]
+                            gathered_metadata = similarity_samples["metadata"]
+
+                        # Build eval_results on all processes for compute_eval_metrics
+                        # The sim_logits are batched as [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
+                        # We need to extract ref_sim (even indices) and ref_diff (odd indices)
+                        # The metadata lists have length = num_samples, but sim_logits has length = 2 * num_samples
+                        num_samples = len(sim_logits) // 2
+                        for i in range(num_samples):
+                            ref_sim_idx = i * 2
+                            ref_diff_idx = i * 2 + 1
+                            
+                            if ref_sim_idx >= len(sim_logits) or ref_diff_idx >= len(sim_logits):
+                                continue
+                            
+                            # Metadata is indexed by sample index (i), not batched index
+                            sample_result = {
+                                "task": gathered_task[i] if i < len(gathered_task) else None,
+                                "sim_score_ref_sim": sim_logits[ref_sim_idx].detach().to(dtype=torch.float32).cpu().numpy(),
+                                "sim_score_ref_diff": sim_logits[ref_diff_idx].detach().to(dtype=torch.float32).cpu().numpy(),
+                                "data_source": gathered_data_source[i] if i < len(gathered_data_source) else None,
+                                "data_gen_strategy": gathered_data_gen_strategy[i] if i < len(gathered_data_gen_strategy) else None,
+                                "metadata": gathered_metadata[i] if i < len(gathered_metadata) else None,
+                            }
+                            eval_results.append(sample_result)
+
+                        # Clean up gathered tensors and metadata after building results
+                        del sim_logits
+                        del gathered_task, gathered_data_source, gathered_data_gen_strategy, gathered_metadata
+
                     # Clean up batch tensors and free memory after each batch
                     # This is critical for VQA with generation to prevent OOM
                     del batch, outputs
@@ -844,6 +916,11 @@ class RFMHeadsTrainer(Trainer):
                     eval_metrics, task_groups, task_details = compute_eval_metrics(
                         eval_type, eval_results, self.config.data.progress_pred_type
                     )
+                elif eval_type == "similarity_score":
+                    # similarity_score returns metrics, task_groups, and task_details
+                    eval_metrics, task_groups, task_details = compute_eval_metrics(
+                        eval_type, eval_results, self.config.data.progress_pred_type
+                    )
                 else:
                     raise ValueError(f"Unsupported eval type: {eval_type}")
 
@@ -858,7 +935,9 @@ class RFMHeadsTrainer(Trainer):
                     eval_metrics["success_auprc"] = success_auprc
 
                 # Store metrics for all processes
-                ds_name = DS_SHORT_NAME_MAPPING.get(eval_dataset, eval_dataset)
+                # For similarity_score, eval_dataset is a list, so use the first element for name mapping
+                dataset_for_mapping = eval_dataset[0] if isinstance(eval_dataset, list) else eval_dataset
+                ds_name = DS_SHORT_NAME_MAPPING.get(dataset_for_mapping, dataset_for_mapping)
                 metrics[ds_name][eval_type] = eval_metrics
 
                 # Only log and visualize on main process
@@ -1006,6 +1085,32 @@ class RFMHeadsTrainer(Trainer):
                         del confusion_plot, confusion_matrix
                         confusion_plot = None
                         confusion_matrix = None
+
+                    elif eval_type == "similarity_score":
+                        # Create wandb table for similarity score results
+                        data = []
+                        for task, group in task_groups.items():
+                            task_margin = task_details.get(task, {}).get("avg_margin", 0.0)
+                            task_same_task_score = task_details.get(task, {}).get("avg_same_task_score", 0.0)
+                            task_diff_task_score = task_details.get(task, {}).get("avg_diff_task_score", 0.0)
+                            num_pairs = task_details.get(task, {}).get("num_pairs", 0)
+                            data.append([
+                                task,
+                                round(task_margin, 3),
+                                round(task_same_task_score, 3),
+                                round(task_diff_task_score, 3),
+                                num_pairs,
+                            ])
+                        columns = ["task", "avg_margin", "avg_same_task_score", "avg_diff_task_score", "num_pairs"]
+                        self.logger.log_table(
+                            f"{ds_name}/similarity_score_samples",
+                            data=data,
+                            columns=columns,
+                            step=self.state.global_step,
+                        )
+                        del data, task_groups, task_details
+                        task_groups = None
+                        task_details = None
 
                 # Clean up after each dataset to prevent memory accumulation
                 # Clean up eval-specific outputs (now properly scoped)

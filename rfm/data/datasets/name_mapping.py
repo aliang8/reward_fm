@@ -12,4 +12,8 @@ DS_SHORT_NAME_MAPPING = {
     "ykorkmaz_libero_failure_rfm_libero_spatial_failure": "libero_spatial_failure",
     "ykorkmaz_libero_failure_rfm_libero_goal_failure": "libero_goal_failure",
     "jesbu1_oxe_rfm_eval_oxe_jaco_play_eval": "oxe_jaco",
+    "anqil_rh20t_subset_rfm_rh20t_human": "rh20t",
+    "anqil_rh20t_subset_rfm_rh20t_robot": "rh20t",
+    "aliangdw_utd_so101_human_utd_so101_human": "utd_so101",
+    "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking": "utd_so101",
 }

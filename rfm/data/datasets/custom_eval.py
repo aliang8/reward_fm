@@ -26,6 +26,7 @@ class CustomEvalDataset(BaseDataset):
             "policy_ranking": ProgressDefaultSampler,
             "quality_preference": QualityPreferenceSampler,
             "quality_preference_roboarena": RoboArenaQualityPreferenceSampler,
+            "similarity_score": SimilarityScoreSampler,
         }
 
         if sampler_type not in sampler_cls:

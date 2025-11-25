@@ -72,9 +72,20 @@ class SimilarityScoreSampler(RFMBaseSampler):
             if not other_tasks:
                 continue
             
-            # For each human-robot pair, create N samples (one per negative)
-            for human_idx in human_indices:
-                for robot_idx in robot_indices:
+            # Limit number of human/robot trajectories considered per task to reduce combinatorics
+            if len(human_indices) > 3:
+                selected_humans = random.sample(human_indices, 3)
+            else:
+                selected_humans = human_indices
+
+            if len(robot_indices) > 3:
+                selected_robots = random.sample(robot_indices, 3)
+            else:
+                selected_robots = robot_indices
+
+            # For each selected human-robot pair, create N samples (one per negative)
+            for human_idx in selected_humans:
+                for robot_idx in selected_robots:
                     # Sample N negative tasks (with replacement if needed)
                     negative_tasks = random.choices(other_tasks, k=self.num_negatives)
                     

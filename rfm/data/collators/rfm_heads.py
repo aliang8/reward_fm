@@ -655,33 +655,17 @@ class RFMBatchCollator(BaseCollator):
 
             all_messages.extend([conversation_ref_sim, conversation_ref_diff])
 
-        # Process all conversations
+        # This creates a single batched input with [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
         batch_inputs = self._process_conversation(all_messages)
 
-        # Split the batch inputs back into ref_A and ref_B
+        # Keep the batched inputs as-is (don't split them)
+        # The trainer will handle extracting ref_sim and ref_diff from the batched output
         num_samples = len(similarity_samples)
-        ref_sim_inputs = {}
-        ref_diff_inputs = {}
-
-        for key, value in batch_inputs.items():
-            if isinstance(value, torch.Tensor):
-                # Split into ref_A and ref_B (alternating)
-                ref_sim_inputs[key] = value[::2]  # Even indices (0, 2, 4, ...)
-                ref_diff_inputs[key] = value[1::2]  # Odd indices (1, 3, 5, ...)
-            else:
-                ref_sim_inputs[key] = value
-                ref_diff_inputs[key] = value
-
-        # Combine into single batch with ref_A and ref_B suffixes
         combined_inputs = {"sample_type": ["similarity"] * num_samples}
 
-        # Add ref_sim inputs
-        for key, value in ref_sim_inputs.items():
-            combined_inputs[f"{key}_ref_sim"] = value
-
-        # Add ref_diff inputs
-        for key, value in ref_diff_inputs.items():
-            combined_inputs[f"{key}_ref_diff"] = value
+        # The batch is structured as [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
+        for key, value in batch_inputs.items():
+            combined_inputs[key] = value
 
         # Add similarity-specific metadata
         combined_inputs = self._add_similarity_meta(combined_inputs, similarity_samples)

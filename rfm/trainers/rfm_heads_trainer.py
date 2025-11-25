@@ -23,6 +23,7 @@ from rfm.data.datasets.helpers import load_dataset_success_percent
 import torch.distributed as dist
 from rfm.data.datasets.base import resolve_dataset_keys
 from rfm.utils.distributed import banner
+from rfm.models.utils import ModelOutput
 
 
 def seed_worker(worker_id):
@@ -1733,43 +1734,63 @@ class RFMHeadsTrainer(Trainer):
         return final_loss
 
     def _compute_similarity_loss(self, model, inputs, return_outputs=False, training=True):
-        """Compute similarity scoring loss (DPO-style)."""
-        if "Qwen" in self.config.model.base_model_id or "SmolVLM" in self.config.model.base_model_id:
-            ref_sim_inputs = {
-                "input_ids": inputs["input_ids_ref_sim"],
-                "attention_mask": inputs["attention_mask_ref_sim"],
-                "pixel_values": inputs.get("pixel_values_ref_sim"),
-                "pixel_values_videos": inputs.get("pixel_values_videos_ref_sim"),
-                "image_grid_thw": inputs.get("image_grid_thw_ref_sim"),
-                "video_grid_thw": inputs.get("video_grid_thw_ref_sim"),
-            }
-
-            # Prepare inputs for reference vs trajectory diff forward pass
-            ref_diff_inputs = {
-                "input_ids": inputs["input_ids_ref_diff"],
-                "attention_mask": inputs["attention_mask_ref_diff"],
-                "pixel_values": inputs.get("pixel_values_ref_diff"),
-                "pixel_values_videos": inputs.get("pixel_values_videos_ref_diff"),
-                "image_grid_thw": inputs.get("image_grid_thw_ref_diff"),
-                "video_grid_thw": inputs.get("video_grid_thw_ref_diff"),
-            }
-        elif "rewind" in self.config.model.base_model_id:
-            # use embeddings
-            if self.config.data.load_embeddings:
-                ref_sim_inputs = {
-                    "video_embeddings": inputs["video_embeddings_ref_sim"],
-                    "text_embeddings": inputs["text_embeddings_ref_sim"],
-                }
-                ref_diff_inputs = {
-                    "video_embeddings": inputs["video_embeddings_ref_diff"],
-                    "text_embeddings": inputs["text_embeddings_ref_diff"],
-                }
-
-        # Forward pass for reference vs trajectory sim
-        model_outputs_ref_sim, _ = self.forward_model(model, ref_sim_inputs, sample_type="similarity")
-
-        # Forward pass for reference vs trajectory diff
-        model_outputs_ref_diff, _ = self.forward_model(model, ref_diff_inputs, sample_type="similarity")
+        """Compute similarity scoring loss (DPO-style).
+        
+        The inputs are already batched by the collator as [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
+        We do a single forward pass and then extract scores for ref_sim (even indices) and ref_diff (odd indices).
+        """
+        # Single forward pass with batched inputs (already batched by collator)
+        # Batch structure: [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
+        batched_outputs, _ = self.forward_model(model, inputs, sample_type="similarity")
+        
+        # Extract batch size (number of similarity samples)
+        # The batched input has 2x the number of samples (ref_sim + ref_diff for each)
+        num_samples = len(inputs.get("data_source", []))
+        batch_size = num_samples  # Number of similarity samples
+        
+        # Split outputs: even indices are ref_sim, odd indices are ref_diff
+        # Handle sim_logits
+        sim_logits_ref_sim = batched_outputs.sim_logits[::2] if batched_outputs.sim_logits is not None else None  # Even indices
+        sim_logits_ref_diff = batched_outputs.sim_logits[1::2] if batched_outputs.sim_logits is not None else None  # Odd indices
+        
+        # Handle progress_logits
+        progress_logits_ref_sim = None
+        progress_logits_ref_diff = None
+        if batched_outputs.progress_logits is not None and batched_outputs.progress_logits.get("A") is not None:
+            progress_A = batched_outputs.progress_logits["A"]
+            if isinstance(progress_A, list):
+                # List format - split by even/odd indices
+                progress_logits_ref_sim = {"A": progress_A[::2], "B": None}
+                progress_logits_ref_diff = {"A": progress_A[1::2], "B": None}
+            elif isinstance(progress_A, torch.Tensor):
+                # Tensor format - split along batch dimension
+                progress_logits_ref_sim = {"A": progress_A[::2], "B": None}
+                progress_logits_ref_diff = {"A": progress_A[1::2], "B": None}
+        
+        # Handle success_logits
+        success_logits_ref_sim = None
+        success_logits_ref_diff = None
+        if batched_outputs.success_logits is not None and batched_outputs.success_logits.get("A") is not None:
+            success_A = batched_outputs.success_logits["A"]
+            if isinstance(success_A, list):
+                # List format - split by even/odd indices
+                success_logits_ref_sim = {"A": success_A[::2], "B": None}
+                success_logits_ref_diff = {"A": success_A[1::2], "B": None}
+            elif isinstance(success_A, torch.Tensor):
+                # Tensor format - split along batch dimension
+                success_logits_ref_sim = {"A": success_A[::2], "B": None}
+                success_logits_ref_diff = {"A": success_A[1::2], "B": None}
+        
+        model_outputs_ref_sim = ModelOutput(
+            sim_logits=sim_logits_ref_sim,
+            progress_logits=progress_logits_ref_sim,
+            success_logits=success_logits_ref_sim,
+        )
+        model_outputs_ref_diff = ModelOutput(
+            sim_logits=sim_logits_ref_diff,
+            progress_logits=progress_logits_ref_diff,
+            success_logits=success_logits_ref_diff,
+        )
 
         score_ref_sim = model_outputs_ref_sim.sim_logits.squeeze(-1)
         score_ref_diff = model_outputs_ref_diff.sim_logits.squeeze(-1)

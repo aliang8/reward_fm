@@ -29,7 +29,7 @@ from hydra import main as hydra_main
 from hydra.core.config_store import ConfigStore
 
 from rfm.configs.experiment_configs import ExperimentConfig, CustomEvaluationConfig
-from rfm.configs.eval_configs import EvalOnlyConfig
+from rfm.configs.eval_configs import OfflineEvalConfig
 from rfm.trainers import RFMHeadsTrainer, RFMVQATrainer
 from rfm.utils.setup_utils import (
     setup_model_and_processor,
@@ -41,7 +41,7 @@ import wandb
 
 # Register structured configs with Hydra
 cs = ConfigStore.instance()
-cs.store(name="eval_only_config", node=EvalOnlyConfig)
+cs.store(name="eval_only_config", node=OfflineEvalConfig)
 
 
 def load_config_from_yaml(config_path: str) -> ExperimentConfig:
@@ -55,16 +55,16 @@ def load_config_from_yaml(config_path: str) -> ExperimentConfig:
 
     # Some configs (e.g., ReWiND-style) serialize custom python objects in YAML.
     # Provide a custom loader that safely converts those tags into plain dicts.
-    class _EvalOnlyConfigLoader(yaml.SafeLoader):
+    class _OfflineEvalConfigLoader(yaml.SafeLoader):
         pass
 
-    _EvalOnlyConfigLoader.add_constructor(
+    _OfflineEvalConfigLoader.add_constructor(
         "tag:yaml.org,2002:python/object:rfm.models.rewind_transformer.ReWINDTransformerConfig",
         lambda loader, node: loader.construct_mapping(node),
     )
 
     try:
-        config_dict = yaml.load(yaml_text, Loader=_EvalOnlyConfigLoader)
+        config_dict = yaml.load(yaml_text, Loader=_OfflineEvalConfigLoader)
     except Exception as e:
         rank_0_print(f"Warning: Custom YAML loading failed ({e}), falling back to safe_load")
         config_dict = yaml.safe_load(yaml_text)
@@ -173,13 +173,13 @@ def run_custom_evaluations(trainer: RFMHeadsTrainer):
     return custom_metrics
 
 
-def convert_hydra_to_dataclass(cfg: DictConfig) -> EvalOnlyConfig:
-    """Convert Hydra DictConfig to EvalOnlyConfig dataclass."""
+def convert_hydra_to_dataclass(cfg: DictConfig) -> OfflineEvalConfig:
+    """Convert Hydra DictConfig to OfflineEvalConfig dataclass."""
     if OmegaConf.is_struct(cfg):
         cfg_dict = OmegaConf.to_container(cfg, resolve=True, structured_config_mode="convert")
     else:
         cfg_dict = OmegaConf.to_container(cfg, resolve=True)
-    return EvalOnlyConfig(**cfg_dict)
+    return OfflineEvalConfig(**cfg_dict)
 
 
 @hydra_main(version_base=None, config_path="rfm/configs", config_name="eval_only_config")
@@ -266,18 +266,18 @@ def main(cfg: DictConfig):
     elif "wandb" in exp_cfg.logging.log_to:
         rank_0_print("Wandb logging enabled but skipped on non-rank-0 processes")
 
-    # Merge custom_eval from EvalOnlyConfig if provided
+    # Merge custom_eval from OfflineEvalConfig if provided
     # Only override fields that are explicitly set (non-empty lists)
     if eval_only_cfg.custom_eval.eval_types:
         exp_cfg.custom_eval.eval_types = eval_only_cfg.custom_eval.eval_types
-        rank_0_print(f"Using eval_types from EvalOnlyConfig: {eval_only_cfg.custom_eval.eval_types}")
+        rank_0_print(f"Using eval_types from OfflineEvalConfig: {eval_only_cfg.custom_eval.eval_types}")
 
     # Override specific eval dataset lists if provided
     for eval_type in ["reward_alignment", "policy_ranking", "confusion_matrix"]:
         eval_datasets = getattr(eval_only_cfg.custom_eval, eval_type, None)
         if eval_datasets and len(eval_datasets) > 0:
             setattr(exp_cfg.custom_eval, eval_type, eval_datasets)
-            rank_0_print(f"Using {eval_type} datasets from EvalOnlyConfig: {eval_datasets}")
+            rank_0_print(f"Using {eval_type} datasets from OfflineEvalConfig: {eval_datasets}")
 
     # Verify model path exists (if local) or is accessible (if HuggingFace)
     if is_local_path and not os.path.exists(model_path):

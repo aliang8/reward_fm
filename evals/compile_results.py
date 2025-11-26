@@ -720,13 +720,13 @@ def run_policy_ranking_eval_roboarena(results: list[dict[str, Any]], progress_pr
 
 def run_similarity_score_eval(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:
     """Run similarity_score evaluation analysis.
-    
+
     Groups results by task and computes:
     - Average similarity score for human->same_task (robot)
     - Average similarity score for human->diff_task (negatives)
     - Margin between same_task and diff_task scores
     - Averages results across N negatives per pairing
-    
+
     Args:
         results: List of evaluation results, each containing:
             - task: Task name
@@ -734,7 +734,7 @@ def run_similarity_score_eval(results: list[dict[str, Any]], progress_pred_type:
             - sim_score_ref_diff: Similarity score for ref->diff (human->negative, different task)
             - metadata: Contains task, negative_task, human_id, robot_id, negative_id
         progress_pred_type: Not used for similarity_score, but kept for consistency
-    
+
     Returns:
         Tuple of (metrics_dict, task_groups, task_details)
     """
@@ -745,15 +745,15 @@ def run_similarity_score_eval(results: list[dict[str, Any]], progress_pred_type:
         if task is None:
             continue
         task_groups[task].append(r)
-    
+
     if not task_groups:
         return {"error": "No valid similarity score data found"}, {}, {}
-    
+
     task_details = {}
     all_margins = []
     all_same_task_scores = []
     all_diff_task_scores = []
-    
+
     for task, task_results in task_groups.items():
         # Group by human-robot pairs (using human_id and robot_id from metadata)
         pair_groups = defaultdict(list)
@@ -765,69 +765,69 @@ def run_similarity_score_eval(results: list[dict[str, Any]], progress_pred_type:
                 continue
             pair_key = (human_id, robot_id)
             pair_groups[pair_key].append(r)
-        
+
         # Compute metrics per pair, then average across pairs
         pair_margins = []
         pair_same_task_scores = []
         pair_diff_task_scores = []
-        
+
         for pair_key, pair_results in pair_groups.items():
             # Extract scores for this pair
             same_task_scores = []
             diff_task_scores = []
-            
+
             for r in pair_results:
                 sim_score_ref_sim = r.get("sim_score_ref_sim")
                 sim_score_ref_diff = r.get("sim_score_ref_diff")
-                
+
                 if sim_score_ref_sim is not None:
                     if isinstance(sim_score_ref_sim, np.ndarray):
                         same_task_scores.append(float(sim_score_ref_sim.item()))
                     else:
                         same_task_scores.append(float(sim_score_ref_sim))
-                
+
                 if sim_score_ref_diff is not None:
                     if isinstance(sim_score_ref_diff, np.ndarray):
                         diff_task_scores.append(float(sim_score_ref_diff.item()))
                     else:
                         diff_task_scores.append(float(sim_score_ref_diff))
-            
+
             if same_task_scores and diff_task_scores:
                 # Average across negatives for this pair
                 avg_same_task = np.mean(same_task_scores)
                 avg_diff_task = np.mean(diff_task_scores)
                 margin = avg_same_task - avg_diff_task
-                
+
                 pair_margins.append(margin)
                 pair_same_task_scores.append(avg_same_task)
                 pair_diff_task_scores.append(avg_diff_task)
-        
+
         if pair_margins:
             task_margin = np.mean(pair_margins)
             task_same_task_score = np.mean(pair_same_task_scores)
             task_diff_task_score = np.mean(pair_diff_task_scores)
-            
+
             task_details[task] = {
                 "avg_margin": task_margin,
                 "avg_same_task_score": task_same_task_score,
                 "avg_diff_task_score": task_diff_task_score,
                 "num_pairs": len(pair_margins),
             }
-            
+
             all_margins.append(task_margin)
             all_same_task_scores.append(task_same_task_score)
             all_diff_task_scores.append(task_diff_task_score)
-    
+
     if not all_margins:
         return {"error": "No valid margins computed"}, {}, {}
-    
+
     # Aggregate metrics across all tasks
     metrics = {
         "avg_margin": np.mean(all_margins).item(),
         "avg_same_task_score": np.mean(all_same_task_scores).item(),
         "avg_diff_task_score": np.mean(all_diff_task_scores).item(),
     }
-    
+
     return metrics, task_groups, task_details
 
 

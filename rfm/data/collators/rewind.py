@@ -160,7 +160,7 @@ class ReWiNDBatchCollator(RFMBatchCollator):
 
     def _process_similarity_batch(self, similarity_samples: list[SimilaritySample]) -> dict[str, torch.Tensor]:
         """Process a batch of similarity samples.
-        
+
         Batches ref_sim and ref_diff inputs together as [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
         to reduce memory usage by doing a single forward pass instead of two.
         """
@@ -178,10 +178,7 @@ class ReWiNDBatchCollator(RFMBatchCollator):
                 sim_video_emb = sample.sim_trajectory.video_embeddings
                 diff_video_emb = sample.diff_trajectory.video_embeddings
 
-                if any(
-                    emb is None
-                    for emb in [ref_video_emb, ref_text_emb, sim_video_emb, diff_video_emb]
-                ):
+                if any(emb is None for emb in [ref_video_emb, ref_text_emb, sim_video_emb, diff_video_emb]):
                     raise ValueError("Sample trajectories are missing embeddings")
 
                 all_ref_video_embeddings.append(ref_video_emb)
@@ -261,7 +258,7 @@ class ReWiNDBatchCollator(RFMBatchCollator):
             # Interleave ref_sim and ref_diff to create batched inputs: [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
             batch_size = len(similarity_samples)
             video_inputs = torch.empty(batch_size * 2, frame_len * 2, C, H, W)
-            
+
             for i in range(batch_size):
                 # Even indices: ref_sim
                 video_inputs[i * 2] = ref_sim_video_inputs[i]

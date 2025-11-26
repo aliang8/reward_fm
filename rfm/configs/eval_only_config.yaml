@@ -13,9 +13,6 @@ defaults:
 model_path: "logs/rfm_st_2gpu_bs16_oxe_mw_rewind5x_vqa/ckpt-avg-6metrics=0.7242_step=500"  # HuggingFace model ID
 # model_path: "./logs/my_run/checkpoint-1000"  # Local checkpoint path
 
-# Optional experiment config override (if not provided, will load from HuggingFace repo or checkpoint/config.yaml)
-# exp_config_path: "rfm/configs/config.yaml"
-
 # Output directory for evaluation results (defaults to ./eval_output/<model_name> or checkpoint_path/eval_output)
 # output_dir: "./eval_results"
 

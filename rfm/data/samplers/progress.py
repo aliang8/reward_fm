@@ -103,15 +103,12 @@ class ProgressSampler(RFMBaseSampler):
 
             # Execute selected strategy
             if selected_strategy == DataGenStrat.SUCCESSFUL:
-                # Successful strategy: use original trajectory, will be processed with "successful" subsample_strategy
                 processed_traj = traj
                 subsample_strategy = "successful"
             elif selected_strategy == DataGenStrat.SUBSEQUENCE:
-                # Subsequence strategy: use original trajectory, will be processed with "subsequence" subsample_strategy
                 processed_traj = traj
                 subsample_strategy = "subsequence"
             elif selected_strategy == DataGenStrat.REVERSE_PROGRESS:
-                # Reverse progress strategy: use original trajectory, will be processed with "reverse_progress" subsample_strategy
                 processed_traj = traj
                 subsample_strategy = "reverse_progress"
             elif selected_strategy == DataGenStrat.REWOUND:

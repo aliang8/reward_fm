@@ -45,14 +45,6 @@ class OfflineEvalConfig:
         metadata={"help": "HuggingFace model ID (e.g., 'aliangdw/rfm_model') or local checkpoint path"},
     )
 
-    # Optional experiment config override (pyrallis reserved "config_path", so using exp_config_path)
-    exp_config_path: Optional[str] = field(
-        default=None,
-        metadata={
-            "help": "Path to experiment config file (if not provided, will try to load from HuggingFace repo or checkpoint/config.yaml)"
-        },
-    )
-
     # Output directory for evaluation results
     output_dir: Optional[str] = field(
         default=None,

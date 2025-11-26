@@ -864,17 +864,27 @@ class RFMHeadsTrainer(Trainer):
                         for i in range(num_samples):
                             ref_sim_idx = i * 2
                             ref_diff_idx = i * 2 + 1
-                            
+
                             if ref_sim_idx >= len(sim_logits) or ref_diff_idx >= len(sim_logits):
                                 continue
-                            
+
                             # Metadata is indexed by sample index (i), not batched index
                             sample_result = {
                                 "task": gathered_task[i] if i < len(gathered_task) else None,
-                                "sim_score_ref_sim": sim_logits[ref_sim_idx].detach().to(dtype=torch.float32).cpu().numpy(),
-                                "sim_score_ref_diff": sim_logits[ref_diff_idx].detach().to(dtype=torch.float32).cpu().numpy(),
+                                "sim_score_ref_sim": sim_logits[ref_sim_idx]
+                                .detach()
+                                .to(dtype=torch.float32)
+                                .cpu()
+                                .numpy(),
+                                "sim_score_ref_diff": sim_logits[ref_diff_idx]
+                                .detach()
+                                .to(dtype=torch.float32)
+                                .cpu()
+                                .numpy(),
                                 "data_source": gathered_data_source[i] if i < len(gathered_data_source) else None,
-                                "data_gen_strategy": gathered_data_gen_strategy[i] if i < len(gathered_data_gen_strategy) else None,
+                                "data_gen_strategy": gathered_data_gen_strategy[i]
+                                if i < len(gathered_data_gen_strategy)
+                                else None,
                                 "metadata": gathered_metadata[i] if i < len(gathered_metadata) else None,
                             }
                             eval_results.append(sample_result)
@@ -942,7 +952,13 @@ class RFMHeadsTrainer(Trainer):
 
                 # Only log and visualize on main process
                 if self.accelerator.is_main_process:
-                    banner("Completed evaluation", f"{eval_type} evaluation: {len(eval_results)} samples", "Metrics", f"{metrics[ds_name][eval_type]}", inner_padding=1)
+                    banner(
+                        "Completed evaluation",
+                        f"{eval_type} evaluation: {len(eval_results)} samples",
+                        "Metrics",
+                        f"{metrics[ds_name][eval_type]}",
+                        inner_padding=1,
+                    )
 
                     # Create wandb tables and log visualizations
                     if eval_type == "reward_alignment":
@@ -1448,7 +1464,8 @@ class RFMHeadsTrainer(Trainer):
             # Compute AUPRC across all valid frames
             if success_probs_flat.numel() > 0 and len(torch.unique(success_labels_flat)) > 1:
                 auprc = average_precision_score(
-                    success_labels_flat.float().detach().cpu().numpy(), success_probs_flat.float().detach().cpu().numpy()
+                    success_labels_flat.float().detach().cpu().numpy(),
+                    success_probs_flat.float().detach().cpu().numpy(),
                 )
                 mean_auprc = torch.tensor(auprc, device=success_loss.device, dtype=torch.float32)
             else:
@@ -1840,24 +1857,28 @@ class RFMHeadsTrainer(Trainer):
 
     def _compute_similarity_loss(self, model, inputs, return_outputs=False, training=True):
         """Compute similarity scoring loss (DPO-style).
-        
+
         The inputs are already batched by the collator as [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
         We do a single forward pass and then extract scores for ref_sim (even indices) and ref_diff (odd indices).
         """
         # Single forward pass with batched inputs (already batched by collator)
         # Batch structure: [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
         batched_outputs, _ = self.forward_model(model, inputs, sample_type="similarity")
-        
+
         # Extract batch size (number of similarity samples)
         # The batched input has 2x the number of samples (ref_sim + ref_diff for each)
         num_samples = len(inputs.get("data_source", []))
         batch_size = num_samples  # Number of similarity samples
-        
+
         # Split outputs: even indices are ref_sim, odd indices are ref_diff
         # Handle sim_logits
-        sim_logits_ref_sim = batched_outputs.sim_logits[::2] if batched_outputs.sim_logits is not None else None  # Even indices
-        sim_logits_ref_diff = batched_outputs.sim_logits[1::2] if batched_outputs.sim_logits is not None else None  # Odd indices
-        
+        sim_logits_ref_sim = (
+            batched_outputs.sim_logits[::2] if batched_outputs.sim_logits is not None else None
+        )  # Even indices
+        sim_logits_ref_diff = (
+            batched_outputs.sim_logits[1::2] if batched_outputs.sim_logits is not None else None
+        )  # Odd indices
+
         # Handle progress_logits
         progress_logits_ref_sim = None
         progress_logits_ref_diff = None
@@ -1871,7 +1892,7 @@ class RFMHeadsTrainer(Trainer):
                 # Tensor format - split along batch dimension
                 progress_logits_ref_sim = {"A": progress_A[::2], "B": None}
                 progress_logits_ref_diff = {"A": progress_A[1::2], "B": None}
-        
+
         # Handle success_logits
         success_logits_ref_sim = None
         success_logits_ref_diff = None
@@ -1885,7 +1906,7 @@ class RFMHeadsTrainer(Trainer):
                 # Tensor format - split along batch dimension
                 success_logits_ref_sim = {"A": success_A[::2], "B": None}
                 success_logits_ref_diff = {"A": success_A[1::2], "B": None}
-        
+
         model_outputs_ref_sim = ModelOutput(
             sim_logits=sim_logits_ref_sim,
             progress_logits=progress_logits_ref_sim,
@@ -1974,13 +1995,13 @@ class RFMHeadsTrainer(Trainer):
                     masked_loss = (
                         similarity_loss_all[mask == 1].detach() if training else similarity_loss_all[mask == 1]
                     )
-                    masked_margin = (
-                        similarity_margin[mask == 1] if not training else similarity_margin[mask == 1]
-                    )
+                    masked_margin = similarity_margin[mask == 1] if not training else similarity_margin[mask == 1]
                     outputs_dict.update({
                         f"{prefix}_strat_sim_acc/{strat}": masked_acc.mean().item(),
                         f"{prefix}_strat_sim_loss/{strat}": masked_loss.mean().item(),
-                        f"{prefix}_strat_sim_margin/{strat}": masked_margin.mean().item() if masked_margin.numel() > 0 else 0.0,
+                        f"{prefix}_strat_sim_margin/{strat}": masked_margin.mean().item()
+                        if masked_margin.numel() > 0
+                        else 0.0,
                     })
 
             # Split metrics by data source
@@ -1995,7 +2016,9 @@ class RFMHeadsTrainer(Trainer):
                 outputs_dict.update({
                     f"{prefix}_ds_sim_acc/{data_source}": masked_acc.mean().item(),
                     f"{prefix}_ds_sim_loss/{data_source}": masked_loss.mean().item(),
-                    f"{prefix}_ds_sim_margin/{data_source}": masked_margin.mean().item() if masked_margin.numel() > 0 else 0.0,
+                    f"{prefix}_ds_sim_margin/{data_source}": masked_margin.mean().item()
+                    if masked_margin.numel() > 0
+                    else 0.0,
                 })
 
             # Add main metrics

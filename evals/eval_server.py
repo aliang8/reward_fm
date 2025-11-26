@@ -2,15 +2,21 @@
 """
 FastAPI server to evaluate RFM model batches with async multi-GPU support.
 
-Endpoint:
-  POST /evaluate_batch
-Request payload (JSON):
+Usage example:
+    uv run python evals/eval_server.py \
+        --config_path rfm/configs/eval_config_server.yaml 
+        --num_gpus 1 \
+        --model_path reward_fm/ant_rfm_rewind_bs1024_pref_prog
 
-Response payload (JSON), per-sample outputs for client-side aggregation:
+Endpoints:
+  POST /evaluate_batch        - JSON payload
+  POST /evaluate_batch_npy    - multipart payload with .npy blobs
+
+Response payload per request contains predictions grouped by head:
   {
-    "predictions": List[int],              # 1 if chosen preferred, else 0
-    "reward_chosen": List[List[float]],    # per-frame rewards for chosen (maps to progress head A)
-    "reward_rejected": List[List[float]]   # per-frame rewards for rejected (maps to progress head B)
+    "outputs_preference": {...},   # Preference logits + optional progress traces
+    "outputs_progress": {...},     # Progress-only trajectories
+    "outputs_similarity": {...},   # Similarity logits (if requested)
   }
 """
 
@@ -24,62 +30,49 @@ import queue
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict
+import argparse
+
+import uvicorn
 
 import numpy as np
 import torch
 import yaml
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from huggingface_hub import hf_hub_download
 from rich.console import Console
 
-from evals.eval_utils import extract_answer_from_text
-from rfm.configs.eval_configs import EvalServerConfig, EvaluationConfig
-from rfm.configs.experiment_configs import ModelConfig, ExperimentConfig
-from rfm.data.dataset_types import PreferenceSample, ProgressSample
+from evals.eval_utils import extract_answer_from_text, load_model_from_hf
+from rfm.configs.eval_configs import EvalServerConfig
+from rfm.configs.experiment_configs import ExperimentConfig
+from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample
 from rfm.utils.parser import deep_merge
 from rfm.utils.setup_utils import setup_model_and_processor, setup_batch_collator
-from rfm.models.rewind_transformer import ReWiNDTransformer
 from rfm.models.utils import ModelOutput
 
 
-def rewind_forward(
-    model, batch_inputs: Dict[str, Any], device: str, sample_type: str = "progress"
-) -> tuple[ModelOutput, Dict[str, Any]]:
-    """Forward pass for ReWiND Transformer."""
+def forward_model(model, batch_inputs: Dict[str, Any], sample_type: str = "progress") -> tuple[ModelOutput, Dict[str, Any]]:
+    """Forward pass that mirrors trainer logic (handles ReWiND vs RFM)."""
     with torch.no_grad():
-        model_output, _ = model(
-            video_embeddings=batch_inputs["video_embeddings"].to(device),
-            text_embeddings=batch_inputs["text_embeddings"].to(device),
-            sample_type=sample_type,
-        )
-    return model_output
-
-
-def rfm_forward(model, batch_inputs: Dict[str, Any], device: str, sample_type: str = "progress") -> ModelOutput:
-    """Forward pass for RFM."""
-    with torch.no_grad():
-        model_output, _ = model(
-            input_ids=batch_inputs["input_ids"].to(device),
-            attention_mask=batch_inputs["attention_mask"].to(device),
-            pixel_values=batch_inputs.get("pixel_values", None).to(device)
-            if batch_inputs.get("pixel_values") is not None
-            else None,
-            pixel_values_videos=batch_inputs.get("pixel_values_videos", None).to(device)
-            if batch_inputs.get("pixel_values_videos") is not None
-            else None,
-            image_grid_thw=batch_inputs.get("image_grid_thw", None).to(device)
-            if batch_inputs.get("image_grid_thw") is not None
-            else None,
-            video_grid_thw=batch_inputs.get("video_grid_thw", None).to(device)
-            if batch_inputs.get("video_grid_thw") is not None
-            else None,
-            second_per_grid_ts=batch_inputs.get("second_per_grid_ts", None).to(device)
-            if batch_inputs.get("second_per_grid_ts") is not None
-            else None,
-            sample_type=sample_type,
-        )
-    return model_output
+        if getattr(model.config, "base_model_id", "") and "rewind" in model.config.base_model_id:
+            model_output, extra = model(
+                video_embeddings=batch_inputs.get("video_embeddings"),
+                text_embeddings=batch_inputs.get("text_embeddings"),
+                sample_type=sample_type,
+                timing_raw=None,
+            )
+        else:
+            model_output, extra = model(
+                input_ids=batch_inputs["input_ids"],
+                attention_mask=batch_inputs["attention_mask"],
+                pixel_values=batch_inputs.get("pixel_values", None),
+                pixel_values_videos=batch_inputs.get("pixel_values_videos", None),
+                image_grid_thw=batch_inputs.get("image_grid_thw", None),
+                video_grid_thw=batch_inputs.get("video_grid_thw", None),
+                second_per_grid_ts=batch_inputs.get("second_per_grid_ts", None),
+                sample_type=sample_type,
+                timing_raw=None,
+            )
+    return model_output, extra
 
 
 class AsyncGPUPool:
@@ -120,6 +113,7 @@ class AsyncGPUPool:
 
             # Load model on specific GPU
             tokenizer, processor, model = setup_model_and_processor(self.exp_config.model, self.model_path)
+            batch_collator = setup_batch_collator(processor, tokenizer, self.exp_config, is_eval=True)
 
             model = model.to(device)
             model.eval()
@@ -137,6 +131,7 @@ class AsyncGPUPool:
                 "model": model,
                 "processor": processor,
                 "tokenizer": tokenizer,
+                "batch_collator": batch_collator,
                 "device": device,
                 "gpu_id": gpu_id,
                 "created_at": time.time(),
@@ -192,14 +187,24 @@ class AsyncGPUPool:
 
         print(f"Processing {len(samples)} samples on GPU {gpu_info['gpu_id']}")
 
-        batch_collator = setup_batch_collator(gpu_info["processor"], gpu_info["tokenizer"], self.exp_config)
+        batch_collator = gpu_info["batch_collator"]
         input_samples = []
         for sample in samples:
-            if sample["sample_type"] == "preference":
-                input_samples.append(PreferenceSample(**sample))
-            elif sample["sample_type"] == "progress":
-                input_samples.append(ProgressSample(**sample))
-        # This time batch_inputs will be a dictionary with preference_inputs, similarity_inputs, and progress_inputs
+            if isinstance(sample, (PreferenceSample, ProgressSample, SimilaritySample)):
+                input_samples.append(sample)
+            elif isinstance(sample, dict):
+                sample_type = sample.get("sample_type")
+                if sample_type == "preference":
+                    input_samples.append(PreferenceSample(**sample))
+                elif sample_type == "progress":
+                    input_samples.append(ProgressSample(**sample))
+                elif sample_type == "similarity":
+                    input_samples.append(SimilaritySample(**sample))
+                else:
+                    raise ValueError(f"Unsupported sample_type: {sample_type}")
+            else:
+                raise ValueError(f"Unsupported sample object type: {type(sample)}")
+
         batch_inputs = batch_collator(input_samples)
 
         # Move inputs to the correct GPU
@@ -210,8 +215,19 @@ class AsyncGPUPool:
         for key, value in batch_inputs["progress_inputs"].items():
             if isinstance(value, torch.Tensor):
                 batch_inputs["progress_inputs"][key] = value.to(device)
+        for key, value in batch_inputs["similarity_inputs"].items():
+            if isinstance(value, torch.Tensor):
+                batch_inputs["similarity_inputs"][key] = value.to(device)
 
-        if batch_inputs["num_preferences"] > 0:
+        outputs_preference = None
+        outputs_progress = None
+        outputs_similarity = None
+
+        num_preferences = batch_inputs.get("num_preferences", 0)
+        num_progress = batch_inputs.get("num_progress", 0)
+        num_similarities = batch_inputs.get("num_similarities", 0)
+
+        if num_preferences > 0:
             if self.exp_config.model.model_type == "vqa":
                 outputs_preference = compute_batch_outputs_vqa(
                     gpu_info["model"],
@@ -220,29 +236,42 @@ class AsyncGPUPool:
                     mode="preference",
                 )
             else:
-                # Run inference for preference samples
                 outputs_preference = compute_batch_outputs(
-                    gpu_info["model"], gpu_info["tokenizer"], batch_inputs["preference_inputs"]
+                    gpu_info["model"],
+                    gpu_info["tokenizer"],
+                    batch_inputs["preference_inputs"],
+                    sample_type="preference",
                 )
         else:
             outputs_preference = None
 
-        if batch_inputs["num_progress"] > 0:
+        if num_progress > 0:
             if self.exp_config.model.model_type == "vqa":
                 outputs_progress = compute_batch_outputs_vqa(
                     gpu_info["model"], gpu_info["tokenizer"], batch_inputs["progress_inputs"], mode="progress"
                 )
             else:
-                # Run inference for progress samples - only compute progress for trajectory A
-                outputs_progress = compute_batch_outputs_progress_only(
-                    gpu_info["model"], gpu_info["tokenizer"], batch_inputs["progress_inputs"]
+                outputs_progress = compute_batch_outputs(
+                    gpu_info["model"],
+                    gpu_info["tokenizer"],
+                    batch_inputs["progress_inputs"],
+                    sample_type="progress",
                 )
-        else:
-            outputs_progress = None
+
+        if num_similarities > 0:
+            if self.exp_config.model.model_type == "vqa":
+                raise ValueError("Similarity evaluation is not supported for VQA model type.")
+            outputs_similarity = compute_batch_outputs(
+                gpu_info["model"],
+                gpu_info["tokenizer"],
+                batch_inputs["similarity_inputs"],
+                sample_type="similarity",
+            )
 
         return {
             "outputs_preference": outputs_preference,
             "outputs_progress": outputs_progress,
+            "outputs_similarity": outputs_similarity,
         }
 
     def get_pool_status(self):
@@ -262,101 +291,122 @@ class AsyncGPUPool:
         print("GPU pool shutdown complete")
 
 
-def compute_batch_outputs(model, tokenizer, batch_inputs: dict[str, torch.Tensor]) -> dict[str, Any]:
-    """Compute batch outputs for preference prediction."""
+def compute_batch_outputs(model, tokenizer, batch_inputs: dict[str, torch.Tensor], sample_type: str) -> dict[str, Any]:
+    """
+    Run a forward pass for non-VQA models and return the raw head outputs we
+    need for eval logging.
+
+    Args:
+        model: RFM/ReWiND model on the target device.
+        tokenizer: Included for parity with the VQA helper (unused here).
+        batch_inputs: Collated inputs for the requested head.
+        sample_type: One of {"preference","progress","similarity"}.
+
+    Returns:
+        Dict containing logits/derived predictions keyed by head.
+    """
     model.eval()
-    device = next(model.parameters()).device
+    model_output, _ = forward_model(model, batch_inputs, sample_type=sample_type)
 
-    with torch.no_grad():
-        if isinstance(model, ReWiNDTransformer):
-            model_output = rewind_forward(model, batch_inputs, device, sample_type="preference")
-        else:
-            model_output = rfm_forward(model, batch_inputs, device, sample_type="preference")
+    results: dict[str, Any] = {}
 
-        # Extract logits from ModelOutput
-        logits = model_output.pref_logits.squeeze(-1)  # [B]
-        probs = torch.sigmoid(logits)  # [B]
-        print(f"predicted preference probabilities: {probs}")
-        preds = (probs > 0.5).long()  # [B]
-
-        predictions = preds.detach().cpu().tolist()
-
-        # Extract progress predictions for A and B if available
-        # Map back to chosen/rejected based on preference labels
-        progress_pred_chosen: list[list[float]] = []
-        progress_pred_rejected: list[list[float]] = []
-
-        progress_logits = model_output.progress_logits
-        if progress_logits is not None and isinstance(progress_logits, dict):
-            # Get preference labels to determine which trajectory (A or B) corresponds to chosen/rejected
-            preference_labels = batch_inputs["preference_labels"].cpu().tolist()
-
-            for _i, (label, seq_A, seq_B) in enumerate(
-                zip(preference_labels, progress_logits.get("A", []), progress_logits.get("B", []), strict=False)
-            ):
-                if label == 1.0:
-                    # First trajectory (A) is chosen, second trajectory (B) is rejected
-                    chosen_seq = seq_A
-                    rejected_seq = seq_B
-                else:
-                    # First trajectory (A) is rejected, second trajectory (B) is chosen
-                    chosen_seq = seq_B
-                    rejected_seq = seq_A
-
-                # Extract chosen progress
-                if chosen_seq is None:
-                    progress_pred_chosen.append([])
-                else:
-                    progress_pred_chosen.append(chosen_seq.detach().cpu().flatten().tolist())
-
-                # Extract rejected progress
-                if rejected_seq is None:
-                    progress_pred_rejected.append([])
-                else:
-                    progress_pred_rejected.append(rejected_seq.detach().cpu().flatten().tolist())
-
-        return {
-            "predictions": predictions,
+    # Preference logits and metadata
+    if sample_type == "preference" and model_output.pref_logits is not None:
+        logits = model_output.pref_logits.squeeze(-1)
+        probs = torch.sigmoid(logits)
+        preds = (probs > 0.5).long()
+        results.update({
+            "predictions": preds.detach().cpu().tolist(),
             "prediction_probs": probs.detach().cpu().tolist(),
-            "progress_pred_chosen": progress_pred_chosen,
-            "progress_pred_rejected": progress_pred_rejected,
-            "preference_labels": preference_labels,
-        }
+            "preference_labels": batch_inputs["preference_labels"].cpu().tolist(),
+        })
 
-
-def compute_batch_outputs_progress_only(model, tokenizer, batch_inputs: dict[str, torch.Tensor]) -> dict[str, Any]:
-    """Compute batch outputs for progress prediction only (trajectory A)."""
-    model.eval()
-    device = next(model.parameters()).device
-
-    with torch.no_grad():
-        if isinstance(model, ReWiNDTransformer):
-            model_output = rewind_forward(model, batch_inputs, device, sample_type="progress")
-        else:
-            model_output = rfm_forward(model, batch_inputs, device, sample_type="progress")
-
-    progress_pred = []
-
+    # Progress predictions (used by both preference + progress sample types)
     progress_logits = model_output.progress_logits
-    if progress_logits is not None and isinstance(progress_logits, dict) and "A" in progress_logits:
-        for seq_A in progress_logits["A"]:
-            if seq_A is None:
-                progress_pred.append([])
-            else:
-                progress_pred.append(seq_A.detach().cpu().flatten().tolist())
-    else:
-        # If no progress logits, create empty lists
-        progress_pred = [[] for _ in range(len(batch_inputs.get("input_ids", [])))]
+    if progress_logits is not None and isinstance(progress_logits, dict):
+        if sample_type == "preference":
+            progress_pred_chosen: list[list[float]] = []
+            progress_pred_rejected: list[list[float]] = []
+            preference_labels = results.get("preference_labels", batch_inputs["preference_labels"].cpu().tolist())
+            seq_A_list = progress_logits.get("A", [])
+            seq_B_list = progress_logits.get("B", [])
+            for label, seq_A, seq_B in zip(preference_labels, seq_A_list, seq_B_list, strict=False):
+                if label == 1.0:
+                    chosen_seq, rejected_seq = seq_A, seq_B
+                else:
+                    chosen_seq, rejected_seq = seq_B, seq_A
+                progress_pred_chosen.append([] if chosen_seq is None else chosen_seq.detach().cpu().flatten().tolist())
+                progress_pred_rejected.append(
+                    [] if rejected_seq is None else rejected_seq.detach().cpu().flatten().tolist()
+                )
+            results.update({
+                "progress_pred_chosen": progress_pred_chosen,
+                "progress_pred_rejected": progress_pred_rejected,
+            })
+        elif sample_type == "progress":
+            progress_pred = []
+            seq_A_list = progress_logits.get("A", [])
+            for seq_A in seq_A_list:
+                progress_pred.append([] if seq_A is None else seq_A.detach().cpu().flatten().tolist())
+            if not progress_pred:
+                batch_size = len(batch_inputs.get("task", []))
+                progress_pred = [[] for _ in range(batch_size)]
+            results["progress_pred"] = progress_pred
 
-    return {
-        "progress_pred": progress_pred,
-    }
+    # Similarity logits
+    if sample_type == "similarity" and model_output.sim_logits is not None:
+        sim_logits = model_output.sim_logits
+        if isinstance(sim_logits, torch.Tensor):
+            sim_tensor = sim_logits.squeeze(-1)
+        elif isinstance(sim_logits, list):
+            sim_tensor = torch.stack(sim_logits).squeeze(-1)
+        else:
+            sim_tensor = None
+
+        sim_scores_list: list[float] = []
+        if sim_tensor is not None:
+            sim_scores_list = sim_tensor.detach().cpu().flatten().tolist()
+
+        num_samples = len(batch_inputs.get("task", []))
+        if num_samples == 0 and sim_scores_list:
+            num_samples = len(sim_scores_list) // 2
+
+        sim_score_ref_sim: list[float | None] = []
+        sim_score_ref_diff: list[float | None] = []
+        for i in range(num_samples):
+            idx_sim = i * 2
+            idx_diff = idx_sim + 1
+            sim_score_ref_sim.append(sim_scores_list[idx_sim] if idx_sim < len(sim_scores_list) else None)
+            sim_score_ref_diff.append(sim_scores_list[idx_diff] if idx_diff < len(sim_scores_list) else None)
+
+        results.update({
+            "sim_score_ref_sim": sim_score_ref_sim,
+            "sim_score_ref_diff": sim_score_ref_diff,
+            "task": batch_inputs.get("task", []),
+            "data_source": batch_inputs.get("data_source", []),
+            "data_gen_strategy": batch_inputs.get("data_gen_strategy", []),
+            "metadata": batch_inputs.get("metadata", []),
+        })
+
+    return results
 
 
 def compute_batch_outputs_vqa(
     model, tokenizer, batch_inputs: dict[str, torch.Tensor], mode: str = "preference"
 ) -> dict[str, Any]:
-    """Compute batch outputs for VQA."""
+    """
+    Generate text answers for VQA-style models and post-process into numeric
+    predictions so downstream aggregation matches the non-VQA path.
+
+    Args:
+        model: VQA model (e.g., Qwen VQA variant).
+        tokenizer: Associated tokenizer for decoding.
+        batch_inputs: Collated inputs including prompt tokens/images.
+        mode: "preference" or "progress" depending on the head requested.
+
+    Returns:
+        Dict containing parsed predictions for the requested mode.
+    """
     model.eval()
     device = next(model.parameters()).device
 
@@ -553,10 +603,6 @@ def create_app(cfg: EvaluationConfig, exp_config: ExperimentConfig):
 
 
 def main():
-    import argparse
-
-    import uvicorn
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--config_path", type=str, default="rfm/configs/eval_config.yaml")
     parser.add_argument(
@@ -576,7 +622,7 @@ def main():
     with open(args.config_path) as f:
         config_dict = yaml.safe_load(f)
 
-    cfg = EvaluationConfig(**config_dict)
+    cfg = EvalServerConfig(**config_dict)
 
     # Override config with command line args
     if args.num_gpus is not None:
@@ -588,13 +634,13 @@ def main():
     console.print(cfg)
 
     # Loading experiment config from prtrained model
-    if cfg.model_path != "":
-        # Download model config from Hugging Face
-        model_config_path = hf_hub_download(repo_id=cfg.model_path, filename="config.yaml")
-        with open(model_config_path) as f:
-            model_config_dict = yaml.safe_load(f)
-
-        exp_config = ExperimentConfig(**model_config_dict)
+    exp_config = None
+    if cfg.model_path:
+        exp_config, _, _, _ = load_model_from_hf(
+            model_path=cfg.model_path,
+            device=torch.device("cpu"),
+            load_model=False,
+        )
     else:
         print("Saved checkpoint is not found, initializing base model")
         print(f"Loading model configs from local paths: {args.model_config_paths}")
@@ -607,6 +653,9 @@ def main():
                 doc = yaml.safe_load(f) or {}
             deep_merge(merged, doc)
         exp_config = ExperimentConfig(**merged)
+
+    if exp_config is None:
+        raise ValueError("Failed to load experiment config. Provide a valid model_path or model_config_paths.")
 
     console.print(exp_config)
 

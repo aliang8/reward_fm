@@ -395,7 +395,7 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: dict[str, torch.Tensor
         Dict containing logits/derived predictions keyed by head.
     """
     model.eval()
-    logger.debug(f"compute_batch_outputs sample_type={sample_type} keys={list(batch_inputs.keys())}")
+    logger.debug(f"compute_batch_outputs sample_type={sample_type}")
     model_output, _ = forward_model(model, batch_inputs, sample_type=sample_type)
 
     results: dict[str, Any] = {}
@@ -410,6 +410,10 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: dict[str, torch.Tensor
             "prediction_probs": probs.detach().cpu().tolist(),
             "preference_labels": batch_inputs["preference_labels"].cpu().tolist(),
         })
+
+        logger.debug(f"predictions: {results['predictions']}")
+        logger.debug(f"prediction_probs: {results['prediction_probs']}")
+        logger.debug(f"preference_labels: {results['preference_labels']}")
 
     # Progress predictions (used by both preference + progress sample types)
     progress_logits = model_output.progress_logits
@@ -433,6 +437,8 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: dict[str, torch.Tensor
                 "progress_pred_chosen": progress_pred_chosen,
                 "progress_pred_rejected": progress_pred_rejected,
             })
+            logger.debug(f"progress_pred_chosen: {progress_pred_chosen}")
+            logger.debug(f"progress_pred_rejected: {progress_pred_rejected}")
         elif sample_type == "progress":
             progress_pred = []
             seq_A_list = progress_logits.get("A", [])
@@ -442,6 +448,7 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: dict[str, torch.Tensor
                 batch_size = len(batch_inputs.get("task", []))
                 progress_pred = [[] for _ in range(batch_size)]
             results["progress_pred"] = progress_pred
+            logger.debug(f"progress_pred: {progress_pred}")
 
     # Similarity logits
     if sample_type == "similarity" and model_output.sim_logits is not None:
@@ -477,6 +484,12 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: dict[str, torch.Tensor
             "data_gen_strategy": batch_inputs.get("data_gen_strategy", []),
             "metadata": batch_inputs.get("metadata", []),
         })
+
+        logger.debug(f"sim_score_ref_sim: {sim_score_ref_sim}")
+        logger.debug(f"sim_score_ref_diff: {sim_score_ref_diff}")
+        logger.debug(f"task: {batch_inputs.get('task', [])}")
+        logger.debug(f"data_source: {batch_inputs.get('data_source', [])}")
+        logger.debug(f"data_gen_strategy: {batch_inputs.get('data_gen_strategy', [])}")
 
     return results
 

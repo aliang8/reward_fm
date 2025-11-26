@@ -73,13 +73,13 @@ class SimilarityScoreSampler(RFMBaseSampler):
                 continue
 
             # Limit number of human/robot trajectories considered per task to reduce combinatorics
-            if len(human_indices) > 3:
-                selected_humans = random.sample(human_indices, 3)
+            if len(human_indices) > 2:
+                selected_humans = random.sample(human_indices, 2)
             else:
                 selected_humans = human_indices
 
-            if len(robot_indices) > 3:
-                selected_robots = random.sample(robot_indices, 3)
+            if len(robot_indices) > 2:
+                selected_robots = random.sample(robot_indices, 2)
             else:
                 selected_robots = robot_indices
 

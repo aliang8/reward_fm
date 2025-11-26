@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-FastAPI server to evaluate RFM model batches with async multi-GPU support.
+FastAPI server to evaluate RFM model batches with a multi-GPU service layer.
 
 Usage example:
-    uv run python evals/eval_server.py \
-        --config_path rfm/configs/eval_config_server.yaml 
-        --num_gpus 1 \
-        --model_path reward_fm/ant_rfm_rewind_bs1024_pref_prog
+    RFM_LOG_LEVEL=DEBUG uv run python evals/eval_server.py \
+        --config_path rfm/configs/eval_config_server.yaml \
+        --num_gpus 2 
 
 Endpoints:
   POST /evaluate_batch        - JSON payload
@@ -24,11 +23,15 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import copy
 import io
 import json
+import os
 import queue
 import time
 from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
+import logging
 from typing import Any, Dict
 import argparse
 
@@ -45,15 +48,35 @@ from evals.eval_utils import extract_answer_from_text, load_model_from_hf
 from rfm.configs.eval_configs import EvalServerConfig
 from rfm.configs.experiment_configs import ExperimentConfig
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample
-from rfm.utils.parser import deep_merge
 from rfm.utils.setup_utils import setup_model_and_processor, setup_batch_collator
 from rfm.models.utils import ModelOutput
 
 
+LOG_LEVEL = os.environ.get("RFM_LOG_LEVEL", "INFO").upper()
+logger = logging.getLogger("rfm.eval_server")
+logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
+    logger.addHandler(handler)
+logger.propagate = False
+logger.info(f"rfm.eval_server logger initialized at level {LOG_LEVEL}")
+
+
+def log_logits(name: str, value: Any) -> None:
+    if isinstance(value, torch.Tensor):
+        logger.debug(f"{name} shape={tuple(value.shape)} values={value.detach().cpu().tolist()}")
+    elif isinstance(value, dict):
+        logger.debug(f"{name} keys={list(value.keys())}")
+        for key, sub_value in value.items():
+            log_logits(f"{name}.{key}", sub_value)
+    elif isinstance(value, list):
+        logger.debug(f"{name}: {value}")
+
 def forward_model(model, batch_inputs: Dict[str, Any], sample_type: str = "progress") -> tuple[ModelOutput, Dict[str, Any]]:
     """Forward pass that mirrors trainer logic (handles ReWiND vs RFM)."""
     with torch.no_grad():
-        if getattr(model.config, "base_model_id", "") and "rewind" in model.config.base_model_id:
+        if "rewind" in model.__class__.__name__.lower():
             model_output, extra = model(
                 video_embeddings=batch_inputs.get("video_embeddings"),
                 text_embeddings=batch_inputs.get("text_embeddings"),
@@ -72,28 +95,45 @@ def forward_model(model, batch_inputs: Dict[str, Any], sample_type: str = "progr
                 sample_type=sample_type,
                 timing_raw=None,
             )
+
     return model_output, extra
 
 
-class AsyncGPUPool:
-    """Async GPU pool for handling multiple requests efficiently across multiple GPUs."""
+class MultiGPUEvalServer:
+    """Multi-GPU inference server that schedules requests across devices."""
 
     def __init__(
         self,
-        exp_config: ExperimentConfig,
         model_path: str,
         num_gpus: int | None = None,
         max_workers: int | None = None,
     ):
-        self.exp_config = exp_config
         self.model_path = model_path
         self.num_gpus = num_gpus or torch.cuda.device_count()
         self.max_workers = max_workers or self.num_gpus
+        self._active_jobs = 0
+        self._job_counter = 0
+        self._completed_jobs = 0
+        self._active_jobs_lock = Lock()
+
+        logger.info(f"Loading experiment config and base model from {self.model_path}")
+        exp_config, tokenizer, processor, reward_model = load_model_from_hf(
+            model_path=self.model_path,
+            device=torch.device("cpu"),
+        )
+        self.exp_config: ExperimentConfig = exp_config
+        self.base_tokenizer = tokenizer
+        self.base_processor = processor
+        self.base_model = reward_model
+        self.base_batch_collator = setup_batch_collator(processor, tokenizer, self.exp_config, is_eval=True)
 
         if self.num_gpus == 0:
             raise RuntimeError("No CUDA devices available")
 
-        print(f"Initializing async GPU pool with {self.num_gpus} GPUs and {self.max_workers} workers")
+        logger.info(
+            f"Initializing multi-GPU eval server: model_path={self.model_path} "
+            f"num_gpus={self.num_gpus} max_workers={self.max_workers}"
+        )
 
         # Initialize GPU pool
         self.gpu_pool = queue.Queue(maxsize=self.num_gpus)
@@ -103,17 +143,19 @@ class AsyncGPUPool:
         # Initialize GPUs
         self._initialize_gpus()
 
-        print("GPU pool initialized successfully")
+        logger.info("Multi-GPU eval server initialized successfully")
 
     def _initialize_gpus(self):
         """Initialize models on all GPUs."""
         for gpu_id in range(self.num_gpus):
             device = f"cuda:{gpu_id}"
-            print(f"Loading model on GPU {gpu_id} ({device})")
+            logger.info(f"Loading model replica on GPU {gpu_id} ({device})")
 
             # Load model on specific GPU
-            tokenizer, processor, model = setup_model_and_processor(self.exp_config.model, self.model_path)
-            batch_collator = setup_batch_collator(processor, tokenizer, self.exp_config, is_eval=True)
+            tokenizer = copy.deepcopy(self.base_tokenizer)
+            processor = copy.deepcopy(self.base_processor)
+            model = copy.deepcopy(self.base_model)
+            batch_collator = copy.deepcopy(self.base_batch_collator)
 
             model = model.to(device)
             model.eval()
@@ -137,14 +179,25 @@ class AsyncGPUPool:
                 "created_at": time.time(),
             })
 
-            print(f"Successfully loaded model on GPU {gpu_id}")
+            logger.info(f"Successfully loaded model on GPU {gpu_id}")
 
     async def process_batch(self, batch_data: dict[str, Any] | list[dict[str, Any]]):
-        """Process a batch using an available GPU asynchronously."""
+        """Process a batch using whichever GPU is available."""
         loop = asyncio.get_event_loop()
 
-        # Get GPU from pool (this will block until one is available)
-        gpu_info = await loop.run_in_executor(self.executor, self.gpu_pool.get)
+        # Get GPU from pool (this will block until one is available).
+        # Use the default executor so worker threads remain available for compute.
+        gpu_info = await loop.run_in_executor(None, self.gpu_pool.get)
+        queue_size_after_acquire = self.gpu_pool.qsize()
+        with self._active_jobs_lock:
+            self._job_counter += 1
+            job_id = self._job_counter
+            self._active_jobs += 1
+            active_jobs = self._active_jobs
+        logger.debug(
+            f"[job {job_id}] Acquired GPU {gpu_info['gpu_id']} "
+            f"queue_size={queue_size_after_acquire} active_jobs={active_jobs}"
+        )
 
         start_time = time.time()
 
@@ -154,7 +207,13 @@ class AsyncGPUPool:
 
         try:
             # Process batch in thread pool
-            result = await loop.run_in_executor(self.executor, self._process_batch_sync, gpu_info, batch_data)
+            result = await loop.run_in_executor(
+                self.executor,
+                self._process_batch_helper,
+                gpu_info,
+                batch_data,
+                job_id,
+            )
 
             # Update stats
             processing_time = time.time() - start_time
@@ -170,8 +229,25 @@ class AsyncGPUPool:
             self.gpu_stats[gpu_info["gpu_id"]]["total_processing_time"] += processing_time
             self.gpu_stats[gpu_info["gpu_id"]]["status"] = "ready"
             self.gpu_pool.put(gpu_info)
+            queue_size_after_release = self.gpu_pool.qsize()
+            with self._active_jobs_lock:
+                self._active_jobs -= 1
+                self._completed_jobs += 1
+                active_jobs = self._active_jobs
+                completed_jobs = self._completed_jobs
+            logger.debug(
+                f"[job {job_id}] Completed on GPU {gpu_info['gpu_id']} "
+                f"active_jobs={active_jobs} completed_jobs={completed_jobs} "
+                f"queue_size={queue_size_after_release} "
+                f"processing_time={processing_time:.3f}s"
+            )
 
-    def _process_batch_sync(self, gpu_info: dict, batch_data: dict[str, Any] | list[dict[str, Any]]):
+    def _process_batch_helper(
+        self,
+        gpu_info: dict,
+        batch_data: dict[str, Any] | list[dict[str, Any]],
+        job_id: int,
+    ):
         """Synchronous batch processing on specific GPU."""
 
         # Handle both dict and list inputs
@@ -185,7 +261,7 @@ class AsyncGPUPool:
         if not samples:
             raise ValueError("No samples found in batch data")
 
-        print(f"Processing {len(samples)} samples on GPU {gpu_info['gpu_id']}")
+        logger.debug(f"[job {job_id}] Processing {len(samples)} samples on GPU {gpu_info['gpu_id']}")
 
         batch_collator = gpu_info["batch_collator"]
         input_samples = []
@@ -226,6 +302,10 @@ class AsyncGPUPool:
         num_preferences = batch_inputs.get("num_preferences", 0)
         num_progress = batch_inputs.get("num_progress", 0)
         num_similarities = batch_inputs.get("num_similarities", 0)
+        logger.debug(
+            f"[job {job_id}] Batch counts — preference: {num_preferences} "
+            f"progress: {num_progress} similarity: {num_similarities}"
+        )
 
         if num_preferences > 0:
             if self.exp_config.model.model_type == "vqa":
@@ -268,11 +348,20 @@ class AsyncGPUPool:
                 sample_type="similarity",
             )
 
+        # if logger.isEnabledFor(logging.DEBUG):
+        #     if outputs_preference is not None:
+        #         log_logits(f"job{job_id}.outputs_preference", outputs_preference)
+        #     if outputs_progress is not None:
+        #         log_logits(f"job{job_id}.outputs_progress", outputs_progress)
+        #     if outputs_similarity is not None:
+        #         log_logits(f"job{job_id}.outputs_similarity", outputs_similarity)
+
         return {
             "outputs_preference": outputs_preference,
             "outputs_progress": outputs_progress,
             "outputs_similarity": outputs_similarity,
         }
+
 
     def get_pool_status(self):
         """Get status of the GPU pool."""
@@ -286,9 +375,9 @@ class AsyncGPUPool:
 
     def shutdown(self):
         """Shutdown the GPU pool and executor."""
-        print("Shutting down GPU pool...")
+        logger.info("Shutting down GPU pool...")
         self.executor.shutdown(wait=True)
-        print("GPU pool shutdown complete")
+        logger.info("GPU pool shutdown complete")
 
 
 def compute_batch_outputs(model, tokenizer, batch_inputs: dict[str, torch.Tensor], sample_type: str) -> dict[str, Any]:
@@ -306,6 +395,7 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: dict[str, torch.Tensor
         Dict containing logits/derived predictions keyed by head.
     """
     model.eval()
+    logger.debug(f"compute_batch_outputs sample_type={sample_type} keys={list(batch_inputs.keys())}")
     model_output, _ = forward_model(model, batch_inputs, sample_type=sample_type)
 
     results: dict[str, Any] = {}
@@ -443,6 +533,7 @@ def compute_batch_outputs_vqa(
         generated_texts = tokenizer.batch_decode(
             generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True
         )
+    logger.debug(f"VQA generated {len(generated_texts)} sequences (mode={mode})")
 
     if mode == "preference":
         predictions = [extract_answer_from_text(text) for text in generated_texts]
@@ -468,7 +559,7 @@ def compute_batch_outputs_vqa(
         raise ValueError(f"Mode {mode} not supported")
 
 
-def create_app(cfg: EvaluationConfig, exp_config: ExperimentConfig):
+def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | None = None):
     app = FastAPI(title="RFM Multi-GPU Evaluation Server")
 
     app.add_middleware(
@@ -479,17 +570,18 @@ def create_app(cfg: EvaluationConfig, exp_config: ExperimentConfig):
         allow_headers=["*"],
     )
 
-    # Initialize async GPU pool
+    # Initialize multi-GPU server
     num_gpus = getattr(cfg, "num_gpus", None)
     max_workers = getattr(cfg, "max_workers", None)
 
-    gpu_pool = AsyncGPUPool(exp_config, cfg.model_path, num_gpus, max_workers)
-    print(f"GPU pool initialized with {gpu_pool.num_gpus} GPUs")
+    multi_gpu_server = multi_gpu_server or MultiGPUEvalServer(cfg.model_path, num_gpus, max_workers)
+    logger.info(f"Multi-GPU eval server initialized with {multi_gpu_server.num_gpus} GPUs")
 
     @app.post("/evaluate_batch")
     async def evaluate_batch(batch: dict[str, Any]):
-        """Evaluate a batch of preference samples using async GPU pool."""
-        return await gpu_pool.process_batch(batch)
+        """Evaluate a batch of preference samples using the Multi-GPU server."""
+        logger.debug(f"Received /evaluate_batch request with keys: {list(batch.keys())}")
+        return await multi_gpu_server.process_batch(batch)
 
     @app.post("/evaluate_batch_npy")
     async def evaluate_batch_npy(request: Request):
@@ -532,7 +624,11 @@ def create_app(cfg: EvaluationConfig, exp_config: ExperimentConfig):
         batch_data = reconstruct_payload_from_npy(numpy_arrays, other_data)
 
         # Process the batch
-        return await gpu_pool.process_batch(batch_data)
+        logger.debug(
+            f"Received /evaluate_batch_npy request with {len(numpy_arrays)} numpy arrays "
+            f"and {len(other_data)} other fields"
+        )
+        return await multi_gpu_server.process_batch(batch_data)
 
     def reconstruct_payload_from_npy(
         numpy_arrays: dict[str, np.ndarray], other_data: dict[str, Any]
@@ -586,18 +682,18 @@ def create_app(cfg: EvaluationConfig, exp_config: ExperimentConfig):
     @app.get("/gpu_status")
     def get_gpu_status():
         """Get status of all GPUs and pool."""
-        return gpu_pool.get_pool_status()
+        return multi_gpu_server.get_pool_status()
 
     @app.get("/health")
     def health_check():
         """Health check endpoint."""
-        status = gpu_pool.get_pool_status()
+        status = multi_gpu_server.get_pool_status()
         return {"status": "healthy", "available_gpus": status["available_gpus"], "total_gpus": status["total_gpus"]}
 
     @app.on_event("shutdown")
     async def shutdown_event():
         """Cleanup on shutdown."""
-        gpu_pool.shutdown()
+        multi_gpu_server.shutdown()
 
     return app
 
@@ -605,12 +701,6 @@ def create_app(cfg: EvaluationConfig, exp_config: ExperimentConfig):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config_path", type=str, default="rfm/configs/eval_config.yaml")
-    parser.add_argument(
-        "--model_config_paths",
-        nargs="*",
-        default=[],
-        help="Paths to the model config files (Only used if model_path is not set in eval config)",
-    )
     parser.add_argument("--host", type=str, default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--num_gpus", type=int, default=None, help="Number of GPUs to use (None for all available)")
@@ -633,34 +723,19 @@ def main():
     console = Console()
     console.print(cfg)
 
-    # Loading experiment config from prtrained model
-    exp_config = None
-    if cfg.model_path:
-        exp_config, _, _, _ = load_model_from_hf(
-            model_path=cfg.model_path,
-            device=torch.device("cpu"),
-            load_model=False,
-        )
-    else:
-        print("Saved checkpoint is not found, initializing base model")
-        print(f"Loading model configs from local paths: {args.model_config_paths}")
-        # load model config from local path
-        assert args.model_config_paths != "", "Model config path is required if model path is not set in eval config"
-        # load & deep-merge YAMLs in order (later files override earlier ones)
-        merged: dict[str, Any] = {}
-        for path in args.model_config_paths:
-            with open(path) as f:
-                doc = yaml.safe_load(f) or {}
-            deep_merge(merged, doc)
-        exp_config = ExperimentConfig(**merged)
+    # Ensure pretrained checkpoint is specified
+    if not cfg.model_path:
+        raise ValueError("Eval config must set model_path to a pretrained checkpoint.")
 
-    if exp_config is None:
-        raise ValueError("Failed to load experiment config. Provide a valid model_path or model_config_paths.")
+    multi_gpu_server = MultiGPUEvalServer(
+        model_path=cfg.model_path,
+        num_gpus=getattr(cfg, "num_gpus", None),
+        max_workers=getattr(cfg, "max_workers", None),
+    )
+    console.print(multi_gpu_server.exp_config)
 
-    console.print(exp_config)
-
-    app = create_app(cfg, exp_config)
-    print(f"Running async multi-GPU server on {args.host}:{args.port}")
+    app = create_app(cfg, multi_gpu_server)
+    print(f"Running multi-GPU eval server on {args.host}:{args.port}")
     print(f"Using {cfg.num_gpus or torch.cuda.device_count()} GPUs")
     uvicorn.run(app, host=args.host, port=args.port)
 

@@ -610,6 +610,8 @@ def setup_batch_collator(
         "resized_width": cfg.data.resized_width,
         "base_model_id": cfg.model.base_model_id,
         "use_multi_image": cfg.data.use_multi_image,
+        "prog_pref": cfg.training.predict_pref_progress,
+        "prog_sim": cfg.training.predict_sim_progress,
         "use_progress_token": cfg.model.use_progress_token,
         "shuffle_progress_frames": cfg.data.shuffle_progress_frames,
         "inference": is_eval,

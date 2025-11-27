@@ -81,11 +81,11 @@ class SimSampler(RFMBaseSampler):
 
         # Strategy selection with data_source-based filtering and boosting
         strategies = []
-        
+
         # Always include REWOUND if ratio > 0
         if self.similarity_strategy_ratio[0] > 0:
             strategies.append((DataGenStrat.REWOUND, self.similarity_strategy_ratio[0]))
-        
+
         # SUBOPTIMAL: only include if data_source is in failure category
         if (
             self._has_suboptimal
@@ -96,7 +96,7 @@ class SimSampler(RFMBaseSampler):
             # Boost probability by 2x if data_source is in failure category
             boosted_prob = self.similarity_strategy_ratio[1] * 2.0
             strategies.append((DataGenStrat.SUBOPTIMAL, boosted_prob))
-        
+
         # PAIRED_HUMAN_ROBOT: only include if data_source is in paired category
         if (
             self._has_paired_human_robot

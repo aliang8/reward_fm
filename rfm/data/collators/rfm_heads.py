@@ -14,6 +14,7 @@ from .base import BaseCollator
 from .utils import convert_frames_to_pil_images, pad_target_progress, write_mp4
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample
 from rfm.data.dataset_category import is_preference_only
+from rfm.data.datasets.helpers import DataGenStrat
 from typing import List, Dict, Union
 
 
@@ -86,6 +87,8 @@ class RFMBatchCollator(BaseCollator):
         base_model_id: str = None,
         load_embeddings: bool = False,
         use_multi_image: bool = False,
+        prog_pref: bool = False,
+        prog_sim: bool = False,
         use_progress_token: bool = False,
         shuffle_progress_frames: bool = False,
         inference: bool = False,
@@ -102,6 +105,8 @@ class RFMBatchCollator(BaseCollator):
             **kwargs,
         )
         self.use_multi_image = use_multi_image
+        self.prog_pref = prog_pref
+        self.prog_sim = prog_sim
         self.use_progress_token = use_progress_token
         self.shuffle_progress_frames = shuffle_progress_frames
         self.inference = inference
@@ -392,7 +397,12 @@ class RFMBatchCollator(BaseCollator):
             )
             rejected_video_field, _ = self._prepare_frames_for_conversation(rejected_frames, prefix="tmp_rejected")
 
-            prompt = f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', evaluate which one better demonstrates successful completion of the task. Compare the trajectories and determine which is preferred."
+            prompt = f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', evaluate which one makes more progress towards the task. Return A for the first trajectory and B for the second trajectory."
+
+            if self.prog_pref:
+                # We ask the model to predict both of the task progress and preference
+                task_prompt = f" Also predict the task progress at each frame of the first trajectory, how far along the robot is towards completing the task, a float between 0 and 1, where 0 is the starting state and 1 is when the task is completed. If the robot is not performing the same task, predict 0 progress."
+                prompt += task_prompt
 
             # Determine which trajectory is A and which is B based on preference label
             if preference_labels[i] == 1.0:
@@ -414,15 +424,18 @@ class RFMBatchCollator(BaseCollator):
             if self.use_progress_token:
                 content_list.append({"type": "text", "text": "<|prog_token_A|>"})
                 content_list.append({"type": "text", "text": "<|succ_token_A|>"})
+
             content_list.extend([
                 {"type": "text", "text": "<|split_token|>"},
                 {"type": "text", "text": "This is Trajectory B. "},
             ])
             self._add_vision_content_to_list(content_list, traj_b_field, content_extras)
+            
             # Add progress and success tokens for trajectory B if use_progress_token is enabled
             if self.use_progress_token:
                 content_list.append({"type": "text", "text": "<|prog_token_B|>"})
                 content_list.append({"type": "text", "text": "<|succ_token_B|>"})
+
             content_list.append({"type": "text", "text": "<|pref_token|>"})
 
             conversation = [
@@ -512,7 +525,7 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["padding_mask_A"] = create_padding_mask(batch_inputs["frames_shape_A"], max_length_A)
         batch_inputs["padding_mask_B"] = create_padding_mask(batch_inputs["frames_shape_B"], max_length_B)
 
-        batch_inputs["chosen_data_gen_strategy"] = ["subsample_task"] * len(preference_samples)
+        batch_inputs["chosen_data_gen_strategy"] = [DataGenStrat.SUBSEQUENCE.value] * len(preference_samples)
         batch_inputs["rejected_data_gen_strategy"] = [sample.data_gen_strategy for sample in preference_samples]
         batch_inputs["chosen_quality_label"] = [sample.chosen_trajectory.quality_label for sample in preference_samples]
 
@@ -521,7 +534,7 @@ class RFMBatchCollator(BaseCollator):
         target_progress_chosen_mask = [
             should_compute_progress(
                 sample.chosen_trajectory.quality_label,
-                "subsample_task",
+                DataGenStrat.SUBSEQUENCE.value,
                 data_source=sample.chosen_trajectory.data_source,
             )
             for sample in preference_samples
@@ -736,10 +749,9 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["padding_mask_sim"] = create_padding_mask(batch_inputs["traj_sim_frames_shape"], max_length_sim)
         batch_inputs["padding_mask_diff"] = create_padding_mask(batch_inputs["traj_diff_frames_shape"], max_length_diff)
         batch_inputs["resample_attempts"] = [sample.resample_attempts for sample in similarity_samples]
-        
+
         batch_inputs["metadata"] = [
-            sample.ref_trajectory.metadata if sample.ref_trajectory.metadata else {}
-            for sample in similarity_samples
+            sample.ref_trajectory.metadata if sample.ref_trajectory.metadata else {} for sample in similarity_samples
         ]
 
         return batch_inputs

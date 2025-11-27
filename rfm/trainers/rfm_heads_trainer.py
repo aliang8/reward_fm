@@ -169,6 +169,74 @@ class RFMHeadsTrainer(Trainer):
 
         rank_0_print("Post-checkpoint load reset complete")
 
+    def _log_rank_shape(self, label: str, value) -> None:
+        """Utility to print tensor/list shapes per rank for debugging gather issues."""
+        if not hasattr(self, "accelerator"):
+            return
+        rank = getattr(self.accelerator, "process_index", None)
+        if rank is None and dist.is_initialized():
+            rank = dist.get_rank()
+        if rank is None:
+            rank = 0
+
+        if torch.is_tensor(value):
+            info = f"tensor shape={tuple(value.shape)}"
+        elif isinstance(value, (list, tuple)):
+            info = f"{type(value).__name__} len={len(value)}"
+        elif value is None:
+            info = "None"
+        else:
+            info = f"{type(value).__name__}"
+
+        print(f"[Rank {rank}] {label}: {info}", flush=True)
+
+    def _normalize_list_like(self, value):
+        """Convert None/scalars/tuples to a list so we can safely gather across ranks."""
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return list(value)
+        if isinstance(value, tuple):
+            return list(value)
+        return [value]
+
+    def _gather_list_across_processes(self, value):
+        """Gather Python lists (or list-like) across all ranks."""
+        normalized = self._normalize_list_like(value)
+        if not dist.is_initialized():
+            return normalized
+
+        world_size = dist.get_world_size()
+        gathered = [None] * world_size
+        dist.all_gather_object(gathered, normalized)
+
+        flattened = []
+        for proc_list in gathered:
+            if not proc_list:
+                continue
+            flattened.extend(proc_list)
+        return flattened
+
+    def _gather_metadata_fields(self, sample_inputs: dict, fields: list[str]) -> dict:
+        """Gather heterogeneous metadata fields (lists, tensors) across processes."""
+        gathered = {}
+        for field in fields:
+            field_value = sample_inputs.get(field)
+            if torch.is_tensor(field_value):
+                gathered[field] = self.accelerator.gather_for_metrics(field_value)
+            else:
+                gathered[field] = self._gather_list_across_processes(field_value)
+        return gathered
+
+    def _truncate_metadata_lists(self, metadata: dict, max_len: int) -> dict:
+        """Ensure metadata lists align with tensor batch sizes without altering tensors."""
+        if max_len < 0:
+            return metadata
+        for key, value in metadata.items():
+            if isinstance(value, list):
+                metadata[key] = value[:max_len]
+        return metadata
+
     def _get_learning_rate(self):
         """
         Override to safely get learning rate, handling cases where scheduler hasn't been stepped yet.
@@ -503,7 +571,6 @@ class RFMHeadsTrainer(Trainer):
 
         self.logger.log_scalars(log_data, step=self.state.global_step)
 
-        # Log to console on rank 0
         if is_rank_0():
             rank_0_print(f"Step {self.state.global_step}:")
             rank_0_print("-" * 50)
@@ -611,32 +678,30 @@ class RFMHeadsTrainer(Trainer):
                             else:
                                 progress_pred = torch.tensor(progress_pred, device=self.accelerator.device)
 
+                        # self._log_rank_shape("progress_pred_local", progress_pred)
+                        # self._log_rank_shape("target_progress_local", progress_samples["target_progress"])
+
                         # Gather everything
                         progress_pred = self.accelerator.gather_for_metrics(progress_pred)
                         target_progress = self.accelerator.gather_for_metrics(progress_samples["target_progress"])
+                        # self._log_rank_shape("progress_pred_gathered", progress_pred)
+                        # self._log_rank_shape("target_progress_gathered", target_progress)
 
                         # Gather metadata fields
                         metadata_fields = [
                             "task",
                             "data_source",
                             "data_gen_strategy",
+
                             "quality_labels",
                             "metadata",
                             "partial_success",
                         ]
-                        gathered_metadata_dict = {}
-
-                        if dist.is_initialized():
-                            world_size = dist.get_world_size()
-                            for field in metadata_fields:
-                                gathered = [None] * world_size
-                                dist.all_gather_object(gathered, progress_samples[field])
-                                gathered_metadata_dict[field] = [item for sublist in gathered for item in sublist]
-                                # Clean up gathered list immediately
-                                del gathered
-                        else:
-                            for field in metadata_fields:
-                                gathered_metadata_dict[field] = progress_samples[field]
+                        gathered_metadata_dict = self._gather_metadata_fields(progress_samples, metadata_fields)
+                        num_progress_samples = progress_pred.shape[0] if progress_pred is not None else 0
+                        gathered_metadata_dict = self._truncate_metadata_lists(
+                            gathered_metadata_dict, num_progress_samples
+                        )
 
                         # Handle success predictions if needed
                         success_pred_gathered = None
@@ -651,9 +716,12 @@ class RFMHeadsTrainer(Trainer):
                                     else torch.tensor(success_pred, device=self.accelerator.device)
                                 )
                             success_probs = torch.sigmoid(success_pred)
+                            # self._log_rank_shape("success_probs_local", success_probs)
                             success_binary = (success_probs > 0.5).float()
                             success_pred_gathered = self.accelerator.gather_for_metrics(success_binary)
                             success_probs_gathered = self.accelerator.gather_for_metrics(success_probs)
+                            # self._log_rank_shape("success_pred_gathered", success_pred_gathered)
+                            # self._log_rank_shape("success_probs_gathered", success_probs_gathered)
 
                             # Compute success labels from target_progress for AUPRC
                             # Use the same logic as in _compute_success_loss_helper
@@ -664,6 +732,7 @@ class RFMHeadsTrainer(Trainer):
                             target_progress_for_success = target_progress
                             if "Qwen" in self.config.model.base_model_id and not self.config.data.use_multi_image:
                                 target_progress_for_success = target_progress[:, ::2]
+                            # self._log_rank_shape("target_progress_for_success", target_progress_for_success)
 
                             # Compute per-sample max_success thresholds
                             data_sources_list = gathered_metadata_dict["data_source"]
@@ -754,44 +823,26 @@ class RFMHeadsTrainer(Trainer):
                         pref_logits = self.accelerator.gather_for_metrics(pref_logits)
                         preference_labels = self.accelerator.gather_for_metrics(preference_samples["preference_labels"])
 
-                        # Gather non-tensor metadata using all_gather_object
-                        if dist.is_initialized():
-                            world_size = dist.get_world_size()
-
-                            # Gather each metadata field separately
-                            gathered_task = [None] * world_size
-                            gathered_data_source = [None] * world_size
-                            gathered_chosen_data_gen_strategy = [None] * world_size
-                            gathered_rejected_data_gen_strategy = [None] * world_size
-                            gathered_metadata = [None] * world_size
-
-                            dist.all_gather_object(gathered_task, preference_samples["task"])
-                            dist.all_gather_object(gathered_data_source, preference_samples["data_source"])
-                            dist.all_gather_object(
-                                gathered_chosen_data_gen_strategy, preference_samples["chosen_data_gen_strategy"]
-                            )
-                            dist.all_gather_object(
-                                gathered_rejected_data_gen_strategy, preference_samples["rejected_data_gen_strategy"]
-                            )
-                            dist.all_gather_object(gathered_metadata, preference_samples["metadata"])
-
-                            # Flatten gathered lists (each element is a list from one rank)
-                            gathered_task = [item for sublist in gathered_task for item in sublist]
-                            gathered_data_source = [item for sublist in gathered_data_source for item in sublist]
-                            gathered_chosen_data_gen_strategy = [
-                                item for sublist in gathered_chosen_data_gen_strategy for item in sublist
-                            ]
-                            gathered_rejected_data_gen_strategy = [
-                                item for sublist in gathered_rejected_data_gen_strategy for item in sublist
-                            ]
-                            gathered_metadata = [item for sublist in gathered_metadata for item in sublist]
-                        else:
-                            # Single process - no gathering needed
-                            gathered_task = preference_samples["task"]
-                            gathered_data_source = preference_samples["data_source"]
-                            gathered_chosen_data_gen_strategy = preference_samples["chosen_data_gen_strategy"]
-                            gathered_rejected_data_gen_strategy = preference_samples["rejected_data_gen_strategy"]
-                            gathered_metadata = preference_samples["metadata"]
+                        # Gather non-tensor metadata using helper (handles single and multi GPU)
+                        gathered_pref_metadata = self._gather_metadata_fields(
+                            preference_samples,
+                            [
+                                "task",
+                                "data_source",
+                                "chosen_data_gen_strategy",
+                                "rejected_data_gen_strategy",
+                                "metadata",
+                            ],
+                        )
+                        num_pref_samples = pref_logits.shape[0] if pref_logits is not None else 0
+                        gathered_pref_metadata = self._truncate_metadata_lists(
+                            gathered_pref_metadata, num_pref_samples
+                        )
+                        gathered_task = gathered_pref_metadata["task"]
+                        gathered_data_source = gathered_pref_metadata["data_source"]
+                        gathered_chosen_data_gen_strategy = gathered_pref_metadata["chosen_data_gen_strategy"]
+                        gathered_rejected_data_gen_strategy = gathered_pref_metadata["rejected_data_gen_strategy"]
+                        gathered_metadata = gathered_pref_metadata["metadata"]
 
                         # Build eval_results on all processes for compute_eval_metrics
                         for i in range(len(pref_logits)):
@@ -827,34 +878,17 @@ class RFMHeadsTrainer(Trainer):
                         # Gather predictions across all ranks
                         sim_logits = self.accelerator.gather_for_metrics(sim_logits)
 
-                        # Gather non-tensor metadata using all_gather_object
-                        if dist.is_initialized():
-                            world_size = dist.get_world_size()
-
-                            # Gather each metadata field separately
-                            gathered_task = [None] * world_size
-                            gathered_data_source = [None] * world_size
-                            gathered_data_gen_strategy = [None] * world_size
-                            gathered_metadata = [None] * world_size
-
-                            dist.all_gather_object(gathered_task, similarity_samples["task"])
-                            dist.all_gather_object(gathered_data_source, similarity_samples["data_source"])
-                            dist.all_gather_object(gathered_data_gen_strategy, similarity_samples["data_gen_strategy"])
-                            dist.all_gather_object(gathered_metadata, similarity_samples["metadata"])
-
-                            # Flatten gathered lists (each element is a list from one rank)
-                            gathered_task = [item for sublist in gathered_task for item in sublist]
-                            gathered_data_source = [item for sublist in gathered_data_source for item in sublist]
-                            gathered_data_gen_strategy = [
-                                item for sublist in gathered_data_gen_strategy for item in sublist
-                            ]
-                            gathered_metadata = [item for sublist in gathered_metadata for item in sublist]
-                        else:
-                            # Single process - no gathering needed
-                            gathered_task = similarity_samples["task"]
-                            gathered_data_source = similarity_samples["data_source"]
-                            gathered_data_gen_strategy = similarity_samples["data_gen_strategy"]
-                            gathered_metadata = similarity_samples["metadata"]
+                        # Gather non-tensor metadata using helper (handles optional/None entries)
+                        gathered_sim_metadata = self._gather_metadata_fields(
+                            similarity_samples,
+                            ["task", "data_source", "data_gen_strategy", "metadata"],
+                        )
+                        num_sim_samples = len(sim_logits) // 2 if sim_logits is not None else 0
+                        gathered_sim_metadata = self._truncate_metadata_lists(gathered_sim_metadata, num_sim_samples)
+                        gathered_task = gathered_sim_metadata["task"]
+                        gathered_data_source = gathered_sim_metadata["data_source"]
+                        gathered_data_gen_strategy = gathered_sim_metadata["data_gen_strategy"]
+                        gathered_metadata = gathered_sim_metadata["metadata"]
 
                         # Build eval_results on all processes for compute_eval_metrics
                         # The sim_logits are batched as [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
@@ -864,17 +898,27 @@ class RFMHeadsTrainer(Trainer):
                         for i in range(num_samples):
                             ref_sim_idx = i * 2
                             ref_diff_idx = i * 2 + 1
-                            
+
                             if ref_sim_idx >= len(sim_logits) or ref_diff_idx >= len(sim_logits):
                                 continue
-                            
+
                             # Metadata is indexed by sample index (i), not batched index
                             sample_result = {
                                 "task": gathered_task[i] if i < len(gathered_task) else None,
-                                "sim_score_ref_sim": sim_logits[ref_sim_idx].detach().to(dtype=torch.float32).cpu().numpy(),
-                                "sim_score_ref_diff": sim_logits[ref_diff_idx].detach().to(dtype=torch.float32).cpu().numpy(),
+                                "sim_score_ref_sim": sim_logits[ref_sim_idx]
+                                .detach()
+                                .to(dtype=torch.float32)
+                                .cpu()
+                                .numpy(),
+                                "sim_score_ref_diff": sim_logits[ref_diff_idx]
+                                .detach()
+                                .to(dtype=torch.float32)
+                                .cpu()
+                                .numpy(),
                                 "data_source": gathered_data_source[i] if i < len(gathered_data_source) else None,
-                                "data_gen_strategy": gathered_data_gen_strategy[i] if i < len(gathered_data_gen_strategy) else None,
+                                "data_gen_strategy": gathered_data_gen_strategy[i]
+                                if i < len(gathered_data_gen_strategy)
+                                else None,
                                 "metadata": gathered_metadata[i] if i < len(gathered_metadata) else None,
                             }
                             eval_results.append(sample_result)
@@ -942,7 +986,13 @@ class RFMHeadsTrainer(Trainer):
 
                 # Only log and visualize on main process
                 if self.accelerator.is_main_process:
-                    banner("Completed evaluation", f"{eval_type} evaluation: {len(eval_results)} samples", "Metrics", f"{metrics[ds_name][eval_type]}", inner_padding=1)
+                    banner(
+                        "Completed evaluation",
+                        f"{eval_type} evaluation: {len(eval_results)} samples",
+                        "Metrics",
+                        f"{metrics[ds_name][eval_type]}",
+                        inner_padding=1,
+                    )
 
                     # Create wandb tables and log visualizations
                     if eval_type == "reward_alignment":
@@ -1448,7 +1498,8 @@ class RFMHeadsTrainer(Trainer):
             # Compute AUPRC across all valid frames
             if success_probs_flat.numel() > 0 and len(torch.unique(success_labels_flat)) > 1:
                 auprc = average_precision_score(
-                    success_labels_flat.float().detach().cpu().numpy(), success_probs_flat.float().detach().cpu().numpy()
+                    success_labels_flat.float().detach().cpu().numpy(),
+                    success_probs_flat.float().detach().cpu().numpy(),
                 )
                 mean_auprc = torch.tensor(auprc, device=success_loss.device, dtype=torch.float32)
             else:
@@ -1840,24 +1891,28 @@ class RFMHeadsTrainer(Trainer):
 
     def _compute_similarity_loss(self, model, inputs, return_outputs=False, training=True):
         """Compute similarity scoring loss (DPO-style).
-        
+
         The inputs are already batched by the collator as [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
         We do a single forward pass and then extract scores for ref_sim (even indices) and ref_diff (odd indices).
         """
         # Single forward pass with batched inputs (already batched by collator)
         # Batch structure: [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
         batched_outputs, _ = self.forward_model(model, inputs, sample_type="similarity")
-        
+
         # Extract batch size (number of similarity samples)
         # The batched input has 2x the number of samples (ref_sim + ref_diff for each)
         num_samples = len(inputs.get("data_source", []))
         batch_size = num_samples  # Number of similarity samples
-        
+
         # Split outputs: even indices are ref_sim, odd indices are ref_diff
         # Handle sim_logits
-        sim_logits_ref_sim = batched_outputs.sim_logits[::2] if batched_outputs.sim_logits is not None else None  # Even indices
-        sim_logits_ref_diff = batched_outputs.sim_logits[1::2] if batched_outputs.sim_logits is not None else None  # Odd indices
-        
+        sim_logits_ref_sim = (
+            batched_outputs.sim_logits[::2] if batched_outputs.sim_logits is not None else None
+        )  # Even indices
+        sim_logits_ref_diff = (
+            batched_outputs.sim_logits[1::2] if batched_outputs.sim_logits is not None else None
+        )  # Odd indices
+
         # Handle progress_logits
         progress_logits_ref_sim = None
         progress_logits_ref_diff = None
@@ -1871,7 +1926,7 @@ class RFMHeadsTrainer(Trainer):
                 # Tensor format - split along batch dimension
                 progress_logits_ref_sim = {"A": progress_A[::2], "B": None}
                 progress_logits_ref_diff = {"A": progress_A[1::2], "B": None}
-        
+
         # Handle success_logits
         success_logits_ref_sim = None
         success_logits_ref_diff = None
@@ -1885,7 +1940,7 @@ class RFMHeadsTrainer(Trainer):
                 # Tensor format - split along batch dimension
                 success_logits_ref_sim = {"A": success_A[::2], "B": None}
                 success_logits_ref_diff = {"A": success_A[1::2], "B": None}
-        
+
         model_outputs_ref_sim = ModelOutput(
             sim_logits=sim_logits_ref_sim,
             progress_logits=progress_logits_ref_sim,
@@ -1974,13 +2029,13 @@ class RFMHeadsTrainer(Trainer):
                     masked_loss = (
                         similarity_loss_all[mask == 1].detach() if training else similarity_loss_all[mask == 1]
                     )
-                    masked_margin = (
-                        similarity_margin[mask == 1] if not training else similarity_margin[mask == 1]
-                    )
+                    masked_margin = similarity_margin[mask == 1] if not training else similarity_margin[mask == 1]
                     outputs_dict.update({
                         f"{prefix}_strat_sim_acc/{strat}": masked_acc.mean().item(),
                         f"{prefix}_strat_sim_loss/{strat}": masked_loss.mean().item(),
-                        f"{prefix}_strat_sim_margin/{strat}": masked_margin.mean().item() if masked_margin.numel() > 0 else 0.0,
+                        f"{prefix}_strat_sim_margin/{strat}": masked_margin.mean().item()
+                        if masked_margin.numel() > 0
+                        else 0.0,
                     })
 
             # Split metrics by data source
@@ -1995,7 +2050,9 @@ class RFMHeadsTrainer(Trainer):
                 outputs_dict.update({
                     f"{prefix}_ds_sim_acc/{data_source}": masked_acc.mean().item(),
                     f"{prefix}_ds_sim_loss/{data_source}": masked_loss.mean().item(),
-                    f"{prefix}_ds_sim_margin/{data_source}": masked_margin.mean().item() if masked_margin.numel() > 0 else 0.0,
+                    f"{prefix}_ds_sim_margin/{data_source}": masked_margin.mean().item()
+                    if masked_margin.numel() > 0
+                    else 0.0,
                 })
 
             # Add main metrics

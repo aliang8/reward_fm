@@ -4,13 +4,21 @@ from __future__ import annotations
 import torch
 import io
 import json
+import os
 import re
-from typing import Any
+from pathlib import Path
+from dataclasses import fields
+from typing import Any, Optional, Tuple
 
 import aiohttp
 import numpy as np
 import requests
+import yaml
 
+from huggingface_hub import hf_hub_download
+
+from rfm.configs.experiment_configs import ExperimentConfig
+from rfm.utils.setup_utils import setup_model_and_processor
 from rfm.data.dataset_types import PreferenceSample, SimilaritySample, ProgressSample
 
 
@@ -20,11 +28,138 @@ def extract_answer_from_text(text):
     return ans
 
 
-def post_batch(url: str, payload: dict[str, Any], timeout_s: float = 120.0) -> dict[str, Any]:
-    """POST a batch payload to the evaluation server and return parsed JSON."""
-    resp = requests.post(url.rstrip("/") + "/evaluate_batch", json=payload, timeout=timeout_s)
-    resp.raise_for_status()
-    return resp.json()
+def load_model_from_hf(
+    model_path: str,
+    device: torch.device,
+) -> Tuple[Optional[ExperimentConfig], Optional[Any], Optional[Any], Optional[Any]]:
+    """
+    Load reward model config and model from HuggingFace or local checkpoint.
+
+    This mirrors the logic used by the training/eval scripts:
+    - Locate config.yaml locally (if model_path is a directory) or download from HF
+    - Use custom YAML loader for ReWiND configs
+    - Filter config keys to ExperimentConfig
+    - Clear training/logging sections
+    - Load model artifacts via setup_model_and_processor
+
+    Args:
+        model_path: HuggingFace model repository ID or local checkpoint path
+        device: Device to load model on
+
+    Returns:
+        Tuple of (exp_config, tokenizer, processor, reward_model)
+    """
+    config_path: Optional[str] = None
+
+    if os.path.exists(model_path):
+        # Local checkpoint: look for config.yaml
+        candidate_paths = [
+            model_path if model_path.endswith(".yaml") else os.path.join(model_path, "config.yaml"),
+            os.path.join(os.path.dirname(model_path), "config.yaml"),
+        ]
+        for candidate in candidate_paths:
+            if os.path.isfile(candidate):
+                config_path = candidate
+                break
+        if config_path is None:
+            raise FileNotFoundError(
+                f"config.yaml not found near local checkpoint {model_path}. "
+                "Provide a path that contains config.yaml."
+            )
+    else:
+        if hf_hub_download is None:
+            raise ImportError("huggingface_hub not available. Install with: pip install huggingface_hub")
+        config_path = hf_hub_download(repo_id=model_path, filename="config.yaml")
+
+    with open(config_path) as f:
+        yaml_text = f.read()
+
+    class _ConfigSafeLoader(yaml.SafeLoader):
+        pass
+
+    _ConfigSafeLoader.add_constructor(
+        "tag:yaml.org,2002:python/object:rfm.models.rewind_transformer.ReWINDTransformerConfig",
+        lambda loader, node: loader.construct_mapping(node),
+    )
+
+    model_config_dict = yaml.load(yaml_text, Loader=_ConfigSafeLoader)
+
+    valid_keys = {f.name for f in fields(ExperimentConfig)}
+    filtered_config = {k: v for k, v in model_config_dict.items() if k in valid_keys}
+    filtered_config["training"] = {}
+    filtered_config["logging"] = {}
+
+    exp_config = ExperimentConfig(**filtered_config)
+    tokenizer, processor, reward_model = setup_model_and_processor(exp_config.model, model_path)
+    reward_model = reward_model.to(device)
+    reward_model.eval()
+
+    return exp_config, tokenizer, processor, reward_model
+
+
+def load_wandb_run_info(model_path: str) -> Optional[dict[str, Any]]:
+    """
+    Retrieve saved wandb metadata for a checkpoint.
+
+    Checks for a local `wandb_info.json` (written during training) and, if the
+    checkpoint lives on HuggingFace, falls back to parsing the README that
+    `upload_to_hub.py` generates (which embeds wandb fields).
+    """
+
+    def _load_json(path: Path) -> Optional[dict[str, Any]]:
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return None
+
+    path = Path(model_path)
+    if path.exists():
+        candidates = []
+        if path.is_file():
+            candidates.append(path.parent / "wandb_info.json")
+        else:
+            candidates.append(path / "wandb_info.json")
+            candidates.append(path.parent / "wandb_info.json")
+        for candidate in candidates:
+            info = _load_json(candidate)
+            if info:
+                return info
+        return None
+
+    if hf_hub_download is None:
+        return None
+
+    try:
+        readme_path = hf_hub_download(repo_id=model_path, filename="README.md", local_files_only=False)
+    except Exception:
+        return None
+
+    try:
+        readme_text = Path(readme_path).read_text()
+    except OSError:
+        return None
+
+    wandb_info: dict[str, Any] = {}
+
+    run_match = re.search(r"\*\*Wandb Run\*\*:\s*\[(?P<name>.+?)\]\((?P<url>.+?)\)", readme_text)
+    if run_match:
+        wandb_info["wandb_name"] = run_match.group("name")
+        wandb_info["wandb_url"] = run_match.group("url")
+
+    id_match = re.search(r"\*\*Wandb ID\*\*:\s*`(?P<id>[^`]+)`", readme_text)
+    if id_match:
+        wandb_info["wandb_id"] = id_match.group("id")
+
+    project_match = re.search(r"\*\*Project\*\*:\s*(?P<project>[^\n]+)", readme_text)
+    if project_match:
+        wandb_info["wandb_project"] = project_match.group("project").strip()
+
+    entity_match = re.search(r"\*\*Entity\*\*:\s*(?P<entity>[^\n]+)", readme_text)
+    if entity_match:
+        wandb_info["wandb_entity"] = entity_match.group("entity").strip()
+
+    return wandb_info or None
 
 
 def build_payload(
@@ -82,6 +217,13 @@ def build_payload(
         sample_data.append(processed_sample)
 
     return files, sample_data
+
+
+def post_batch(url: str, payload: dict[str, Any], timeout_s: float = 120.0) -> dict[str, Any]:
+    """POST a batch payload to the evaluation server and return parsed JSON."""
+    resp = requests.post(url.rstrip("/") + "/evaluate_batch", json=payload, timeout=timeout_s)
+    resp.raise_for_status()
+    return resp.json()
 
 
 def post_batch_npy(

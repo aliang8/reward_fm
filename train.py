@@ -75,7 +75,7 @@ def train(cfg: ExperimentConfig):
     torch.backends.cudnn.benchmark = True
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    
+
     banner("Setting up model and processor")
     # Use the shared function to set up model and processor
     with _timer("time/setup_model_and_processor", timing_raw=timing_raw):
@@ -174,7 +174,6 @@ def train(cfg: ExperimentConfig):
 
         eval_dataset = setup_dataset(cfg.data, is_eval=True, **dataset_kwargs)
         rank_0_print(f"Evaluation dataset created with {cfg.data.eval_subset_size} samples")
-
 
     banner("Setting up trainer", f"Trainer class: {cfg.trainer_cls}")
     trainer_cls = {

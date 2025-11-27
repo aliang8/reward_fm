@@ -11,8 +11,6 @@ from typing import Any
 import yaml
 from collections import defaultdict
 
-from rfm.configs.eval_configs import EvalServerConfig, EvaluationConfig
-from rfm.configs.experiment_configs import DataConfig
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -720,13 +718,13 @@ def run_policy_ranking_eval_roboarena(results: list[dict[str, Any]], progress_pr
 
 def run_similarity_score_eval(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:
     """Run similarity_score evaluation analysis.
-    
+
     Groups results by task and computes:
     - Average similarity score for human->same_task (robot)
     - Average similarity score for human->diff_task (negatives)
     - Margin between same_task and diff_task scores
     - Averages results across N negatives per pairing
-    
+
     Args:
         results: List of evaluation results, each containing:
             - task: Task name
@@ -734,7 +732,7 @@ def run_similarity_score_eval(results: list[dict[str, Any]], progress_pred_type:
             - sim_score_ref_diff: Similarity score for ref->diff (human->negative, different task)
             - metadata: Contains task, negative_task, human_id, robot_id, negative_id
         progress_pred_type: Not used for similarity_score, but kept for consistency
-    
+
     Returns:
         Tuple of (metrics_dict, task_groups, task_details)
     """
@@ -745,15 +743,15 @@ def run_similarity_score_eval(results: list[dict[str, Any]], progress_pred_type:
         if task is None:
             continue
         task_groups[task].append(r)
-    
+
     if not task_groups:
         return {"error": "No valid similarity score data found"}, {}, {}
-    
+
     task_details = {}
     all_margins = []
     all_same_task_scores = []
     all_diff_task_scores = []
-    
+
     for task, task_results in task_groups.items():
         # Group by human-robot pairs (using human_id and robot_id from metadata)
         pair_groups = defaultdict(list)
@@ -765,197 +763,67 @@ def run_similarity_score_eval(results: list[dict[str, Any]], progress_pred_type:
                 continue
             pair_key = (human_id, robot_id)
             pair_groups[pair_key].append(r)
-        
+
         # Compute metrics per pair, then average across pairs
         pair_margins = []
         pair_same_task_scores = []
         pair_diff_task_scores = []
-        
+
         for pair_key, pair_results in pair_groups.items():
             # Extract scores for this pair
             same_task_scores = []
             diff_task_scores = []
-            
+
             for r in pair_results:
                 sim_score_ref_sim = r.get("sim_score_ref_sim")
                 sim_score_ref_diff = r.get("sim_score_ref_diff")
-                
+
                 if sim_score_ref_sim is not None:
                     if isinstance(sim_score_ref_sim, np.ndarray):
                         same_task_scores.append(float(sim_score_ref_sim.item()))
                     else:
                         same_task_scores.append(float(sim_score_ref_sim))
-                
+
                 if sim_score_ref_diff is not None:
                     if isinstance(sim_score_ref_diff, np.ndarray):
                         diff_task_scores.append(float(sim_score_ref_diff.item()))
                     else:
                         diff_task_scores.append(float(sim_score_ref_diff))
-            
+
             if same_task_scores and diff_task_scores:
                 # Average across negatives for this pair
                 avg_same_task = np.mean(same_task_scores)
                 avg_diff_task = np.mean(diff_task_scores)
                 margin = avg_same_task - avg_diff_task
-                
+
                 pair_margins.append(margin)
                 pair_same_task_scores.append(avg_same_task)
                 pair_diff_task_scores.append(avg_diff_task)
-        
+
         if pair_margins:
             task_margin = np.mean(pair_margins)
             task_same_task_score = np.mean(pair_same_task_scores)
             task_diff_task_score = np.mean(pair_diff_task_scores)
-            
+
             task_details[task] = {
                 "avg_margin": task_margin,
                 "avg_same_task_score": task_same_task_score,
                 "avg_diff_task_score": task_diff_task_score,
                 "num_pairs": len(pair_margins),
             }
-            
+
             all_margins.append(task_margin)
             all_same_task_scores.append(task_same_task_score)
             all_diff_task_scores.append(task_diff_task_score)
-    
+
     if not all_margins:
         return {"error": "No valid margins computed"}, {}, {}
-    
+
     # Aggregate metrics across all tasks
     metrics = {
         "avg_margin": np.mean(all_margins).item(),
         "avg_same_task_score": np.mean(all_same_task_scores).item(),
         "avg_diff_task_score": np.mean(all_diff_task_scores).item(),
     }
-    
+
     return metrics, task_groups, task_details
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Compile evaluation results and create visualizations")
-    parser.add_argument(
-        "--config", type=str, default="rfm/configs/eval_config.yaml", help="Path to evaluation configuration file"
-    )
-    parser.add_argument("--results_dir", type=str, default=None, help="Directory containing multiple results JSONs")
-    parser.add_argument("--eval_logs_dir", type=str, default=None, help="Root directory containing eval_logs structure")
-    args = parser.parse_args()
-
-    # Load evaluation config manually
-    print(f"Loading evaluation config from: {args.config}")
-    with open(args.config) as f:
-        config_dict = yaml.safe_load(f)
-
-    cfg = EvaluationConfig(**config_dict)
-    cfg.data = DataConfig(**config_dict["data"])
-    print(f"Evaluation config: {cfg}")
-
-    # Auto-scan eval_logs directory structure
-    if args.eval_logs_dir is not None:
-        eval_logs_path = Path(args.eval_logs_dir)
-        if not eval_logs_path.exists():
-            print(f"eval_logs directory not found: {eval_logs_path}")
-            return
-
-        print(f"Scanning eval_logs directory: {eval_logs_path}")
-
-        # Find all model directories
-        model_dirs = [d for d in eval_logs_path.iterdir() if d.is_dir()]
-        print(f"Found model directories: {[d.name for d in model_dirs]}")
-
-        all_results = {}
-
-        for model_dir in model_dirs:
-            model_name = model_dir.name
-            print(f"\nProcessing model: {model_name}")
-
-            # Find all dataset directories
-            dataset_dirs = [d for d in model_dir.iterdir() if d.is_dir()]
-            print(f"  Found dataset directories: {[d.name for d in dataset_dirs]}")
-
-            model_results = {}
-
-            for dataset_dir in dataset_dirs:
-                dataset_name = dataset_dir.name
-                print(f"  Processing dataset: {dataset_name}")
-
-                # Find all evaluation JSON files
-                eval_files = list(dataset_dir.glob("*.json"))
-                print(f"    Found evaluation files: {[f.stem for f in eval_files]}")
-
-                dataset_results = {}
-
-                for eval_file in eval_files:
-                    eval_type = eval_file.stem  # filename without extension
-
-                    results = load_results(str(eval_file))
-                    metrics = compute_eval_metrics(eval_type, results, cfg.data.progress_pred_type)
-
-                    if eval_type == "confusion_matrix_progress" or eval_type == "confusion_matrix":
-                        # save the figure
-                        fig, confusion_matrix = metrics
-                        fig.savefig(eval_file.with_suffix(".png"))
-                        # save the confusion matrix
-                        np.save(eval_file.with_suffix(".npy"), confusion_matrix)
-                    else:
-                        dataset_results[eval_type] = metrics
-
-                model_results[dataset_name] = dataset_results
-
-            all_results[model_name] = model_results
-
-        # Save comprehensive results
-        results_summary_path = eval_logs_path / "evaluation_summary.json"
-
-        with open(results_summary_path, "w") as f:
-            json.dump(all_results, f, indent=2)
-        print(f"\nSaved comprehensive evaluation summary to: {results_summary_path}")
-
-        # Print summary
-        print("\n" + "=" * 80)
-        print("EVALUATION SUMMARY")
-        print("=" * 80)
-
-        for model_name, model_results in all_results.items():
-            print(f"\nModel: {model_name}")
-            print("-" * 40)
-
-            for dataset_name, dataset_results in model_results.items():
-                print(f"  Dataset: {dataset_name}")
-
-                for eval_type, metrics in dataset_results.items():
-                    if "error" in metrics:
-                        print(f"    {eval_type}: ERROR - {metrics['error']}")
-                    else:
-                        print(f"    {eval_type}:")
-                        for metric_name, value in metrics.items():
-                            if isinstance(value, float):
-                                print(f"      {metric_name}: {value:.4f}")
-                            else:
-                                print(f"      {metric_name}: {value}")
-
-        print("\nDone!")
-        return
-
-    if args.results_dir is not None:
-        results_dir = Path(args.results_dir)
-        if not results_dir.exists():
-            print(f"results_dir not found: {results_dir}")
-            return
-
-        print(f"Loading results from: {results_dir}")
-        eval_files = list(results_dir.glob("*.json"))
-        print(f"Found evaluation files: {[f.stem for f in eval_files]}")
-
-        for eval_file in eval_files:
-            eval_type = eval_file.stem  # filename without extension
-            print(f"    Analyzing {eval_type}...")
-            results = load_results(str(eval_file))
-            metrics = compute_eval_metrics(eval_type, results, cfg.data.progress_pred_type)
-            print(f"      ✓ Completed {eval_type} analysis")
-            print(f"      ✓ Metrics: {metrics}")
-        print("Done!")
-        return
-
-
-if __name__ == "__main__":
-    main()

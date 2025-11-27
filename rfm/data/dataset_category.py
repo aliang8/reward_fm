@@ -129,12 +129,16 @@ DATASET_MAP = {
         ],
     },
     "reward_alignment": {
-        "eval": ["aliangdw_metaworld_metaworld_eval", "abraranwar_usc_koch_rewind_rfm_usc_koch_rewind", "jesbu1_egodex_rfm_egodex_test"]
+        "eval": [
+            "aliangdw_metaworld_metaworld_eval",
+            "abraranwar_usc_koch_rewind_rfm_usc_koch_rewind",
+            "jesbu1_egodex_rfm_egodex_test",
+        ]
     },
     "quality_preference": {
         "eval": [
             "aliangdw_metaworld_metaworld_eval",
-            "jesbu1_roboarena_0825_rfm_roboarena",
+            "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
             "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",
             "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
             "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
@@ -224,6 +228,7 @@ DATA_SOURCE_CATEGORY = {
 
 # DATASET helper functions
 
+
 def get_preference_only_datasets() -> list[str]:
     """Get list of datasets that should only generate preference samples."""
     return DATASET_CATEGORY.get("preference_only", [])
@@ -263,7 +268,9 @@ def is_success(dataset_name: str) -> bool:
     """Check if a dataset contains successful trajectories."""
     return dataset_name in DATASET_CATEGORY.get("success", [])
 
+
 # DATA_SOURCE helper functions
+
 
 def get_preference_only_ds() -> list[str]:
     """Get list of data sources that should only generate preference samples."""
@@ -273,6 +280,7 @@ def get_preference_only_ds() -> list[str]:
 def get_paired_ds() -> list[str]:
     """Get list of data sources containing paired human/robot trajectories."""
     return DATA_SOURCE_CATEGORY.get("paired", [])
+
 
 def get_failure_ds() -> list[str]:
     """Get list of data sources containing failure trajectories."""
@@ -284,17 +292,20 @@ def get_success_ds() -> list[str]:
     return DATA_SOURCE_CATEGORY.get("success", [])
 
 
-def is_preference_only_ds(data_source_name: str) -> bool:  
+def is_preference_only_ds(data_source_name: str) -> bool:
     """Check if a data source should only generate preference samples."""
     return data_source_name in DATA_SOURCE_CATEGORY.get("preference_only", [])
+
 
 def is_paired_ds(data_source_name: str) -> bool:
     """Check if a data source contains paired human/robot trajectories."""
     return data_source_name in DATA_SOURCE_CATEGORY.get("paired", [])
 
+
 def is_failure_ds(data_source_name: str) -> bool:
     """Check if a data source contains failure trajectories."""
     return data_source_name in DATA_SOURCE_CATEGORY.get("failure", [])
+
 
 def is_success_ds(data_source_name: str) -> bool:
     """Check if a data source contains successful trajectories."""

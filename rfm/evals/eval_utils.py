@@ -51,6 +51,12 @@ def load_model_from_hf(
     """
     config_path: Optional[str] = None
 
+    # Parse repo_id and revision (tag) from model_path if using @tag format
+    if "@" in model_path:
+        repo_id, revision = model_path.split("@", 1)
+    else:
+        repo_id, revision = model_path, None
+
     if os.path.exists(model_path):
         # Local checkpoint: look for config.yaml
         candidate_paths = [
@@ -69,7 +75,8 @@ def load_model_from_hf(
     else:
         if hf_hub_download is None:
             raise ImportError("huggingface_hub not available. Install with: pip install huggingface_hub")
-        config_path = hf_hub_download(repo_id=model_path, filename="config.yaml")
+        # Download config with revision if specified
+        config_path = hf_hub_download(repo_id=repo_id, filename="config.yaml", revision=revision)
 
     with open(config_path) as f:
         yaml_text = f.read()
@@ -130,8 +137,14 @@ def load_wandb_run_info(model_path: str) -> Optional[dict[str, Any]]:
     if hf_hub_download is None:
         return None
 
+    # Parse repo_id and revision (tag) from model_path if using @tag format
+    if "@" in model_path:
+        repo_id, revision = model_path.split("@", 1)
+    else:
+        repo_id, revision = model_path, None
+
     try:
-        readme_path = hf_hub_download(repo_id=model_path, filename="README.md", local_files_only=False)
+        readme_path = hf_hub_download(repo_id=repo_id, filename="README.md", revision=revision, local_files_only=False)
     except Exception:
         return None
 

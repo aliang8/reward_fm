@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import collections
 import json
 import os
 from typing import Any
@@ -96,6 +97,18 @@ class BaseDataset(torch.utils.data.Dataset):
         self._cached_is_robot = self.dataset["is_robot"]
 
         rank_0_print(f"Dataset loaded with {len(self.dataset)} total trajectories", verbose=self.verbose)
+
+        # Initialize resampling stats containers shared by subclasses
+        self._resample_attempt_stats: dict[str, collections.defaultdict[str, list[int]]] = {
+            "preference": collections.defaultdict(list),
+            "progress": collections.defaultdict(list),
+            "similarity": collections.defaultdict(list),
+        }
+        self._resample_dataset_attempt_stats: dict[str, collections.defaultdict[str, list[int]]] = {
+            "preference": collections.defaultdict(list),
+            "progress": collections.defaultdict(list),
+            "similarity": collections.defaultdict(list),
+        }
 
     def __len__(self):
         return len(self.dataset)
@@ -443,6 +456,39 @@ class BaseDataset(torch.utils.data.Dataset):
             filtered_combined_indices = combined_indices
 
         return filtered_dataset, filtered_combined_indices
+
+    # ------------------------------------------------------------------
+    # Shared resample helpers for subclasses
+    # ------------------------------------------------------------------
+    def _record_resample_attempt(
+        self, sample_type: str, strategy: str, sample_attempts: int, dataset_attempts: int
+    ) -> None:
+        if sample_type not in self._resample_attempt_stats:
+            return
+
+        self._resample_attempt_stats[sample_type][strategy].append(sample_attempts)
+        self._resample_dataset_attempt_stats[sample_type][strategy].append(dataset_attempts)
+
+    def _set_resample_attempts(self, sample, dataset_attempts: int):
+        if sample is None:
+            return None
+
+        dataset_attempts = max(1, int(dataset_attempts))
+        sample_attempts = int(getattr(sample, "resample_attempts", dataset_attempts))
+        sample_attempts = max(1, sample_attempts)
+        sample.resample_attempts = sample_attempts
+
+        sample_type = getattr(sample, "sample_type", "unknown")
+        strategy = str(getattr(sample, "data_gen_strategy", "unknown"))
+        self._record_resample_attempt(sample_type, strategy, sample_attempts, dataset_attempts)
+
+        return sample
+
+    def get_resample_attempt_stats(self):
+        return self._resample_attempt_stats
+
+    def get_resample_dataset_attempt_stats(self):
+        return self._resample_dataset_attempt_stats
 
     def _build_paired_human_robot_index(self, combined_indices: dict, cached_is_robot: list):
         """Build paired_human_robot_by_task index from task_indices by checking is_robot field.

@@ -48,13 +48,12 @@ uv run accelerate launch \
     training.overwrite_output_dir=true \
     training.predict_pref_progress=true \
     training.predict_sim_progress=true \
-    training.exp_name=ant_rfm_rewind_bs1024_pref_prog_sim \
+    training.exp_name=ant_rfm_rewind_bs1024_pref_prog_sim_2 \
     training.bf16=true \
     training.fp16=false \
     custom_eval.eval_types=[quality_preference,reward_alignment,policy_ranking,confusion_matrix] \
-    custom_eval.quality_preference=[quality_preference] \
-    custom_eval.reward_alignment=[reward_alignment] \
-    custom_eval.policy_ranking=[policy_ranking] \
+    custom_eval.reward_alignment=[mw] \
+    custom_eval.policy_ranking=[mw] \
     custom_eval.confusion_matrix=[mw] \
     logging.log_to=[wandb]
 

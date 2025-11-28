@@ -3,6 +3,7 @@ import os
 import warnings
 from dataclasses import asdict
 import shutil
+from datetime import datetime
 
 import torch
 import torch.distributed as dist
@@ -61,6 +62,10 @@ cs.store(group="logging/save_best", name="save_best_config", node=SaveBestConfig
 cs.store(group="custom_eval", name="custom_eval_config", node=CustomEvaluationConfig)
 
 
+import torch
+torch.set_num_threads(64)
+torch.set_num_interop_threads(8)
+
 def train(cfg: ExperimentConfig):
     timing_raw = {}
 
@@ -99,7 +104,7 @@ def train(cfg: ExperimentConfig):
 
     output_dir = os.path.join(cfg.training.output_dir, run_name)
 
-    training_args = create_training_arguments(cfg, output_dir)
+    training_args = create_training_arguments(cfg.training, output_dir)
 
     # Handle output directory existence (works with accelerate/distributed training)
     overwrite_output_dir = getattr(cfg.training, "overwrite_output_dir", False)
@@ -149,10 +154,10 @@ def train(cfg: ExperimentConfig):
         logger.init_wandb(
             project=cfg.logging.wandb_project,
             entity=cfg.logging.wandb_entity,
-            name=run_name,
+            name=wandb_run_name,
             config=config_dict,
         )
-        rank_0_print(f"Wandb initialized: {run_name}")
+        rank_0_print(f"Wandb initialized: {wandb_run_name}")
 
     logger.write_wandb_info(output_dir, run_name)
 

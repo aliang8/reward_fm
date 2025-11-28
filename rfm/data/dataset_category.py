@@ -161,7 +161,7 @@ DATASET_MAP = {
             "jesbu1_ph2d_rfm_ph2d",
         ],
         "eval": [
-            "jesbu1_egodex_rfm_egodex_test",
+            # "jesbu1_egodex_rfm_egodex_test",
             "aliangdw_utd_so101_human_utd_so101_human",
             "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
         ],

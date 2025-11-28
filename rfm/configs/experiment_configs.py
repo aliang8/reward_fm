@@ -281,6 +281,8 @@ class TrainingConfig:
     ddp_bucket_cap_mb: int = field(default=25)
     max_steps: Optional[int] = field(default=-1)  # -1 means no limit, use num_train_epochs instead
     save_steps: int = field(default=100)
+    dataloader_pin_memory: bool = field(default=True)
+    dataloader_num_workers: int = field(default=0)
 
     # Evaluation settings
     evaluation_strategy: str = field(default="no", metadata={"help": "Evaluation strategy: 'no', 'steps', 'epoch'"})

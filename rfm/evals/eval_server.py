@@ -44,7 +44,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from rich.console import Console
 
-from evals.eval_utils import extract_answer_from_text, load_model_from_hf
+from rfm.evals.eval_utils import extract_answer_from_text, load_model_from_hf
 from rfm.configs.eval_configs import EvalServerConfig
 from rfm.configs.experiment_configs import ExperimentConfig
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample

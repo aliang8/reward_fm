@@ -34,7 +34,13 @@ except ImportError:
     Qwen3VLForConditionalGeneration = None
     Qwen3VLModel = None
 
-from rfm.configs.experiment_configs import DataConfig, ExperimentConfig, ModelConfig, PEFTConfig
+from rfm.configs.experiment_configs import (
+    DataConfig,
+    ExperimentConfig,
+    ModelConfig,
+    PEFTConfig,
+    TrainingConfig,
+)
 from rfm.data.collators import BaseCollator, ReWiNDBatchCollator, RFMBatchCollator, VQABatchCollator
 from rfm.data.datasets import (
     BalancedRFMDataset,
@@ -47,6 +53,49 @@ from rfm.models import RFM, RFMVQA, ReWiNDTransformer
 from rfm.models.rewind_transformer import ReWINDTransformerConfig
 from rfm.models.rewind_transformer_scale import ReWINDScaleTransformerConfig, ReWiNDScaleTransformer
 from rfm.utils.distributed import rank_0_print
+
+
+def parse_hf_model_id_and_revision(
+    hf_model_id: str, model_name: str = "model"
+) -> Tuple[str, Optional[str]]:
+    """
+    Parse HuggingFace model ID and determine which revision (tag) to load.
+
+    Supports explicit revisions via repo@revision format, or automatically
+    finds the best tag if no explicit revision is provided.
+
+    Args:
+        hf_model_id: HuggingFace model repository ID or local path, optionally with @revision
+        model_name: Name of the model type for logging (e.g., "ReWiND model", "Qwen model")
+
+    Returns:
+        Tuple of (repo_id, revision_to_load) where:
+        - repo_id: The repository ID without the @revision suffix
+        - revision_to_load: The revision/tag to load, or None for latest
+    """
+    # Allow users to specify explicit revisions via repo@revision
+    if "@" in hf_model_id:
+        repo_id, explicit_revision = hf_model_id.split("@", 1)
+    else:
+        repo_id, explicit_revision = hf_model_id, None
+
+    revision_to_load = explicit_revision
+
+    # Check if this is a HuggingFace repo (not a local path) and find best tag
+    if "/" in repo_id and not repo_id.startswith("/"):
+        if revision_to_load:
+            rank_0_print(f"Loading {model_name} {repo_id} at explicit revision '{revision_to_load}'")
+        else:
+            best_tag, best_score = find_best_model_tag(repo_id)
+            if best_tag:
+                revision_to_load = best_tag
+                rank_0_print(f"Loading {model_name} from best tag: {repo_id}@{revision_to_load} (score: {best_score})")
+            else:
+                rank_0_print(f"No best tag found, loading latest revision of {repo_id}")
+    else:
+        rank_0_print(f"Loading local/explicit {model_name} from {repo_id}")
+
+    return repo_id, revision_to_load
 
 
 def find_best_model_tag(hf_model_id: str, hub_token: Optional[str] = None) -> Tuple[Optional[str], Optional[float]]:
@@ -313,29 +362,7 @@ def setup_model_and_processor(
         )
 
         if hf_model_id:
-            # Allow users to specify explicit revisions via repo@revision
-            if "@" in hf_model_id:
-                repo_id, explicit_revision = hf_model_id.split("@", 1)
-            else:
-                repo_id, explicit_revision = hf_model_id, None
-
-            revision_to_load = explicit_revision
-
-            # Check if this is a HuggingFace repo (not a local path) and find best tag
-            if "/" in repo_id and not repo_id.startswith("/"):
-                if revision_to_load:
-                    rank_0_print(f"Loading model {repo_id} at explicit revision '{revision_to_load}'")
-                else:
-                    best_tag, best_score = find_best_model_tag(repo_id)
-                    if best_tag:
-                        revision_to_load = best_tag
-                        rank_0_print(f"Loading model from best tag: {repo_id}@{revision_to_load} (score: {best_score})")
-                    else:
-                        rank_0_print(f"No best tag found, loading latest revision of {repo_id}")
-                hf_repo_with_rev = repo_id
-            else:
-                hf_repo_with_rev = repo_id
-                rank_0_print(f"Loading local/explicit model from {hf_repo_with_rev}")
+            repo_id, revision_to_load = parse_hf_model_id_and_revision(hf_model_id, model_name="model")
 
             if cfg.model_type != "vqa":
                 if "Qwen2.5" in cfg.base_model_id:
@@ -347,7 +374,7 @@ def setup_model_and_processor(
 
             # load the model from the evaluation path
             model = model_cls.from_pretrained(
-                hf_repo_with_rev,
+                repo_id,
                 processor=processor,
                 tokenizer=tokenizer,
                 base_model=base_model,
@@ -385,21 +412,15 @@ def setup_model_and_processor(
         tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L12-v2")
 
         if hf_model_id:
-            # Check if this is a HuggingFace repo (not a local path) and find best tag
-            if "/" in hf_model_id and not hf_model_id.startswith("/") and not "@" in hf_model_id:
-                best_tag, best_score = find_best_model_tag(hf_model_id)
-                if best_tag:
-                    rank_0_print(f"Loading ReWiND model from best tag: {hf_model_id} (score: {best_score})")
-            else:
-                rank_0_print(f"Loading ReWiND model from {hf_model_id}")
+            repo_id, revision_to_load = parse_hf_model_id_and_revision(hf_model_id, model_name="ReWiND model")
 
             model = ReWiNDTransformer.from_pretrained(
-                hf_model_id,
+                repo_id,
                 processor=processor,
                 image_encoder=image_encoder,
                 text_encoder=text_encoder,
                 tokenizer=tokenizer,
-                revision=best_tag,
+                revision=revision_to_load,
             )
         else:
             train_img = cfg.train_vision_encoder
@@ -519,37 +540,37 @@ def setup_peft_model(rfm_model: RFM, cfg: PEFTConfig) -> RFM:
     return rfm_model
 
 
-def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: bool = False) -> TrainingArguments:
+def create_training_arguments(cfg: TrainingConfig, output_dir: str, is_eval: bool = False) -> TrainingArguments:
     """Shared function to create TrainingArguments for both training and evaluation"""
 
     # Base arguments that are the same for both training and evaluation
     base_args = {
         "output_dir": output_dir,
-        "per_device_train_batch_size": cfg.training.per_device_train_batch_size,
-        "gradient_accumulation_steps": cfg.training.gradient_accumulation_steps,
-        "ddp_find_unused_parameters": cfg.training.ddp_find_unused_parameters,
-        "learning_rate": cfg.training.learning_rate,
-        "save_strategy": cfg.training.save_strategy,
-        "logging_steps": cfg.training.logging_steps,
-        "save_steps": cfg.training.save_steps,
-        "bf16": cfg.training.bf16,
-        "fp16": cfg.training.fp16,
-        "remove_unused_columns": cfg.training.remove_unused_columns,
-        "gradient_checkpointing": cfg.training.gradient_checkpointing,
-        "dataloader_pin_memory": cfg.data.dataloader_pin_memory,
-        "dataloader_num_workers": cfg.data.dataloader_num_workers,
+        "per_device_train_batch_size": cfg.per_device_train_batch_size,
+        "gradient_accumulation_steps": cfg.gradient_accumulation_steps,
+        "ddp_find_unused_parameters": cfg.ddp_find_unused_parameters,
+        "learning_rate": cfg.learning_rate,
+        "save_strategy": cfg.save_strategy,
+        "logging_steps": cfg.logging_steps,
+        "save_steps": cfg.save_steps,
+        "bf16": cfg.bf16,
+        "fp16": cfg.fp16,
+        "remove_unused_columns": cfg.remove_unused_columns,
+        "gradient_checkpointing": cfg.gradient_checkpointing,
+        "dataloader_pin_memory": cfg.dataloader_pin_memory,
+        "dataloader_num_workers": cfg.dataloader_num_workers,
         "save_safetensors": True,
         "save_total_limit": 2,
         # Evaluation settings
-        "eval_strategy": cfg.training.evaluation_strategy,
-        "per_device_eval_batch_size": cfg.training.per_device_eval_batch_size,
-        "do_eval": cfg.training.do_eval,
-        "prediction_loss_only": cfg.training.prediction_loss_only,
-        "lr_scheduler_type": cfg.training.lr_scheduler_type,
-        "warmup_steps": cfg.training.warmup_steps,
-        "warmup_ratio": cfg.training.warmup_ratio,
-        "max_grad_norm": cfg.training.max_grad_norm,
-        "weight_decay": cfg.training.weight_decay,
+        "eval_strategy": cfg.evaluation_strategy,
+        "per_device_eval_batch_size": cfg.per_device_eval_batch_size,
+        "do_eval": cfg.do_eval,
+        "prediction_loss_only": cfg.prediction_loss_only,
+        "lr_scheduler_type": cfg.lr_scheduler_type,
+        "warmup_steps": cfg.warmup_steps,
+        "warmup_ratio": cfg.warmup_ratio,
+        "max_grad_norm": cfg.max_grad_norm,
+        "weight_decay": cfg.weight_decay,
         "disable_tqdm": False,
         # # Compile settings
         # "torch_compile": True,
@@ -558,8 +579,8 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
     }
 
     # Add eval_steps if evaluation_strategy is "steps"
-    if cfg.training.evaluation_strategy == "steps" and cfg.training.eval_steps is not None:
-        base_args["eval_steps"] = cfg.training.eval_steps
+    if cfg.evaluation_strategy == "steps" and cfg.eval_steps is not None:
+        base_args["eval_steps"] = cfg.eval_steps
 
     if is_eval:
         # Evaluation-specific arguments
@@ -572,8 +593,8 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
     else:
         # Training-specific arguments
         base_args.update({
-            "num_train_epochs": cfg.training.num_train_epochs if cfg.training.num_train_epochs is not None else 1,
-            "max_steps": cfg.training.max_steps if cfg.training.max_steps is not None else -1,
+            "num_train_epochs": cfg.num_train_epochs if cfg.num_train_epochs is not None else 1,
+            "max_steps": cfg.max_steps if cfg.max_steps is not None else -1,
             # Disable HuggingFace's automatic logging - we use custom Logger class instead
             "report_to": "none",
         })
@@ -605,7 +626,6 @@ def setup_batch_collator(
     """Shared function to create BatchCollator"""
     collator_kwargs = {
         "processor": processor,
-        "max_length": cfg.training.max_seq_length,
         "resized_height": cfg.data.resized_height,
         "resized_width": cfg.data.resized_width,
         "base_model_id": cfg.model.base_model_id,

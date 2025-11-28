@@ -152,6 +152,8 @@ training:
   per_device_eval_batch_size: 16  # Evaluation batch size per device
   do_eval: true  # Enable evaluation during training
   prediction_loss_only: true # Only compute loss for the prediction head
+  dataloader_pin_memory: ${data.dataloader_pin_memory}
+  dataloader_num_workers: ${data.dataloader_num_workers}
   
   # Model settings
   max_seq_length: 1024 # currently not used

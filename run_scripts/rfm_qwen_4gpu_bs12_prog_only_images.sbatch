@@ -57,6 +57,11 @@ uv run accelerate launch \
     training.weight_decay=0.05 \
     training.overwrite_output_dir=true \
     training.exp_name=ant_rfm_qwen_4gpu_bs12_oxe_mw_prog \
+    custom_eval.eval_types=[quality_preference,reward_alignment,policy_ranking,confusion_matrix] \
+    custom_eval.reward_alignment=[mw] \
+    custom_eval.policy_ranking=[mw] \
+    custom_eval.confusion_matrix=[mw] \
+    custom_eval.quality_preference=[mw] \
     logging.log_to=[wandb]
 
 # Print completion time

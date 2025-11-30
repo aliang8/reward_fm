@@ -647,12 +647,6 @@ class RFMHeadsTrainer(Trainer):
                         progress_logits = outputs.progress_logits
                         progress_pred = progress_logits["A"]
 
-                        if isinstance(progress_pred, list):
-                            if isinstance(progress_pred[0], torch.Tensor):
-                                progress_pred = torch.stack(progress_pred)
-                            else:
-                                progress_pred = torch.tensor(progress_pred, device=self.accelerator.device)
-
                         # self._log_rank_shape("progress_pred_local", progress_pred)
                         # self._log_rank_shape("target_progress_local", progress_samples["target_progress"])
 
@@ -683,12 +677,6 @@ class RFMHeadsTrainer(Trainer):
                         success_labels_gathered = None
                         if self.config.model.train_success_head:
                             success_pred = outputs.success_logits["A"]
-                            if isinstance(success_pred, list):
-                                success_pred = (
-                                    torch.stack(success_pred)
-                                    if isinstance(success_pred[0], torch.Tensor)
-                                    else torch.tensor(success_pred, device=self.accelerator.device)
-                                )
                             success_probs = torch.sigmoid(success_pred)
                             # self._log_rank_shape("success_probs_local", success_probs)
                             success_binary = (success_probs > 0.5).float()
@@ -741,12 +729,12 @@ class RFMHeadsTrainer(Trainer):
                         if success_labels_gathered is not None:
                             del success_labels_gathered
 
-                    elif eval_type == "quality_preference" or eval_type == "quality_preference_roboarena":
+                    elif "quality_preference" in eval_type:
                         # Process preference samples for quality_preference evaluation
                         preference_samples = batch["preference_inputs"]
                         with torch.no_grad():
                             outputs, _ = self.forward_model(self.model, preference_samples, sample_type="preference")
-                        pref_logits = outputs.pref_logits
+                        n = outputs.pref_logits
 
                         # Gather predictions and labels across all ranks
                         pref_logits = self.accelerator.gather_for_metrics(pref_logits)
@@ -862,7 +850,7 @@ class RFMHeadsTrainer(Trainer):
                         eval_type, eval_results, self.config.data.progress_pred_type
                     )
                 elif eval_type == "policy_ranking":
-                    # create task groups from eval_results (handles roboarena automatically)
+                    # create task groups from eval_results
                     eval_metrics, task_groups, task_details = compute_eval_metrics(
                         eval_type, eval_results, self.config.data.progress_pred_type
                     )
@@ -871,7 +859,7 @@ class RFMHeadsTrainer(Trainer):
                         eval_type, eval_results, self.config.data.progress_pred_type
                     )
                     eval_metrics = {}  # no eval metrics
-                elif eval_type == "quality_preference" or eval_type == "quality_preference_roboarena":
+                elif "quality_preference" in eval_type:
                     # quality_preference returns metrics, task_groups, and task_details
                     eval_metrics, task_groups, task_details = compute_eval_metrics(
                         eval_type, eval_results, self.config.data.progress_pred_type
@@ -951,14 +939,8 @@ class RFMHeadsTrainer(Trainer):
                             for task, group in task_groups.items():
                                 partial_successes = [round(t["partial_success"], 3) for t in group]
                                 predicted_rewards = [round(t["final_predicted_reward"], 3) for t in group]
-                                spearman = task_details.get(task, {}).get("spearman", 0.0)
-                                data.append([
-                                    task,
-                                    f"partial:{partial_successes}",
-                                    f"predicted:{predicted_rewards}",
-                                    round(spearman, 3),
-                                ])
-                            columns = ["task", "partial_successes", "predicted_rewards", "spearman"]
+                                data.append([task, f"partial:{partial_successes}", f"predicted:{predicted_rewards}"])
+                            columns = ["task", "partial_successes", "predicted_rewards"]
                         else:
                             # Standard policy ranking visualization: show quality labels and rewards
                             for task, group in task_groups.items():
@@ -981,45 +963,20 @@ class RFMHeadsTrainer(Trainer):
                         task_groups = None
                         task_details = None
 
-                    elif eval_type == "quality_preference" or eval_type == "quality_preference_roboarena":
-                        # Check if this is roboarena by checking if task_details have partial_success_accuracies
-                        is_roboarena = False
-                        if task_details:
-                            first_task_details = next(iter(task_details.values()))
-                            if "partial_success_accuracies" in first_task_details:
-                                is_roboarena = True
-
-                        data = []
-                        if is_roboarena:
-                            # RoboArena visualization: show partial_success accuracies
-                            for task, details in task_details.items():
-                                task_acc = details["preference_accuracy"]
-                                partial_accs = details.get("partial_success_accuracies", {})
-                                partial_accs_str = ",".join([f"{k}:{round(v, 3)}" for k, v in partial_accs.items()])
-                                num_correct = details["num_correct"]
-                                num_total = details["num_total"]
-                                data.append([
-                                    task,
-                                    round(task_acc, 3),
-                                    partial_accs_str if partial_accs_str else "N/A",
-                                    f"{num_correct}/{num_total}",
-                                ])
-                            columns = ["task", "preference_accuracy", "partial_success_accuracies", "num_correct/total"]
-                        else:
-                            # Standard quality_preference visualization: show quality label accuracies
-                            for task, details in task_details.items():
-                                task_acc = details["preference_accuracy"]
-                                quality_accs = details["quality_accuracies"]
-                                quality_accs_str = ",".join([f"{k}:{round(v, 3)}" for k, v in quality_accs.items()])
-                                num_correct = details["num_correct"]
-                                num_total = details["num_total"]
-                                data.append([
-                                    task,
-                                    round(task_acc, 3),
-                                    quality_accs_str if quality_accs_str else "N/A",
-                                    f"{num_correct}/{num_total}",
-                                ])
-                            columns = ["task", "preference_accuracy", "quality_accuracies", "num_correct/total"]
+                    elif "quality_preference" in eval_type:
+                        for task, details in task_details.items():
+                            task_acc = details["preference_accuracy"]
+                            quality_accs = details["quality_accuracies"]
+                            quality_accs_str = ",".join([f"{k}:{round(v, 3)}" for k, v in quality_accs.items()])
+                            num_correct = details["num_correct"]
+                            num_total = details["num_total"]
+                            data.append([
+                                task,
+                                round(task_acc, 3),
+                                quality_accs_str if quality_accs_str else "N/A",
+                                f"{num_correct}/{num_total}",
+                            ])
+                        columns = ["task", "preference_accuracy", "quality_accuracies", "num_correct/total"]
 
                         table_name = f"quality_preference_samples/{ds_name}"
 
@@ -1716,28 +1673,18 @@ class RFMHeadsTrainer(Trainer):
         progress_logits_ref_diff = None
         if batched_outputs.progress_logits is not None and batched_outputs.progress_logits.get("A") is not None:
             progress_A = batched_outputs.progress_logits["A"]
-            if isinstance(progress_A, list):
-                # List format - split by even/odd indices
-                progress_logits_ref_sim = {"A": progress_A[::2], "B": None}
-                progress_logits_ref_diff = {"A": progress_A[1::2], "B": None}
-            elif isinstance(progress_A, torch.Tensor):
-                # Tensor format - split along batch dimension
-                progress_logits_ref_sim = {"A": progress_A[::2], "B": None}
-                progress_logits_ref_diff = {"A": progress_A[1::2], "B": None}
+            # Split along batch dimension
+            progress_logits_ref_sim = {"A": progress_A[::2], "B": None}
+            progress_logits_ref_diff = {"A": progress_A[1::2], "B": None}
 
         # Handle success_logits
         success_logits_ref_sim = None
         success_logits_ref_diff = None
         if batched_outputs.success_logits is not None and batched_outputs.success_logits.get("A") is not None:
             success_A = batched_outputs.success_logits["A"]
-            if isinstance(success_A, list):
-                # List format - split by even/odd indices
-                success_logits_ref_sim = {"A": success_A[::2], "B": None}
-                success_logits_ref_diff = {"A": success_A[1::2], "B": None}
-            elif isinstance(success_A, torch.Tensor):
-                # Tensor format - split along batch dimension
-                success_logits_ref_sim = {"A": success_A[::2], "B": None}
-                success_logits_ref_diff = {"A": success_A[1::2], "B": None}
+            # Split along batch dimension
+            success_logits_ref_sim = {"A": success_A[::2], "B": None}
+            success_logits_ref_diff = {"A": success_A[1::2], "B": None}
 
         model_outputs_ref_sim = ModelOutput(
             sim_logits=sim_logits_ref_sim,

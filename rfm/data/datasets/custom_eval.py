@@ -25,9 +25,11 @@ class CustomEvalDataset(BaseDataset):
             "reward_alignment": RewardAlignmentSampler,
             "policy_ranking": ProgressDefaultSampler,
             "quality_preference": QualityPreferenceSampler,
-            "quality_preference_roboarena": RoboArenaQualityPreferenceSampler,
             "similarity_score": SimilarityScoreSampler,
         }
+
+        if "roboarena" in self.config.data.eval_datasets:
+            sampler_cls["quality_preference"] = RoboArenaQualityPreferenceSampler
 
         if sampler_type not in sampler_cls:
             raise ValueError(f"Unknown sampler type: {sampler_type}. Available: {list(sampler_cls.keys())}")

@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import statistics
-from evals.eval_utils import extract_answer_from_text
+from rfm.evals.eval_utils import extract_answer_from_text
 from .rfm_heads_trainer import RFMHeadsTrainer
 from rfm.utils.timer import _timer
 from rfm.models.utils import ModelOutput

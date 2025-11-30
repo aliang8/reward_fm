@@ -64,8 +64,10 @@ cs.store(group="custom_eval", name="custom_eval_config", node=CustomEvaluationCo
 
 
 import torch
+
 torch.set_num_threads(64)
 torch.set_num_interop_threads(8)
+
 
 def train(cfg: ExperimentConfig):
     timing_raw = {}
@@ -155,10 +157,10 @@ def train(cfg: ExperimentConfig):
         logger.init_wandb(
             project=cfg.logging.wandb_project,
             entity=cfg.logging.wandb_entity,
-            name=wandb_run_name,
+            name=run_name,
             config=config_dict,
         )
-        rank_0_print(f"Wandb initialized: {wandb_run_name}")
+        rank_0_print(f"Wandb initialized: {run_name}")
 
     logger.write_wandb_info(output_dir, run_name)
 

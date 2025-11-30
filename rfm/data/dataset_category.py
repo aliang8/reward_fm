@@ -132,7 +132,7 @@ DATASET_MAP = {
         "eval": [
             "aliangdw_metaworld_metaworld_eval",
             "abraranwar_usc_koch_rewind_rfm_usc_koch_rewind",
-            "jesbu1_egodex_rfm_egodex_test",
+            # "jesbu1_egodex_rfm_egodex_test",
         ]
     },
     "quality_preference": {

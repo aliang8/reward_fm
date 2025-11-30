@@ -9,6 +9,7 @@ from rfm.data.datasets.helpers import (
     load_frames_from_npz,
     load_embeddings_from_path,
     convert_absolute_to_relative_progress,
+    compute_success_labels,
 )
 
 
@@ -125,6 +126,20 @@ class BaseQualityPreferenceSampler(RFMBaseSampler):
         if rejected_traj.get("partial_success") is not None:
             rejected_metadata["partial_success"] = rejected_traj.get("partial_success")
 
+        # Compute success labels
+        chosen_success_label = compute_success_labels(
+            target_progress=chosen_progress,
+            data_source=chosen_traj["data_source"],
+            dataset_success_percent=self.dataset_success_cutoff_map,
+            max_success=self.config.max_success,
+        )
+        rejected_success_label = compute_success_labels(
+            target_progress=rejected_progress,
+            data_source=rejected_traj["data_source"],
+            dataset_success_percent=self.dataset_success_cutoff_map,
+            max_success=self.config.max_success,
+        )
+
         # Create trajectory objects
         chosen_trajectory = Trajectory(
             frames=chosen_frames,
@@ -139,6 +154,7 @@ class BaseQualityPreferenceSampler(RFMBaseSampler):
             is_robot=chosen_traj["is_robot"],
             target_progress=chosen_progress,
             partial_success=chosen_traj.get("partial_success"),
+            success_label=chosen_success_label,
             metadata=chosen_metadata,
         )
 
@@ -155,6 +171,7 @@ class BaseQualityPreferenceSampler(RFMBaseSampler):
             is_robot=rejected_traj["is_robot"],
             target_progress=rejected_progress,
             partial_success=rejected_traj.get("partial_success"),
+            success_label=rejected_success_label,
             metadata=rejected_metadata,
         )
 

@@ -34,7 +34,7 @@ uv run accelerate launch \
     model.train_preference_head=false \
     model.train_progress_head=true \
     model.train_success_head=false \
-    data.train_datasets=[oxe,mw] \
+    data.train_datasets=[mw] \
     data.eval_datasets=[mw] \
     data.dataset_type=data_source_balance \
     data.data_source_weights.metaworld_train=20 \

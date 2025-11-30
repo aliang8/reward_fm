@@ -26,10 +26,14 @@ BS=12
 # Override config for progress-only training
 uv run accelerate launch \
     --config_file rfm/configs/distributed/ddp.yaml \
-    --num_processes=4 \
+    --num_processes=2 \
     train.py \
     data.sample_type_ratio=[0,1,0] \
     data.progress_strategy_ratio=[1,6,1,1,1] \
+    data.train_datasets=[mw,others] \
+    data.eval_datasets=[mw] \
+    data.dataset_type=data_source_balance \
+    data.data_source_weights.metaworld_train=20 \
     model.train_progress_head=true \
     model.train_preference_head=false \
     model.train_similarity_head=false \
@@ -43,7 +47,6 @@ uv run accelerate launch \
     data.resized_height=196 \
     data.resized_width=196 \
     data.use_multi_image=true \
-    data.shuffle_progress_frames=false \
     data.dataset_type=data_source_balance \
     training.max_steps=15000 \
     training.eval_steps=200 \

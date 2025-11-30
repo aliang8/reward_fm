@@ -24,8 +24,8 @@ def write_mp4(frames, out_path, fps=4):
     c.close()
 
 
-def pad_target_progress(progress_list):
-    """Helper function to pad target progress sequences to max length."""
+def pad_list_to_max(progress_list):
+    """Helper function to pad lists of sequences to max length."""
     if not progress_list:
         return None
 
@@ -38,8 +38,7 @@ def pad_target_progress(progress_list):
         else:
             padded_progress = progress
         padded_list.append(padded_progress)
-    # Explicitly set requires_grad=False since these are labels, not model outputs
-    return torch.tensor(padded_list, dtype=torch.float32, requires_grad=False)
+    return torch.tensor(padded_list, dtype=torch.float32)
 
 
 def convert_frames_to_pil_images(frames, frames_shape=None):

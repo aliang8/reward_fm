@@ -393,8 +393,14 @@ class RFM(PreTrainedModel):
                         progress_logits_B.append(None)
                         success_logits_B.append(None)
 
-        progress_logits = {"A": progress_logits_A, "B": progress_logits_B}
-        success_logits = {"A": success_logits_A, "B": success_logits_B}
+        progress_logits = {
+            "A": torch.stack(progress_logits_A) if progress_logits_A else None,
+            "B": torch.stack(progress_logits_B) if progress_logits_B else None,
+        }
+        success_logits = {
+            "A": torch.stack(success_logits_A) if success_logits_A else None,
+            "B": torch.stack(success_logits_B) if success_logits_B else None,
+        }
 
         return outputs, progress_logits, success_logits
 
@@ -549,8 +555,14 @@ class RFM(PreTrainedModel):
                             progress_logits_B.append(None)
                             success_logits_B.append(None)
 
-        progress_logits = {"A": progress_logits_A, "B": progress_logits_B}
-        success_logits = {"A": success_logits_A, "B": success_logits_B}
+        progress_logits = {
+            "A": torch.stack(progress_logits_A) if progress_logits_A else None,
+            "B": torch.stack(progress_logits_B) if progress_logits_B[0] is not None else None,
+        }
+        success_logits = {
+            "A": torch.stack(success_logits_A) if success_logits_A else None,
+            "B": torch.stack(success_logits_B) if success_logits_B[0] is not None else None,
+        }
 
         return outputs, progress_logits, success_logits
 
@@ -614,8 +626,8 @@ class RFM(PreTrainedModel):
                     - pref_logits: Binary logits [batch_size, 1] for preference
                     - sim_logits: Continuous similarity scores [batch_size, 1] for similarity
                     - progress_logits: Dict with 'A' and 'B' trajectories
-                        - 'A': List of tensors for trajectory A (before vision_end token), each [seq_len_A]
-                        - 'B': List of tensors for trajectory B (after vision_end token), each [seq_len_B]
+                        - 'A': Tensor for trajectory A [batch_size, max_seq_len_A] (padded to max length)
+                        - 'B': Tensor for trajectory B [batch_size, max_seq_len_B] or None (padded to max length)
                     Values should be in range [0, 1] representing task completion percentage at each timestep.
 
                 - timing_raw (Dict[str, float]):
@@ -718,10 +730,10 @@ class RFM(PreTrainedModel):
                 success_pred_A = self.success_head(succ_token_A_hidden_states).squeeze(-1)  # [B]
                 success_pred_B = self.success_head(succ_token_B_hidden_states).squeeze(-1)  # [B]
 
-                progress_logits["A"] = progress_pred_A.unsqueeze(-1)
-                progress_logits["B"] = progress_pred_B.unsqueeze(-1)
-                success_logits["A"] = success_pred_A.unsqueeze(-1)
-                success_logits["B"] = success_pred_B.unsqueeze(-1)
+                progress_logits["A"] = progress_pred_A.unsqueeze(-1)  # [B, 1]
+                progress_logits["B"] = progress_pred_B.unsqueeze(-1)  # [B, 1]
+                success_logits["A"] = success_pred_A.unsqueeze(-1)  # [B, 1]
+                success_logits["B"] = success_pred_B.unsqueeze(-1)  # [B, 1]
 
                 # Also extract preference/similarity token for the main prediction
                 if sample_type == "preference":

@@ -73,7 +73,10 @@ def log_logits(name: str, value: Any) -> None:
     elif isinstance(value, list):
         logger.debug(f"{name}: {value}")
 
-def forward_model(model, batch_inputs: Dict[str, Any], sample_type: str = "progress") -> tuple[ModelOutput, Dict[str, Any]]:
+
+def forward_model(
+    model, batch_inputs: Dict[str, Any], sample_type: str = "progress"
+) -> tuple[ModelOutput, Dict[str, Any]]:
     """Forward pass that mirrors trainer logic (handles ReWiND vs RFM)."""
     with torch.no_grad():
         if "rewind" in model.__class__.__name__.lower():
@@ -361,7 +364,6 @@ class MultiGPUEvalServer:
             "outputs_progress": outputs_progress,
             "outputs_similarity": outputs_similarity,
         }
-
 
     def get_pool_status(self):
         """Get status of the GPU pool."""

@@ -69,8 +69,7 @@ def load_model_from_hf(
                 break
         if config_path is None:
             raise FileNotFoundError(
-                f"config.yaml not found near local checkpoint {model_path}. "
-                "Provide a path that contains config.yaml."
+                f"config.yaml not found near local checkpoint {model_path}. Provide a path that contains config.yaml."
             )
     else:
         if hf_hub_download is None:

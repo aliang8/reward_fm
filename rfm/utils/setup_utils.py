@@ -55,9 +55,7 @@ from rfm.models.rewind_transformer_scale import ReWINDScaleTransformerConfig, Re
 from rfm.utils.distributed import rank_0_print
 
 
-def parse_hf_model_id_and_revision(
-    hf_model_id: str, model_name: str = "model"
-) -> Tuple[str, Optional[str]]:
+def parse_hf_model_id_and_revision(hf_model_id: str, model_name: str = "model") -> Tuple[str, Optional[str]]:
     """
     Parse HuggingFace model ID and determine which revision (tag) to load.
 

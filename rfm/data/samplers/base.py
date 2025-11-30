@@ -10,6 +10,7 @@ from rfm.data.datasets.helpers import (
     pad_trajectory_to_max_frames_torch,
     pad_trajectory_to_max_frames_np,
     subsample_pairs_and_progress,
+    compute_success_labels,
 )
 from rfm.data.dataset_types import Trajectory
 from rfm.data.datasets.helpers import create_rewind_trajectory, load_embeddings_from_path
@@ -293,6 +294,8 @@ class RFMBaseSampler:
             use_embeddings=self.config.load_embeddings,
             progress_pred_type=getattr(self.config, "progress_pred_type", "absolute"),
             success_cutoff=success_cutoff,
+            dataset_success_percent=self.dataset_success_cutoff_map,
+            max_success=self.config.max_success,
         )
 
     def _get_traj_from_data(self, traj: dict | Trajectory, subsample_strategy: str | None = None) -> Trajectory:
@@ -395,6 +398,14 @@ class RFMBaseSampler:
             else:
                 frames, progress = pad_trajectory_to_max_frames_np(frames, progress, self.config.max_frames)
 
+        # Compute success labels
+        success_label = compute_success_labels(
+            target_progress=progress,
+            data_source=traj["data_source"],
+            dataset_success_percent=self.dataset_success_cutoff_map,
+            max_success=self.config.max_success,
+        )
+
         return Trajectory(
             frames=frames,
             frames_shape=frames_shape,
@@ -408,5 +419,6 @@ class RFMBaseSampler:
             is_robot=traj["is_robot"],
             target_progress=progress,
             partial_success=traj.get("partial_success"),
+            success_label=success_label,
             metadata=metadata,
         )

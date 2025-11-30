@@ -15,15 +15,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import cv2
+from sklearn.metrics import average_precision_score
 from rfm.data.datasets.helpers import load_frames_from_npz
 from rfm.data.dataset_category import is_failure
-from evals.eval_metrics_utils import compute_pearson, compute_preference_accuracy, compute_spearman
-
-
-def load_results(results_path: str) -> list[dict[str, Any]]:
-    """Load results from JSON file."""
-    with open(results_path) as f:
-        return json.load(f)
+from rfm.evals.eval_metrics_utils import compute_pearson, compute_preference_accuracy, compute_spearman
 
 
 def compute_eval_metrics(eval_type: str, results: list[dict[str, Any]], progress_pred_type: str):
@@ -266,10 +261,29 @@ def run_reward_alignment_eval_per_trajectory(
     plots = []
     video_frames_list = []
 
+    # Collect all success_probs and success_labels for AUPRC computation
+    all_success_probs = []
+    all_success_labels = []
+
     for r in results:
         trajectory_id = r.get("id")
         if trajectory_id:
             unique_trajectory_ids.add(trajectory_id)
+
+        # Collect success probabilities and labels for AUPRC
+        success_probs = r.get("success_probs", None)
+        success_labels = r.get("success_labels", None)
+        if success_probs is not None and success_labels is not None:
+            # Convert to numpy arrays if needed
+            if isinstance(success_probs, np.ndarray):
+                all_success_probs.append(success_probs.flatten())
+            else:
+                all_success_probs.append(np.array(success_probs).flatten())
+
+            if isinstance(success_labels, np.ndarray):
+                all_success_labels.append(success_labels.flatten())
+            else:
+                all_success_labels.append(np.array(success_labels).flatten())
 
     for trajectory_id in unique_trajectory_ids:
         last_preds = []
@@ -292,7 +306,9 @@ def run_reward_alignment_eval_per_trajectory(
 
         # Determine success availability from the first result only
         have_success = results_for_trajectory[0].get("success_pred", None) is not None
+        have_success_labels = results_for_trajectory[0].get("success_labels", None) is not None
 
+        last_success_labels = []
         for timestep, r in enumerate(results_for_trajectory):
             pred = r.get("progress_pred")
             tgt = r.get("target_progress")
@@ -322,6 +338,11 @@ def run_reward_alignment_eval_per_trajectory(
             succ = r.get("success_pred", None)
             if succ is not None:
                 last_success.append(float(succ[-1]))
+
+            # Optional success labels (ground truth) from trainer outputs
+            succ_labels = r.get("success_labels", None)
+            if succ_labels is not None:
+                last_success_labels.append(float(succ_labels[-1]))
 
         if len(last_preds) == 0 or len(last_targets) == 0:
             print("No valid predictions or targets found for trajectory: ", trajectory_id)
@@ -381,13 +402,25 @@ def run_reward_alignment_eval_per_trajectory(
 
             # Success subplot (binary)
             ax2 = axs[1]
-            ax2.step(range(len(last_success)), last_success, where="post", linewidth=2)
+            ax2.step(range(len(last_success)), last_success, where="post", linewidth=2, label="Predicted", color="blue")
+            # Add ground truth success labels as green line if available
+            if have_success_labels and len(last_success_labels) == len(last_success):
+                ax2.step(
+                    range(len(last_success_labels)),
+                    last_success_labels,
+                    where="post",
+                    linewidth=2,
+                    label="Ground Truth",
+                    color="green",
+                )
             ax2.set_ylabel("Success")
             ax2.set_title("Success (final per slice)")
             ax2.set_ylim(-0.05, 1.05)
             ax2.spines["right"].set_visible(False)
             ax2.spines["top"].set_visible(False)
             ax2.set_yticks([0, 1])
+            if have_success_labels and len(last_success_labels) == len(last_success):
+                ax2.legend(loc="upper right", fontsize=8)
         else:
             fig, ax = plt.subplots(figsize=(6, 3.5))
             ax.plot(last_preds, linewidth=2)
@@ -423,12 +456,29 @@ def run_reward_alignment_eval_per_trajectory(
         pearson_per_trajectory = np.mean(pearson_trajectories).item()
         # spearman_per_trajectory = np.mean(spearman_trajectories).item()
 
+    # Compute success_auprc across all collected success predictions and labels
+    success_auprc = None
+    if all_success_probs and all_success_labels:
+        # Flatten all collected probabilities and labels
+        success_probs_flat = np.concatenate(all_success_probs)
+        success_labels_flat = np.concatenate(all_success_labels)
+
+        # Compute AUPRC if we have valid data
+        if success_probs_flat.size > 0 and len(np.unique(success_labels_flat)) > 1:
+            success_auprc = float(average_precision_score(success_labels_flat, success_probs_flat))
+        else:
+            success_auprc = 0.0
+
     metrics = {
         "mse": mse_per_trajectory,
         "pearson": pearson_per_trajectory,
         # "spearman": spearman_per_trajectory,
         # "num_samples": len(unique_trajectory_ids),
     }
+
+    # Add success_auprc to metrics if computed
+    if success_auprc is not None:
+        metrics["success_auprc"] = success_auprc
 
     return metrics, plots, video_frames_list
 

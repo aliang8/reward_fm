@@ -10,6 +10,7 @@ from rfm.data.datasets.helpers import (
     load_embeddings_from_path,
     load_frames_from_npz,
     convert_absolute_to_relative_progress,
+    compute_success_labels,
 )
 from rfm.utils.distributed import rank_0_print
 
@@ -105,6 +106,14 @@ class ProgressDefaultSampler(RFMBaseSampler):
             "video_path": video_path,
         }
 
+        # Compute success labels
+        success_label = compute_success_labels(
+            target_progress=progress,
+            data_source=traj["data_source"],
+            dataset_success_percent=self.dataset_success_cutoff_map,
+            max_success=self.config.max_success,
+        )
+
         # Create trajectory for the progress sample
         trajectory = Trajectory(
             frames=frames,
@@ -119,6 +128,7 @@ class ProgressDefaultSampler(RFMBaseSampler):
             is_robot=traj["is_robot"],
             target_progress=progress,
             partial_success=traj.get("partial_success"),
+            success_label=success_label,
             metadata=metadata,
         )
 

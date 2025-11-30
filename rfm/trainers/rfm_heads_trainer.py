@@ -1,5 +1,6 @@
 import collections
 import os
+from typing import Dict
 
 import numpy as np
 import torch
@@ -18,12 +19,12 @@ from rfm.utils.metrics import compute_spearman_correlation
 from rfm.utils.setup_utils import setup_dataset, setup_batch_collator, setup_custom_eval_dataset
 from torch.utils.data import DataLoader
 from rfm.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
-from evals.compile_results import compute_eval_metrics
-from rfm.data.datasets.helpers import load_dataset_success_percent
+from rfm.evals.compile_results import compute_eval_metrics
 import torch.distributed as dist
 from rfm.data.datasets.base import resolve_dataset_keys
 from rfm.utils.distributed import banner
 from rfm.models.utils import ModelOutput
+from rfm.utils.tensor_utils import t2n
 
 
 def seed_worker(worker_id):
@@ -132,14 +133,6 @@ class RFMHeadsTrainer(Trainer):
                 is_main_process=is_rank_0(),
             )
 
-        # Load dataset-specific success perfect percentage
-        cutoff_file_path = config.data.dataset_success_cutoff_file
-        self.dataset_success_percent = load_dataset_success_percent(cutoff_file_path)
-
-        rank_0_print(f"Dataset success perfect percentage:")
-        for k, v in self.dataset_success_percent.items():
-            rank_0_print(f"  {k} - {v}")
-        rank_0_print(f"=" * 100)
         rank_0_print(f"DDP find_unused_parameters: {getattr(self.args, 'ddp_find_unused_parameters', 'N/A')}")
 
     def _post_checkpoint_load_reset(self):
@@ -309,12 +302,7 @@ class RFMHeadsTrainer(Trainer):
             rejected_data_gen_strategy = preference_inputs["rejected_data_gen_strategy"]
             if isinstance(rejected_data_gen_strategy, list) and len(rejected_data_gen_strategy) > 0:
                 for s in rejected_data_gen_strategy:
-                    if s == "rewind_same_task":
-                        self.global_metadata["pref_num_trajs_rewind"] += 1
-                    elif s == "suboptimal_same_task":
-                        self.global_metadata["pref_num_trajs_same_task_subopt"] += 1
-                    elif s == "different_task":
-                        self.global_metadata["pref_num_trajs_diff_task"] += 1
+                    self.global_metadata[f"pref_{s}"] += 1
 
             data_sources = preference_inputs.get("data_source", None)
             if data_sources is not None:
@@ -325,12 +313,7 @@ class RFMHeadsTrainer(Trainer):
             data_gen_strategy = progress_inputs["data_gen_strategy"]
             if isinstance(data_gen_strategy, list) and len(data_gen_strategy) > 0:
                 for s in data_gen_strategy:
-                    if s == "successful":
-                        self.global_metadata["prog_num_trajs_succ"] += 1
-                    elif s == "rewind_same_task":
-                        self.global_metadata["prog_num_trajs_rewind"] += 1
-                    elif s == "different_task":
-                        self.global_metadata["prog_num_trajs_diff_task"] += 1
+                    self.global_metadata[f"prog_{s}"] += 1
 
             data_sources = progress_inputs.get("data_source", None)
             if data_sources is not None:
@@ -341,12 +324,7 @@ class RFMHeadsTrainer(Trainer):
             data_gen_strategy = similarity_inputs["data_gen_strategy"]
             if isinstance(data_gen_strategy, list) and len(data_gen_strategy) > 0:
                 for s in data_gen_strategy:
-                    if s == "rewind_same_task":
-                        self.global_metadata["sim_num_trajs_rewind"] += 1
-                    elif s == "suboptimal_same_task":
-                        self.global_metadata["sim_num_trajs_same_task_subopt"] += 1
-                    elif s == "paired_human_robot":
-                        self.global_metadata["sim_num_trajs_paired_hr"] += 1
+                    self.global_metadata[f"sim_{s}"] += 1
 
             data_sources = similarity_inputs.get("data_source", None)
             if data_sources is not None:
@@ -651,9 +629,6 @@ class RFMHeadsTrainer(Trainer):
                     self.optimizer.zero_grad(set_to_none=True)
                 eval_results = []
 
-                # Initialize success_auprc to None for all eval types
-                success_auprc = None
-
                 for batch in tqdm(
                     dataloader,
                     desc=f"Running {eval_type}, ds: {eval_dataset}, batch size: {self.config.training.per_device_eval_batch_size}",
@@ -692,7 +667,6 @@ class RFMHeadsTrainer(Trainer):
                             "task",
                             "data_source",
                             "data_gen_strategy",
-
                             "quality_labels",
                             "metadata",
                             "partial_success",
@@ -706,7 +680,7 @@ class RFMHeadsTrainer(Trainer):
                         # Handle success predictions if needed
                         success_pred_gathered = None
                         success_probs_gathered = None
-                        # success_auprc is initialized before the loop, only update it here if computing
+                        success_labels_gathered = None
                         if self.config.model.train_success_head:
                             success_pred = outputs.success_logits["A"]
                             if isinstance(success_pred, list):
@@ -723,64 +697,15 @@ class RFMHeadsTrainer(Trainer):
                             # self._log_rank_shape("success_pred_gathered", success_pred_gathered)
                             # self._log_rank_shape("success_probs_gathered", success_probs_gathered)
 
-                            # Compute success labels from target_progress for AUPRC
-                            # Use the same logic as in _compute_success_loss_helper
-                            min_success = self.config.data.min_success
-                            max_success_default = self.config.data.max_success
+                            # Get success labels from batch (computed in collator)
+                            success_labels = progress_samples.get("success_labels")
+                            success_labels_gathered = self.accelerator.gather_for_metrics(success_labels)
 
-                            # Handle Qwen downsampling if needed
-                            target_progress_for_success = target_progress
-                            if "Qwen" in self.config.model.base_model_id and not self.config.data.use_multi_image:
-                                target_progress_for_success = target_progress[:, ::2]
-                            # self._log_rank_shape("target_progress_for_success", target_progress_for_success)
-
-                            # Compute per-sample max_success thresholds
-                            data_sources_list = gathered_metadata_dict["data_source"]
-                            max_success_tensor = torch.tensor(
-                                [
-                                    self.dataset_success_percent.get(
-                                        ds if isinstance(ds, str) else str(ds), max_success_default
-                                    )
-                                    for ds in data_sources_list
-                                ],
-                                dtype=target_progress_for_success.dtype,
-                                device=target_progress_for_success.device,
-                            )
-
-                            # Generate success labels: 1.0 for success, 0.0 for failure
-                            success_labels = (target_progress_for_success > max_success_tensor.unsqueeze(1)).float()
-
-                            # Ensure shapes match - target_progress must be a sequence to compute frame-level success
-                            if success_probs_gathered.shape != target_progress_for_success.shape:
-                                raise ValueError(
-                                    f"Shape mismatch for AUPRC computation: "
-                                    f"success_probs_gathered.shape={success_probs_gathered.shape}, "
-                                    f"target_progress_for_success.shape={target_progress_for_success.shape}. "
-                                    f"target_progress must be a sequence (frame-level) to compute frame-level success AUPRC. "
-                                    f"If target_progress is scalar [batch, 1], frame-level success cannot be computed."
-                                )
-
-                            # Compute AUPRC across all valid frames
-                            # Flatten tensors for AUPRC computation
-                            success_probs_flat = success_probs_gathered.flatten()
-                            success_labels_flat = success_labels.flatten()
-
-                            if success_probs_flat.numel() > 0 and len(torch.unique(success_labels_flat)) > 1:
-                                auprc_value = average_precision_score(
-                                    success_labels_flat.detach().cpu().float().numpy(),
-                                    success_probs_flat.detach().cpu().float().numpy(),
-                                )
-                                success_auprc = float(auprc_value)
-                            else:
-                                success_auprc = 0.0
-
-                            # Clean up intermediate tensors
+                            # Clean up intermediate tensors (but keep gathered tensors for eval_results)
                             del (
                                 success_pred,
                                 success_binary,
                                 success_probs,
-                                target_progress_for_success,
-                                max_success_tensor,
                                 success_labels,
                             )
 
@@ -789,8 +714,8 @@ class RFMHeadsTrainer(Trainer):
                             metadata = gathered_metadata_dict["metadata"][i]
                             sample_result = {
                                 "task": gathered_metadata_dict["task"][i],
-                                "target_progress": target_progress[i].detach().to(dtype=torch.float32).cpu().numpy(),
-                                "progress_pred": progress_pred[i].detach().to(dtype=torch.float32).cpu().numpy(),
+                                "target_progress": t2n(target_progress[i]),
+                                "progress_pred": t2n(progress_pred[i]),
                                 "data_source": gathered_metadata_dict["data_source"][i],
                                 "data_gen_strategy": gathered_metadata_dict["data_gen_strategy"][i],
                                 "quality_label": gathered_metadata_dict["quality_labels"][i],
@@ -800,9 +725,11 @@ class RFMHeadsTrainer(Trainer):
                                 "partial_success": gathered_metadata_dict["partial_success"][i],
                             }
                             if success_pred_gathered is not None:
-                                sample_result["success_pred"] = (
-                                    success_pred_gathered[i].detach().to(dtype=torch.float32).cpu().numpy()
-                                )
+                                sample_result["success_pred"] = t2n(success_pred_gathered[i])
+                            if success_probs_gathered is not None:
+                                sample_result["success_probs"] = t2n(success_probs_gathered[i])
+                            if success_labels_gathered is not None:
+                                sample_result["success_labels"] = t2n(success_labels_gathered[i])
                             eval_results.append(sample_result)
 
                         # Clean up gathered tensors and metadata after building results
@@ -811,6 +738,8 @@ class RFMHeadsTrainer(Trainer):
                             del success_pred_gathered
                         if success_probs_gathered is not None:
                             del success_probs_gathered
+                        if success_labels_gathered is not None:
+                            del success_labels_gathered
 
                     elif eval_type == "quality_preference" or eval_type == "quality_preference_roboarena":
                         # Process preference samples for quality_preference evaluation
@@ -835,9 +764,7 @@ class RFMHeadsTrainer(Trainer):
                             ],
                         )
                         num_pref_samples = pref_logits.shape[0] if pref_logits is not None else 0
-                        gathered_pref_metadata = self._truncate_metadata_lists(
-                            gathered_pref_metadata, num_pref_samples
-                        )
+                        gathered_pref_metadata = self._truncate_metadata_lists(gathered_pref_metadata, num_pref_samples)
                         gathered_task = gathered_pref_metadata["task"]
                         gathered_data_source = gathered_pref_metadata["data_source"]
                         gathered_chosen_data_gen_strategy = gathered_pref_metadata["chosen_data_gen_strategy"]
@@ -850,12 +777,8 @@ class RFMHeadsTrainer(Trainer):
                                 continue
                             sample_result = {
                                 "task": gathered_task[i],
-                                "preference_pred": pref_logits[i].detach().to(dtype=torch.float32).cpu().numpy(),
-                                "preference_labels": preference_labels[i]
-                                .detach()
-                                .to(dtype=torch.float32)
-                                .cpu()
-                                .numpy(),
+                                "preference_pred": t2n(pref_logits[i]),
+                                "preference_labels": t2n(preference_labels[i]),
                                 "data_source": gathered_data_source[i],
                                 "chosen_data_gen_strategy": gathered_chosen_data_gen_strategy[i],
                                 "rejected_data_gen_strategy": gathered_rejected_data_gen_strategy[i],
@@ -905,16 +828,8 @@ class RFMHeadsTrainer(Trainer):
                             # Metadata is indexed by sample index (i), not batched index
                             sample_result = {
                                 "task": gathered_task[i] if i < len(gathered_task) else None,
-                                "sim_score_ref_sim": sim_logits[ref_sim_idx]
-                                .detach()
-                                .to(dtype=torch.float32)
-                                .cpu()
-                                .numpy(),
-                                "sim_score_ref_diff": sim_logits[ref_diff_idx]
-                                .detach()
-                                .to(dtype=torch.float32)
-                                .cpu()
-                                .numpy(),
+                                "sim_score_ref_sim": t2n(sim_logits[ref_sim_idx]),
+                                "sim_score_ref_diff": t2n(sim_logits[ref_diff_idx]),
                                 "data_source": gathered_data_source[i] if i < len(gathered_data_source) else None,
                                 "data_gen_strategy": gathered_data_gen_strategy[i]
                                 if i < len(gathered_data_gen_strategy)
@@ -955,6 +870,7 @@ class RFMHeadsTrainer(Trainer):
                     confusion_plot, confusion_matrix = compute_eval_metrics(
                         eval_type, eval_results, self.config.data.progress_pred_type
                     )
+                    eval_metrics = {}  # no eval metrics
                 elif eval_type == "quality_preference" or eval_type == "quality_preference_roboarena":
                     # quality_preference returns metrics, task_groups, and task_details
                     eval_metrics, task_groups, task_details = compute_eval_metrics(
@@ -967,16 +883,6 @@ class RFMHeadsTrainer(Trainer):
                     )
                 else:
                     raise ValueError(f"Unsupported eval type: {eval_type}")
-
-                # Add success_auprc to metrics if computed (for eval types with success predictions)
-                if success_auprc is not None and eval_type in [
-                    "reward_alignment",
-                    "policy_ranking",
-                    "confusion_matrix",
-                ]:
-                    if not isinstance(eval_metrics, dict):
-                        eval_metrics = {}
-                    eval_metrics["success_auprc"] = success_auprc
 
                 # Store metrics for all processes
                 # For similarity_score, eval_dataset is a list, so use the first element for name mapping
@@ -1003,7 +909,7 @@ class RFMHeadsTrainer(Trainer):
                                 rows.append((frames, plot))
                         if rows and self.logger.enabled("wandb"):
                             self.logger.log_video_table(
-                                f"{ds_name}/reward_alignment_samples",
+                                f"reward_alignment_samples/{ds_name}",
                                 videos_and_figures=rows,
                                 columns=["video", "progress_plot"],
                                 step=self.state.global_step,
@@ -1013,7 +919,7 @@ class RFMHeadsTrainer(Trainer):
                             for idx, frames in enumerate(video_frames_list):
                                 if frames is not None:
                                     self.logger.log_video(
-                                        f"{ds_name}/reward_alignment_video/{idx}",
+                                        f"reward_alignment_video/{ds_name}/{idx}",
                                         frames,
                                         fps=2,
                                         step=self.state.global_step,
@@ -1053,7 +959,6 @@ class RFMHeadsTrainer(Trainer):
                                     round(spearman, 3),
                                 ])
                             columns = ["task", "partial_successes", "predicted_rewards", "spearman"]
-                            table_name = f"{ds_name}/policy_ranking_roboarena_samples"
                         else:
                             # Standard policy ranking visualization: show quality labels and rewards
                             for task, group in task_groups.items():
@@ -1063,7 +968,8 @@ class RFMHeadsTrainer(Trainer):
                                 quality_to_rews = ",".join([f"{q}:{r}" for q, r in quality_to_rews.items()])
                                 data.append([task, quality_to_rews])
                             columns = ["task", "quality_and_rews"]
-                            table_name = f"{ds_name}/policy_ranking_samples"
+
+                        table_name = f"policy_ranking_samples/{ds_name}"
 
                         self.logger.log_table(
                             table_name,
@@ -1099,7 +1005,6 @@ class RFMHeadsTrainer(Trainer):
                                     f"{num_correct}/{num_total}",
                                 ])
                             columns = ["task", "preference_accuracy", "partial_success_accuracies", "num_correct/total"]
-                            table_name = f"{ds_name}/quality_preference_roboarena_samples"
                         else:
                             # Standard quality_preference visualization: show quality label accuracies
                             for task, details in task_details.items():
@@ -1115,7 +1020,8 @@ class RFMHeadsTrainer(Trainer):
                                     f"{num_correct}/{num_total}",
                                 ])
                             columns = ["task", "preference_accuracy", "quality_accuracies", "num_correct/total"]
-                            table_name = f"{ds_name}/quality_preference_samples"
+
+                        table_name = f"quality_preference_samples/{ds_name}"
 
                         self.logger.log_table(
                             table_name,
@@ -1128,9 +1034,7 @@ class RFMHeadsTrainer(Trainer):
                         task_details = None
 
                     elif eval_type == "confusion_matrix":
-                        self.logger.log_figure(
-                            f"{ds_name}/confusion_matrix", confusion_plot, step=self.state.global_step
-                        )
+                        self.logger.log_figure(f"eval_cm/{ds_name}", confusion_plot, step=self.state.global_step)
                         plt.close(confusion_plot)
                         del confusion_plot, confusion_matrix
                         confusion_plot = None
@@ -1153,7 +1057,7 @@ class RFMHeadsTrainer(Trainer):
                             ])
                         columns = ["task", "avg_margin", "avg_same_task_score", "avg_diff_task_score", "num_pairs"]
                         self.logger.log_table(
-                            f"{ds_name}/similarity_score_samples",
+                            f"similarity_score_samples/{ds_name}",
                             data=data,
                             columns=columns,
                             step=self.state.global_step,
@@ -1187,27 +1091,23 @@ class RFMHeadsTrainer(Trainer):
 
                 gc.collect()
 
-        # Prepare metrics for callbacks (all processes)
-        callback_metrics = {}
+        flat_metrics = {}
         for ds_name, eval_type_metric in metrics.items():
             for eval_type, metric in eval_type_metric.items():
                 eval_type_short = EVAL_TYPE_SHORT[eval_type]
-                # Add to callback metrics
+                # Add to flat metrics dict with full names
                 for k, v in metric.items():
                     if isinstance(v, (int, float)):
-                        metric_name = f"custom_eval/{eval_type_short}_{k}_{ds_name}"
-                        callback_metrics[metric_name] = v
+                        metric_name = f"eval_{eval_type_short}/{k}_{ds_name}"
+                        flat_metrics[metric_name] = v
+
+        # Prepare metrics for callbacks (all processes should have the same metrics)
+        callback_metrics = flat_metrics
 
         # Prepare wandb metrics and log (only on main process)
         if self.accelerator.is_main_process:
-            to_log = {}
-            for ds_name, eval_type_metric in metrics.items():
-                for eval_type, metric in eval_type_metric.items():
-                    eval_type_short = EVAL_TYPE_SHORT[eval_type]
-                    for k, v in metric.items():
-                        if isinstance(v, (int, float)):
-                            metric_name = f"custom_eval/{eval_type_short}_{k}_{ds_name}"
-                            to_log[metric_name] = float(v)
+            # Convert callback_metrics to float for wandb logging
+            to_log = {k: float(v) for k, v in callback_metrics.items()}
             self.logger.log_scalars(to_log, step=self.state.global_step)
 
         banner("Finished running custom evaluations!")
@@ -1381,13 +1281,8 @@ class RFMHeadsTrainer(Trainer):
         return total_loss
 
     def _compute_success_loss_helper(
-        self,
-        success_logits,
-        target_progress,
-        progress_loss_mask=None,
-        data_source=None,
-        aggregate: bool = False,
-    ):
+        self, success_logits, target_progress, success_labels, progress_loss_mask=None
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Helper function to compute success prediction loss.
 
@@ -1399,68 +1294,29 @@ class RFMHeadsTrainer(Trainer):
         Args:
             success_logits: Success prediction logits (can be tensor or list of tensors)
             target_progress: Target progress tensors (can be tensor or list of tensors)
+            success_labels: Success labels from batch (computed in collator) (can be tensor or list of tensors)
             progress_loss_mask: Per-sample mask tensor of shape (batch_size,) with 1.0 for samples
                 where we should compute progress/success loss (e.g., successful, rewound, different_task)
-            data_source: Dataset source information for threshold lookup
             aggregate: Whether to return the mean of the losses and accuracies
 
         Returns:
-            tuple: (success_loss, success_accuracy, success_auprc) if aggregate=True
-                   (masked_loss, masked_correct, masked_auprc) if aggregate=False
+            tuple: (success_loss, success_accuracy, success_auprc, metrics)
         """
-        if success_logits is None or target_progress is None:
-            # Return zero tensors instead of floats to maintain tensor consistency
-            device = (
-                success_logits.device
-                if success_logits is not None
-                else (target_progress.device if target_progress is not None else torch.device("cpu"))
-            )
-            return torch.tensor(0.0, device=device), torch.tensor(0.0, device=device), torch.tensor(0.0, device=device)
-
-        # Normalize inputs to tensors
-        if isinstance(success_logits, list):
-            success_logits = torch.stack(success_logits)
-        if isinstance(target_progress, list):
-            target_progress = torch.stack(target_progress)
-
         # Get base thresholds from config
         min_success = self.config.data.min_success
-        max_success_default = self.config.data.max_success
-
-        # Compute per-sample max_success thresholds if data_source is available
-        if data_source is not None:
-            max_success_tensor = torch.tensor(
-                [
-                    self.dataset_success_percent.get(ds if isinstance(ds, str) else str(ds), max_success_default)
-                    for ds in data_source
-                ],
-                dtype=target_progress.dtype,
-                device=target_progress.device,
-            )
-        else:
-            max_success_tensor = torch.full(
-                (success_logits.shape[0],),
-                max_success_default,
-                dtype=target_progress.dtype,
-                device=target_progress.device,
-            )
 
         # Handle Qwen downsampling: take every 2nd frame if using Qwen and NOT using multi_image
         # In multi_image mode, we already get one embedding per frame, so no downsampling needed
         # Ensure success_logits matches target_progress length after downsampling
         if "Qwen" in self.config.model.base_model_id and not self.config.data.use_multi_image:
+            success_logits = success_logits[:, ::2]
             target_progress = target_progress[:, ::2]
+            success_labels = success_labels[:, ::2]
 
-        # Generate success labels and mask vectorized
-        # combined_mask: 1.0 where we should compute loss (low or high progress), 0.0 otherwise
-        # success_labels: 0.0 for failure, 1.0 for success
-        combined_mask = ((target_progress < min_success) | (target_progress > max_success_tensor.unsqueeze(1))).float()
-        success_labels = (target_progress > max_success_tensor.unsqueeze(1)).float()
+        combined_mask = ((target_progress < min_success) | (success_labels > 0.5)).float()
 
         if progress_loss_mask is not None:
-            progress_loss_mask_t = progress_loss_mask.to(device=combined_mask.device, dtype=combined_mask.dtype)
-            # Expand mask from (batch_size,) to (batch_size, seq_len)
-            combined_mask = combined_mask * progress_loss_mask_t.unsqueeze(1)
+            combined_mask = combined_mask * progress_loss_mask
 
         # Clamp logits to prevent extreme values and gradient issues
         success_logits = torch.clamp(success_logits, min=-50.0, max=50.0)
@@ -1489,52 +1345,34 @@ class RFMHeadsTrainer(Trainer):
         success_probs_flat = success_probs[combined_mask > 0]
         success_labels_flat = success_labels[combined_mask > 0]
 
-        if aggregate:
-            success_loss = masked_loss.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
-            mean_accuracy = masked_correct.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
-            success_loss = success_loss.mean()
-            mean_accuracy = mean_accuracy.mean()
+        success_loss = masked_loss.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
+        success_acc = masked_correct.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
+        success_loss = success_loss.mean()
+        success_acc = success_acc.mean()
 
-            # Compute AUPRC across all valid frames
-            if success_probs_flat.numel() > 0 and len(torch.unique(success_labels_flat)) > 1:
-                auprc = average_precision_score(
-                    success_labels_flat.float().detach().cpu().numpy(),
-                    success_probs_flat.float().detach().cpu().numpy(),
-                )
-                mean_auprc = torch.tensor(auprc, device=success_loss.device, dtype=torch.float32)
-            else:
-                mean_auprc = torch.tensor(0.0, device=success_loss.device, dtype=torch.float32)
+        # Compute AUPRC across all valid frames
+        if success_probs_flat.numel() > 0 and len(torch.unique(success_labels_flat)) > 1:
+            auprc = average_precision_score(
+                t2n(success_labels_flat),
+                t2n(success_probs_flat),
+            )
+            batch_auprc = torch.tensor(auprc, device=success_loss.device, dtype=torch.float32)
+        else:
+            batch_auprc = torch.tensor(0.0, device=success_loss.device, dtype=torch.float32)
 
-            # Don't delete tensors that might be part of autograd graph
-            # They will be cleaned up automatically after backward pass
-            return success_loss, mean_accuracy, mean_auprc
+        metrics = {
+            "masked_loss": masked_loss,
+            "masked_correct": masked_correct,
+        }
 
-        # For non-aggregate case, compute AUPRC per sample
-        # Compute AUPRC per sample (per sequence)
-        batch_size = success_logits.shape[0]
-        masked_auprc = torch.zeros(batch_size, device=success_logits.device, dtype=torch.float32)
-
-        for i in range(batch_size):
-            sample_mask = combined_mask[i] > 0
-            if sample_mask.sum() > 0:
-                sample_probs = success_probs[i][sample_mask]
-                sample_labels = success_labels[i][sample_mask]
-                if len(torch.unique(sample_labels)) > 1:
-                    auprc = average_precision_score(
-                        sample_labels.detach().cpu().float().numpy(), sample_probs.detach().cpu().float().numpy()
-                    )
-                    masked_auprc[i] = auprc
-
-        # Don't delete intermediate tensors as they may be needed for backward pass
-        return masked_loss, masked_correct, masked_auprc
+        return success_loss, success_acc, batch_auprc, metrics
 
     def _compute_progress_loss_helper(
         self,
-        progress_pred,
-        target_progress,
-        mask,
-        aggregate: bool = False,
-    ):
+        progress_pred: torch.Tensor,
+        target_progress: torch.Tensor,
+        mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Helper function to compute progress loss.
 
@@ -1542,66 +1380,88 @@ class RFMHeadsTrainer(Trainer):
             progress_pred: Progress prediction tensors (can be tensor or list of tensors) of shape (batch_size, seq_len)
             target_progress: Target progress tensors (can be tensor or list of tensors) of shape (batch_size, seq_len)
             mask: Per-sample mask tensor of shape (batch_size,) with 1.0 for samples where we should compute loss
-            aggregate: Whether to return the mean of the losses and correlations
 
         Returns:
-            tuple: (progress_loss, spearman_correlation)
+            tuple: (masked_loss, spearman_correlations, metrics)
         """
-        if progress_pred is None or target_progress is None:
-            # Return zero tensors instead of floats to maintain tensor consistency
-            device = (
-                progress_pred.device
-                if progress_pred is not None
-                else (target_progress.device if target_progress is not None else torch.device("cpu"))
-            )
-            return torch.tensor(0.0, device=device), torch.tensor(0.0, device=device)
-
-        # Normalize inputs to tensors
-        if isinstance(progress_pred, list):
-            progress_pred = torch.stack(progress_pred)
-        if isinstance(target_progress, list):
-            target_progress = torch.stack(target_progress)
-
         # Handle Qwen downsampling: take every 2nd frame if using Qwen and NOT using multi_image
         # In multi_image mode, we already get one embedding per frame, so no downsampling needed
         if "Qwen" in self.config.model.base_model_id and not self.config.data.use_multi_image:
             target_progress = target_progress[:, ::2]
-
-        # Apply all masks together at once
-        combined_mask = torch.ones_like(target_progress, dtype=torch.float32)
-        mask_t = None
-        if mask is not None:
-            mask_t = mask.to(device=combined_mask.device, dtype=combined_mask.dtype)
-            # Expand mask from (batch_size,) to (batch_size, seq_len)
-            combined_mask = combined_mask * mask_t.unsqueeze(1)
+            mask = mask[:, ::2]
 
         # If predict_last_frame_progress is True, only compute loss for the last frame
         last_frame_mask = None
         if self.config.loss.predict_last_frame_progress:
             # Create a mask that only selects the last frame for each sequence
-            last_frame_mask = torch.zeros_like(combined_mask, dtype=torch.float32)
+            last_frame_mask = torch.zeros_like(target_progress, dtype=torch.float32)
             last_frame_mask[:, -1] = 1.0  # Set last frame to 1.0 for all sequences
-            combined_mask = combined_mask * last_frame_mask
+            mask = mask * last_frame_mask
 
         # Compute MSE loss per frame
         loss_per_frame = F.mse_loss(progress_pred.float(), target_progress.float(), reduction="none")
-        masked_loss = loss_per_frame * combined_mask
-        spearman_correlations = compute_spearman_correlation(
-            progress_pred, target_progress, aggregate=False, mask=combined_mask
+        masked_loss = loss_per_frame * mask
+
+        repeated_mask = mask.repeat(1, target_progress.shape[1])
+        masked_spearman_corr = compute_spearman_correlation(
+            progress_pred, target_progress, aggregate=False, mask=repeated_mask
         )
+        masked_spearman_corr = masked_spearman_corr.detach()
 
-        if aggregate:
-            # Average per sample, then take mean across batch
-            progress_losses = masked_loss.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
-            progress_loss = progress_losses.mean()
-            mean_spearman = spearman_correlations.mean()
-            # Don't delete tensors that might be part of autograd graph
-            # They will be cleaned up automatically after backward pass
-            return progress_loss, mean_spearman
+        # Average per sample, then take mean across batch
+        progress_losses = masked_loss.sum(dim=1) / (mask.sum(dim=1) + 1e-8)
+        progress_loss = progress_losses.mean()
+        spearman_corr = masked_spearman_corr.mean()
 
-        # For non-aggregate case, return the tensors as-is
-        # Don't delete intermediate tensors as they may be needed for backward pass
-        return masked_loss, spearman_correlations
+        # Keep track of the per-sample metrics
+        metrics = {"masked_loss": masked_loss, "masked_spearman_corr": masked_spearman_corr}
+
+        return progress_loss, spearman_corr, metrics
+
+    def _add_stratified_metrics(
+        self,
+        outputs_dict: Dict,
+        prefix: str,
+        strategy_values: list | None,
+        data_source_values: list,
+        metrics: Dict[str, torch.Tensor],
+    ) -> None:
+        """
+        Add stratified metrics (by strategy and data source) to outputs_dict.
+
+        Args:
+            outputs_dict: Dictionary to update with metrics
+            prefix: Prefix for metric keys (e.g., "train" or "eval")
+            strategy_values: List of strategy values to split by (e.g., data_gen_strategy), or None to skip
+            data_source_values: List of data source values to split by
+            metrics: Dictionary of metric tensors, e.g., {"acc": tensor, "loss": tensor, "margin": tensor}
+        """
+        device = self.accelerator.device
+
+        # Split by strategy
+        if strategy_values is not None:
+            strats = set(strategy_values)
+            for strat in strats:
+                mask = torch.tensor(
+                    [1 if s == strat else 0 for s in strategy_values], device=device, requires_grad=False
+                )
+                # Apply mask to each metric and compute mean
+                for metric_name, metric_tensor in metrics.items():
+                    masked_metric = metric_tensor[mask == 1].detach()
+                    mean_value = masked_metric.mean().item() if masked_metric.numel() > 0 else 0.0
+                    outputs_dict[f"{prefix}_strat_{metric_name}/{strat}"] = mean_value
+
+        # Split by data source
+        data_sources = set(data_source_values)
+        for data_source in data_sources:
+            mask = torch.tensor(
+                [1 if s == data_source else 0 for s in data_source_values], device=device, requires_grad=False
+            )
+            # Apply mask to each metric and compute mean
+            for metric_name, metric_tensor in metrics.items():
+                masked_metric = metric_tensor[mask == 1].detach()
+                mean_value = masked_metric.mean().item() if masked_metric.numel() > 0 else 0.0
+                outputs_dict[f"{prefix}_ds_{metric_name}/{data_source}"] = mean_value
 
     def forward_model(self, model, inputs, sample_type="progress"):
         """Forward pass for the model."""
@@ -1639,62 +1499,24 @@ class RFMHeadsTrainer(Trainer):
         progress_logits = model_output.progress_logits
         progress_pred = progress_logits["A"]
         progress_target = inputs["target_progress"]
-        progress_target_mask = inputs["target_progress_mask"]
+        progress_target_mask = inputs["target_progress_mask"].unsqueeze(-1)
 
-        # [B, T], [B]
-        progress_loss_all, spearman_corr_all = self._compute_progress_loss_helper(
-            progress_pred,
-            progress_target,
-            progress_target_mask,
-            aggregate=False,
+        progress_loss, spearman_corr, progress_metrics = self._compute_progress_loss_helper(
+            progress_pred, progress_target, progress_target_mask
         )
 
-        # Handle Qwen downsampling: take every 2nd frame if using Qwen and NOT using multi_image
-        # In multi_image mode, we already get one embedding per frame, so no downsampling needed
-        # This downsampling is needed for creating the combined_mask that matches progress_loss_all shape
-        # progress_target should already have requires_grad=False (set in collator), but clone to avoid view issues
-        if "Qwen" in self.config.model.base_model_id and not self.config.data.use_multi_image:
-            # Create downsampled version - use contiguous() to ensure it's not a view that breaks DDP
-            progress_target_for_mask = progress_target[:, ::2].contiguous()
-        else:
-            progress_target_for_mask = progress_target
-
-        # Apply all masks together at once
-        # Create combined_mask without requires_grad to ensure it's not part of computation graph
-        combined_mask = torch.ones_like(progress_target_for_mask, dtype=torch.float32, requires_grad=False)
-        if progress_target_mask is not None:
-            # progress_target_mask should already have requires_grad=False (set in collator)
-            mask_t = progress_target_mask.to(device=combined_mask.device, dtype=combined_mask.dtype)
-            # Expand mask from (batch_size,) to (batch_size, seq_len)
-            combined_mask = combined_mask * mask_t.unsqueeze(1)
-
-        progress_loss_all = progress_loss_all * combined_mask
-        progress_loss = progress_loss_all.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
-        progress_loss = progress_loss.mean()
         final_loss = progress_loss
-
         if self.config.model.train_success_head:
             success_logits = model_output.success_logits
             success_pred = success_logits["A"]
-            data_source = inputs["data_source"]
-            # Use the same downsampled target for success loss
-            progress_target_for_success = (
-                progress_target_for_mask
-                if ("Qwen" in self.config.model.base_model_id and not self.config.data.use_multi_image)
-                else progress_target
-            )
-            success_loss_all, success_acc_all, success_auprc_all = self._compute_success_loss_helper(
+            success_labels = inputs["success_labels"]
+
+            success_loss, success_accuracy, success_auprc, success_metrics = self._compute_success_loss_helper(
                 success_pred,
-                progress_target_for_success,
+                progress_target,
+                success_labels,
                 progress_loss_mask=progress_target_mask,
-                data_source=data_source,
-                aggregate=False,
             )
-            success_loss = success_loss_all.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
-            success_accuracy = success_acc_all.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
-            success_auprc = success_auprc_all.mean()
-            success_loss = success_loss.mean()
-            success_accuracy = success_accuracy.mean()
             final_loss = progress_loss + success_loss
 
         # Check for NaN in final loss
@@ -1706,45 +1528,22 @@ class RFMHeadsTrainer(Trainer):
             outputs_dict = {}
 
             prefix = "train" if training else "eval"
+            stratified_metrics = {
+                "spearman_corr": progress_metrics["masked_spearman_corr"],
+                "prog_loss": progress_metrics["masked_loss"],
+            }
 
-            # split spearman by data gen strategy
-            strats = set(inputs["data_gen_strategy"])
-            for strat in strats:
-                mask = [1 if s == strat else 0 for s in inputs["data_gen_strategy"]]
-                mask = torch.tensor(mask, device=self.accelerator.device, requires_grad=False)
-                # Detach indexed tensors to avoid DDP hook issues with boolean indexing
-                masked_spearman = spearman_corr_all[mask == 1].detach() if training else spearman_corr_all[mask == 1]
-                masked_loss = progress_loss_all[mask == 1].detach() if training else progress_loss_all[mask == 1]
-                outputs_dict.update({
-                    f"{prefix}_strat_spearman_corr/{strat}": masked_spearman.mean().item(),
-                    f"{prefix}_strat_prog_loss/{strat}": masked_loss.mean().item(),
-                })
-
-            # split spearman by data source
-            data_sources = set(inputs["data_source"])
-            for data_source in data_sources:
-                mask = [1 if s == data_source else 0 for s in inputs["data_source"]]
-                mask = torch.tensor(mask, device=self.accelerator.device, requires_grad=False)
-                # Detach indexed tensors to avoid DDP hook issues with boolean indexing
-                masked_spearman = spearman_corr_all[mask == 1].detach() if training else spearman_corr_all[mask == 1]
-                masked_loss = progress_loss_all[mask == 1].detach() if training else progress_loss_all[mask == 1]
-                outputs_dict.update({
-                    f"{prefix}_ds_spearman_corr/{data_source}": masked_spearman.mean().item(),
-                    f"{prefix}_ds_prog_loss/{data_source}": masked_loss.mean().item(),
-                })
-
-            # Compute average Spearman correlation across trajectories A and B
-            spearman_values = []
-            if isinstance(spearman_corr_all, torch.Tensor):
-                spearman_values.append(spearman_corr_all.mean().item())
-            else:
-                spearman_values.append(spearman_corr_all)
-
-            avg_spearman = np.mean(spearman_values) if spearman_values else 0.0
+            self._add_stratified_metrics(
+                outputs_dict,
+                prefix,
+                inputs["data_gen_strategy"],
+                inputs["data_source"],
+                stratified_metrics,
+            )
 
             outputs_dict.update({
                 f"{prefix}/prog_loss": progress_loss.item(),
-                f"{prefix}/spearman_corr_avg": avg_spearman,
+                f"{prefix}/spearman_corr": spearman_corr.item(),
             })
 
             if self.config.model.train_success_head:
@@ -1754,13 +1553,6 @@ class RFMHeadsTrainer(Trainer):
                     f"{prefix}/success_auprc": success_auprc.item(),
                 })
 
-            # DO NOT delete any tensors during training - they are part of the autograd graph
-            # and must remain until backward completes. DDP will fail if we delete them prematurely.
-            # Even during evaluation, be cautious - only delete if absolutely necessary and
-            # after confirming they're not part of any computation graph.
-
-        # Don't delete tensors that are part of the computation graph
-        # They will be cleaned up automatically after backward pass completes
         if not return_outputs:
             return final_loss
 
@@ -1791,33 +1583,31 @@ class RFMHeadsTrainer(Trainer):
         # =========================================================================================
         # Compute progress and success loss for the first trajectory in the paired samples
         # =========================================================================================
-        target_progress_A_mask = inputs["target_progress_A_mask"]
         target_progress_A = inputs["target_progress_A"]
-        data_source = inputs["data_source"]
+        target_progress_A_mask = inputs["target_progress_A_mask"].unsqueeze(-1)
 
         if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
             progress_pred_A = progress_logits["A"]
 
-            progress_loss, spearman_corr = self._compute_progress_loss_helper(
+            progress_loss_A, spearman_corr_A, progress_metrics_A = self._compute_progress_loss_helper(
                 progress_pred_A,
                 target_progress_A,
-                mask=target_progress_A_mask,
-                aggregate=True,
+                target_progress_A_mask,
             )
-            final_loss = preference_loss + progress_loss
+            final_loss += progress_loss_A
 
         if self.config.model.train_success_head:
             success_logits = model_outputs.success_logits
             success_logits = success_logits["A"]
+            success_labels_A = inputs["success_labels_A"]
 
-            success_loss, success_accuracy, success_auprc = self._compute_success_loss_helper(
+            success_loss, success_accuracy, success_auprc, success_metrics_A = self._compute_success_loss_helper(
                 success_logits,
                 target_progress_A,
+                success_labels_A,
                 progress_loss_mask=target_progress_A_mask,
-                data_source=data_source,
-                aggregate=True,
             )
-            final_loss = final_loss + success_loss
+            final_loss += success_loss
 
         # Check for NaN in final loss
         if torch.isnan(final_loss).any():
@@ -1832,9 +1622,22 @@ class RFMHeadsTrainer(Trainer):
 
             if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
                 outputs_dict.update({
-                    f"{prefix}/pref_progress_loss": progress_loss.item(),
-                    f"{prefix}/pref_spearman_corr": spearman_corr.item(),
+                    f"{prefix}/pref_prog_loss": progress_loss_A.item(),
+                    f"{prefix}/pref_prog_spearman_corr": spearman_corr_A.item(),
                 })
+
+                stratified_progress_metrics = {
+                    "spearman_corr": progress_metrics_A["masked_spearman_corr"],
+                    "prog_loss": progress_metrics_A["masked_loss"],
+                }
+
+                self._add_stratified_metrics(
+                    outputs_dict,
+                    prefix,
+                    inputs["trajectory_A_data_gen_strategy"],
+                    inputs["data_source"],
+                    stratified_progress_metrics,
+                )
 
             if self.config.model.train_success_head:
                 outputs_dict.update({
@@ -1843,45 +1646,40 @@ class RFMHeadsTrainer(Trainer):
                     f"{prefix}/pref_success_auprc": success_auprc.item(),
                 })
 
+                stratified_success_metrics = {
+                    "success_loss": success_metrics_A["masked_loss"],
+                    "success_acc": success_metrics_A["masked_correct"],
+                }
+
+                self._add_stratified_metrics(
+                    outputs_dict,
+                    prefix,
+                    inputs["trajectory_A_data_gen_strategy"],
+                    inputs["data_source"],
+                    stratified_success_metrics,
+                )
+
             if preference_loss is not None:
                 # Compute preference accuracy for training monitoring
                 preference_probs = torch.sigmoid(preference_scores)
                 preference_predictions = (preference_probs > 0.5).float()
                 preference_accuracy = (preference_predictions == preference_labels).float()
 
-                # split acc by data gen strategy
-                rejected_strats = set(rejected_data_gen_strategy)
-                for strat in rejected_strats:
-                    mask = [1 if s == strat else 0 for s in rejected_data_gen_strategy]
-                    mask = torch.tensor(mask, device=self.accelerator.device, requires_grad=False)
-                    # Detach indexed tensors to avoid DDP hook issues with boolean indexing
-                    masked_acc = preference_accuracy[mask == 1].detach() if training else preference_accuracy[mask == 1]
-                    masked_loss = (
-                        preference_loss_all[mask == 1].detach() if training else preference_loss_all[mask == 1]
-                    )
-                    outputs_dict.update({
-                        f"{prefix}_strat_pref_acc/{strat}": masked_acc.mean().item(),
-                        f"{prefix}_strat_pref_loss/{strat}": masked_loss.mean().item(),
-                    })
+                # Prepare metrics for stratification
+                stratified_metrics = {
+                    "pref_acc": preference_accuracy,
+                    "pref_loss": preference_loss_all,
+                }
 
-                # split acc by data source
-                data_sources = set(inputs["data_source"])
-                for data_source in data_sources:
-                    mask = [1 if s == data_source else 0 for s in inputs["data_source"]]
-                    mask = torch.tensor(mask, device=self.accelerator.device, requires_grad=False)
-                    # Detach indexed tensors to avoid DDP hook issues with boolean indexing
-                    masked_acc = preference_accuracy[mask == 1].detach() if training else preference_accuracy[mask == 1]
-                    masked_loss = (
-                        preference_loss_all[mask == 1].detach() if training else preference_loss_all[mask == 1]
-                    )
-                    outputs_dict.update({
-                        f"{prefix}_ds/pref_acc_{data_source}": masked_acc.mean().item(),
-                        f"{prefix}_ds/pref_loss_{data_source}": masked_loss.mean().item(),
-                    })
+                self._add_stratified_metrics(
+                    outputs_dict,
+                    prefix,
+                    rejected_data_gen_strategy,
+                    inputs["data_source"],
+                    stratified_metrics,
+                )
 
                 outputs_dict.update({
-                    # "preference_scores": preference_scores,
-                    # "preference_labels": preference_labels,
                     f"{prefix}/preference_loss": preference_loss.item(),
                     f"{prefix}/preference_accuracy": preference_accuracy.mean().item(),
                 })
@@ -1970,36 +1768,158 @@ class RFMHeadsTrainer(Trainer):
         final_loss = similarity_loss
 
         # =========================================================================================
-        # Compute progress and success loss for the reference trajectory
+        # Compute progress and success loss for randomly selected trajectory in both ref_sim and ref_diff
         # =========================================================================================
-        target_progress_ref_mask = inputs["target_progress_ref_mask"]
-        target_progress_ref = inputs["target_progress_ref"]
-        data_source = inputs["data_source"]
+        # Randomly select which trajectory (A or B) to predict progress/success for in each comparison
+        # 1.0 means use trajectory A (ref), 0.0 means use trajectory B (sim/diff)
+        num_samples = len(inputs["data_source"])
+        progress_pred_traj_ref_sim = torch.randint(
+            0, 2, (num_samples,), device=self.accelerator.device, dtype=torch.float32
+        )
+        progress_pred_traj_ref_diff = torch.randint(
+            0, 2, (num_samples,), device=self.accelerator.device, dtype=torch.float32
+        )
+        success_pred_traj_ref_sim = torch.randint(
+            0, 2, (num_samples,), device=self.accelerator.device, dtype=torch.float32
+        )
+        success_pred_traj_ref_diff = torch.randint(
+            0, 2, (num_samples,), device=self.accelerator.device, dtype=torch.float32
+        )
+
+        # Get target progress and masks for all trajectories
+        target_progress_ref = inputs["target_progress_ref"]  # [batch_size, seq_len]
+        target_progress_sim = inputs["target_progress_sim"]  # [batch_size, seq_len]
+        target_progress_diff = inputs["target_progress_diff"]  # [batch_size, seq_len]
+        target_progress_ref_mask = inputs["target_progress_ref_mask"].unsqueeze(-1)  # [batch_size, 1]
+        target_progress_sim_mask = inputs["target_progress_sim_mask"].unsqueeze(-1)  # [batch_size, 1]
+        target_progress_diff_mask = inputs["target_progress_diff_mask"].unsqueeze(-1)  # [batch_size, 1]
+
+        # Get success labels for all trajectories
+        success_labels_ref = inputs["success_labels_ref"]  # [batch_size, seq_len]
+        success_labels_sim = inputs["success_labels_sim"]  # [batch_size, seq_len]
+        success_labels_diff = inputs["success_labels_diff"]  # [batch_size, seq_len]
 
         if self.config.model.train_progress_head and self.config.training.predict_sim_progress:
+            # Get progress logits for both comparisons
             progress_logits_ref_sim = model_outputs_ref_sim.progress_logits
-            progress_pred_ref_sim_A = progress_logits_ref_sim["A"]
+            progress_logits_ref_diff = model_outputs_ref_diff.progress_logits
+            progress_pred_ref_sim_A = progress_logits_ref_sim["A"]  # [batch_size, seq_len]
+            progress_pred_ref_sim_B = progress_logits_ref_sim.get("B")  # [batch_size, seq_len] or None
+            progress_pred_ref_diff_A = progress_logits_ref_diff["A"]  # [batch_size, seq_len]
+            progress_pred_ref_diff_B = progress_logits_ref_diff.get("B")  # [batch_size, seq_len] or None
 
-            progress_loss, spearman_corr = self._compute_progress_loss_helper(
-                progress_pred_ref_sim_A,
-                target_progress_ref,
-                mask=target_progress_ref_mask,
-                aggregate=True,
+            # For ref_sim: select trajectory A (ref) or B (sim) based on random indicator
+            # progress_pred_traj_ref_sim[i] == 1.0 means use A (ref), 0.0 means use B (sim)
+            ref_sim_use_A = (progress_pred_traj_ref_sim == 1.0).float().unsqueeze(-1)  # [batch_size, 1]
+            target_progress_ref_sim = ref_sim_use_A * target_progress_ref + (1 - ref_sim_use_A) * target_progress_sim
+            target_progress_ref_sim_mask = (
+                ref_sim_use_A * target_progress_ref_mask + (1 - ref_sim_use_A) * target_progress_sim_mask
             )
-            final_loss = similarity_loss + progress_loss
+            progress_pred_ref_sim = ref_sim_use_A * progress_pred_ref_sim_A
+            if progress_pred_ref_sim_B is not None:
+                progress_pred_ref_sim = progress_pred_ref_sim + (1 - ref_sim_use_A) * progress_pred_ref_sim_B
+
+            # For ref_diff: select trajectory A (ref) or B (diff) based on random indicator
+            # progress_pred_traj_ref_diff[i] == 1.0 means use A (ref), 0.0 means use B (diff)
+            ref_diff_use_A = (progress_pred_traj_ref_diff == 1.0).float().unsqueeze(-1)  # [batch_size, 1]
+            target_progress_ref_diff = (
+                ref_diff_use_A * target_progress_ref + (1 - ref_diff_use_A) * target_progress_diff
+            )
+            target_progress_ref_diff_mask = (
+                ref_diff_use_A * target_progress_ref_mask + (1 - ref_diff_use_A) * target_progress_diff_mask
+            )
+            progress_pred_ref_diff = ref_diff_use_A * progress_pred_ref_diff_A
+            if progress_pred_ref_diff_B is not None:
+                progress_pred_ref_diff = progress_pred_ref_diff + (1 - ref_diff_use_A) * progress_pred_ref_diff_B
+
+            # Compute progress loss for ref_sim
+            progress_loss_ref_sim, spearman_corr_ref_sim, progress_metrics_ref_sim = self._compute_progress_loss_helper(
+                progress_pred_ref_sim,
+                target_progress_ref_sim,
+                target_progress_ref_sim_mask,
+            )
+
+            # Compute progress loss for ref_diff
+            progress_loss_ref_diff, spearman_corr_ref_diff, progress_metrics_ref_diff = (
+                self._compute_progress_loss_helper(
+                    progress_pred_ref_diff,
+                    target_progress_ref_diff,
+                    target_progress_ref_diff_mask,
+                )
+            )
+
+            # Sum the progress losses
+            total_progress_loss = progress_loss_ref_sim + progress_loss_ref_diff
+            final_loss = similarity_loss + total_progress_loss
 
         if self.config.model.train_success_head:
+            # Get success logits for both comparisons
             success_logits_ref_sim = model_outputs_ref_sim.success_logits
-            success_logits_ref_sim_A = success_logits_ref_sim["A"]
+            success_logits_ref_diff = model_outputs_ref_diff.success_logits
+            success_pred_ref_sim_A = success_logits_ref_sim["A"]  # [batch_size, seq_len]
+            success_pred_ref_sim_B = success_logits_ref_sim.get("B")  # [batch_size, seq_len] or None
+            success_pred_ref_diff_A = success_logits_ref_diff["A"]  # [batch_size, seq_len]
+            success_pred_ref_diff_B = success_logits_ref_diff.get("B")  # [batch_size, seq_len] or None
 
-            success_loss, success_accuracy, success_auprc = self._compute_success_loss_helper(
-                success_logits_ref_sim_A,
-                target_progress_ref,
-                progress_loss_mask=target_progress_ref_mask,
-                data_source=data_source,
-                aggregate=True,
+            # For ref_sim: select trajectory A (ref) or B (sim) based on random indicator
+            # success_pred_traj_ref_sim[i] == 1.0 means use A (ref), 0.0 means use B (sim)
+            ref_sim_use_A_success = (success_pred_traj_ref_sim == 1.0).float().unsqueeze(-1)  # [batch_size, 1]
+            target_progress_ref_sim_success = (
+                ref_sim_use_A_success * target_progress_ref + (1 - ref_sim_use_A_success) * target_progress_sim
             )
-            final_loss = final_loss + success_loss
+            success_labels_ref_sim = (
+                ref_sim_use_A_success * success_labels_ref + (1 - ref_sim_use_A_success) * success_labels_sim
+            )
+            target_progress_ref_sim_mask_success = (
+                ref_sim_use_A_success * target_progress_ref_mask
+                + (1 - ref_sim_use_A_success) * target_progress_sim_mask
+            )
+            success_pred_ref_sim = ref_sim_use_A_success * success_pred_ref_sim_A
+            if success_pred_ref_sim_B is not None:
+                success_pred_ref_sim = success_pred_ref_sim + (1 - ref_sim_use_A_success) * success_pred_ref_sim_B
+
+            # For ref_diff: select trajectory A (ref) or B (diff) based on random indicator
+            # success_pred_traj_ref_diff[i] == 1.0 means use A (ref), 0.0 means use B (diff)
+            ref_diff_use_A_success = (success_pred_traj_ref_diff == 1.0).float().unsqueeze(-1)  # [batch_size, 1]
+            target_progress_ref_diff_success = (
+                ref_diff_use_A_success * target_progress_ref + (1 - ref_diff_use_A_success) * target_progress_diff
+            )
+            success_labels_ref_diff = (
+                ref_diff_use_A_success * success_labels_ref + (1 - ref_diff_use_A_success) * success_labels_diff
+            )
+            target_progress_ref_diff_mask_success = (
+                ref_diff_use_A_success * target_progress_ref_mask
+                + (1 - ref_diff_use_A_success) * target_progress_diff_mask
+            )
+            success_pred_ref_diff = ref_diff_use_A_success * success_pred_ref_diff_A
+            if success_pred_ref_diff_B is not None:
+                success_pred_ref_diff = success_pred_ref_diff + (1 - ref_diff_use_A_success) * success_pred_ref_diff_B
+
+            # Compute success loss for ref_sim
+            success_loss_ref_sim, success_accuracy_ref_sim, success_auprc_ref_sim, success_metrics_ref_sim = (
+                self._compute_success_loss_helper(
+                    success_pred_ref_sim,
+                    target_progress_ref_sim_success,
+                    success_labels_ref_sim,
+                    progress_loss_mask=target_progress_ref_sim_mask_success,
+                )
+            )
+
+            # Compute success loss for ref_diff
+            success_loss_ref_diff, success_accuracy_ref_diff, success_auprc_ref_diff, success_metrics_ref_diff = (
+                self._compute_success_loss_helper(
+                    success_pred_ref_diff,
+                    target_progress_ref_diff_success,
+                    success_labels_ref_diff,
+                    progress_loss_mask=target_progress_ref_diff_mask_success,
+                )
+            )
+
+            # Sum the success losses
+            total_success_loss = success_loss_ref_sim + success_loss_ref_diff
+            success_accuracy = (success_accuracy_ref_sim + success_accuracy_ref_diff) / 2.0
+            success_auprc = (success_auprc_ref_sim + success_auprc_ref_diff) / 2.0
+            final_loss = final_loss + total_success_loss
 
         # Check for NaN in final loss
         if torch.isnan(final_loss).any():
@@ -2018,64 +1938,90 @@ class RFMHeadsTrainer(Trainer):
 
             data_gen_strategy = inputs["data_gen_strategy"]
 
-            # Split metrics by data generation strategy
-            if data_gen_strategy is not None:
-                strats = set(data_gen_strategy)
-                for strat in strats:
-                    mask = [1 if s == strat else 0 for s in data_gen_strategy]
-                    mask = torch.tensor(mask, device=self.accelerator.device, requires_grad=False)
-                    # Detach indexed tensors to avoid DDP hook issues with boolean indexing
-                    masked_acc = similarity_correct[mask == 1].detach() if training else similarity_correct[mask == 1]
-                    masked_loss = (
-                        similarity_loss_all[mask == 1].detach() if training else similarity_loss_all[mask == 1]
-                    )
-                    masked_margin = similarity_margin[mask == 1] if not training else similarity_margin[mask == 1]
-                    outputs_dict.update({
-                        f"{prefix}_strat_sim_acc/{strat}": masked_acc.mean().item(),
-                        f"{prefix}_strat_sim_loss/{strat}": masked_loss.mean().item(),
-                        f"{prefix}_strat_sim_margin/{strat}": masked_margin.mean().item()
-                        if masked_margin.numel() > 0
-                        else 0.0,
-                    })
+            # Prepare metrics for stratification
+            stratified_metrics = {
+                "sim_acc": similarity_correct,
+                "sim_loss": similarity_loss_all,
+                "sim_margin": similarity_margin,
+            }
 
-            # Split metrics by data source
-            data_sources = set(inputs["data_source"])
-            for data_source in data_sources:
-                mask = [1 if s == data_source else 0 for s in inputs["data_source"]]
-                mask = torch.tensor(mask, device=self.accelerator.device, requires_grad=False)
-                # Detach indexed tensors to avoid DDP hook issues with boolean indexing
-                masked_acc = similarity_correct[mask == 1].detach() if training else similarity_correct[mask == 1]
-                masked_loss = similarity_loss_all[mask == 1].detach() if training else similarity_loss_all[mask == 1]
-                masked_margin = similarity_margin[mask == 1]
-                outputs_dict.update({
-                    f"{prefix}_ds_sim_acc/{data_source}": masked_acc.mean().item(),
-                    f"{prefix}_ds_sim_loss/{data_source}": masked_loss.mean().item(),
-                    f"{prefix}_ds_sim_margin/{data_source}": masked_margin.mean().item()
-                    if masked_margin.numel() > 0
-                    else 0.0,
-                })
+            self._add_stratified_metrics(
+                outputs_dict,
+                prefix,
+                data_gen_strategy,
+                inputs["data_source"],
+                stratified_metrics,
+            )
 
             # Add main metrics
             outputs_dict.update({
                 f"{prefix}/similarity_loss": similarity_loss.item(),
-                f"{prefix}/similarity_accuracy": similarity_accuracy.item(),
+                f"{prefix}/similarity_acc": similarity_accuracy.item(),
                 f"{prefix}/similarity_margin": avg_similarity_margin.item(),
             })
 
             # Add progress loss metrics if computed
             if self.config.model.train_progress_head and self.config.training.predict_sim_progress:
                 outputs_dict.update({
-                    f"{prefix}/sim_progress_loss": progress_loss.item(),
-                    f"{prefix}/sim_spearman_corr_avg": spearman_corr.item(),
+                    f"{prefix}/sim_prog_loss": total_progress_loss.item(),
+                    f"{prefix}/sim_prog_loss_ref_sim": progress_loss_ref_sim.item(),
+                    f"{prefix}/sim_prog_loss_ref_diff": progress_loss_ref_diff.item(),
+                    f"{prefix}/sim_prog_spearman_corr": (spearman_corr_ref_sim + spearman_corr_ref_diff).item() / 2.0,
                 })
+
+                # Combine metrics from both ref_sim and ref_diff for stratification
+                # Average the metrics across both comparisons
+                combined_spearman_corr = (
+                    progress_metrics_ref_sim["masked_spearman_corr"] + progress_metrics_ref_diff["masked_spearman_corr"]
+                ) / 2.0
+                combined_prog_loss = (
+                    progress_metrics_ref_sim["masked_loss"] + progress_metrics_ref_diff["masked_loss"]
+                ) / 2.0
+
+                stratified_progress_metrics = {
+                    "spearman_corr": combined_spearman_corr,
+                    "prog_loss": combined_prog_loss,
+                }
+
+                self._add_stratified_metrics(
+                    outputs_dict,
+                    prefix,
+                    inputs["data_gen_strategy"],
+                    inputs["data_source"],
+                    stratified_progress_metrics,
+                )
 
             # Add success loss metrics if computed
             if self.config.model.train_success_head:
                 outputs_dict.update({
-                    f"{prefix}/sim_success_loss": success_loss.item(),
+                    f"{prefix}/sim_success_loss": total_success_loss.item(),
+                    f"{prefix}/sim_success_loss_ref_sim": success_loss_ref_sim.item(),
+                    f"{prefix}/sim_success_loss_ref_diff": success_loss_ref_diff.item(),
                     f"{prefix}/sim_success_accuracy": success_accuracy.item(),
                     f"{prefix}/sim_success_auprc": success_auprc.item(),
                 })
+
+                # Combine metrics from both ref_sim and ref_diff for stratification
+                # Average the metrics across both comparisons
+                combined_success_loss = (
+                    success_metrics_ref_sim["masked_loss"] + success_metrics_ref_diff["masked_loss"]
+                ) / 2.0
+                combined_success_acc = (
+                    success_metrics_ref_sim["masked_correct"] + success_metrics_ref_diff["masked_correct"]
+                ) / 2.0
+
+                stratified_success_metrics = {
+                    "success_loss": combined_success_loss,
+                    "success_acc": combined_success_acc,
+                }
+
+                self._add_stratified_metrics(
+                    outputs_dict,
+                    prefix,
+                    inputs["data_gen_strategy"],
+                    inputs["data_source"],
+                    stratified_success_metrics,
+                )
 
             return final_loss, outputs_dict
 

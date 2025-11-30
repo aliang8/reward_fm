@@ -734,7 +734,8 @@ class RFMHeadsTrainer(Trainer):
                         preference_samples = batch["preference_inputs"]
                         with torch.no_grad():
                             outputs, _ = self.forward_model(self.model, preference_samples, sample_type="preference")
-                        n = outputs.pref_logits
+                        pref_logits 
+                        = outputs.pref_logits
 
                         # Gather predictions and labels across all ranks
                         pref_logits = self.accelerator.gather_for_metrics(pref_logits)
@@ -964,6 +965,7 @@ class RFMHeadsTrainer(Trainer):
                         task_details = None
 
                     elif "quality_preference" in eval_type:
+                        data = []
                         for task, details in task_details.items():
                             task_acc = details["preference_accuracy"]
                             quality_accs = details["quality_accuracies"]

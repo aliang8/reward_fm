@@ -147,7 +147,7 @@ DATASET_MAP = {
     "policy_ranking": {
         "eval": [
             "aliangdw_metaworld_metaworld_eval",
-            "jesbu1_roboarena_eval_deug_nowrist_roboarena_eval_debug_nowrist",
+            "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
             "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",
             "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
             "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",

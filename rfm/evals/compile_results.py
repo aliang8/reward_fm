@@ -404,8 +404,6 @@ def run_reward_alignment_eval_per_trajectory(
     metrics = {
         "mse": mse_per_trajectory,
         "pearson": pearson_per_trajectory,
-        # "spearman": spearman_per_trajectory,
-        # "num_samples": len(unique_trajectory_ids),
     }
 
     # Add success_auprc to metrics if computed
@@ -783,7 +781,6 @@ def run_similarity_score_eval(results: list[dict[str, Any]], progress_pred_type:
     Returns:
         Tuple of (metrics_dict, task_groups, task_details)
     """
-    # First, gather all similarity scores, tasks, and pair keys
     all_sim_scores = []
     all_diff_scores = []
     all_tasks = []

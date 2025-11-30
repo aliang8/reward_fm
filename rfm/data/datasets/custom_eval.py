@@ -28,7 +28,7 @@ class CustomEvalDataset(BaseDataset):
             "similarity_score": SimilarityScoreSampler,
         }
 
-        if "roboarena" in self.config.data.eval_datasets:
+        if "roboarena" in self.config.eval_datasets:
             sampler_cls["quality_preference"] = RoboArenaQualityPreferenceSampler
 
         if sampler_type not in sampler_cls:

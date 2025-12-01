@@ -6,6 +6,9 @@ from rfm.data.samplers.sim import SimSampler
 from rfm.data.samplers.progress import ProgressSampler
 from rfm.data.dataset_category import is_preference_only
 from rfm.utils.distributed import rank_0_print
+from rfm.utils.logger import get_logger
+
+logger = get_logger()
 
 
 class RFMDataset(BaseDataset):
@@ -70,20 +73,32 @@ class RFMDataset(BaseDataset):
     def __getitem__(self, idx):
         """Create a data sample from the dataset."""
         idx = idx % self.data_len
+        logger.debug(f"[RFMDataset] __getitem__: Starting for idx={idx}")
 
         # Get the item from the filtered dataset
         item = self.dataset[idx]
-        return self._generate_sample_from_item(item)
+        traj_id = item.get("id", "unknown")
+        logger.debug(f"[RFMDataset] __getitem__: Got item with ID={traj_id}, calling _generate_sample_from_item")
+        
+        sample = self._generate_sample_from_item(item)
+        logger.debug(f"[RFMDataset] __getitem__: Successfully generated sample for idx={idx}, ID={traj_id}")
+        return sample
 
     def _generate_sample_from_item(self, item):
         """Shared sampler logic that can be reused by balanced datasets."""
+        traj_id = item.get("id", "unknown")
         data_source = item["data_source"]
+        logger.debug(f"[RFMDataset] _generate_sample_from_item: Starting for ID={traj_id}, data_source={data_source}")
 
         # Preference-only override by data_source using raw filtered dataset entry
         if is_preference_only(data_source) and self.pref_sampler is not None:
+            logger.debug(f"[RFMDataset] _generate_sample_from_item: Using preference-only override for ID={traj_id}")
             sample = self.pref_sampler._generate_sample(item)
             if sample is not None:
+                logger.debug(f"[RFMDataset] _generate_sample_from_item: Preference-only sample generated successfully for ID={traj_id}")
                 return self._set_resample_attempts(sample, 1)
+            else:
+                logger.debug(f"[RFMDataset] _generate_sample_from_item: Preference-only sampler returned None for ID={traj_id}")
 
         # Available samplers with their probabilities
         samplers = [
@@ -97,18 +112,25 @@ class RFMDataset(BaseDataset):
             (name, prob, sampler) for name, prob, sampler in samplers if prob > 0 and sampler is not None
         ]
 
+        logger.debug(f"[RFMDataset] _generate_sample_from_item: Available samplers for ID={traj_id}: {[name for name, _, _ in available_samplers]}")
+
         # Fallback to progress sampler if no samplers have positive probability
         if not available_samplers:
             if self.progress_sampler is not None:
+                logger.debug(f"[RFMDataset] _generate_sample_from_item: No available samplers, using progress fallback for ID={traj_id}")
                 sample = self.progress_sampler._generate_sample(item)
                 if sample is not None:
                     return self._set_resample_attempts(sample, 1)
             raise ValueError("No samplers available")
 
         # Try samplers until we get a non-None result
-        max_attempts = len(available_samplers) * 2  # Try each sampler multiple times if needed
+        # Limit max_attempts to prevent hangs with num_workers=0 in distributed training
+        # With num_workers=0, blocking here blocks the entire rank's main thread
+        max_attempts = min(len(available_samplers) * 2, 10)  # Cap at 10 to prevent infinite loops
         attempt = 0
         tried_samplers = set()
+
+        logger.debug(f"[RFMDataset] _generate_sample_from_item: Starting sampling loop for ID={traj_id}, max_attempts={max_attempts}")
 
         while attempt < max_attempts:
             attempt += 1
@@ -154,21 +176,29 @@ class RFMDataset(BaseDataset):
             if selected_sampler is None:
                 selected_name, _, selected_sampler = remaining_samplers[0]
 
+            logger.debug(f"[RFMDataset] _generate_sample_from_item: Attempt {attempt}/{max_attempts} for ID={traj_id}, trying sampler '{selected_name}'")
+
             # Try the selected sampler
             sample = selected_sampler._generate_sample(item)
 
             # If sample is not None, return it
             if sample is not None:
+                logger.debug(f"[RFMDataset] _generate_sample_from_item: Successfully generated sample on attempt {attempt} using '{selected_name}' for ID={traj_id}")
                 return self._set_resample_attempts(sample, attempt)
 
             # Sample is None, mark this sampler as tried
+            logger.debug(f"[RFMDataset] _generate_sample_from_item: Attempt {attempt} failed (sampler '{selected_name}' returned None) for ID={traj_id}")
             tried_samplers.add(selected_name)
+
+        logger.debug(f"[RFMDataset] _generate_sample_from_item: All {max_attempts} attempts exhausted for ID={traj_id}, trying progress fallback")
 
         # All attempts failed, try progress sampler as final fallback
         if self.progress_sampler is not None:
             sample = self.progress_sampler._generate_sample(item)
             if sample is not None:
+                logger.debug(f"[RFMDataset] _generate_sample_from_item: Progress fallback succeeded for ID={traj_id}")
                 return self._set_resample_attempts(sample, attempt)
 
         # Final fallback: raise error if all samplers returned None
+        logger.error(f"[RFMDataset] _generate_sample_from_item: ERROR - All samplers failed for ID={traj_id} after {max_attempts} attempts")
         raise ValueError(f"All samplers failed to generate a sample after {max_attempts} attempts")

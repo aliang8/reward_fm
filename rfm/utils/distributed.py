@@ -26,6 +26,32 @@ def rank_0_print(*args, verbose=True, **kwargs):
         rprint(*args, **kwargs)
 
 
+def get_rank():
+    """Get the current rank (process index) in distributed training.
+    
+    Returns:
+        int: Rank number, or 0 if not in distributed training or rank cannot be determined.
+    """
+    # First check environment variables (most reliable for accelerate)
+    if "LOCAL_RANK" in os.environ:
+        return int(os.environ.get("LOCAL_RANK", 0))
+    
+    # Also check RANK for global rank
+    if "RANK" in os.environ:
+        return int(os.environ.get("RANK", 0))
+    
+    # Fallback to torch.distributed
+    try:
+        import torch.distributed as dist
+        if dist.is_initialized():
+            return dist.get_rank()
+    except:
+        pass
+    
+    # Default to 0 if not distributed
+    return 0
+
+
 def banner(*lines, inner_padding=3):
     rank_0_print("\n" + "#" * 60)
 

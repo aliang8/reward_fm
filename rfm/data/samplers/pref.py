@@ -12,7 +12,10 @@ from rfm.data.datasets.helpers import (
     DataGenStrat,
 )
 from rfm.utils.distributed import rank_0_print
+from rfm.utils.logger import get_logger
 from rfm.utils.timer import timer
+
+logger = get_logger()
 
 
 class PrefSampler(RFMBaseSampler):
@@ -34,7 +37,7 @@ class PrefSampler(RFMBaseSampler):
         self.preference_strategy_ratio: list[float] = config.preference_strategy_ratio
         self._has_suboptimal = any(indices for indices in self.suboptimal_by_task.values())
         rank_0_print(
-            f"[PREF SAMPLER] No suboptimal/failure data available; skipping suboptimal strategy for preferences. Has suboptimal: {self._has_suboptimal}"
+            f"[PREF SAMPLER] Has suboptimal: {self._has_suboptimal}"
         )
 
         # Initialize preference dataset
@@ -100,6 +103,9 @@ class PrefSampler(RFMBaseSampler):
             ValueError: If no chosen trajectories are available for preference generation
             RuntimeError: If all strategies fail and fallback rewind also fails
         """
+        # Log when preference sampler is called
+        traj_id = chosen_traj.get("id", "unknown") if chosen_traj is not None else "sampling_new"
+        logger.debug(f"[PREF SAMPLER] Creating preference sample for trajectory ID: {traj_id}")
 
         # Use provided chosen trajectory if given; otherwise sample one
         if chosen_traj is None:
@@ -107,13 +113,24 @@ class PrefSampler(RFMBaseSampler):
             if not self.optimal_by_task:
                 return None
 
-            # Get a random task and chosen trajectory from it
-            task_name = random.choice(list(self.optimal_by_task.keys()))
+            # Filter out tasks with empty optimal_indices to avoid infinite loop
+            valid_tasks = {
+                task: indices 
+                for task, indices in self.optimal_by_task.items() 
+                if indices  # Only include tasks with non-empty indices
+            }
+            
+            if not valid_tasks:
+                # No valid tasks with optimal trajectories available
+                return None
 
-            optimal_indices = self.optimal_by_task[task_name]
-            while not optimal_indices:
-                task_name = random.choice(list(self.optimal_by_task.keys()))
-                optimal_indices = self.optimal_by_task[task_name]
+            # Get a random task and chosen trajectory from it
+            task_name = random.choice(list(valid_tasks.keys()))
+            optimal_indices = valid_tasks[task_name]
+            
+            # Double-check that we have valid indices (should always be true now)
+            if not optimal_indices:
+                return None
 
             chosen_idx = random.choice(optimal_indices)
             chosen_traj = self.dataset[chosen_idx]
@@ -164,6 +181,11 @@ class PrefSampler(RFMBaseSampler):
                     selected_strategy = strat
                     break
 
+            # Log strategy attempt
+            logger.debug(
+                f"[PREF SAMPLER] Attempt {attempt}/{max_attempts}: Trying strategy {selected_strategy.value if selected_strategy else 'None'}"
+            )
+
             # Execute selected strategy with retry logic
             max_retries = 3  # Number of retry attempts for sampling
 
@@ -191,18 +213,29 @@ class PrefSampler(RFMBaseSampler):
             # Check if strategy succeeded
             if rejected_traj is not None:
                 strategy_used = selected_strategy
+                logger.debug(
+                    f"[PREF SAMPLER] Strategy {selected_strategy.value} succeeded on attempt {attempt}"
+                )
             else:
                 # Strategy failed - increment attempt count
                 strategy_attempt_counts[selected_strategy] = strategy_attempt_counts.get(selected_strategy, 0) + 1
+                failed_count = strategy_attempt_counts[selected_strategy]
+                
+                logger.debug(
+                    f"[PREF SAMPLER] Strategy {selected_strategy.value} failed (failure count: {failed_count}/{max_strategy_attempts})"
+                )
 
                 # Only remove strategy if it has failed max_strategy_attempts times
                 if strategy_attempt_counts[selected_strategy] >= max_strategy_attempts:
+                    logger.debug(
+                        f"[PREF SAMPLER] Removing strategy {selected_strategy.value} after {max_strategy_attempts} consecutive failures"
+                    )
                     strategies = [(strat, prob) for strat, prob in strategies if strat != selected_strategy]
                     continue
 
         # If we still don't have a sample after all attempts, return None
         if rejected_traj is None:
-            rank_0_print(
+            logger.debug(
                 f"[PREF SAMPLER] Failed to generate preference sample after {max_attempts} attempts - all strategies exhausted"
             )
             return None

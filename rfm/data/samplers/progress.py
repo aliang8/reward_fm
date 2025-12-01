@@ -8,6 +8,9 @@ from rfm.data.datasets.helpers import (
     load_embeddings_from_path,
 )
 from rfm.utils.distributed import rank_0_print
+from rfm.utils.logger import get_logger
+
+logger = get_logger()
 
 
 class ProgressSampler(RFMBaseSampler):
@@ -130,7 +133,7 @@ class ProgressSampler(RFMBaseSampler):
 
         # If we still don't have a sample after all attempts, return None
         if processed_traj is None:
-            rank_0_print(
+            logger.debug(
                 f"[PROGRESS SAMPLER] Failed to generate progress sample after {max_attempts} attempts - all strategies exhausted"
             )
             return None

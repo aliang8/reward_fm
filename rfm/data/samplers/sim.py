@@ -61,12 +61,24 @@ class SimSampler(RFMBaseSampler):
             if not self.optimal_by_task:
                 return None
 
+            # Filter out tasks with empty optimal_indices to avoid infinite loop
+            valid_tasks = {
+                task: indices 
+                for task, indices in self.optimal_by_task.items() 
+                if indices  # Only include tasks with non-empty indices
+            }
+            
+            if not valid_tasks:
+                # No valid tasks with optimal trajectories available
+                return None
+
             # Get a random task and optimal trajectory from it
-            task_name = random.choice(list(self.optimal_by_task.keys()))
-            optimal_indices = self.optimal_by_task[task_name]
-            while not optimal_indices:
-                task_name = random.choice(list(self.optimal_by_task.keys()))
-                optimal_indices = self.optimal_by_task[task_name]
+            task_name = random.choice(list(valid_tasks.keys()))
+            optimal_indices = valid_tasks[task_name]
+            
+            # Double-check that we have valid indices (should always be true now)
+            if not optimal_indices:
+                return None
 
             optimal_idx = random.choice(optimal_indices)
             ref_traj = self.dataset[optimal_idx]
@@ -188,47 +200,30 @@ class SimSampler(RFMBaseSampler):
     def _get_traj_dicts_for_rewind(self, ref_traj: dict) -> tuple[dict | Trajectory, dict] | None:
         """Get traj_sim and traj_diff for rewind strategy.
 
-        Two cases:
-        1) sim = rewound, diff = different task
-        2) sim = same task optimal, diff = rewound
-
-        Args:
-            ref_traj: Reference trajectory
-
         Returns:
-            Tuple of (traj_sim, traj_diff) where both can be dict or Trajectory objects, or None if not available
+            Tuple of (traj_sim, traj_diff) where:
+            - traj_sim = rewound trajectory
+            - traj_diff = different task trajectory
+            Returns None if either cannot be generated after retries.
+            The main strategy loop will handle retries with different strategies.
         """
         max_retries = 3  # Number of retry attempts for sampling
 
-        # Try case 1: sim = rewound, diff = different task
+        # Try to get rewound trajectory for sim
         traj_sim = None
         for _ in range(max_retries):
             traj_sim = self._get_rewound_traj(ref_traj)
             if traj_sim is not None:
                 break
 
+        # Try to get different task trajectory for diff
         traj_diff = None
         for _ in range(max_retries):
             traj_diff = self._get_different_video_traj(ref_traj)
             if traj_diff is not None:
                 break
 
-        if traj_sim is not None and traj_diff is not None:
-            return traj_sim, traj_diff
-
-        # Case 1 failed, try case 2: sim = same task optimal, diff = rewound
-        traj_sim = None
-        for _ in range(max_retries):
-            traj_sim = self._get_same_task_optimal(ref_traj)
-            if traj_sim is not None:
-                break
-
-        traj_diff = None
-        for _ in range(max_retries):
-            traj_diff = self._get_rewound_traj(ref_traj)
-            if traj_diff is not None:
-                break
-
+        # Return both if successful, otherwise return None (main loop will handle retries)
         if traj_sim is not None and traj_diff is not None:
             return traj_sim, traj_diff
 

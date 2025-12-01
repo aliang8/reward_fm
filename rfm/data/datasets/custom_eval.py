@@ -18,7 +18,7 @@ class CustomEvalDataset(BaseDataset):
             verbose: Verbose flag
             **kwargs: Additional keyword arguments for the sampler
         """
-        super().__init__(config, is_evaluation, verbose=verbose, **kwargs)
+        super().__init__(config, is_evaluation, **kwargs)
 
         sampler_cls = {
             "confusion_matrix": ConfusionMatrixSampler,

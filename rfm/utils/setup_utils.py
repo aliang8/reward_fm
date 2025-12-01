@@ -52,7 +52,7 @@ from rfm.data.datasets.custom_eval import CustomEvalDataset
 from rfm.models import RFM, RFMVQA, ReWiNDTransformer
 from rfm.models.rewind_transformer import ReWINDTransformerConfig
 from rfm.models.rewind_transformer_scale import ReWINDScaleTransformerConfig, ReWiNDScaleTransformer
-from rfm.utils.distributed import rank_0_print
+from rfm.utils.logger import rank_0_info
 
 
 def parse_hf_model_id_and_revision(hf_model_id: str, model_name: str = "model") -> Tuple[str, Optional[str]]:
@@ -82,16 +82,16 @@ def parse_hf_model_id_and_revision(hf_model_id: str, model_name: str = "model") 
     # Check if this is a HuggingFace repo (not a local path) and find best tag
     if "/" in repo_id and not repo_id.startswith("/"):
         if revision_to_load:
-            rank_0_print(f"Loading {model_name} {repo_id} at explicit revision '{revision_to_load}'")
+            rank_0_info(f"Loading {model_name} {repo_id} at explicit revision '{revision_to_load}'")
         else:
             best_tag, best_score = find_best_model_tag(repo_id)
             if best_tag:
                 revision_to_load = best_tag
-                rank_0_print(f"Loading {model_name} from best tag: {repo_id}@{revision_to_load} (score: {best_score})")
+                rank_0_info(f"Loading {model_name} from best tag: {repo_id}@{revision_to_load} (score: {best_score})")
             else:
-                rank_0_print(f"No best tag found, loading latest revision of {repo_id}")
+                rank_0_info(f"No best tag found, loading latest revision of {repo_id}")
     else:
-        rank_0_print(f"Loading local/explicit {model_name} from {repo_id}")
+        rank_0_info(f"Loading local/explicit {model_name} from {repo_id}")
 
     return repo_id, revision_to_load
 
@@ -115,17 +115,17 @@ def find_best_model_tag(hf_model_id: str, hub_token: Optional[str] = None) -> Tu
 
         # Check if repository exists
         if not api.repo_exists(repo_id=hf_model_id, repo_type="model"):
-            rank_0_print(f"Repository {hf_model_id} does not exist")
+            rank_0_info(f"Repository {hf_model_id} does not exist")
             return None, None
 
         # Get all tags for the repository
         tags = api.list_repo_refs(repo_id=hf_model_id, repo_type="model").tags
 
         if not tags:
-            rank_0_print(f"No tags found in repository {hf_model_id}")
+            rank_0_info(f"No tags found in repository {hf_model_id}")
             return None, None
 
-        rank_0_print(f"Found {len(tags)} tags in {hf_model_id}: {[tag.name for tag in tags]}")
+        rank_0_info(f"Found {len(tags)} tags in {hf_model_id}: {[tag.name for tag in tags]}")
 
         best_tag = None
         best_score = float("-inf")
@@ -143,27 +143,27 @@ def find_best_model_tag(hf_model_id: str, hub_token: Optional[str] = None) -> Tu
             if match:
                 try:
                     score = float(match.group(1))
-                    rank_0_print(f"Parsed tag '{tag_name}': score = {score}")
+                    rank_0_info(f"Parsed tag '{tag_name}': score = {score}")
 
                     if score > best_score:
                         best_score = score
                         best_tag = tag_name
 
                 except ValueError:
-                    rank_0_print(f"Could not parse score from tag '{tag_name}'")
+                    rank_0_info(f"Could not parse score from tag '{tag_name}'")
                     continue
             else:
-                rank_0_print(f"Tag '{tag_name}' does not match expected pattern")
+                rank_0_info(f"Tag '{tag_name}' does not match expected pattern")
 
         if best_tag:
-            rank_0_print(f"Best tag found: '{best_tag}' with score {best_score}")
+            rank_0_info(f"Best tag found: '{best_tag}' with score {best_score}")
         else:
-            rank_0_print("No valid tags found matching the expected pattern")
+            rank_0_info("No valid tags found matching the expected pattern")
 
         return best_tag, best_score
 
     except Exception as e:
-        rank_0_print(f"Error finding best tag for {hf_model_id}: {e}")
+        rank_0_info(f"Error finding best tag for {hf_model_id}: {e}")
         return None, None
 
 
@@ -187,13 +187,13 @@ def setup_model_and_processor(
 
     # Convert string dtype to torch dtype (used across all model loading paths)
     torch_dtype = getattr(torch, cfg.torch_dtype, torch.bfloat16)
-    rank_0_print(f"Using torch dtype: {torch_dtype}")
+    rank_0_info(f"Using torch dtype: {torch_dtype}")
 
     # Check if unsloth should be used
     use_unsloth = cfg.use_unsloth and "Qwen" in cfg.base_model_id
 
     if use_unsloth:
-        rank_0_print("Unsloth mode enabled for faster training")
+        rank_0_info("Unsloth mode enabled for faster training")
 
     # If quantization is enabled, use bitsandbytes (unless using unsloth)
     if cfg.quantization and not use_unsloth:
@@ -207,10 +207,10 @@ def setup_model_and_processor(
     try:
         import flash_attn
 
-        rank_0_print("Flash Attention 2 CUDA is available")
+        rank_0_info("Flash Attention 2 CUDA is available")
         has_flash_attn = True
     except:
-        rank_0_print("Flash Attention 2 CUDA is not available")
+        rank_0_info("Flash Attention 2 CUDA is not available")
         has_flash_attn = False
 
     if has_flash_attn:
@@ -230,7 +230,7 @@ def setup_model_and_processor(
                 use_fast=True,
             )
 
-            rank_0_print(f"SmolVLM Processor: {processor}")
+            rank_0_info(f"SmolVLM Processor: {processor}")
 
             base_model = AutoModelForImageTextToText.from_pretrained(
                 cfg.base_model_id,
@@ -244,7 +244,7 @@ def setup_model_and_processor(
         elif "Qwen" in cfg.base_model_id:
             # Check if unsloth should be used
             if use_unsloth:
-                rank_0_print("Using Unsloth for faster training with Qwen model")
+                rank_0_info("Using Unsloth for faster training with Qwen model")
 
                 # Load model with unsloth
                 base_model, tokenizer = FastVisionModel.from_pretrained(
@@ -279,12 +279,12 @@ def setup_model_and_processor(
                 # Select appropriate model classes based on version and model type
                 if is_qwen3:
                     qwen_model_cls = Qwen3VLModel if cfg.model_type == "default" else Qwen3VLForConditionalGeneration
-                    rank_0_print("Using Qwen3 models")
+                    rank_0_info("Using Qwen3 models")
                 else:
                     qwen_model_cls = (
                         Qwen2_5_VLModel if cfg.model_type == "default" else Qwen2_5_VLForConditionalGeneration
                     )
-                    rank_0_print("Using Qwen2/2.5 models")
+                    rank_0_info("Using Qwen2/2.5 models")
 
                 base_model = qwen_model_cls.from_pretrained(
                     cfg.base_model_id,
@@ -305,7 +305,7 @@ def setup_model_and_processor(
                 # max_frames=cfg.data.max_frames,
                 padding_side="left",
             )
-            rank_0_print(f"Qwen Processor: {processor}")
+            rank_0_info(f"Qwen Processor: {processor}")
         else:
             raise ValueError(f"Invalid base model id: {cfg.base_model_id}")
 
@@ -332,7 +332,7 @@ def setup_model_and_processor(
             for token in special_tokens:
                 if token not in processor.tokenizer.get_vocab():
                     processor.tokenizer.add_special_tokens({"additional_special_tokens": [token]})
-                    rank_0_print(f"Added special token: {token}")
+                    rank_0_info(f"Added special token: {token}")
 
             # Resize token embeddings if new tokens were added
             vocab_size = (
@@ -342,12 +342,12 @@ def setup_model_and_processor(
             )
 
             if len(processor.tokenizer) != vocab_size:
-                rank_0_print(f"Resizing token embeddings from {vocab_size} to {len(processor.tokenizer)}")
+                rank_0_info(f"Resizing token embeddings from {vocab_size} to {len(processor.tokenizer)}")
                 base_model.resize_token_embeddings(len(processor.tokenizer))
-                rank_0_print(f"Resized token embeddings to {len(processor.tokenizer)}")
+                rank_0_info(f"Resized token embeddings to {len(processor.tokenizer)}")
 
         # Initialize RFM model wrapper with the pre-loaded base model
-        rank_0_print("Initializing RFM model...")
+        rank_0_info("Initializing RFM model...")
         tokenizer = processor.tokenizer
 
         model = model_cls(
@@ -388,15 +388,15 @@ def setup_model_and_processor(
                     after = model.model.visual.blocks[0].mlp.linear_fc1.weight
                     after_progress_head = model.progress_head[0].weight
 
-                rank_0_print(f"Before: {before.shape}, {before.sum()} | After: {after.shape}, {after.sum()}")
-                rank_0_print(
+                rank_0_info(f"Before: {before.shape}, {before.sum()} | After: {after.shape}, {after.sum()}")
+                rank_0_info(
                     f"Before progress head: {before_progress_head.shape}, {before_progress_head.sum()} | After progress head: {after_progress_head.shape}, {after_progress_head.sum()}"
                 )
                 # check that before and after are different
                 if torch.allclose(before, after):
-                    rank_0_print("Before and after are the same! Check if you loaded the pretrained model correctly")
+                    rank_0_info("Before and after are the same! Check if you loaded the pretrained model correctly")
                 if torch.allclose(before_progress_head, after_progress_head):
-                    rank_0_print(
+                    rank_0_info(
                         "Before and after progress head are the same! Check if you loaded the pretrained model correctly"
                     )
 
@@ -430,7 +430,7 @@ def setup_model_and_processor(
             for p in text_encoder.parameters():
                 p.requires_grad = train_text
 
-            rank_0_print("Initializing ReWiND model...")
+            rank_0_info("Initializing ReWiND model...")
 
             rewind_config = cfg.rewind if cfg.rewind is not None else ReWINDTransformerConfig()
             if cfg.rewind_scale_model:
@@ -451,8 +451,8 @@ def setup_model_and_processor(
                     text_encoder=text_encoder,
                 )
 
-    rank_0_print("Model architecture initialized")
-    rank_0_print(f"Model architecture: {model}")
+    rank_0_info("Model architecture initialized")
+    rank_0_info(f"Model architecture: {model}")
 
     # Configure which parts of the model to train based on config
     for name, param in model.named_parameters():
@@ -493,21 +493,21 @@ def setup_model_and_processor(
             if "lm_head" in name:
                 param.requires_grad = False
 
-    rank_0_print("Training configuration:")
-    rank_0_print(f"  - Vision encoder: {cfg.train_vision_encoder}")
-    rank_0_print(f"  - Language model: {cfg.train_language_model}")
-    rank_0_print(f"  - Progress head: {cfg.train_progress_head}")
-    rank_0_print(f"  - Success head: {getattr(cfg, 'train_success_head', False)}")
-    rank_0_print(f"  - Preference head: {cfg.train_preference_head}")
-    rank_0_print(f"  - Similarity head: {cfg.train_similarity_head}")
+    rank_0_info("Training configuration:")
+    rank_0_info(f"  - Vision encoder: {cfg.train_vision_encoder}")
+    rank_0_info(f"  - Language model: {cfg.train_language_model}")
+    rank_0_info(f"  - Progress head: {cfg.train_progress_head}")
+    rank_0_info(f"  - Success head: {getattr(cfg, 'train_success_head', False)}")
+    rank_0_info(f"  - Preference head: {cfg.train_preference_head}")
+    rank_0_info(f"  - Similarity head: {cfg.train_similarity_head}")
 
     for name, param in model.named_parameters():
         if param.requires_grad:
-            rank_0_print(f"{name:60} | {param.shape} | RG: {param.requires_grad}")
+            rank_0_info(f"{name:60} | {param.shape} | RG: {param.requires_grad}")
 
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     all_params = sum(p.numel() for p in model.parameters())
-    rank_0_print(
+    rank_0_info(
         f"trainable params: {trainable_params:,} || all params: {all_params:,} || trainable%: {100 * trainable_params / all_params:.4f}"
     )
     return tokenizer, processor, model
@@ -516,7 +516,7 @@ def setup_model_and_processor(
 def setup_peft_model(rfm_model: RFM, cfg: PEFTConfig) -> RFM:
     """Shared function to apply PEFT configuration to the model"""
 
-    rank_0_print("Using PEFT/LoRA training...")
+    rank_0_info("Using PEFT/LoRA training...")
     lora_config = LoraConfig(
         r=cfg.r,
         lora_alpha=cfg.lora_alpha,
@@ -526,13 +526,13 @@ def setup_peft_model(rfm_model: RFM, cfg: PEFTConfig) -> RFM:
     )
     if cfg.peft_vision_encoder:
         # vision backbone is frozen, but we can still train the LoRA parameters
-        rank_0_print("Attaching LoRA to only the vision encoder...")
+        rank_0_info("Attaching LoRA to only the vision encoder...")
         rfm_model.base_model.model.visual = get_peft_model(rfm_model.base_model.model.visual, lora_config)
 
     # Count trainable parameters manually - defer printing until after FSDP setup
     trainable_params = sum(p.numel() for p in rfm_model.parameters() if p.requires_grad)
     all_params = sum(p.numel() for p in rfm_model.parameters())
-    rank_0_print(
+    rank_0_info(
         f"AFTER PEFT: trainable params: {trainable_params:,} || all params: {all_params:,} || trainable%: {100 * trainable_params / all_params:.4f}"
     )
     return rfm_model

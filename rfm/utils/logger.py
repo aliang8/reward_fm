@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 from typing import Dict, Any, Iterable, Optional, List
 import numpy as np
@@ -14,32 +15,27 @@ from rfm.utils.distributed import get_rank, is_rank_0
 def setup_loguru_logging(log_level: str = "INFO", output_dir: Optional[str] = None):
     """
     Initialize loguru logger with rank-aware formatting and log level.
+    Uses loguru's default format to preserve automatic rich formatting for booleans, numbers, etc.
     
     Args:
         log_level: Logging level ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
         output_dir: Optional directory to write log files to
     """
-    # Remove default handler
     loguru_logger.remove()
-    
-    # Format with rank information
     rank = get_rank()
+    rank_prefix = f"[Rank {rank}] " if rank > 0 else ""
+    format_string = (
+        "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+        "<level>{level: <8}</level> | "
+        f"{rank_prefix}"
+        "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
+        "<level>{message}</level>\n"
+    )
     
-    def format_record(record):
-        """Format log record with rank prefix."""
-        rank_str = f"[Rank {rank}]" if rank > 0 else ""
-        return (
-            "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
-            "<level>{level: <8}</level> | "
-            f"{rank_str} "
-            "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
-            "<level>{message}</level>\n"
-        )
-    
-    # Console handler with rank-aware formatting
+    # Console handler using sys.stderr to preserve loguru's rich formatting
     loguru_logger.add(
-        lambda msg: print(msg, end="", flush=True),
-        format=format_record,
+        sys.stderr,
+        format=format_string,
         level=log_level.upper(),
         colorize=True,
     )
@@ -258,3 +254,21 @@ class Logger:
 def get_logger():
     """Get the loguru logger instance for structured logging."""
     return loguru_logger
+
+
+def rank_0_info(*args, **kwargs):
+    """Log info message only on rank 0 (main process)."""
+    if is_rank_0():
+        loguru_logger.info(*args, **kwargs)
+
+
+def rank_0_warning(*args, **kwargs):
+    """Log warning message only on rank 0 (main process)."""
+    if is_rank_0():
+        loguru_logger.warning(*args, **kwargs)
+
+
+def rank_0_debug(*args, **kwargs):
+    """Log debug message only on rank 0 (main process)."""
+    if is_rank_0():
+        loguru_logger.debug(*args, **kwargs)

@@ -143,7 +143,8 @@ def train(cfg: ExperimentConfig):
 
     # Initialize logger (works with wandb/tensorboard)
     log_to = cfg.logging.log_to
-    logger = Logger(log_to=log_to, output_dir=output_dir, is_main_process=is_rank_0())
+    log_level = cfg.logging.log_level
+    logger = Logger(log_to=log_to, output_dir=output_dir, is_main_process=is_rank_0(), log_level=log_level)
     config_save_path = os.path.join(output_dir, "config.yaml")
     config_dict = asdict(cfg)
     with open(config_save_path, "w") as f:

@@ -373,6 +373,8 @@ class LoggingConfig:
     # Wandb configuration
     wandb_project: str = field(default="rfm-model", metadata={"help": "Wandb project name"})
     wandb_entity: Optional[str] = field(default=None, metadata={"help": "Wandb entity/username"})
+    # Log level: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
+    log_level: str = field(default="INFO", metadata={"help": "Logging level for console output"})
 
     # SaveBest configuration
     save_best: Optional[SaveBestConfig] = field(default=None, metadata={"help": "SaveBestCallback configuration"})

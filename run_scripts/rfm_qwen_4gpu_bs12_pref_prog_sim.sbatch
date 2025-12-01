@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH -J ant_rfm_qwen_4gpu_bs12_pref_prog_sim
-#SBATCH --gres=gpu:4               # number of GPUs to reserve
+#SBATCH --gres=gpu:2               # number of GPUs to reserve
 #SBATCH --cpus-per-task=32         # CPUs for data loading (8 per GPU is reasonable)
 #SBATCH --mem=128G                 # Memory allocation (adjust based on your cluster)
 #SBATCH --time=18:00:00            # Time limit (adjust as needed)
@@ -26,7 +26,7 @@ export BS=8
 # Override config for progress-only training
 uv run accelerate launch \
     --config_file rfm/configs/distributed/ddp.yaml \
-    --num_processes=4 \
+    --num_processes=2 \
     train.py \
     data.sample_type_ratio=[1,0,1] \
     data.progress_strategy_ratio=[1,6,1,1,1] \
@@ -37,7 +37,7 @@ uv run accelerate launch \
     model.train_progress_head=true \
     model.train_preference_head=true \
     model.train_similarity_head=true \
-    model.train_success_head=false \
+    model.train_success_head=true \
     model.train_language_model=true \
     model.train_vision_encoder=false \
     model.average_temporal_patches=true \
@@ -47,7 +47,6 @@ uv run accelerate launch \
     data.resized_height=196 \
     data.resized_width=196 \
     data.use_multi_image=true \
-    data.shuffle_progress_frames=false \
     data.dataset_type=rfm \
     training.max_steps=15000 \
     training.eval_steps=200 \
@@ -60,14 +59,14 @@ uv run accelerate launch \
     training.predict_pref_progress=true \
     training.predict_sim_progress=true \
     training.ddp_find_unused_parameters=false \
-    training.gradient_accumulation_steps=2 \
+    training.gradient_accumulation_steps=1 \
     training.exp_name=ant_rfm_qwen_4gpu_bs12_pref_prog_sim \
     custom_eval.eval_types=[quality_preference,reward_alignment,policy_ranking,confusion_matrix,similarity_score] \
     custom_eval.quality_preference=[quality_preference] \
     custom_eval.reward_alignment=[reward_alignment] \
     custom_eval.policy_ranking=[policy_ranking] \
     custom_eval.confusion_matrix=[mw] \
-    custom_eval.similarity_score=[paired] \
+    custom_eval.similarity_score=[similarity_score] \
     logging.log_to=[wandb]
 
 # Print completion time

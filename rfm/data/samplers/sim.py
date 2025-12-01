@@ -9,6 +9,9 @@ from rfm.data.samplers.base import RFMBaseSampler
 from rfm.data.datasets.helpers import DataGenStrat
 from rfm.data.dataset_category import is_failure_ds, is_paired_ds
 from rfm.utils.distributed import rank_0_print
+from rfm.utils.logger import get_logger
+
+logger = get_logger()
 
 
 class SimSampler(RFMBaseSampler):
@@ -30,14 +33,9 @@ class SimSampler(RFMBaseSampler):
             entry["robot"] and entry["human"] for entry in self.paired_human_robot_by_task.values()
         )
         self._has_suboptimal = any(indices for indices in self.suboptimal_by_task.values())
-        if self.similarity_strategy_ratio[2] > 0 and not self._has_paired_human_robot:
-            rank_0_print(
-                "[SIM SAMPLER] No paired human/robot data available; skipping paired strategy for similarity sampling."
-            )
-        if self.similarity_strategy_ratio[1] > 0 and not self._has_suboptimal:
-            rank_0_print(
-                "[SIM SAMPLER] No suboptimal/failure data available; skipping suboptimal strategy for similarity sampling."
-            )
+        rank_0_print(
+            f"[SIM SAMPLER] Has paired human/robot: {self._has_paired_human_robot}, Has suboptimal: {self._has_suboptimal}"
+        )
 
     def _generate_sample(self, item: dict):
         return self._create_similarity_sample(ref_traj=item)
@@ -54,6 +52,9 @@ class SimSampler(RFMBaseSampler):
         Args:
             ref_traj: Optional reference trajectory. If None, samples from optimal trajectories.
         """
+        # Log when similarity sampler is called
+        traj_id = ref_traj.get("id", "unknown") if ref_traj is not None else "sampling_new"
+        logger.debug(f"[SIM SAMPLER] Creating similarity sample for trajectory ID: {traj_id}")
 
         # Use provided reference trajectory if given; otherwise sample one
         if ref_traj is None:
@@ -158,6 +159,11 @@ class SimSampler(RFMBaseSampler):
                     strategies_tried.append(selected_strategy)
                     break
 
+            # Log strategy attempt
+            logger.debug(
+                f"[SIM SAMPLER] Attempt {attempt}/{max_attempts}: Trying strategy {selected_strategy.value if selected_strategy else 'None'}"
+            )
+
             # Execute selected strategy
             if selected_strategy == DataGenStrat.REWOUND:
                 result = self._get_traj_dicts_for_rewind(ref_traj)
@@ -172,18 +178,29 @@ class SimSampler(RFMBaseSampler):
             if result is not None:
                 traj_sim, traj_diff = result
                 strategy_used = selected_strategy
+                logger.debug(
+                    f"[SIM SAMPLER] Strategy {selected_strategy.value} succeeded on attempt {attempt}"
+                )
             else:
                 # Strategy failed - increment attempt count
                 strategy_attempt_counts[selected_strategy] = strategy_attempt_counts.get(selected_strategy, 0) + 1
+                failed_count = strategy_attempt_counts[selected_strategy]
+                
+                logger.debug(
+                    f"[SIM SAMPLER] Strategy {selected_strategy.value} failed (failure count: {failed_count}/{max_strategy_attempts})"
+                )
 
                 # Only remove strategy if it has failed max_strategy_attempts times
                 if strategy_attempt_counts[selected_strategy] >= max_strategy_attempts:
+                    logger.debug(
+                        f"[SIM SAMPLER] Removing strategy {selected_strategy.value} after {max_strategy_attempts} consecutive failures"
+                    )
                     strategies = [(strat, prob) for strat, prob in strategies if strat != selected_strategy]
                     continue
 
         # If we still don't have a sample after all attempts, return None
         if traj_sim is None or traj_diff is None:
-            rank_0_print(
+            logger.debug(
                 f"[SIM SAMPLER] Failed to generate similarity sample after {max_attempts} attempts - all strategies exhausted"
             )
             return None

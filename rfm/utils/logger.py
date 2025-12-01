@@ -6,20 +6,75 @@ import torch
 import wandb
 from torch.utils.tensorboard import SummaryWriter
 import matplotlib.pyplot as plt
+from loguru import logger as loguru_logger
+
+from rfm.utils.distributed import get_rank, is_rank_0
+
+
+def setup_loguru_logging(log_level: str = "INFO", output_dir: Optional[str] = None):
+    """
+    Initialize loguru logger with rank-aware formatting and log level.
+    
+    Args:
+        log_level: Logging level ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+        output_dir: Optional directory to write log files to
+    """
+    # Remove default handler
+    loguru_logger.remove()
+    
+    # Format with rank information
+    rank = get_rank()
+    
+    def format_record(record):
+        """Format log record with rank prefix."""
+        rank_str = f"[Rank {rank}]" if rank > 0 else ""
+        return (
+            "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+            "<level>{level: <8}</level> | "
+            f"{rank_str} "
+            "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
+            "<level>{message}</level>\n"
+        )
+    
+    # Console handler with rank-aware formatting
+    loguru_logger.add(
+        lambda msg: print(msg, end="", flush=True),
+        format=format_record,
+        level=log_level.upper(),
+        colorize=True,
+    )
+    
+    # Optional file handler if output_dir is provided
+    if output_dir and is_rank_0():
+        log_file = os.path.join(output_dir, "training.log")
+        loguru_logger.add(
+            log_file,
+            format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} | {message}\n",
+            level=log_level.upper(),
+            rotation="10 MB",
+            retention="7 days",
+            encoding="utf-8",
+        )
 
 
 class Logger:
+    """Logger for metrics (wandb/tensorboard). For console logging, use loguru logger directly."""
+    
     def __init__(
         self,
         log_to: Iterable[str] | None,
         output_dir: str,
         is_main_process: bool = True,
         wandb_run: Optional[Any] = None,
+        log_level: str = "INFO",
     ):
         backends = [b.lower() for b in (list(log_to) if log_to is not None else [])]
         self._use_wandb = "wandb" in backends
         self._use_tb = "tensorboard" in backends
         self._is_main = bool(is_main_process)
+        
+        # Setup loguru for console logging
+        setup_loguru_logging(log_level=log_level, output_dir=output_dir if is_main_process else None)
 
         self._wandb_run = wandb.run if (self._use_wandb and self._is_main) else None
 
@@ -198,3 +253,8 @@ class Logger:
         path = os.path.join(output_dir, "wandb_info.json")
         with open(path, "w") as f:
             json.dump(info, f, indent=2)
+
+
+def get_logger():
+    """Get the loguru logger instance for structured logging."""
+    return loguru_logger

@@ -15,6 +15,9 @@ from rfm.data.datasets.helpers import (
 from rfm.data.dataset_types import Trajectory
 from rfm.data.datasets.helpers import create_rewind_trajectory, load_embeddings_from_path
 from rfm.utils.distributed import rank_0_print
+from rfm.utils.logger import get_logger
+
+logger = get_logger()
 
 
 class RFMBaseSampler:
@@ -105,6 +108,7 @@ class RFMBaseSampler:
         task_name = ref_traj["task"]
         same_task_optimal_indices = self.optimal_by_task.get(task_name, [])
         if not same_task_optimal_indices:
+            logger.debug(f"[BASE SAMPLER] _get_same_task_optimal: No optimal indices for task '{task_name}'")
             return None
 
         # Use cached IDs to check without loading full trajectories
@@ -125,9 +129,12 @@ class RFMBaseSampler:
                 random_idx = random.choice(filtered_indices)
             else:
                 # No other trajectories available
+                logger.debug(f"[BASE SAMPLER] _get_same_task_optimal: All trajectories have same ID '{chosen_id}' for task '{task_name}'")
                 return None
 
-        return self.dataset[random_idx]
+        result = self.dataset[random_idx]
+        logger.debug(f"[BASE SAMPLER] _get_same_task_optimal: Found trajectory {result.get('id', 'unknown')} for task '{task_name}'")
+        return result
 
     def _get_same_task_suboptimal(self, ref_traj: dict) -> dict | None:
         """Get suboptimal trajectory from same task.
@@ -141,6 +148,7 @@ class RFMBaseSampler:
         task_name = ref_traj["task"]
         same_task_suboptimal_indices = self.suboptimal_by_task.get(task_name, [])
         if not same_task_suboptimal_indices:
+            logger.debug(f"[BASE SAMPLER] _get_same_task_suboptimal: No suboptimal indices for task '{task_name}'")
             return None
 
         # Use cached IDs to check without loading full trajectories
@@ -161,9 +169,12 @@ class RFMBaseSampler:
                 random_idx = random.choice(filtered_indices)
             else:
                 # No other trajectories available
+                logger.debug(f"[BASE SAMPLER] _get_same_task_suboptimal: All trajectories have same ID '{chosen_id}' for task '{task_name}'")
                 return None
 
-        return self.dataset[random_idx]
+        result = self.dataset[random_idx]
+        logger.debug(f"[BASE SAMPLER] _get_same_task_suboptimal: Found trajectory {result.get('id', 'unknown')} for task '{task_name}'")
+        return result
 
     def _get_different_video_traj(self, ref_traj: dict) -> dict | None:
         """Get trajectory from different task.
@@ -176,15 +187,19 @@ class RFMBaseSampler:
         """
         other_tasks = [task for task in self.optimal_by_task.keys() if task != ref_traj["task"]]
         if not other_tasks:
+            logger.debug(f"[BASE SAMPLER] _get_different_video_traj: No other tasks available (ref task: '{ref_traj['task']}')")
             return None
 
         other_task = random.choice(other_tasks)
         other_task_indices = self.optimal_by_task[other_task]
         if not other_task_indices:
+            logger.debug(f"[BASE SAMPLER] _get_different_video_traj: Task '{other_task}' has no optimal indices")
             return None
 
         other_idx = random.choice(other_task_indices)
-        return self.dataset[other_idx]
+        result = self.dataset[other_idx]
+        logger.debug(f"[BASE SAMPLER] _get_different_video_traj: Found trajectory {result.get('id', 'unknown')} from task '{other_task}'")
+        return result
 
     def _get_different_task_instruction(self, ref_traj: dict) -> dict | None:
         """Get the same trajectory but with a different task instruction.
@@ -206,6 +221,7 @@ class RFMBaseSampler:
             candidate_tasks = [task for task in self.optimal_by_task.keys() if task != ref_traj["task"]]
 
         if not candidate_tasks:
+            logger.debug(f"[BASE SAMPLER] _get_different_task_instruction: No candidate tasks available (ref task: '{ref_traj['task']}')")
             return None
 
         other_task = random.choice(candidate_tasks)
@@ -213,6 +229,7 @@ class RFMBaseSampler:
         # Get embeddings_path and lang_vector from a random trajectory with the other_task
         other_task_indices = self.optimal_by_task.get(other_task, [])
         if not other_task_indices:
+            logger.debug(f"[BASE SAMPLER] _get_different_task_instruction: Task '{other_task}' has no optimal indices")
             return None
 
         other_task_idx = random.choice(other_task_indices)
@@ -246,6 +263,7 @@ class RFMBaseSampler:
         is_robot = ref_traj.get("is_robot", True)
 
         if task not in self.paired_human_robot_by_task:
+            logger.debug(f"[BASE SAMPLER] _get_paired_human_robot_traj: Task '{task}' not in paired_human_robot_by_task")
             return None
 
         task_pairs = self.paired_human_robot_by_task[task]
@@ -255,6 +273,7 @@ class RFMBaseSampler:
         opposite_indices = task_pairs.get(opposite_key, [])
 
         if not opposite_indices:
+            logger.debug(f"[BASE SAMPLER] _get_paired_human_robot_traj: No {opposite_key} indices for task '{task}'")
             return None
 
         # Sample a paired trajectory and verify it's different from reference
@@ -266,10 +285,13 @@ class RFMBaseSampler:
         max_retries = min(len(available_indices), 10)
         retries = 0
 
+        logger.debug(f"[BASE SAMPLER] _get_paired_human_robot_traj: Looking for {opposite_key} trajectory (chosen_id: {chosen_id}, available: {len(available_indices)})")
+
         while (paired_traj is None or paired_traj.get("id") == chosen_id) and retries < max_retries:
             retries += 1
             
             if not available_indices:
+                logger.debug(f"[BASE SAMPLER] _get_paired_human_robot_traj: No more available indices after {retries} retries")
                 return None
 
             paired_idx = random.choice(available_indices)
@@ -283,8 +305,10 @@ class RFMBaseSampler:
 
         # If we exhausted retries without finding a valid trajectory, return None
         if paired_traj is None or paired_traj.get("id") == chosen_id:
+            logger.debug(f"[BASE SAMPLER] _get_paired_human_robot_traj: Failed to find valid paired trajectory after {max_retries} retries")
             return None
 
+        logger.debug(f"[BASE SAMPLER] _get_paired_human_robot_traj: Found paired trajectory {paired_traj.get('id', 'unknown')} on retry {retries}")
         return paired_traj
 
     def _get_rewound_traj(self, ref_traj: dict) -> Trajectory:
@@ -296,9 +320,12 @@ class RFMBaseSampler:
         Returns:
             Rewound trajectory as Trajectory object (already processed)
         """
+        traj_id = ref_traj.get("id", "unknown")
+        logger.debug(f"[BASE SAMPLER] _get_rewound_traj: Creating rewound trajectory for ID: {traj_id}")
+        
         ds_key = ref_traj["data_source"]
         success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
-        return create_rewind_trajectory(
+        result = create_rewind_trajectory(
             ref_traj,
             max_frames=self.config.max_frames,
             use_embeddings=self.config.load_embeddings,
@@ -307,6 +334,8 @@ class RFMBaseSampler:
             dataset_success_percent=self.dataset_success_cutoff_map,
             max_success=self.config.max_success,
         )
+        logger.debug(f"[BASE SAMPLER] _get_rewound_traj: Successfully created rewound trajectory for ID: {traj_id}")
+        return result
 
     def _get_traj_from_data(self, traj: dict | Trajectory, subsample_strategy: str | None = None) -> Trajectory:
         """Load, subsample, and optionally pad trajectory data and create a Trajectory object.

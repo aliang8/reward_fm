@@ -9,11 +9,11 @@ from tqdm import tqdm
 from transformers import Trainer
 import matplotlib.pyplot as plt
 from sklearn.metrics import average_precision_score
-from rfm.utils.logger import Logger
+from rfm.utils.logger import Logger, get_logger
 
 import copy
 import wandb
-from rfm.utils.distributed import is_rank_0, rank_0_print
+from rfm.utils.distributed import is_rank_0
 from rfm.utils.timer import _timer
 from rfm.utils.metrics import compute_spearman_correlation
 from rfm.utils.setup_utils import setup_dataset, setup_batch_collator, setup_custom_eval_dataset
@@ -25,6 +25,8 @@ from rfm.data.datasets.base import resolve_dataset_keys
 from rfm.utils.distributed import banner
 from rfm.models.utils import ModelOutput
 from rfm.utils.tensor_utils import t2n
+
+logger = get_logger()
 
 
 def seed_worker(worker_id):
@@ -83,12 +85,12 @@ def reduce_metrics_with_accelerate(metrics: dict, accelerator, aggregate_method=
 
             # Check for NaN values before reduction
             if torch.isnan(tensor_val).any():
-                rank_0_print(f"Warning: NaN detected in metric '{key}', using 0.0")
+                logger.warning(f"NaN detected in metric '{key}', using 0.0")
                 tensor_val = torch.tensor(0.0, dtype=torch.float32, device=accelerator.device)
 
             # Check for infinity values
             if torch.isinf(tensor_val).any():
-                rank_0_print(f"Warning: Infinity detected in metric '{key}', using 0.0")
+                logger.warning(f"Infinity detected in metric '{key}', using 0.0")
                 tensor_val = torch.tensor(0.0, dtype=torch.float32, device=accelerator.device)
 
             # Use accelerator's reduce method - all processes participate
@@ -96,14 +98,14 @@ def reduce_metrics_with_accelerate(metrics: dict, accelerator, aggregate_method=
 
             # Final check for NaN in reduced result
             if torch.isnan(reduced_val).any():
-                rank_0_print(f"Warning: NaN in reduced result for metric '{key}', using fallback")
+                logger.warning(f"NaN in reduced result for metric '{key}', using fallback")
                 result_metrics[key] = 0.0
             else:
                 result_metrics[key] = reduced_val.item()
 
         except Exception as metric_error:
             # If individual metric fails, keep original value (or 0.0 if missing)
-            rank_0_print(f"Warning: Failed to reduce metric '{key}': {metric_error}")
+            logger.warning(f"Failed to reduce metric '{key}': {metric_error}")
             if key in metrics:
                 original_val = float(metrics[key]) if not torch.is_tensor(metrics[key]) else metrics[key].item()
                 result_metrics[key] = 0.0 if np.isnan(original_val) else original_val
@@ -127,13 +129,17 @@ class RFMHeadsTrainer(Trainer):
         if logger is not None:
             self.logger = logger
         else:
+            log_level = self.config.logging.log_level
             self.logger = Logger(
                 log_to=self.config.logging.log_to,
                 output_dir=getattr(self.args, "output_dir", "./logs"),
                 is_main_process=is_rank_0(),
+                log_level=log_level,
             )
-
-        rank_0_print(f"DDP find_unused_parameters: {getattr(self.args, 'ddp_find_unused_parameters', 'N/A')}")
+        
+        # Use loguru logger after it's been initialized
+        loguru_logger = get_logger()
+        loguru_logger.info(f"DDP find_unused_parameters: {getattr(self.args, 'ddp_find_unused_parameters', 'N/A')}")
 
     def _post_checkpoint_load_reset(self):
         """
@@ -141,7 +147,7 @@ class RFMHeadsTrainer(Trainer):
         This addresses issues where checkpoint loading can leave stale gradients
         or computational graph state that causes crashes during training.
         """
-        rank_0_print("Performing post-checkpoint load reset...")
+        logger.info("Performing post-checkpoint load reset...")
 
         # Ensure model is in training mode
         self.model.train()
@@ -153,14 +159,14 @@ class RFMHeadsTrainer(Trainer):
             if hasattr(self, "optimizer") and self.optimizer is not None:
                 self.optimizer.zero_grad(set_to_none=True)
         except Exception as e:
-            rank_0_print(f"Warning: Could not clear gradients: {e}")
+            logger.warning(f"Could not clear gradients: {e}")
 
         # Clear CUDA cache if available
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
 
-        rank_0_print("Post-checkpoint load reset complete")
+        logger.info("Post-checkpoint load reset complete")
 
     def _log_rank_shape(self, label: str, value) -> None:
         """Utility to print tensor/list shapes per rank for debugging gather issues."""
@@ -246,7 +252,7 @@ class RFMHeadsTrainer(Trainer):
             # Last resort: return configured learning rate
             return self.args.learning_rate
         except Exception as e:
-            rank_0_print(f"Warning: Could not get learning rate: {e}")
+            logger.warning(f"Could not get learning rate: {e}")
             return self.args.learning_rate
 
     def train(self, resume_from_checkpoint=None, **kwargs):
@@ -255,7 +261,7 @@ class RFMHeadsTrainer(Trainer):
         """
         # If resuming from checkpoint, set flag for reset in first training step
         if resume_from_checkpoint is not None:
-            rank_0_print(f"Resuming from checkpoint: {resume_from_checkpoint}")
+            logger.info(f"Resuming from checkpoint: {resume_from_checkpoint}")
             self._just_resumed_from_checkpoint = True
 
         # Call parent train method
@@ -279,7 +285,7 @@ class RFMHeadsTrainer(Trainer):
 
         # Safety check: ensure model is in training mode and gradients are properly set up
         if not model.training:
-            rank_0_print("Warning: Model not in training mode, setting to train mode")
+            logger.warning("Model not in training mode, setting to train mode")
             model.train()
 
         # Clear any stale gradients before starting
@@ -338,11 +344,11 @@ class RFMHeadsTrainer(Trainer):
         self.global_metadata["total_similarities"] += num_similarities
         self.global_metadata["total_progress"] += num_progress
 
-        self._update_resample_attempt_metrics(inputs)
+        # self._update_resample_attempt_metrics(inputs)
 
-        # Log custom losses at specified intervals (using our custom logger only)
-        if self.state.global_step % self.args.logging_steps == 0:
-            self._log_metadata()
+        # # Log custom losses at specified intervals (using our custom logger only)
+        # if self.state.global_step % self.args.logging_steps == 0:
+        #     self._log_metadata()
 
         return loss
 
@@ -550,17 +556,17 @@ class RFMHeadsTrainer(Trainer):
         self.logger.log_scalars(log_data, step=self.state.global_step)
 
         if is_rank_0():
-            rank_0_print(f"Step {self.state.global_step}:")
-            rank_0_print("-" * 50)
+            logger.info(f"Step {self.state.global_step}:")
+            logger.info("-" * 50)
             for key in log_global:
-                rank_0_print(f"  {key}: {log_global[key]}")
+                logger.info(f"  {key}: {log_global[key]}")
 
             rounded_times = {k: round(v, 2) for k, v in self.timing_raw.items()}
-            rank_0_print(f"Timing raw: {rounded_times}")
+            logger.info(f"Timing raw: {rounded_times}")
 
             # Log optimizer stats to console
             if optim_stats:
-                rank_0_print(f"Optimizer stats: {optim_stats}")
+                logger.info(f"Optimizer stats: {optim_stats}")
 
     def _make_eval_dataloader(self, dataset):
         """Create a distributed evaluation dataloader with proper sampling."""
@@ -594,7 +600,7 @@ class RFMHeadsTrainer(Trainer):
         banner("Running custom evaluations", f"Custom evaluations: {eval_types}")
 
         for eval_type in eval_types:
-            rank_0_print(f"Running evaluation for: {eval_type}")
+            logger.info(f"Running evaluation for: {eval_type}")
 
             datasets = getattr(self.config.custom_eval, eval_type)
             eval_datasets_name = resolve_dataset_keys(datasets, split="eval")
@@ -1132,8 +1138,8 @@ class RFMHeadsTrainer(Trainer):
             if is_rank_0():
                 banner("Custom RFM Evaluation Results (Aggregated)", inner_padding=1)
                 for key, value in metrics.items():
-                    rank_0_print(f"{key}: {value:.6f}")
-                rank_0_print("=" * 50)
+                    logger.info(f"{key}: {value:.6f}")
+                logger.info("=" * 50)
 
             # Also log to wandb if available and configured (only on rank 0)
             self.logger.log_scalars(metrics, step=self.state.global_step)
@@ -1176,11 +1182,11 @@ class RFMHeadsTrainer(Trainer):
             and hasattr(model, "module")
         ):
             if hasattr(model.module, "_set_static_graph"):
-                rank_0_print("Setting DDP static graph mode for multiple forward passes")
+                logger.info("Setting DDP static graph mode for multiple forward passes")
                 model.module._set_static_graph()
                 self._ddp_static_graph_set = True
             elif hasattr(model, "_set_static_graph"):
-                rank_0_print("Setting DDP static graph mode for multiple forward passes")
+                logger.info("Setting DDP static graph mode for multiple forward passes")
                 model._set_static_graph()
                 self._ddp_static_graph_set = True
 
@@ -1225,7 +1231,7 @@ class RFMHeadsTrainer(Trainer):
 
         # Check for NaN in total loss before returning
         if torch.isnan(total_loss).any():
-            rank_0_print(f"Warning: NaN detected in total_loss, replacing with 0.0")
+            logger.warning(f"NaN detected in total_loss, replacing with 0.0")
             total_loss = torch.tensor(0.0, device=total_loss.device, dtype=total_loss.dtype)
 
         # Always store custom losses for logging (even when return_outputs=False)
@@ -1479,7 +1485,7 @@ class RFMHeadsTrainer(Trainer):
 
         # Check for NaN in final loss
         if torch.isnan(final_loss).any():
-            rank_0_print(f"Warning: NaN detected in progress loss, replacing with 0.0")
+            logger.warning(f"NaN detected in progress loss, replacing with 0.0")
             final_loss = torch.tensor(0.0, device=final_loss.device, dtype=final_loss.dtype)
 
         if return_outputs:
@@ -1569,7 +1575,7 @@ class RFMHeadsTrainer(Trainer):
 
         # Check for NaN in final loss
         if torch.isnan(final_loss).any():
-            rank_0_print(f"Warning: NaN detected in preference loss, replacing with 0.0")
+            logger.warning(f"NaN detected in preference loss, replacing with 0.0")
             final_loss = torch.tensor(0.0, device=final_loss.device, dtype=final_loss.dtype)
 
         if return_outputs:
@@ -1871,7 +1877,7 @@ class RFMHeadsTrainer(Trainer):
 
         # Check for NaN in final loss
         if torch.isnan(final_loss).any():
-            rank_0_print(f"Warning: NaN detected in similarity loss, replacing with 0.0")
+            logger.warning(f"NaN detected in similarity loss, replacing with 0.0")
             final_loss = torch.tensor(0.0, device=final_loss.device, dtype=final_loss.dtype)
 
         if return_outputs:

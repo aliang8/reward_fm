@@ -32,7 +32,7 @@ uv run accelerate launch \
     data.progress_strategy_ratio=[1,6,1,1,1] \
     data.preference_strategy_ratio=[6,1,1] \
     data.similarity_strategy_ratio=[1,1,1] \
-    data.train_datasets=[oxe,mw,others,paired,suboptimal_fail] \
+    data.train_datasets=[oxe,mw,others,suboptimal_fail] \
     data.eval_datasets=[mw] \
     model.train_progress_head=true \
     model.train_preference_head=true \

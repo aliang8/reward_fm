@@ -262,7 +262,13 @@ class RFMBaseSampler:
         available_indices = opposite_indices.copy()
         paired_traj = None
 
-        while paired_traj is None or paired_traj.get("id") == chosen_id:
+        # Add retry limit to prevent infinite loops
+        max_retries = min(len(available_indices), 10)
+        retries = 0
+
+        while (paired_traj is None or paired_traj.get("id") == chosen_id) and retries < max_retries:
+            retries += 1
+            
             if not available_indices:
                 return None
 
@@ -274,6 +280,10 @@ class RFMBaseSampler:
                 available_indices = [idx for idx in available_indices if idx != paired_idx]
                 paired_traj = None
                 continue
+
+        # If we exhausted retries without finding a valid trajectory, return None
+        if paired_traj is None or paired_traj.get("id") == chosen_id:
+            return None
 
         return paired_traj
 

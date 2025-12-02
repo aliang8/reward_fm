@@ -207,10 +207,10 @@ logging:
     metric_names: 
       - eval_rew_align/pearson_mw_eval
       - eval_p_rank/spearman_mw_eval
-      
+
     greater_is_better: [true, true]  # Whether higher values are better for each metric (must match metric_names length)
     keep_top_k: 5  # Number of best checkpoints and uploads to keep
-    save_every: null  # Save 'latest' checkpoint every N steps (should be multiple of custom_eval_steps). Set to null to disable.
+    save_every: 1000  # Save 'latest' checkpoint every N steps (should be multiple of custom_eval_steps). Set to null to disable.
     
     # Hub upload configuration (optional)
     upload_to_hub: true   # Whether to upload best models to HuggingFace Hub

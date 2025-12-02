@@ -4,6 +4,7 @@ import shutil
 import json
 from dataclasses import dataclass, field
 from typing import Optional, List, Tuple
+from datetime import datetime
 import numpy as np
 import gc
 import torch
@@ -215,6 +216,7 @@ class SaveBestCallback(TrainerCallback):
         self._last_best_save_step = -1  # Track last step where we saved 'best'
         self._previous_latest_ckpt_dir = None  # Track previous 'latest' checkpoint directory
         self._previous_latest_hub_tag = None  # Track previous 'latest' Hub tag
+        self._run_timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")  # Static timestamp for this run
 
     def setup_trainer_reference(self, trainer: Trainer):
         """Set the trainer reference for later use in callbacks"""
@@ -275,11 +277,11 @@ class SaveBestCallback(TrainerCallback):
         return ", ".join(individual_scores) if individual_scores else "no metrics"
     
     def _get_hub_model_id(self, args: TrainingArguments) -> str:
-        """Get the Hub model ID from output directory."""
+        """Get the Hub model ID from output directory with timestamp."""
         base_name = args.output_dir.split("/")[-1].replace("_", "-")
         base_name = re.sub(r"-+", "-", base_name)
         base_name = base_name.strip("-")
-        return f"rewardfm/{base_name}"
+        return f"rewardfm/{base_name}-{self._run_timestamp}"
     
     def _clean_tag_name(self, tag_name: str) -> str:
         """Clean tag name for HuggingFace repo naming requirements."""

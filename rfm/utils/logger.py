@@ -323,3 +323,62 @@ def rank_0_debug2(*args, **kwargs):
     """Log debug2 message only on rank 0 (main process)."""
     if is_rank_0():
         loguru_logger.debug2(*args, **kwargs)
+
+
+def log_memory_usage(prefix="", rank=None, output_dir=None):
+    """Log GPU and CPU memory usage in a readable format.
+    
+    Args:
+        prefix: Prefix string to identify the logging point
+        rank: Process rank (auto-detected if None)
+        output_dir: Directory to write memory log file (uses OUTPUT_DIR env var if None)
+    
+    Returns:
+        str: Memory usage string
+    """
+    import psutil
+    import datetime
+    
+    if rank is None:
+        rank = get_rank()
+    
+    memory_info = []
+    
+    # GPU memory
+    if torch.cuda.is_available():
+        for i in range(torch.cuda.device_count()):
+            allocated = torch.cuda.memory_allocated(i) / 1024**3  # GB
+            reserved = torch.cuda.memory_reserved(i) / 1024**3  # GB
+            max_allocated = torch.cuda.max_memory_allocated(i) / 1024**3  # GB
+            memory_info.append(f"GPU{i}: {allocated:.2f}GB alloc, {reserved:.2f}GB reserved, {max_allocated:.2f}GB peak")
+    
+    # CPU memory
+    process = psutil.Process()
+    mem_info = process.memory_info()
+    cpu_mem_rss = mem_info.rss / 1024**3  # GB - Resident Set Size (actual physical memory)
+    cpu_mem_vms = mem_info.vms / 1024**3  # GB - Virtual Memory Size
+    
+    # Get system-wide memory stats
+    system_mem = psutil.virtual_memory()
+    system_total = system_mem.total / 1024**3  # GB
+    system_available = system_mem.available / 1024**3  # GB
+    system_percent = system_mem.percent
+    
+    memory_info.append(
+        f"CPU: {cpu_mem_rss:.2f}GB RSS, {cpu_mem_vms:.2f}GB VMS | "
+        f"System: {system_available:.2f}GB/{system_total:.2f}GB avail ({system_percent:.1f}% used)"
+    )
+    
+    memory_str = " | ".join(memory_info) if memory_info else "No memory info available"
+    loguru_logger.info(f"[Rank {rank}] {prefix} Memory: {memory_str}")
+    
+    # Also write to a memory log file for post-mortem analysis
+    if output_dir is None:
+        output_dir = os.environ.get("OUTPUT_DIR", ".")
+    
+    memory_log_file = os.path.join(output_dir, f"memory_log_rank{rank}.txt")
+    with open(memory_log_file, "a") as f:
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        f.write(f"{timestamp} | {prefix} | {memory_str}\n")
+    
+    return memory_str

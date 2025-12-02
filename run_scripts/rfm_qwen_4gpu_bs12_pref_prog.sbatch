@@ -1,14 +1,16 @@
 #!/bin/bash
-#SBATCH -J ant_rfm_qwen_4gpu_bs12_pref_prog
-#SBATCH --gres=gpu:4               # number of GPUs to reserve
-#SBATCH --cpus-per-task=32         # CPUs for data loading (8 per GPU is reasonable)
-#SBATCH --mem=128G                 # Memory allocation (adjust based on your cluster)
+#SBATCH -J ant_rfm_qwen_2gpu_bs8_pref_prog
+#SBATCH --gres=gpu:2               # number of GPUs to reserve
+#SBATCH --cpus-per-task=16         # CPUs for data loading (8 per GPU is reasonable)
+#SBATCH --mem=64G                 # Memory allocation (adjust based on your cluster)
 #SBATCH --time=18:00:00            # Time limit (adjust as needed)
 #SBATCH --output=slurm_logs/slurm_%j.out # Standard output
 #SBATCH --error=slurm_logs/slurm_%j.err  # Standard error
 
 # Exit on error
 set -e
+
+ulimit -n 65536
 
 # Print job information
 echo "Job ID: $SLURM_JOB_ID"
@@ -26,12 +28,12 @@ export BS=8
 # Override config for progress-only training
 uv run accelerate launch \
     --config_file rfm/configs/distributed/ddp.yaml \
-    --num_processes=4 \
+    --num_processes=2 \
     train.py \
     data.sample_type_ratio=[1,0,0] \
     data.progress_strategy_ratio=[1,6,1,1,1] \
     data.preference_strategy_ratio=[6,1,1] \
-    data.train_datasets=[mw,oxe,others] \
+    data.train_datasets=[mw,oxe,others,paired,suboptimal_fail] \
     data.eval_datasets=[mw] \
     model.train_progress_head=true \
     model.train_preference_head=true \
@@ -58,7 +60,7 @@ uv run accelerate launch \
     training.overwrite_output_dir=true \
     training.predict_pref_progress=true \
     training.ddp_find_unused_parameters=false \
-    training.exp_name=ant_rfm_qwen_4gpu_bs12_pref_prog_rfm_2 \
+    training.exp_name=ant_rfm_qwen_2gpu_bs8_pref_prog \
     custom_eval.eval_types=[quality_preference,reward_alignment,policy_ranking,confusion_matrix] \
     custom_eval.quality_preference=[quality_preference] \
     custom_eval.reward_alignment=[reward_alignment] \

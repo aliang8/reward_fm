@@ -197,6 +197,7 @@ def train(cfg: ExperimentConfig):
         metric_names=save_best_cfg.metric_names,
         greater_is_better=save_best_cfg.greater_is_better,
         keep_top_k=save_best_cfg.keep_top_k,
+        save_every=save_best_cfg.save_every,
         upload_to_hub=save_best_cfg.upload_to_hub,
         hub_token=save_best_cfg.hub_token,
         hub_private=save_best_cfg.hub_private,

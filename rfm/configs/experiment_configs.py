@@ -188,6 +188,10 @@ class DataConfig:
     # Dataloader parameters
     dataloader_pin_memory: bool = field(default=True, metadata={"help": "Whether to pin memory in dataloader"})
     dataloader_num_workers: int = field(default=0, metadata={"help": "Number of worker processes for dataloader"})
+    dataloader_persistent_workers: bool = field(
+        default=False, 
+        metadata={"help": "If True, the data loader will not shut down the worker processes after a dataset has been consumed once. This allows to maintain the workers dataset instances alive."}
+    )
 
     # Video binned dataset specific parameters
     num_bins: int = field(default=10, metadata={"help": "Number of bins to use for video binned dataset"})
@@ -283,6 +287,7 @@ class TrainingConfig:
     save_steps: int = field(default=100)
     dataloader_pin_memory: bool = field(default=True)
     dataloader_num_workers: int = field(default=0)
+    dataloader_persistent_workers: bool = field(default=False)
 
     # Evaluation settings
     evaluation_strategy: str = field(default="no", metadata={"help": "Evaluation strategy: 'no', 'steps', 'epoch'"})
@@ -373,8 +378,13 @@ class LoggingConfig:
     # Wandb configuration
     wandb_project: str = field(default="rfm-model", metadata={"help": "Wandb project name"})
     wandb_entity: Optional[str] = field(default=None, metadata={"help": "Wandb entity/username"})
-    # Log level: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
-    log_level: str = field(default="INFO", metadata={"help": "Logging level for console output"})
+    # Log level: "TRACE", "DEBUG2", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
+    log_level: str = field(
+        default="INFO",
+        metadata={
+            "help": "Logging level for console output. Options: TRACE (most verbose), DEBUG2, DEBUG, INFO, WARNING, ERROR, CRITICAL"
+        },
+    )
 
     # SaveBest configuration
     save_best: Optional[SaveBestConfig] = field(default=None, metadata={"help": "SaveBestCallback configuration"})

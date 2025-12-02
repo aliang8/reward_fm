@@ -11,25 +11,54 @@ from loguru import logger as loguru_logger
 
 from rfm.utils.distributed import get_rank, is_rank_0
 
+# Define custom log levels for more granular debugging
+# Standard levels: CRITICAL=50, ERROR=40, WARNING=30, INFO=20, DEBUG=10
+# TRACE (5) already exists in loguru by default
+DEBUG2_LEVEL = 8  # Intermediate debug level between TRACE (5) and DEBUG (10)
+
+
+def _add_custom_log_levels():
+    """Add custom log levels to loguru for more granular debugging control."""
+    # TRACE level (5) already exists in loguru by default, no need to add it
+    # Only add DEBUG2 level (intermediate verbose)
+    # Check if level already exists to avoid errors on multiple calls
+    try:
+        loguru_logger.level("DEBUG2", no=DEBUG2_LEVEL, color="<dim><cyan>")
+    except ValueError:
+        # Level already exists, which is fine
+        pass
+
 
 def setup_loguru_logging(log_level: str = "INFO", output_dir: Optional[str] = None):
     """
     Initialize loguru logger with rank-aware formatting and log level.
     Uses loguru's default format to preserve automatic rich formatting for booleans, numbers, etc.
     
+    Supported log levels (from most to least verbose):
+    - TRACE: Most verbose debugging (level 5)
+    - DEBUG2: Intermediate debug level (level 8)
+    - DEBUG: Standard debug level (level 10)
+    - INFO: Informational messages (level 20)
+    - WARNING: Warning messages (level 30)
+    - ERROR: Error messages (level 40)
+    - CRITICAL: Critical errors (level 50)
+    
     Args:
-        log_level: Logging level ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+        log_level: Logging level (e.g., "TRACE", "DEBUG2", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
         output_dir: Optional directory to write log files to
     """
+    # Add custom log levels first
+    _add_custom_log_levels()
+    
     loguru_logger.remove()
     rank = get_rank()
-    rank_prefix = f"[Rank {rank}] " if rank > 0 else ""
+    rank_prefix = f"[Rank {rank}] "
     format_string = (
         "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
         "<level>{level: <8}</level> | "
         f"{rank_prefix}"
         "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
-        "<level>{message}</level>\n"
+        "<level>{message}</level>"
     )
     
     # Console handler using sys.stderr to preserve loguru's rich formatting
@@ -272,3 +301,25 @@ def rank_0_debug(*args, **kwargs):
     """Log debug message only on rank 0 (main process)."""
     if is_rank_0():
         loguru_logger.debug(*args, **kwargs)
+
+
+def trace(*args, **kwargs):
+    """Log trace message (most verbose debug level)."""
+    loguru_logger.trace(*args, **kwargs)
+
+
+def debug2(*args, **kwargs):
+    """Log debug2 message (intermediate debug level)."""
+    loguru_logger.debug2(*args, **kwargs)
+
+
+def rank_0_trace(*args, **kwargs):
+    """Log trace message only on rank 0 (main process)."""
+    if is_rank_0():
+        loguru_logger.trace(*args, **kwargs)
+
+
+def rank_0_debug2(*args, **kwargs):
+    """Log debug2 message only on rank 0 (main process)."""
+    if is_rank_0():
+        loguru_logger.debug2(*args, **kwargs)

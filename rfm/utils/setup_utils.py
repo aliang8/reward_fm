@@ -557,6 +557,7 @@ def create_training_arguments(cfg: TrainingConfig, output_dir: str, is_eval: boo
         "gradient_checkpointing": cfg.gradient_checkpointing,
         "dataloader_pin_memory": cfg.dataloader_pin_memory,
         "dataloader_num_workers": cfg.dataloader_num_workers,
+        "dataloader_persistent_workers": cfg.dataloader_persistent_workers,
         "save_safetensors": True,
         "save_total_limit": 2,
         # Evaluation settings

@@ -19,6 +19,7 @@ from huggingface_hub import hf_hub_download
 
 from rfm.configs.experiment_configs import ExperimentConfig
 from rfm.utils.setup_utils import setup_model_and_processor
+from rfm.utils.save import resolve_checkpoint_path
 from rfm.data.dataset_types import PreferenceSample, SimilaritySample, ProgressSample
 
 
@@ -31,11 +32,13 @@ def extract_answer_from_text(text):
 def load_model_from_hf(
     model_path: str,
     device: torch.device,
+    hub_token: Optional[str] = None,
 ) -> Tuple[Optional[ExperimentConfig], Optional[Any], Optional[Any], Optional[Any]]:
     """
     Load reward model config and model from HuggingFace or local checkpoint.
 
     This mirrors the logic used by the training/eval scripts:
+    - Resolve checkpoint path (supports HF Hub with @ notation)
     - Locate config.yaml locally (if model_path is a directory) or download from HF
     - Use custom YAML loader for ReWiND configs
     - Filter config keys to ExperimentConfig
@@ -43,25 +46,33 @@ def load_model_from_hf(
     - Load model artifacts via setup_model_and_processor
 
     Args:
-        model_path: HuggingFace model repository ID or local checkpoint path
+        model_path: HuggingFace model repository ID or local checkpoint path.
+                   Supports @ notation for tags: username/model@tag-name
         device: Device to load model on
+        hub_token: Optional HuggingFace token for private repos
 
     Returns:
         Tuple of (exp_config, tokenizer, processor, reward_model)
     """
+    # Resolve checkpoint path (handles HF Hub downloads with @ notation)
+    resolved_path = resolve_checkpoint_path(model_path, hub_token=hub_token)
+    if resolved_path is None:
+        raise ValueError(f"Could not resolve checkpoint path: {model_path}")
+    
     config_path: Optional[str] = None
 
     # Parse repo_id and revision (tag) from model_path if using @tag format
+    # This is used for downloading config.yaml if needed
     if "@" in model_path:
         repo_id, revision = model_path.split("@", 1)
     else:
         repo_id, revision = model_path, None
 
-    if os.path.exists(model_path):
+    if os.path.exists(resolved_path):
         # Local checkpoint: look for config.yaml
         candidate_paths = [
-            model_path if model_path.endswith(".yaml") else os.path.join(model_path, "config.yaml"),
-            os.path.join(os.path.dirname(model_path), "config.yaml"),
+            resolved_path if resolved_path.endswith(".yaml") else os.path.join(resolved_path, "config.yaml"),
+            os.path.join(os.path.dirname(resolved_path), "config.yaml"),
         ]
         for candidate in candidate_paths:
             if os.path.isfile(candidate):
@@ -69,13 +80,13 @@ def load_model_from_hf(
                 break
         if config_path is None:
             raise FileNotFoundError(
-                f"config.yaml not found near local checkpoint {model_path}. Provide a path that contains config.yaml."
+                f"config.yaml not found near local checkpoint {resolved_path}. Provide a path that contains config.yaml."
             )
     else:
         if hf_hub_download is None:
             raise ImportError("huggingface_hub not available. Install with: pip install huggingface_hub")
         # Download config with revision if specified
-        config_path = hf_hub_download(repo_id=repo_id, filename="config.yaml", revision=revision)
+        config_path = hf_hub_download(repo_id=repo_id, filename="config.yaml", revision=revision, token=hub_token)
 
     with open(config_path) as f:
         yaml_text = f.read()
@@ -96,20 +107,26 @@ def load_model_from_hf(
     filtered_config["logging"] = {}
 
     exp_config = ExperimentConfig(**filtered_config)
-    tokenizer, processor, reward_model = setup_model_and_processor(exp_config.model, model_path)
+    # Use resolved_path for loading the actual model
+    tokenizer, processor, reward_model = setup_model_and_processor(exp_config.model, resolved_path)
     reward_model = reward_model.to(device)
     reward_model.eval()
 
     return exp_config, tokenizer, processor, reward_model
 
 
-def load_wandb_run_info(model_path: str) -> Optional[dict[str, Any]]:
+def load_wandb_run_info(model_path: str, hub_token: Optional[str] = None) -> Optional[dict[str, Any]]:
     """
     Retrieve saved wandb metadata for a checkpoint.
 
     Checks for a local `wandb_info.json` (written during training) and, if the
     checkpoint lives on HuggingFace, falls back to parsing the README that
     `upload_to_hub.py` generates (which embeds wandb fields).
+    
+    Args:
+        model_path: HuggingFace model repository ID or local checkpoint path.
+                   Supports @ notation for tags: username/model@tag-name
+        hub_token: Optional HuggingFace token for private repos
     """
 
     def _load_json(path: Path) -> Optional[dict[str, Any]]:
@@ -119,19 +136,21 @@ def load_wandb_run_info(model_path: str) -> Optional[dict[str, Any]]:
         except (FileNotFoundError, json.JSONDecodeError):
             return None
 
-    path = Path(model_path)
-    if path.exists():
-        candidates = []
-        if path.is_file():
-            candidates.append(path.parent / "wandb_info.json")
-        else:
-            candidates.append(path / "wandb_info.json")
-            candidates.append(path.parent / "wandb_info.json")
-        for candidate in candidates:
-            info = _load_json(candidate)
-            if info:
-                return info
-        return None
+    # Resolve checkpoint path first
+    resolved_path = resolve_checkpoint_path(model_path, hub_token=hub_token)
+    if resolved_path:
+        path = Path(resolved_path)
+        if path.exists():
+            candidates = []
+            if path.is_file():
+                candidates.append(path.parent / "wandb_info.json")
+            else:
+                candidates.append(path / "wandb_info.json")
+                candidates.append(path.parent / "wandb_info.json")
+            for candidate in candidates:
+                info = _load_json(candidate)
+                if info:
+                    return info
 
     if hf_hub_download is None:
         return None
@@ -143,7 +162,9 @@ def load_wandb_run_info(model_path: str) -> Optional[dict[str, Any]]:
         repo_id, revision = model_path, None
 
     try:
-        readme_path = hf_hub_download(repo_id=repo_id, filename="README.md", revision=revision, local_files_only=False)
+        readme_path = hf_hub_download(
+            repo_id=repo_id, filename="README.md", revision=revision, token=hub_token, local_files_only=False
+        )
     except Exception:
         return None
 

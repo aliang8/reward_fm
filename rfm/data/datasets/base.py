@@ -184,7 +184,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         # Warn about missing datasets
         if missing_datasets:
-            rank_0_warning("\n⚠️  Warning: The following configured datasets are not available in the cache:")
+            rank_0_warning("⚠️  Warning: The following configured datasets are not available in the cache:")
             for dataset_path in missing_datasets:
                 rank_0_warning(f"    ❌ {dataset_path}")
             rank_0_warning("  Available datasets will be loaded, but some configured data may be missing.")
@@ -195,7 +195,7 @@ class BaseDataset(torch.utils.data.Dataset):
                 f"Please run preprocess_datasets.py to create the cache for: {self.datasets}"
             )
 
-        rank_0_info(f"\nSummary: {len(available_datasets)} available, {len(missing_datasets)} missing")
+        rank_0_info(f"Summary: {len(available_datasets)} available, {len(missing_datasets)} missing")
 
         return available_datasets, missing_datasets
 

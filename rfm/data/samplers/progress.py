@@ -133,7 +133,7 @@ class ProgressSampler(RFMBaseSampler):
 
         # If we still don't have a sample after all attempts, return None
         if processed_traj is None:
-            logger.debug(
+            logger.trace(
                 f"[PROGRESS SAMPLER] Failed to generate progress sample after {max_attempts} attempts - all strategies exhausted"
             )
             return None

@@ -13,7 +13,7 @@ from rfm.utils.logger import Logger, get_logger
 
 import copy
 import wandb
-from rfm.utils.distributed import is_rank_0
+from rfm.utils.distributed import is_rank_0, get_rank
 from rfm.utils.timer import _timer
 from rfm.utils.metrics import compute_spearman_correlation
 from rfm.utils.setup_utils import setup_dataset, setup_batch_collator, setup_custom_eval_dataset
@@ -168,27 +168,6 @@ class RFMHeadsTrainer(Trainer):
 
         logger.info("Post-checkpoint load reset complete")
 
-    def _log_rank_shape(self, label: str, value) -> None:
-        """Utility to print tensor/list shapes per rank for debugging gather issues."""
-        if not hasattr(self, "accelerator"):
-            return
-        rank = getattr(self.accelerator, "process_index", None)
-        if rank is None and dist.is_initialized():
-            rank = dist.get_rank()
-        if rank is None:
-            rank = 0
-
-        if torch.is_tensor(value):
-            info = f"tensor shape={tuple(value.shape)}"
-        elif isinstance(value, (list, tuple)):
-            info = f"{type(value).__name__} len={len(value)}"
-        elif value is None:
-            info = "None"
-        else:
-            info = f"{type(value).__name__}"
-
-        print(f"[Rank {rank}] {label}: {info}", flush=True)
-
     def _normalize_list_like(self, value):
         """Convert None/scalars/tuples to a list so we can safely gather across ranks."""
         if value is None:
@@ -273,6 +252,8 @@ class RFMHeadsTrainer(Trainer):
         """
         Perform a training step and log custom losses.
         """
+        logger.debug("training_step: Starting")
+        
         # Check if we just resumed from checkpoint (first step after resume)
         if hasattr(self, "_just_resumed_from_checkpoint") and self._just_resumed_from_checkpoint:
             self._post_checkpoint_load_reset()
@@ -303,7 +284,8 @@ class RFMHeadsTrainer(Trainer):
         num_progress = inputs.get("num_progress", 0)
         num_similarities = inputs.get("num_similarities", 0)
 
-        # Adding more granular counting for the data strategies
+        logger.trace(f"num_preferences: {num_preferences}, num_progress: {num_progress}, num_similarities: {num_similarities}")
+
         if num_preferences > 0 and preference_inputs:
             rejected_data_gen_strategy = preference_inputs["rejected_data_gen_strategy"]
             if isinstance(rejected_data_gen_strategy, list) and len(rejected_data_gen_strategy) > 0:
@@ -344,11 +326,15 @@ class RFMHeadsTrainer(Trainer):
         self.global_metadata["total_similarities"] += num_similarities
         self.global_metadata["total_progress"] += num_progress
 
-        # self._update_resample_attempt_metrics(inputs)
+        logger.trace("finished updating global metadata")
 
-        # # Log custom losses at specified intervals (using our custom logger only)
-        # if self.state.global_step % self.args.logging_steps == 0:
-        #     self._log_metadata()
+        self._update_resample_attempt_metrics(inputs)
+
+        logger.trace("update resample attempt metrics")
+
+        # Log custom losses at specified intervals (using our custom logger only)
+        if self.state.global_step % self.args.logging_steps == 0:
+            self._log_metadata()
 
         return loss
 
@@ -531,8 +517,12 @@ class RFMHeadsTrainer(Trainer):
         if not self.log_metadata:
             return
 
+        logger.trace("logging metadata, starting to aggregate metrics")
+
         # Use local metrics (no aggregation needed for individual GPU metrics)
         log_metadata = reduce_metrics_with_accelerate(self.log_metadata, self.accelerator, aggregate_method="mean")
+
+        logger.trace("finished aggregating metrics")
 
         # Prepare logging data using aggregated losses
         log_data = {
@@ -542,7 +532,9 @@ class RFMHeadsTrainer(Trainer):
         }
 
         # Log global metadata
+        logger.trace("logging global metadata")
         global_metadata = reduce_metrics_with_accelerate(self.global_metadata, self.accelerator, aggregate_method="sum")
+        logger.trace("finished aggregating global metadata")
         log_global = {f"counts/{key}": global_metadata[key] for key in global_metadata}
         log_data.update(log_global)
 
@@ -653,14 +645,9 @@ class RFMHeadsTrainer(Trainer):
                         progress_logits = outputs.progress_logits
                         progress_pred = progress_logits["A"]
 
-                        # self._log_rank_shape("progress_pred_local", progress_pred)
-                        # self._log_rank_shape("target_progress_local", progress_samples["target_progress"])
-
                         # Gather everything
                         progress_pred = self.accelerator.gather_for_metrics(progress_pred)
                         target_progress = self.accelerator.gather_for_metrics(progress_samples["target_progress"])
-                        # self._log_rank_shape("progress_pred_gathered", progress_pred)
-                        # self._log_rank_shape("target_progress_gathered", target_progress)
 
                         # Gather metadata fields
                         metadata_fields = [
@@ -684,14 +671,9 @@ class RFMHeadsTrainer(Trainer):
                         if self.config.model.train_success_head:
                             success_pred = outputs.success_logits["A"]
                             success_probs = torch.sigmoid(success_pred)
-                            # self._log_rank_shape("success_probs_local", success_probs)
                             success_binary = (success_probs > 0.5).float()
                             success_pred_gathered = self.accelerator.gather_for_metrics(success_binary)
                             success_probs_gathered = self.accelerator.gather_for_metrics(success_probs)
-                            # self._log_rank_shape("success_pred_gathered", success_pred_gathered)
-                            # self._log_rank_shape("success_probs_gathered", success_probs_gathered)
-
-                            # Get success labels from batch (computed in collator)
                             success_labels = progress_samples.get("success_labels")
                             success_labels_gathered = self.accelerator.gather_for_metrics(success_labels)
 
@@ -1172,6 +1154,7 @@ class RFMHeadsTrainer(Trainer):
 
     def compute_loss(self, model, inputs, return_outputs=False, training=True, **kwargs):
         """Compute loss for separate preference and similarity batches."""
+        logger.debug("compute_loss: Starting")
 
         # Set static graph for DDP on first training step to handle multiple forward passes
         # This is necessary because similarity loss does 2 forward passes (ref_sim and ref_diff)
@@ -1202,6 +1185,8 @@ class RFMHeadsTrainer(Trainer):
         total_loss = 0
         log_metadata = {}
 
+        logger.debug(f"Num preferences: {num_preferences}, Num similarities: {num_similarities}, Num progress: {num_progress}")
+
         # Compute preference loss if we have preference samples
         if num_preferences > 0 and preference_inputs and self.config.model.train_preference_head:
             with _timer("time/compute_preference_loss", timing_raw=self.timing_raw):
@@ -1228,6 +1213,11 @@ class RFMHeadsTrainer(Trainer):
                 )
                 total_loss += similarity_loss
             log_metadata.update(loss_dict)
+
+        for key, value in log_metadata.items():
+            logger.debug(f"{key}: {value}, type: {type(value)}")
+            if isinstance(value, torch.Tensor):
+                logger.debug(f"\t{key}: shape={value.shape}")
 
         # Check for NaN in total loss before returning
         if torch.isnan(total_loss).any():
@@ -1429,8 +1419,11 @@ class RFMHeadsTrainer(Trainer):
 
     def forward_model(self, model, inputs, sample_type="progress"):
         """Forward pass for the model."""
+        logger.trace(f"forward_model: Starting forward pass for sample_type={sample_type}")
+        
         with _timer("time/forward", timing_raw=self.timing_raw):
             if "rewind" in self.config.model.base_model_id:
+                logger.trace("forward_model: Using ReWiND model path")
                 model_output, model_timing_raw = model(
                     input_ids=inputs.get("input_ids"),
                     attention_mask=inputs.get("attention_mask"),
@@ -1442,6 +1435,8 @@ class RFMHeadsTrainer(Trainer):
                     timing_raw=self.timing_raw,
                 )
             else:
+                logger.trace("forward_model: Using Qwen/RFM model path, calling model forward")
+                logger.trace(f"forward_model: input_ids shape: {inputs['input_ids'].shape if 'input_ids' in inputs else 'N/A'}")
                 model_output, model_timing_raw = model(
                     input_ids=inputs["input_ids"],
                     attention_mask=inputs["attention_mask"],
@@ -1453,7 +1448,9 @@ class RFMHeadsTrainer(Trainer):
                     sample_type=sample_type,
                     timing_raw=self.timing_raw,
                 )
+                logger.trace("forward_model: Model forward pass completed")
 
+            logger.trace("forward_model: Updating timing and returning")
             self.timing_raw.update(model_timing_raw)
             return model_output, model_timing_raw
 
@@ -1657,9 +1654,25 @@ class RFMHeadsTrainer(Trainer):
         The inputs are already batched by the collator as [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
         We do a single forward pass and then extract scores for ref_sim (even indices) and ref_diff (odd indices).
         """
+
+        logger.trace("computing similarity loss")
+        
+        # Check batch size consistency across ranks
+        batch_size = inputs.get("input_ids", torch.tensor([])).shape[0] if "input_ids" in inputs else 0
+        logger.trace(f"similarity batch size: {batch_size}")
+
+        for key, value in inputs.items():
+            if isinstance(value, torch.Tensor):
+                logger.trace(f"{key}: {value.shape}")
+            else:
+                logger.trace(f"{key}: {value}")
+        
         # Single forward pass with batched inputs (already batched by collator)
         # Batch structure: [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
+        logger.trace("About to call forward_model for similarity")
         batched_outputs, _ = self.forward_model(model, inputs, sample_type="similarity")
+
+        logger.trace("finished forward pass for similarity loss")
 
         # Extract batch size (number of similarity samples)
         # The batched input has 2x the number of samples (ref_sim + ref_diff for each)
@@ -1674,6 +1687,9 @@ class RFMHeadsTrainer(Trainer):
         sim_logits_ref_diff = (
             batched_outputs.sim_logits[1::2] if batched_outputs.sim_logits is not None else None
         )  # Odd indices
+
+        logger.trace(f"sim_logits_ref_sim: {sim_logits_ref_sim}, shape: {sim_logits_ref_sim.shape}")
+        logger.trace(f"sim_logits_ref_diff: {sim_logits_ref_diff}, shape: {sim_logits_ref_diff.shape}")
 
         # Handle progress_logits
         progress_logits_ref_sim = None

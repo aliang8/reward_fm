@@ -8,8 +8,7 @@ from rfm.data.dataset_types import SimilaritySample, Trajectory
 from rfm.data.samplers.base import RFMBaseSampler
 from rfm.data.datasets.helpers import DataGenStrat
 from rfm.data.dataset_category import is_failure_ds, is_paired_ds
-from rfm.utils.distributed import rank_0_print
-from rfm.utils.logger import get_logger
+from rfm.utils.logger import get_logger, rank_0_info
 
 logger = get_logger()
 
@@ -29,11 +28,18 @@ class SimSampler(RFMBaseSampler):
     ):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
         self.similarity_strategy_ratio: list[float] = config.similarity_strategy_ratio
-        self._has_paired_human_robot = any(
-            entry["robot"] and entry["human"] for entry in self.paired_human_robot_by_task.values()
+        self._has_paired_human_robot = (
+            any(
+                len(entry.get("robot", [])) > 0 and len(entry.get("human", [])) > 0
+                for entry in self.paired_human_robot_by_task.values()
+            )
+            if self.paired_human_robot_by_task else False
         )
-        self._has_suboptimal = any(indices for indices in self.suboptimal_by_task.values())
-        rank_0_print(
+        self._has_suboptimal = (
+            any(len(indices) > 0 for indices in self.suboptimal_by_task.values())
+            if self.suboptimal_by_task else False
+        )
+        rank_0_info(
             f"[SIM SAMPLER] Has paired human/robot: {self._has_paired_human_robot}, Has suboptimal: {self._has_suboptimal}"
         )
 
@@ -54,7 +60,7 @@ class SimSampler(RFMBaseSampler):
         """
         # Log when similarity sampler is called
         traj_id = ref_traj.get("id", "unknown") if ref_traj is not None else "sampling_new"
-        logger.debug(f"[SIM SAMPLER] Creating similarity sample for trajectory ID: {traj_id}")
+        logger.trace(f"[SIM SAMPLER] Creating similarity sample for trajectory ID: {traj_id}")
 
         # Use provided reference trajectory if given; otherwise sample one
         if ref_traj is None:
@@ -160,7 +166,7 @@ class SimSampler(RFMBaseSampler):
                     break
 
             # Log strategy attempt
-            logger.debug(
+            logger.trace(
                 f"[SIM SAMPLER] Attempt {attempt}/{max_attempts}: Trying strategy {selected_strategy.value if selected_strategy else 'None'}"
             )
 
@@ -178,7 +184,7 @@ class SimSampler(RFMBaseSampler):
             if result is not None:
                 traj_sim, traj_diff = result
                 strategy_used = selected_strategy
-                logger.debug(
+                logger.trace(
                     f"[SIM SAMPLER] Strategy {selected_strategy.value} succeeded on attempt {attempt}"
                 )
             else:
@@ -186,13 +192,13 @@ class SimSampler(RFMBaseSampler):
                 strategy_attempt_counts[selected_strategy] = strategy_attempt_counts.get(selected_strategy, 0) + 1
                 failed_count = strategy_attempt_counts[selected_strategy]
                 
-                logger.debug(
+                logger.trace(
                     f"[SIM SAMPLER] Strategy {selected_strategy.value} failed (failure count: {failed_count}/{max_strategy_attempts})"
                 )
 
                 # Only remove strategy if it has failed max_strategy_attempts times
                 if strategy_attempt_counts[selected_strategy] >= max_strategy_attempts:
-                    logger.debug(
+                    logger.trace(
                         f"[SIM SAMPLER] Removing strategy {selected_strategy.value} after {max_strategy_attempts} consecutive failures"
                     )
                     strategies = [(strat, prob) for strat, prob in strategies if strat != selected_strategy]
@@ -200,7 +206,7 @@ class SimSampler(RFMBaseSampler):
 
         # If we still don't have a sample after all attempts, return None
         if traj_sim is None or traj_diff is None:
-            logger.debug(
+            logger.trace(
                 f"[SIM SAMPLER] Failed to generate similarity sample after {max_attempts} attempts - all strategies exhausted"
             )
             return None

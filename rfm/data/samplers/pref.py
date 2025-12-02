@@ -11,8 +11,7 @@ from rfm.data.samplers.base import RFMBaseSampler
 from rfm.data.datasets.helpers import (
     DataGenStrat,
 )
-from rfm.utils.distributed import rank_0_print
-from rfm.utils.logger import get_logger
+from rfm.utils.logger import get_logger, rank_0_info, trace
 from rfm.utils.timer import timer
 
 logger = get_logger()
@@ -35,8 +34,10 @@ class PrefSampler(RFMBaseSampler):
 
         self.dataset_preference_ratio = config.dataset_preference_ratio
         self.preference_strategy_ratio: list[float] = config.preference_strategy_ratio
-        self._has_suboptimal = any(indices for indices in self.suboptimal_by_task.values())
-        rank_0_print(
+        self._has_suboptimal = any(
+            len(indices) > 0 for indices in self.suboptimal_by_task.values()
+        ) if self.suboptimal_by_task else False
+        rank_0_info(
             f"[PREF SAMPLER] Has suboptimal: {self._has_suboptimal}"
         )
 
@@ -64,7 +65,7 @@ class PrefSampler(RFMBaseSampler):
 
         # For now, we'll use empty preferences since the config structure has changed
         # This can be updated later if needed
-        rank_0_print("[PREF SAMPLER] No preference dataset provided, will use random sampling for preferences")
+        rank_0_info("[PREF SAMPLER] No preference dataset provided, will use random sampling for preferences")
         return
 
     def _create_preference_sample(self) -> PreferenceSample:
@@ -105,7 +106,7 @@ class PrefSampler(RFMBaseSampler):
         """
         # Log when preference sampler is called
         traj_id = chosen_traj.get("id", "unknown") if chosen_traj is not None else "sampling_new"
-        logger.debug(f"[PREF SAMPLER] Creating preference sample for trajectory ID: {traj_id}")
+        logger.trace(f"[PREF SAMPLER] Creating preference sample for trajectory ID: {traj_id}")
 
         # Use provided chosen trajectory if given; otherwise sample one
         if chosen_traj is None:
@@ -182,7 +183,7 @@ class PrefSampler(RFMBaseSampler):
                     break
 
             # Log strategy attempt
-            logger.debug(
+            logger.trace(
                 f"[PREF SAMPLER] Attempt {attempt}/{max_attempts}: Trying strategy {selected_strategy.value if selected_strategy else 'None'}"
             )
 
@@ -213,7 +214,7 @@ class PrefSampler(RFMBaseSampler):
             # Check if strategy succeeded
             if rejected_traj is not None:
                 strategy_used = selected_strategy
-                logger.debug(
+                logger.trace(
                     f"[PREF SAMPLER] Strategy {selected_strategy.value} succeeded on attempt {attempt}"
                 )
             else:
@@ -221,13 +222,13 @@ class PrefSampler(RFMBaseSampler):
                 strategy_attempt_counts[selected_strategy] = strategy_attempt_counts.get(selected_strategy, 0) + 1
                 failed_count = strategy_attempt_counts[selected_strategy]
                 
-                logger.debug(
+                logger.trace(
                     f"[PREF SAMPLER] Strategy {selected_strategy.value} failed (failure count: {failed_count}/{max_strategy_attempts})"
                 )
 
                 # Only remove strategy if it has failed max_strategy_attempts times
                 if strategy_attempt_counts[selected_strategy] >= max_strategy_attempts:
-                    logger.debug(
+                    logger.trace(
                         f"[PREF SAMPLER] Removing strategy {selected_strategy.value} after {max_strategy_attempts} consecutive failures"
                     )
                     strategies = [(strat, prob) for strat, prob in strategies if strat != selected_strategy]
@@ -235,7 +236,7 @@ class PrefSampler(RFMBaseSampler):
 
         # If we still don't have a sample after all attempts, return None
         if rejected_traj is None:
-            logger.debug(
+            logger.trace(
                 f"[PREF SAMPLER] Failed to generate preference sample after {max_attempts} attempts - all strategies exhausted"
             )
             return None

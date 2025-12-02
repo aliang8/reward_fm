@@ -53,6 +53,7 @@ uv run accelerate launch \
     training.max_steps=15000 \
     training.eval_steps=200 \
     training.custom_eval_steps=200 \
+    logging.save_best.save_every=1000 \
     training.per_device_train_batch_size=$BS \
     training.per_device_eval_batch_size=$BS \
     training.learning_rate=5e-5 \

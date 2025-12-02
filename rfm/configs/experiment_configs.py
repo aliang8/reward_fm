@@ -349,6 +349,10 @@ class SaveBestConfig:
         metadata={"help": "Whether higher values are better for each metric (must match length of metric_names)"},
     )
     keep_top_k: int = field(default=1, metadata={"help": "Number of best checkpoints/uploads to keep"})
+    save_every: Optional[int] = field(
+        default=None,
+        metadata={"help": "Save 'latest' checkpoint every N steps (should be multiple of eval_steps). None disables."}
+    )
 
     # Hub upload configuration
     upload_to_hub: bool = field(default=False, metadata={"help": "Whether to upload best models to HuggingFace Hub"})

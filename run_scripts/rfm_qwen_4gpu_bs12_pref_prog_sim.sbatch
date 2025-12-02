@@ -2,7 +2,7 @@
 #SBATCH -J ant_rfm_qwen_4gpu_bs12_pref_prog_sim
 #SBATCH --gres=gpu:2               # number of GPUs to reserve
 #SBATCH --cpus-per-task=16         # CPUs for data loading (8 per GPU is reasonable)
-#SBATCH --mem=64G                 # Memory allocation (adjust based on your cluster)
+#SBATCH --mem=200G                 # Memory allocation (adjust based on your cluster)
 #SBATCH --time=18:00:00            # Time limit (adjust as needed)
 #SBATCH --output=slurm_logs/slurm_%j.out # Standard output
 #SBATCH --error=slurm_logs/slurm_%j.err  # Standard error

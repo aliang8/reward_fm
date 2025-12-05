@@ -45,6 +45,53 @@ class PrefSampler(RFMBaseSampler):
         self._load_preference_dataset()
 
     def _generate_sample(self, item: dict):
+        """Generate a preference sample from an item.
+        
+        If the item has a non-successful quality label, it will be used as the rejected
+        trajectory and an optimal trajectory from the same task will be found as the chosen one.
+        Otherwise, normal preference sampling logic is used.
+        """
+        quality_label = item["quality_label"]
+        
+        # Handle non-successful trajectories: use as rejected, find optimal from same task as chosen
+        if quality_label != "successful":
+            traj_id = item["id"]
+            logger.trace(f"[PREF SAMPLER] Non-successful quality detected for ID={traj_id}, using as rejected trajectory")
+            
+            # Get task name from current trajectory
+            task_name = item["task"]
+            if task_name is None:
+                logger.trace(f"[PREF SAMPLER] No task name found for ID={traj_id}, falling through to normal sampling")
+                return self._create_pref_sample(item)
+            
+            # Find optimal trajectories from the same task
+            same_task_optimal_indices = self.optimal_by_task.get(task_name, [])
+            
+            if not same_task_optimal_indices:
+                logger.trace(f"[PREF SAMPLER] No optimal trajectories found for task '{task_name}', falling through to normal sampling")
+                return self._create_pref_sample(item)
+            
+            # Select a random optimal trajectory from the same task as chosen
+            chosen_idx = random.choice(same_task_optimal_indices)
+            chosen_traj_dict = self.dataset[chosen_idx]
+            
+            # Create trajectories using the base sampler's method
+            chosen_trajectory = self._get_traj_from_data(chosen_traj_dict)
+            rejected_trajectory = self._get_traj_from_data(item)
+            
+            # Set rejected trajectory progress to 0 (as per suboptimal strategy)
+            rejected_trajectory.target_progress = [0.0] * len(rejected_trajectory.target_progress)
+            
+            # Create preference sample with suboptimal strategy
+            sample = PreferenceSample(
+                chosen_trajectory=chosen_trajectory,
+                rejected_trajectory=rejected_trajectory,
+                data_gen_strategy=DataGenStrat.SUBOPTIMAL.value,
+            )
+            
+            logger.trace(f"[PREF SAMPLER] Created preference sample for non-successful traj ID={traj_id} with optimal traj from same task")
+            return sample
+        
         return self._create_pref_sample(item)
 
     def _create_pref_sample_from_dataset(self) -> PreferenceSample:

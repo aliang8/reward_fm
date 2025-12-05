@@ -86,9 +86,22 @@ class RFMDataset(BaseDataset):
 
     def _generate_sample_from_item(self, item):
         """Shared sampler logic that can be reused by balanced datasets."""
-        traj_id = item.get("id", "unknown")
+        traj_id = item["id"]
         data_source = item["data_source"]
-        logger.trace(f"[RFMDataset] _generate_sample_from_item: Starting for ID={traj_id}, data_source={data_source}")
+        quality_label = item["quality_label"]
+        logger.trace(f"[RFMDataset] _generate_sample_from_item: Starting for ID={traj_id}, data_source={data_source}, quality={quality_label}")
+
+        # Force preference-only for non-successful trajectories
+        if quality_label != "successful" and self.pref_sampler is not None:
+            logger.trace(f"[RFMDataset] _generate_sample_from_item: Non-successful quality detected for ID={traj_id}, forcing preference-only")
+            sample = self.pref_sampler._generate_sample(item)
+            if sample is not None:
+                logger.trace(f"[RFMDataset] _generate_sample_from_item: Preference sample generated successfully for non-successful traj ID={traj_id}")
+                return self._set_resample_attempts(sample, 1)
+            else:
+                logger.trace(f"[RFMDataset] _generate_sample_from_item: Preference sampler returned None for non-successful traj ID={traj_id}")
+                # If preference fails for non-successful traj, we can't use other samplers
+                raise ValueError(f"Preference sampler failed for non-successful trajectory ID={traj_id} and no fallback available")
 
         # Preference-only override by data_source using raw filtered dataset entry
         if is_preference_only(data_source) and self.pref_sampler is not None:

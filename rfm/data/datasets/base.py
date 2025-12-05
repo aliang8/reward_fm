@@ -91,12 +91,14 @@ class BaseDataset(torch.utils.data.Dataset):
         # Apply all filters simultaneously
         excluded_keywords = ["rings", "hands", "flick"]
         min_frames = config.min_frames_per_trajectory
+        rank_0_info(f"Filtering dataset with {len(self.dataset)} total trajectories")
         self.dataset, self._combined_indices = self._filter_dataset(
             excluded_keywords=excluded_keywords,
             min_frames=min_frames,
             dataset=self.dataset,
             combined_indices=self._combined_indices,
         )
+        rank_0_info(f"Dataset filtered with {len(self.dataset)} total trajectories")
 
         # Set cached fields after filtering
         self._cached_ids = self.dataset["id"]
@@ -359,8 +361,7 @@ class BaseDataset(torch.utils.data.Dataset):
                 - filtered_combined_indices: The filtered combined indices
         """
         task_column = dataset["task"]
-        has_frames_shape = "frames_shape" in dataset.column_names
-        frames_shape_column = dataset["frames_shape"] if has_frames_shape else None
+        frames_shape_column = dataset["frames_shape"]
 
         # Track filtering statistics
         filtered_by_keywords = 0
@@ -381,7 +382,7 @@ class BaseDataset(torch.utils.data.Dataset):
                     continue
 
             # Filter by minimum frames
-            if has_frames_shape and should_keep:
+            if should_keep:
                 frames_shape = frames_shape_column[idx]
                 if frames_shape is not None and len(frames_shape) > 0:
                     # frames_shape is typically (num_frames, height, width, channels)

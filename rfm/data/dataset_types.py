@@ -33,6 +33,7 @@ class Trajectory(BaseModel):
     # Progress and metadata
     target_progress: list[float] | None = None
     partial_success: float | None = None
+    success_label: list[float] | None = None  # Success labels for each frame (1.0 for success, 0.0 for failure)
     metadata: dict[str, Any] | None = None
 
     class Config:

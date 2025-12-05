@@ -26,6 +26,7 @@ from rfm.data.datasets.helpers import (
     show_available_datasets,
     load_dataset_success_percent,
 )
+from rfm.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
 from rfm.data.samplers.base import RFMBaseSampler
 from rfm.data.dataset_types import Trajectory
 from rfm.utils.distributed import rank_0_print
@@ -71,6 +72,35 @@ def load_dataset_from_cache(dataset_name: str) -> tuple[Dataset, str]:
     return dataset, individual_cache_dir
 
 
+def get_dataset_short_name(dataset_name: str) -> str:
+    """Get the short name for a dataset.
+    
+    Args:
+        dataset_name: Full dataset name (e.g., "metaworld/assembly-v2")
+        
+    Returns:
+        Short name from mapping, or a sanitized version of the dataset name
+    """
+    # Try to get from mapping first
+    short_name = DS_SHORT_NAME_MAPPING.get(dataset_name, None)
+    if short_name:
+        return short_name
+    
+    # If not in mapping, create a short name from the dataset name
+    # Replace "/" and ":" with "_" and take the last part if it contains "/"
+    sanitized = dataset_name.replace("/", "_").replace(":", "_")
+    # If it's too long, take a reasonable portion
+    if len(sanitized) > 30:
+        # Try to get meaningful parts
+        parts = dataset_name.replace(":", "/").split("/")
+        if len(parts) > 1:
+            sanitized = "_".join(parts[-2:])  # Take last two parts
+        else:
+            sanitized = sanitized[:30]
+    
+    return sanitized
+
+
 def load_combined_indices(individual_cache_dir: str) -> dict:
     """Load combined indices from cache directory.
 
@@ -97,6 +127,9 @@ def load_combined_indices(individual_cache_dir: str) -> dict:
         "task_indices": indices.get("task_indices", {}),
         "source_indices": indices.get("source_indices", {}),
         "partial_success_indices": indices.get("partial_success_indices", {}),
+        "paired_human_robot_by_task": indices.get("paired_human_robot_by_task", {}),
+        "tasks_with_multiple_quality_labels": indices.get("tasks_with_multiple_quality_labels", []),
+
     }
 
     return combined_indices
@@ -374,6 +407,9 @@ def main():
     # Load dataset
     print(f"Loading dataset: {args.dataset}")
     dataset, individual_cache_dir = load_dataset_from_cache(args.dataset)
+    
+    # Get dataset short name for filename
+    ds_short_name = get_dataset_short_name(args.dataset)
 
     # Load combined indices
     combined_indices = load_combined_indices(individual_cache_dir)
@@ -450,16 +486,23 @@ def main():
         # Determine output path
         if args.num_videos > 1:
             # Multiple videos: save in folder with indexed name
-            output_filename = f"base_sampler_trajectory_{video_idx + 1:04d}.mp4"
+            output_filename = f"{ds_short_name}_base_sampler_trajectory_{video_idx + 1:04d}.mp4"
             output_path = os.path.join(output_folder, output_filename)
         else:
             # Single video: use specified path or default
             if output_folder and not args.output.endswith(".mp4"):
-                output_path = os.path.join(output_folder, "base_sampler_trajectory.mp4")
+                output_path = os.path.join(output_folder, f"{ds_short_name}_base_sampler_trajectory.mp4")
             elif not args.output.endswith(".mp4"):
-                output_path = args.output + ".mp4"
+                output_path = f"{ds_short_name}_{args.output}.mp4"
             else:
-                output_path = args.output
+                # If user provided .mp4 extension, preserve directory and insert short name in filename
+                output_dir = os.path.dirname(args.output)
+                base_filename = os.path.basename(args.output)
+                base_name = os.path.splitext(base_filename)[0]
+                if output_dir:
+                    output_path = os.path.join(output_dir, f"{ds_short_name}_{base_name}.mp4")
+                else:
+                    output_path = f"{ds_short_name}_{base_name}.mp4"
 
         # Create video
         print(f"\nCreating video with {args.fps} fps...")

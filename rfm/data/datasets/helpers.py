@@ -43,6 +43,40 @@ def load_dataset_success_percent(cutoff_file_path):
     return success_percent_dict
 
 
+def compute_success_labels(
+    target_progress: list[float],
+    data_source: str | None,
+    dataset_success_percent: dict[str, float] | None = None,
+    max_success: float = 0.95,
+) -> list[float]:
+    """
+    Compute success labels from target_progress.
+
+    Args:
+        target_progress: List of progress values (floats between 0 and 1)
+        data_source: Data source name (used to look up dataset-specific threshold)
+        dataset_success_percent: Dictionary mapping data source names to max_success thresholds
+        max_success: Default max_success threshold if data_source not in dataset_success_percent
+
+    Returns:
+        List of success labels (1.0 for success, 0.0 for failure) for each frame
+    """
+    if target_progress is None or len(target_progress) == 0:
+        return []
+
+    # Get the threshold for this data source
+    if data_source is not None and dataset_success_percent is not None:
+        threshold = dataset_success_percent.get(
+            data_source if isinstance(data_source, str) else str(data_source), max_success
+        )
+    else:
+        threshold = max_success
+
+    # Generate success labels: 1.0 for success (progress > threshold), 0.0 for failure
+    success_labels = [1.0 if prog > threshold else 0.0 for prog in target_progress]
+    return success_labels
+
+
 def load_frames_from_npz(npz_filepath: str) -> np.ndarray:
     """Load frames on-demand from npz file.
 
@@ -486,6 +520,8 @@ def create_rewind_trajectory(
     use_embeddings: bool = False,
     progress_pred_type: str = "absolute",
     success_cutoff: float | None = None,
+    dataset_success_percent: dict[str, float] | None = None,
+    max_success: float = 0.95,
 ) -> Trajectory:
     """Create a suboptimal trajectory by rewinding the original trajectory.
 
@@ -648,6 +684,14 @@ def create_rewind_trajectory(
         "subsampled_indices": subsampled_indices,
     }
 
+    # Compute success labels
+    success_label = compute_success_labels(
+        target_progress=subsampled_progress,
+        data_source=original_traj["data_source"],
+        dataset_success_percent=dataset_success_percent,
+        max_success=max_success,
+    )
+
     return Trajectory(
         frames=subsampled_frames if not use_embeddings else None,
         frames_shape=subsampled_frames_shape,
@@ -660,6 +704,7 @@ def create_rewind_trajectory(
         is_robot=original_traj["is_robot"],
         target_progress=subsampled_progress,
         partial_success=original_traj.get("partial_success"),
+        success_label=success_label,
         metadata=metadata,
     )
 

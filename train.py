@@ -4,6 +4,7 @@ import os
 import warnings
 from dataclasses import asdict
 import shutil
+from datetime import datetime
 
 import torch
 import torch.distributed as dist
@@ -33,7 +34,7 @@ from rfm.trainers import ReWiNDTrainer, RFMHeadsTrainer, RFMVQATrainer
 from rfm.data.datasets.helpers import show_available_datasets
 from rfm.utils.distributed import is_rank_0, rank_0_print
 from rfm.utils.timer import _timer
-from rfm.utils.save import SaveBestCallback
+from rfm.utils.save import SaveBestCallback, resolve_checkpoint_path
 from rfm.utils.setup_utils import (
     create_training_arguments,
     setup_batch_collator,
@@ -60,6 +61,12 @@ cs.store(group="loss", name="loss_config", node=LossConfig)
 cs.store(group="logging", name="logging_config", node=LoggingConfig)
 cs.store(group="logging/save_best", name="save_best_config", node=SaveBestConfig)
 cs.store(group="custom_eval", name="custom_eval_config", node=CustomEvaluationConfig)
+
+
+import torch
+
+torch.set_num_threads(64)
+torch.set_num_interop_threads(8)
 
 
 def train(cfg: ExperimentConfig):
@@ -93,14 +100,15 @@ def train(cfg: ExperimentConfig):
 
     # Create training arguments from config
     if cfg.debug:
-        cfg.training.logging_steps = 2
-        cfg.training.eval_steps = 2
+        cfg.training.logging_steps = 5
+        cfg.training.eval_steps = 5
         cfg.data.eval_subset_size = 10
-        cfg.training.custom_eval_steps = 2
+        cfg.training.custom_eval_steps = 5
+        cfg.logging.save_best.save_every = 5
 
     output_dir = os.path.join(cfg.training.output_dir, run_name)
 
-    training_args = create_training_arguments(cfg, output_dir)
+    training_args = create_training_arguments(cfg.training, output_dir)
 
     # Handle output directory existence (works with accelerate/distributed training)
     overwrite_output_dir = getattr(cfg.training, "overwrite_output_dir", False)
@@ -136,7 +144,8 @@ def train(cfg: ExperimentConfig):
 
     # Initialize logger (works with wandb/tensorboard)
     log_to = cfg.logging.log_to
-    logger = Logger(log_to=log_to, output_dir=output_dir, is_main_process=is_rank_0())
+    log_level = cfg.logging.log_level
+    logger = Logger(log_to=log_to, output_dir=output_dir, is_main_process=is_rank_0(), log_level=log_level)
     config_save_path = os.path.join(output_dir, "config.yaml")
     config_dict = asdict(cfg)
     with open(config_save_path, "w") as f:
@@ -189,6 +198,7 @@ def train(cfg: ExperimentConfig):
         metric_names=save_best_cfg.metric_names,
         greater_is_better=save_best_cfg.greater_is_better,
         keep_top_k=save_best_cfg.keep_top_k,
+        save_every=save_best_cfg.save_every,
         upload_to_hub=save_best_cfg.upload_to_hub,
         hub_token=save_best_cfg.hub_token,
         hub_private=save_best_cfg.hub_private,
@@ -242,12 +252,17 @@ def train(cfg: ExperimentConfig):
         logger.log_scalars(timing_raw)
 
     rank_0_print(f"Timing raw: {timing_raw}")
-    rank_0_print(f"Training from checkpoint: {cfg.training.resume_from_checkpoint}")
+    
+    checkpoint_path = resolve_checkpoint_path(
+        cfg.training.resume_from_checkpoint,
+        hub_token=save_best_cfg.hub_token
+    )
+    rank_0_print(f"Training from checkpoint: {checkpoint_path}")
 
     if cfg.debug:
         rank_0_print("🐛 DEBUG MODE: eval_steps=2, custom_eval_steps=2, eval_subset_size=10")
 
-    trainer.train(resume_from_checkpoint=cfg.training.resume_from_checkpoint)
+    trainer.train(resume_from_checkpoint=checkpoint_path)
     trainer.save_model(cfg.training.output_dir)
     rank_0_print(f"Training complete! Check {cfg.training.output_dir} for checkpoints and final model.")
 

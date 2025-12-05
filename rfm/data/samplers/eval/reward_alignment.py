@@ -19,6 +19,7 @@ from rfm.data.datasets.helpers import (
     pad_trajectory_to_max_frames_torch,
     load_embeddings_from_path,
     load_frames_from_npz,
+    compute_success_labels,
 )
 from rfm.utils.distributed import rank_0_print
 
@@ -154,6 +155,14 @@ class RewardAlignmentSampler(RFMBaseSampler):
             "video_path": sample_idx_info["video_path"],
         }
 
+        # Compute success labels
+        success_label = compute_success_labels(
+            target_progress=padded_progress,
+            data_source=original_traj["data_source"],
+            dataset_success_percent=self.dataset_success_cutoff_map,
+            max_success=self.config.max_success,
+        )
+
         # Create trajectory for the subsequence
         subsequence_trajectory = Trajectory(
             id=original_traj["id"],
@@ -169,6 +178,7 @@ class RewardAlignmentSampler(RFMBaseSampler):
             data_gen_strategy="reward_alignment",
             target_progress=padded_progress,
             partial_success=original_traj.get("partial_success"),
+            success_label=success_label,
             metadata=metadata,
         )
 

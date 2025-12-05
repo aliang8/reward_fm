@@ -193,6 +193,7 @@ class RFMBatchCollator(BaseCollator):
                     tokenize=False,
                     add_generation_prompt=add_generation_prompt,
                     add_vision_id=True,
+                    enable_thinking=False,
                     fps=1,
                 )
                 for msg in conversations

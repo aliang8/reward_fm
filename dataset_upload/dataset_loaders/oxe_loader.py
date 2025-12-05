@@ -1,5 +1,6 @@
 import os
 import cv2
+import gc
 from multiprocessing import cpu_count
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ from datasets import Dataset
 
 # Disable GPUs for TensorFlow in this loader to avoid CUDA context issues in workers
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+DEBUG_MODE = False
 
 import tensorflow_datasets as tfds
 
@@ -142,10 +144,17 @@ def _process_single_oxe_episode(args):
             use_video=True,
             fps=fps,
         )
+        
+        # Clear frames from memory immediately after video creation
+        del frames
+        
         if entry:
             entry["frames"] = rel_path
             episode_entries.append(entry)
-
+    
+    # Clear frames from memory after processing
+    del episode
+    
     return episode_entries
 
 
@@ -229,7 +238,8 @@ def convert_oxe_dataset_to_hf(
 
     # Determine valid image observation keys
     img_key_to_name = OXE_DATASET_CONFIGS[base_ds_name]["image_obs_keys"]
-    img_key_to_name = {k: v for k, v in img_key_to_name.items() if k != "wrist"}
+    if "droid" not in base_ds_name: # make sure to use DROID's wrist cam
+        img_key_to_name = {k: v for k, v in img_key_to_name.items() if k != "wrist"}
     valid_img_keys = list(img_key_to_name.values())
 
     # Determine number of workers
@@ -244,13 +254,16 @@ def convert_oxe_dataset_to_hf(
 
     entries: list[dict[str, Any]] = []
     produced = 0
-    max_limit = float("inf") if (max_trajectories is None or max_trajectories == -1) else int(max_trajectories)
+    if DEBUG_MODE:
+        max_limit = 100
+    else:
+        max_limit = float("inf") if (max_trajectories is None or max_trajectories == -1) else int(max_trajectories)
 
     if "language_table" in base_ds_name:
         max_limit = MAX_LANGTABLE_EPISODES
 
         # Process episodes in batches to avoid OOM
-    batch_size = 16  # Process episodes in smaller batches
+    batch_size = 4 # Process episodes in smaller batches
     entries = []
     produced = 0
 
@@ -364,6 +377,9 @@ def convert_oxe_dataset_to_hf(
             # Clear batch for next iteration
             episode_batch = []
             episode_info_batch = []
+            
+            # Force garbage collection to free memory
+            gc.collect()
 
             # Check if we've reached the limit
             if produced >= max_limit:
@@ -421,6 +437,9 @@ def convert_oxe_dataset_to_hf(
                 produced += len(episode_entries)
                 if produced >= max_limit:
                     break
+            
+            # Force garbage collection after final batch
+            gc.collect()
 
     if not entries:
         return Dataset.from_dict({

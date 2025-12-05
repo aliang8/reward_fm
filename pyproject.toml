@@ -73,7 +73,12 @@ dependencies = [
     "tensorboard",
     "requests",
     "hydra-core",
-    "omegaconf"
+    "omegaconf",
+    "tensorflow-datasets==4.9.2", # just for oxe and other tfds dataset uploading
+    "tensorflow==2.19", # just for oxe and other tfds dataset uploading
+    "tf-keras>=2.19.0", # just for oxe and other tfds dataset uploading
+    "protobuf<3.21", # just for oxe and other tfds dataset uploading
+
 ]
 
 [project.urls]

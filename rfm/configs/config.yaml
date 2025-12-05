@@ -103,7 +103,7 @@ data:
 
   # Success label parameters
   min_success: 0.8  # Progress threshold below which success label is 0
-  max_success: 0.95  # Progress threshold above which success label is 1
+  max_success: 1.0  # Progress threshold above which success label is 1
   # Dataset-specific success thresholds (CSV format: dataset_name,success_percentage)
   dataset_success_cutoff_file: "rfm/data/dataset_success_cutoff.txt"  
 

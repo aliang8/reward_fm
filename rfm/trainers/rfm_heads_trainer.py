@@ -562,7 +562,9 @@ class RFMHeadsTrainer(Trainer):
 
     def _make_eval_dataloader(self, dataset):
         """Create a distributed evaluation dataloader with proper sampling."""
+        log_memory_usage("Before creating collator")
         collator = setup_batch_collator(self.model.processor, self.model.tokenizer, self.config, is_eval=True)
+        log_memory_usage("After creating collator")
 
         dl = DataLoader(
             dataset,
@@ -571,10 +573,14 @@ class RFMHeadsTrainer(Trainer):
             num_workers=self.args.dataloader_num_workers,
             pin_memory=self.args.dataloader_pin_memory,
             drop_last=False,
-            persistent_workers=self.args.dataloader_persistent_workers,
+            # Force persistent_workers=False for eval to prevent memory leaks across datasets
+            persistent_workers=False,
             worker_init_fn=seed_worker,
         )
-        return self.accelerator.prepare(dl)
+        log_memory_usage("After creating DataLoader")
+        prepared_dl = self.accelerator.prepare(dl)
+        log_memory_usage("After accelerator.prepare(dataloader)")
+        return prepared_dl
 
     def _run_custom_evaluations(self):
         logger.info("=" * 100)
@@ -628,6 +634,9 @@ class RFMHeadsTrainer(Trainer):
                 dataset = setup_custom_eval_dataset(
                     eval_cfg, sampler_type=eval_type, is_eval=True, verbose=False, **kwargs
                 )
+                # Explicitly delete eval_cfg after dataset creation to free memory
+                del eval_cfg
+                
                 logger.info(f"  Dataset size: {len(dataset)}")
                 log_memory_usage(f"After creating dataset")
                 
@@ -650,10 +659,12 @@ class RFMHeadsTrainer(Trainer):
                 eval_results = []
 
                 batch_idx = 0
-                for batch in tqdm(
+                # Create tqdm iterator explicitly so we can close it properly
+                dataloader_iter = tqdm(
                     dataloader,
                     desc=f"Running {eval_type}, ds: {eval_dataset}, batch size: {self.config.training.per_device_eval_batch_size}",
-                ):
+                )
+                for batch in dataloader_iter:
                     logger.debug(f"  Processing batch {batch_idx}")
                     if batch_idx % 10 == 0:  # Log memory every 10 batches
                         log_memory_usage(f"Batch {batch_idx}/{len(dataloader)}")
@@ -700,6 +711,8 @@ class RFMHeadsTrainer(Trainer):
                         gathered_metadata_dict = self._truncate_metadata_lists(
                             gathered_metadata_dict, num_progress_samples
                         )
+                        if batch_idx % 10 == 0:
+                            log_memory_usage(f"After gathering metadata (batch {batch_idx})")
 
                         # Handle success predictions if needed
                         success_pred_gathered = None
@@ -746,6 +759,8 @@ class RFMHeadsTrainer(Trainer):
                             eval_results.append(sample_result)
 
                         # Clean up gathered tensors and metadata after building results
+                        if batch_idx % 10 == 0:
+                            log_memory_usage(f"Before deleting gathered tensors (batch {batch_idx})")
                         del progress_pred, target_progress, gathered_metadata_dict
                         if success_pred_gathered is not None:
                             del success_pred_gathered
@@ -753,6 +768,8 @@ class RFMHeadsTrainer(Trainer):
                             del success_probs_gathered
                         if success_labels_gathered is not None:
                             del success_labels_gathered
+                        if batch_idx % 10 == 0:
+                            log_memory_usage(f"After deleting gathered tensors (batch {batch_idx})")
 
                     elif "quality_preference" in eval_type:
                         # Process preference samples for quality_preference evaluation
@@ -803,9 +820,13 @@ class RFMHeadsTrainer(Trainer):
                             eval_results.append(sample_result)
 
                         # Clean up gathered tensors and metadata after building results
+                        if batch_idx % 10 == 0:
+                            log_memory_usage(f"Before deleting pref tensors (batch {batch_idx})")
                         del pref_logits, preference_labels
                         del gathered_task, gathered_data_source, gathered_chosen_data_gen_strategy
                         del gathered_rejected_data_gen_strategy, gathered_metadata
+                        if batch_idx % 10 == 0:
+                            log_memory_usage(f"After deleting pref tensors (batch {batch_idx})")
 
                     elif eval_type == "similarity_score":
                         # Process similarity samples for similarity_score evaluation
@@ -875,8 +896,12 @@ class RFMHeadsTrainer(Trainer):
                             eval_results.append(sample_result)
 
                         # Clean up gathered tensors and metadata after building results
+                        if batch_idx % 10 == 0:
+                            log_memory_usage(f"Before deleting sim tensors (batch {batch_idx})")
                         del sim_logits
                         del gathered_task, gathered_data_source, gathered_data_gen_strategy, gathered_metadata
+                        if batch_idx % 10 == 0:
+                            log_memory_usage(f"After deleting sim tensors (batch {batch_idx})")
 
                     # Clean up batch tensors and free memory after each batch
                     # This is critical for VQA with generation to prevent OOM
@@ -888,6 +913,10 @@ class RFMHeadsTrainer(Trainer):
                     if (batch_idx - 1) % 10 == 0:
                         log_memory_usage(f"After batch {batch_idx-1} cleanup")
 
+                # Close tqdm iterator to release any held references
+                dataloader_iter.close()
+                del dataloader_iter
+                
                 logger.info(f"  Finished processing {len(eval_results)} eval results")
                 log_memory_usage(f"After eval loop, before compute_eval_metrics")
                 
@@ -904,26 +933,31 @@ class RFMHeadsTrainer(Trainer):
                     eval_metrics, plots, video_frames_list = compute_eval_metrics(
                         eval_type, eval_results, self.config.data.progress_pred_type
                     )
+                    log_memory_usage(f"After compute_eval_metrics (reward_alignment)")
                 elif eval_type == "policy_ranking":
                     # create task groups from eval_results
                     eval_metrics, task_groups, task_details = compute_eval_metrics(
                         eval_type, eval_results, self.config.data.progress_pred_type
                     )
+                    log_memory_usage(f"After compute_eval_metrics (policy_ranking)")
                 elif eval_type == "confusion_matrix":
                     confusion_plot, confusion_matrix = compute_eval_metrics(
                         eval_type, eval_results, self.config.data.progress_pred_type
                     )
                     eval_metrics = {}  # no eval metrics
+                    log_memory_usage(f"After compute_eval_metrics (confusion_matrix)")
                 elif "quality_preference" in eval_type:
                     # quality_preference returns metrics, task_groups, and task_details
                     eval_metrics, task_groups, task_details = compute_eval_metrics(
                         eval_type, eval_results, self.config.data.progress_pred_type
                     )
+                    log_memory_usage(f"After compute_eval_metrics (quality_preference)")
                 elif eval_type == "similarity_score":
                     # similarity_score returns metrics, task_groups, and task_details
                     eval_metrics, task_groups, task_details = compute_eval_metrics(
                         eval_type, eval_results, self.config.data.progress_pred_type
                     )
+                    log_memory_usage(f"After compute_eval_metrics (similarity_score)")
                 else:
                     raise ValueError(f"Unsupported eval type: {eval_type}")
 
@@ -976,9 +1010,11 @@ class RFMHeadsTrainer(Trainer):
                             plt.close(plot)
 
                         # Explicitly delete to free memory and set to None for outer cleanup
+                        log_memory_usage(f"Before deleting plots/videos")
                         del plots, video_frames_list, rows
                         plots = None
                         video_frames_list = None
+                        log_memory_usage(f"After deleting plots/videos")
 
                     elif eval_type == "policy_ranking":
                         # Check if this is roboarena by checking if task_groups have partial_reward field
@@ -1014,9 +1050,11 @@ class RFMHeadsTrainer(Trainer):
                             columns=columns,
                             step=self.state.global_step,
                         )
+                        log_memory_usage(f"Before deleting policy_ranking data")
                         del data, task_groups, task_details
                         task_groups = None
                         task_details = None
+                        log_memory_usage(f"After deleting policy_ranking data")
 
                     elif "quality_preference" in eval_type:
                         data = []
@@ -1042,16 +1080,20 @@ class RFMHeadsTrainer(Trainer):
                             columns=columns,
                             step=self.state.global_step,
                         )
+                        log_memory_usage(f"Before deleting quality_preference data")
                         del data, task_groups, task_details
                         task_groups = None
                         task_details = None
+                        log_memory_usage(f"After deleting quality_preference data")
 
                     elif eval_type == "confusion_matrix":
                         self.logger.log_figure(f"eval_cm/{ds_name}", confusion_plot, step=self.state.global_step)
                         plt.close(confusion_plot)
+                        log_memory_usage(f"Before deleting confusion_matrix data")
                         del confusion_plot, confusion_matrix
                         confusion_plot = None
                         confusion_matrix = None
+                        log_memory_usage(f"After deleting confusion_matrix data")
 
                     elif eval_type == "similarity_score":
                         # Create wandb table for similarity score results
@@ -1075,9 +1117,11 @@ class RFMHeadsTrainer(Trainer):
                             columns=columns,
                             step=self.state.global_step,
                         )
+                        log_memory_usage(f"Before deleting similarity_score data")
                         del data, task_groups, task_details
                         task_groups = None
                         task_details = None
+                        log_memory_usage(f"After deleting similarity_score data")
 
                 # Clean up after each dataset to prevent memory accumulation
                 # Clean up eval-specific outputs (now properly scoped)
@@ -1098,18 +1142,50 @@ class RFMHeadsTrainer(Trainer):
                 logger.info(f"  Cleaning up dataset and eval_results")
                 log_memory_usage(f"Before cleanup")
                 
-                del dataset, dataloader, eval_results
+                # Aggressive cleanup to prevent memory leaks
+                # First, delete eval_results which can be large
+                del eval_results
+                
+                # For the dataloader, we need to ensure worker processes are shut down
+                # The accelerator.prepare() wraps the dataloader, so we need to clean both
+                # Access the underlying dataloader if it exists and has workers
+                try:
+                    if hasattr(dataloader, '_loader'):
+                        # Accelerator-wrapped dataloader
+                        underlying_dl = dataloader._loader
+                    else:
+                        underlying_dl = dataloader
+                    
+                    # Shutdown workers if they exist
+                    if hasattr(underlying_dl, '_iterator') and underlying_dl._iterator is not None:
+                        underlying_dl._iterator._shutdown_workers()
+                        underlying_dl._iterator = None
+                except (AttributeError, RuntimeError) as e:
+                    logger.debug(f"Could not explicitly shutdown workers: {e}")
+                
+                # Delete dataloader and dataset
+                del dataloader, dataset
+                log_memory_usage(f"After deleting dataloader and dataset")
 
+                # Force garbage collection
+                import gc
+                gc.collect()
+                log_memory_usage(f"After first gc.collect()")
+                gc.collect()  # Call twice for cyclic references
+                log_memory_usage(f"After second gc.collect()")
+                
+                # Clear GPU cache
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                     torch.cuda.synchronize()
-                import gc
-
-                gc.collect()
                 
                 log_memory_usage(f"After cleanup for {eval_dataset}")
                 logger.info(f"  Finished {eval_type} for {eval_dataset}")
                 logger.info("-" * 80)
+            
+            log_memory_usage(f"After completing all datasets for {eval_type}")
+            logger.info(f"Finished eval_type: {eval_type}")
+            logger.info("=" * 80)
 
         flat_metrics = {}
         for ds_name, eval_type_metric in metrics.items():

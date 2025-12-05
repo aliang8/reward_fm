@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import collections
 import json
 import os
 from typing import Any
@@ -7,7 +8,10 @@ import torch
 from datasets import Dataset, concatenate_datasets
 from rfm.data.datasets.helpers import load_dataset_success_percent
 from rfm.data.dataset_category import DATASET_MAP, DATA_SOURCE_CATEGORY, get_paired_ds
-from rfm.utils.distributed import rank_0_print, banner
+from rfm.utils.distributed import banner
+from rfm.utils.logger import get_logger, rank_0_info, rank_0_warning
+
+logger = get_logger()
 
 
 def resolve_dataset_keys(dataset_keys: list[str] | list[list[str]], split: str) -> list[str] | list[list[str]]:
@@ -37,8 +41,8 @@ def resolve_dataset_keys(dataset_keys: list[str] | list[list[str]], split: str) 
                     if split in DATASET_MAP[key]:
                         resolved_group.extend(DATASET_MAP[key][split])
                     else:
-                        rank_0_print(
-                            f"Warning: Key '{key}' found in DATASET_MAP but no '{split}' split defined. Skipping."
+                        rank_0_warning(
+                            f"Key '{key}' found in DATASET_MAP but no '{split}' split defined. Skipping."
                         )
                 else:
                     # Not a key, assume it's already a dataset name
@@ -54,7 +58,7 @@ def resolve_dataset_keys(dataset_keys: list[str] | list[list[str]], split: str) 
             if split in DATASET_MAP[key]:
                 resolved_datasets.extend(DATASET_MAP[key][split])
             else:
-                rank_0_print(f"Warning: Key '{key}' found in DATASET_MAP but no '{split}' split defined. Skipping.")
+                rank_0_warning(f"Key '{key}' found in DATASET_MAP but no '{split}' split defined. Skipping.")
         else:
             # Not a key, assume it's already a dataset name
             resolved_datasets.append(key)
@@ -62,10 +66,9 @@ def resolve_dataset_keys(dataset_keys: list[str] | list[list[str]], split: str) 
 
 
 class BaseDataset(torch.utils.data.Dataset):
-    def __init__(self, config, is_evaluation=False, verbose=True, **kwargs):
+    def __init__(self, config, is_evaluation=False, **kwargs):
         self.config = config
         self.is_evaluation = is_evaluation
-        self.verbose = verbose
 
         # Choose datasets based on whether this is for evaluation or training
         if is_evaluation and config.eval_datasets:
@@ -95,7 +98,19 @@ class BaseDataset(torch.utils.data.Dataset):
         self._cached_ids = self.dataset["id"]
         self._cached_is_robot = self.dataset["is_robot"]
 
-        rank_0_print(f"Dataset loaded with {len(self.dataset)} total trajectories", verbose=self.verbose)
+        rank_0_info(f"Dataset loaded with {len(self.dataset)} total trajectories")
+
+        # Initialize resampling stats containers shared by subclasses
+        self._resample_attempt_stats: dict[str, collections.defaultdict[str, list[int]]] = {
+            "preference": collections.defaultdict(list),
+            "progress": collections.defaultdict(list),
+            "similarity": collections.defaultdict(list),
+        }
+        self._resample_dataset_attempt_stats: dict[str, collections.defaultdict[str, list[int]]] = {
+            "preference": collections.defaultdict(list),
+            "progress": collections.defaultdict(list),
+            "similarity": collections.defaultdict(list),
+        }
 
     def __len__(self):
         return len(self.dataset)
@@ -117,24 +132,16 @@ class BaseDataset(torch.utils.data.Dataset):
 
         # Check if preprocessed cache exists
         if os.path.exists(cache_dir):
-            rank_0_print(
-                f"Found preprocessed cache at {cache_dir}, loading {cache_type} datasets...", verbose=self.verbose
-            )
+            rank_0_info(f"Found preprocessed cache at {cache_dir}, loading {cache_type} datasets...")
 
             dataset, combined_indices = self._load_preprocessed_cache(cache_dir, is_training=not self.is_evaluation)
 
-            rank_0_print(
-                f"Successfully loaded preprocessed {cache_type} datasets with {len(dataset)} trajectory indices",
-                verbose=self.verbose,
-            )
+            rank_0_info(f"Successfully loaded preprocessed {cache_type} datasets with {len(dataset)} trajectory indices")
 
             return dataset, combined_indices
         else:
             # If no cache exists, we need to run the preprocessor first
-            rank_0_print(
-                "No preprocessed cache found. Please run preprocess_datasets.py first to create the cache.",
-                verbose=self.verbose,
-            )
+            rank_0_warning("No preprocessed cache found. Please run preprocess_datasets.py first to create the cache.")
             raise RuntimeError(
                 "Dataset preprocessing required. Please run:\n"
                 "uv run scripts/preprocess_datasets.py\n"
@@ -164,29 +171,23 @@ class BaseDataset(torch.utils.data.Dataset):
                             json.load(f)
 
                         available_datasets.append((dataset_path, individual_cache_dir))
-                        rank_0_print(f"       Found cache: {individual_cache_dir}", verbose=self.verbose)
+                        rank_0_info(f"       Found cache: {individual_cache_dir}")
                     except:
-                        rank_0_print(
-                            f"       Cache info file corrupted, skipping: {individual_cache_dir}", verbose=self.verbose
-                        )
+                        rank_0_warning(f"       Cache info file corrupted, skipping: {individual_cache_dir}")
                         continue
                 else:
-                    rank_0_print(f"       No info file found, skipping: {individual_cache_dir}", verbose=self.verbose)
+                    rank_0_info(f"       No info file found, skipping: {individual_cache_dir}")
                     continue
             else:
                 missing_datasets.append(dataset_path)
-                rank_0_print(f"      ❌ Missing cache: {individual_cache_dir}", verbose=self.verbose)
+                rank_0_warning(f"      ❌ Missing cache: {individual_cache_dir}")
 
         # Warn about missing datasets
         if missing_datasets:
-            rank_0_print(
-                "\n⚠️  Warning: The following configured datasets are not available in the cache:", verbose=self.verbose
-            )
+            rank_0_warning("⚠️  Warning: The following configured datasets are not available in the cache:")
             for dataset_path in missing_datasets:
-                rank_0_print(f"    ❌ {dataset_path}", verbose=self.verbose)
-            rank_0_print(
-                "  Available datasets will be loaded, but some configured data may be missing.", verbose=self.verbose
-            )
+                rank_0_warning(f"    ❌ {dataset_path}")
+            rank_0_warning("  Available datasets will be loaded, but some configured data may be missing.")
 
         if not available_datasets:
             raise RuntimeError(
@@ -194,9 +195,7 @@ class BaseDataset(torch.utils.data.Dataset):
                 f"Please run preprocess_datasets.py to create the cache for: {self.datasets}"
             )
 
-        rank_0_print(
-            f"\nSummary: {len(available_datasets)} available, {len(missing_datasets)} missing", verbose=self.verbose
-        )
+        rank_0_info(f"Summary: {len(available_datasets)} available, {len(missing_datasets)} missing")
 
         return available_datasets, missing_datasets
 
@@ -218,9 +217,7 @@ class BaseDataset(torch.utils.data.Dataset):
             # Load the processed dataset
             dataset_cache_dir = os.path.join(individual_cache_dir, "processed_dataset")
             if not os.path.exists(dataset_cache_dir):
-                rank_0_print(
-                    f"   Warning: Processed dataset not found at {dataset_cache_dir}, skipping...", verbose=self.verbose
-                )
+                rank_0_warning(f"   Warning: Processed dataset not found at {dataset_cache_dir}, skipping...")
                 continue
 
             dataset = Dataset.load_from_disk(dataset_cache_dir, keep_in_memory=True)
@@ -235,8 +232,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
             dataset_indices_list.append(indices)
 
-            if self.verbose:
-                rank_0_print(f"  ✅ Loaded {len(dataset)} trajectories from {dataset_path}", verbose=self.verbose)
+            rank_0_info(f"  ✅ Loaded {len(dataset)} trajectories from {dataset_path}")
 
         if not loaded_datasets:
             raise RuntimeError("No datasets could be loaded from the cache")
@@ -321,38 +317,21 @@ class BaseDataset(torch.utils.data.Dataset):
         combined_indices = self._build_indices(loaded_datasets, dataset_indices_list, dataset["is_robot"])
 
         dataset_type = "training" if is_training else "evaluation"
-        rank_0_print(
-            f"✅ Loaded {len(dataset)} total trajectories from preprocessed {dataset_type} datasets",
-            verbose=self.verbose,
-        )
-        rank_0_print(
-            f"  📊 Available datasets: {len(available_datasets)}/{len(missing_datasets) + len(available_datasets)}",
-            verbose=self.verbose,
-        )
-        rank_0_print(f"  📊 Missing datasets: {len(missing_datasets)}", verbose=self.verbose)
-
-        if self.verbose:
-            banner("Dataset statistics")
-        rank_0_print(f"Robot trajectories: {len(combined_indices['robot_trajectories'])}", verbose=self.verbose)
-        rank_0_print(f"Human trajectories: {len(combined_indices['human_trajectories'])}", verbose=self.verbose)
-        rank_0_print(f"Number of different tasks: {len(combined_indices['task_indices'])}", verbose=self.verbose)
-        rank_0_print(f"Data sources: {len(combined_indices['source_indices'])}", verbose=self.verbose)
-        rank_0_print(
-            f"Tasks available: {list[Any](combined_indices['task_indices'].keys())[:10]} ...", verbose=self.verbose
-        )
-        rank_0_print(f"Number of quality labels: {len(combined_indices['quality_indices'])}", verbose=self.verbose)
+        rank_0_info(f"✅ Loaded {len(dataset)} total trajectories from preprocessed {dataset_type} datasets")
+        rank_0_info(f"  📊 Available datasets: {len(available_datasets)}/{len(missing_datasets) + len(available_datasets)}")
+        rank_0_info(f"  📊 Missing datasets: {len(missing_datasets)}")
+        banner("Dataset statistics")
+        rank_0_info(f"Robot trajectories: {len(combined_indices['robot_trajectories'])}")
+        rank_0_info(f"Human trajectories: {len(combined_indices['human_trajectories'])}")
+        rank_0_info(f"Number of different tasks: {len(combined_indices['task_indices'])}")
+        rank_0_info(f"Data sources: {len(combined_indices['source_indices'])}")
+        rank_0_info(f"Tasks available: {list[Any](combined_indices['task_indices'].keys())[:10]} ...")
+        rank_0_info(f"Number of quality labels: {len(combined_indices['quality_indices'])}")
         for quality_label in combined_indices["quality_indices"]:
-            rank_0_print(
-                f"  {quality_label}: {len(combined_indices['quality_indices'][quality_label])}", verbose=self.verbose
-            )
-        rank_0_print(f"Data sources available: {combined_indices['source_indices'].keys()}", verbose=self.verbose)
-        rank_0_print(
-            f"Number of paired tasks: {len(combined_indices['paired_human_robot_by_task'])}", verbose=self.verbose
-        )
-        rank_0_print(
-            f"Number of tasks with both multiple quality labels: {len(combined_indices['tasks_with_multiple_quality_labels'])}",
-            verbose=self.verbose,
-        )
+            rank_0_info(f"  {quality_label}: {len(combined_indices['quality_indices'][quality_label])}")
+        rank_0_info(f"Data sources available: {combined_indices['source_indices'].keys()}")
+        rank_0_info(f"Number of paired tasks: {len(combined_indices['paired_human_robot_by_task'])}")
+        rank_0_info(f"Number of tasks with both multiple quality labels: {len(combined_indices['tasks_with_multiple_quality_labels'])}")
 
         return dataset, combined_indices
 
@@ -384,11 +363,7 @@ class BaseDataset(torch.utils.data.Dataset):
         # Filter dataset using the mask
         if not all(keep_mask):
             num_filtered = sum(1 for x in keep_mask if not x)
-            if self.verbose:
-                rank_0_print(
-                    f"  Filtering out {num_filtered} trajectories with excluded task keywords: {excluded_keywords}",
-                    verbose=self.verbose,
-                )
+            rank_0_info(f"  Filtering out {num_filtered} trajectories with excluded task keywords: {excluded_keywords}")
             # Use select to efficiently filter by indices
             keep_indices = [i for i, keep in enumerate(keep_mask) if keep]
             filtered_dataset = dataset.select(keep_indices)
@@ -444,6 +419,39 @@ class BaseDataset(torch.utils.data.Dataset):
 
         return filtered_dataset, filtered_combined_indices
 
+    # ------------------------------------------------------------------
+    # Shared resample helpers for subclasses
+    # ------------------------------------------------------------------
+    def _record_resample_attempt(
+        self, sample_type: str, strategy: str, sample_attempts: int, dataset_attempts: int
+    ) -> None:
+        if sample_type not in self._resample_attempt_stats:
+            return
+
+        self._resample_attempt_stats[sample_type][strategy].append(sample_attempts)
+        self._resample_dataset_attempt_stats[sample_type][strategy].append(dataset_attempts)
+
+    def _set_resample_attempts(self, sample, dataset_attempts: int):
+        if sample is None:
+            return None
+
+        dataset_attempts = max(1, int(dataset_attempts))
+        sample_attempts = int(getattr(sample, "resample_attempts", dataset_attempts))
+        sample_attempts = max(1, sample_attempts)
+        sample.resample_attempts = sample_attempts
+
+        sample_type = getattr(sample, "sample_type", "unknown")
+        strategy = str(getattr(sample, "data_gen_strategy", "unknown"))
+        self._record_resample_attempt(sample_type, strategy, sample_attempts, dataset_attempts)
+
+        return sample
+
+    def get_resample_attempt_stats(self):
+        return self._resample_attempt_stats
+
+    def get_resample_dataset_attempt_stats(self):
+        return self._resample_dataset_attempt_stats
+
     def _build_paired_human_robot_index(self, combined_indices: dict, cached_is_robot: list):
         """Build paired_human_robot_by_task index from task_indices by checking is_robot field.
 
@@ -467,7 +475,7 @@ class BaseDataset(torch.utils.data.Dataset):
                 paired_data_source_indices.update(combined_indices["source_indices"][data_source])
 
         if not paired_data_source_indices:
-            rank_0_print("  No paired data sources found, skipping paired index building", verbose=self.verbose)
+            rank_0_info("  No paired data sources found, skipping paired index building")
             return {}
 
         # Build index from task_indices using cached is_robot field, but only for paired data sources
@@ -487,17 +495,15 @@ class BaseDataset(torch.utils.data.Dataset):
                 else:
                     paired_human_robot_by_task[task]["human"].append(idx)
 
-        if self.verbose:
-            # Count tasks with both robot and human trajectories
-            tasks_with_pairs = [
-                task
-                for task, task_dict in paired_human_robot_by_task.items()
-                if task_dict["robot"] and task_dict["human"]
-            ]
-            num_tasks_with_pairs = len(tasks_with_pairs)
-            rank_0_print(
-                f"  Built paired_human_robot_by_task index: {num_tasks_with_pairs} tasks with both robot and human trajectories (from paired data sources only)",
-                verbose=self.verbose,
-            )
+        # Count tasks with both robot and human trajectories
+        tasks_with_pairs = [
+            task
+            for task, task_dict in paired_human_robot_by_task.items()
+            if task_dict["robot"] and task_dict["human"]
+        ]
+        num_tasks_with_pairs = len(tasks_with_pairs)
+        rank_0_info(
+            f"  Built paired_human_robot_by_task index: {num_tasks_with_pairs} tasks with both robot and human trajectories (from paired data sources only)"
+        )
 
         return paired_human_robot_by_task

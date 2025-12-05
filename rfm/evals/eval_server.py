@@ -44,7 +44,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from rich.console import Console
 
-from evals.eval_utils import extract_answer_from_text, load_model_from_hf
+from rfm.evals.eval_utils import extract_answer_from_text, load_model_from_hf
 from rfm.configs.eval_configs import EvalServerConfig
 from rfm.configs.experiment_configs import ExperimentConfig
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample
@@ -73,7 +73,10 @@ def log_logits(name: str, value: Any) -> None:
     elif isinstance(value, list):
         logger.debug(f"{name}: {value}")
 
-def forward_model(model, batch_inputs: Dict[str, Any], sample_type: str = "progress") -> tuple[ModelOutput, Dict[str, Any]]:
+
+def forward_model(
+    model, batch_inputs: Dict[str, Any], sample_type: str = "progress"
+) -> tuple[ModelOutput, Dict[str, Any]]:
     """Forward pass that mirrors trainer logic (handles ReWiND vs RFM)."""
     with torch.no_grad():
         if "rewind" in model.__class__.__name__.lower():
@@ -362,7 +365,6 @@ class MultiGPUEvalServer:
             "outputs_similarity": outputs_similarity,
         }
 
-
     def get_pool_status(self):
         """Get status of the GPU pool."""
         return {
@@ -422,13 +424,18 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: dict[str, torch.Tensor
             progress_pred_chosen: list[list[float]] = []
             progress_pred_rejected: list[list[float]] = []
             preference_labels = results.get("preference_labels", batch_inputs["preference_labels"].cpu().tolist())
-            seq_A_list = progress_logits.get("A", [])
-            seq_B_list = progress_logits.get("B", [])
-            for label, seq_A, seq_B in zip(preference_labels, seq_A_list, seq_B_list, strict=False):
+            seq_A = progress_logits.get("A")
+            seq_B = progress_logits.get("B")
+
+            # Convert tensors to lists
+            seq_A_list = [seq_A[i] for i in range(seq_A.shape[0])] if seq_A is not None else []
+            seq_B_list = [seq_B[i] for i in range(seq_B.shape[0])] if seq_B is not None else []
+
+            for label, seq_A_item, seq_B_item in zip(preference_labels, seq_A_list, seq_B_list, strict=False):
                 if label == 1.0:
-                    chosen_seq, rejected_seq = seq_A, seq_B
+                    chosen_seq, rejected_seq = seq_A_item, seq_B_item
                 else:
-                    chosen_seq, rejected_seq = seq_B, seq_A
+                    chosen_seq, rejected_seq = seq_B_item, seq_A_item
                 progress_pred_chosen.append([] if chosen_seq is None else chosen_seq.detach().cpu().flatten().tolist())
                 progress_pred_rejected.append(
                     [] if rejected_seq is None else rejected_seq.detach().cpu().flatten().tolist()
@@ -441,9 +448,13 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: dict[str, torch.Tensor
             logger.debug(f"progress_pred_rejected: {progress_pred_rejected}")
         elif sample_type == "progress":
             progress_pred = []
-            seq_A_list = progress_logits.get("A", [])
-            for seq_A in seq_A_list:
-                progress_pred.append([] if seq_A is None else seq_A.detach().cpu().flatten().tolist())
+            seq_A = progress_logits.get("A")
+
+            # Convert tensor to list
+            seq_A_list = [seq_A[i] for i in range(seq_A.shape[0])] if seq_A is not None else []
+
+            for seq_A_item in seq_A_list:
+                progress_pred.append([] if seq_A_item is None else seq_A_item.detach().cpu().flatten().tolist())
             if not progress_pred:
                 batch_size = len(batch_inputs.get("task", []))
                 progress_pred = [[] for _ in range(batch_size)]

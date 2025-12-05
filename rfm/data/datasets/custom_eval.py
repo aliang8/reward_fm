@@ -18,16 +18,18 @@ class CustomEvalDataset(BaseDataset):
             verbose: Verbose flag
             **kwargs: Additional keyword arguments for the sampler
         """
-        super().__init__(config, is_evaluation, verbose=verbose, **kwargs)
+        super().__init__(config, is_evaluation, **kwargs)
 
         sampler_cls = {
             "confusion_matrix": ConfusionMatrixSampler,
             "reward_alignment": RewardAlignmentSampler,
             "policy_ranking": ProgressDefaultSampler,
             "quality_preference": QualityPreferenceSampler,
-            "quality_preference_roboarena": RoboArenaQualityPreferenceSampler,
             "similarity_score": SimilarityScoreSampler,
         }
+
+        if "roboarena" in self.config.eval_datasets:
+            sampler_cls["quality_preference"] = RoboArenaQualityPreferenceSampler
 
         if sampler_type not in sampler_cls:
             raise ValueError(f"Unknown sampler type: {sampler_type}. Available: {list(sampler_cls.keys())}")

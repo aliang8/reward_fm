@@ -96,13 +96,14 @@ data:
   # Data loading settings
   dataloader_pin_memory: True
   dataloader_num_workers: 8
+  dataloader_persistent_workers: True
 
   progress_pred_type: "absolute" # "absolute" or "relative", relative is delta progress between frames
   pairwise_progress: false
 
   # Success label parameters
   min_success: 0.8  # Progress threshold below which success label is 0
-  max_success: 0.95  # Progress threshold above which success label is 1
+  max_success: 1.0  # Progress threshold above which success label is 1
   # Dataset-specific success thresholds (CSV format: dataset_name,success_percentage)
   dataset_success_cutoff_file: "rfm/data/dataset_success_cutoff.txt"  
 
@@ -152,6 +153,9 @@ training:
   per_device_eval_batch_size: 16  # Evaluation batch size per device
   do_eval: true  # Enable evaluation during training
   prediction_loss_only: true # Only compute loss for the prediction head
+  dataloader_pin_memory: ${data.dataloader_pin_memory}
+  dataloader_num_workers: ${data.dataloader_num_workers}
+  dataloader_persistent_workers: ${data.dataloader_persistent_workers}
   
   # Model settings
   max_seq_length: 1024 # currently not used
@@ -200,9 +204,13 @@ logging:
   
   # SaveBestCallback configuration
   save_best:
-    metric_names: ["custom_eval/p_rank_spearman_rewind_mw_eval", "custom_eval/rew_align_pearson_mw_eval"]  # List of metrics to monitor (will be averaged)
+    metric_names: 
+      - eval_rew_align/pearson_mw_eval
+      - eval_p_rank/spearman_mw_eval
+
     greater_is_better: [true, true]  # Whether higher values are better for each metric (must match metric_names length)
     keep_top_k: 5  # Number of best checkpoints and uploads to keep
+    save_every: 1000  # Save 'latest' checkpoint every N steps (should be multiple of custom_eval_steps). Set to null to disable.
     
     # Hub upload configuration (optional)
     upload_to_hub: true   # Whether to upload best models to HuggingFace Hub

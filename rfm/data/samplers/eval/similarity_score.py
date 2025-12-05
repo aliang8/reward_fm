@@ -20,6 +20,7 @@ from rfm.data.datasets.helpers import (
     pad_trajectory_to_max_frames_torch,
     load_embeddings_from_path,
     load_frames_from_npz,
+    compute_success_labels,
 )
 from rfm.utils.distributed import rank_0_print
 
@@ -190,6 +191,14 @@ class SimilarityScoreSampler(RFMBaseSampler):
                 subsequence_frames, [1.0] * len(frame_indices), self.config.max_frames
             )
 
+        # Compute success labels
+        success_label = compute_success_labels(
+            target_progress=padded_progress,
+            data_source=traj_data["data_source"],
+            dataset_success_percent=self.dataset_success_cutoff_map,
+            max_success=self.config.max_success,
+        )
+
         # Create trajectory
         trajectory = Trajectory(
             id=traj_data["id"],
@@ -205,6 +214,7 @@ class SimilarityScoreSampler(RFMBaseSampler):
             data_gen_strategy="similarity_score_eval",
             target_progress=padded_progress,
             partial_success=traj_data.get("partial_success"),
+            success_label=success_label,
             metadata={},
         )
 

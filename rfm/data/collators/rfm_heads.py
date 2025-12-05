@@ -11,7 +11,7 @@ import torch
 from qwen_vl_utils import process_vision_info
 
 from .base import BaseCollator
-from .utils import convert_frames_to_pil_images, pad_target_progress, write_mp4
+from .utils import convert_frames_to_pil_images, pad_list_to_max, write_mp4
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample
 from rfm.data.dataset_category import is_preference_only
 from rfm.data.datasets.helpers import DataGenStrat
@@ -193,6 +193,7 @@ class RFMBatchCollator(BaseCollator):
                     tokenize=False,
                     add_generation_prompt=add_generation_prompt,
                     add_vision_id=True,
+                    enable_thinking=False,
                     fps=1,
                 )
                 for msg in conversations
@@ -348,7 +349,7 @@ class RFMBatchCollator(BaseCollator):
             target_progress_list = target_progress_override
         else:
             target_progress_list = [sample.trajectory.target_progress for sample in progress_samples]
-        batch_inputs["target_progress"] = pad_target_progress(target_progress_list)
+        batch_inputs["target_progress"] = pad_list_to_max(target_progress_list)
         batch_inputs["quality_labels"] = [sample.trajectory.quality_label for sample in progress_samples]
 
         frames_shape_list = [sample.trajectory.frames_shape for sample in progress_samples]
@@ -368,10 +369,11 @@ class RFMBatchCollator(BaseCollator):
             )
             for sample in progress_samples
         ]
-        # Explicitly set requires_grad=False since this is a mask/label, not a model output
-        batch_inputs["target_progress_mask"] = torch.tensor(
-            target_progress_mask, dtype=torch.float32, requires_grad=False
-        )
+        batch_inputs["target_progress_mask"] = torch.tensor(target_progress_mask, dtype=torch.float32)
+
+        success_label_list = [sample.trajectory.success_label for sample in progress_samples]
+        batch_inputs["success_labels"] = pad_list_to_max(success_label_list)
+
         return batch_inputs
 
     def _process_preference_batch(self, preference_samples: list[PreferenceSample]) -> dict[str, torch.Tensor]:
@@ -430,7 +432,7 @@ class RFMBatchCollator(BaseCollator):
                 {"type": "text", "text": "This is Trajectory B. "},
             ])
             self._add_vision_content_to_list(content_list, traj_b_field, content_extras)
-            
+
             # Add progress and success tokens for trajectory B if use_progress_token is enabled
             if self.use_progress_token:
                 content_list.append({"type": "text", "text": "<|prog_token_B|>"})
@@ -510,8 +512,8 @@ class RFMBatchCollator(BaseCollator):
             for traj, strategy in zip(trajectory_B_list, trajectory_B_data_gen_strategy)
         ]
 
-        batch_inputs["target_progress_A"] = pad_target_progress(target_progress_A)
-        batch_inputs["target_progress_B"] = pad_target_progress(target_progress_B)
+        batch_inputs["target_progress_A"] = pad_list_to_max(target_progress_A)
+        batch_inputs["target_progress_B"] = pad_list_to_max(target_progress_B)
         batch_inputs["target_progress_A_mask"] = torch.tensor(target_progress_A_mask, dtype=torch.float32)
         batch_inputs["target_progress_B_mask"] = torch.tensor(target_progress_B_mask, dtype=torch.float32)
 
@@ -549,8 +551,8 @@ class RFMBatchCollator(BaseCollator):
         ]
 
         # Pad target progress tensors to max length in last dimension
-        batch_inputs["target_progress_chosen"] = pad_target_progress(target_progress_chosen)
-        batch_inputs["target_progress_rejected"] = pad_target_progress(target_progress_rejected)
+        batch_inputs["target_progress_chosen"] = pad_list_to_max(target_progress_chosen)
+        batch_inputs["target_progress_rejected"] = pad_list_to_max(target_progress_rejected)
         batch_inputs["target_progress_chosen_mask"] = torch.tensor(target_progress_chosen_mask, dtype=torch.float32)
         batch_inputs["target_progress_rejected_mask"] = torch.tensor(target_progress_rejected_mask, dtype=torch.float32)
 
@@ -561,6 +563,10 @@ class RFMBatchCollator(BaseCollator):
             [sample.rejected_trajectory.frames_shape for sample in preference_samples], dtype=torch.int32
         )
         batch_inputs["resample_attempts"] = [sample.resample_attempts for sample in preference_samples]
+
+        # Aggregate success labels for trajectory A from trajectories
+        success_label_A_list = [traj.success_label for traj in trajectory_A_list]
+        batch_inputs["success_labels_A"] = pad_list_to_max(success_label_A_list)
 
         # Add metadata structure for evaluation
         metadata_list = []
@@ -726,9 +732,9 @@ class RFMBatchCollator(BaseCollator):
             for sample in similarity_samples
         ]
 
-        batch_inputs["target_progress_ref"] = pad_target_progress(target_progress_ref)
-        batch_inputs["target_progress_sim"] = pad_target_progress(target_progress_sim)
-        batch_inputs["target_progress_diff"] = pad_target_progress(target_progress_diff)
+        batch_inputs["target_progress_ref"] = pad_list_to_max(target_progress_ref)
+        batch_inputs["target_progress_sim"] = pad_list_to_max(target_progress_sim)
+        batch_inputs["target_progress_diff"] = pad_list_to_max(target_progress_diff)
 
         batch_inputs["target_progress_ref_mask"] = torch.tensor(target_progress_ref_mask, dtype=torch.float32)
         batch_inputs["target_progress_sim_mask"] = torch.tensor(target_progress_sim_mask, dtype=torch.float32)
@@ -749,6 +755,13 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["padding_mask_sim"] = create_padding_mask(batch_inputs["traj_sim_frames_shape"], max_length_sim)
         batch_inputs["padding_mask_diff"] = create_padding_mask(batch_inputs["traj_diff_frames_shape"], max_length_diff)
         batch_inputs["resample_attempts"] = [sample.resample_attempts for sample in similarity_samples]
+
+        success_label_ref_list = [sample.ref_trajectory.success_label for sample in similarity_samples]
+        success_label_sim_list = [sample.sim_trajectory.success_label for sample in similarity_samples]
+        success_label_diff_list = [sample.diff_trajectory.success_label for sample in similarity_samples]
+        batch_inputs["success_labels_ref"] = pad_list_to_max(success_label_ref_list)
+        batch_inputs["success_labels_sim"] = pad_list_to_max(success_label_sim_list)
+        batch_inputs["success_labels_diff"] = pad_list_to_max(success_label_diff_list)
 
         batch_inputs["metadata"] = [
             sample.ref_trajectory.metadata if sample.ref_trajectory.metadata else {} for sample in similarity_samples

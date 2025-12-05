@@ -16,6 +16,7 @@ from rfm.data.datasets.helpers import (
     pad_trajectory_to_max_frames_torch,
     load_embeddings_from_path,
     load_frames_from_npz,
+    compute_success_labels,
 )
 from rfm.utils.distributed import rank_0_print
 from sentence_transformers import SentenceTransformer
@@ -150,6 +151,14 @@ class ConfusionMatrixSampler(RFMBaseSampler):
             "video_path": video_path,
         }
 
+        # Compute success labels
+        success_label = compute_success_labels(
+            target_progress=padded_progress,
+            data_source=video_traj["data_source"],
+            dataset_success_percent=self.dataset_success_cutoff_map,
+            max_success=self.config.max_success,
+        )
+
         # Create trajectory for the sample (using the original trajectory data but with new task)
         sample_trajectory = Trajectory(
             id=video_traj["id"],
@@ -165,6 +174,7 @@ class ConfusionMatrixSampler(RFMBaseSampler):
             data_gen_strategy=DataGenStrat.SUCCESSFUL.value,
             target_progress=padded_progress,  # Padded progress sequence (all 1.0 since trajectory is complete)
             partial_success=video_traj.get("partial_success"),
+            success_label=success_label,
             metadata=metadata,
         )
 

@@ -50,7 +50,7 @@ def create_eval_trainer(
     os.makedirs(output_dir, exist_ok=True)
 
     # Create training args with eval settings
-    training_args = create_training_arguments(cfg, output_dir)
+    training_args = create_training_arguments(cfg.training, output_dir)
 
     # Override some settings for evaluation-only
     training_args.do_train = False

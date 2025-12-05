@@ -18,7 +18,8 @@ fsdp_config:
   fsdp_backward_prefetch: BACKWARD_PRE
   fsdp_cpu_ram_efficient_loading: true
   fsdp_forward_prefetch: false
-  fsdp_transformer_layer_cls_to_wrap: "Qwen2_5_VLVisionBlock,Qwen2_5_VLDecoderLayer"
+  # fsdp_transformer_layer_cls_to_wrap: "Qwen2_5_VLVisionBlock,Qwen2_5_VLDecoderLayer"
+  fsdp_transformer_layer_cls_to_wrap: "Qwen3VLVisionBlock,Qwen3VLTextDecoderLayer"
   
   # Sharding strategy: FULL_SHARD is the most memory-efficient
   fsdp_sharding_strategy: FULL_SHARD # 1 for FULL_SHARD, 2 for SHARD_GRAD_OP

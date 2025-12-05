@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH -J ant_rfm_rewind_bs1024_pref_prog_sim
-#SBATCH --gres=gpu:1               # number of GPUs to reserve
+#SBATCH --gres=gpu:2               # number of GPUs to reserve
 #SBATCH --cpus-per-task=8         # CPUs for data loading (8 per GPU is reasonable)
 #SBATCH --mem=64G                 # Memory allocation (adjust based on your cluster)
 #SBATCH --time=10:00:00            # Time limit (adjust as needed)
@@ -26,7 +26,7 @@ export BS=1024
 # Override config for progress-only training
 uv run accelerate launch \
     --config_file rfm/configs/distributed/ddp.yaml \
-    --num_processes=1 \
+    --num_processes=2 \
     train.py \
     --config-name=rewind_transformer \
     data.sample_type_ratio=[1,0,1] \
@@ -35,7 +35,7 @@ uv run accelerate launch \
     data.similarity_strategy_ratio=[1,1,1] \
     model.train_preference_head=true \
     model.train_progress_head=true \
-    model.train_success_head=false \
+    model.train_success_head=true \
     model.train_similarity_head=true \
     data.train_datasets=[oxe,mw,others,paired,suboptimal_fail] \
     data.eval_datasets=[mw] \
@@ -48,14 +48,15 @@ uv run accelerate launch \
     training.overwrite_output_dir=true \
     training.predict_pref_progress=true \
     training.predict_sim_progress=true \
-    training.exp_name=ant_rfm_rewind_bs1024_pref_prog_sim \
+    training.exp_name=ant_rfm_rewind_pref_prog_sim \
     training.bf16=true \
     training.fp16=false \
-    custom_eval.eval_types=[quality_preference,reward_alignment,policy_ranking,confusion_matrix] \
+    custom_eval.eval_types=[quality_preference,reward_alignment,policy_ranking,confusion_matrix,similarity_score] \
     custom_eval.quality_preference=[quality_preference] \
     custom_eval.reward_alignment=[reward_alignment] \
     custom_eval.policy_ranking=[policy_ranking] \
     custom_eval.confusion_matrix=[mw] \
+    custom_eval.similarity_score=[similarity_score] \
     logging.log_to=[wandb]
 
 # Print completion time

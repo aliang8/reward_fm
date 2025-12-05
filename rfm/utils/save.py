@@ -1,17 +1,175 @@
 import os
 import re
 import shutil
+import json
 from dataclasses import dataclass, field
 from typing import Optional, List, Tuple
+from datetime import datetime
 import numpy as np
 import gc
 import torch
 from transformers import TrainerCallback, TrainerState, TrainerControl, TrainingArguments, Trainer
 from transformers.trainer_utils import get_last_checkpoint
 from accelerate.state import AcceleratorState
-from huggingface_hub import HfApi
+from huggingface_hub import HfApi, snapshot_download
 from .upload_to_hub import upload_model_to_hub
-from rfm.utils.distributed import rank_0_print, is_rank_0
+from rfm.utils.distributed import is_rank_0
+from rfm.utils.logger import loguru_logger as logger
+
+
+def resolve_checkpoint_path(checkpoint_path: Optional[str], hub_token: Optional[str] = None) -> Optional[str]:
+    """
+    Resolve checkpoint path, supporting local paths and HuggingFace Hub with @ notation.
+    
+    Args:
+        checkpoint_path: Path to checkpoint. Can be:
+            - None: No checkpoint to load
+            - Local path: /path/to/checkpoint
+            - HF repo: username/model-name (loads best tag automatically)
+            - HF repo with tag: username/model-name@tag-name
+        hub_token: Optional HuggingFace token for private repos
+    
+    Returns:
+        Resolved local path to checkpoint, or None if no checkpoint
+    """
+    if not checkpoint_path:
+        return None
+    
+    # If it's a local path, return as-is
+    if checkpoint_path.startswith("/") or checkpoint_path.startswith("./") or checkpoint_path.startswith("../"):
+        logger.info(f"Using local checkpoint: {checkpoint_path}")
+        return checkpoint_path
+    
+    # Check if it looks like a HuggingFace repo (contains /)
+    if "/" in checkpoint_path:
+        repo_id, revision = parse_hf_model_id_and_revision(checkpoint_path, model_name="checkpoint")
+        
+        # Download from HuggingFace Hub
+        logger.info(f"Downloading checkpoint from HuggingFace Hub: {repo_id}@{revision or 'latest'}")
+        local_path = snapshot_download(
+            repo_id=repo_id,
+            revision=revision,
+            token=hub_token,
+            allow_patterns=["*.safetensors", "*.bin", "*.json", "*.txt", "*.model"],
+        )
+        logger.info(f"Downloaded checkpoint to: {local_path}")
+        return local_path
+    
+    # Otherwise, treat as local path
+    logger.info(f"Using checkpoint: {checkpoint_path}")
+    return checkpoint_path
+
+
+def parse_hf_model_id_and_revision(hf_model_id: str, model_name: str = "model") -> Tuple[str, Optional[str]]:
+    """
+    Parse HuggingFace model ID and determine which revision (tag) to load.
+
+    Supports explicit revisions via repo@revision format, or automatically
+    finds the best tag if no explicit revision is provided.
+
+    Args:
+        hf_model_id: HuggingFace model repository ID or local path, optionally with @revision
+        model_name: Name of the model type for logging (e.g., "ReWiND model", "Qwen model")
+
+    Returns:
+        Tuple of (repo_id, revision_to_load) where:
+        - repo_id: The repository ID without the @revision suffix
+        - revision_to_load: The revision/tag to load, or None for latest
+    """
+    # Allow users to specify explicit revisions via repo@revision
+    if "@" in hf_model_id:
+        repo_id, explicit_revision = hf_model_id.split("@", 1)
+    else:
+        repo_id, explicit_revision = hf_model_id, None
+
+    revision_to_load = explicit_revision
+
+    # Check if this is a HuggingFace repo (not a local path) and find best tag
+    if "/" in repo_id and not repo_id.startswith("/"):
+        if revision_to_load:
+            logger.info(f"Loading {model_name} {repo_id} at explicit revision '{revision_to_load}'")
+        else:
+            best_tag, best_score = find_best_model_tag(repo_id)
+            if best_tag:
+                revision_to_load = best_tag
+                logger.info(f"Loading {model_name} from best tag: {repo_id}@{revision_to_load} (score: {best_score})")
+            else:
+                logger.info(f"No best tag found, loading latest revision of {repo_id}")
+    else:
+        logger.info(f"Loading local/explicit {model_name} from {repo_id}")
+
+    return repo_id, revision_to_load
+
+
+def find_best_model_tag(hf_model_id: str, hub_token: Optional[str] = None) -> Tuple[Optional[str], Optional[float]]:
+    """
+    Find the best model tag from HuggingFace Hub by parsing tag names and extracting scores.
+
+    Expected tag format: "best-{metric_short}-{score:.4f}-step-{step}"
+    Example: "best-p-rank-spearman-mw-0.8500-step-123" or "best-avg-3metrics-0.7234-step-456"
+
+    Args:
+        hf_model_id: HuggingFace model ID (e.g., "aliangdw/rewind-debug")
+        hub_token: Optional HuggingFace token for private repos
+
+    Returns:
+        tuple: (best_tag_name, best_score) or (None, None) if no valid tags found
+    """
+    try:
+        api = HfApi(token=hub_token)
+
+        # Check if repository exists
+        if not api.repo_exists(repo_id=hf_model_id, repo_type="model"):
+            logger.info(f"Repository {hf_model_id} does not exist")
+            return None, None
+
+        # Get all tags for the repository
+        tags = api.list_repo_refs(repo_id=hf_model_id, repo_type="model").tags
+
+        if not tags:
+            logger.info(f"No tags found in repository {hf_model_id}")
+            return None, None
+
+        logger.info(f"Found {len(tags)} tags in {hf_model_id}: {[tag.name for tag in tags]}")
+
+        best_tag = None
+        best_score = float("-inf")
+
+        # Parse each tag to extract score
+        for tag in tags:
+            tag_name = tag.name
+
+            # Match our tag pattern: "best-{metric_short}-{score}-step-{step}"
+            # Examples: "best-p-rank-spearman-mw-0.8500-step-123" or "best-avg-3metrics-0.7234-step-456"
+            # Score can be positive or negative (e.g., 0.8500 or -1.2300)
+            pattern = r"best-.*?-(-?\d+\.\d+)-step-\d+"
+            match = re.search(pattern, tag_name)
+
+            if match:
+                try:
+                    score = float(match.group(1))
+                    logger.info(f"Parsed tag '{tag_name}': score = {score}")
+
+                    if score > best_score:
+                        best_score = score
+                        best_tag = tag_name
+
+                except ValueError:
+                    logger.info(f"Could not parse score from tag '{tag_name}'")
+                    continue
+            else:
+                logger.info(f"Tag '{tag_name}' does not match expected pattern")
+
+        if best_tag:
+            logger.info(f"Best tag found: '{best_tag}' with score {best_score}")
+        else:
+            logger.info("No valid tags found matching the expected pattern")
+
+        return best_tag, best_score
+
+    except Exception as e:
+        logger.info(f"Error finding best tag for {hf_model_id}: {e}")
+        return None, None
 
 
 class SaveBestCallback(TrainerCallback):
@@ -19,6 +177,7 @@ class SaveBestCallback(TrainerCallback):
     Save a checkpoint whenever `metric_name` improves.
     Works in DDP/accelerate: only rank 0 writes checkpoints.
     Optionally keeps top-k best checkpoints and uploads to Hub.
+    Also saves a 'latest' checkpoint at regular intervals.
     """
 
     def __init__(
@@ -26,6 +185,7 @@ class SaveBestCallback(TrainerCallback):
         metric_names: List[str] = None,
         greater_is_better: List[bool] = None,
         keep_top_k: int = 1,
+        save_every: Optional[int] = None,
         upload_to_hub: bool = False,
         hub_token: Optional[str] = None,
         hub_private: bool = False,
@@ -41,6 +201,7 @@ class SaveBestCallback(TrainerCallback):
                 f"metric_names ({len(self.metric_names)}) and greater_is_better ({len(self.greater_is_better)}) must have the same length"
             )
         self.keep_top_k = keep_top_k
+        self.save_every = save_every
         self.upload_to_hub = upload_to_hub
         self.hub_token = hub_token
         self.hub_private = hub_private
@@ -51,6 +212,11 @@ class SaveBestCallback(TrainerCallback):
             Tuple[float, str, str]
         ] = []  # list of (score, tag_name, commit_id), sorted from best -> worst
         self._trainer = None  # Will be set when callback is registered
+        self._last_save_step = -1  # Track last step where we saved 'latest'
+        self._last_best_save_step = -1  # Track last step where we saved 'best'
+        self._previous_latest_ckpt_dir = None  # Track previous 'latest' checkpoint directory
+        self._previous_latest_hub_tag = None  # Track previous 'latest' Hub tag
+        self._run_timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")  # Static timestamp for this run
 
     def setup_trainer_reference(self, trainer: Trainer):
         """Set the trainer reference for later use in callbacks"""
@@ -86,15 +252,101 @@ class SaveBestCallback(TrainerCallback):
             return trainer.is_world_process_zero() and is_rank_0()
         except:
             return (not AcceleratorState().distributed_type) or AcceleratorState().is_main_process
+    
+    def _build_metric_short_name(self) -> str:
+        """Build a short metric name for checkpoint naming."""
+        if len(self.metric_names) == 1:
+            return self.metric_names[0].split("/")[-1]
+        else:
+            return f"avg-{len(self.metric_names)}metrics"
+    
+    def _build_metrics_detail_string(self, metrics: dict) -> str:
+        """Build a detailed metrics string for logging."""
+        metrics_detail = []
+        for name in self.metric_names:
+            if name in metrics:
+                metrics_detail.append(f"{name}:{metrics[name]:.4f}")
+        return " | ".join(metrics_detail) if metrics_detail else "no metrics"
+    
+    def _build_individual_scores_string(self, metrics: dict) -> str:
+        """Build individual scores string for commit messages."""
+        individual_scores = []
+        for name in self.metric_names:
+            if name in metrics:
+                individual_scores.append(f"{name.split('/')[-1]}={metrics[name]:.4f}")
+        return ", ".join(individual_scores) if individual_scores else "no metrics"
+    
+    def _get_hub_model_id(self, args: TrainingArguments) -> str:
+        """Get the Hub model ID from output directory with timestamp."""
+        base_name = args.output_dir.split("/")[-1].replace("_", "-")
+        base_name = re.sub(r"-+", "-", base_name)
+        base_name = base_name.strip("-")
+        return f"rewardfm/{base_name}-{self._run_timestamp}"
+    
+    def _clean_tag_name(self, tag_name: str) -> str:
+        """Clean tag name for HuggingFace repo naming requirements."""
+        tag_name = tag_name.replace("_", "-").replace(",", "")
+        tag_name = re.sub(r"-+", "-", tag_name)
+        tag_name = tag_name.strip("-")
+        return tag_name
+    
+    def _save_checkpoint_files(self, args: TrainingArguments, ckpt_dir: str, metrics: dict = None, step: int = None):
+        """Save model, trainer state files, and metrics.
+        
+        Note: This should only be called from rank 0 in the current implementation.
+        """
+        self._trainer.save_model(ckpt_dir)
+        if args.should_save:
+            self._trainer.save_state()  # trainer_state.json etc. in output_dir
+            # save the trainer_state.json to the actual checkpoint directory
+            shutil.copy(os.path.join(args.output_dir, "trainer_state.json"), ckpt_dir)
+        
+        # Save metrics to JSON file
+        if metrics is not None:
+            metrics_file = os.path.join(ckpt_dir, "metrics.json")
+            metrics_to_save = {
+                "step": step,
+                "metrics": {k: float(v) if isinstance(v, (int, float, np.number)) else str(v) 
+                           for k, v in metrics.items()}
+            }
+            with open(metrics_file, "w") as f:
+                json.dump(metrics_to_save, f, indent=2)
+            logger.info(f"📊 Saved metrics to {metrics_file}")
+    
+    def _cleanup_memory(self):
+        """Perform memory cleanup."""
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+    
+    def _upload_checkpoint_to_hub(
+        self, 
+        ckpt_dir: str, 
+        hub_model_id: str, 
+        tag_name: str, 
+        commit_message: str
+    ) -> Tuple[str, str]:
+        """Upload checkpoint to Hub and return URL and commit ID."""
+        hub_url, commit_id = upload_model_to_hub(
+            model_dir=ckpt_dir,
+            hub_model_id=hub_model_id,
+            private=self.hub_private,
+            token=self.hub_token,
+            commit_message=commit_message,
+            base_model=self.base_model,
+            tag_name=tag_name,
+        )
+        return hub_url, commit_id
 
     def on_evaluate(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, metrics, **kwargs):
         # Gather metrics across all processes if using distributed training
+        # IMPORTANT: All ranks must participate in this collective operation before any early returns
         if hasattr(self._trainer, "accelerator") and self._trainer.accelerator.num_processes > 1:
             # Convert metrics to tensors for gathering
             gathered_metrics = {}
             for key, value in metrics.items():
                 if isinstance(value, (int, float)):
-                    # Convert to tensor and gather
+                    # Convert to tensor and gather (collective operation - all ranks must participate)
                     tensor_value = self._trainer.accelerator.gather_for_metrics(
                         torch.tensor(value, dtype=torch.float32, device=self._trainer.accelerator.device)
                     )
@@ -104,12 +356,17 @@ class SaveBestCallback(TrainerCallback):
                     # For non-numeric values, just use the local value
                     gathered_metrics[key] = value
             metrics = gathered_metrics
+        
+        # Only rank 0 needs to process metrics and save checkpoints
+        # Early return AFTER collective operations to avoid deadlock
+        if not self._is_main_process(self._trainer):
+            return control
 
         score, missing_metrics = self._compute_averaged_score(metrics)
 
         if missing_metrics:
-            rank_0_print(f"⚠️ Metrics {missing_metrics} not found in evaluation metrics")
-            rank_0_print(f"Available metrics: {metrics.keys()}")
+            logger.warning(f"⚠️ Metrics {missing_metrics} not found in evaluation metrics")
+            logger.warning(f"Available metrics: {metrics.keys()}")
             if score == float("-inf"):  # All metrics missing
                 return
 
@@ -132,105 +389,78 @@ class SaveBestCallback(TrainerCallback):
 
             # Make a descriptive dir name
             step = state.global_step
-            # Use "avg" if multiple metrics, otherwise use the single metric name
-            if len(self.metric_names) == 1:
-                metric_short = self.metric_names[0].split("/")[-1]
-            else:
-                metric_short = f"avg-{len(self.metric_names)}metrics"
-
+            metric_short = self._build_metric_short_name()
             tag = f"{metric_short}={score:.4f}_step={step}"
             ckpt_dir = os.path.join(args.output_dir, f"ckpt-{tag}")
 
-            # Build detailed metrics string for logging
-            metrics_detail = []
-            for name in self.metric_names:
-                if name in metrics:
-                    metrics_detail.append(f"{name}:{metrics[name]:.4f}")
-            metrics_str = " | ".join(metrics_detail)
-
-            rank_0_print(
+            metrics_str = self._build_metrics_detail_string(metrics)
+            logger.info(
                 f"💾 Saving ckpt: {ckpt_dir} | avg_score: {score:.6f} | {metrics_str} (rank {len(self._saved) + 1}/{self.keep_top_k})"
             )
 
-            # Save model, optimizer/scheduler, RNG state, etc.
-            # ALL processes must call this for distributed training to work correctly
-            self._trainer.save_model(ckpt_dir)
-            if args.should_save:
-                self._trainer.save_state()  # trainer_state.json etc. in output_dir
-                # save the trainer_state.json to the actual checkpoint directory
-                shutil.copy(os.path.join(args.output_dir, "trainer_state.json"), ckpt_dir)
+            # Save model, trainer state, and metrics
+            self._save_checkpoint_files(args, ckpt_dir, metrics, step)
+            self._cleanup_memory()
+            
+            # Track that we saved a best checkpoint at this step
+            self._last_best_save_step = step
 
-            # Memory cleanup after saving model
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            gc.collect()
+            # Add to saved list and sort (always best -> worst since we normalized scores)
+            self._saved.append((score, ckpt_dir))
+            self._saved.sort(key=lambda x: x[0], reverse=True)
 
-            # Only manage saved list and file operations on rank 0
-            if self._is_main_process(self._trainer):
-                # Add to saved list and sort (always best -> worst since we normalized scores)
-                self._saved.append((score, ckpt_dir))
-                self._saved.sort(key=lambda x: x[0], reverse=True)
+            # Remove old checkpoint if we exceed keep_top_k
+            if len(self._saved) > self.keep_top_k:
+                _, path_to_rm = self._saved.pop(-1)
+                logger.info(f"🗑️ Removing old checkpoint: {path_to_rm}")
+                if os.path.isdir(path_to_rm):
+                    shutil.rmtree(path_to_rm, ignore_errors=True)
 
-                # Remove old checkpoint if we exceed keep_top_k
-                if len(self._saved) > self.keep_top_k:
-                    _, path_to_rm = self._saved.pop(-1)
-                    rank_0_print(f"🗑️ Removing old checkpoint: {path_to_rm}")
-                    if os.path.isdir(path_to_rm):
-                        shutil.rmtree(path_to_rm, ignore_errors=True)
+            if self.upload_to_hub:
+                hub_model_id = self._get_hub_model_id(args)
+                tag_name = self._clean_tag_name(f"best-{metric_short}-{score:.4f}-step-{step}")
+                individual_scores_str = self._build_individual_scores_string(metrics)
+                commit_message = f"Checkpoint: avg_score={score:.4f} at step {step} | {individual_scores_str}"
 
-                if self.upload_to_hub:
-                    base_name = args.output_dir.split("/")[-1].replace("_", "-")
-                    # Clean base_name too
-                    base_name = re.sub(r"-+", "-", base_name)  # Replace multiple hyphens with single hyphen
-                    base_name = base_name.strip("-")  # Remove leading/trailing hyphens
-                    # Clean the tag name for HuggingFace repo naming requirements
-                    tag_name = f"best-{metric_short}-{score:.4f}-step-{step}".replace("_", "-").replace(",", "")
-                    # Remove consecutive hyphens and ensure valid naming
-                    tag_name = re.sub(r"-+", "-", tag_name)  # Replace multiple hyphens with single hyphen
-                    tag_name = tag_name.strip("-")  # Remove leading/trailing hyphens
-                    hub_model_id = f"rewardfm/{base_name}"
+                logger.info(f"🚀 Uploading to Hub: {hub_model_id}")
 
-                    # Build detailed commit message with individual metric scores
-                    individual_scores = []
-                    for name in self.metric_names:
-                        if name in metrics:
-                            individual_scores.append(f"{name.split('/')[-1]}={metrics[name]:.4f}")
-                    individual_scores_str = ", ".join(individual_scores)
+                hub_url, commit_id = self._upload_checkpoint_to_hub(
+                    ckpt_dir=ckpt_dir,
+                    hub_model_id=hub_model_id,
+                    tag_name=tag_name,
+                    commit_message=commit_message,
+                )
+                logger.info(f"✅ Successfully uploaded to: {hub_url}")
+                logger.info(f"🏷️ Tagged as: {tag_name}")
 
-                    commit_message = f"Checkpoint: avg_score={score:.4f} at step {step} | {individual_scores_str}"
+                # Add to uploaded list and sort (always best -> worst since we normalized scores)
+                self._uploaded.append((score, tag_name, commit_id))
+                self._uploaded.sort(key=lambda x: x[0], reverse=True)
 
-                    rank_0_print(f"🚀 Uploading to Hub: {hub_model_id}")
+                # Remove old tags if we exceed keep_top_k
+                api = HfApi(token=self.hub_token)
+                if len(self._uploaded) > self.keep_top_k:
+                    _, old_tag, _ = self._uploaded.pop(-1)
+                    logger.info(f"🗑️ Removing old Hub tag: {old_tag}")
+                    api.delete_tag(repo_id=hub_model_id, repo_type="model", tag=old_tag)
+                    logger.info(f"✅ Deleted tag: {old_tag}")
 
-                    hub_url, commit_id = upload_model_to_hub(
-                        model_dir=ckpt_dir,
-                        hub_model_id=hub_model_id,
-                        private=self.hub_private,
-                        token=self.hub_token,
-                        commit_message=commit_message,
-                        base_model=self.base_model,
-                        tag_name=tag_name,
-                    )
-                    rank_0_print(f"✅ Successfully uploaded to: {hub_url}")
-                    rank_0_print(f"🏷️ Tagged as: {tag_name}")
+                # Aggressive memory cleanup after upload to prevent OOM
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                gc.collect()
+                logger.info("🧹 Cleaned up memory after Hub upload")
 
-                    # Add to uploaded list and sort (always best -> worst since we normalized scores)
-                    self._uploaded.append((score, tag_name, commit_id))
-                    self._uploaded.sort(key=lambda x: x[0], reverse=True)
-
-                    # Remove old tags if we exceed keep_top_k
-                    api = HfApi(token=self.hub_token)
-                    if len(self._uploaded) > self.keep_top_k:
-                        _, old_tag, _ = self._uploaded.pop(-1)
-                        rank_0_print(f"🗑️ Removing old Hub tag: {old_tag}")
-                        api.delete_tag(repo_id=hub_model_id, repo_type="model", tag=old_tag)
-                        rank_0_print(f"✅ Deleted tag: {old_tag}")
-
-                    # Aggressive memory cleanup after upload to prevent OOM
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                        torch.cuda.synchronize()
-                    gc.collect()
-                    rank_0_print("🧹 Cleaned up memory after Hub upload")
+        # Save 'latest' checkpoint if save_every is configured and it's time to save
+        # Do this after processing best checkpoints so we have the gathered metrics
+        # Skip if we just saved a best checkpoint at this step
+        if self.save_every is not None and state.global_step > 0 and state.global_step % self.save_every == 0:
+            if state.global_step != self._last_save_step and state.global_step != self._last_best_save_step:
+                self._save_latest_checkpoint(args, state, metrics)
+                self._last_save_step = state.global_step
+            elif state.global_step == self._last_best_save_step:
+                logger.info(f"⏭️ Skipping 'latest' checkpoint save at step {state.global_step} (already saved as 'best')")
 
         # Additional cleanup on all ranks after the entire on_evaluate callback
         if torch.cuda.is_available():
@@ -239,3 +469,73 @@ class SaveBestCallback(TrainerCallback):
         gc.collect()
 
         return control
+    
+    def _save_latest_checkpoint(self, args: TrainingArguments, state: TrainerState, metrics: dict):
+        """Save a 'latest' checkpoint with metrics and step in the tag.
+        Tracks and deletes the previous 'latest' checkpoint.
+        
+        Args:
+            args: Training arguments
+            state: Trainer state
+            metrics: Evaluation metrics dictionary
+        """
+        if not self._trainer:
+            return
+        
+        # Compute score and build tag similar to best checkpoints
+        score, missing_metrics = self._compute_averaged_score(metrics)
+        step = state.global_step
+        metric_short = self._build_metric_short_name()
+        
+        # Build tag with metrics and step
+        tag = f"latest-{metric_short}={score:.4f}_step={step}"
+        ckpt_dir = os.path.join(args.output_dir, f"ckpt-{tag}")
+        
+        metrics_str = self._build_metrics_detail_string(metrics)
+        logger.info(f"💾 Saving 'latest' checkpoint at step {step} to {ckpt_dir} | {metrics_str}")
+        
+        # Remove old 'latest' checkpoint if it exists
+        if self._previous_latest_ckpt_dir and os.path.isdir(self._previous_latest_ckpt_dir):
+            logger.info(f"🗑️ Removing previous 'latest' checkpoint: {self._previous_latest_ckpt_dir}")
+            shutil.rmtree(self._previous_latest_ckpt_dir, ignore_errors=True)
+        
+        # Save model, trainer state, and metrics
+        self._save_checkpoint_files(args, ckpt_dir, metrics, step)
+        logger.info(f"✅ Saved 'latest' checkpoint at step {step}")
+        
+        # Upload to Hub if configured
+        if self.upload_to_hub:
+            hub_model_id = self._get_hub_model_id(args)
+            tag_name = self._clean_tag_name(f"latest-{metric_short}-{score:.4f}-step-{step}")
+            individual_scores_str = self._build_individual_scores_string(metrics)
+            commit_message = f"Latest checkpoint: avg_score={score:.4f} at step {step} | {individual_scores_str}"
+            
+            # Delete previous 'latest' Hub tag if it exists
+            api = HfApi(token=self.hub_token)
+            if self._previous_latest_hub_tag:
+                try:
+                    logger.info(f"🗑️ Removing previous 'latest' Hub tag: {self._previous_latest_hub_tag}")
+                    api.delete_tag(repo_id=hub_model_id, repo_type="model", tag=self._previous_latest_hub_tag)
+                    logger.info(f"✅ Deleted previous tag: {self._previous_latest_hub_tag}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not delete previous Hub tag {self._previous_latest_hub_tag}: {e}")
+            
+            logger.info(f"🚀 Uploading 'latest' checkpoint to Hub: {hub_model_id}")
+            
+            hub_url, commit_id = self._upload_checkpoint_to_hub(
+                ckpt_dir=ckpt_dir,
+                hub_model_id=hub_model_id,
+                tag_name=tag_name,
+                commit_message=commit_message,
+            )
+            logger.info(f"✅ Successfully uploaded 'latest' to: {hub_url}")
+            logger.info(f"🏷️ Tagged as: {tag_name}")
+            
+            # Track this as the new previous latest
+            self._previous_latest_hub_tag = tag_name
+        
+        # Track this as the new previous latest checkpoint directory
+        self._previous_latest_ckpt_dir = ckpt_dir
+        
+        # Memory cleanup after saving model
+        self._cleanup_memory()

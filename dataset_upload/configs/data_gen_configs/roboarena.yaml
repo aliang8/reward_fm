@@ -1,10 +1,10 @@
 # config.yaml
 dataset:
   dataset_path: ./datasets/roboarena
-  dataset_name: roboarena # This will be the dataset name / data source
+  dataset_name: roboarena_eval_debug_nowrist # This will be the dataset name / data source
 
 output:
-  output_dir: ./rfm_dataset/roboarena_0825_rfm
+  output_dir: ./rfm_dataset/roboarena_eval_debug_nowrist
   max_trajectories: -1
   max_frames: 64
   use_video: true
@@ -15,4 +15,4 @@ output:
 
 hub:
   push_to_hub: true
-  hub_repo_id: roboarena_0825_rfm
+  hub_repo_id: roboarena_eval_debug_nowrist

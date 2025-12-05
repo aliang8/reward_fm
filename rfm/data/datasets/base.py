@@ -91,12 +91,14 @@ class BaseDataset(torch.utils.data.Dataset):
         # Apply all filters simultaneously
         excluded_keywords = ["rings", "hands", "flick"]
         min_frames = config.min_frames_per_trajectory
+        rank_0_info(f"Filtering dataset with {len(self.dataset)} total trajectories")
         self.dataset, self._combined_indices = self._filter_dataset(
             excluded_keywords=excluded_keywords,
             min_frames=min_frames,
             dataset=self.dataset,
             combined_indices=self._combined_indices,
         )
+        rank_0_info(f"Dataset filtered with {len(self.dataset)} total trajectories")
 
         # Set cached fields after filtering
         self._cached_ids = self.dataset["id"]
@@ -347,6 +349,8 @@ class BaseDataset(torch.utils.data.Dataset):
         - Have tasks containing excluded keywords
         - Have <= min_frames frames
 
+        Uses batched map operations for efficient parallel processing.
+
         Args:
             excluded_keywords: List of keywords to exclude from task names (case-insensitive)
             min_frames: Minimum number of frames required (trajectories with frames > min_frames are kept)
@@ -358,55 +362,75 @@ class BaseDataset(torch.utils.data.Dataset):
                 - filtered_dataset: The filtered dataset
                 - filtered_combined_indices: The filtered combined indices
         """
-        task_column = dataset["task"]
-        has_frames_shape = "frames_shape" in dataset.column_names
-        frames_shape_column = dataset["frames_shape"] if has_frames_shape else None
+        excluded_keywords_lower = [kw.lower() for kw in excluded_keywords]
 
-        # Track filtering statistics
-        filtered_by_keywords = 0
-        filtered_by_frames = 0
+        def add_filter_flags(batch):
+            """Add filter flags to batch for efficient filtering."""
+            tasks = batch["task"]
+            frames_shapes = batch["frames_shape"]
 
-        # Create boolean mask: True for rows to keep
-        keep_mask = []
-        for idx, task in enumerate(task_column):
-            should_keep = True
+            drop_kw = []
+            drop_frames = []
 
-            # Filter by excluded task keywords
-            if task is not None:
-                task_lower = task.lower()
-                if any(keyword in task_lower for keyword in excluded_keywords):
-                    should_keep = False
-                    filtered_by_keywords += 1
-                    keep_mask.append(False)
-                    continue
+            for task, fs in zip(tasks, frames_shapes):
+                dkw = False
+                dfr = False
 
-            # Filter by minimum frames
-            if has_frames_shape and should_keep:
-                frames_shape = frames_shape_column[idx]
-                if frames_shape is not None and len(frames_shape) > 0:
-                    # frames_shape is typically (num_frames, height, width, channels)
-                    # First element is the number of frames
-                    num_frames = frames_shape[0] if isinstance(frames_shape, (list, tuple)) else frames_shape
+                # Check excluded keywords
+                if task is not None:
+                    t = task.lower()
+                    if any(kw in t for kw in excluded_keywords_lower):
+                        dkw = True
+
+                # Check minimum frames (only if not dropped by keywords)
+                if not dkw and fs is not None and not (isinstance(fs, (list, tuple)) and len(fs) == 0):
+                    if isinstance(fs, (list, tuple)):
+                        num_frames = fs[0]
+                    else:
+                        num_frames = fs
                     if num_frames <= min_frames:
-                        should_keep = False
-                        filtered_by_frames += 1
+                        dfr = True
 
-            keep_mask.append(should_keep)
+                drop_kw.append(dkw)
+                drop_frames.append(dfr)
 
-        # Filter dataset using the mask
-        if not all(keep_mask):
-            total_filtered = sum(1 for x in keep_mask if not x)
+            return {
+                "drop_by_keywords": drop_kw,
+                "drop_by_frames": drop_frames,
+            }
+
+        # 1) Compute flags in a single batched pass
+        dataset_with_flags = dataset.map(
+            add_filter_flags,
+            batched=True,
+            num_proc=8,  # Can be increased for parallel processing if needed
+            desc="Computing filter flags",
+        )
+
+        # 2) Compute counts and build keep_indices from flags
+        drop_kw_list = dataset_with_flags["drop_by_keywords"]
+        drop_frames_list = dataset_with_flags["drop_by_frames"]
+        
+        filtered_by_keywords = int(sum(drop_kw_list))
+        filtered_by_frames = int(sum(drop_frames_list))
+        total_filtered = filtered_by_keywords + filtered_by_frames
+
+        # 3) Filter using precomputed flags (efficient)
+        if total_filtered > 0:
             filter_messages = []
             if filtered_by_keywords > 0:
                 filter_messages.append(f"{filtered_by_keywords} with excluded task keywords: {excluded_keywords}")
             if filtered_by_frames > 0:
                 filter_messages.append(f"{filtered_by_frames} with <= {min_frames} frames")
-            
-            if filter_messages:
-                rank_0_info(f"  Filtering out {total_filtered} trajectories ({', '.join(filter_messages)})")
-            
-            # Use select to efficiently filter by indices
-            keep_indices = [i for i, keep in enumerate(keep_mask) if keep]
+
+            rank_0_info(f"  Filtering out {total_filtered} trajectories ({', '.join(filter_messages)})")
+
+            # Build keep_indices from flags (before filtering)
+            keep_indices = [
+                i for i, (dkw, dfr) in enumerate(zip(drop_kw_list, drop_frames_list)) if not (dkw or dfr)
+            ]
+
+            # Filter dataset using select with keep_indices (more efficient than filter)
             filtered_dataset = dataset.select(keep_indices)
 
             # Update combined_indices using the shared helper

@@ -527,6 +527,7 @@ class RFMHeadsTrainer(Trainer):
         # Prepare logging data using aggregated losses
         log_data = {
             "step": self.state.global_step,
+            "epoch": self.state.epoch,
             **self.timing_raw,
             **log_metadata,
         }
@@ -548,7 +549,7 @@ class RFMHeadsTrainer(Trainer):
         self.logger.log_scalars(log_data, step=self.state.global_step)
 
         if is_rank_0():
-            logger.info(f"Step {self.state.global_step}:")
+            logger.info(f"Step {self.state.global_step}, Epoch {self.state.epoch:.2f}:")
             logger.info("-" * 50)
             for key in log_global:
                 logger.info(f"  {key}: {log_global[key]}")
@@ -1204,6 +1205,7 @@ class RFMHeadsTrainer(Trainer):
         if self.accelerator.is_main_process:
             # Convert callback_metrics to float for wandb logging
             to_log = {k: float(v) for k, v in callback_metrics.items()}
+            to_log["epoch"] = self.state.epoch
             self.logger.log_scalars(to_log, step=self.state.global_step)
 
         banner("Finished running custom evaluations!")
@@ -1280,6 +1282,7 @@ class RFMHeadsTrainer(Trainer):
                 logger.info("=" * 50)
 
             # Also log to wandb if available and configured (only on rank 0)
+            metrics["epoch"] = self.state.epoch
             self.logger.log_scalars(metrics, step=self.state.global_step)
 
         # Run the custom evaluations

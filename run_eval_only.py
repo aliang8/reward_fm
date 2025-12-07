@@ -4,7 +4,7 @@ Script to load an existing model checkpoint and run custom evaluations.
 
 Usage:
     # Using default config
-    uv run python run_eval_only.py model_path=rewardfm/ant-rfm-qwen-prog-only-images-bs12-prog-only-more-rewind
+    uv run python run_eval_only.py model_path=rewardfm/rewardfm/ant-rfm-qwen-4gpu-bs12-pref-prog-20251205-132026
     
     # Override config values
     uv run python run_eval_only.py \
@@ -16,90 +16,30 @@ Usage:
 """
 
 import os
-import yaml
 import torch
-from pathlib import Path
-from dataclasses import asdict
-import argparse
-import ast
 from typing import Optional
 
-from transformers import TrainingArguments
 from omegaconf import OmegaConf, DictConfig
 from hydra import main as hydra_main
 from hydra.core.config_store import ConfigStore
 
-from rfm.configs.experiment_configs import ExperimentConfig, CustomEvaluationConfig
+from rfm.configs.experiment_configs import ExperimentConfig
 from rfm.configs.eval_configs import OfflineEvalConfig
 from rfm.trainers import RFMHeadsTrainer, RFMVQATrainer
 from rfm.utils.setup_utils import (
-    setup_model_and_processor,
     setup_batch_collator,
     create_training_arguments,
 )
-from rfm.utils.distributed import is_rank_0, rank_0_print
+from rfm.utils.distributed import is_rank_0
+from rfm.utils.logger import rank_0_info, get_logger
 import wandb
-from evals.eval_utils import load_model_from_hf
+from rfm.evals.eval_utils import load_model_from_hf
+
+logger = get_logger()
 
 # Register structured configs with Hydra
 cs = ConfigStore.instance()
 cs.store(name="eval_only_config", node=OfflineEvalConfig)
-
-
-def load_config_from_yaml(config_path: str) -> ExperimentConfig:
-    """Load experiment config from YAML file."""
-    if not os.path.exists(config_path):
-        raise FileNotFoundError(f"Config file not found: {config_path}")
-
-    rank_0_print(f"Loading config from: {config_path}")
-    with open(config_path, "r") as f:
-        yaml_text = f.read()
-
-    # Some configs (e.g., ReWiND-style) serialize custom python objects in YAML.
-    # Provide a custom loader that safely converts those tags into plain dicts.
-    class _OfflineEvalConfigLoader(yaml.SafeLoader):
-        pass
-
-    _OfflineEvalConfigLoader.add_constructor(
-        "tag:yaml.org,2002:python/object:rfm.models.rewind_transformer.ReWINDTransformerConfig",
-        lambda loader, node: loader.construct_mapping(node),
-    )
-
-    try:
-        config_dict = yaml.load(yaml_text, Loader=_OfflineEvalConfigLoader)
-    except Exception as e:
-        rank_0_print(f"Warning: Custom YAML loading failed ({e}), falling back to safe_load")
-        config_dict = yaml.safe_load(yaml_text)
-
-    # Create config from dictionary
-    cfg = ExperimentConfig(**config_dict)
-    return cfg
-
-
-def load_model_from_checkpoint(cfg: ExperimentConfig, model_path: str, device: torch.device):
-    """Load model and processor from HuggingFace model ID or local checkpoint path."""
-    rank_0_print(f"Loading model from: {model_path}")
-
-    # model_path can be either a HuggingFace model ID or a local path
-    # setup_model_and_processor handles both cases
-    hf_model_id = model_path
-
-    # Load model and processor
-    # Pass the model_path to setup_model_and_processor which handles loading
-    # If PEFT was used during training, the checkpoint should contain adapter weights
-    # which will be automatically loaded by from_pretrained
-    tokenizer, processor, rfm_model = setup_model_and_processor(
-        cfg.model, hf_model_id=hf_model_id, peft_config=cfg.peft if cfg.model.use_peft else None
-    )
-
-    # Note: If PEFT was used during training, the adapter weights should already be loaded
-    # by from_pretrained. We don't need to call setup_peft_model again for evaluation.
-
-    rfm_model = rfm_model.to(device)
-    rfm_model.eval()
-
-    rank_0_print(f"✅ Model loaded successfully from {model_path}")
-    return tokenizer, processor, rfm_model
 
 
 def create_eval_trainer(
@@ -110,7 +50,7 @@ def create_eval_trainer(
     output_dir: str,
 ):
     """Create RFMHeadsTrainer configured for evaluation only."""
-    rank_0_print("Setting up trainer for evaluation...")
+    rank_0_info("Setting up trainer for evaluation...")
 
     # Create minimal training arguments (needed for trainer initialization)
     # Most settings don't matter since we're only evaluating
@@ -154,9 +94,9 @@ def create_eval_trainer(
 
 def run_custom_evaluations(trainer: RFMHeadsTrainer):
     """Run custom evaluations using the trainer."""
-    rank_0_print("=" * 100)
-    rank_0_print("Starting custom evaluations...")
-    rank_0_print("=" * 100)
+    rank_0_info("=" * 100)
+    rank_0_info("Starting custom evaluations...")
+    rank_0_info("=" * 100)
 
     # Ensure model is in eval mode
     trainer.model.eval()
@@ -165,15 +105,15 @@ def run_custom_evaluations(trainer: RFMHeadsTrainer):
     # This method creates datasets internally based on config.custom_eval settings
     custom_metrics = trainer._run_custom_evaluations()
 
-    rank_0_print("=" * 100)
-    rank_0_print("Custom evaluations completed!")
-    rank_0_print("=" * 100)
+    rank_0_info("=" * 100)
+    rank_0_info("Custom evaluations completed!")
+    rank_0_info("=" * 100)
 
     # Print metrics summary
     if is_rank_0():
-        rank_0_print("\nEvaluation Metrics Summary:")
+        rank_0_info("\nEvaluation Metrics Summary:")
         for metric_name, metric_value in custom_metrics.items():
-            rank_0_print(f"  {metric_name}: {metric_value}")
+            rank_0_info(f"  {metric_name}: {metric_value}")
 
     return custom_metrics
 
@@ -198,54 +138,13 @@ def main(cfg: DictConfig):
 
     model_path = eval_only_cfg.model_path
 
-    # Initialize wandb if enabled (only on rank 0)
-    # This needs to happen early so that trainer's wandb logging works
-    if is_rank_0():
-        # Check if wandb logging is enabled in the experiment config (will be loaded later)
-        # For now, we'll initialize wandb if it's requested, but we'll get the actual config after loading
-        # We can initialize wandb later after loading exp_cfg, or just disable wandb for eval-only runs
-        # Let's disable wandb for standalone eval runs unless explicitly configured
-        pass  # We'll handle wandb initialization after loading exp_cfg
-
-    # Determine if model_path is a HuggingFace ID or local path
-    is_hf_repo = "/" in model_path and not os.path.exists(model_path) and not model_path.startswith("/")
-    is_local_path = os.path.exists(model_path) or os.path.isdir(model_path)
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    exp_cfg: Optional[ExperimentConfig] = None
-    tokenizer = processor = model = None
 
-    # Load experiment config (training config)
-    if eval_only_cfg.exp_config_path:
-        # Load from provided config file
-        exp_cfg = load_config_from_yaml(eval_only_cfg.exp_config_path)
-        rank_0_print(f"Loaded experiment config from: {eval_only_cfg.exp_config_path}")
-    elif is_local_path:
-        # Try to load from local checkpoint directory
-        config_path = os.path.join(model_path, "config.yaml")
-        outside_config_path = os.path.join(model_path, "..", "config.yaml")
-        if os.path.exists(config_path):
-            exp_cfg = load_config_from_yaml(config_path)
-            rank_0_print(f"Loaded experiment config from local checkpoint: {config_path}")
-        elif os.path.exists(outside_config_path):
-            exp_cfg = load_config_from_yaml(outside_config_path)
-            rank_0_print(f"Loaded experiment config from local checkpoint: {outside_config_path}")
-        else:
-            raise FileNotFoundError(
-                f"Config file not found at {config_path}. "
-                f"Please provide exp_config_path or ensure checkpoint contains config.yaml"
-            )
-    elif is_hf_repo:
-        exp_cfg, tokenizer, processor, model = load_model_from_hf(model_path=model_path, device=device)
-        rank_0_print(f"Loaded experiment config and model from HuggingFace repo: {model_path}")
-    else:
-        raise ValueError(
-            f"Could not determine if {model_path} is a HuggingFace repo or local path. "
-            f"Please provide exp_config_path or ensure the path is valid."
-        )
-
-    if exp_cfg is None:
-        raise ValueError("Failed to load experiment configuration.")
+    # Load experiment config and model using load_model_from_hf
+    # This function handles both HuggingFace repos and local paths
+    rank_0_info(f"Loading model and config from: {model_path}")
+    exp_cfg, tokenizer, processor, model = load_model_from_hf(model_path=model_path, device=device)
+    rank_0_info(f"✅ Model and config loaded successfully from {model_path}")
 
     # Initialize wandb if enabled in experiment config (only on rank 0)
     if "wandb" in exp_cfg.logging.log_to and is_rank_0():
@@ -259,47 +158,36 @@ def main(cfg: DictConfig):
             name=f"eval_{model_name}",
             config=config_dict,
         )
-        rank_0_print(f"Wandb initialized for evaluation: eval_{model_name}")
+        rank_0_info(f"Wandb initialized for evaluation: eval_{model_name}")
     elif "wandb" in exp_cfg.logging.log_to:
-        rank_0_print("Wandb logging enabled but skipped on non-rank-0 processes")
+        rank_0_info("Wandb logging enabled but skipped on non-rank-0 processes")
 
     # Merge custom_eval from OfflineEvalConfig if provided
     # Only override fields that are explicitly set (non-empty lists)
     if eval_only_cfg.custom_eval.eval_types:
         exp_cfg.custom_eval.eval_types = eval_only_cfg.custom_eval.eval_types
-        rank_0_print(f"Using eval_types from OfflineEvalConfig: {eval_only_cfg.custom_eval.eval_types}")
+        rank_0_info(f"Using eval_types from OfflineEvalConfig: {eval_only_cfg.custom_eval.eval_types}")
 
     # Override specific eval dataset lists if provided
     for eval_type in ["reward_alignment", "policy_ranking", "confusion_matrix"]:
         eval_datasets = getattr(eval_only_cfg.custom_eval, eval_type, None)
         if eval_datasets and len(eval_datasets) > 0:
             setattr(exp_cfg.custom_eval, eval_type, eval_datasets)
-            rank_0_print(f"Using {eval_type} datasets from OfflineEvalConfig: {eval_datasets}")
-
-    # Verify model path exists (if local) or is accessible (if HuggingFace)
-    if is_local_path and not os.path.exists(model_path):
-        raise FileNotFoundError(f"Model path does not exist: {model_path}")
+            rank_0_info(f"Using {eval_type} datasets from OfflineEvalConfig: {eval_datasets}")
 
     # Ensure custom eval is configured
     if not hasattr(exp_cfg.custom_eval, "eval_types") or not exp_cfg.custom_eval.eval_types:
-        rank_0_print(
-            "Warning: No eval_types configured in custom_eval. Please set custom_eval.eval_types in your config."
+        logger.warning(
+            "No eval_types configured in custom_eval. Please set custom_eval.eval_types in your config."
         )
         return
 
     # Determine output directory
     output_dir = eval_only_cfg.output_dir
     if output_dir is None:
-        # Use model name as output dir for HuggingFace repos, or checkpoint path for local
-        if is_hf_repo:
-            model_name = model_path.replace("/", "_")
-            output_dir = os.path.join("./eval_output", model_name)
-        else:
-            output_dir = os.path.join(model_path, "eval_output")
-
-    # Load model (if not already loaded via helper)
-    if tokenizer is None or processor is None or model is None:
-        tokenizer, processor, model = load_model_from_checkpoint(exp_cfg, model_path, device=device)
+        # Use model name as output dir (sanitize path for both HF repos and local paths)
+        model_name = model_path.replace("/", "_").replace("@", "_")
+        output_dir = os.path.join("./eval_output", model_name)
 
     # Create trainer
     trainer = create_eval_trainer(exp_cfg, model, processor, tokenizer, output_dir)
@@ -307,7 +195,7 @@ def main(cfg: DictConfig):
     # Run custom evaluations
     metrics = run_custom_evaluations(trainer)
 
-    rank_0_print("\n✅ Evaluation complete!")
+    rank_0_info("\n✅ Evaluation complete!")
     return metrics
 
 

@@ -50,7 +50,7 @@ def resolve_checkpoint_path(checkpoint_path: Optional[str], hub_token: Optional[
             repo_id=repo_id,
             revision=revision,
             token=hub_token,
-            allow_patterns=["*.safetensors", "*.bin", "*.json", "*.txt", "*.model"],
+            allow_patterns=["*.safetensors", "*.bin", "*.json", "*.txt", "*.model", "*.yaml"],
         )
         logger.info(f"Downloaded checkpoint to: {local_path}")
         return local_path

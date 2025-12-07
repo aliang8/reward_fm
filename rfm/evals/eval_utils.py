@@ -58,7 +58,7 @@ def load_model_from_hf(
     resolved_path = resolve_checkpoint_path(model_path, hub_token=hub_token)
     if resolved_path is None:
         raise ValueError(f"Could not resolve checkpoint path: {model_path}")
-    
+
     config_path: Optional[str] = None
 
     # Parse repo_id and revision (tag) from model_path if using @tag format
@@ -122,7 +122,7 @@ def load_wandb_run_info(model_path: str, hub_token: Optional[str] = None) -> Opt
     Checks for a local `wandb_info.json` (written during training) and, if the
     checkpoint lives on HuggingFace, falls back to parsing the README that
     `upload_to_hub.py` generates (which embeds wandb fields).
-    
+
     Args:
         model_path: HuggingFace model repository ID or local checkpoint path.
                    Supports @ notation for tags: username/model@tag-name

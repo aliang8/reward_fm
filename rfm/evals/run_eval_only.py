@@ -157,6 +157,8 @@ def main(cfg: DictConfig):
             "config": config_dict,
             "job_type": "offline_eval",
         }
+        if exp_cfg.logging.wandb_notes:
+            wandb_kwargs["notes"] = exp_cfg.logging.wandb_notes
         if wandb_prev_run:
             if wandb_prev_run.get("wandb_project"):
                 wandb_kwargs["project"] = wandb_prev_run["wandb_project"]

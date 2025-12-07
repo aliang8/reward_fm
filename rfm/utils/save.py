@@ -20,7 +20,7 @@ from rfm.utils.logger import loguru_logger as logger
 def resolve_checkpoint_path(checkpoint_path: Optional[str], hub_token: Optional[str] = None) -> Optional[str]:
     """
     Resolve checkpoint path, supporting local paths and HuggingFace Hub with @ notation.
-    
+
     Args:
         checkpoint_path: Path to checkpoint. Can be:
             - None: No checkpoint to load
@@ -28,22 +28,22 @@ def resolve_checkpoint_path(checkpoint_path: Optional[str], hub_token: Optional[
             - HF repo: username/model-name (loads best tag automatically)
             - HF repo with tag: username/model-name@tag-name
         hub_token: Optional HuggingFace token for private repos
-    
+
     Returns:
         Resolved local path to checkpoint, or None if no checkpoint
     """
     if not checkpoint_path:
         return None
-    
+
     # If it's a local path, return as-is
     if checkpoint_path.startswith("/") or checkpoint_path.startswith("./") or checkpoint_path.startswith("../"):
         logger.info(f"Using local checkpoint: {checkpoint_path}")
         return checkpoint_path
-    
+
     # Check if it looks like a HuggingFace repo (contains /)
     if "/" in checkpoint_path:
         repo_id, revision = parse_hf_model_id_and_revision(checkpoint_path, model_name="checkpoint")
-        
+
         # Download from HuggingFace Hub
         logger.info(f"Downloading checkpoint from HuggingFace Hub: {repo_id}@{revision or 'latest'}")
         local_path = snapshot_download(
@@ -54,7 +54,7 @@ def resolve_checkpoint_path(checkpoint_path: Optional[str], hub_token: Optional[
         )
         logger.info(f"Downloaded checkpoint to: {local_path}")
         return local_path
-    
+
     # Otherwise, treat as local path
     logger.info(f"Using checkpoint: {checkpoint_path}")
     return checkpoint_path
@@ -252,14 +252,14 @@ class SaveBestCallback(TrainerCallback):
             return trainer.is_world_process_zero() and is_rank_0()
         except:
             return (not AcceleratorState().distributed_type) or AcceleratorState().is_main_process
-    
+
     def _build_metric_short_name(self) -> str:
         """Build a short metric name for checkpoint naming."""
         if len(self.metric_names) == 1:
             return self.metric_names[0].split("/")[-1]
         else:
             return f"avg-{len(self.metric_names)}metrics"
-    
+
     def _build_metrics_detail_string(self, metrics: dict) -> str:
         """Build a detailed metrics string for logging."""
         metrics_detail = []
@@ -267,7 +267,7 @@ class SaveBestCallback(TrainerCallback):
             if name in metrics:
                 metrics_detail.append(f"{name}:{metrics[name]:.4f}")
         return " | ".join(metrics_detail) if metrics_detail else "no metrics"
-    
+
     def _build_individual_scores_string(self, metrics: dict) -> str:
         """Build individual scores string for commit messages."""
         individual_scores = []
@@ -275,24 +275,24 @@ class SaveBestCallback(TrainerCallback):
             if name in metrics:
                 individual_scores.append(f"{name.split('/')[-1]}={metrics[name]:.4f}")
         return ", ".join(individual_scores) if individual_scores else "no metrics"
-    
+
     def _get_hub_model_id(self, args: TrainingArguments) -> str:
         """Get the Hub model ID from output directory with timestamp."""
         base_name = args.output_dir.split("/")[-1].replace("_", "-")
         base_name = re.sub(r"-+", "-", base_name)
         base_name = base_name.strip("-")
         return f"rewardfm/{base_name}-{self._run_timestamp}"
-    
+
     def _clean_tag_name(self, tag_name: str) -> str:
         """Clean tag name for HuggingFace repo naming requirements."""
         tag_name = tag_name.replace("_", "-").replace(",", "")
         tag_name = re.sub(r"-+", "-", tag_name)
         tag_name = tag_name.strip("-")
         return tag_name
-    
+
     def _save_checkpoint_files(self, args: TrainingArguments, ckpt_dir: str, metrics: dict = None, step: int = None):
         """Save model, trainer state files, and metrics.
-        
+
         Note: This should only be called from rank 0 in the current implementation.
         """
         self._trainer.save_model(ckpt_dir)
@@ -300,31 +300,28 @@ class SaveBestCallback(TrainerCallback):
             self._trainer.save_state()  # trainer_state.json etc. in output_dir
             # save the trainer_state.json to the actual checkpoint directory
             shutil.copy(os.path.join(args.output_dir, "trainer_state.json"), ckpt_dir)
-        
+
         # Save metrics to JSON file
         if metrics is not None:
             metrics_file = os.path.join(ckpt_dir, "metrics.json")
             metrics_to_save = {
                 "step": step,
-                "metrics": {k: float(v) if isinstance(v, (int, float, np.number)) else str(v) 
-                           for k, v in metrics.items()}
+                "metrics": {
+                    k: float(v) if isinstance(v, (int, float, np.number)) else str(v) for k, v in metrics.items()
+                },
             }
             with open(metrics_file, "w") as f:
                 json.dump(metrics_to_save, f, indent=2)
             logger.info(f"📊 Saved metrics to {metrics_file}")
-    
+
     def _cleanup_memory(self):
         """Perform memory cleanup."""
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()
-    
+
     def _upload_checkpoint_to_hub(
-        self, 
-        ckpt_dir: str, 
-        hub_model_id: str, 
-        tag_name: str, 
-        commit_message: str
+        self, ckpt_dir: str, hub_model_id: str, tag_name: str, commit_message: str
     ) -> Tuple[str, str]:
         """Upload checkpoint to Hub and return URL and commit ID."""
         hub_url, commit_id = upload_model_to_hub(
@@ -356,7 +353,7 @@ class SaveBestCallback(TrainerCallback):
                     # For non-numeric values, just use the local value
                     gathered_metrics[key] = value
             metrics = gathered_metrics
-        
+
         # Only rank 0 needs to process metrics and save checkpoints
         # Early return AFTER collective operations to avoid deadlock
         if not self._is_main_process(self._trainer):
@@ -401,7 +398,7 @@ class SaveBestCallback(TrainerCallback):
             # Save model, trainer state, and metrics
             self._save_checkpoint_files(args, ckpt_dir, metrics, step)
             self._cleanup_memory()
-            
+
             # Track that we saved a best checkpoint at this step
             self._last_best_save_step = step
 
@@ -460,7 +457,9 @@ class SaveBestCallback(TrainerCallback):
                 self._save_latest_checkpoint(args, state, metrics)
                 self._last_save_step = state.global_step
             elif state.global_step == self._last_best_save_step:
-                logger.info(f"⏭️ Skipping 'latest' checkpoint save at step {state.global_step} (already saved as 'best')")
+                logger.info(
+                    f"⏭️ Skipping 'latest' checkpoint save at step {state.global_step} (already saved as 'best')"
+                )
 
         # Additional cleanup on all ranks after the entire on_evaluate callback
         if torch.cuda.is_available():
@@ -469,11 +468,11 @@ class SaveBestCallback(TrainerCallback):
         gc.collect()
 
         return control
-    
+
     def _save_latest_checkpoint(self, args: TrainingArguments, state: TrainerState, metrics: dict):
         """Save a 'latest' checkpoint with metrics and step in the tag.
         Tracks and deletes the previous 'latest' checkpoint.
-        
+
         Args:
             args: Training arguments
             state: Trainer state
@@ -481,35 +480,35 @@ class SaveBestCallback(TrainerCallback):
         """
         if not self._trainer:
             return
-        
+
         # Compute score and build tag similar to best checkpoints
         score, missing_metrics = self._compute_averaged_score(metrics)
         step = state.global_step
         metric_short = self._build_metric_short_name()
-        
+
         # Build tag with metrics and step
         tag = f"latest-{metric_short}={score:.4f}_step={step}"
         ckpt_dir = os.path.join(args.output_dir, f"ckpt-{tag}")
-        
+
         metrics_str = self._build_metrics_detail_string(metrics)
         logger.info(f"💾 Saving 'latest' checkpoint at step {step} to {ckpt_dir} | {metrics_str}")
-        
+
         # Remove old 'latest' checkpoint if it exists
         if self._previous_latest_ckpt_dir and os.path.isdir(self._previous_latest_ckpt_dir):
             logger.info(f"🗑️ Removing previous 'latest' checkpoint: {self._previous_latest_ckpt_dir}")
             shutil.rmtree(self._previous_latest_ckpt_dir, ignore_errors=True)
-        
+
         # Save model, trainer state, and metrics
         self._save_checkpoint_files(args, ckpt_dir, metrics, step)
         logger.info(f"✅ Saved 'latest' checkpoint at step {step}")
-        
+
         # Upload to Hub if configured
         if self.upload_to_hub:
             hub_model_id = self._get_hub_model_id(args)
             tag_name = self._clean_tag_name(f"latest-{metric_short}-{score:.4f}-step-{step}")
             individual_scores_str = self._build_individual_scores_string(metrics)
             commit_message = f"Latest checkpoint: avg_score={score:.4f} at step {step} | {individual_scores_str}"
-            
+
             # Delete previous 'latest' Hub tag if it exists
             api = HfApi(token=self.hub_token)
             if self._previous_latest_hub_tag:
@@ -519,9 +518,9 @@ class SaveBestCallback(TrainerCallback):
                     logger.info(f"✅ Deleted previous tag: {self._previous_latest_hub_tag}")
                 except Exception as e:
                     logger.warning(f"⚠️ Could not delete previous Hub tag {self._previous_latest_hub_tag}: {e}")
-            
+
             logger.info(f"🚀 Uploading 'latest' checkpoint to Hub: {hub_model_id}")
-            
+
             hub_url, commit_id = self._upload_checkpoint_to_hub(
                 ckpt_dir=ckpt_dir,
                 hub_model_id=hub_model_id,
@@ -530,12 +529,12 @@ class SaveBestCallback(TrainerCallback):
             )
             logger.info(f"✅ Successfully uploaded 'latest' to: {hub_url}")
             logger.info(f"🏷️ Tagged as: {tag_name}")
-            
+
             # Track this as the new previous latest
             self._previous_latest_hub_tag = tag_name
-        
+
         # Track this as the new previous latest checkpoint directory
         self._previous_latest_ckpt_dir = ckpt_dir
-        
+
         # Memory cleanup after saving model
         self._cleanup_memory()

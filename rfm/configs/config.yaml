@@ -201,6 +201,7 @@ logging:
   log_to: []
   wandb_project: "rfm"
   wandb_entity: clvr
+  wandb_notes: "training RFM"
   
   # SaveBestCallback configuration
   save_best:

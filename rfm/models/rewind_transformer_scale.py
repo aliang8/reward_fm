@@ -134,9 +134,7 @@ class ReWiNDScaleTransformer(PreTrainedModel):
             nn.Linear(hidden_dim // 2, 1),
         )
 
-        base_mask = torch.zeros((1 + 3*config.max_len + 1,
-                                    1 + 3*config.max_len + 1),
-                                    dtype=torch.bool)
+        base_mask = torch.zeros((1 + 3 * config.max_len + 1, 1 + 3 * config.max_len + 1), dtype=torch.bool)
 
         half = config.max_len
         idx_A = 1
@@ -149,13 +147,11 @@ class ReWiNDScaleTransformer(PreTrainedModel):
         mask = base_mask[:L, :L]
 
         # 1) A_out_tokens cannot see sequence B
-        mask[idx_Ao:idx_Ao+half, idx_B:idx_B + config.max_len] = True
+        mask[idx_Ao : idx_Ao + half, idx_B : idx_B + config.max_len] = True
 
         # 2) pred_token cannot see A_out_tokens
-        mask[idx_pred, idx_Ao:idx_Ao+half] = True
+        mask[idx_pred, idx_Ao : idx_Ao + half] = True
         self.atten_mask = mask
-
-
 
     def forward(
         self,
@@ -211,31 +207,35 @@ class ReWiNDScaleTransformer(PreTrainedModel):
             video_embeddings_A = video_embeddings[:, : T // 2].clone()
             video_embeddings_B = video_embeddings[:, T // 2 :].clone()
 
-            pos_A_in = einops.repeat(self.front_position_embedding_A[:, :half], "1 t d -> b t d", b=B) # also used for progress learning 
+            pos_A_in = einops.repeat(
+                self.front_position_embedding_A[:, :half], "1 t d -> b t d", b=B
+            )  # also used for progress learning
             pos_B_in = einops.repeat(self.front_position_embedding_B[:, :half], "1 t d -> b t d", b=B)
             text_pos = einops.repeat(self.text_position_embedding, "1 1 d -> b 1 d", b=B)
 
-            video_embeddings_A = video_embeddings_A + pos_A_in 
-            video_embeddings_B = video_embeddings_B + pos_B_in 
+            video_embeddings_A = video_embeddings_A + pos_A_in
+            video_embeddings_B = video_embeddings_B + pos_B_in
             text_emb = text_embeddings.unsqueeze(1) + text_pos
 
             # ---- Output tokens for progress/success ----
             pos_A_out = einops.repeat(self.back_position_embedding_A[:, :half], "1 t d -> b t d", b=B)
-            A_out_tokens = pos_A_out.clone() # used for progress/success prediction
+            A_out_tokens = pos_A_out.clone()  # used for progress/success prediction
 
             # ---- Prediction token ----
             if sample_type == "preference":
                 pred_token = einops.repeat(self.preference_token, "1 1 d -> b 1 d", b=B)
             else:
                 pred_token = einops.repeat(self.similarity_token, "1 1 d -> b 1 d", b=B)
-            full_sequence = torch.cat( 
-                [ text_emb, # 0 
-                 video_embeddings_A,# 1 ... half 
-                 video_embeddings_B,# half+1 ... 2*half 
-                 A_out_tokens, # 2*half+1 ... 3*half 
-                 pred_token, # last
-                ], 
-                dim=1 ) # [B, L, D]
+            full_sequence = torch.cat(
+                [
+                    text_emb,  # 0
+                    video_embeddings_A,  # 1 ... half
+                    video_embeddings_B,  # half+1 ... 2*half
+                    A_out_tokens,  # 2*half+1 ... 3*half
+                    pred_token,  # last
+                ],
+                dim=1,
+            )  # [B, L, D]
             mask = self.atten_mask[: full_sequence.shape[1], : full_sequence.shape[1]].to(full_sequence.device)
             full_embeddings = self.transformer(full_sequence, src_key_padding_mask=None, mask=mask)
 

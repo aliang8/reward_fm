@@ -41,9 +41,7 @@ def resolve_dataset_keys(dataset_keys: list[str] | list[list[str]], split: str) 
                     if split in DATASET_MAP[key]:
                         resolved_group.extend(DATASET_MAP[key][split])
                     else:
-                        rank_0_warning(
-                            f"Key '{key}' found in DATASET_MAP but no '{split}' split defined. Skipping."
-                        )
+                        rank_0_warning(f"Key '{key}' found in DATASET_MAP but no '{split}' split defined. Skipping.")
                 else:
                     # Not a key, assume it's already a dataset name
                     resolved_group.append(key)
@@ -142,7 +140,9 @@ class BaseDataset(torch.utils.data.Dataset):
 
             dataset, combined_indices = self._load_preprocessed_cache(cache_dir, is_training=not self.is_evaluation)
 
-            rank_0_info(f"Successfully loaded preprocessed {cache_type} datasets with {len(dataset)} trajectory indices")
+            rank_0_info(
+                f"Successfully loaded preprocessed {cache_type} datasets with {len(dataset)} trajectory indices"
+            )
 
             return dataset, combined_indices
         else:
@@ -324,7 +324,9 @@ class BaseDataset(torch.utils.data.Dataset):
 
         dataset_type = "training" if is_training else "evaluation"
         rank_0_info(f"✅ Loaded {len(dataset)} total trajectories from preprocessed {dataset_type} datasets")
-        rank_0_info(f"  📊 Available datasets: {len(available_datasets)}/{len(missing_datasets) + len(available_datasets)}")
+        rank_0_info(
+            f"  📊 Available datasets: {len(available_datasets)}/{len(missing_datasets) + len(available_datasets)}"
+        )
         rank_0_info(f"  📊 Missing datasets: {len(missing_datasets)}")
         banner("Dataset statistics")
         rank_0_info(f"Robot trajectories: {len(combined_indices['robot_trajectories'])}")
@@ -337,10 +339,11 @@ class BaseDataset(torch.utils.data.Dataset):
             rank_0_info(f"  {quality_label}: {len(combined_indices['quality_indices'][quality_label])}")
         rank_0_info(f"Data sources available: {combined_indices['source_indices'].keys()}")
         rank_0_info(f"Number of paired tasks: {len(combined_indices['paired_human_robot_by_task'])}")
-        rank_0_info(f"Number of tasks with both multiple quality labels: {len(combined_indices['tasks_with_multiple_quality_labels'])}")
+        rank_0_info(
+            f"Number of tasks with both multiple quality labels: {len(combined_indices['tasks_with_multiple_quality_labels'])}"
+        )
 
         return dataset, combined_indices
-
 
     def _filter_dataset(self, excluded_keywords: list[str], min_frames: int, dataset, combined_indices: dict):
         """Filter dataset based on multiple criteria simultaneously.
@@ -410,7 +413,7 @@ class BaseDataset(torch.utils.data.Dataset):
         # 2) Compute counts and build keep_indices from flags
         drop_kw_list = dataset_with_flags["drop_by_keywords"]
         drop_frames_list = dataset_with_flags["drop_by_frames"]
-        
+
         filtered_by_keywords = int(sum(drop_kw_list))
         filtered_by_frames = int(sum(drop_frames_list))
         total_filtered = filtered_by_keywords + filtered_by_frames
@@ -426,9 +429,7 @@ class BaseDataset(torch.utils.data.Dataset):
             rank_0_info(f"  Filtering out {total_filtered} trajectories ({', '.join(filter_messages)})")
 
             # Build keep_indices from flags (before filtering)
-            keep_indices = [
-                i for i, (dkw, dfr) in enumerate(zip(drop_kw_list, drop_frames_list)) if not (dkw or dfr)
-            ]
+            keep_indices = [i for i, (dkw, dfr) in enumerate(zip(drop_kw_list, drop_frames_list)) if not (dkw or dfr)]
 
             # Filter dataset using select with keep_indices (more efficient than filter)
             filtered_dataset = dataset.select(keep_indices)
@@ -462,9 +463,7 @@ class BaseDataset(torch.utils.data.Dataset):
         for key in combined_indices:
             if isinstance(combined_indices[key], list):
                 # Filter list indices
-                filtered_combined_indices[key] = [
-                    old_to_new[idx] for idx in combined_indices[key] if idx in old_to_new
-                ]
+                filtered_combined_indices[key] = [old_to_new[idx] for idx in combined_indices[key] if idx in old_to_new]
             elif isinstance(combined_indices[key], dict):
                 # Filter dict indices
                 filtered_dict = {}
@@ -489,9 +488,7 @@ class BaseDataset(torch.utils.data.Dataset):
                 filtered_combined_indices[key] = filtered_dict
             elif isinstance(combined_indices[key], set):
                 # Filter set indices
-                filtered_combined_indices[key] = {
-                    old_to_new[idx] for idx in combined_indices[key] if idx in old_to_new
-                }
+                filtered_combined_indices[key] = {old_to_new[idx] for idx in combined_indices[key] if idx in old_to_new}
             else:
                 # Keep other types as-is (e.g., strings, numbers)
                 filtered_combined_indices[key] = combined_indices[key]
@@ -576,9 +573,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         # Count tasks with both robot and human trajectories
         tasks_with_pairs = [
-            task
-            for task, task_dict in paired_human_robot_by_task.items()
-            if task_dict["robot"] and task_dict["human"]
+            task for task, task_dict in paired_human_robot_by_task.items() if task_dict["robot"] and task_dict["human"]
         ]
         num_tasks_with_pairs = len(tasks_with_pairs)
         rank_0_info(

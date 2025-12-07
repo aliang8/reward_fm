@@ -33,11 +33,11 @@ class SimSampler(RFMBaseSampler):
                 len(entry.get("robot", [])) > 0 and len(entry.get("human", [])) > 0
                 for entry in self.paired_human_robot_by_task.values()
             )
-            if self.paired_human_robot_by_task else False
+            if self.paired_human_robot_by_task
+            else False
         )
         self._has_suboptimal = (
-            any(len(indices) > 0 for indices in self.suboptimal_by_task.values())
-            if self.suboptimal_by_task else False
+            any(len(indices) > 0 for indices in self.suboptimal_by_task.values()) if self.suboptimal_by_task else False
         )
         rank_0_info(
             f"[SIM SAMPLER] Has paired human/robot: {self._has_paired_human_robot}, Has suboptimal: {self._has_suboptimal}"
@@ -70,11 +70,11 @@ class SimSampler(RFMBaseSampler):
 
             # Filter out tasks with empty optimal_indices to avoid infinite loop
             valid_tasks = {
-                task: indices 
-                for task, indices in self.optimal_by_task.items() 
+                task: indices
+                for task, indices in self.optimal_by_task.items()
                 if indices  # Only include tasks with non-empty indices
             }
-            
+
             if not valid_tasks:
                 # No valid tasks with optimal trajectories available
                 return None
@@ -82,7 +82,7 @@ class SimSampler(RFMBaseSampler):
             # Get a random task and optimal trajectory from it
             task_name = random.choice(list(valid_tasks.keys()))
             optimal_indices = valid_tasks[task_name]
-            
+
             # Double-check that we have valid indices (should always be true now)
             if not optimal_indices:
                 return None
@@ -184,14 +184,12 @@ class SimSampler(RFMBaseSampler):
             if result is not None:
                 traj_sim, traj_diff = result
                 strategy_used = selected_strategy
-                logger.trace(
-                    f"[SIM SAMPLER] Strategy {selected_strategy.value} succeeded on attempt {attempt}"
-                )
+                logger.trace(f"[SIM SAMPLER] Strategy {selected_strategy.value} succeeded on attempt {attempt}")
             else:
                 # Strategy failed - increment attempt count
                 strategy_attempt_counts[selected_strategy] = strategy_attempt_counts.get(selected_strategy, 0) + 1
                 failed_count = strategy_attempt_counts[selected_strategy]
-                
+
                 logger.trace(
                     f"[SIM SAMPLER] Strategy {selected_strategy.value} failed (failure count: {failed_count}/{max_strategy_attempts})"
                 )

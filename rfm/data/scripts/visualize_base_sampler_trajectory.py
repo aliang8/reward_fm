@@ -74,10 +74,10 @@ def load_dataset_from_cache(dataset_name: str) -> tuple[Dataset, str]:
 
 def get_dataset_short_name(dataset_name: str) -> str:
     """Get the short name for a dataset.
-    
+
     Args:
         dataset_name: Full dataset name (e.g., "metaworld/assembly-v2")
-        
+
     Returns:
         Short name from mapping, or a sanitized version of the dataset name
     """
@@ -85,7 +85,7 @@ def get_dataset_short_name(dataset_name: str) -> str:
     short_name = DS_SHORT_NAME_MAPPING.get(dataset_name, None)
     if short_name:
         return short_name
-    
+
     # If not in mapping, create a short name from the dataset name
     # Replace "/" and ":" with "_" and take the last part if it contains "/"
     sanitized = dataset_name.replace("/", "_").replace(":", "_")
@@ -97,7 +97,7 @@ def get_dataset_short_name(dataset_name: str) -> str:
             sanitized = "_".join(parts[-2:])  # Take last two parts
         else:
             sanitized = sanitized[:30]
-    
+
     return sanitized
 
 
@@ -129,7 +129,6 @@ def load_combined_indices(individual_cache_dir: str) -> dict:
         "partial_success_indices": indices.get("partial_success_indices", {}),
         "paired_human_robot_by_task": indices.get("paired_human_robot_by_task", {}),
         "tasks_with_multiple_quality_labels": indices.get("tasks_with_multiple_quality_labels", []),
-
     }
 
     return combined_indices
@@ -407,7 +406,7 @@ def main():
     # Load dataset
     print(f"Loading dataset: {args.dataset}")
     dataset, individual_cache_dir = load_dataset_from_cache(args.dataset)
-    
+
     # Get dataset short name for filename
     ds_short_name = get_dataset_short_name(args.dataset)
 

@@ -34,64 +34,68 @@ class PrefSampler(RFMBaseSampler):
 
         self.dataset_preference_ratio = config.dataset_preference_ratio
         self.preference_strategy_ratio: list[float] = config.preference_strategy_ratio
-        self._has_suboptimal = any(
-            len(indices) > 0 for indices in self.suboptimal_by_task.values()
-        ) if self.suboptimal_by_task else False
-        rank_0_info(
-            f"[PREF SAMPLER] Has suboptimal: {self._has_suboptimal}"
+        self._has_suboptimal = (
+            any(len(indices) > 0 for indices in self.suboptimal_by_task.values()) if self.suboptimal_by_task else False
         )
+        rank_0_info(f"[PREF SAMPLER] Has suboptimal: {self._has_suboptimal}")
 
         # Initialize preference dataset
         self._load_preference_dataset()
 
     def _generate_sample(self, item: dict):
         """Generate a preference sample from an item.
-        
+
         If the item has a non-successful quality label, it will be used as the rejected
         trajectory and an optimal trajectory from the same task will be found as the chosen one.
         Otherwise, normal preference sampling logic is used.
         """
         quality_label = item["quality_label"]
-        
+
         # Handle non-successful trajectories: use as rejected, find optimal from same task as chosen
         if quality_label != "successful":
             traj_id = item["id"]
-            logger.trace(f"[PREF SAMPLER] Non-successful quality detected for ID={traj_id}, using as rejected trajectory")
-            
+            logger.trace(
+                f"[PREF SAMPLER] Non-successful quality detected for ID={traj_id}, using as rejected trajectory"
+            )
+
             # Get task name from current trajectory
             task_name = item["task"]
             if task_name is None:
                 logger.trace(f"[PREF SAMPLER] No task name found for ID={traj_id}, falling through to normal sampling")
                 return self._create_pref_sample(item)
-            
+
             # Find optimal trajectories from the same task
             same_task_optimal_indices = self.optimal_by_task.get(task_name, [])
-            
+
             if not same_task_optimal_indices:
-                logger.trace(f"[PREF SAMPLER] No optimal trajectories found for task '{task_name}', falling through to normal sampling")
+                logger.trace(
+                    f"[PREF SAMPLER] No optimal trajectories found for task '{task_name}', falling through to normal sampling"
+                )
                 return self._create_pref_sample(item)
-            
+
             # Select a random optimal trajectory from the same task as chosen
             chosen_idx = random.choice(same_task_optimal_indices)
             chosen_traj_dict = self.dataset[chosen_idx]
-            
+
             # Create trajectories using the base sampler's method
             chosen_trajectory = self._get_traj_from_data(chosen_traj_dict)
             rejected_trajectory = self._get_traj_from_data(item)
-            
+
             # Set rejected trajectory progress to 0 (as per suboptimal strategy)
             rejected_trajectory.target_progress = [0.0] * len(rejected_trajectory.target_progress)
-            
+
             # Create preference sample with suboptimal strategy
             sample = PreferenceSample(
                 chosen_trajectory=chosen_trajectory,
                 rejected_trajectory=rejected_trajectory,
                 data_gen_strategy=DataGenStrat.SUBOPTIMAL.value,
             )
-            
-            logger.trace(f"[PREF SAMPLER] Created preference sample for non-successful traj ID={traj_id} with optimal traj from same task")
+
+            logger.trace(
+                f"[PREF SAMPLER] Created preference sample for non-successful traj ID={traj_id} with optimal traj from same task"
+            )
             return sample
-        
+
         return self._create_pref_sample(item)
 
     def _create_pref_sample_from_dataset(self) -> PreferenceSample:
@@ -163,11 +167,11 @@ class PrefSampler(RFMBaseSampler):
 
             # Filter out tasks with empty optimal_indices to avoid infinite loop
             valid_tasks = {
-                task: indices 
-                for task, indices in self.optimal_by_task.items() 
+                task: indices
+                for task, indices in self.optimal_by_task.items()
                 if indices  # Only include tasks with non-empty indices
             }
-            
+
             if not valid_tasks:
                 # No valid tasks with optimal trajectories available
                 return None
@@ -175,7 +179,7 @@ class PrefSampler(RFMBaseSampler):
             # Get a random task and chosen trajectory from it
             task_name = random.choice(list(valid_tasks.keys()))
             optimal_indices = valid_tasks[task_name]
-            
+
             # Double-check that we have valid indices (should always be true now)
             if not optimal_indices:
                 return None
@@ -261,14 +265,12 @@ class PrefSampler(RFMBaseSampler):
             # Check if strategy succeeded
             if rejected_traj is not None:
                 strategy_used = selected_strategy
-                logger.trace(
-                    f"[PREF SAMPLER] Strategy {selected_strategy.value} succeeded on attempt {attempt}"
-                )
+                logger.trace(f"[PREF SAMPLER] Strategy {selected_strategy.value} succeeded on attempt {attempt}")
             else:
                 # Strategy failed - increment attempt count
                 strategy_attempt_counts[selected_strategy] = strategy_attempt_counts.get(selected_strategy, 0) + 1
                 failed_count = strategy_attempt_counts[selected_strategy]
-                
+
                 logger.trace(
                     f"[PREF SAMPLER] Strategy {selected_strategy.value} failed (failure count: {failed_count}/{max_strategy_attempts})"
                 )

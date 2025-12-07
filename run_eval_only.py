@@ -152,13 +152,18 @@ def main(cfg: DictConfig):
 
         config_dict = asdict(exp_cfg)
         model_name = model_path.replace("/", "_") if "/" in model_path else model_path
-        wandb.init(
-            project=exp_cfg.logging.wandb_project,
-            entity=exp_cfg.logging.wandb_entity,
-            name=f"eval_{model_name}",
-            config=config_dict,
-        )
+        init_kwargs = {
+            "project": exp_cfg.logging.wandb_project,
+            "entity": exp_cfg.logging.wandb_entity,
+            "name": f"eval_{model_name}",
+            "config": config_dict,
+        }
+        if exp_cfg.logging.wandb_notes:
+            init_kwargs["notes"] = exp_cfg.logging.wandb_notes
+        wandb.init(**init_kwargs)
         rank_0_info(f"Wandb initialized for evaluation: eval_{model_name}")
+        if exp_cfg.logging.wandb_notes:
+            rank_0_info(f"Wandb notes: {exp_cfg.logging.wandb_notes}")
     elif "wandb" in exp_cfg.logging.log_to:
         rank_0_info("Wandb logging enabled but skipped on non-rank-0 processes")
 
@@ -177,9 +182,7 @@ def main(cfg: DictConfig):
 
     # Ensure custom eval is configured
     if not hasattr(exp_cfg.custom_eval, "eval_types") or not exp_cfg.custom_eval.eval_types:
-        logger.warning(
-            "No eval_types configured in custom_eval. Please set custom_eval.eval_types in your config."
-        )
+        logger.warning("No eval_types configured in custom_eval. Please set custom_eval.eval_types in your config.")
         return
 
     # Determine output directory

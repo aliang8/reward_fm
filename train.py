@@ -161,8 +161,11 @@ def train(cfg: ExperimentConfig):
             entity=cfg.logging.wandb_entity,
             name=run_name,
             config=config_dict,
+            notes=cfg.logging.wandb_notes,
         )
         rank_0_print(f"Wandb initialized: {run_name}")
+        if cfg.logging.wandb_notes:
+            rank_0_print(f"Wandb notes: {cfg.logging.wandb_notes}")
 
     logger.write_wandb_info(output_dir, run_name)
 
@@ -252,11 +255,8 @@ def train(cfg: ExperimentConfig):
         logger.log_scalars(timing_raw)
 
     rank_0_print(f"Timing raw: {timing_raw}")
-    
-    checkpoint_path = resolve_checkpoint_path(
-        cfg.training.resume_from_checkpoint,
-        hub_token=save_best_cfg.hub_token
-    )
+
+    checkpoint_path = resolve_checkpoint_path(cfg.training.resume_from_checkpoint, hub_token=save_best_cfg.hub_token)
     rank_0_print(f"Training from checkpoint: {checkpoint_path}")
 
     if cfg.debug:

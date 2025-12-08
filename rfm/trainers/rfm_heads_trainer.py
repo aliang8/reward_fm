@@ -1538,8 +1538,7 @@ class RFMHeadsTrainer(Trainer):
         masked_spearman_corr = masked_spearman_corr.detach()
 
         # Average per sample, then take mean across batch
-        progress_losses = masked_loss.sum(dim=1) / (mask.sum(dim=1) + 1e-8)
-        progress_loss = progress_losses.mean()
+        progress_loss = masked_loss.mean(dim=1).sum(dim=0) / mask.sum()
         spearman_corr = masked_spearman_corr.mean()
 
         # Keep track of the per-sample metrics

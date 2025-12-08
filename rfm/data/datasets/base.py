@@ -89,12 +89,21 @@ class BaseDataset(torch.utils.data.Dataset):
         # Apply all filters simultaneously
         excluded_keywords = ["rings", "hands", "flick"]
         min_frames = config.min_frames_per_trajectory
+        
+        # Check if we're in progress_only mode (sample_type_ratio == [0, 1, 0])
+        # In progress_only mode, filter to only include successful trajectories
+        filter_successful_only = False
+        if config.sample_type_ratio == [0, 1, 0]:
+            filter_successful_only = True
+            rank_0_info("Progress-only mode detected (sample_type_ratio=[0, 1, 0]), filtering to only successful trajectories")
+        
         rank_0_info(f"Filtering dataset with {len(self.dataset)} total trajectories")
         self.dataset, self._combined_indices = self._filter_dataset(
             excluded_keywords=excluded_keywords,
             min_frames=min_frames,
             dataset=self.dataset,
             combined_indices=self._combined_indices,
+            filter_successful_only=filter_successful_only,
         )
         rank_0_info(f"Dataset filtered with {len(self.dataset)} total trajectories")
 
@@ -345,12 +354,13 @@ class BaseDataset(torch.utils.data.Dataset):
 
         return dataset, combined_indices
 
-    def _filter_dataset(self, excluded_keywords: list[str], min_frames: int, dataset, combined_indices: dict):
+    def _filter_dataset(self, excluded_keywords: list[str], min_frames: int, dataset, combined_indices: dict, filter_successful_only: bool = False):
         """Filter dataset based on multiple criteria simultaneously.
 
         Filters out trajectories that:
         - Have tasks containing excluded keywords
         - Have <= min_frames frames
+        - (If filter_successful_only=True) Have quality_label != "successful"
 
         Uses batched map operations for efficient parallel processing.
 
@@ -359,6 +369,7 @@ class BaseDataset(torch.utils.data.Dataset):
             min_frames: Minimum number of frames required (trajectories with frames > min_frames are kept)
             dataset: The dataset to filter
             combined_indices: Dictionary of combined indices to update after filtering
+            filter_successful_only: If True, only keep trajectories with quality_label == "successful"
 
         Returns:
             tuple: (filtered_dataset, filtered_combined_indices)
@@ -371,13 +382,16 @@ class BaseDataset(torch.utils.data.Dataset):
             """Add filter flags to batch for efficient filtering."""
             tasks = batch["task"]
             frames_shapes = batch["frames_shape"]
+            quality_labels = batch["quality_label"]
 
             drop_kw = []
             drop_frames = []
+            drop_quality = []
 
-            for task, fs in zip(tasks, frames_shapes):
+            for task, fs, quality_label in zip(tasks, frames_shapes, quality_labels):
                 dkw = False
                 dfr = False
+                dq = False
 
                 # Check excluded keywords
                 if task is not None:
@@ -394,12 +408,19 @@ class BaseDataset(torch.utils.data.Dataset):
                     if num_frames <= min_frames:
                         dfr = True
 
+                # Check quality_label for successful-only filter (only if not dropped by other filters)
+                if filter_successful_only and not dkw and not dfr:
+                    if quality_label != "successful":
+                        dq = True
+
                 drop_kw.append(dkw)
                 drop_frames.append(dfr)
+                drop_quality.append(dq)
 
             return {
                 "drop_by_keywords": drop_kw,
                 "drop_by_frames": drop_frames,
+                "drop_by_quality": drop_quality,
             }
 
         # 1) Compute flags in a single batched pass
@@ -413,10 +434,12 @@ class BaseDataset(torch.utils.data.Dataset):
         # 2) Compute counts and build keep_indices from flags
         drop_kw_list = dataset_with_flags["drop_by_keywords"]
         drop_frames_list = dataset_with_flags["drop_by_frames"]
+        drop_quality_list = dataset_with_flags["drop_by_quality"]
 
         filtered_by_keywords = int(sum(drop_kw_list))
         filtered_by_frames = int(sum(drop_frames_list))
-        total_filtered = filtered_by_keywords + filtered_by_frames
+        filtered_by_quality = int(sum(drop_quality_list))
+        total_filtered = filtered_by_keywords + filtered_by_frames + filtered_by_quality
 
         # 3) Filter using precomputed flags (efficient)
         if total_filtered > 0:
@@ -425,12 +448,13 @@ class BaseDataset(torch.utils.data.Dataset):
                 filter_messages.append(f"{filtered_by_keywords} with excluded task keywords: {excluded_keywords}")
             if filtered_by_frames > 0:
                 filter_messages.append(f"{filtered_by_frames} with <= {min_frames} frames")
+            if filtered_by_quality > 0:
+                filter_messages.append(f"{filtered_by_quality} with quality_label != 'successful'")
 
             rank_0_info(f"  Filtering out {total_filtered} trajectories ({', '.join(filter_messages)})")
 
             # Build keep_indices from flags (before filtering)
-            keep_indices = [i for i, (dkw, dfr) in enumerate(zip(drop_kw_list, drop_frames_list)) if not (dkw or dfr)]
-
+            keep_indices = [i for i, (dkw, dfr, dq) in enumerate(zip(drop_kw_list, drop_frames_list, drop_quality_list)) if not (dkw or dfr or dq)]
             # Filter dataset using select with keep_indices (more efficient than filter)
             filtered_dataset = dataset.select(keep_indices)
 

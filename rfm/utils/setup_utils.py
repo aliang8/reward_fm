@@ -45,6 +45,7 @@ from rfm.data.collators import BaseCollator, ReWiNDBatchCollator, RFMBatchCollat
 from rfm.data.datasets import (
     BalancedRFMDataset,
     RFMDataset,
+    StrategyBalancedDataset,
     BaseDataset,
     InfiniteDataset,
 )
@@ -495,6 +496,7 @@ def setup_dataset(cfg: DataConfig, is_eval: bool = False, **kwargs) -> BaseDatas
     dataset_cls = {
         "rfm": RFMDataset,
         "data_source_balance": BalancedRFMDataset,
+        "strategy_balance": StrategyBalancedDataset,
     }
     dataset = dataset_cls[cfg.dataset_type](config=cfg, is_evaluation=is_eval, **kwargs)
     dataset = InfiniteDataset(dataset)

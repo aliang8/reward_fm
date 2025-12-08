@@ -93,7 +93,7 @@ class BaseDataset(torch.utils.data.Dataset):
         # Check if we're in progress_only mode (sample_type_ratio == [0, 1, 0])
         # In progress_only mode, filter to only include successful trajectories
         filter_successful_only = False
-        if config.sample_type_ratio == [0, 1, 0]:
+        if config.sample_type_ratio == [0, 1, 0] and not is_evaluation:
             filter_successful_only = True
             rank_0_info("Progress-only mode detected (sample_type_ratio=[0, 1, 0]), filtering to only successful trajectories")
         

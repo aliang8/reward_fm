@@ -330,9 +330,9 @@ class RFMHeadsTrainer(Trainer):
 
         logger.trace("finished updating global metadata")
 
-        self._update_resample_attempt_metrics(inputs)
+        # self._update_resample_attempt_metrics(inputs)
 
-        logger.trace("update resample attempt metrics")
+        # logger.trace("update resample attempt metrics")
 
         # Log custom losses at specified intervals (using our custom logger only)
         if self.state.global_step % self.args.logging_steps == 0:
@@ -618,6 +618,7 @@ class RFMHeadsTrainer(Trainer):
                 logger.info(f"  Processing dataset: {eval_dataset}")
                 log_memory_usage(f"Before dataset {eval_dataset}")
                 eval_cfg = copy.deepcopy(self.config.data)
+                eval_cfg.dataset_type = "rfm"
                 # For similarity_score, eval_dataset is a list of datasets that should be loaded together
                 # For other eval types, eval_dataset is a single dataset name
                 if eval_type == "similarity_score" and isinstance(eval_dataset, list):
@@ -667,6 +668,7 @@ class RFMHeadsTrainer(Trainer):
                     dataloader,
                     desc=f"Running {eval_type}, ds: {eval_dataset}, batch size: {self.config.training.per_device_eval_batch_size}",
                 )
+
                 for batch in dataloader_iter:
                     logger.debug(f"  Processing batch {batch_idx}")
                     if batch_idx % 10 == 0:  # Log memory every 10 batches
@@ -714,6 +716,7 @@ class RFMHeadsTrainer(Trainer):
                         gathered_metadata_dict = self._truncate_metadata_lists(
                             gathered_metadata_dict, num_progress_samples
                         )
+
                         if batch_idx % 10 == 0:
                             log_memory_usage(f"After gathering metadata (batch {batch_idx})")
 
@@ -1033,8 +1036,10 @@ class RFMHeadsTrainer(Trainer):
                         if is_roboarena:
                             # RoboArena visualization: show partial vs predicted rewards
                             for task, group in task_groups.items():
-                                partial_successes = [round(t["partial_success"], 3) for t in group]
-                                predicted_rewards = [round(t["final_predicted_reward"], 3) for t in group]
+                                partial_successes = np.array([t["partial_success"] for t in group]).round(2)
+                                predicted_rewards = np.array([t["final_predicted_reward"] for t in group]).round(2)
+                                partial_successes = partial_successes.tolist()
+                                predicted_rewards = predicted_rewards.tolist()
                                 data.append([task, f"partial:{partial_successes}", f"predicted:{predicted_rewards}"])
                             columns = ["task", "partial_successes", "predicted_rewards"]
                         else:
@@ -1042,13 +1047,17 @@ class RFMHeadsTrainer(Trainer):
                             for task, group in task_groups.items():
                                 quality_to_rews = collections.defaultdict(list)
                                 for t in group:
-                                    quality_to_rews[t["quality_label"]].append(round(t["final_reward"], 2))
+                                    rew = t["final_reward"]
+                                    quality_to_rews[t["quality_label"]].append(rew)
+
+                                for q, r in quality_to_rews.items():
+                                    quality_to_rews[q] = np.array(r).round(2).tolist()
                                 quality_to_rews = ",".join([f"{q}:{r}" for q, r in quality_to_rews.items()])
                                 data.append([task, quality_to_rews])
                             columns = ["task", "quality_and_rews"]
 
                         table_name = f"policy_ranking_samples/{ds_name}"
-
+                        
                         self.logger.log_table(
                             table_name,
                             data=data,

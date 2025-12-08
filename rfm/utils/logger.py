@@ -165,6 +165,10 @@ class Logger:
         Log a table where first column can be video (wandb), second a figure, etc.
         videos_and_figures: list of tuples e.g. [(video_array_or_path, figure), ...]
         Only supported for wandb; TensorBoard has no native table/video support.
+        
+        Note: For wandb, logging tables with step parameter can cause display issues
+        because wandb treats them as time-series. If step is provided, it's included in
+        the tag name instead to create unique table names per evaluation step.
         """
         if not self._is_main:
             return
@@ -200,7 +204,14 @@ class Logger:
                                 # Fallback: store raw value
                                 row.append(x)
                 rows.append(row)
-            self._wandb_run.log({tag: wandb.Table(data=rows, columns=columns)}, step=step)
+            # Include step in tag name to avoid time-series display issues
+            # This creates unique tables per step while maintaining proper display
+            if step is not None:
+                tag_with_step = f"{tag}/step_{step}"
+            else:
+                tag_with_step = tag
+            # Don't pass step parameter to avoid time-series visualization issues
+            self._wandb_run.log({tag_with_step: wandb.Table(data=rows, columns=columns)})
 
     def add_text(self, tag: str, text: str, step: Optional[int] = None):
         if not self._is_main:
@@ -215,11 +226,22 @@ class Logger:
     def log_table(self, tag: str, data: List[List[Any]], columns: List[str], step: Optional[int] = None):
         """
         Log a generic table (wandb only). TensorBoard has no native table support.
+        
+        Note: For wandb, logging tables with step parameter can cause display issues
+        because wandb treats them as time-series. If step is provided, it's included in
+        the tag name instead to create unique table names per evaluation step.
         """
         if not self._is_main:
             return
         if self.enabled("wandb"):
-            self._wandb_run.log({tag: wandb.Table(data=data, columns=columns)}, step=step)
+            # Include step in tag name to avoid time-series display issues
+            # This creates unique tables per step while maintaining proper display
+            if step is not None:
+                tag_with_step = f"{tag}/step_{step}"
+            else:
+                tag_with_step = tag
+            # Don't pass step parameter to avoid time-series visualization issues
+            self._wandb_run.log({tag_with_step: wandb.Table(data=data, columns=columns)})
 
     def log_video(self, tag: str, video: Any, fps: int = 10, step: Optional[int] = None):
         """

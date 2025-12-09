@@ -143,6 +143,7 @@ DATASET_MAP = {
             "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",
             "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
             "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
+            "jesbu1_soar_rfm_soar_rfm"
         ]
     },
     "policy_ranking": {
@@ -152,6 +153,7 @@ DATASET_MAP = {
             "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",
             "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
             "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
+            "jesbu1_soar_rfm_soar_rfm"
         ]
     },
     "paired": {
@@ -213,6 +215,7 @@ DATA_SOURCE_CATEGORY = {
         "oxe_bc_z",
         "oxe_dlr_edan_shared_control_converted_externally_to_rlds",
         "roboarena",
+        "auto_eval_rfm",
     ],
     "paired": [
         "h2r",

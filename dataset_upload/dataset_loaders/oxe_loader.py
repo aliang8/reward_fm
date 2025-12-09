@@ -144,17 +144,17 @@ def _process_single_oxe_episode(args):
             use_video=True,
             fps=fps,
         )
-        
+
         # Clear frames from memory immediately after video creation
         del frames
-        
+
         if entry:
             entry["frames"] = rel_path
             episode_entries.append(entry)
-    
+
     # Clear frames from memory after processing
     del episode
-    
+
     return episode_entries
 
 
@@ -238,7 +238,7 @@ def convert_oxe_dataset_to_hf(
 
     # Determine valid image observation keys
     img_key_to_name = OXE_DATASET_CONFIGS[base_ds_name]["image_obs_keys"]
-    if "droid" not in base_ds_name: # make sure to use DROID's wrist cam
+    if "droid" not in base_ds_name:  # make sure to use DROID's wrist cam
         img_key_to_name = {k: v for k, v in img_key_to_name.items() if k != "wrist"}
     valid_img_keys = list(img_key_to_name.values())
 
@@ -377,7 +377,7 @@ def convert_oxe_dataset_to_hf(
             # Clear batch for next iteration
             episode_batch = []
             episode_info_batch = []
-            
+
             # Force garbage collection to free memory
             gc.collect()
 
@@ -437,7 +437,7 @@ def convert_oxe_dataset_to_hf(
                 produced += len(episode_entries)
                 if produced >= max_limit:
                     break
-            
+
             # Force garbage collection after final batch
             gc.collect()
 

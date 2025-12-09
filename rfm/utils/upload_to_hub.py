@@ -65,12 +65,14 @@ def create_model_card(model_dir: Path, base_model: str, model_name: str):
         try:
             with open(wandb_info_path) as f:
                 wandb_info = json.load(f)
+            wandb_notes = wandb_info.get("wandb_notes", "")
+            notes_section = f"\n- **Notes**: {wandb_notes}" if wandb_notes else ""
             wandb_section = f"""
 ## Training Run
 
 - **Wandb Run**: [{wandb_info.get("wandb_name", "N/A")}]({wandb_info.get("wandb_url", "#")})
 - **Wandb ID**: `{wandb_info.get("wandb_id", "N/A")}`
-- **Project**: {wandb_info.get("wandb_project", "N/A")}
+- **Project**: {wandb_info.get("wandb_project", "N/A")}{notes_section}
 """
         except Exception as e:
             print(f"⚠️ WARNING: Could not read wandb info: {e}")

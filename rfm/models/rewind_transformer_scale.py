@@ -134,6 +134,25 @@ class ReWiNDScaleTransformer(PreTrainedModel):
             nn.Linear(hidden_dim // 2, 1),
         )
 
+        base_mask = torch.zeros((1 + 3 * config.max_len + 1, 1 + 3 * config.max_len + 1), dtype=torch.bool)
+
+        half = config.max_len
+        idx_A = 1
+        idx_B = 1 + config.max_len
+        idx_Ao = 1 + 2 * config.max_len
+        idx_pred = 1 + 3 * config.max_len
+        L = idx_pred + 1
+
+        # crop base_mask depending on actual T
+        mask = base_mask[:L, :L]
+
+        # 1) A_out_tokens cannot see sequence B
+        mask[idx_Ao : idx_Ao + half, idx_B : idx_B + config.max_len] = True
+
+        # 2) pred_token cannot see A_out_tokens
+        mask[idx_pred, idx_Ao : idx_Ao + half] = True
+        self.atten_mask = mask
+
     def forward(
         self,
         input_ids=None,
@@ -183,59 +202,60 @@ class ReWiNDScaleTransformer(PreTrainedModel):
         output = ModelOutput()
 
         if sample_type == "preference" or sample_type == "similarity":
-            assert NotImplementedError("preference/similarity forward pass not implemented yet")
-            # video_embeddings_A = video_embeddings[:, : T // 2].clone()
-            # video_embeddings_B = video_embeddings[:, T // 2 :].clone()
+            # assert NotImplementedError("preference/similarity forward pass not implemented yet")
+            half = T // 2
+            video_embeddings_A = video_embeddings[:, : T // 2].clone()
+            video_embeddings_B = video_embeddings[:, T // 2 :].clone()
 
-            # # Add the first embedding to the beginning of embedding A
-            # # first_frame_emb_A = einops.repeat(self.first_embedding_A, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
-            # # first_frame_emb_B = einops.repeat(self.first_embedding_B, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
+            pos_A_in = einops.repeat(
+                self.front_position_embedding_A[:, :half], "1 t d -> b t d", b=B
+            )  # also used for progress learning
+            pos_B_in = einops.repeat(self.front_position_embedding_B[:, :half], "1 t d -> b t d", b=B)
+            text_pos = einops.repeat(self.text_position_embedding, "1 1 d -> b 1 d", b=B)
 
-            # # video_embeddings_A[:, 0:1] += first_frame_emb_A
-            # # video_embeddings_B[:, 0:1] += first_frame_emb_B
+            video_embeddings_A = video_embeddings_A + pos_A_in
+            video_embeddings_B = video_embeddings_B + pos_B_in
+            text_emb = text_embeddings.unsqueeze(1) + text_pos
 
-            # # Add position embeddings
+            # ---- Output tokens for progress/success ----
+            pos_A_out = einops.repeat(self.back_position_embedding_A[:, :half], "1 t d -> b t d", b=B)
+            A_out_tokens = pos_A_out.clone()  # used for progress/success prediction
 
-            # if sample_type == "preference":
-            #     pred_token = einops.repeat(self.preference_token, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
-            # else:
-            #     pred_token = einops.repeat(self.similarity_token, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
+            # ---- Prediction token ----
+            if sample_type == "preference":
+                pred_token = einops.repeat(self.preference_token, "1 1 d -> b 1 d", b=B)
+            else:
+                pred_token = einops.repeat(self.similarity_token, "1 1 d -> b 1 d", b=B)
+            full_sequence = torch.cat(
+                [
+                    text_emb,  # 0
+                    video_embeddings_A,  # 1 ... half
+                    video_embeddings_B,  # half+1 ... 2*half
+                    A_out_tokens,  # 2*half+1 ... 3*half
+                    pred_token,  # last
+                ],
+                dim=1,
+            )  # [B, L, D]
+            mask = self.atten_mask[: full_sequence.shape[1], : full_sequence.shape[1]].to(full_sequence.device)
+            full_embeddings = self.transformer(full_sequence, src_key_padding_mask=None, mask=mask)
 
-            # token_sequence = torch.cat(
-            #     [text_embeddings.unsqueeze(1), video_embeddings_A, video_embeddings_B, pred_token], dim=1
-            # )  # shape: [B, 2*T + 1, D]
-            # import pdb ;pdb.set_trace()
-            # token_embeddings = self.transformer(token_sequence)
-            # D = token_embeddings.shape[-1]
+            D = full_embeddings.shape[-1]
+            final_embeddings_A = full_embeddings[:, 1 : 1 + half, :]  # avoid the text embedding
+            Progress_A_logits = self.progress_head(final_embeddings_A.reshape(-1, D))
+            Progress_A_logits = einops.rearrange(Progress_A_logits, "(b t) 1 -> b t", b=B)
+            progress_logits = {"A": Progress_A_logits, "B": None}
+            output.progress_logits = progress_logits
 
-            # final_embeddings_A = token_embeddings[:, 1 : 1 + T // 2, :]  # avoid the text embedding
-            # final_embeddings_B = token_embeddings[:, 1 + T // 2 : -1, :]  # avoid the text embedding
+            success_A_logits = self.success_head(final_embeddings_A.reshape(-1, D))
+            success_A_logits = einops.rearrange(success_A_logits, "(b t) 1 -> b t", b=B)
+            success_logits = {"A": success_A_logits, "B": None}
+            output.success_logits = success_logits
 
-            # progress_A_logits = self.progress_head(final_embeddings_A.reshape(-1, D))
-            # progress_A_logits = einops.rearrange(progress_A_logits, "(b t) 1 -> b t", b=B)
-
-            # progress_B_logits = self.progress_head(final_embeddings_B.reshape(-1, D))
-            # progress_B_logits = einops.rearrange(progress_B_logits, "(b t) 1 -> b t", b=B)
-
-            # progress_logits = {"A": progress_A_logits, "B": progress_B_logits}
-            # output.progress_logits = progress_logits
-
-            # # Predict success for all frames
-            # success_A_logits = self.success_head(final_embeddings_A.reshape(-1, D))
-            # success_A_logits = einops.rearrange(success_A_logits, "(b t) 1 -> b t", b=B)
-
-            # success_B_logits = self.success_head(final_embeddings_B.reshape(-1, D))
-            # success_B_logits = einops.rearrange(success_B_logits, "(b t) 1 -> b t", b=B)
-
-            # success_logits = {"A": success_A_logits, "B": success_B_logits}
-            # output.success_logits = success_logits
-
-            # pred_class_token = token_embeddings[:, -1, :]  # [B, D]
-
-            # if sample_type == "preference":
-            #     output.pref_logits = self.preference_head(pred_class_token)
-            # else:  # similarity
-            #     output.sim_logits = self.similarity_head(pred_class_token)
+            pred_class_token = full_embeddings[:, -1, :]  # [B, D]
+            if sample_type == "preference":
+                output.pref_logits = self.preference_head(pred_class_token)
+            else:  # similarity
+                output.sim_logits = self.similarity_head(pred_class_token)
 
         elif sample_type == "progress":
             # first_frame_emb = einops.repeat(self.first_embedding_A, "1 1 d -> b 1 d", b=B)  # [B, 1, D]

@@ -13,7 +13,7 @@ from rfm.utils.logger import Logger, get_logger, log_memory_usage
 
 import copy
 import wandb
-from rfm.utils.distributed import is_rank_0, get_rank
+from rfm.utils.distributed import is_rank_0, get_rank, log_fsdp_diagnostics
 from rfm.utils.timer import _timer
 from rfm.utils.metrics import compute_spearman_correlation
 from rfm.utils.setup_utils import setup_dataset, setup_batch_collator, setup_custom_eval_dataset
@@ -125,6 +125,7 @@ class RFMHeadsTrainer(Trainer):
         self.global_metadata = collections.defaultdict(float)
         self.timing_raw = collections.defaultdict(float)
         self._ddp_static_graph_set = False  # Flag to track if DDP static graph has been set
+        self._fsdp_diagnostics_logged = False  # Flag to track if FSDP diagnostics have been logged
 
         if logger is not None:
             self.logger = logger
@@ -136,7 +137,7 @@ class RFMHeadsTrainer(Trainer):
                 is_main_process=is_rank_0(),
                 log_level=log_level,
             )
-        
+
         # Use loguru logger after it's been initialized
         loguru_logger = get_logger()
         loguru_logger.info(f"DDP find_unused_parameters: {getattr(self.args, 'ddp_find_unused_parameters', 'N/A')}")
@@ -253,7 +254,11 @@ class RFMHeadsTrainer(Trainer):
         Perform a training step and log custom losses.
         """
         logger.debug("training_step: Starting")
-        
+
+        if not self._fsdp_diagnostics_logged:
+            log_fsdp_diagnostics(model, accelerator=self.accelerator, logger=logger)
+            self._fsdp_diagnostics_logged = True
+
         # Check if we just resumed from checkpoint (first step after resume)
         if hasattr(self, "_just_resumed_from_checkpoint") and self._just_resumed_from_checkpoint:
             self._post_checkpoint_load_reset()
@@ -284,7 +289,9 @@ class RFMHeadsTrainer(Trainer):
         num_progress = inputs.get("num_progress", 0)
         num_similarities = inputs.get("num_similarities", 0)
 
-        logger.trace(f"num_preferences: {num_preferences}, num_progress: {num_progress}, num_similarities: {num_similarities}")
+        logger.trace(
+            f"num_preferences: {num_preferences}, num_progress: {num_progress}, num_similarities: {num_similarities}"
+        )
 
         if num_preferences > 0 and preference_inputs:
             rejected_data_gen_strategy = preference_inputs["rejected_data_gen_strategy"]
@@ -328,13 +335,16 @@ class RFMHeadsTrainer(Trainer):
 
         logger.trace("finished updating global metadata")
 
-        self._update_resample_attempt_metrics(inputs)
+        # self._update_resample_attempt_metrics(inputs)
 
-        logger.trace("update resample attempt metrics")
+        # logger.trace("update resample attempt metrics")
 
         # Log custom losses at specified intervals (using our custom logger only)
         if self.state.global_step % self.args.logging_steps == 0:
             self._log_metadata()
+
+        # Log GPU memory usage at every training step for diagnostics
+        log_memory_usage(f"Step {self.state.global_step}")
 
         return loss
 
@@ -527,6 +537,7 @@ class RFMHeadsTrainer(Trainer):
         # Prepare logging data using aggregated losses
         log_data = {
             "step": self.state.global_step,
+            "epoch": self.state.epoch,
             **self.timing_raw,
             **log_metadata,
         }
@@ -548,7 +559,7 @@ class RFMHeadsTrainer(Trainer):
         self.logger.log_scalars(log_data, step=self.state.global_step)
 
         if is_rank_0():
-            logger.info(f"Step {self.state.global_step}:")
+            logger.info(f"Step {self.state.global_step}, Epoch {self.state.epoch:.2f}:")
             logger.info("-" * 50)
             for key in log_global:
                 logger.info(f"  {key}: {log_global[key]}")
@@ -582,12 +593,22 @@ class RFMHeadsTrainer(Trainer):
         log_memory_usage("After accelerator.prepare(dataloader)")
         return prepared_dl
 
-    def _run_custom_evaluations(self):
+    def _run_custom_evaluations(self, eval_step=None):
+        """
+        Run custom evaluations.
+
+        Args:
+            eval_step: Step number to use for logging. If None, uses self.state.global_step.
+                      This ensures consistent step logging to prevent wandb warnings.
+        """
+        if eval_step is None:
+            eval_step = self.state.global_step
+
         logger.info("=" * 100)
         logger.info("STARTING CUSTOM EVALUATIONS")
         log_memory_usage("Before custom evaluations")
         logger.info("=" * 100)
-        
+
         metrics = collections.defaultdict(dict)
         eval_types = self.config.custom_eval.eval_types
 
@@ -615,6 +636,7 @@ class RFMHeadsTrainer(Trainer):
                 logger.info(f"  Processing dataset: {eval_dataset}")
                 log_memory_usage(f"Before dataset {eval_dataset}")
                 eval_cfg = copy.deepcopy(self.config.data)
+                eval_cfg.dataset_type = "rfm"
                 # For similarity_score, eval_dataset is a list of datasets that should be loaded together
                 # For other eval types, eval_dataset is a single dataset name
                 if eval_type == "similarity_score" and isinstance(eval_dataset, list):
@@ -636,10 +658,10 @@ class RFMHeadsTrainer(Trainer):
                 )
                 # Explicitly delete eval_cfg after dataset creation to free memory
                 del eval_cfg
-                
+
                 logger.info(f"  Dataset size: {len(dataset)}")
                 log_memory_usage(f"After creating dataset")
-                
+
                 dataloader = self._make_eval_dataloader(dataset)
                 logger.info(f"  Dataloader created with {len(dataloader)} batches")
                 log_memory_usage(f"After creating dataloader")
@@ -649,13 +671,13 @@ class RFMHeadsTrainer(Trainer):
                 # Explicitly zero any gradients that might exist (shouldn't, but safety measure)
                 if hasattr(self, "optimizer") and self.optimizer is not None:
                     self.optimizer.zero_grad(set_to_none=True)
-                
+
                 # Clear cache before starting evaluation
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                     torch.cuda.synchronize()
                 log_memory_usage(f"After clearing cache, before eval loop")
-                
+
                 eval_results = []
 
                 batch_idx = 0
@@ -664,13 +686,14 @@ class RFMHeadsTrainer(Trainer):
                     dataloader,
                     desc=f"Running {eval_type}, ds: {eval_dataset}, batch size: {self.config.training.per_device_eval_batch_size}",
                 )
+
                 for batch in dataloader_iter:
                     logger.debug(f"  Processing batch {batch_idx}")
                     if batch_idx % 10 == 0:  # Log memory every 10 batches
                         log_memory_usage(f"Batch {batch_idx}/{len(dataloader)}")
-                    
+
                     batch = self._prepare_inputs(batch)
-                    
+
                     # Log batch composition
                     num_pref = batch.get("num_preferences", 0)
                     num_prog = batch.get("num_progress", 0)
@@ -711,6 +734,7 @@ class RFMHeadsTrainer(Trainer):
                         gathered_metadata_dict = self._truncate_metadata_lists(
                             gathered_metadata_dict, num_progress_samples
                         )
+
                         if batch_idx % 10 == 0:
                             log_memory_usage(f"After gathering metadata (batch {batch_idx})")
 
@@ -832,29 +856,31 @@ class RFMHeadsTrainer(Trainer):
                         # Process similarity samples for similarity_score evaluation
                         logger.debug(f"    Processing similarity_score batch")
                         similarity_samples = batch["similarity_inputs"]
-                        
+
                         # Log similarity batch details
                         num_sim_samples = len(similarity_samples.get("data_source", []))
                         logger.debug(f"    Similarity samples on this rank: {num_sim_samples}")
                         if "input_ids" in similarity_samples:
                             logger.debug(f"    input_ids shape: {similarity_samples['input_ids'].shape}")
-                        
+
                         logger.debug(f"    Calling forward_model for similarity")
                         log_memory_usage(f"Before similarity forward pass")
-                        
+
                         with torch.no_grad():
                             outputs, _ = self.forward_model(self.model, similarity_samples, sample_type="similarity")
-                        
+
                         logger.debug(f"    Forward pass complete")
                         log_memory_usage(f"After similarity forward pass")
-                        
+
                         sim_logits = outputs.sim_logits
                         logger.debug(f"    sim_logits shape: {sim_logits.shape if sim_logits is not None else 'None'}")
 
                         # Gather predictions across all ranks
                         logger.debug(f"    Gathering sim_logits across ranks")
                         sim_logits = self.accelerator.gather_for_metrics(sim_logits)
-                        logger.debug(f"    Gathered sim_logits shape: {sim_logits.shape if sim_logits is not None else 'None'}")
+                        logger.debug(
+                            f"    Gathered sim_logits shape: {sim_logits.shape if sim_logits is not None else 'None'}"
+                        )
 
                         # Gather non-tensor metadata using helper (handles optional/None entries)
                         logger.debug(f"    Gathering metadata across ranks")
@@ -908,18 +934,18 @@ class RFMHeadsTrainer(Trainer):
                     del batch, outputs
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
-                    
+
                     # Log memory after cleanup every 10 batches
                     if (batch_idx - 1) % 10 == 0:
-                        log_memory_usage(f"After batch {batch_idx-1} cleanup")
+                        log_memory_usage(f"After batch {batch_idx - 1} cleanup")
 
                 # Close tqdm iterator to release any held references
                 dataloader_iter.close()
                 del dataloader_iter
-                
+
                 logger.info(f"  Finished processing {len(eval_results)} eval results")
                 log_memory_usage(f"After eval loop, before compute_eval_metrics")
-                
+
                 # Compute metrics on all processes
                 # Initialize variables to None to ensure they exist for cleanup
                 plots = None
@@ -989,7 +1015,7 @@ class RFMHeadsTrainer(Trainer):
                                 f"reward_alignment_samples/{ds_name}",
                                 videos_and_figures=rows,
                                 columns=["video", "progress_plot"],
-                                step=self.state.global_step,
+                                step=eval_step,
                             )
                         # For tensorboard (no table support), log each video and its figure separately
                         if self.logger.enabled("tensorboard"):
@@ -999,12 +1025,10 @@ class RFMHeadsTrainer(Trainer):
                                         f"reward_alignment_video/{ds_name}/{idx}",
                                         frames,
                                         fps=2,
-                                        step=self.state.global_step,
+                                        step=eval_step,
                                     )
                             for idx, plot in enumerate(plots):
-                                self.logger.log_figure(
-                                    f"{ds_name}/reward_alignment_plot/{idx}", plot, step=self.state.global_step
-                                )
+                                self.logger.log_figure(f"{ds_name}/reward_alignment_plot/{idx}", plot, step=eval_step)
                         # Close all plots to avoid accumulating open figures
                         for plot in plots:
                             plt.close(plot)
@@ -1028,8 +1052,10 @@ class RFMHeadsTrainer(Trainer):
                         if is_roboarena:
                             # RoboArena visualization: show partial vs predicted rewards
                             for task, group in task_groups.items():
-                                partial_successes = [round(t["partial_success"], 3) for t in group]
-                                predicted_rewards = [round(t["final_predicted_reward"], 3) for t in group]
+                                partial_successes = np.array([t["partial_success"] for t in group]).round(2)
+                                predicted_rewards = np.array([t["final_predicted_reward"] for t in group]).round(2)
+                                partial_successes = partial_successes.tolist()
+                                predicted_rewards = predicted_rewards.tolist()
                                 data.append([task, f"partial:{partial_successes}", f"predicted:{predicted_rewards}"])
                             columns = ["task", "partial_successes", "predicted_rewards"]
                         else:
@@ -1037,18 +1063,22 @@ class RFMHeadsTrainer(Trainer):
                             for task, group in task_groups.items():
                                 quality_to_rews = collections.defaultdict(list)
                                 for t in group:
-                                    quality_to_rews[t["quality_label"]].append(round(t["final_reward"], 2))
+                                    rew = t["final_reward"]
+                                    quality_to_rews[t["quality_label"]].append(rew)
+
+                                for q, r in quality_to_rews.items():
+                                    quality_to_rews[q] = np.array(r).round(2).tolist()
                                 quality_to_rews = ",".join([f"{q}:{r}" for q, r in quality_to_rews.items()])
                                 data.append([task, quality_to_rews])
                             columns = ["task", "quality_and_rews"]
 
                         table_name = f"policy_ranking_samples/{ds_name}"
-
+                        
                         self.logger.log_table(
                             table_name,
                             data=data,
                             columns=columns,
-                            step=self.state.global_step,
+                            step=eval_step,
                         )
                         log_memory_usage(f"Before deleting policy_ranking data")
                         del data, task_groups, task_details
@@ -1078,7 +1108,7 @@ class RFMHeadsTrainer(Trainer):
                             table_name,
                             data=data,
                             columns=columns,
-                            step=self.state.global_step,
+                            step=eval_step,
                         )
                         log_memory_usage(f"Before deleting quality_preference data")
                         del data, task_groups, task_details
@@ -1087,7 +1117,7 @@ class RFMHeadsTrainer(Trainer):
                         log_memory_usage(f"After deleting quality_preference data")
 
                     elif eval_type == "confusion_matrix":
-                        self.logger.log_figure(f"eval_cm/{ds_name}", confusion_plot, step=self.state.global_step)
+                        self.logger.log_figure(f"eval_cm/{ds_name}", confusion_plot, step=eval_step)
                         plt.close(confusion_plot)
                         log_memory_usage(f"Before deleting confusion_matrix data")
                         del confusion_plot, confusion_matrix
@@ -1115,7 +1145,7 @@ class RFMHeadsTrainer(Trainer):
                             f"similarity_score_samples/{ds_name}",
                             data=data,
                             columns=columns,
-                            step=self.state.global_step,
+                            step=eval_step,
                         )
                         log_memory_usage(f"Before deleting similarity_score data")
                         del data, task_groups, task_details
@@ -1141,48 +1171,49 @@ class RFMHeadsTrainer(Trainer):
                 # Clean up dataset, dataloader, and eval_results
                 logger.info(f"  Cleaning up dataset and eval_results")
                 log_memory_usage(f"Before cleanup")
-                
+
                 # Aggressive cleanup to prevent memory leaks
                 # First, delete eval_results which can be large
                 del eval_results
-                
+
                 # For the dataloader, we need to ensure worker processes are shut down
                 # The accelerator.prepare() wraps the dataloader, so we need to clean both
                 # Access the underlying dataloader if it exists and has workers
                 try:
-                    if hasattr(dataloader, '_loader'):
+                    if hasattr(dataloader, "_loader"):
                         # Accelerator-wrapped dataloader
                         underlying_dl = dataloader._loader
                     else:
                         underlying_dl = dataloader
-                    
+
                     # Shutdown workers if they exist
-                    if hasattr(underlying_dl, '_iterator') and underlying_dl._iterator is not None:
+                    if hasattr(underlying_dl, "_iterator") and underlying_dl._iterator is not None:
                         underlying_dl._iterator._shutdown_workers()
                         underlying_dl._iterator = None
                 except (AttributeError, RuntimeError) as e:
                     logger.debug(f"Could not explicitly shutdown workers: {e}")
-                
+
                 # Delete dataloader and dataset
                 del dataloader, dataset
                 log_memory_usage(f"After deleting dataloader and dataset")
 
                 # Force garbage collection
                 import gc
+
                 gc.collect()
                 log_memory_usage(f"After first gc.collect()")
                 gc.collect()  # Call twice for cyclic references
                 log_memory_usage(f"After second gc.collect()")
-                
+
                 # Clear GPU cache
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                     torch.cuda.synchronize()
-                
+
                 log_memory_usage(f"After cleanup for {eval_dataset}")
                 logger.info(f"  Finished {eval_type} for {eval_dataset}")
                 logger.info("-" * 80)
-            
+
             log_memory_usage(f"After completing all datasets for {eval_type}")
             logger.info(f"Finished eval_type: {eval_type}")
             logger.info("=" * 80)
@@ -1204,7 +1235,8 @@ class RFMHeadsTrainer(Trainer):
         if self.accelerator.is_main_process:
             # Convert callback_metrics to float for wandb logging
             to_log = {k: float(v) for k, v in callback_metrics.items()}
-            self.logger.log_scalars(to_log, step=self.state.global_step)
+            to_log["epoch"] = self.state.epoch
+            self.logger.log_scalars(to_log, step=eval_step)
 
         banner("Finished running custom evaluations!")
         log_memory_usage("After all evaluations, before cleanup")
@@ -1227,7 +1259,7 @@ class RFMHeadsTrainer(Trainer):
 
         # Clean up large objects
         del metrics
-        
+
         log_memory_usage("After final cleanup")
         logger.info("=" * 100)
         logger.info("FINISHED CUSTOM EVALUATIONS")
@@ -1239,6 +1271,8 @@ class RFMHeadsTrainer(Trainer):
         """
         Override evaluate method to implement custom RFM evaluation metrics.
         """
+        eval_step = self.state.global_step
+        
         # Save current training mode and set to eval mode
         was_training = self.model.training
         self.model.eval()
@@ -1280,7 +1314,8 @@ class RFMHeadsTrainer(Trainer):
                 logger.info("=" * 50)
 
             # Also log to wandb if available and configured (only on rank 0)
-            self.logger.log_scalars(metrics, step=self.state.global_step)
+            metrics["epoch"] = self.state.epoch
+            self.logger.log_scalars(metrics, step=eval_step)
 
         # Run the custom evaluations
         custom_eval_should_run = (
@@ -1288,7 +1323,7 @@ class RFMHeadsTrainer(Trainer):
             and self.state.global_step % self.config.training.custom_eval_steps == 0
         )
         if custom_eval_should_run:
-            custom_metrics = self._run_custom_evaluations()
+            custom_metrics = self._run_custom_evaluations(eval_step=eval_step)
             metrics.update(custom_metrics)
 
             # to trigger the callback handler
@@ -1341,7 +1376,9 @@ class RFMHeadsTrainer(Trainer):
         total_loss = 0
         log_metadata = {}
 
-        logger.debug(f"Num preferences: {num_preferences}, Num similarities: {num_similarities}, Num progress: {num_progress}")
+        logger.debug(
+            f"Num preferences: {num_preferences}, Num similarities: {num_similarities}, Num progress: {num_progress}"
+        )
 
         # Compute preference loss if we have preference samples
         if num_preferences > 0 and preference_inputs and self.config.model.train_preference_head:
@@ -1519,8 +1556,8 @@ class RFMHeadsTrainer(Trainer):
         masked_spearman_corr = masked_spearman_corr.detach()
 
         # Average per sample, then take mean across batch
-        progress_losses = masked_loss.sum(dim=1) / (mask.sum(dim=1) + 1e-8)
-        progress_loss = progress_losses.mean()
+        # TODO: might need to change this if the mask is per timestep too
+        progress_loss = masked_loss.mean(dim=1).sum(dim=0) / mask.sum()
         spearman_corr = masked_spearman_corr.mean()
 
         # Keep track of the per-sample metrics
@@ -1576,7 +1613,7 @@ class RFMHeadsTrainer(Trainer):
     def forward_model(self, model, inputs, sample_type="progress"):
         """Forward pass for the model."""
         logger.trace(f"forward_model: Starting forward pass for sample_type={sample_type}")
-        
+
         with _timer("time/forward", timing_raw=self.timing_raw):
             if "rewind" in self.config.model.base_model_id:
                 logger.trace("forward_model: Using ReWiND model path")
@@ -1592,7 +1629,9 @@ class RFMHeadsTrainer(Trainer):
                 )
             else:
                 logger.trace("forward_model: Using Qwen/RFM model path, calling model forward")
-                logger.trace(f"forward_model: input_ids shape: {inputs['input_ids'].shape if 'input_ids' in inputs else 'N/A'}")
+                logger.trace(
+                    f"forward_model: input_ids shape: {inputs['input_ids'].shape if 'input_ids' in inputs else 'N/A'}"
+                )
                 model_output, model_timing_raw = model(
                     input_ids=inputs["input_ids"],
                     attention_mask=inputs["attention_mask"],
@@ -1812,7 +1851,7 @@ class RFMHeadsTrainer(Trainer):
         """
 
         logger.trace("computing similarity loss")
-        
+
         # Check batch size consistency across ranks
         batch_size = inputs.get("input_ids", torch.tensor([])).shape[0] if "input_ids" in inputs else 0
         logger.trace(f"similarity batch size: {batch_size}")
@@ -1822,7 +1861,7 @@ class RFMHeadsTrainer(Trainer):
                 logger.trace(f"{key}: {value.shape}")
             else:
                 logger.trace(f"{key}: {value}")
-        
+
         # Single forward pass with batched inputs (already batched by collator)
         # Batch structure: [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
         logger.trace("About to call forward_model for similarity")

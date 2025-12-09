@@ -423,24 +423,26 @@ class RFM(PreTrainedModel):
         """Forward pass for Qwen model."""
         batch_size = input_ids.shape[0] if input_ids is not None else 0
         logger.trace(f"RFM._forward_qwen: Starting, sample_type={sample_type}, batch_size={batch_size}")
-        
+
         # Extract second_per_grid_ts from kwargs if present
         second_per_grid_ts = kwargs.pop("second_per_grid_ts", None)
-        
+
         # Log all input shapes to check for inconsistencies across ranks
-        logger.trace(f"RFM._forward_qwen: Input shapes - input_ids: {input_ids.shape if input_ids is not None else 'None'}, "
-                    f"attention_mask: {attention_mask.shape if attention_mask is not None else 'None'}, "
-                    f"pixel_values: {pixel_values.shape if pixel_values is not None else 'None'}, "
-                    f"pixel_values_videos: {pixel_values_videos.shape if pixel_values_videos is not None else 'None'}")
+        logger.trace(
+            f"RFM._forward_qwen: Input shapes - input_ids: {input_ids.shape if input_ids is not None else 'None'}, "
+            f"attention_mask: {attention_mask.shape if attention_mask is not None else 'None'}, "
+            f"pixel_values: {pixel_values.shape if pixel_values is not None else 'None'}, "
+            f"pixel_values_videos: {pixel_values_videos.shape if pixel_values_videos is not None else 'None'}"
+        )
         if image_grid_thw is not None:
             logger.trace(f"RFM._forward_qwen: image_grid_thw shape: {image_grid_thw.shape}, len: {len(image_grid_thw)}")
         if video_grid_thw is not None:
             logger.trace(f"RFM._forward_qwen: video_grid_thw shape: {video_grid_thw.shape}, len: {len(video_grid_thw)}")
-        
+
         torch.cuda.synchronize()
         logger.trace(f"attention mask sum: {attention_mask.sum()}")
         torch.cuda.synchronize()
-        
+
         model_kwargs = {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
@@ -481,11 +483,13 @@ class RFM(PreTrainedModel):
                 logger.trace(f"RFM._forward_qwen: Processing {len(input_ids)} samples in frame extraction mode")
                 # Compute per-frame embeddings and predictions
                 for i, seq_ids in enumerate(input_ids):
-                    logger.trace(f"RFM._forward_qwen: Processing sample {i}/{len(input_ids)-1}")
+                    logger.trace(f"RFM._forward_qwen: Processing sample {i}/{len(input_ids) - 1}")
                     # Find all vision token positions
                     vision_start_positions = (seq_ids == vision_start_token_id).nonzero(as_tuple=True)[0]
                     vision_end_positions = (seq_ids == vision_end_token_id).nonzero(as_tuple=True)[0]
-                    logger.trace(f"RFM._forward_qwen: Sample {i} - found {len(vision_start_positions)} vision_start tokens, {len(vision_end_positions)} vision_end tokens")
+                    logger.trace(
+                        f"RFM._forward_qwen: Sample {i} - found {len(vision_start_positions)} vision_start tokens, {len(vision_end_positions)} vision_end tokens"
+                    )
 
                     if len(vision_start_positions) == 0:
                         raise ValueError(f"vision_start_token not found in sequence {i}")
@@ -586,7 +590,9 @@ class RFM(PreTrainedModel):
                             progress_logits_B.append(None)
                             success_logits_B.append(None)
 
-        logger.trace(f"RFM._forward_qwen: Stacking progress/success logits, len_A={len(progress_logits_A)}, len_B={len(progress_logits_B)}")
+        logger.trace(
+            f"RFM._forward_qwen: Stacking progress/success logits, len_A={len(progress_logits_A)}, len_B={len(progress_logits_B)}"
+        )
         progress_logits = {
             "A": torch.stack(progress_logits_A) if progress_logits_A else None,
             "B": torch.stack(progress_logits_B) if progress_logits_B[0] is not None else None,
@@ -666,8 +672,10 @@ class RFM(PreTrainedModel):
                 - timing_raw (Dict[str, float]):
                     Timing information for the forward pass.
         """
-        logger.trace(f"RFM.forward: Starting, sample_type={sample_type}, batch_size={input_ids.shape[0] if input_ids is not None else 'N/A'}")
-        
+        logger.trace(
+            f"RFM.forward: Starting, sample_type={sample_type}, batch_size={input_ids.shape[0] if input_ids is not None else 'N/A'}"
+        )
+
         if timing_raw is None:
             timing_raw = {}
 
@@ -707,8 +715,10 @@ class RFM(PreTrainedModel):
             or (sample_type in ["preference", "similarity"] and self.use_progress_token and outputs is not None)
             or sample_type in ["preference", "similarity"]
         )
-        logger.trace(f"RFM.forward: need_token_extraction={need_token_extraction}, sample_type={sample_type}, use_progress_token={self.use_progress_token}")
-        
+        logger.trace(
+            f"RFM.forward: need_token_extraction={need_token_extraction}, sample_type={sample_type}, use_progress_token={self.use_progress_token}"
+        )
+
         if need_token_extraction:
             # Get hidden states (works for both SmolVLM and Qwen)
             logger.trace("RFM.forward: Extracting hidden states for token-based predictions")
@@ -744,7 +754,9 @@ class RFM(PreTrainedModel):
                 logger.trace("RFM.forward: Applying progress and success heads")
                 progress_pred = self.progress_head(prog_token_A_hidden_states).squeeze(-1)  # [B]
                 success_pred = self.success_head(succ_token_A_hidden_states).squeeze(-1)  # [B]
-                logger.trace(f"RFM.forward: progress_pred shape: {progress_pred.shape}, success_pred shape: {success_pred.shape}")
+                logger.trace(
+                    f"RFM.forward: progress_pred shape: {progress_pred.shape}, success_pred shape: {success_pred.shape}"
+                )
 
                 progress_logits["A"] = progress_pred.unsqueeze(-1)
                 success_logits["A"] = success_pred.unsqueeze(-1)

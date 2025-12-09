@@ -205,7 +205,7 @@ class PrefSampler(RFMBaseSampler):
         strategies = []
         # For RoboArena, prioritize partial_success strategy
         if is_roboarena:
-            strategies.append((DataGenStrat.ROBOARENA_PARTIAL_SUCCESS, 1.0))
+            strategies.append((DataGenStrat.ROBOARENA_PARTIAL_SUCCESS, 5.0))
         # Add other strategies if not RoboArena or as fallback
         if self.preference_strategy_ratio[0] > 0:
             strategies.append((DataGenStrat.REWOUND, self.preference_strategy_ratio[0]))

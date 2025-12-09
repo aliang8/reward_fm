@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH -J ant_rfm_qwen_4gpu_bs12_pref_prog_sim
 #SBATCH --gres=gpu:2               # number of GPUs to reserve
-#SBATCH --cpus-per-task=16         # CPUs for data loading (8 per GPU is reasonable)
-#SBATCH --mem=200G                 # Memory allocation (adjust based on your cluster)
-#SBATCH --time=18:00:00            # Time limit (adjust as needed)
+#SBATCH --cpus-per-task=8         # CPUs for data loading (8 per GPU is reasonable)
+#SBATCH --mem=400G                 # Memory allocation (adjust based on your cluster)
+#SBATCH --time=36:00:00            # Time limit (adjust as needed)
 #SBATCH --output=slurm_logs/slurm_%j.out # Standard output
 #SBATCH --error=slurm_logs/slurm_%j.err  # Standard error
 
@@ -20,8 +20,7 @@ echo "Start Time: $(date)"
 echo "Working Directory: $(pwd)"
 
 # Set environment variables
-export RFM_PROCESSED_DATASETS_PATH=/scr/shared/reward_fm/processed_datasets/
-export BS=8
+export BS=12
 
 # Run training with accelerate
 # Using FSDP config with 4 processes for 4 GPUs
@@ -69,6 +68,7 @@ uv run accelerate launch \
     custom_eval.reward_alignment=[reward_alignment] \
     custom_eval.policy_ranking=[policy_ranking] \
     custom_eval.confusion_matrix=[mw] \
+    logging.log_level=trace \
     logging.log_to=[wandb]
 
 # Print completion time

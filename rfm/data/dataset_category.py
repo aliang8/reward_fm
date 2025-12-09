@@ -60,6 +60,8 @@ DATASET_CATEGORY = {
     "preference_only": [
         "jesbu1_oxe_rfm_oxe_bc_z",
         "jesbu1_oxe_rfm_oxe_dlr_edan_shared_control_converted_externally_to_rlds",
+        "roboarena",
+        "auto_eval_rfm",
     ],
     "paired": [
         "jesbu1_h2r_rfm_h2r",
@@ -81,7 +83,6 @@ DATASET_MAP = {
             # "jesbu1_egodex_rfm_egodex_part4",
             # "jesbu1_egodex_rfm_egodex_part5",
             "abraranwar_agibotworld_alpha_rfm_agibotworld",
-            "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
         ],
         "eval": [
             "jesbu1_egodex_rfm_egodex_test",

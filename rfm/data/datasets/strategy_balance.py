@@ -16,7 +16,7 @@ class StrategyBalancedDataset(BaseDataset):
     """
     Dataset that first selects a sample type (preference, progress, similarity) based on ratios,
     then selects a dataset source and trajectory to construct the sample from.
-    
+
     This is different from RFMDataset which selects a trajectory first, then selects a sample type.
     """
 
@@ -79,7 +79,9 @@ class StrategyBalancedDataset(BaseDataset):
             self.normalized_weights = None
 
         logger.info(f"StrategyBalancedDataset initialized with {len(self.dataset)} trajectories")
-        logger.info(f"Sample type ratios: pref={self.sample_type_ratio[0]}, progress={self.sample_type_ratio[1]}, sim={self.sample_type_ratio[2]}")
+        logger.info(
+            f"Sample type ratios: pref={self.sample_type_ratio[0]}, progress={self.sample_type_ratio[1]}, sim={self.sample_type_ratio[2]}"
+        )
         logger.info(f"Available data sources: {list(self.source_indices.keys())}")
 
     def _normalize_data_source_weights(self):
@@ -132,7 +134,7 @@ class StrategyBalancedDataset(BaseDataset):
             # Select a dataset source
             selected_source = self._select_data_source()
             source_indices = self.source_indices.get(selected_source)
-            
+
             if not source_indices:
                 logger.trace(f"[StrategyBalancedDataset] No indices for source {selected_source}, retrying...")
                 continue
@@ -140,13 +142,13 @@ class StrategyBalancedDataset(BaseDataset):
             # Select a trajectory from this source
             selected_traj_idx = random.choice(source_indices)
             item = self.dataset[selected_traj_idx]
-            
+
             traj_id = item["id"]
             data_source = item["data_source"]
             quality_label = item["quality_label"]
-            
+
             logger.trace(
-                f"[StrategyBalancedDataset] Attempt {attempt+1}/{max_attempts}: "
+                f"[StrategyBalancedDataset] Attempt {attempt + 1}/{max_attempts}: "
                 f"Selected traj ID={traj_id}, source={data_source}, quality={quality_label} for {sample_type}"
             )
 
@@ -159,17 +161,13 @@ class StrategyBalancedDataset(BaseDataset):
                     )
                     return self._set_resample_attempts(sample, attempt + 1)
                 else:
-                    logger.trace(
-                        f"[StrategyBalancedDataset] Sampler returned None for ID={traj_id}, retrying..."
-                    )
+                    logger.trace(f"[StrategyBalancedDataset] Sampler returned None for ID={traj_id}, retrying...")
             except ValueError as e:
                 logger.trace(f"[StrategyBalancedDataset] ValueError for ID={traj_id}: {e}, retrying...")
                 continue
 
         # All attempts failed
-        logger.error(
-            f"[StrategyBalancedDataset] Failed to generate {sample_type} sample after {max_attempts} attempts"
-        )
+        logger.error(f"[StrategyBalancedDataset] Failed to generate {sample_type} sample after {max_attempts} attempts")
         raise ValueError(f"Failed to generate {sample_type} sample after {max_attempts} attempts")
 
     def _select_sample_type(self) -> str:
@@ -286,4 +284,3 @@ class StrategyBalancedDataset(BaseDataset):
 
     def get_resample_dataset_attempt_stats(self):
         return self._resample_dataset_attempt_stats
-

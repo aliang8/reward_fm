@@ -89,14 +89,16 @@ class BaseDataset(torch.utils.data.Dataset):
         # Apply all filters simultaneously
         excluded_keywords = ["rings", "hands", "flick"]
         min_frames = config.min_frames_per_trajectory
-        
+
         # Check if we're in progress_only mode (sample_type_ratio == [0, 1, 0])
         # In progress_only mode, filter to only include successful trajectories
         filter_successful_only = False
         if config.sample_type_ratio == [0, 1, 0] and not is_evaluation:
             filter_successful_only = True
-            rank_0_info("Progress-only mode detected (sample_type_ratio=[0, 1, 0]), filtering to only successful trajectories")
-        
+            rank_0_info(
+                "Progress-only mode detected (sample_type_ratio=[0, 1, 0]), filtering to only successful trajectories"
+            )
+
         rank_0_info(f"Filtering dataset with {len(self.dataset)} total trajectories")
         self.dataset, self._combined_indices = self._filter_dataset(
             excluded_keywords=excluded_keywords,
@@ -354,7 +356,14 @@ class BaseDataset(torch.utils.data.Dataset):
 
         return dataset, combined_indices
 
-    def _filter_dataset(self, excluded_keywords: list[str], min_frames: int, dataset, combined_indices: dict, filter_successful_only: bool = False):
+    def _filter_dataset(
+        self,
+        excluded_keywords: list[str],
+        min_frames: int,
+        dataset,
+        combined_indices: dict,
+        filter_successful_only: bool = False,
+    ):
         """Filter dataset based on multiple criteria simultaneously.
 
         Filters out trajectories that:
@@ -454,7 +463,11 @@ class BaseDataset(torch.utils.data.Dataset):
             rank_0_info(f"  Filtering out {total_filtered} trajectories ({', '.join(filter_messages)})")
 
             # Build keep_indices from flags (before filtering)
-            keep_indices = [i for i, (dkw, dfr, dq) in enumerate(zip(drop_kw_list, drop_frames_list, drop_quality_list)) if not (dkw or dfr or dq)]
+            keep_indices = [
+                i
+                for i, (dkw, dfr, dq) in enumerate(zip(drop_kw_list, drop_frames_list, drop_quality_list))
+                if not (dkw or dfr or dq)
+            ]
             # Filter dataset using select with keep_indices (more efficient than filter)
             filtered_dataset = dataset.select(keep_indices)
 

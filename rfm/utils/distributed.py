@@ -76,7 +76,7 @@ def log_fsdp_diagnostics(model, accelerator=None, logger=None):
     """
     Log comprehensive FSDP diagnostics including parameter counts, types, and FSDP wrapping status.
     This helps verify if FSDP is properly configured and working.
-    
+
     Args:
         model: The model to check (may be wrapped in FSDP/DDP)
         accelerator: Optional Accelerate accelerator object to check FSDP plugin configuration
@@ -88,6 +88,7 @@ def log_fsdp_diagnostics(model, accelerator=None, logger=None):
     # Import logger if not provided
     if logger is None:
         from rfm.utils.logger import get_logger
+
         logger = get_logger()
 
     logger.info("=" * 80)
@@ -97,6 +98,7 @@ def log_fsdp_diagnostics(model, accelerator=None, logger=None):
     # Check if FSDP is available
     try:
         from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
         has_fsdp_v1 = True
     except ImportError:
         has_fsdp_v1 = False
@@ -104,6 +106,7 @@ def log_fsdp_diagnostics(model, accelerator=None, logger=None):
 
     try:
         from torch.distributed._composable.fsdp import FSDPModule
+
         has_fsdp_v2 = True
     except ImportError:
         has_fsdp_v2 = False
@@ -166,7 +169,9 @@ def log_fsdp_diagnostics(model, accelerator=None, logger=None):
     logger.info(f"  Trainable parameters: {sum(p.numel() for p in trainable_params):,}")
     logger.info(f"  Frozen parameters: {sum(p.numel() for p in frozen_params):,}")
     if sum(p.numel() for p in all_params) > 0:
-        logger.info(f"  Trainable %: {100 * sum(p.numel() for p in trainable_params) / sum(p.numel() for p in all_params):.4f}%")
+        logger.info(
+            f"  Trainable %: {100 * sum(p.numel() for p in trainable_params) / sum(p.numel() for p in all_params):.4f}%"
+        )
 
     logger.info("\nParameters by device:")
     for device, count in sorted(device_counts.items()):
@@ -222,7 +227,7 @@ def log_fsdp_diagnostics(model, accelerator=None, logger=None):
     logger.info("\nGradient Checkpointing:")
     gradient_checkpointing_enabled = False
     gradient_checkpointing_info = []
-    
+
     # Check unwrapped model first
     if hasattr(unwrapped_model, "is_gradient_checkpointing"):
         gradient_checkpointing_enabled = unwrapped_model.is_gradient_checkpointing
@@ -232,7 +237,7 @@ def log_fsdp_diagnostics(model, accelerator=None, logger=None):
         gradient_checkpointing_info.append(f"  Root model: {gradient_checkpointing_enabled}")
     else:
         gradient_checkpointing_info.append("  Root model: is_gradient_checkpointing attribute not found")
-    
+
     # Check if the underlying model (e.g., base_model) has gradient checkpointing
     if hasattr(unwrapped_model, "model"):
         base_model = unwrapped_model.model
@@ -242,20 +247,21 @@ def log_fsdp_diagnostics(model, accelerator=None, logger=None):
         elif hasattr(base_model, "gradient_checkpointing"):
             base_gc = base_model.gradient_checkpointing
             gradient_checkpointing_info.append(f"  Base model: {base_gc}")
-    
+
     # Check wrapped model as well
     if hasattr(model, "is_gradient_checkpointing") and model != unwrapped_model:
         wrapped_gc = model.is_gradient_checkpointing
         gradient_checkpointing_info.append(f"  Wrapped model: {wrapped_gc}")
-    
+
     for info in gradient_checkpointing_info:
         logger.info(info)
-    
+
     if not gradient_checkpointing_info or all("not found" in info.lower() for info in gradient_checkpointing_info):
         logger.info("  Note: Could not determine gradient checkpointing status from model attributes")
 
     # Check distributed environment
     import torch.distributed as dist
+
     if dist.is_available() and dist.is_initialized():
         logger.info(f"\nDistributed Environment:")
         logger.info(f"  World size: {dist.get_world_size()}")

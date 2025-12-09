@@ -13,7 +13,7 @@ from rfm.utils.logger import Logger, get_logger, log_memory_usage
 
 import copy
 import wandb
-from rfm.utils.distributed import is_rank_0, get_rank
+from rfm.utils.distributed import is_rank_0, get_rank, log_fsdp_diagnostics
 from rfm.utils.timer import _timer
 from rfm.utils.metrics import compute_spearman_correlation
 from rfm.utils.setup_utils import setup_dataset, setup_batch_collator, setup_custom_eval_dataset
@@ -125,6 +125,7 @@ class RFMHeadsTrainer(Trainer):
         self.global_metadata = collections.defaultdict(float)
         self.timing_raw = collections.defaultdict(float)
         self._ddp_static_graph_set = False  # Flag to track if DDP static graph has been set
+        self._fsdp_diagnostics_logged = False  # Flag to track if FSDP diagnostics have been logged
 
         if logger is not None:
             self.logger = logger
@@ -253,6 +254,10 @@ class RFMHeadsTrainer(Trainer):
         Perform a training step and log custom losses.
         """
         logger.debug("training_step: Starting")
+
+        if not self._fsdp_diagnostics_logged:
+            log_fsdp_diagnostics(model, accelerator=self.accelerator, logger=logger)
+            self._fsdp_diagnostics_logged = True
 
         # Check if we just resumed from checkpoint (first step after resume)
         if hasattr(self, "_just_resumed_from_checkpoint") and self._just_resumed_from_checkpoint:

@@ -191,8 +191,22 @@ class PrefSampler(RFMBaseSampler):
         rejected_traj = None
         strategy_used = None
 
+        # Check if this is a RoboArena trajectory (has partial_success and data_source contains "roboarena")
+        is_roboarena = False
+        data_source = chosen_traj.get("data_source", "")
+        partial_success = chosen_traj.get("partial_success")
+        if partial_success is not None and data_source and "roboarena" in str(data_source).lower():
+            is_roboarena = True
+            logger.trace(
+                f"[PREF SAMPLER] RoboArena trajectory detected (ID: {chosen_traj.get('id', 'unknown')}, partial_success: {partial_success})"
+            )
+
         # Strategy selection with rebalancing on failure
         strategies = []
+        # For RoboArena, prioritize partial_success strategy
+        if is_roboarena:
+            strategies.append((DataGenStrat.ROBOARENA_PARTIAL_SUCCESS, 1.0))
+        # Add other strategies if not RoboArena or as fallback
         if self.preference_strategy_ratio[0] > 0:
             strategies.append((DataGenStrat.REWOUND, self.preference_strategy_ratio[0]))
         if self._has_suboptimal and self.preference_strategy_ratio[1] > 0:
@@ -241,7 +255,13 @@ class PrefSampler(RFMBaseSampler):
             # Execute selected strategy with retry logic
             max_retries = 3  # Number of retry attempts for sampling
 
-            if selected_strategy == DataGenStrat.REWOUND:
+            if selected_strategy == DataGenStrat.ROBOARENA_PARTIAL_SUCCESS:
+                rejected_traj = None
+                for _ in range(max_retries):
+                    rejected_traj = self._get_lower_partial_success_traj(chosen_traj)
+                    if rejected_traj is not None:
+                        break
+            elif selected_strategy == DataGenStrat.REWOUND:
                 rejected_traj = None
                 for _ in range(max_retries):
                     rejected_traj = self._get_rewound_traj(chosen_traj)
@@ -293,7 +313,8 @@ class PrefSampler(RFMBaseSampler):
         chosen_trajectory = self._get_traj_from_data(chosen_traj)
         rejected_trajectory = self._get_traj_from_data(rejected_traj)
 
-        # If our strategy is different task, make sure the rejected trajectory has 0 progress
+        # If our strategy is different task or suboptimal, make sure the rejected trajectory has 0 progress
+        # For RoboArena partial_success, keep the original progress (it's already lower)
         if strategy_used in [
             DataGenStrat.DIFFERENT_TASK,
             DataGenStrat.DIFFERENT_TASK_INSTRUCTION,

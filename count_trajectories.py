@@ -158,7 +158,13 @@ def main():
                 status_style = "red"
                 count_value = -1  # Use -1 for sorting (will appear at end)
 
-            train_rows.append((count_value, dataset_path, subset, count_str, f"[{status_style}]{status}[/{status_style}]"))
+            train_rows.append((
+                count_value,
+                dataset_path,
+                subset,
+                count_str,
+                f"[{status_style}]{status}[/{status_style}]",
+            ))
 
     # Sort by count (descending), then add to table
     train_rows.sort(key=lambda x: x[0], reverse=True)
@@ -196,7 +202,13 @@ def main():
                 status_style = "red"
                 count_value = -1  # Use -1 for sorting (will appear at end)
 
-            eval_rows.append((count_value, dataset_path, subset, count_str, f"[{status_style}]{status}[/{status_style}]"))
+            eval_rows.append((
+                count_value,
+                dataset_path,
+                subset,
+                count_str,
+                f"[{status_style}]{status}[/{status_style}]",
+            ))
 
     # Sort by count (descending), then add to table
     eval_rows.sort(key=lambda x: x[0], reverse=True)
@@ -219,11 +231,7 @@ def main():
     train_agg_table.add_column("Subsets Found/Total", justify="center", style="green")
 
     # Sort by count (descending)
-    train_agg_items = sorted(
-        train_dataset_aggregates.items(),
-        key=lambda x: x[1]["count"],
-        reverse=True
-    )
+    train_agg_items = sorted(train_dataset_aggregates.items(), key=lambda x: x[1]["count"], reverse=True)
 
     for dataset_path, agg in train_agg_items:
         count_str = f"{agg['count']:,}" if agg["count"] > 0 else "0"
@@ -247,11 +255,7 @@ def main():
     eval_agg_table.add_column("Subsets Found/Total", justify="center", style="green")
 
     # Sort by count (descending)
-    eval_agg_items = sorted(
-        eval_dataset_aggregates.items(),
-        key=lambda x: x[1]["count"],
-        reverse=True
-    )
+    eval_agg_items = sorted(eval_dataset_aggregates.items(), key=lambda x: x[1]["count"], reverse=True)
 
     for dataset_path, agg in eval_agg_items:
         count_str = f"{agg['count']:,}" if agg["count"] > 0 else "0"

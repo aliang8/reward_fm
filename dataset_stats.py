@@ -97,9 +97,9 @@ def compute_dataset_statistics(cache_dir: str, dataset_path: str, subset: str) -
                 indices = json.load(f)
                 quality_indices = indices.get("quality_indices", {})
                 # Get list of quality labels that have trajectories
-                result["quality_labels_available"] = sorted(
-                    [label for label, traj_indices in quality_indices.items() if len(traj_indices) > 0]
-                )
+                result["quality_labels_available"] = sorted([
+                    label for label, traj_indices in quality_indices.items() if len(traj_indices) > 0
+                ])
 
         # Compute frame statistics
         # Get frames_shape column directly (much faster than iterating)

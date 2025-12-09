@@ -33,7 +33,7 @@ def setup_loguru_logging(log_level: str = "INFO", output_dir: Optional[str] = No
     """
     Initialize loguru logger with rank-aware formatting and log level.
     Uses loguru's default format to preserve automatic rich formatting for booleans, numbers, etc.
-    
+
     Supported log levels (from most to least verbose):
     - TRACE: Most verbose debugging (level 5)
     - DEBUG2: Intermediate debug level (level 8)
@@ -42,14 +42,14 @@ def setup_loguru_logging(log_level: str = "INFO", output_dir: Optional[str] = No
     - WARNING: Warning messages (level 30)
     - ERROR: Error messages (level 40)
     - CRITICAL: Critical errors (level 50)
-    
+
     Args:
         log_level: Logging level (e.g., "TRACE", "DEBUG2", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
         output_dir: Optional directory to write log files to
     """
     # Add custom log levels first
     _add_custom_log_levels()
-    
+
     loguru_logger.remove()
     rank = get_rank()
     rank_prefix = f"[Rank {rank}] "
@@ -60,7 +60,7 @@ def setup_loguru_logging(log_level: str = "INFO", output_dir: Optional[str] = No
         "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
         "<level>{message}</level>"
     )
-    
+
     # Console handler using sys.stderr to preserve loguru's rich formatting
     loguru_logger.add(
         sys.stderr,
@@ -68,7 +68,7 @@ def setup_loguru_logging(log_level: str = "INFO", output_dir: Optional[str] = No
         level=log_level.upper(),
         colorize=True,
     )
-    
+
     # Optional file handler if output_dir is provided
     if output_dir and is_rank_0():
         log_file = os.path.join(output_dir, "training.log")
@@ -84,7 +84,7 @@ def setup_loguru_logging(log_level: str = "INFO", output_dir: Optional[str] = No
 
 class Logger:
     """Logger for metrics (wandb/tensorboard). For console logging, use loguru logger directly."""
-    
+
     def __init__(
         self,
         log_to: Iterable[str] | None,
@@ -97,7 +97,7 @@ class Logger:
         self._use_wandb = "wandb" in backends
         self._use_tb = "tensorboard" in backends
         self._is_main = bool(is_main_process)
-        
+
         # Setup loguru for console logging
         setup_loguru_logging(log_level=log_level, output_dir=output_dir if is_main_process else None)
 
@@ -109,12 +109,22 @@ class Logger:
             os.makedirs(logging_dir, exist_ok=True)
             self._tb_writer = SummaryWriter(log_dir=logging_dir)
 
-    def init_wandb(self, project: Optional[str], entity: Optional[str], name: Optional[str], config: Optional[dict]):
+    def init_wandb(
+        self,
+        project: Optional[str],
+        entity: Optional[str],
+        name: Optional[str],
+        config: Optional[dict],
+        notes: Optional[str] = None,
+    ):
         if not (self._use_wandb and self._is_main):
             return None
         if self._wandb_run is not None:
             return self._wandb_run
-        self._wandb_run = wandb.init(project=project, entity=entity, name=name, config=config)
+        init_kwargs = {"project": project, "entity": entity, "name": name, "config": config}
+        if notes:
+            init_kwargs["notes"] = notes
+        self._wandb_run = wandb.init(**init_kwargs)
         return self._wandb_run
 
     def enabled(self, backend: str) -> bool:
@@ -190,7 +200,11 @@ class Logger:
                                 # Fallback: store raw value
                                 row.append(x)
                 rows.append(row)
-            self._wandb_run.log({tag: wandb.Table(data=rows, columns=columns)}, step=step)
+            if step is not None:
+                tag_with_step = f"{tag}/step_{step}"
+            else:
+                tag_with_step = tag
+            self._wandb_run.log({tag_with_step: wandb.Table(data=rows, columns=columns)}, step=step)
 
     def add_text(self, tag: str, text: str, step: Optional[int] = None):
         if not self._is_main:
@@ -209,7 +223,11 @@ class Logger:
         if not self._is_main:
             return
         if self.enabled("wandb"):
-            self._wandb_run.log({tag: wandb.Table(data=data, columns=columns)}, step=step)
+            if step is not None:
+                tag_with_step = f"{tag}/step_{step}"
+            else:
+                tag_with_step = tag
+            self._wandb_run.log({tag_with_step: wandb.Table(data=data, columns=columns)}, step=step)
 
     def log_video(self, tag: str, video: Any, fps: int = 10, step: Optional[int] = None):
         """
@@ -222,7 +240,7 @@ class Logger:
         # wandb
         if self.enabled("wandb"):
             if isinstance(video, str):
-                self._wandb_run.log({tag: wandb.Video(video, fps=fps)})
+                self._wandb_run.log({tag: wandb.Video(video, fps=fps)}, step=step)
             else:
                 arr = None
                 if isinstance(video, np.ndarray):
@@ -274,6 +292,9 @@ class Logger:
             "wandb_entity": run.entity,
             "wandb_url": run.url,
         }
+        # Include notes if available
+        if hasattr(run, "notes") and run.notes:
+            info["wandb_notes"] = run.notes
         os.makedirs(output_dir, exist_ok=True)
         path = os.path.join(output_dir, "wandb_info.json")
         with open(path, "w") as f:
@@ -327,58 +348,60 @@ def rank_0_debug2(*args, **kwargs):
 
 def log_memory_usage(prefix="", rank=None, output_dir=None):
     """Log GPU and CPU memory usage in a readable format.
-    
+
     Args:
         prefix: Prefix string to identify the logging point
         rank: Process rank (auto-detected if None)
         output_dir: Directory to write memory log file (uses OUTPUT_DIR env var if None)
-    
+
     Returns:
         str: Memory usage string
     """
     import psutil
     import datetime
-    
+
     if rank is None:
         rank = get_rank()
-    
+
     memory_info = []
-    
+
     # GPU memory
     if torch.cuda.is_available():
         for i in range(torch.cuda.device_count()):
             allocated = torch.cuda.memory_allocated(i) / 1024**3  # GB
             reserved = torch.cuda.memory_reserved(i) / 1024**3  # GB
             max_allocated = torch.cuda.max_memory_allocated(i) / 1024**3  # GB
-            memory_info.append(f"GPU{i}: {allocated:.2f}GB alloc, {reserved:.2f}GB reserved, {max_allocated:.2f}GB peak")
-    
+            memory_info.append(
+                f"GPU{i}: {allocated:.2f}GB alloc, {reserved:.2f}GB reserved, {max_allocated:.2f}GB peak"
+            )
+
     # CPU memory
     process = psutil.Process()
     mem_info = process.memory_info()
     cpu_mem_rss = mem_info.rss / 1024**3  # GB - Resident Set Size (actual physical memory)
     cpu_mem_vms = mem_info.vms / 1024**3  # GB - Virtual Memory Size
-    
+
     # Get system-wide memory stats
     system_mem = psutil.virtual_memory()
     system_total = system_mem.total / 1024**3  # GB
     system_available = system_mem.available / 1024**3  # GB
     system_percent = system_mem.percent
-    
+
     memory_info.append(
         f"CPU: {cpu_mem_rss:.2f}GB RSS, {cpu_mem_vms:.2f}GB VMS | "
         f"System: {system_available:.2f}GB/{system_total:.2f}GB avail ({system_percent:.1f}% used)"
     )
-    
+
     memory_str = " | ".join(memory_info) if memory_info else "No memory info available"
     loguru_logger.info(f"[Rank {rank}] {prefix} Memory: {memory_str}")
-    
+
     # Also write to a memory log file for post-mortem analysis
     if output_dir is None:
         output_dir = os.environ.get("OUTPUT_DIR", ".")
-    
+
     memory_log_file = os.path.join(output_dir, f"memory_log_rank{rank}.txt")
     with open(memory_log_file, "a") as f:
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         f.write(f"{timestamp} | {prefix} | {memory_str}\n")
-    
+
     return memory_str

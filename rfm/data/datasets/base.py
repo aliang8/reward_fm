@@ -41,9 +41,7 @@ def resolve_dataset_keys(dataset_keys: list[str] | list[list[str]], split: str) 
                     if split in DATASET_MAP[key]:
                         resolved_group.extend(DATASET_MAP[key][split])
                     else:
-                        rank_0_warning(
-                            f"Key '{key}' found in DATASET_MAP but no '{split}' split defined. Skipping."
-                        )
+                        rank_0_warning(f"Key '{key}' found in DATASET_MAP but no '{split}' split defined. Skipping.")
                 else:
                     # Not a key, assume it's already a dataset name
                     resolved_group.append(key)
@@ -88,11 +86,28 @@ class BaseDataset(torch.utils.data.Dataset):
         # Load trajectory dataset
         self.dataset, self._combined_indices = self._load_all_datasets()
 
-        # Filter out tasks containing excluded keywords
+        # Apply all filters simultaneously
         excluded_keywords = ["rings", "hands", "flick"]
-        self.dataset, self._combined_indices = self._filter_dataset_by_task_keywords(
-            excluded_keywords, self.dataset, self._combined_indices
+        min_frames = config.min_frames_per_trajectory
+
+        # Check if we're in progress_only mode (sample_type_ratio == [0, 1, 0])
+        # In progress_only mode, filter to only include successful trajectories
+        filter_successful_only = False
+        if config.sample_type_ratio == [0, 1, 0] and not is_evaluation:
+            filter_successful_only = True
+            rank_0_info(
+                "Progress-only mode detected (sample_type_ratio=[0, 1, 0]), filtering to only successful trajectories"
+            )
+
+        rank_0_info(f"Filtering dataset with {len(self.dataset)} total trajectories")
+        self.dataset, self._combined_indices = self._filter_dataset(
+            excluded_keywords=excluded_keywords,
+            min_frames=min_frames,
+            dataset=self.dataset,
+            combined_indices=self._combined_indices,
+            filter_successful_only=filter_successful_only,
         )
+        rank_0_info(f"Dataset filtered with {len(self.dataset)} total trajectories")
 
         # Set cached fields after filtering
         self._cached_ids = self.dataset["id"]
@@ -136,7 +151,9 @@ class BaseDataset(torch.utils.data.Dataset):
 
             dataset, combined_indices = self._load_preprocessed_cache(cache_dir, is_training=not self.is_evaluation)
 
-            rank_0_info(f"Successfully loaded preprocessed {cache_type} datasets with {len(dataset)} trajectory indices")
+            rank_0_info(
+                f"Successfully loaded preprocessed {cache_type} datasets with {len(dataset)} trajectory indices"
+            )
 
             return dataset, combined_indices
         else:
@@ -318,7 +335,9 @@ class BaseDataset(torch.utils.data.Dataset):
 
         dataset_type = "training" if is_training else "evaluation"
         rank_0_info(f"✅ Loaded {len(dataset)} total trajectories from preprocessed {dataset_type} datasets")
-        rank_0_info(f"  📊 Available datasets: {len(available_datasets)}/{len(missing_datasets) + len(available_datasets)}")
+        rank_0_info(
+            f"  📊 Available datasets: {len(available_datasets)}/{len(missing_datasets) + len(available_datasets)}"
+        )
         rank_0_info(f"  📊 Missing datasets: {len(missing_datasets)}")
         banner("Dataset statistics")
         rank_0_info(f"Robot trajectories: {len(combined_indices['robot_trajectories'])}")
@@ -331,93 +350,187 @@ class BaseDataset(torch.utils.data.Dataset):
             rank_0_info(f"  {quality_label}: {len(combined_indices['quality_indices'][quality_label])}")
         rank_0_info(f"Data sources available: {combined_indices['source_indices'].keys()}")
         rank_0_info(f"Number of paired tasks: {len(combined_indices['paired_human_robot_by_task'])}")
-        rank_0_info(f"Number of tasks with both multiple quality labels: {len(combined_indices['tasks_with_multiple_quality_labels'])}")
+        rank_0_info(
+            f"Number of tasks with both multiple quality labels: {len(combined_indices['tasks_with_multiple_quality_labels'])}"
+        )
 
         return dataset, combined_indices
 
-    def _filter_dataset_by_task_keywords(self, excluded_keywords: list[str], dataset, combined_indices: dict):
-        """Filter out dataset rows where task contains any of the excluded keywords.
+    def _filter_dataset(
+        self,
+        excluded_keywords: list[str],
+        min_frames: int,
+        dataset,
+        combined_indices: dict,
+        filter_successful_only: bool = False,
+    ):
+        """Filter dataset based on multiple criteria simultaneously.
+
+        Filters out trajectories that:
+        - Have tasks containing excluded keywords
+        - Have <= min_frames frames
+        - (If filter_successful_only=True) Have quality_label != "successful"
+
+        Uses batched map operations for efficient parallel processing.
 
         Args:
-            excluded_keywords: List of keywords to exclude (case-insensitive)
+            excluded_keywords: List of keywords to exclude from task names (case-insensitive)
+            min_frames: Minimum number of frames required (trajectories with frames > min_frames are kept)
             dataset: The dataset to filter
             combined_indices: Dictionary of combined indices to update after filtering
+            filter_successful_only: If True, only keep trajectories with quality_label == "successful"
 
         Returns:
             tuple: (filtered_dataset, filtered_combined_indices)
                 - filtered_dataset: The filtered dataset
                 - filtered_combined_indices: The filtered combined indices
         """
-        task_column = dataset["task"]
+        excluded_keywords_lower = [kw.lower() for kw in excluded_keywords]
 
-        # Create boolean mask: True for rows to keep (task doesn't contain excluded keywords)
-        keep_mask = []
-        for task in task_column:
-            if task is None:
-                keep_mask.append(True)  # Keep rows with None tasks
-            else:
-                task_lower = task.lower()
-                should_keep = not any(keyword in task_lower for keyword in excluded_keywords)
-                keep_mask.append(should_keep)
+        def add_filter_flags(batch):
+            """Add filter flags to batch for efficient filtering."""
+            tasks = batch["task"]
+            frames_shapes = batch["frames_shape"]
+            quality_labels = batch["quality_label"]
 
-        # Filter dataset using the mask
-        if not all(keep_mask):
-            num_filtered = sum(1 for x in keep_mask if not x)
-            rank_0_info(f"  Filtering out {num_filtered} trajectories with excluded task keywords: {excluded_keywords}")
-            # Use select to efficiently filter by indices
-            keep_indices = [i for i, keep in enumerate(keep_mask) if keep]
+            drop_kw = []
+            drop_frames = []
+            drop_quality = []
+
+            for task, fs, quality_label in zip(tasks, frames_shapes, quality_labels):
+                dkw = False
+                dfr = False
+                dq = False
+
+                # Check excluded keywords
+                if task is not None:
+                    t = task.lower()
+                    if any(kw in t for kw in excluded_keywords_lower):
+                        dkw = True
+
+                # Check minimum frames (only if not dropped by keywords)
+                if not dkw and fs is not None and not (isinstance(fs, (list, tuple)) and len(fs) == 0):
+                    if isinstance(fs, (list, tuple)):
+                        num_frames = fs[0]
+                    else:
+                        num_frames = fs
+                    if num_frames <= min_frames:
+                        dfr = True
+
+                # Check quality_label for successful-only filter (only if not dropped by other filters)
+                if filter_successful_only and not dkw and not dfr:
+                    if quality_label != "successful":
+                        dq = True
+
+                drop_kw.append(dkw)
+                drop_frames.append(dfr)
+                drop_quality.append(dq)
+
+            return {
+                "drop_by_keywords": drop_kw,
+                "drop_by_frames": drop_frames,
+                "drop_by_quality": drop_quality,
+            }
+
+        # 1) Compute flags in a single batched pass
+        dataset_with_flags = dataset.map(
+            add_filter_flags,
+            batched=True,
+            num_proc=8,  # Can be increased for parallel processing if needed
+            desc="Computing filter flags",
+        )
+
+        # 2) Compute counts and build keep_indices from flags
+        drop_kw_list = dataset_with_flags["drop_by_keywords"]
+        drop_frames_list = dataset_with_flags["drop_by_frames"]
+        drop_quality_list = dataset_with_flags["drop_by_quality"]
+
+        filtered_by_keywords = int(sum(drop_kw_list))
+        filtered_by_frames = int(sum(drop_frames_list))
+        filtered_by_quality = int(sum(drop_quality_list))
+        total_filtered = filtered_by_keywords + filtered_by_frames + filtered_by_quality
+
+        # 3) Filter using precomputed flags (efficient)
+        if total_filtered > 0:
+            filter_messages = []
+            if filtered_by_keywords > 0:
+                filter_messages.append(f"{filtered_by_keywords} with excluded task keywords: {excluded_keywords}")
+            if filtered_by_frames > 0:
+                filter_messages.append(f"{filtered_by_frames} with <= {min_frames} frames")
+            if filtered_by_quality > 0:
+                filter_messages.append(f"{filtered_by_quality} with quality_label != 'successful'")
+
+            rank_0_info(f"  Filtering out {total_filtered} trajectories ({', '.join(filter_messages)})")
+
+            # Build keep_indices from flags (before filtering)
+            keep_indices = [
+                i
+                for i, (dkw, dfr, dq) in enumerate(zip(drop_kw_list, drop_frames_list, drop_quality_list))
+                if not (dkw or dfr or dq)
+            ]
+            # Filter dataset using select with keep_indices (more efficient than filter)
             filtered_dataset = dataset.select(keep_indices)
 
-            # Update combined_indices by filtering out excluded indices
-            # Create a mapping from old index to new index
-            old_to_new = {old_idx: new_idx for new_idx, old_idx in enumerate(keep_indices)}
-
-            # Create a copy of combined_indices to avoid mutating the input
-            filtered_combined_indices = {}
-
-            # Filter all index lists and dicts
-            for key in combined_indices:
-                if isinstance(combined_indices[key], list):
-                    # Filter list indices
-                    filtered_combined_indices[key] = [
-                        old_to_new[idx] for idx in combined_indices[key] if idx in old_to_new
-                    ]
-                elif isinstance(combined_indices[key], dict):
-                    # Filter dict indices
-                    filtered_dict = {}
-                    for subkey, subindices in combined_indices[key].items():
-                        # Handle nested dict structure (e.g., paired_human_robot_by_task has {"robot": [...], "human": [...]})
-                        if isinstance(subindices, dict):
-                            # This is a nested dict like {"robot": [...], "human": [...]}
-                            filtered_nested_dict = {}
-                            for nested_key, nested_list in subindices.items():
-                                if isinstance(nested_list, list):
-                                    filtered_nested_list = [old_to_new[idx] for idx in nested_list if idx in old_to_new]
-                                    if filtered_nested_list:  # Only keep if there are remaining indices
-                                        filtered_nested_dict[nested_key] = filtered_nested_list
-                            # Only keep the task if it has at least one non-empty list (robot or human)
-                            if filtered_nested_dict:
-                                filtered_dict[subkey] = filtered_nested_dict
-                        elif isinstance(subindices, list):
-                            # Regular dict with list values (e.g., task_indices, source_indices)
-                            filtered_indices = [old_to_new[idx] for idx in subindices if idx in old_to_new]
-                            if filtered_indices:  # Only keep keys with remaining indices
-                                filtered_dict[subkey] = filtered_indices
-                    filtered_combined_indices[key] = filtered_dict
-                elif isinstance(combined_indices[key], set):
-                    # Filter set indices
-                    filtered_combined_indices[key] = {
-                        old_to_new[idx] for idx in combined_indices[key] if idx in old_to_new
-                    }
-                else:
-                    # Keep other types as-is (e.g., strings, numbers)
-                    filtered_combined_indices[key] = combined_indices[key]
+            # Update combined_indices using the shared helper
+            filtered_combined_indices = self._update_indices_after_filtering(combined_indices, keep_indices)
         else:
             # No filtering needed, return original dataset and indices
             filtered_dataset = dataset
             filtered_combined_indices = combined_indices
 
         return filtered_dataset, filtered_combined_indices
+
+    def _update_indices_after_filtering(self, combined_indices: dict, keep_indices: list[int]) -> dict:
+        """Update combined_indices after filtering the dataset.
+
+        Args:
+            combined_indices: Dictionary of combined indices before filtering
+            keep_indices: List of indices to keep (from the original dataset)
+
+        Returns:
+            dict: Updated combined_indices with remapped indices
+        """
+        # Create a mapping from old index to new index
+        old_to_new = {old_idx: new_idx for new_idx, old_idx in enumerate(keep_indices)}
+
+        # Create a copy of combined_indices to avoid mutating the input
+        filtered_combined_indices = {}
+
+        # Filter all index lists and dicts
+        for key in combined_indices:
+            if isinstance(combined_indices[key], list):
+                # Filter list indices
+                filtered_combined_indices[key] = [old_to_new[idx] for idx in combined_indices[key] if idx in old_to_new]
+            elif isinstance(combined_indices[key], dict):
+                # Filter dict indices
+                filtered_dict = {}
+                for subkey, subindices in combined_indices[key].items():
+                    # Handle nested dict structure (e.g., paired_human_robot_by_task has {"robot": [...], "human": [...]})
+                    if isinstance(subindices, dict):
+                        # This is a nested dict like {"robot": [...], "human": [...]}
+                        filtered_nested_dict = {}
+                        for nested_key, nested_list in subindices.items():
+                            if isinstance(nested_list, list):
+                                filtered_nested_list = [old_to_new[idx] for idx in nested_list if idx in old_to_new]
+                                if filtered_nested_list:  # Only keep if there are remaining indices
+                                    filtered_nested_dict[nested_key] = filtered_nested_list
+                        # Only keep the task if it has at least one non-empty list (robot or human)
+                        if filtered_nested_dict:
+                            filtered_dict[subkey] = filtered_nested_dict
+                    elif isinstance(subindices, list):
+                        # Regular dict with list values (e.g., task_indices, source_indices)
+                        filtered_indices = [old_to_new[idx] for idx in subindices if idx in old_to_new]
+                        if filtered_indices:  # Only keep keys with remaining indices
+                            filtered_dict[subkey] = filtered_indices
+                filtered_combined_indices[key] = filtered_dict
+            elif isinstance(combined_indices[key], set):
+                # Filter set indices
+                filtered_combined_indices[key] = {old_to_new[idx] for idx in combined_indices[key] if idx in old_to_new}
+            else:
+                # Keep other types as-is (e.g., strings, numbers)
+                filtered_combined_indices[key] = combined_indices[key]
+
+        return filtered_combined_indices
 
     # ------------------------------------------------------------------
     # Shared resample helpers for subclasses
@@ -497,9 +610,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         # Count tasks with both robot and human trajectories
         tasks_with_pairs = [
-            task
-            for task, task_dict in paired_human_robot_by_task.items()
-            if task_dict["robot"] and task_dict["human"]
+            task for task, task_dict in paired_human_robot_by_task.items() if task_dict["robot"] and task_dict["human"]
         ]
         num_tasks_with_pairs = len(tasks_with_pairs)
         rank_0_info(

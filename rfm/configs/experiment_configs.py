@@ -189,8 +189,10 @@ class DataConfig:
     dataloader_pin_memory: bool = field(default=True, metadata={"help": "Whether to pin memory in dataloader"})
     dataloader_num_workers: int = field(default=0, metadata={"help": "Number of worker processes for dataloader"})
     dataloader_persistent_workers: bool = field(
-        default=False, 
-        metadata={"help": "If True, the data loader will not shut down the worker processes after a dataset has been consumed once. This allows to maintain the workers dataset instances alive."}
+        default=False,
+        metadata={
+            "help": "If True, the data loader will not shut down the worker processes after a dataset has been consumed once. This allows to maintain the workers dataset instances alive."
+        },
     )
 
     # Video binned dataset specific parameters
@@ -351,7 +353,7 @@ class SaveBestConfig:
     keep_top_k: int = field(default=1, metadata={"help": "Number of best checkpoints/uploads to keep"})
     save_every: Optional[int] = field(
         default=None,
-        metadata={"help": "Save 'latest' checkpoint every N steps (should be multiple of eval_steps). None disables."}
+        metadata={"help": "Save 'latest' checkpoint every N steps (should be multiple of eval_steps). None disables."},
     )
 
     # Hub upload configuration
@@ -382,6 +384,9 @@ class LoggingConfig:
     # Wandb configuration
     wandb_project: str = field(default="rfm-model", metadata={"help": "Wandb project name"})
     wandb_entity: Optional[str] = field(default=None, metadata={"help": "Wandb entity/username"})
+    wandb_notes: Optional[str] = field(
+        default=None, metadata={"help": "Optional notes/comment to add to the wandb run"}
+    )
     # Log level: "TRACE", "DEBUG2", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
     log_level: str = field(
         default="INFO",

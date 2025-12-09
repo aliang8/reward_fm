@@ -56,3 +56,8 @@ class OfflineEvalConfig:
         default_factory=CustomEvaluationConfig,
         metadata={"help": "Custom evaluation configuration (reused from experiment_configs)"},
     )
+
+    def __post_init__(self):
+        """Convert nested dict configs to dataclass instances."""
+        if isinstance(self.custom_eval, dict):
+            self.custom_eval = CustomEvaluationConfig(**self.custom_eval)

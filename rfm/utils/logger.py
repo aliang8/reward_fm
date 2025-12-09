@@ -254,7 +254,7 @@ class Logger:
         # wandb
         if self.enabled("wandb"):
             if isinstance(video, str):
-                self._wandb_run.log({tag: wandb.Video(video, fps=fps)})
+                self._wandb_run.log({tag: wandb.Video(video, fps=fps)}, step=step)
             else:
                 arr = None
                 if isinstance(video, np.ndarray):

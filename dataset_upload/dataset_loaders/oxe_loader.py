@@ -263,7 +263,7 @@ def convert_oxe_dataset_to_hf(
         max_limit = MAX_LANGTABLE_EPISODES
 
         # Process episodes in batches to avoid OOM
-    batch_size = 4  # Process episodes in smaller batches
+    batch_size = 32 # Process episodes in smaller batches
     entries = []
     produced = 0
 

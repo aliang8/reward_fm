@@ -218,6 +218,42 @@ def log_fsdp_diagnostics(model, accelerator=None, logger=None):
         else:
             logger.info("  FSDP Plugin: Not found (FSDP may not be configured)")
 
+    # Check gradient checkpointing status
+    logger.info("\nGradient Checkpointing:")
+    gradient_checkpointing_enabled = False
+    gradient_checkpointing_info = []
+    
+    # Check unwrapped model first
+    if hasattr(unwrapped_model, "is_gradient_checkpointing"):
+        gradient_checkpointing_enabled = unwrapped_model.is_gradient_checkpointing
+        gradient_checkpointing_info.append(f"  Root model: {gradient_checkpointing_enabled}")
+    elif hasattr(unwrapped_model, "gradient_checkpointing"):
+        gradient_checkpointing_enabled = unwrapped_model.gradient_checkpointing
+        gradient_checkpointing_info.append(f"  Root model: {gradient_checkpointing_enabled}")
+    else:
+        gradient_checkpointing_info.append("  Root model: is_gradient_checkpointing attribute not found")
+    
+    # Check if the underlying model (e.g., base_model) has gradient checkpointing
+    if hasattr(unwrapped_model, "model"):
+        base_model = unwrapped_model.model
+        if hasattr(base_model, "is_gradient_checkpointing"):
+            base_gc = base_model.is_gradient_checkpointing
+            gradient_checkpointing_info.append(f"  Base model: {base_gc}")
+        elif hasattr(base_model, "gradient_checkpointing"):
+            base_gc = base_model.gradient_checkpointing
+            gradient_checkpointing_info.append(f"  Base model: {base_gc}")
+    
+    # Check wrapped model as well
+    if hasattr(model, "is_gradient_checkpointing") and model != unwrapped_model:
+        wrapped_gc = model.is_gradient_checkpointing
+        gradient_checkpointing_info.append(f"  Wrapped model: {wrapped_gc}")
+    
+    for info in gradient_checkpointing_info:
+        logger.info(info)
+    
+    if not gradient_checkpointing_info or all("not found" in info.lower() for info in gradient_checkpointing_info):
+        logger.info("  Note: Could not determine gradient checkpointing status from model attributes")
+
     # Check distributed environment
     import torch.distributed as dist
     if dist.is_available() and dist.is_initialized():

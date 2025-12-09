@@ -343,6 +343,9 @@ class RFMHeadsTrainer(Trainer):
         if self.state.global_step % self.args.logging_steps == 0:
             self._log_metadata()
 
+        # Log GPU memory usage at every training step for diagnostics
+        log_memory_usage(f"Step {self.state.global_step}")
+
         return loss
 
     def _get_optimizer_stats(self):
@@ -590,7 +593,17 @@ class RFMHeadsTrainer(Trainer):
         log_memory_usage("After accelerator.prepare(dataloader)")
         return prepared_dl
 
-    def _run_custom_evaluations(self):
+    def _run_custom_evaluations(self, eval_step=None):
+        """
+        Run custom evaluations.
+        
+        Args:
+            eval_step: Step number to use for logging. If None, uses self.state.global_step.
+                      This ensures consistent step logging to prevent wandb warnings.
+        """
+        if eval_step is None:
+            eval_step = self.state.global_step
+            
         logger.info("=" * 100)
         logger.info("STARTING CUSTOM EVALUATIONS")
         log_memory_usage("Before custom evaluations")
@@ -1002,7 +1015,7 @@ class RFMHeadsTrainer(Trainer):
                                 f"reward_alignment_samples/{ds_name}",
                                 videos_and_figures=rows,
                                 columns=["video", "progress_plot"],
-                                step=self.state.global_step,
+                                step=eval_step,
                             )
                         # For tensorboard (no table support), log each video and its figure separately
                         if self.logger.enabled("tensorboard"):
@@ -1012,11 +1025,11 @@ class RFMHeadsTrainer(Trainer):
                                         f"reward_alignment_video/{ds_name}/{idx}",
                                         frames,
                                         fps=2,
-                                        step=self.state.global_step,
+                                        step=eval_step,
                                     )
                             for idx, plot in enumerate(plots):
                                 self.logger.log_figure(
-                                    f"{ds_name}/reward_alignment_plot/{idx}", plot, step=self.state.global_step
+                                    f"{ds_name}/reward_alignment_plot/{idx}", plot, step=eval_step
                                 )
                         # Close all plots to avoid accumulating open figures
                         for plot in plots:
@@ -1067,7 +1080,7 @@ class RFMHeadsTrainer(Trainer):
                             table_name,
                             data=data,
                             columns=columns,
-                            step=self.state.global_step,
+                            step=eval_step,
                         )
                         log_memory_usage(f"Before deleting policy_ranking data")
                         del data, task_groups, task_details
@@ -1097,7 +1110,7 @@ class RFMHeadsTrainer(Trainer):
                             table_name,
                             data=data,
                             columns=columns,
-                            step=self.state.global_step,
+                            step=eval_step,
                         )
                         log_memory_usage(f"Before deleting quality_preference data")
                         del data, task_groups, task_details
@@ -1106,7 +1119,7 @@ class RFMHeadsTrainer(Trainer):
                         log_memory_usage(f"After deleting quality_preference data")
 
                     elif eval_type == "confusion_matrix":
-                        self.logger.log_figure(f"eval_cm/{ds_name}", confusion_plot, step=self.state.global_step)
+                        self.logger.log_figure(f"eval_cm/{ds_name}", confusion_plot, step=eval_step)
                         plt.close(confusion_plot)
                         log_memory_usage(f"Before deleting confusion_matrix data")
                         del confusion_plot, confusion_matrix
@@ -1134,7 +1147,7 @@ class RFMHeadsTrainer(Trainer):
                             f"similarity_score_samples/{ds_name}",
                             data=data,
                             columns=columns,
-                            step=self.state.global_step,
+                            step=eval_step,
                         )
                         log_memory_usage(f"Before deleting similarity_score data")
                         del data, task_groups, task_details
@@ -1225,7 +1238,7 @@ class RFMHeadsTrainer(Trainer):
             # Convert callback_metrics to float for wandb logging
             to_log = {k: float(v) for k, v in callback_metrics.items()}
             to_log["epoch"] = self.state.epoch
-            self.logger.log_scalars(to_log, step=self.state.global_step)
+            self.logger.log_scalars(to_log, step=eval_step)
 
         banner("Finished running custom evaluations!")
         log_memory_usage("After all evaluations, before cleanup")
@@ -1260,6 +1273,8 @@ class RFMHeadsTrainer(Trainer):
         """
         Override evaluate method to implement custom RFM evaluation metrics.
         """
+        eval_step = self.state.global_step
+        
         # Save current training mode and set to eval mode
         was_training = self.model.training
         self.model.eval()
@@ -1302,7 +1317,7 @@ class RFMHeadsTrainer(Trainer):
 
             # Also log to wandb if available and configured (only on rank 0)
             metrics["epoch"] = self.state.epoch
-            self.logger.log_scalars(metrics, step=self.state.global_step)
+            self.logger.log_scalars(metrics, step=eval_step)
 
         # Run the custom evaluations
         custom_eval_should_run = (
@@ -1310,7 +1325,7 @@ class RFMHeadsTrainer(Trainer):
             and self.state.global_step % self.config.training.custom_eval_steps == 0
         )
         if custom_eval_should_run:
-            custom_metrics = self._run_custom_evaluations()
+            custom_metrics = self._run_custom_evaluations(eval_step=eval_step)
             metrics.update(custom_metrics)
 
             # to trigger the callback handler

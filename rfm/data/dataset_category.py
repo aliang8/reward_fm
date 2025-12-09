@@ -75,12 +75,13 @@ DATASET_MAP = {
         "train": [
             "jesbu1_molmoact_rfm_molmoact_dataset_household",
             "jesbu1_molmoact_rfm_molmoact_dataset_tabletop",
-            "jesbu1_egodex_rfm_egodex_part1",
-            "jesbu1_egodex_rfm_egodex_part2",
-            "jesbu1_egodex_rfm_egodex_part3",
-            "jesbu1_egodex_rfm_egodex_part4",
-            "jesbu1_egodex_rfm_egodex_part5",
+            # "jesbu1_egodex_rfm_egodex_part1",
+            # "jesbu1_egodex_rfm_egodex_part2",
+            # "jesbu1_egodex_rfm_egodex_part3",
+            # "jesbu1_egodex_rfm_egodex_part4",
+            # "jesbu1_egodex_rfm_egodex_part5",
             "abraranwar_agibotworld_alpha_rfm_agibotworld",
+            "roboarena_0825_rfm_roboarena",
         ],
         "eval": [
             "jesbu1_egodex_rfm_egodex_test",
@@ -208,7 +209,7 @@ DATA_SOURCE_CATEGORY = {
         "libero_spatial_failure",
         "libero_goal_failure",
     ],
-    "preference_only": ["oxe_bc_z", "oxe_dlr_edan_shared_control_converted_externally_to_rlds"],
+    "preference_only": ["oxe_bc_z", "oxe_dlr_edan_shared_control_converted_externally_to_rlds", "roboarena_0825_rfm_roboarena"],
     "paired": [
         "h2r",
         "motif_rfm",

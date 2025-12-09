@@ -596,14 +596,14 @@ class RFMHeadsTrainer(Trainer):
     def _run_custom_evaluations(self, eval_step=None):
         """
         Run custom evaluations.
-        
+
         Args:
             eval_step: Step number to use for logging. If None, uses self.state.global_step.
                       This ensures consistent step logging to prevent wandb warnings.
         """
         if eval_step is None:
             eval_step = self.state.global_step
-            
+
         logger.info("=" * 100)
         logger.info("STARTING CUSTOM EVALUATIONS")
         log_memory_usage("Before custom evaluations")
@@ -1028,9 +1028,7 @@ class RFMHeadsTrainer(Trainer):
                                         step=eval_step,
                                     )
                             for idx, plot in enumerate(plots):
-                                self.logger.log_figure(
-                                    f"{ds_name}/reward_alignment_plot/{idx}", plot, step=eval_step
-                                )
+                                self.logger.log_figure(f"{ds_name}/reward_alignment_plot/{idx}", plot, step=eval_step)
                         # Close all plots to avoid accumulating open figures
                         for plot in plots:
                             plt.close(plot)

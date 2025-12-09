@@ -81,7 +81,7 @@ DATASET_MAP = {
             # "jesbu1_egodex_rfm_egodex_part4",
             # "jesbu1_egodex_rfm_egodex_part5",
             "abraranwar_agibotworld_alpha_rfm_agibotworld",
-            "roboarena_0825_rfm_roboarena",
+            "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
         ],
         "eval": [
             "jesbu1_egodex_rfm_egodex_test",
@@ -170,7 +170,7 @@ DATASET_MAP = {
     },
     "suboptimal_fail": {
         "train": [
-            "jesbu1_roboarena_0825_rfm_roboarena",
+            "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
             "jesbu1_fino_net_rfm_fino_net",
             "jesbu1_failsafe_rfm_failsafe",
             "jesbu1_soar_rfm_soar_rfm",
@@ -178,7 +178,7 @@ DATASET_MAP = {
             "jesbu1_racer_rfm_racer_train",
         ],
         "eval": [
-            "jesbu1_roboarena_0825_rfm_roboarena",
+            "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
             "jesbu1_racer_rfm_racer_val",
         ],
     },
@@ -209,7 +209,11 @@ DATA_SOURCE_CATEGORY = {
         "libero_spatial_failure",
         "libero_goal_failure",
     ],
-    "preference_only": ["oxe_bc_z", "oxe_dlr_edan_shared_control_converted_externally_to_rlds", "roboarena_0825_rfm_roboarena"],
+    "preference_only": [
+        "oxe_bc_z",
+        "oxe_dlr_edan_shared_control_converted_externally_to_rlds",
+        "roboarena",
+    ],
     "paired": [
         "h2r",
         "motif_rfm",

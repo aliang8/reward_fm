@@ -165,7 +165,7 @@ class Logger:
         Log a table where first column can be video (wandb), second a figure, etc.
         videos_and_figures: list of tuples e.g. [(video_array_or_path, figure), ...]
         Only supported for wandb; TensorBoard has no native table/video support.
-        
+
         Note: For wandb, logging tables with step parameter can cause display issues
         because wandb treats them as time-series. If step is provided, it's included in
         the tag name instead to create unique table names per evaluation step.
@@ -226,7 +226,7 @@ class Logger:
     def log_table(self, tag: str, data: List[List[Any]], columns: List[str], step: Optional[int] = None):
         """
         Log a generic table (wandb only). TensorBoard has no native table support.
-        
+
         Note: For wandb, logging tables with step parameter can cause display issues
         because wandb treats them as time-series. If step is provided, it's included in
         the tag name instead to create unique table names per evaluation step.

@@ -335,6 +335,64 @@ class RFMBaseSampler:
         )
         return paired_traj
 
+    def _get_lower_partial_success_traj(self, ref_traj: dict) -> dict | None:
+        """Get trajectory from same task with lower partial_success (for RoboArena).
+
+        Args:
+            ref_traj: Reference trajectory (chosen trajectory)
+
+        Returns:
+            Trajectory dict with lower partial_success from same task or None if not available
+        """
+        task_name = ref_traj["task"]
+        ref_partial_success = ref_traj.get("partial_success")
+        
+        # Check if partial_success is available
+        if ref_partial_success is None:
+            logger.trace(
+                f"[BASE SAMPLER] _get_lower_partial_success_traj: No partial_success for trajectory {ref_traj.get('id', 'unknown')}"
+            )
+            return None
+        
+        # Get all trajectories from the same task
+        same_task_indices = self.task_indices.get(task_name, [])
+        if not same_task_indices:
+            logger.trace(
+                f"[BASE SAMPLER] _get_lower_partial_success_traj: No trajectories found for task '{task_name}'"
+            )
+            return None
+        
+        # Filter to trajectories with lower partial_success
+        chosen_id = ref_traj["id"]
+        candidate_indices = []
+        
+        for idx in same_task_indices:
+            # Skip if same trajectory
+            if self._cached_ids[idx] == chosen_id:
+                continue
+            
+            # Get partial_success for this trajectory
+            traj_dict = self.dataset[idx]
+            traj_partial_success = traj_dict.get("partial_success")
+            
+            # Only include if partial_success is lower than reference
+            if traj_partial_success is not None and traj_partial_success < ref_partial_success:
+                candidate_indices.append(idx)
+        
+        if not candidate_indices:
+            logger.trace(
+                f"[BASE SAMPLER] _get_lower_partial_success_traj: No trajectories with lower partial_success for task '{task_name}' (ref: {ref_partial_success})"
+            )
+            return None
+        
+        # Randomly select from candidates
+        selected_idx = random.choice(candidate_indices)
+        result = self.dataset[selected_idx]
+        logger.trace(
+            f"[BASE SAMPLER] _get_lower_partial_success_traj: Found trajectory {result.get('id', 'unknown')} with partial_success {result.get('partial_success')} < {ref_partial_success}"
+        )
+        return result
+
     def _get_rewound_traj(self, ref_traj: dict) -> Trajectory:
         """Get rewound trajectory from reference trajectory.
 

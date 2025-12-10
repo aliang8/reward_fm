@@ -54,15 +54,11 @@ class PrefSampler(RFMBaseSampler):
         # Handle non-successful trajectories: use as rejected, find optimal from same task as chosen
         if quality_label != "successful":
             traj_id = item["id"]
-            logger.trace(
-                f"[PREF SAMPLER] Non-successful quality detected for ID={traj_id}, using as rejected trajectory"
-            )
-
-            # Get task name from current trajectory
             task_name = item["task"]
-            if task_name is None:
-                logger.trace(f"[PREF SAMPLER] No task name found for ID={traj_id}, falling through to normal sampling")
-                return self._create_pref_sample(item)
+
+            logger.trace(
+                f"[PREF SAMPLER] Non-successful quality detected for ID={traj_id}, using as rejected trajectory, task={task_name}"
+            )
 
             # Find optimal trajectories from the same task
             same_task_optimal_indices = self.optimal_by_task.get(task_name, [])
@@ -156,7 +152,7 @@ class PrefSampler(RFMBaseSampler):
             RuntimeError: If all strategies fail and fallback rewind also fails
         """
         # Log when preference sampler is called
-        traj_id = chosen_traj.get("id", "unknown") if chosen_traj is not None else "sampling_new"
+        traj_id = chosen_traj["id"] if chosen_traj is not None else "sampling_new"
         logger.trace(f"[PREF SAMPLER] Creating preference sample for trajectory ID: {traj_id}")
 
         # Use provided chosen trajectory if given; otherwise sample one
@@ -203,16 +199,17 @@ class PrefSampler(RFMBaseSampler):
 
         # Strategy selection with rebalancing on failure
         strategies = []
-        # For RoboArena, prioritize partial_success strategy
+        # For RoboArena, always use partial_success strategy only
         if is_roboarena:
-            strategies.append((DataGenStrat.ROBOARENA_PARTIAL_SUCCESS, 5.0))
-        # Add other strategies if not RoboArena or as fallback
-        if self.preference_strategy_ratio[0] > 0:
-            strategies.append((DataGenStrat.REWOUND, self.preference_strategy_ratio[0]))
-        if self._has_suboptimal and self.preference_strategy_ratio[1] > 0:
-            strategies.append((DataGenStrat.SUBOPTIMAL, self.preference_strategy_ratio[1]))
-        if self.preference_strategy_ratio[2] > 0:
-            strategies.append((DataGenStrat.DIFFERENT_TASK, self.preference_strategy_ratio[2]))
+            strategies.append((DataGenStrat.ROBOARENA_PARTIAL_SUCCESS, 1.0))
+        else:
+            # Add other strategies if not RoboArena
+            if self.preference_strategy_ratio[0] > 0:
+                strategies.append((DataGenStrat.REWOUND, self.preference_strategy_ratio[0]))
+            if self._has_suboptimal and self.preference_strategy_ratio[1] > 0:
+                strategies.append((DataGenStrat.SUBOPTIMAL, self.preference_strategy_ratio[1]))
+            if self.preference_strategy_ratio[2] > 0:
+                strategies.append((DataGenStrat.DIFFERENT_TASK, self.preference_strategy_ratio[2]))
 
         max_attempts = 10  # Limit retry attempts to prevent infinite loops
         max_strategy_attempts = 3  # Maximum attempts per strategy before removing it

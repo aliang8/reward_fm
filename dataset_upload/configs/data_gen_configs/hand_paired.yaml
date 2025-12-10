@@ -1,6 +1,6 @@
 # config.yaml
 dataset:
-  dataset_path: ./datasets/HAND_paired_data
+  dataset_path: ./datasets/hand_paired_data
   dataset_name: hand_paired
 
 output:

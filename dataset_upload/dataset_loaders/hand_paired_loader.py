@@ -126,15 +126,18 @@ def load_hand_paired_dataset(dataset_path: str) -> dict[str, list[dict]]:
     task_data: dict[str, list[dict]] = {}
 
     for task_dir in task_dirs:
+        print(f"Processing task: {task_dir.name}")
         task_name = _parse_task_name(task_dir.name)
         is_robot = not _is_human_task(task_dir.name)
 
         # Get all trajectory directories (traj0, traj1, traj2, etc.)
         traj_dirs = [p for p in task_dir.iterdir() if p.is_dir() and p.name.startswith("traj")]
-
+        print(f"Found {len(traj_dirs)} trajectory directories")
         for traj_dir in traj_dirs:
+            print(f"Processing trajectory: {traj_dir.name}")
             # Process each camera view
             for camera_view in CAMERA_VIEWS:
+                print(f"Processing camera view: {camera_view}")
                 camera_dir = traj_dir / camera_view
                 if not camera_dir.exists():
                     continue

@@ -1,10 +1,10 @@
 # HAND_paired_data Dataset Guide
 
-This guide explains how to load and convert the HAND_paired_data dataset with the RFM pipeline.
+This guide explains how to load and convert a subset of the HAND dataset with the RFM pipeline from [HAND](https://liralab.usc.edu/handretrieval/).
 
 ## Overview
 
-The HAND_paired_data dataset contains paired robot and human demonstrations for the same tasks. Each task has both robot executions and human hand demonstrations.
+The HAND dataset contains paired robot and human demonstrations for the same tasks. Each task has both robot executions and human hand demonstrations.
 
 ### Directory Structure
 

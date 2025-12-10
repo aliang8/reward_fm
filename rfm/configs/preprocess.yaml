@@ -70,7 +70,7 @@ eval_subsets:
   - ["utd_so101_policy_ranking"]
   - ["utd_so101_human"]
   #- ["roboarena_eval_debug_nowrist"]
-  - ["hand_paired_rfm"]
+  - ["hand_paired"]
 
 max_frames_for_preprocessing: 32
 video_frame_sampling: "uniform"

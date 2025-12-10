@@ -468,6 +468,11 @@ class BaseDataset(torch.utils.data.Dataset):
                 for i, (dkw, dfr, dq) in enumerate(zip(drop_kw_list, drop_frames_list, drop_quality_list))
                 if not (dkw or dfr or dq)
             ]
+
+            removed_indices = set(range(len(dataset))) - set(keep_indices)
+            
+            logger.trace(f"Removed indices: {removed_indices}")
+
             # Filter dataset using select with keep_indices (more efficient than filter)
             filtered_dataset = dataset.select(keep_indices)
 

@@ -127,7 +127,7 @@ class DataConfig:
     )
     max_frames: int = field(default=8, metadata={"help": "Maximum number of frames to extract from videos"})
     min_frames_per_trajectory: int = field(
-        default=10,
+        default=5,
         metadata={
             "help": "Minimum number of frames required per trajectory (trajectories with fewer frames will be filtered out)"
         },

@@ -354,6 +354,9 @@ class RFMBaseSampler:
             )
             return None
         
+        # Get minimum threshold from config (default to 0.0 if not set)
+        min_threshold = getattr(self.config, "roboarena_partial_success_threshold", 0.0)
+        
         # Get all trajectories from the same task
         same_task_indices = self.task_indices.get(task_name, [])
         if not same_task_indices:
@@ -362,7 +365,7 @@ class RFMBaseSampler:
             )
             return None
         
-        # Filter to trajectories with lower partial_success
+        # Filter to trajectories with lower partial_success that meet the threshold requirement
         chosen_id = ref_traj["id"]
         candidate_indices = []
         
@@ -375,21 +378,24 @@ class RFMBaseSampler:
             traj_dict = self.dataset[idx]
             traj_partial_success = traj_dict.get("partial_success")
             
-            # Only include if partial_success is lower than reference
-            if traj_partial_success is not None and traj_partial_success < ref_partial_success:
-                candidate_indices.append(idx)
+            # Only include if partial_success is lower than reference AND meets minimum threshold
+            if traj_partial_success is not None:
+                partial_success_diff = ref_partial_success - traj_partial_success
+                if partial_success_diff >= min_threshold:
+                    candidate_indices.append(idx)
         
         if not candidate_indices:
             logger.trace(
-                f"[BASE SAMPLER] _get_lower_partial_success_traj: No trajectories with lower partial_success for task '{task_name}' (ref: {ref_partial_success})"
+                f"[BASE SAMPLER] _get_lower_partial_success_traj: No trajectories with lower partial_success (threshold: {min_threshold}) for task '{task_name}' (ref: {ref_partial_success})"
             )
             return None
         
         # Randomly select from candidates
         selected_idx = random.choice(candidate_indices)
         result = self.dataset[selected_idx]
+        result_partial_success = result.get("partial_success")
         logger.trace(
-            f"[BASE SAMPLER] _get_lower_partial_success_traj: Found trajectory {result.get('id', 'unknown')} with partial_success {result.get('partial_success')} < {ref_partial_success}"
+            f"[BASE SAMPLER] _get_lower_partial_success_traj: Found trajectory {result.get('id', 'unknown')} with partial_success {result_partial_success} < {ref_partial_success} (diff: {ref_partial_success - result_partial_success:.3f}, threshold: {min_threshold})"
         )
         return result
 

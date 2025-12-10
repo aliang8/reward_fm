@@ -98,8 +98,11 @@ data:
   dataloader_num_workers: 8
   dataloader_persistent_workers: True
 
-  progress_pred_type: "absolute" # "absolute" or "relative", relative is delta progress between frames
+  progress_pred_type: "absolute_first_frame" # "absolute_first_frame", "relative_first_frame", or "absolute_wrt_total_frames"
   pairwise_progress: false
+
+  # RoboArena partial success threshold
+  roboarena_partial_success_threshold: 0.2  # Minimum difference in partial_success between chosen and rejected trajectories for RoboArena
 
   # Success label parameters
   min_success: 0.8  # Progress threshold below which success label is 0

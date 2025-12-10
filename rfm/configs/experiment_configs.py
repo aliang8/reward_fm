@@ -239,6 +239,14 @@ class DataConfig:
         metadata={"help": "Whether to use pairwise progress sampling strategy for progress prediction"},
     )
 
+    # RoboArena partial success threshold
+    roboarena_partial_success_threshold: float = field(
+        default=0.2,
+        metadata={
+            "help": "Minimum difference in partial_success required between chosen and rejected trajectories for RoboArena preference sampling"
+        },
+    )
+
 
 @dataclass
 class CustomEvaluationConfig:

@@ -402,7 +402,7 @@ def compute_progress_from_segment(
     start_idx: int,
     end_idx: int,
     frame_indices: list[int],
-    progress_pred_type: str = "absolute",
+    progress_pred_type: str = "absolute_first_frame",
     success_cutoff: float | None = None,
 ) -> list[float]:
     """Compute progress values given total frames, segment, and subsampled indices.
@@ -412,12 +412,26 @@ def compute_progress_from_segment(
         start_idx: Start index (inclusive) of the selected segment within the original trajectory.
         end_idx: End index (exclusive) of the selected segment within the original trajectory.
         frame_indices: Indices into the segment array returned by subsampling (0-based in-segment indices).
-        progress_pred_type: "absolute" for cumulative segment progress, "relative" for inter-frame deltas.
+        progress_pred_type: Type of progress calculation:
+            - "absolute_first_frame": progress[i] = i / (num_frames_total - start_idx - 1), evaluated at each selected in-segment index.
+            - "relative_first_frame": progress[0] = 0.0; progress[i] = (frame_indices[i] - frame_indices[i-1]) / (num_frames_total - start_idx).
+            - "absolute_wrt_total_frames": progress[i] = (start_idx + frame_indices[i]) / num_frames_total.
 
     Behavior:
-        - absolute: progress[i] = i / (num_frames_total - start_idx - 1), evaluated at each selected in-segment index.
-        - relative: progress[0] = 0.0; progress[i] = (frame_indices[i] - frame_indices[i-1]) / (num_frames_total - start_idx).
+        - absolute_first_frame: progress[i] = i / (num_frames_total - start_idx - 1), evaluated at each selected in-segment index.
+        - relative_first_frame: progress[0] = 0.0; progress[i] = (frame_indices[i] - frame_indices[i-1]) / (num_frames_total - start_idx).
+        - absolute_wrt_total_frames: progress[i] = (start_idx + frame_indices[i]) / num_frames_total.
     """
+    # Handle absolute_wrt_total_frames first (simplest case)
+    if progress_pred_type == "absolute_wrt_total_frames":
+        segment_progress = []
+        for idx in frame_indices:
+            # Calculate absolute index in original trajectory
+            abs_idx = start_idx + idx
+            progress = abs_idx / num_frames_total
+            segment_progress.append(progress)
+        return segment_progress
+
     # Calculate progress for the full segment first
     segment_len = end_idx - start_idx
     assert segment_len > 0, "Segment length must be greater than 0"
@@ -428,7 +442,7 @@ def compute_progress_from_segment(
         cutoff_index = int(success_cutoff * num_frames_total)
 
     # Calculate progress at each frame in the segment
-    # This is absolute progress
+    # This is absolute_first_frame progress
     segment_progress = []
     for i in range(segment_len):
         if cutoff_index is not None:
@@ -445,14 +459,15 @@ def compute_progress_from_segment(
     # Determine progress at subsampled indices
     segment_progress = [segment_progress[idx] for idx in frame_indices]
 
-    if progress_pred_type == "relative":
+    if progress_pred_type == "relative_first_frame":
         # Convert absolute progress to relative deltas
         return convert_absolute_to_relative_progress(segment_progress)
 
+    # Default: absolute_first_frame
     return segment_progress
 
 
-def subsample_pairs_and_progress(frames, max_frames: int, progress_pred_type: str = "absolute"):
+def subsample_pairs_and_progress(frames, max_frames: int, progress_pred_type: str = "absolute_first_frame"):
     """Create pairwise frames for progress prediction.
 
     Constructs pairs (o_i, o_i+1), (o_i+1, o_i), (o_i, o_i+T), (o_i+T, o_i)
@@ -462,7 +477,9 @@ def subsample_pairs_and_progress(frames, max_frames: int, progress_pred_type: st
     Args:
         frames: Full trajectory frames (can be numpy array or torch tensor)
         max_frames: Maximum number of frame pairs to generate (will be paired to 2*max_frames total)
-        progress_pred_type: "absolute" or "relative" progress prediction
+        progress_pred_type: Type of progress prediction:
+            - "absolute_first_frame" or "relative_first_frame": delta between frames / num_frames_total
+            - "absolute_wrt_total_frames": absolute indices / num_frames_total for each frame in pair
 
     Returns:
         Tuple of (subsampled_frames, progress_list, metadata)
@@ -499,10 +516,16 @@ def subsample_pairs_and_progress(frames, max_frames: int, progress_pred_type: st
     else:
         pair_frames = np.stack(pair_frames)
 
-    # Calculate progress as a single number: delta between the two frames
-    # For pairwise, we predict the delta/change between the frame pair
-    delta_indices = pair_indices[1] - pair_indices[0]
-    progress = [delta_indices / num_frames_total]  # make sure it is a list
+    # Calculate progress based on type
+    if progress_pred_type == "absolute_wrt_total_frames":
+        # For each frame in the pair, calculate progress as idx / num_frames_total
+        progress = [idx / num_frames_total for idx in pair_indices]
+    else:
+        # For absolute_first_frame and relative_first_frame, use delta between frames
+        # Calculate progress as a single number: delta between the two frames
+        # For pairwise, we predict the delta/change between the frame pair
+        delta_indices = pair_indices[1] - pair_indices[0]
+        progress = [delta_indices / num_frames_total]  # make sure it is a list
 
     metadata = {
         "pair_indices": pair_indices,
@@ -519,7 +542,7 @@ def create_rewind_trajectory(
     rewind_length: int | None = None,
     max_frames: int = 8,
     use_embeddings: bool = False,
-    progress_pred_type: str = "absolute",
+    progress_pred_type: str = "absolute_first_frame",
     success_cutoff: float | None = None,
     dataset_success_percent: dict[str, float] | None = None,
     max_success: float = 0.95,
@@ -638,25 +661,36 @@ def create_rewind_trajectory(
         # Index of the first frame where progress exceeds the cutoff
         cutoff_index = int(success_cutoff * num_frames)
 
-    # Step 6: Calculate absolute progress for each frame position in the combined trajectory
-    forward_progress_abs = []
-    denom_norm = max(1, (num_frames - start_idx - 1))
-    denom_cut = None
-    if cutoff_index is not None and cutoff_index > start_idx:
-        denom_cut = max(1, (cutoff_index - start_idx - 1))
+    # Calculate progress based on type
+    if progress_pred_type == "absolute_wrt_total_frames":
+        # For absolute_wrt_total_frames, calculate progress as absolute_idx / num_frames
+        # Forward segment: indices from start_idx to end_idx-1
+        forward_progress_abs = [(start_idx + i) / num_frames for i in range(len(forward_indices))]
+        # Rewind segment: reverse the forward progress (but we need to map to actual indices)
+        # The rewind segment goes from end_idx-2 down to rewind_point
+        rewind_actual_indices = list(range(end_idx - 2, rewind_point - 1, -1))  # Reverse order
+        rewind_progress_abs = [idx / num_frames for idx in rewind_actual_indices]
+    else:
+        # For absolute_first_frame and relative_first_frame, use the original logic
+        # Step 6: Calculate absolute progress for each frame position in the combined trajectory
+        forward_progress_abs = []
+        denom_norm = max(1, (num_frames - start_idx - 1))
+        denom_cut = None
+        if cutoff_index is not None and cutoff_index > start_idx:
+            denom_cut = max(1, (cutoff_index - start_idx - 1))
 
-    for i in range(len(forward_indices)):  # 0 to len(forward_indices)-1
-        current_abs_idx = start_idx + i
-        if denom_cut is not None:
-            if current_abs_idx < cutoff_index:
-                forward_progress_abs.append(i / denom_norm)
+        for i in range(len(forward_indices)):  # 0 to len(forward_indices)-1
+            current_abs_idx = start_idx + i
+            if denom_cut is not None:
+                if current_abs_idx < cutoff_index:
+                    forward_progress_abs.append(i / denom_norm)
+                else:
+                    forward_progress_abs.append(min(1.0, i / denom_cut))
             else:
-                forward_progress_abs.append(min(1.0, i / denom_cut))
-        else:
-            forward_progress_abs.append(i / denom_norm)
+                forward_progress_abs.append(i / denom_norm)
 
-    # Rewind progress is the reverse of forward progress
-    rewind_progress_abs = forward_progress_abs[::-1][1 : rewind_length + 1]
+        # Rewind progress is the reverse of forward progress
+        rewind_progress_abs = forward_progress_abs[::-1][1 : rewind_length + 1]
 
     # Combine absolute progress values
     combined_progress_abs = forward_progress_abs + rewind_progress_abs
@@ -665,7 +699,7 @@ def create_rewind_trajectory(
     subsampled_progress = [combined_progress_abs[idx] for idx in subsampled_indices]
     subsampled_frames_shape = subsampled_frames.shape
 
-    if progress_pred_type == "relative":
+    if progress_pred_type == "relative_first_frame":
         subsampled_progress = convert_absolute_to_relative_progress(subsampled_progress)
 
     if use_embeddings:

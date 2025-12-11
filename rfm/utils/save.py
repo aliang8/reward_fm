@@ -187,6 +187,7 @@ class SaveBestCallback(TrainerCallback):
         keep_top_k: int = 1,
         save_every: Optional[int] = None,
         upload_to_hub: bool = False,
+        hub_save_every: Optional[int] = None,
         hub_token: Optional[str] = None,
         hub_private: bool = False,
         base_model: str = "Qwen/Qwen2.5-VL-3B-Instruct",
@@ -203,6 +204,7 @@ class SaveBestCallback(TrainerCallback):
         self.keep_top_k = keep_top_k
         self.save_every = save_every
         self.upload_to_hub = upload_to_hub
+        self.hub_save_every = hub_save_every  # Frequency for Hub uploads (None = upload every checkpoint)
         self.hub_token = hub_token
         self.hub_private = hub_private
         self.base_model = base_model
@@ -214,6 +216,8 @@ class SaveBestCallback(TrainerCallback):
         self._trainer = None  # Will be set when callback is registered
         self._last_save_step = -1  # Track last step where we saved 'latest'
         self._last_best_save_step = -1  # Track last step where we saved 'best'
+        self._last_hub_upload_step = -1  # Track last step where we uploaded 'best' to Hub
+        self._last_latest_hub_upload_step = -1  # Track last step where we uploaded 'latest' to Hub
         self._previous_latest_ckpt_dir = None  # Track previous 'latest' checkpoint directory
         self._previous_latest_hub_tag = None  # Track previous 'latest' Hub tag
         self._run_timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")  # Static timestamp for this run
@@ -413,7 +417,22 @@ class SaveBestCallback(TrainerCallback):
                 if os.path.isdir(path_to_rm):
                     shutil.rmtree(path_to_rm, ignore_errors=True)
 
+            # Upload to Hub if enabled and frequency check passes
+            should_upload_to_hub = False
             if self.upload_to_hub:
+                if self.hub_save_every is None:
+                    # Upload every checkpoint if no frequency is set
+                    should_upload_to_hub = True
+                else:
+                    # Check if it's time to upload based on frequency
+                    if self._last_hub_upload_step == -1:
+                        # First upload
+                        should_upload_to_hub = True
+                    elif (step - self._last_hub_upload_step) >= self.hub_save_every:
+                        # Enough steps have passed
+                        should_upload_to_hub = True
+
+            if should_upload_to_hub:
                 hub_model_id = self._get_hub_model_id(args)
                 tag_name = self._clean_tag_name(f"best-{metric_short}-{score:.4f}-step-{step}")
                 individual_scores_str = self._build_individual_scores_string(metrics)
@@ -429,6 +448,9 @@ class SaveBestCallback(TrainerCallback):
                 )
                 logger.info(f"✅ Successfully uploaded to: {hub_url}")
                 logger.info(f"🏷️ Tagged as: {tag_name}")
+
+                # Track that we uploaded to Hub at this step
+                self._last_hub_upload_step = step
 
                 # Add to uploaded list and sort (always best -> worst since we normalized scores)
                 self._uploaded.append((score, tag_name, commit_id))
@@ -448,6 +470,10 @@ class SaveBestCallback(TrainerCallback):
                     torch.cuda.synchronize()
                 gc.collect()
                 logger.info("🧹 Cleaned up memory after Hub upload")
+            elif self.upload_to_hub and self.hub_save_every is not None:
+                # Hub upload is enabled but not time yet
+                steps_until_upload = self.hub_save_every - (step - self._last_hub_upload_step)
+                logger.info(f"⏭️ Skipping Hub upload (saving locally only). Next upload in {steps_until_upload} steps")
 
         # Save 'latest' checkpoint if save_every is configured and it's time to save
         # Do this after processing best checkpoints so we have the gathered metrics
@@ -502,8 +528,22 @@ class SaveBestCallback(TrainerCallback):
         self._save_checkpoint_files(args, ckpt_dir, metrics, step)
         logger.info(f"✅ Saved 'latest' checkpoint at step {step}")
 
-        # Upload to Hub if configured
+        # Upload to Hub if enabled and frequency check passes
+        should_upload_latest_to_hub = False
         if self.upload_to_hub:
+            if self.hub_save_every is None:
+                # Upload every checkpoint if no frequency is set
+                should_upload_latest_to_hub = True
+            else:
+                # Check if it's time to upload based on frequency
+                if self._last_latest_hub_upload_step == -1:
+                    # First upload
+                    should_upload_latest_to_hub = True
+                elif (step - self._last_latest_hub_upload_step) >= self.hub_save_every:
+                    # Enough steps have passed
+                    should_upload_latest_to_hub = True
+
+        if should_upload_latest_to_hub:
             hub_model_id = self._get_hub_model_id(args)
             tag_name = self._clean_tag_name(f"latest-{metric_short}-{score:.4f}-step-{step}")
             individual_scores_str = self._build_individual_scores_string(metrics)
@@ -532,6 +572,11 @@ class SaveBestCallback(TrainerCallback):
 
             # Track this as the new previous latest
             self._previous_latest_hub_tag = tag_name
+            self._last_latest_hub_upload_step = step
+        elif self.upload_to_hub and self.hub_save_every is not None:
+            # Hub upload is enabled but not time yet
+            steps_until_upload = self.hub_save_every - (step - self._last_latest_hub_upload_step)
+            logger.info(f"⏭️ Skipping Hub upload for 'latest' (saving locally only). Next upload in {steps_until_upload} steps")
 
         # Track this as the new previous latest checkpoint directory
         self._previous_latest_ckpt_dir = ckpt_dir

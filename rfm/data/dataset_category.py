@@ -116,7 +116,7 @@ DATASET_MAP = {
         "eval": [
             "jesbu1_oxe_rfm_eval_oxe_bc_z_eval",
             "jesbu1_oxe_rfm_eval_oxe_berkeley_cable_routing_eval",
-            "jesbu1_oxe_rfm_eval_oxe_bridge_v2_eval",
+            # "jesbu1_oxe_rfm_eval_oxe_bridge_v2_eval",
             "jesbu1_oxe_rfm_eval_oxe_jaco_play_eval",
             "jesbu1_oxe_rfm_eval_oxe_toto_eval",
             "jesbu1_oxe_rfm_eval_oxe_viola_eval",

@@ -183,7 +183,7 @@ class DataConfig:
     seed: int = field(default=42, metadata={"help": "Random seed for reproducibility"})
 
     # Evaluation parameters
-    eval_subset_size: Optional[int] = field(default=100, metadata={"help": "Number of samples to use for evaluation"})
+    eval_subset_size: Optional[int] = field(default=None, metadata={"help": "Number of samples to use for evaluation"})
 
     # Dataloader parameters
     dataloader_pin_memory: bool = field(default=True, metadata={"help": "Whether to pin memory in dataloader"})

@@ -64,7 +64,7 @@ data:
   eval_datasets:
     - mw
 
-  eval_subset_size: 500  # Number of evaluation examples
+  eval_subset_size: null  # Number of evaluation examples
 
   # Video processing settings
   max_frames_after_preprocessing: 64

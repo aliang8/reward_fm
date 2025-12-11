@@ -17,7 +17,7 @@ class QualityPreferenceSampler(BaseQualityPreferenceSampler):
         dataset_success_cutoff_map=None,
         is_evaluation=False,
         verbose=True,
-        comparisons_per_task=None,  
+        comparisons_per_task=None,
         **kwargs,
     ):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
@@ -68,7 +68,7 @@ class QualityPreferenceSampler(BaseQualityPreferenceSampler):
 
             # Collect all pairs for this task
             task_pairs = []
-            
+
             # Create pairs of different quality labels
             for quality1, quality2 in combinations(quality_labels, 2):
                 trajs1 = quality_groups[quality1]
@@ -106,12 +106,12 @@ class QualityPreferenceSampler(BaseQualityPreferenceSampler):
                             "chosen_quality": chosen_quality,
                             "rejected_quality": rejected_quality,
                         })
-            
+
             # Apply comparisons_per_task limit if set (sample uniformly across all pairs for this task)
             if self.comparisons_per_task is not None and len(task_pairs) > self.comparisons_per_task:
                 # Uniformly sample comparisons for this task
                 task_pairs = random.sample(task_pairs, self.comparisons_per_task)
-            
+
             sample_indices.extend(task_pairs)
 
         return sample_indices

@@ -576,7 +576,9 @@ class SaveBestCallback(TrainerCallback):
         elif self.upload_to_hub and self.hub_save_every is not None:
             # Hub upload is enabled but not time yet
             steps_until_upload = self.hub_save_every - (step - self._last_latest_hub_upload_step)
-            logger.info(f"⏭️ Skipping Hub upload for 'latest' (saving locally only). Next upload in {steps_until_upload} steps")
+            logger.info(
+                f"⏭️ Skipping Hub upload for 'latest' (saving locally only). Next upload in {steps_until_upload} steps"
+            )
 
         # Track this as the new previous latest checkpoint directory
         self._previous_latest_ckpt_dir = ckpt_dir

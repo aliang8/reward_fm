@@ -335,67 +335,72 @@ class RFMBaseSampler:
         )
         return paired_traj
 
-    def _get_lower_partial_success_traj(self, ref_traj: dict) -> dict | None:
-        """Get trajectory from same task with lower partial_success (for RoboArena).
+    def _get_different_partial_success_traj(self, ref_traj: dict) -> dict | None:
+        """Get trajectory from same task with different partial_success (for RoboArena).
+
+        Finds trajectories with either higher or lower partial_success than the reference,
+        using absolute difference for threshold checking.
 
         Args:
-            ref_traj: Reference trajectory (chosen trajectory)
+            ref_traj: Reference trajectory
 
         Returns:
-            Trajectory dict with lower partial_success from same task or None if not available
+            Trajectory dict with different partial_success from same task or None if not available
         """
         task_name = ref_traj["task"]
         ref_partial_success = ref_traj.get("partial_success")
-        
+
         # Check if partial_success is available
         if ref_partial_success is None:
             logger.trace(
-                f"[BASE SAMPLER] _get_lower_partial_success_traj: No partial_success for trajectory {ref_traj.get('id', 'unknown')}"
+                f"[BASE SAMPLER] _get_different_partial_success_traj: No partial_success for trajectory {ref_traj.get('id', 'unknown')}"
             )
             return None
-        
+
         # Get minimum threshold from config (default to 0.0 if not set)
         min_threshold = self.config.roboarena_partial_success_threshold
-        
+
         # Get all trajectories from the same task
         same_task_indices = self.task_indices.get(task_name, [])
         if not same_task_indices:
             logger.trace(
-                f"[BASE SAMPLER] _get_lower_partial_success_traj: No trajectories found for task '{task_name}'"
+                f"[BASE SAMPLER] _get_different_partial_success_traj: No trajectories found for task '{task_name}'"
             )
             return None
-        
-        # Filter to trajectories with lower partial_success that meet the threshold requirement
+
+        # Filter to trajectories with different partial_success that meet the threshold requirement
+        # Uses absolute difference to allow both higher and lower partial_success
         chosen_id = ref_traj["id"]
         candidate_indices = []
-        
+
         for idx in same_task_indices:
             # Skip if same trajectory
             if self._cached_ids[idx] == chosen_id:
                 continue
-            
+
             # Get partial_success for this trajectory
             traj_dict = self.dataset[idx]
             traj_partial_success = traj_dict.get("partial_success")
-            
-            # Only include if partial_success is lower than reference AND meets minimum threshold
+
+            # Include if partial_success differs from reference by at least the threshold (using abs)
             if traj_partial_success is not None:
-                partial_success_diff = ref_partial_success - traj_partial_success
+                partial_success_diff = abs(ref_partial_success - traj_partial_success)
                 if partial_success_diff >= min_threshold:
                     candidate_indices.append(idx)
-        
+
         if not candidate_indices:
             logger.trace(
-                f"[BASE SAMPLER] _get_lower_partial_success_traj: No trajectories with lower partial_success (threshold: {min_threshold}) for task '{task_name}' (ref: {ref_partial_success})"
+                f"[BASE SAMPLER] _get_different_partial_success_traj: No trajectories with different partial_success (threshold: {min_threshold}) for task '{task_name}' (ref: {ref_partial_success})"
             )
             return None
-        
+
         # Randomly select from candidates
         selected_idx = random.choice(candidate_indices)
         result = self.dataset[selected_idx]
         result_partial_success = result.get("partial_success")
+        direction = "higher" if result_partial_success > ref_partial_success else "lower"
         logger.trace(
-            f"[BASE SAMPLER] _get_lower_partial_success_traj: Found trajectory {result.get('id', 'unknown')} with partial_success {result_partial_success} < {ref_partial_success} (diff: {ref_partial_success - result_partial_success:.3f}, threshold: {min_threshold})"
+            f"[BASE SAMPLER] _get_different_partial_success_traj: Found trajectory {result.get('id', 'unknown')} with partial_success {result_partial_success} ({direction} than {ref_partial_success}, abs diff: {abs(ref_partial_success - result_partial_success):.3f}, threshold: {min_threshold})"
         )
         return result
 

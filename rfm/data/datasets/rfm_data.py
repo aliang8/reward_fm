@@ -89,6 +89,8 @@ class RFMDataset(BaseDataset):
         traj_id = item["id"]
         data_source = item["data_source"]
         quality_label = item["quality_label"]
+        task_name = item["task"]
+
         logger.trace(
             f"[RFMDataset] _generate_sample_from_item: Starting for ID={traj_id}, data_source={data_source}, quality={quality_label}"
         )
@@ -110,7 +112,7 @@ class RFMDataset(BaseDataset):
                 )
                 # If preference fails for non-successful traj, we can't use other samplers
                 raise ValueError(
-                    f"Preference sampler failed for non-successful trajectory ID={traj_id} and no fallback available"
+                    f"Preference sampler failed for non-successful trajectory ID={traj_id} and no fallback available, task={task_name}"
                 )
 
         # Preference-only override by data_source using raw filtered dataset entry
@@ -124,7 +126,7 @@ class RFMDataset(BaseDataset):
                 return self._set_resample_attempts(sample, 1)
             else:
                 logger.trace(
-                    f"[RFMDataset] _generate_sample_from_item: Preference-only sampler returned None for ID={traj_id}"
+                    f"[RFMDataset] _generate_sample_from_item: Preference-only sampler returned None for ID={traj_id}, task={task_name}"
                 )
 
         # Available samplers with their probabilities

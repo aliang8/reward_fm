@@ -271,7 +271,7 @@ def create_video_from_trajectory(
         # Create header with metadata
         header = np.zeros((header_height, width, 3), dtype=np.uint8)
         header_with_text = add_text_to_frame(header, header_lines, font_scale=font_scale)
-        
+
         # Add frame-specific info to header (bottom of header, with proper spacing)
         frame_info_lines = [f"Frame: {i + 1}/{num_frames}", f"Progress: {progress_values[i]:.3f}"]
         # Add frame info starting after static metadata with spacing
@@ -347,7 +347,9 @@ def create_preference_video(
 
     # Ensure frames are in correct format (T, H, W, C)
     if len(chosen_frames.shape) != 4 or len(rejected_frames.shape) != 4:
-        raise ValueError(f"Expected frames with shape (T, H, W, C), got chosen: {chosen_frames.shape}, rejected: {rejected_frames.shape}")
+        raise ValueError(
+            f"Expected frames with shape (T, H, W, C), got chosen: {chosen_frames.shape}, rejected: {rejected_frames.shape}"
+        )
 
     # Get frame dimensions
     chosen_num_frames, chosen_height, chosen_width, chosen_channels = chosen_frames.shape
@@ -362,22 +364,24 @@ def create_preference_video(
         new_chosen_height = int(chosen_height * scale_factor)
         new_rejected_width = int(rejected_width * scale_factor)
         new_rejected_height = int(rejected_height * scale_factor)
-        
+
         resized_chosen = []
         for frame in chosen_frames:
             resized_frame = cv2.resize(frame, (new_chosen_width, new_chosen_height), interpolation=cv2.INTER_LINEAR)
             resized_chosen.append(resized_frame)
         chosen_frames = np.array(resized_chosen)
-        
+
         resized_rejected = []
         for frame in rejected_frames:
             resized_frame = cv2.resize(frame, (new_rejected_width, new_rejected_height), interpolation=cv2.INTER_LINEAR)
             resized_rejected.append(resized_frame)
         rejected_frames = np.array(resized_rejected)
-        
+
         chosen_height, chosen_width = new_chosen_height, new_chosen_width
         rejected_height, rejected_width = new_rejected_height, new_rejected_width
-        print(f"Upscaled frames to {chosen_width}x{chosen_height} (chosen) and {rejected_width}x{rejected_height} (rejected)")
+        print(
+            f"Upscaled frames to {chosen_width}x{chosen_height} (chosen) and {rejected_width}x{rejected_height} (rejected)"
+        )
 
     # Pad to same number of frames
     max_frames = max(chosen_num_frames, rejected_num_frames)
@@ -411,7 +415,9 @@ def create_preference_video(
 
     # Get progress values
     chosen_progress = chosen_traj.target_progress[:max_frames] if chosen_traj.target_progress else [0.0] * max_frames
-    rejected_progress = rejected_traj.target_progress[:max_frames] if rejected_traj.target_progress else [0.0] * max_frames
+    rejected_progress = (
+        rejected_traj.target_progress[:max_frames] if rejected_traj.target_progress else [0.0] * max_frames
+    )
     while len(chosen_progress) < max_frames:
         chosen_progress.append(chosen_progress[-1] if chosen_progress else 0.0)
     while len(rejected_progress) < max_frames:
@@ -432,7 +438,7 @@ def create_preference_video(
     font_scale = 0.4
     thickness = 1
     line_spacing = 20  # Increased spacing to prevent overlap
-    
+
     # Header will contain: strategy, task, chosen/rejected info, and frame-specific info
     header_lines = [
         f"Strategy: {strategy}",
@@ -447,7 +453,7 @@ def create_preference_video(
         if rejected_partial_success is not None:
             partial_info.append(f"Rejected Partial: {rejected_partial_success:.3f}")
         header_lines.append(" | ".join(partial_info))
-    
+
     # Calculate height: static metadata + spacing + frame info (2 lines) + padding
     static_metadata_height = len(header_lines) * line_spacing
     frame_info_height = 2 * line_spacing  # Frame number + progress
@@ -460,13 +466,13 @@ def create_preference_video(
         # Ensure frames are uint8
         chosen_frame = chosen_frames[i]
         rejected_frame = rejected_frames[i]
-        
+
         if chosen_frame.dtype != np.uint8:
             if chosen_frame.max() <= 1.0:
                 chosen_frame = (chosen_frame * 255).astype(np.uint8)
             else:
                 chosen_frame = np.clip(chosen_frame, 0, 255).astype(np.uint8)
-        
+
         if rejected_frame.dtype != np.uint8:
             if rejected_frame.max() <= 1.0:
                 rejected_frame = (rejected_frame * 255).astype(np.uint8)
@@ -482,7 +488,7 @@ def create_preference_video(
         # Create header with metadata
         header = np.zeros((header_height, header_width, 3), dtype=np.uint8)
         header_with_text = add_text_to_frame(header, header_lines, font_scale=font_scale)
-        
+
         # Add frame-specific info to header (after static metadata with proper spacing)
         frame_info_lines = [
             f"Frame: {i + 1}/{max_frames}",
@@ -527,7 +533,7 @@ def create_preference_video(
             2,
             cv2.LINE_AA,
         )
-        
+
         # Add a colored border and label to rejected frame (right side)
         rejected_frame_with_indicator = rejected_frame.copy()
         # Add red border (thickness 5) to indicate rejected
@@ -543,10 +549,10 @@ def create_preference_video(
             2,
             cv2.LINE_AA,
         )
-        
+
         # Concatenate side by side with visual indicators
         side_by_side = np.concatenate([chosen_frame_with_indicator, rejected_frame_with_indicator], axis=1)
-        
+
         # Concatenate header above the video
         frame_with_header = np.concatenate([header_with_text, side_by_side], axis=0)
         frame_list.append(frame_with_header)
@@ -640,7 +646,16 @@ def main():
         "--strategy",
         type=str,
         default=None,
-        choices=["rewound", "suboptimal", "different_task", "roboarena_partial_success", "reverse_progress", "successful", "subsequence", "different_task_instruction"],
+        choices=[
+            "rewound",
+            "suboptimal",
+            "different_task",
+            "roboarena_partial_success",
+            "reverse_progress",
+            "successful",
+            "subsequence",
+            "different_task_instruction",
+        ],
         help="Data generation strategy. For preference: rewound, suboptimal, different_task, roboarena_partial_success. For progress: successful, rewound, subsequence, reverse_progress, different_task_instruction.",
     )
     parser.add_argument(
@@ -692,7 +707,7 @@ def main():
     # Load dataset using BaseDataset (reuses all the loading logic)
     print(f"Loading dataset: {args.dataset}")
     base_dataset = BaseDataset(config=data_config, is_evaluation=False)
-    
+
     # Extract dataset and combined_indices from BaseDataset
     dataset = base_dataset.dataset
     combined_indices = base_dataset._combined_indices
@@ -775,7 +790,7 @@ def main():
                         "roboarena_partial_success": DataGenStrat.ROBOARENA_PARTIAL_SUCCESS,
                     }
                     target_strategy = strategy_map.get(args.strategy)
-                    
+
                     if target_strategy is not None:
                         # Temporarily override strategy ratios to force the desired strategy
                         original_ratios = data_config.preference_strategy_ratio.copy()
@@ -790,27 +805,31 @@ def main():
                             pass
                         if target_strategy is not None:
                             sampler.preference_strategy_ratio = data_config.preference_strategy_ratio
-                
+
                 # Generate preference sample using _generate_sample (which internally calls _create_pref_sample)
                 preference_sample = sampler._generate_sample(trajectory_dict)
-                
+
                 if preference_sample is None:
                     print(f"Error: Failed to generate preference sample for trajectory {traj_idx}")
                     num_failed += 1
                     continue
-                
+
                 print("Preference sample generated successfully!")
                 print(f"  Task: {preference_sample.chosen_trajectory.task}")
                 print(f"  Strategy: {preference_sample.data_gen_strategy}")
                 print(f"  Chosen ID: {preference_sample.chosen_trajectory.id}")
                 print(f"  Rejected ID: {preference_sample.rejected_trajectory.id}")
-                print(f"  Chosen progress: {preference_sample.chosen_trajectory.target_progress[-1] if preference_sample.chosen_trajectory.target_progress else 'N/A'}")
-                print(f"  Rejected progress: {preference_sample.rejected_trajectory.target_progress[-1] if preference_sample.rejected_trajectory.target_progress else 'N/A'}")
-                
+                print(
+                    f"  Chosen progress: {preference_sample.chosen_trajectory.target_progress[-1] if preference_sample.chosen_trajectory.target_progress else 'N/A'}"
+                )
+                print(
+                    f"  Rejected progress: {preference_sample.rejected_trajectory.target_progress[-1] if preference_sample.rejected_trajectory.target_progress else 'N/A'}"
+                )
+
                 # Print frame indices for both trajectories
                 chosen_metadata = preference_sample.chosen_trajectory.metadata or {}
                 rejected_metadata = preference_sample.rejected_trajectory.metadata or {}
-                
+
                 if "subsampled_indices" in chosen_metadata:
                     chosen_indices = chosen_metadata["subsampled_indices"]
                     print(f"  Chosen frame indices: {chosen_indices}")
@@ -818,7 +837,7 @@ def main():
                     print(f"  Chosen frame range: {chosen_metadata['start_idx']} to {chosen_metadata['end_idx']}")
                 else:
                     print(f"  Chosen frame indices: All frames (no subsampling)")
-                
+
                 if "subsampled_indices" in rejected_metadata:
                     rejected_indices = rejected_metadata["subsampled_indices"]
                     print(f"  Rejected frame indices: {rejected_indices}")
@@ -826,15 +845,16 @@ def main():
                     print(f"  Rejected frame range: {rejected_metadata['start_idx']} to {rejected_metadata['end_idx']}")
                 else:
                     print(f"  Rejected frame indices: All frames (no subsampling)")
-                
+
                 # Restore original ratios if we overrode them
                 if args.strategy:
                     data_config.preference_strategy_ratio = original_ratios
                     sampler.preference_strategy_ratio = original_ratios
-                
+
             except Exception as e:
                 print(f"Error: Failed to generate preference sample: {e}")
                 import traceback
+
                 traceback.print_exc()
                 num_failed += 1
                 continue
@@ -854,7 +874,9 @@ def main():
                     base_filename = os.path.basename(args.output)
                     base_name = os.path.splitext(base_filename)[0]
                     if output_dir:
-                        output_path = os.path.join(output_dir, f"{ds_short_name}_preference{strategy_suffix}_{base_name}.mp4")
+                        output_path = os.path.join(
+                            output_dir, f"{ds_short_name}_preference{strategy_suffix}_{base_name}.mp4"
+                        )
                     else:
                         output_path = f"{ds_short_name}_preference{strategy_suffix}_{base_name}.mp4"
 
@@ -872,6 +894,7 @@ def main():
             except Exception as e:
                 print(f"❌ Failed to create preference video {video_idx + 1}: {e}")
                 import traceback
+
                 traceback.print_exc()
                 num_failed += 1
         else:  # progress
@@ -888,7 +911,7 @@ def main():
                         "different_task_instruction": DataGenStrat.DIFFERENT_TASK_INSTRUCTION,
                     }
                     target_strategy = strategy_map.get(args.strategy)
-                    
+
                     if target_strategy is not None:
                         # Temporarily override strategy ratios to force the desired strategy
                         original_ratios = data_config.progress_strategy_ratio.copy()
@@ -903,31 +926,36 @@ def main():
                             data_config.progress_strategy_ratio = [0.0, 0.0, 0.0, 1.0, 0.0]
                         elif target_strategy == DataGenStrat.REVERSE_PROGRESS:
                             data_config.progress_strategy_ratio = [0.0, 0.0, 0.0, 0.0, 1.0]
-                
+
                 # Generate progress sample using _generate_sample (which internally calls _create_progress_sample)
                 progress_sample = sampler._generate_sample(trajectory_dict)
-                
+
                 if progress_sample is None:
                     print(f"Error: Failed to generate progress sample for trajectory {traj_idx}")
                     num_failed += 1
                     continue
-                
+
                 processed_trajectory = progress_sample.trajectory
-                
+
                 print("Progress sample generated successfully!")
                 print(f"  Task: {processed_trajectory.task}")
                 print(f"  Strategy: {progress_sample.data_gen_strategy}")
-                print(f"  Frames: {len(processed_trajectory.frames) if processed_trajectory.frames is not None else 'N/A'}")
+                print(
+                    f"  Frames: {len(processed_trajectory.frames) if processed_trajectory.frames is not None else 'N/A'}"
+                )
                 print(f"  Progress values: {processed_trajectory.target_progress}")
-                print(f"  Final progress: {processed_trajectory.target_progress[-1] if processed_trajectory.target_progress else 'N/A'}")
-                
+                print(
+                    f"  Final progress: {processed_trajectory.target_progress[-1] if processed_trajectory.target_progress else 'N/A'}"
+                )
+
                 # Restore original ratios if we overrode them
                 if args.strategy and target_strategy is not None:
                     data_config.progress_strategy_ratio = original_ratios
-                
+
             except Exception as e:
                 print(f"Error: Failed to generate progress sample: {e}")
                 import traceback
+
                 traceback.print_exc()
                 num_failed += 1
                 continue
@@ -950,7 +978,9 @@ def main():
                     base_filename = os.path.basename(args.output)
                     base_name = os.path.splitext(base_filename)[0]
                     if output_dir:
-                        output_path = os.path.join(output_dir, f"{ds_short_name}_progress{strategy_suffix}_{base_name}.mp4")
+                        output_path = os.path.join(
+                            output_dir, f"{ds_short_name}_progress{strategy_suffix}_{base_name}.mp4"
+                        )
                     else:
                         output_path = f"{ds_short_name}_progress{strategy_suffix}_{base_name}.mp4"
 

@@ -476,7 +476,7 @@ class BaseDataset(torch.utils.data.Dataset):
             ]
 
             removed_indices = set(range(len(dataset))) - set(keep_indices)
-            
+
             logger.trace(f"Removed indices: {removed_indices}")
 
             # Filter dataset using select with keep_indices (more efficient than filter)

@@ -86,7 +86,7 @@ class ProgressDefaultSampler(RFMBaseSampler):
 
         data, frame_indices = linspace_subsample_frames(data, max_frames)
         frames_shape_orig = data.shape
-        
+
         # Compute progress based on type
         if self.config.progress_pred_type == "absolute_wrt_total_frames":
             progress_abs = [(idx + 1) / total_frames for idx in frame_indices]

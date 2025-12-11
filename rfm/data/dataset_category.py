@@ -144,7 +144,7 @@ DATASET_MAP = {
             "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",
             "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
             "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
-            "jesbu1_soar_rfm_soar_rfm"
+            "jesbu1_soar_rfm_soar_rfm",
         ]
     },
     "policy_ranking": {
@@ -154,7 +154,7 @@ DATASET_MAP = {
             "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",
             "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
             "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
-            "jesbu1_soar_rfm_soar_rfm"
+            "jesbu1_soar_rfm_soar_rfm",
         ]
     },
     "paired": {

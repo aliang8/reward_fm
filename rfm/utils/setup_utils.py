@@ -499,7 +499,9 @@ def setup_dataset(cfg: DataConfig, is_eval: bool = False, **kwargs) -> BaseDatas
         "strategy_balance": StrategyBalancedDataset,
     }
     dataset = dataset_cls[cfg.dataset_type](config=cfg, is_evaluation=is_eval, **kwargs)
-    dataset = InfiniteDataset(dataset)
+
+    if not is_eval:
+        dataset = InfiniteDataset(dataset)
     return dataset
 
 

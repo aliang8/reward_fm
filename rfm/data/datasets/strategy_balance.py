@@ -20,7 +20,7 @@ class StrategyBalancedDataset(BaseDataset):
     This is different from RFMDataset which selects a trajectory first, then selects a sample type.
     """
 
-    def __init__(self, config, is_evaluation=False, max_samples=None, batch_size=None, **kwargs):
+    def __init__(self, config, is_evaluation=False, max_samples=None, **kwargs):
         super().__init__(config, is_evaluation, **kwargs)
 
         self.pref_sampler = None
@@ -59,9 +59,7 @@ class StrategyBalancedDataset(BaseDataset):
             )
 
         self.sample_type_ratio = config.sample_type_ratio
-        # set max_samples to a large number if not provided
-        self.max_samples = max_samples if max_samples is not None else 10000000
-        self.batch_size = batch_size
+        self.max_samples = max_samples
         self.data_len = len(self.dataset)
 
         # Build source indices for efficient sampling
@@ -111,7 +109,7 @@ class StrategyBalancedDataset(BaseDataset):
 
     def __len__(self):
         if self.max_samples is None:
-            return max(self.data_len, self.batch_size) if self.batch_size else self.data_len
+            return self.data_len
         else:
             return self.max_samples
 

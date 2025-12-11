@@ -14,7 +14,7 @@ logger = get_logger()
 class RFMDataset(BaseDataset):
     """Dataset that combines preference, similarity, and progress generation."""
 
-    def __init__(self, config, is_evaluation=False, max_samples=None, batch_size=None, **kwargs):
+    def __init__(self, config, is_evaluation=False, max_samples=None, **kwargs):
         super().__init__(config, is_evaluation, **kwargs)
 
         self.pref_sampler = None
@@ -54,7 +54,6 @@ class RFMDataset(BaseDataset):
 
         self.sample_type_ratio = config.sample_type_ratio
         self.max_samples = max_samples
-        self.batch_size = batch_size
 
         self.data_len = len(self.dataset)
 
@@ -66,7 +65,7 @@ class RFMDataset(BaseDataset):
 
     def __len__(self):
         if self.max_samples is None:
-            return max(self.data_len, self.batch_size)
+            return self.data_len
         else:
             return self.max_samples
 

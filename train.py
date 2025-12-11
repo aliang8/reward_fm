@@ -102,7 +102,7 @@ def train(cfg: ExperimentConfig):
     if cfg.debug:
         cfg.training.logging_steps = 5
         cfg.training.eval_steps = 5
-        cfg.data.eval_subset_size = 10
+        # cfg.data.eval_subset_size = 100
         cfg.training.custom_eval_steps = 5
         cfg.logging.save_best.save_every = 5
 
@@ -177,15 +177,19 @@ def train(cfg: ExperimentConfig):
     banner("Setting up training and evaluation datasets and collator")
     with _timer("time/setup_data", timing_raw=timing_raw):
         batch_collator = setup_batch_collator(processor, tokenizer, cfg, is_eval=False)
-        train_dataset = setup_dataset(cfg.data, batch_size=cfg.training.per_device_train_batch_size)
+        train_dataset = setup_dataset(cfg.data)
 
     # Set up evaluation dataset if evaluation is enabled
     eval_dataset = None
     if cfg.training.do_eval:
-        dataset_kwargs = {"max_samples": cfg.data.eval_subset_size}
+        if cfg.data.eval_subset_size is not None:
+            dataset_kwargs = {"max_samples": cfg.data.eval_subset_size}
+        else:
+            dataset_kwargs = {}
 
         eval_dataset = setup_dataset(cfg.data, is_eval=True, **dataset_kwargs)
-        rank_0_print(f"Evaluation dataset created with {cfg.data.eval_subset_size} samples")
+        num_eval_samples = len(eval_dataset)
+        rank_0_print(f"Evaluation dataset created with {num_eval_samples} samples")
 
     banner("Setting up trainer", f"Trainer class: {cfg.trainer_cls}")
     trainer_cls = {

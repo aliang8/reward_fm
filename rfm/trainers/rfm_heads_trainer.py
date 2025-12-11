@@ -1310,17 +1310,7 @@ class RFMHeadsTrainer(Trainer):
 
             # Aggregate metrics across all processes using accelerator
             metrics = reduce_metrics_with_accelerate(metrics, self.accelerator, aggregate_method="mean")
-
-            # Log metrics
-            if is_rank_0():
-                banner("Custom RFM Evaluation Results (Aggregated)", inner_padding=1)
-                for key, value in metrics.items():
-                    logger.info(f"{key}: {value:.6f}")
-                logger.info("=" * 50)
-
-            # Also log to wandb if available and configured (only on rank 0)
-            metrics["epoch"] = self.state.epoch
-            self.logger.log_scalars(metrics, step=eval_step)
+            metrics["time/evaluate"] = self.timing_raw["time/evaluate"]
 
         # Run the custom evaluations
         custom_eval_should_run = (
@@ -1328,11 +1318,27 @@ class RFMHeadsTrainer(Trainer):
             and self.state.global_step % self.config.training.custom_eval_steps == 0
         )
         if custom_eval_should_run:
-            custom_metrics = self._run_custom_evaluations(eval_step=eval_step)
-            metrics.update(custom_metrics)
+            with _timer("time/custom_evaluations", timing_raw=self.timing_raw):
+                custom_metrics = self._run_custom_evaluations(eval_step=eval_step)
 
-            # to trigger the callback handler
-            # self.log(metrics)
+            metrics.update(custom_metrics)
+            # Add custom evaluation time
+            metrics["time/custom_evaluations"] = self.timing_raw["time/custom_evaluations"]
+            
+            if is_rank_0():
+                logger.info(f"Custom evaluations took {self.timing_raw['time/custom_evaluations']:.2f} seconds")
+
+        if metrics:
+            if is_rank_0():
+                banner("Evaluation Results (Aggregated)", inner_padding=1)
+                for key, value in metrics.items():
+                    logger.info(f"{key}: {value:.6f}")
+                logger.info("=" * 50)
+            
+            if is_rank_0():
+                self.logger.log_scalars(metrics, step=eval_step)
+            
+            # Trigger the callback handler with all metrics
             self.control = self.callback_handler.on_evaluate(self.args, self.state, self.control, metrics)
 
         # Restore original training mode to prevent state leakage
@@ -1682,6 +1688,8 @@ class RFMHeadsTrainer(Trainer):
 
         # Check for NaN in final loss
         if torch.isnan(final_loss).any():
+            if training:
+                import ipdb; ipdb.set_trace()
             logger.warning(f"NaN detected in progress loss, replacing with 0.0")
             final_loss = torch.tensor(0.0, device=final_loss.device, dtype=final_loss.dtype)
 

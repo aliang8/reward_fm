@@ -534,10 +534,14 @@ class RFMHeadsTrainer(Trainer):
 
         logger.trace("finished aggregating metrics")
 
+        training_step_time = self.timing_raw.get("time/training_step", 0.0)
+        it_per_sec = 1.0 / training_step_time if training_step_time > 0 else 0.0
+
         # Prepare logging data using aggregated losses
         log_data = {
             "step": self.state.global_step,
             "epoch": self.state.epoch,
+            "train/it_per_sec": it_per_sec,
             **self.timing_raw,
             **log_metadata,
         }
@@ -561,6 +565,7 @@ class RFMHeadsTrainer(Trainer):
         if is_rank_0():
             logger.info(f"Step {self.state.global_step}, Epoch {self.state.epoch:.2f}:")
             logger.info("-" * 50)
+            logger.info(f"  train/it_per_sec: {it_per_sec:.4f}")
             for key in log_global:
                 logger.info(f"  {key}: {log_global[key]}")
 

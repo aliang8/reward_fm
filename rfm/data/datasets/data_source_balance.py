@@ -2,7 +2,9 @@ import random
 from collections import defaultdict
 
 from rfm.data.datasets.rfm_data import RFMDataset
-from rfm.utils.distributed import rank_0_print
+from rfm.utils.logger import get_logger
+
+logger = get_logger()
 
 
 class BalancedRFMDataset(RFMDataset):
@@ -14,7 +16,7 @@ class BalancedRFMDataset(RFMDataset):
         self.data_source_weights = config.data_source_weights
         self.data_len = 10000000
 
-        rank_0_print("Building source indices for BalancedRFMDataset...")
+        logger.info("Building source indices for BalancedRFMDataset...")
         self.source_indices = defaultdict(list)
 
         if "data_source" in self.dataset.column_names:
@@ -23,12 +25,11 @@ class BalancedRFMDataset(RFMDataset):
                 self.source_indices[source].append(i)
 
         self._normalize_data_source_weights()
-
-        if self.verbose:
-            rank_0_print(f"BalancedRFMDataset initialized with {len(self.source_indices)} data sources")
-            for source, indices in self.source_indices.items():
-                weight = self.normalized_weights.get(source, 0.0)
-                rank_0_print(f"  {source}: {len(indices)} trajectories (weight: {weight:.3f})")
+        
+        logger.info(f"BalancedRFMDataset initialized with {len(self.source_indices)} data sources")
+        for source, indices in self.source_indices.items():
+            weight = self.normalized_weights.get(source, 0.0)
+            logger.info(f"  {source}: {len(indices)} trajectories (weight: {weight:.3f})")
 
     def _normalize_data_source_weights(self):
         """Normalize data source weights across all available sources."""

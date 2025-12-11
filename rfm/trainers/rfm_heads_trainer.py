@@ -657,6 +657,8 @@ class RFMHeadsTrainer(Trainer):
                     kwargs["frame_step"] = (
                         2 if (self.config.trainer_cls == "rfm_heads" and not self.config.data.use_multi_image) else 1
                     )
+                if eval_type == "quality_preference":
+                    kwargs["comparisons_per_task"] = self.config.custom_eval.comparisons_per_task
 
                 dataset = setup_custom_eval_dataset(
                     eval_cfg, sampler_type=eval_type, is_eval=True, verbose=False, **kwargs

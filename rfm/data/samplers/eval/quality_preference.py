@@ -17,12 +17,14 @@ class QualityPreferenceSampler(BaseQualityPreferenceSampler):
         dataset_success_cutoff_map=None,
         is_evaluation=False,
         verbose=True,
+        comparisons_per_task=None,  
         **kwargs,
     ):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
 
         # Set data_gen_strategy for this sampler
         self.data_gen_strategy = "quality_preference"
+        self.comparisons_per_task = comparisons_per_task
 
         # Generate all possible sample indices upfront (not the actual samples)
         self.sample_indices = self._generate_all_sample_indices()
@@ -55,9 +57,6 @@ class QualityPreferenceSampler(BaseQualityPreferenceSampler):
 
         # Generate pairs for each task
         quality_order = {"failure": 1, "suboptimal": 2, "successful": 3}
-        
-        # Get comparisons_per_task limit if set
-        comparisons_per_task = self.config.custom_eval.comparisons_per_task
 
         for task in tqdm(task_to_quality_trajs, desc="Generating quality preference samples"):
             quality_groups = task_to_quality_trajs[task]
@@ -109,9 +108,9 @@ class QualityPreferenceSampler(BaseQualityPreferenceSampler):
                         })
             
             # Apply comparisons_per_task limit if set (sample uniformly across all pairs for this task)
-            if comparisons_per_task is not None and len(task_pairs) > comparisons_per_task:
+            if self.comparisons_per_task is not None and len(task_pairs) > self.comparisons_per_task:
                 # Uniformly sample comparisons for this task
-                task_pairs = random.sample(task_pairs, comparisons_per_task)
+                task_pairs = random.sample(task_pairs, self.comparisons_per_task)
             
             sample_indices.extend(task_pairs)
 

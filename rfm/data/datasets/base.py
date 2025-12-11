@@ -109,6 +109,12 @@ class BaseDataset(torch.utils.data.Dataset):
         )
         rank_0_info(f"Dataset filtered with {len(self.dataset)} total trajectories")
 
+        # Filter out suboptimal/failed trajectories without optimal counterparts and tasks with only suboptimal/failed trajectories
+        self.dataset, self._combined_indices = self._filter_tasks_without_optimal(
+            dataset=self.dataset,
+            combined_indices=self._combined_indices,
+        )
+
         # Set cached fields after filtering
         self._cached_ids = self.dataset["id"]
         self._cached_is_robot = self.dataset["is_robot"]
@@ -480,6 +486,70 @@ class BaseDataset(torch.utils.data.Dataset):
             filtered_combined_indices = self._update_indices_after_filtering(combined_indices, keep_indices)
         else:
             # No filtering needed, return original dataset and indices
+            filtered_dataset = dataset
+            filtered_combined_indices = combined_indices
+
+        return filtered_dataset, filtered_combined_indices
+
+    def _filter_tasks_without_optimal(
+        self,
+        dataset,
+        combined_indices: dict,
+    ):
+        """Filter out suboptimal/failed trajectories that don't have optimal counterparts with the same task name.
+        Also filter out tasks that only have failed/suboptimal trajectories.
+
+        Args:
+            dataset: The dataset to filter
+            combined_indices: Dictionary of combined indices to update after filtering
+
+        Returns:
+            tuple: (filtered_dataset, filtered_combined_indices)
+                - filtered_dataset: The filtered dataset
+                - filtered_combined_indices: The filtered combined indices
+        """
+        # Get tasks that have optimal trajectories
+        tasks_with_optimal = set(combined_indices.get("optimal_by_task", {}).keys())
+
+        # Get all tasks in the dataset
+        all_tasks = dataset["task"]
+        quality_labels = dataset["quality_label"]
+
+        # Identify trajectories to remove:
+        # 1. All trajectories from tasks that have no optimal trajectories
+        # 2. Suboptimal/failed trajectories whose task doesn't have optimal trajectories
+        indices_to_remove = set()
+        tasks_removed = set()
+
+        for idx, (task, quality_label) in enumerate(zip(all_tasks, quality_labels)):
+            if task is None:
+                # Skip trajectories with None task
+                continue
+            if task not in tasks_with_optimal:
+                # This task has no optimal trajectories
+                # Remove all trajectories from this task (they're all suboptimal/failed with no optimal counterparts)
+                indices_to_remove.add(idx)
+                tasks_removed.add(task)
+
+        if indices_to_remove:
+            # Build keep_indices
+            keep_indices = [i for i in range(len(dataset)) if i not in indices_to_remove]
+
+            filtered_by_no_optimal = len(indices_to_remove)
+            tasks_removed_count = len(tasks_removed)
+
+            rank_0_info(
+                f"  Filtering out {filtered_by_no_optimal} trajectories from {tasks_removed_count} tasks "
+                f"that have no optimal trajectories (only suboptimal/failed)"
+            )
+
+            # Filter dataset using select with keep_indices
+            filtered_dataset = dataset.select(keep_indices)
+
+            # Update combined_indices using the shared helper
+            filtered_combined_indices = self._update_indices_after_filtering(combined_indices, keep_indices)
+        else:
+            # No filtering needed
             filtered_dataset = dataset
             filtered_combined_indices = combined_indices
 

@@ -415,12 +415,12 @@ def compute_progress_from_segment(
         progress_pred_type: Type of progress calculation:
             - "absolute_first_frame": progress[i] = i / (num_frames_total - start_idx - 1), evaluated at each selected in-segment index.
             - "relative_first_frame": progress[0] = 0.0; progress[i] = (frame_indices[i] - frame_indices[i-1]) / (num_frames_total - start_idx).
-            - "absolute_wrt_total_frames": progress[i] = (start_idx + frame_indices[i]) / num_frames_total.
+            - "absolute_wrt_total_frames": progress[i] = (start_idx + frame_indices[i] + 1) / num_frames_total.
 
     Behavior:
         - absolute_first_frame: progress[i] = i / (num_frames_total - start_idx - 1), evaluated at each selected in-segment index.
         - relative_first_frame: progress[0] = 0.0; progress[i] = (frame_indices[i] - frame_indices[i-1]) / (num_frames_total - start_idx).
-        - absolute_wrt_total_frames: progress[i] = (start_idx + frame_indices[i]) / num_frames_total.
+        - absolute_wrt_total_frames: progress[i] = (start_idx + frame_indices[i] + 1) / num_frames_total.
     """
     # Handle absolute_wrt_total_frames first (simplest case)
     if progress_pred_type == "absolute_wrt_total_frames":
@@ -428,7 +428,7 @@ def compute_progress_from_segment(
         for idx in frame_indices:
             # Calculate absolute index in original trajectory
             abs_idx = start_idx + idx
-            progress = abs_idx / num_frames_total
+            progress = (abs_idx + 1) / num_frames_total
             segment_progress.append(progress)
         return segment_progress
 
@@ -518,8 +518,8 @@ def subsample_pairs_and_progress(frames, max_frames: int, progress_pred_type: st
 
     # Calculate progress based on type
     if progress_pred_type == "absolute_wrt_total_frames":
-        # For each frame in the pair, calculate progress as idx / num_frames_total
-        progress = [idx / num_frames_total for idx in pair_indices]
+        # For each frame in the pair, calculate progress as (idx + 1) / num_frames_total
+        progress = [(idx + 1) / num_frames_total for idx in pair_indices]
     else:
         # For absolute_first_frame and relative_first_frame, use delta between frames
         # Calculate progress as a single number: delta between the two frames
@@ -663,13 +663,13 @@ def create_rewind_trajectory(
 
     # Calculate progress based on type
     if progress_pred_type == "absolute_wrt_total_frames":
-        # For absolute_wrt_total_frames, calculate progress as absolute_idx / num_frames
+        # For absolute_wrt_total_frames, calculate progress as (absolute_idx + 1) / num_frames
         # Forward segment: indices from start_idx to end_idx-1
-        forward_progress_abs = [(start_idx + i) / num_frames for i in range(len(forward_indices))]
+        forward_progress_abs = [(start_idx + i + 1) / num_frames for i in range(len(forward_indices))]
         # Rewind segment: reverse the forward progress (but we need to map to actual indices)
         # The rewind segment goes from end_idx-2 down to rewind_point
         rewind_actual_indices = list(range(end_idx - 2, rewind_point - 1, -1))  # Reverse order
-        rewind_progress_abs = [idx / num_frames for idx in rewind_actual_indices]
+        rewind_progress_abs = [(idx + 1) / num_frames for idx in rewind_actual_indices]
     else:
         # For absolute_first_frame and relative_first_frame, use the original logic
         # Step 6: Calculate absolute progress for each frame position in the combined trajectory

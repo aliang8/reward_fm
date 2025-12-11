@@ -6,24 +6,27 @@ Loads a dataset, creates a BaseSampler, processes trajectories using _get_traj_f
 and generates videos with overlayed metadata (task, progress, etc.).
 
 Example commands:
-
-    # Visualize a single trajectory
-    python visualize_base_sampler_trajectory.py --dataset metaworld/assembly-v2 --trajectory_idx 0
-
-    # Visualize a preference sample with rewound strategy
-    python visualize_base_sampler_trajectory.py --dataset metaworld/assembly-v2 --viz_type preference --strategy rewound
-
-    # Visualize a preference sample with suboptimal strategy
-    python visualize_base_sampler_trajectory.py --dataset metaworld/assembly-v2 --viz_type preference --strategy suboptimal
-
-    # Visualize a preference sample with different_task strategy
-    python visualize_base_sampler_trajectory.py --dataset metaworld/assembly-v2 --viz_type preference --strategy different_task
-
     # Visualize multiple preference samples
-    python visualize_base_sampler_trajectory.py --dataset metaworld/assembly-v2 --viz_type preference --strategy rewound --num_videos 10
+    uv run python rfm/data/scripts/visualize_base_sampler_trajectory.py \
+        --dataset jesbu1/oxe_rfm_oxe_bc_z \
+        --viz_type preference \
+        --strategy rewound \
+        --num_videos 10 \
+        --max_frames 2 \
+        --progress_pred_type absolute_wrt_total_frames \
+        --output data_strategy_visualization
+
+    uv run python rfm/data/scripts/visualize_base_sampler_trajectory.py \
+        --dataset jesbu1/oxe_rfm_oxe_bc_z \
+        --viz_type progress \
+        --strategy rewound \
+        --num_videos 10 \
+        --max_frames 2 \
+        --progress_pred_type absolute_wrt_total_frames \
+        --output data_strategy_visualization
 
     # List available datasets
-    python visualize_base_sampler_trajectory.py --list_datasets
+    uv run python rfm/data/scripts/visualize_base_sampler_trajectory.py --list_datasets
 """
 
 import argparse
@@ -223,7 +226,7 @@ def create_video_from_trajectory(
         if "end_idx" in metadata:
             header_lines.append(f"End Idx: {metadata['end_idx']}")
         if "subsampled_indices" in metadata:
-            header_lines.append(f"Indices: {metadata['subsampled_indices'][:5]}...")  # Show first 5
+            header_lines.append(f"Indices: {metadata['subsampled_indices']} ")  # Show first 5
         if "pair_type" in metadata:
             header_lines.append(f"Pair Type: {metadata['pair_type']}")
         if "i" in metadata:
@@ -581,8 +584,8 @@ def main():
     parser.add_argument(
         "--output",
         type=str,
-        default="base_sampler_trajectory",
-        help="Output video path or folder name (default: base_sampler_trajectory)",
+        default="data_strategy_visualization",
+        help="Output video path or folder name (default: data_strategy_visualization)",
     )
     parser.add_argument(
         "--num_videos",
@@ -605,9 +608,9 @@ def main():
     parser.add_argument(
         "--progress_pred_type",
         type=str,
-        default="absolute",
-        choices=["absolute", "relative"],
-        help="Progress prediction type (default: absolute)",
+        default="absolute_first_frame",
+        choices=["absolute_first_frame", "relative_first_frame", "absolute_wrt_total_frames"],
+        help="Progress prediction type: 'absolute_first_frame', 'relative_first_frame', or 'absolute_wrt_total_frames' (default: absolute_first_frame)",
     )
     parser.add_argument(
         "--pairwise_progress",
@@ -628,9 +631,9 @@ def main():
     parser.add_argument(
         "--viz_type",
         type=str,
-        default="trajectory",
-        choices=["trajectory", "preference"],
-        help="Visualization type: 'trajectory' for single trajectory or 'preference' for preference sample (default: trajectory)",
+        default="progress",
+        choices=["progress", "preference"],
+        help="Visualization type: 'progress' for single progress trajectory or 'preference' for preference sample (default: progress)",
     )
     parser.add_argument(
         "--strategy",
@@ -682,7 +685,7 @@ def main():
         preference_strategy_ratio=strategy_ratios,
         dataset_success_cutoff_file=args.dataset_success_cutoff_file,
         min_frames_per_trajectory=0,
-        sample_type_ratio=[1, 0, 0] if args.viz_type == "preference" else [0, 1, 0],  # Preference or progress only
+        sample_type_ratio=[1, 0, 0] if args.viz_type == "preference" else [0, 1, 0],  # Preference or progress
     )
 
     # Load dataset using BaseDataset (reuses all the loading logic)

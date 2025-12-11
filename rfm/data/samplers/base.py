@@ -355,7 +355,7 @@ class RFMBaseSampler:
             return None
         
         # Get minimum threshold from config (default to 0.0 if not set)
-        min_threshold = getattr(self.config, "roboarena_partial_success_threshold", 0.0)
+        min_threshold = self.config.roboarena_partial_success_threshold
         
         # Get all trajectories from the same task
         same_task_indices = self.task_indices.get(task_name, [])

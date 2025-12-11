@@ -98,9 +98,10 @@ class RewardAlignmentSampler(RFMBaseSampler):
         text_embedding = None
 
         # Ground truth progress: linear from 0 to 1
-        if self.config.progress_pred_type == "absolute":
+        # If starts with "absolute", use linspace logic; if "relative", use 1/num_frames
+        if self.config.progress_pred_type.startswith("absolute"):
             gt_progress = (end_idx - 1) / (num_frames - 1)
-        else:
+        else:  # relative_first_frame
             gt_progress = 1 / num_frames
 
         if self.config.load_embeddings and original_traj.get("embeddings_path"):

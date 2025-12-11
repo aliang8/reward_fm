@@ -86,14 +86,23 @@ class ProgressDefaultSampler(RFMBaseSampler):
 
         data, frame_indices = linspace_subsample_frames(data, max_frames)
         frames_shape_orig = data.shape
-        progress_abs = [idx / (total_frames - 1) for idx in frame_indices]
+        
+        # Compute progress based on type
+        if self.config.progress_pred_type == "absolute_wrt_total_frames":
+            progress_abs = [(idx + 1) / total_frames for idx in frame_indices]
+        elif self.config.progress_pred_type.startswith("absolute"):
+            # absolute_first_frame: use linspace logic
+            progress_abs = [idx / (total_frames - 1) for idx in frame_indices]
+        else:  # relative_first_frame
+            # For relative, we still compute absolute first, then convert
+            progress_abs = [idx / (total_frames - 1) for idx in frame_indices]
 
         if use_embeddings:
             video_embeddings, progress_abs = pad_trajectory_to_max_frames_torch(data, progress_abs, max_frames)
         else:
             frames, progress_abs = pad_trajectory_to_max_frames_np(data, progress_abs, max_frames)
 
-        if self.config.progress_pred_type == "relative":
+        if self.config.progress_pred_type == "relative_first_frame":
             progress = convert_absolute_to_relative_progress(progress_abs)
         else:
             progress = progress_abs

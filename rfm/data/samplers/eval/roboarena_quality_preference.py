@@ -1,3 +1,4 @@
+import random
 from tqdm import tqdm
 
 from rfm.data.samplers.eval.base_pref import BaseQualityPreferenceSampler
@@ -70,6 +71,9 @@ class RoboArenaQualityPreferenceSampler(BaseQualityPreferenceSampler):
                 "partial_success": float(partial_success),
             })
 
+        # Get comparisons_per_task limit if set
+        comparisons_per_task = self.config.custom_eval.comparisons_per_task
+
         # Generate pairs for each task
         for task in tqdm(task_to_trajs, desc="Generating RoboArena quality preference samples"):
             trajs = task_to_trajs[task]
@@ -79,6 +83,7 @@ class RoboArenaQualityPreferenceSampler(BaseQualityPreferenceSampler):
                 continue
 
             # Create all pairs of trajectories
+            task_pairs = []
             for i, traj1 in enumerate(trajs):
                 for j, traj2 in enumerate(trajs):
                     if i >= j:  # Avoid duplicates and self-pairs
@@ -103,12 +108,19 @@ class RoboArenaQualityPreferenceSampler(BaseQualityPreferenceSampler):
                         chosen_partial = partial2
                         rejected_partial = partial1
 
-                    sample_indices.append({
+                    task_pairs.append({
                         "chosen_traj_idx": chosen_traj_idx,
                         "rejected_traj_idx": rejected_traj_idx,
                         "task": task,
                         "chosen_partial_success": chosen_partial,
                         "rejected_partial_success": rejected_partial,
                     })
+            
+            # Apply comparisons_per_task limit if set (sample uniformly across all pairs for this task)
+            if comparisons_per_task is not None and len(task_pairs) > comparisons_per_task:
+                # Uniformly sample comparisons for this task
+                task_pairs = random.sample(task_pairs, comparisons_per_task)
+            
+            sample_indices.extend(task_pairs)
 
         return sample_indices

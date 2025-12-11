@@ -1,3 +1,4 @@
+import random
 from itertools import combinations
 from tqdm import tqdm
 
@@ -54,6 +55,9 @@ class QualityPreferenceSampler(BaseQualityPreferenceSampler):
 
         # Generate pairs for each task
         quality_order = {"failure": 1, "suboptimal": 2, "successful": 3}
+        
+        # Get comparisons_per_task limit if set
+        comparisons_per_task = self.config.custom_eval.comparisons_per_task
 
         for task in tqdm(task_to_quality_trajs, desc="Generating quality preference samples"):
             quality_groups = task_to_quality_trajs[task]
@@ -63,6 +67,9 @@ class QualityPreferenceSampler(BaseQualityPreferenceSampler):
             if len(quality_labels) < 2:
                 continue
 
+            # Collect all pairs for this task
+            task_pairs = []
+            
             # Create pairs of different quality labels
             for quality1, quality2 in combinations(quality_labels, 2):
                 trajs1 = quality_groups[quality1]
@@ -90,15 +97,22 @@ class QualityPreferenceSampler(BaseQualityPreferenceSampler):
                     # Same order, skip this pair as we can't reliably compare them
                     continue
 
-                # Create all possible pairs
+                # Create all possible pairs for this quality combination
                 for chosen_idx in chosen_indices:
                     for rejected_idx in rejected_indices:
-                        sample_indices.append({
+                        task_pairs.append({
                             "chosen_traj_idx": chosen_idx,
                             "rejected_traj_idx": rejected_idx,
                             "task": task,
                             "chosen_quality": chosen_quality,
                             "rejected_quality": rejected_quality,
                         })
+            
+            # Apply comparisons_per_task limit if set (sample uniformly across all pairs for this task)
+            if comparisons_per_task is not None and len(task_pairs) > comparisons_per_task:
+                # Uniformly sample comparisons for this task
+                task_pairs = random.sample(task_pairs, comparisons_per_task)
+            
+            sample_indices.extend(task_pairs)
 
         return sample_indices

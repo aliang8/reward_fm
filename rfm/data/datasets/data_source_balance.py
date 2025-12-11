@@ -8,8 +8,8 @@ from rfm.utils.distributed import rank_0_print
 class BalancedRFMDataset(RFMDataset):
     """Dataset that extends RFMDataset with configurable sampling weights per data source."""
 
-    def __init__(self, config, is_evaluation=False, max_samples=None, batch_size=None, **kwargs):
-        super().__init__(config, is_evaluation, max_samples, batch_size, **kwargs)
+    def __init__(self, config, is_evaluation=False, max_samples=None, **kwargs):
+        super().__init__(config, is_evaluation, max_samples, **kwargs)
 
         self.data_source_weights = config.data_source_weights
         self.data_len = 10000000

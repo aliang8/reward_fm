@@ -127,6 +127,7 @@ custom_eval:
     - mw
   quality_preference:
     - mw
+  comparisons_per_task: 5  # Limit number of quality preference comparisons per task. null = use all comparisons. Uniformly samples if limit is set.
 
 # =====================================================================================
 # Training Configuration

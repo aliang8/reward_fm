@@ -258,6 +258,10 @@ class CustomEvaluationConfig:
     reward_alignment: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
     quality_preference: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
     similarity_score: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
+    comparisons_per_task: Optional[int] = field(
+        default=None,
+        metadata={"help": "Limit number of quality preference comparisons per task. None = use all comparisons. Uniformly samples if limit is set."},
+    )
 
 
 @dataclass

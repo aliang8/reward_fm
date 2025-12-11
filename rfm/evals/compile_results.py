@@ -586,6 +586,9 @@ def run_policy_ranking_eval(results: list[dict[str, Any]], progress_pred_type: s
     task_details = {}
     all_spearman = []
     all_spearman_rewind = []
+    all_succ_subopt_diffs = []
+    all_subopt_fail_diffs = []
+    all_succ_fail_diffs = []
 
     if use_partial_success:
         # RoboArena: Sample pairs of trajectories, rank based on partial_success vs predicted rewards
@@ -743,9 +746,29 @@ def run_policy_ranking_eval(results: list[dict[str, Any]], progress_pred_type: s
                 else:
                     spearman_rewind = None
 
+            # Compute average differences between quality labels
+            succ_subopt_diff = None
+            subopt_fail_diff = None
+            succ_fail_diff = None
+            
+            if "successful" in avg_rewards_per_quality and "suboptimal" in avg_rewards_per_quality:
+                succ_subopt_diff = avg_rewards_per_quality["successful"] - avg_rewards_per_quality["suboptimal"]
+                all_succ_subopt_diffs.append(succ_subopt_diff)
+            
+            if "suboptimal" in avg_rewards_per_quality and "failure" in avg_rewards_per_quality:
+                subopt_fail_diff = avg_rewards_per_quality["suboptimal"] - avg_rewards_per_quality["failure"]
+                all_subopt_fail_diffs.append(subopt_fail_diff)
+            
+            if "successful" in avg_rewards_per_quality and "failure" in avg_rewards_per_quality:
+                succ_fail_diff = avg_rewards_per_quality["successful"] - avg_rewards_per_quality["failure"]
+                all_succ_fail_diffs.append(succ_fail_diff)
+
             task_details[task] = {
                 "spearman": avg_spearman_corr,
                 "spearman_rewind": spearman_rewind,
+                "succ_subopt_diff": succ_subopt_diff,
+                "subopt_fail_diff": subopt_fail_diff,
+                "succ_fail_diff": succ_fail_diff,
             }
             all_spearman.append(avg_spearman_corr)
 
@@ -756,6 +779,9 @@ def run_policy_ranking_eval(results: list[dict[str, Any]], progress_pred_type: s
     policy_ranking_metrics = {
         "spearman": np.mean(all_spearman).item(),
         "spearman_rewind": np.mean(all_spearman_rewind).item() if all_spearman_rewind else None,
+        "avg_succ_subopt_diff": np.mean(all_succ_subopt_diffs).item() if all_succ_subopt_diffs else None,
+        "avg_subopt_fail_diff": np.mean(all_subopt_fail_diffs).item() if all_subopt_fail_diffs else None,
+        "avg_succ_fail_diff": np.mean(all_succ_fail_diffs).item() if all_succ_fail_diffs else None,
     }
 
     return policy_ranking_metrics, task_groups, task_details

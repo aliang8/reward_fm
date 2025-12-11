@@ -1076,8 +1076,25 @@ class RFMHeadsTrainer(Trainer):
                                 for q, r in quality_to_rews.items():
                                     quality_to_rews[q] = np.array(r).round(2).tolist()
                                 quality_to_rews = ",".join([f"{q}:{r}" for q, r in quality_to_rews.items()])
-                                data.append([task, quality_to_rews])
-                            columns = ["task", "quality_and_rews"]
+                                
+                                # Get task details for differences
+                                task_detail = task_details.get(task, {})
+                                succ_subopt = task_detail.get("succ_subopt_diff")
+                                subopt_fail = task_detail.get("subopt_fail_diff")
+                                succ_fail = task_detail.get("succ_fail_diff")
+                                
+                                # Format differences
+                                diff_str = []
+                                if succ_subopt is not None:
+                                    diff_str.append(f"succ-subopt:{succ_subopt:.2f}")
+                                if subopt_fail is not None:
+                                    diff_str.append(f"subopt-fail:{subopt_fail:.2f}")
+                                if succ_fail is not None:
+                                    diff_str.append(f"succ-fail:{succ_fail:.2f}")
+                                diff_str = ",".join(diff_str) if diff_str else "N/A"
+                                
+                                data.append([task, quality_to_rews, diff_str])
+                            columns = ["task", "quality_and_rews", "avg_differences"]
 
                         table_name = f"policy_ranking_samples/{ds_name}"
 

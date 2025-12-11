@@ -1073,7 +1073,7 @@ class RFMHeadsTrainer(Trainer):
                             columns = ["task", "quality_and_rews"]
 
                         table_name = f"policy_ranking_samples/{ds_name}"
-                        
+
                         self.logger.log_table(
                             table_name,
                             data=data,
@@ -1272,7 +1272,7 @@ class RFMHeadsTrainer(Trainer):
         Override evaluate method to implement custom RFM evaluation metrics.
         """
         eval_step = self.state.global_step
-        
+
         # Save current training mode and set to eval mode
         was_training = self.model.training
         self.model.eval()

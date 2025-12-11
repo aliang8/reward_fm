@@ -40,7 +40,7 @@ class HandPairedFrameLoader:
 def _sorted_jpgs(dir_path: Path) -> list[str]:
     """Return sorted list of JPG file paths from a directory."""
     paths = [p for p in dir_path.glob("*.jpg")]
-    
+
     def _key(p: Path):
         # Extract number from filenames like "im_0.jpg", "im_1.jpg", etc.
         name = p.stem
@@ -51,14 +51,14 @@ def _sorted_jpgs(dir_path: Path) -> list[str]:
             return int(name)
         except Exception:
             return 0
-    
+
     paths.sort(key=_key)
     return [str(p) for p in paths]
 
 
 def _parse_task_name(folder_name: str) -> str:
     """Convert folder name to human-readable task instruction.
-    
+
     Examples:
         blend_carrot -> blend carrot
         close_microwave_hand -> close microwave
@@ -158,4 +158,3 @@ def load_hand_paired_dataset(dataset_path: str) -> dict[str, list[dict]]:
         print(f"  {task}: {robot_count} robot, {human_count} human trajectories")
 
     return task_data
-

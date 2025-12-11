@@ -370,7 +370,6 @@ class SaveBestConfig:
         default=None,
         metadata={"help": "Frequency (in steps) to upload to Hub. None = upload every checkpoint. Local saves always happen regardless."},
     )
-    hub_model_id: Optional[str] = field(default=None, metadata={"help": "HuggingFace model ID (username/model-name)"})
     hub_token: Optional[str] = field(default=None, metadata={"help": "HuggingFace token (or set HF_TOKEN env var)"})
     hub_private: bool = field(default=False, metadata={"help": "Whether to make the Hub model private"})
 

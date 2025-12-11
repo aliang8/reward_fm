@@ -199,17 +199,21 @@ class PrefSampler(RFMBaseSampler):
 
         # Strategy selection with rebalancing on failure
         strategies = []
-        # For RoboArena, always use partial_success strategy only
+        # # For RoboArena, always use partial_success strategy only
+        # if is_roboarena:
+        #     strategies.append((DataGenStrat.ROBOARENA_PARTIAL_SUCCESS, 1.0))
+        # else:
+
+        # Add other strategies if not RoboArena
+        if self.preference_strategy_ratio[0] > 0:
+            strategies.append((DataGenStrat.REWOUND, self.preference_strategy_ratio[0]))
+        if self._has_suboptimal and self.preference_strategy_ratio[1] > 0:
+            strategies.append((DataGenStrat.SUBOPTIMAL, self.preference_strategy_ratio[1]))
+        if self.preference_strategy_ratio[2] > 0:
+            strategies.append((DataGenStrat.DIFFERENT_TASK, self.preference_strategy_ratio[2]))
+
         if is_roboarena:
-            strategies.append((DataGenStrat.ROBOARENA_PARTIAL_SUCCESS, 1.0))
-        else:
-            # Add other strategies if not RoboArena
-            if self.preference_strategy_ratio[0] > 0:
-                strategies.append((DataGenStrat.REWOUND, self.preference_strategy_ratio[0]))
-            if self._has_suboptimal and self.preference_strategy_ratio[1] > 0:
-                strategies.append((DataGenStrat.SUBOPTIMAL, self.preference_strategy_ratio[1]))
-            if self.preference_strategy_ratio[2] > 0:
-                strategies.append((DataGenStrat.DIFFERENT_TASK, self.preference_strategy_ratio[2]))
+            strategies.append((DataGenStrat.ROBOARENA_PARTIAL_SUCCESS, 10.0))
 
         max_attempts = 10  # Limit retry attempts to prevent infinite loops
         max_strategy_attempts = 3  # Maximum attempts per strategy before removing it

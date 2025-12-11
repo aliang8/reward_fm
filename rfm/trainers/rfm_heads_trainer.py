@@ -598,6 +598,624 @@ class RFMHeadsTrainer(Trainer):
         log_memory_usage("After accelerator.prepare(dataloader)")
         return prepared_dl
 
+    def _setup_eval_dataset(self, eval_type, eval_dataset):
+        """Setup dataset and dataloader for evaluation."""
+        eval_cfg = copy.deepcopy(self.config.data)
+        eval_cfg.dataset_type = "rfm"
+        # For similarity_score, eval_dataset is a list of datasets that should be loaded together
+        # For other eval types, eval_dataset is a single dataset name
+        if eval_type == "similarity_score" and isinstance(eval_dataset, list):
+            eval_cfg.eval_datasets = eval_dataset
+        else:
+            eval_cfg.eval_datasets = [eval_dataset]
+
+        # Create custom eval dataset with the appropriate sampler
+        # set max_trajectories to 10 for reward_alignment per eval dataset
+        kwargs = {}
+        if eval_type == "reward_alignment":
+            kwargs["max_trajectories"] = 10
+            kwargs["frame_step"] = (
+                2 if (self.config.trainer_cls == "rfm_heads" and not self.config.data.use_multi_image) else 1
+            )
+        if eval_type == "quality_preference":
+            kwargs["comparisons_per_task"] = self.config.custom_eval.comparisons_per_task
+
+        dataset = setup_custom_eval_dataset(eval_cfg, sampler_type=eval_type, is_eval=True, verbose=False, **kwargs)
+        # Explicitly delete eval_cfg after dataset creation to free memory
+        del eval_cfg
+
+        logger.info(f"  Dataset size: {len(dataset)}")
+        log_memory_usage(f"After creating dataset")
+
+        dataloader = self._make_eval_dataloader(dataset)
+        logger.info(f"  Dataloader created with {len(dataloader)} batches")
+        log_memory_usage(f"After creating dataloader")
+
+        # Ensure model is in eval mode and clear any gradient buffers
+        self.model.eval()
+        # Explicitly zero any gradients that might exist (shouldn't, but safety measure)
+        if hasattr(self, "optimizer") and self.optimizer is not None:
+            self.optimizer.zero_grad(set_to_none=True)
+
+        # Clear cache before starting evaluation
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        log_memory_usage(f"After clearing cache, before eval loop")
+
+        return dataset, dataloader
+
+    def _process_batch_progress_eval(self, batch, eval_type):
+        """Process a batch for progress-based evaluations (reward_alignment, policy_ranking, confusion_matrix)."""
+        logger.debug(f"    Processing {eval_type} batch")
+        progress_samples = batch["progress_inputs"]
+        logger.debug(f"    Calling forward_model for progress")
+        with torch.no_grad():
+            outputs, _ = self.forward_model(self.model, progress_samples, sample_type="progress")
+        logger.debug(f"    Forward pass complete")
+
+        progress_logits = outputs.progress_logits
+        progress_pred = progress_logits["A"]
+
+        # Gather everything
+        progress_pred = self.accelerator.gather_for_metrics(progress_pred)
+        target_progress = self.accelerator.gather_for_metrics(progress_samples["target_progress"])
+
+        # Gather metadata fields
+        metadata_fields = [
+            "task",
+            "data_source",
+            "data_gen_strategy",
+            "quality_labels",
+            "metadata",
+            "partial_success",
+        ]
+        gathered_metadata_dict = self._gather_metadata_fields(progress_samples, metadata_fields)
+        num_progress_samples = progress_pred.shape[0] if progress_pred is not None else 0
+        gathered_metadata_dict = self._truncate_metadata_lists(gathered_metadata_dict, num_progress_samples)
+
+        # Handle success predictions if needed
+        success_pred_gathered = None
+        success_probs_gathered = None
+        success_labels_gathered = None
+        if self.config.model.train_success_head:
+            success_pred = outputs.success_logits["A"]
+            success_probs = torch.sigmoid(success_pred)
+            success_binary = (success_probs > 0.5).float()
+            success_pred_gathered = self.accelerator.gather_for_metrics(success_binary)
+            success_probs_gathered = self.accelerator.gather_for_metrics(success_probs)
+            success_labels = progress_samples.get("success_labels")
+            success_labels_gathered = self.accelerator.gather_for_metrics(success_labels)
+
+            # Clean up intermediate tensors (but keep gathered tensors for eval_results)
+            del (
+                success_pred,
+                success_binary,
+                success_probs,
+                success_labels,
+            )
+
+        # Build eval_results on all processes for compute_eval_metrics
+        batch_results = []
+        for i in range(len(progress_pred)):
+            metadata = gathered_metadata_dict["metadata"][i]
+            sample_result = {
+                "task": gathered_metadata_dict["task"][i],
+                "target_progress": t2n(target_progress[i]),
+                "progress_pred": t2n(progress_pred[i]),
+                "data_source": gathered_metadata_dict["data_source"][i],
+                "data_gen_strategy": gathered_metadata_dict["data_gen_strategy"][i],
+                "quality_label": gathered_metadata_dict["quality_labels"][i],
+                "metadata": metadata,
+                "id": metadata["id"],
+                "video_path": metadata["video_path"],
+                "partial_success": gathered_metadata_dict["partial_success"][i],
+            }
+            if success_pred_gathered is not None:
+                sample_result["success_pred"] = t2n(success_pred_gathered[i])
+            if success_probs_gathered is not None:
+                sample_result["success_probs"] = t2n(success_probs_gathered[i])
+            if success_labels_gathered is not None:
+                sample_result["success_labels"] = t2n(success_labels_gathered[i])
+            batch_results.append(sample_result)
+
+        # Clean up gathered tensors and metadata after building results
+        del progress_pred, target_progress, gathered_metadata_dict
+        if success_pred_gathered is not None:
+            del success_pred_gathered
+        if success_probs_gathered is not None:
+            del success_probs_gathered
+        if success_labels_gathered is not None:
+            del success_labels_gathered
+
+        return batch_results, outputs
+
+    def _process_batch_preference_eval(self, batch):
+        """Process a batch for preference-based evaluations (quality_preference)."""
+        logger.debug(f"    Processing quality_preference batch")
+        preference_samples = batch["preference_inputs"]
+        logger.debug(f"    Calling forward_model for preference")
+        with torch.no_grad():
+            outputs, _ = self.forward_model(self.model, preference_samples, sample_type="preference")
+        logger.debug(f"    Forward pass complete")
+        pref_logits = outputs.pref_logits
+
+        # Gather predictions and labels across all ranks
+        pref_logits = self.accelerator.gather_for_metrics(pref_logits)
+        preference_labels = self.accelerator.gather_for_metrics(preference_samples["preference_labels"])
+
+        # Gather non-tensor metadata using helper (handles single and multi GPU)
+        gathered_pref_metadata = self._gather_metadata_fields(
+            preference_samples,
+            [
+                "task",
+                "data_source",
+                "chosen_data_gen_strategy",
+                "rejected_data_gen_strategy",
+                "metadata",
+            ],
+        )
+        num_pref_samples = pref_logits.shape[0] if pref_logits is not None else 0
+        gathered_pref_metadata = self._truncate_metadata_lists(gathered_pref_metadata, num_pref_samples)
+        gathered_task = gathered_pref_metadata["task"]
+        gathered_data_source = gathered_pref_metadata["data_source"]
+        gathered_chosen_data_gen_strategy = gathered_pref_metadata["chosen_data_gen_strategy"]
+        gathered_rejected_data_gen_strategy = gathered_pref_metadata["rejected_data_gen_strategy"]
+        gathered_metadata = gathered_pref_metadata["metadata"]
+
+        # Build eval_results on all processes for compute_eval_metrics
+        batch_results = []
+        for i in range(len(pref_logits)):
+            if pref_logits[i] is None:
+                continue
+            sample_result = {
+                "task": gathered_task[i],
+                "preference_pred": t2n(pref_logits[i]),
+                "preference_labels": t2n(preference_labels[i]),
+                "data_source": gathered_data_source[i],
+                "chosen_data_gen_strategy": gathered_chosen_data_gen_strategy[i],
+                "rejected_data_gen_strategy": gathered_rejected_data_gen_strategy[i],
+                "metadata": gathered_metadata[i],
+            }
+            batch_results.append(sample_result)
+
+        # Clean up gathered tensors and metadata after building results
+        del pref_logits, preference_labels
+        del gathered_task, gathered_data_source, gathered_chosen_data_gen_strategy
+        del gathered_rejected_data_gen_strategy, gathered_metadata
+
+        return batch_results, outputs
+
+    def _process_batch_similarity_eval(self, batch):
+        """Process a batch for similarity-based evaluations (similarity_score)."""
+        logger.debug(f"    Processing similarity_score batch")
+        similarity_samples = batch["similarity_inputs"]
+
+        # Log similarity batch details
+        num_sim_samples = len(similarity_samples.get("data_source", []))
+        logger.debug(f"    Similarity samples on this rank: {num_sim_samples}")
+        if "input_ids" in similarity_samples:
+            logger.debug(f"    input_ids shape: {similarity_samples['input_ids'].shape}")
+
+        logger.debug(f"    Calling forward_model for similarity")
+        log_memory_usage(f"Before similarity forward pass")
+
+        with torch.no_grad():
+            outputs, _ = self.forward_model(self.model, similarity_samples, sample_type="similarity")
+
+        logger.debug(f"    Forward pass complete")
+        log_memory_usage(f"After similarity forward pass")
+
+        sim_logits = outputs.sim_logits
+        logger.debug(f"    sim_logits shape: {sim_logits.shape if sim_logits is not None else 'None'}")
+
+        # Gather predictions across all ranks
+        logger.debug(f"    Gathering sim_logits across ranks")
+        sim_logits = self.accelerator.gather_for_metrics(sim_logits)
+        logger.debug(f"    Gathered sim_logits shape: {sim_logits.shape if sim_logits is not None else 'None'}")
+
+        # Gather non-tensor metadata using helper (handles optional/None entries)
+        logger.debug(f"    Gathering metadata across ranks")
+        gathered_sim_metadata = self._gather_metadata_fields(
+            similarity_samples,
+            ["task", "data_source", "data_gen_strategy", "metadata"],
+        )
+        logger.debug(f"    Metadata gathered, building eval_results")
+        num_sim_samples = len(sim_logits) // 2 if sim_logits is not None else 0
+        gathered_sim_metadata = self._truncate_metadata_lists(gathered_sim_metadata, num_sim_samples)
+        gathered_task = gathered_sim_metadata["task"]
+        gathered_data_source = gathered_sim_metadata["data_source"]
+        gathered_data_gen_strategy = gathered_sim_metadata["data_gen_strategy"]
+        gathered_metadata = gathered_sim_metadata["metadata"]
+
+        # Build eval_results on all processes for compute_eval_metrics
+        # The sim_logits are batched as [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
+        # We need to extract ref_sim (even indices) and ref_diff (odd indices)
+        # The metadata lists have length = num_samples, but sim_logits has length = 2 * num_samples
+        batch_results = []
+        num_samples = len(sim_logits) // 2
+        for i in range(num_samples):
+            ref_sim_idx = i * 2
+            ref_diff_idx = i * 2 + 1
+
+            if ref_sim_idx >= len(sim_logits) or ref_diff_idx >= len(sim_logits):
+                continue
+
+            # Metadata is indexed by sample index (i), not batched index
+            sample_result = {
+                "task": gathered_task[i] if i < len(gathered_task) else None,
+                "sim_score_ref_sim": t2n(sim_logits[ref_sim_idx]),
+                "sim_score_ref_diff": t2n(sim_logits[ref_diff_idx]),
+                "data_source": gathered_data_source[i] if i < len(gathered_data_source) else None,
+                "data_gen_strategy": gathered_data_gen_strategy[i] if i < len(gathered_data_gen_strategy) else None,
+                "metadata": gathered_metadata[i] if i < len(gathered_metadata) else None,
+            }
+            batch_results.append(sample_result)
+
+        # Clean up gathered tensors and metadata after building results
+        del sim_logits
+        del gathered_task, gathered_data_source, gathered_data_gen_strategy, gathered_metadata
+
+        return batch_results, outputs
+
+    def _compute_and_log_eval_metrics(self, eval_type, eval_results, ds_name, eval_step):
+        """Compute metrics and create visualizations for evaluation results."""
+        # Compute metrics on all processes
+        # Initialize variables to None to ensure they exist for cleanup
+        plots = None
+        video_frames_list = None
+        task_groups = None
+        task_details = None
+        confusion_plot = None
+        confusion_matrix = None
+
+        if eval_type == "reward_alignment":
+            eval_metrics, plots, video_frames_list = compute_eval_metrics(
+                eval_type, eval_results, self.config.data.progress_pred_type
+            )
+            log_memory_usage(f"After compute_eval_metrics (reward_alignment)")
+        elif eval_type == "policy_ranking":
+            # create task groups from eval_results
+            eval_metrics, task_groups, task_details = compute_eval_metrics(
+                eval_type, eval_results, self.config.data.progress_pred_type
+            )
+            log_memory_usage(f"After compute_eval_metrics (policy_ranking)")
+        elif eval_type == "confusion_matrix":
+            confusion_plot, confusion_matrix = compute_eval_metrics(
+                eval_type, eval_results, self.config.data.progress_pred_type
+            )
+            eval_metrics = {}  # no eval metrics
+            log_memory_usage(f"After compute_eval_metrics (confusion_matrix)")
+        elif "quality_preference" in eval_type:
+            # quality_preference returns metrics, task_groups, and task_details
+            eval_metrics, task_groups, task_details = compute_eval_metrics(
+                eval_type, eval_results, self.config.data.progress_pred_type
+            )
+            log_memory_usage(f"After compute_eval_metrics (quality_preference)")
+        elif eval_type == "similarity_score":
+            # similarity_score returns metrics, task_groups, and task_details
+            eval_metrics, task_groups, task_details = compute_eval_metrics(
+                eval_type, eval_results, self.config.data.progress_pred_type
+            )
+            log_memory_usage(f"After compute_eval_metrics (similarity_score)")
+        else:
+            raise ValueError(f"Unsupported eval type: {eval_type}")
+
+        # Only log and visualize on main process
+        if self.accelerator.is_main_process:
+            banner(
+                "Completed evaluation",
+                f"{eval_type} evaluation: {len(eval_results)} samples",
+                "Metrics",
+                f"{eval_metrics}",
+                inner_padding=1,
+            )
+
+            # Create wandb tables and log visualizations
+            if eval_type == "reward_alignment":
+                # Build rows of (video, figure)
+                rows = []
+                for plot, frames in zip(plots, video_frames_list):
+                    if frames is not None:
+                        rows.append((frames, plot))
+                if rows and self.logger.enabled("wandb"):
+                    self.logger.log_video_table(
+                        f"reward_alignment_samples/{ds_name}",
+                        videos_and_figures=rows,
+                        columns=["video", "progress_plot"],
+                        step=eval_step,
+                    )
+                # For tensorboard (no table support), log each video and its figure separately
+                if self.logger.enabled("tensorboard"):
+                    for idx, frames in enumerate(video_frames_list):
+                        if frames is not None:
+                            self.logger.log_video(
+                                f"reward_alignment_video/{ds_name}/{idx}",
+                                frames,
+                                fps=2,
+                                step=eval_step,
+                            )
+                    for idx, plot in enumerate(plots):
+                        self.logger.log_figure(f"{ds_name}/reward_alignment_plot/{idx}", plot, step=eval_step)
+                # Close all plots to avoid accumulating open figures
+                for plot in plots:
+                    plt.close(plot)
+
+                # Explicitly delete to free memory and set to None for outer cleanup
+                log_memory_usage(f"Before deleting plots/videos")
+                del plots, video_frames_list, rows
+                plots = None
+                video_frames_list = None
+                log_memory_usage(f"After deleting plots/videos")
+
+            elif eval_type == "policy_ranking":
+                # Check if this is roboarena by checking if task_groups have partial_reward field
+                is_roboarena = False
+                if task_groups:
+                    first_group = next(iter(task_groups.values()))
+                    if first_group and "partial_success" in first_group[0]:
+                        is_roboarena = True
+
+                data = []
+                if is_roboarena:
+                    # RoboArena visualization: show partial vs predicted rewards
+                    for task, group in task_groups.items():
+                        partial_successes = np.array([t["partial_success"] for t in group]).round(2)
+                        predicted_rewards = np.array([t["final_predicted_reward"] for t in group]).round(2)
+                        partial_successes = partial_successes.tolist()
+                        predicted_rewards = predicted_rewards.tolist()
+                        data.append([task, f"partial:{partial_successes}", f"predicted:{predicted_rewards}"])
+                    columns = ["task", "partial_successes", "predicted_rewards"]
+                else:
+                    # Standard policy ranking visualization: show quality labels and rewards
+                    for task, group in task_groups.items():
+                        quality_to_rews = collections.defaultdict(list)
+                        for t in group:
+                            rew = t["final_reward"]
+                            quality_to_rews[t["quality_label"]].append(rew)
+
+                        for q, r in quality_to_rews.items():
+                            quality_to_rews[q] = np.array(r).round(2).tolist()
+                        quality_to_rews = ",".join([f"{q}:{r}" for q, r in quality_to_rews.items()])
+
+                        # Get task details for differences
+                        task_detail = task_details.get(task, {})
+                        succ_subopt = task_detail.get("succ_subopt_diff")
+                        subopt_fail = task_detail.get("subopt_fail_diff")
+                        succ_fail = task_detail.get("succ_fail_diff")
+
+                        # Format differences
+                        diff_str = []
+                        if succ_subopt is not None:
+                            diff_str.append(f"succ-subopt:{succ_subopt:.2f}")
+                        if subopt_fail is not None:
+                            diff_str.append(f"subopt-fail:{subopt_fail:.2f}")
+                        if succ_fail is not None:
+                            diff_str.append(f"succ-fail:{succ_fail:.2f}")
+                        diff_str = ",".join(diff_str) if diff_str else "N/A"
+
+                        data.append([task, quality_to_rews, diff_str])
+                    columns = ["task", "quality_and_rews", "avg_differences"]
+
+                table_name = f"policy_ranking_samples/{ds_name}"
+
+                self.logger.log_table(
+                    table_name,
+                    data=data,
+                    columns=columns,
+                    step=eval_step,
+                )
+                log_memory_usage(f"Before deleting policy_ranking data")
+                del data, task_groups, task_details
+                task_groups = None
+                task_details = None
+                log_memory_usage(f"After deleting policy_ranking data")
+
+            elif "quality_preference" in eval_type:
+                data = []
+                for task, details in task_details.items():
+                    task_acc = details["preference_accuracy"]
+                    quality_accs = details["quality_accuracies"]
+                    quality_accs_str = ",".join([f"{k}:{round(v, 3)}" for k, v in quality_accs.items()])
+                    num_correct = details["num_correct"]
+                    num_total = details["num_total"]
+                    data.append([
+                        task,
+                        round(task_acc, 3),
+                        quality_accs_str if quality_accs_str else "N/A",
+                        f"{num_correct}/{num_total}",
+                    ])
+                columns = ["task", "preference_accuracy", "quality_accuracies", "num_correct/total"]
+
+                table_name = f"quality_preference_samples/{ds_name}"
+
+                self.logger.log_table(
+                    table_name,
+                    data=data,
+                    columns=columns,
+                    step=eval_step,
+                )
+                log_memory_usage(f"Before deleting quality_preference data")
+                del data, task_groups, task_details
+                task_groups = None
+                task_details = None
+                log_memory_usage(f"After deleting quality_preference data")
+
+            elif eval_type == "confusion_matrix":
+                self.logger.log_figure(f"eval_cm/{ds_name}", confusion_plot, step=eval_step)
+                plt.close(confusion_plot)
+                log_memory_usage(f"Before deleting confusion_matrix data")
+                del confusion_plot, confusion_matrix
+                confusion_plot = None
+                confusion_matrix = None
+                log_memory_usage(f"After deleting confusion_matrix data")
+
+            elif eval_type == "similarity_score":
+                # Create wandb table for similarity score results
+                data = []
+                for task, group in task_groups.items():
+                    task_margin = task_details.get(task, {}).get("avg_margin", 0.0)
+                    task_same_task_score = task_details.get(task, {}).get("avg_same_task_score", 0.0)
+                    task_diff_task_score = task_details.get(task, {}).get("avg_diff_task_score", 0.0)
+                    num_pairs = task_details.get(task, {}).get("num_pairs", 0)
+                    data.append([
+                        task,
+                        round(task_margin, 3),
+                        round(task_same_task_score, 3),
+                        round(task_diff_task_score, 3),
+                        num_pairs,
+                    ])
+                columns = ["task", "avg_margin", "avg_same_task_score", "avg_diff_task_score", "num_pairs"]
+                self.logger.log_table(
+                    f"similarity_score_samples/{ds_name}",
+                    data=data,
+                    columns=columns,
+                    step=eval_step,
+                )
+                log_memory_usage(f"Before deleting similarity_score data")
+                del data, task_groups, task_details
+                task_groups = None
+                task_details = None
+                log_memory_usage(f"After deleting similarity_score data")
+
+        # Clean up eval-specific outputs
+        if plots is not None:
+            del plots
+        if video_frames_list is not None:
+            del video_frames_list
+        if task_groups is not None:
+            del task_groups
+        if task_details is not None:
+            del task_details
+        if confusion_plot is not None:
+            del confusion_plot
+        if confusion_matrix is not None:
+            del confusion_matrix
+
+        return eval_metrics
+
+    def _cleanup_eval_dataset(self, dataset, dataloader, eval_results):
+        """Clean up dataset, dataloader, and eval_results after evaluation."""
+        logger.info(f"  Cleaning up dataset and eval_results")
+        log_memory_usage(f"Before cleanup")
+
+        # Aggressive cleanup to prevent memory leaks
+        # First, delete eval_results which can be large
+        del eval_results
+
+        # For the dataloader, we need to ensure worker processes are shut down
+        # The accelerator.prepare() wraps the dataloader, so we need to clean both
+        # Access the underlying dataloader if it exists and has workers
+        try:
+            if hasattr(dataloader, "_loader"):
+                # Accelerator-wrapped dataloader
+                underlying_dl = dataloader._loader
+            else:
+                underlying_dl = dataloader
+
+            # Shutdown workers if they exist
+            if hasattr(underlying_dl, "_iterator") and underlying_dl._iterator is not None:
+                underlying_dl._iterator._shutdown_workers()
+                underlying_dl._iterator = None
+        except (AttributeError, RuntimeError) as e:
+            logger.debug(f"Could not explicitly shutdown workers: {e}")
+
+        # Delete dataloader and dataset
+        del dataloader, dataset
+        log_memory_usage(f"After deleting dataloader and dataset")
+
+        # Force garbage collection
+        import gc
+
+        gc.collect()
+        log_memory_usage(f"After first gc.collect()")
+        gc.collect()  # Call twice for cyclic references
+        log_memory_usage(f"After second gc.collect()")
+
+        # Clear GPU cache
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+
+    def _run_single_eval_dataset(self, eval_type, eval_dataset, eval_step):
+        """Run evaluation for a single dataset."""
+        logger.info(f"  Processing dataset: {eval_dataset}")
+        log_memory_usage(f"Before dataset {eval_dataset}")
+
+        # Get dataset name for mapping
+        dataset_for_mapping = eval_dataset[0] if isinstance(eval_dataset, list) else eval_dataset
+        ds_name = DS_SHORT_NAME_MAPPING.get(dataset_for_mapping, dataset_for_mapping)
+        timing_key = f"time/eval_dataset/{eval_type}/{ds_name}"
+
+        with _timer(timing_key, timing_raw=self.timing_raw):
+            # Setup dataset and dataloader
+            dataset, dataloader = self._setup_eval_dataset(eval_type, eval_dataset)
+
+            eval_results = []
+            batch_idx = 0
+            # Create tqdm iterator explicitly so we can close it properly
+            dataloader_iter = tqdm(
+                dataloader,
+                desc=f"Running {eval_type}, ds: {eval_dataset}, batch size: {self.config.training.per_device_eval_batch_size}",
+            )
+
+            for batch in dataloader_iter:
+                logger.debug(f"  Processing batch {batch_idx}")
+                if batch_idx % 10 == 0:  # Log memory every 10 batches
+                    log_memory_usage(f"Batch {batch_idx}/{len(dataloader)}")
+
+                batch = self._prepare_inputs(batch)
+
+                # Log batch composition
+                num_pref = batch.get("num_preferences", 0)
+                num_prog = batch.get("num_progress", 0)
+                num_sim = batch.get("num_similarities", 0)
+                logger.debug(f"  Batch {batch_idx}: pref={num_pref}, prog={num_prog}, sim={num_sim}")
+                batch_idx += 1
+
+                # Process batch based on eval type
+                if eval_type in ["reward_alignment", "policy_ranking", "confusion_matrix"]:
+                    batch_results, outputs = self._process_batch_progress_eval(batch, eval_type)
+                    eval_results.extend(batch_results)
+                elif "quality_preference" in eval_type:
+                    batch_results, outputs = self._process_batch_preference_eval(batch)
+                    eval_results.extend(batch_results)
+                elif eval_type == "similarity_score":
+                    batch_results, outputs = self._process_batch_similarity_eval(batch)
+                    eval_results.extend(batch_results)
+
+                # Clean up batch tensors and free memory after each batch
+                # This is critical for VQA with generation to prevent OOM
+                del batch, outputs
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+                # Log memory after cleanup every 10 batches
+                if (batch_idx - 1) % 10 == 0:
+                    log_memory_usage(f"After batch {batch_idx - 1} cleanup")
+
+            # Close tqdm iterator to release any held references
+            dataloader_iter.close()
+            del dataloader_iter
+
+            logger.info(f"  Finished processing {len(eval_results)} eval results")
+            log_memory_usage(f"After eval loop, before compute_eval_metrics")
+
+            # Compute metrics and create visualizations
+            eval_metrics = self._compute_and_log_eval_metrics(eval_type, eval_results, ds_name, eval_step)
+
+            # Cleanup
+            self._cleanup_eval_dataset(dataset, dataloader, eval_results)
+
+            log_memory_usage(f"After cleanup for {eval_dataset}")
+
+            # Store timing for this eval_dataset
+            eval_dataset_time = self.timing_raw.get(timing_key, 0.0)
+            logger.info(f"  Finished {eval_type} for {eval_dataset} (took {eval_dataset_time:.2f} seconds)")
+            logger.info("-" * 80)
+
+            return eval_metrics, ds_name
+
     def _run_custom_evaluations(self, eval_step=None):
         """
         Run custom evaluations.
@@ -628,6 +1246,9 @@ class RFMHeadsTrainer(Trainer):
 
         banner("Running custom evaluations", f"Custom evaluations: {eval_types}")
 
+        eval_type_timings = {}
+        eval_dataset_timings = {}
+
         for eval_type in eval_types:
             logger.info("=" * 80)
             logger.info(f"Running evaluation for: {eval_type}")
@@ -637,610 +1258,25 @@ class RFMHeadsTrainer(Trainer):
             datasets = getattr(self.config.custom_eval, eval_type)
             eval_datasets_name = resolve_dataset_keys(datasets, split="eval")
 
-            for eval_dataset in eval_datasets_name:
-                logger.info(f"  Processing dataset: {eval_dataset}")
-                log_memory_usage(f"Before dataset {eval_dataset}")
-                eval_cfg = copy.deepcopy(self.config.data)
-                eval_cfg.dataset_type = "rfm"
-                # For similarity_score, eval_dataset is a list of datasets that should be loaded together
-                # For other eval types, eval_dataset is a single dataset name
-                if eval_type == "similarity_score" and isinstance(eval_dataset, list):
-                    eval_cfg.eval_datasets = eval_dataset
-                else:
-                    eval_cfg.eval_datasets = [eval_dataset]
-
-                # Create custom eval dataset with the appropriate sampler
-                # set max_trajectories to 10 for reward_alignment per eval dataset
-                kwargs = {}
-                if eval_type == "reward_alignment":
-                    kwargs["max_trajectories"] = 10
-                    kwargs["frame_step"] = (
-                        2 if (self.config.trainer_cls == "rfm_heads" and not self.config.data.use_multi_image) else 1
-                    )
-                if eval_type == "quality_preference":
-                    kwargs["comparisons_per_task"] = self.config.custom_eval.comparisons_per_task
-
-                dataset = setup_custom_eval_dataset(
-                    eval_cfg, sampler_type=eval_type, is_eval=True, verbose=False, **kwargs
-                )
-                # Explicitly delete eval_cfg after dataset creation to free memory
-                del eval_cfg
-
-                logger.info(f"  Dataset size: {len(dataset)}")
-                log_memory_usage(f"After creating dataset")
-
-                dataloader = self._make_eval_dataloader(dataset)
-                logger.info(f"  Dataloader created with {len(dataloader)} batches")
-                log_memory_usage(f"After creating dataloader")
-
-                # Ensure model is in eval mode and clear any gradient buffers
-                self.model.eval()
-                # Explicitly zero any gradients that might exist (shouldn't, but safety measure)
-                if hasattr(self, "optimizer") and self.optimizer is not None:
-                    self.optimizer.zero_grad(set_to_none=True)
-
-                # Clear cache before starting evaluation
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                    torch.cuda.synchronize()
-                log_memory_usage(f"After clearing cache, before eval loop")
-
-                eval_results = []
-
-                batch_idx = 0
-                # Create tqdm iterator explicitly so we can close it properly
-                dataloader_iter = tqdm(
-                    dataloader,
-                    desc=f"Running {eval_type}, ds: {eval_dataset}, batch size: {self.config.training.per_device_eval_batch_size}",
-                )
-
-                for batch in dataloader_iter:
-                    logger.debug(f"  Processing batch {batch_idx}")
-                    if batch_idx % 10 == 0:  # Log memory every 10 batches
-                        log_memory_usage(f"Batch {batch_idx}/{len(dataloader)}")
-
-                    batch = self._prepare_inputs(batch)
-
-                    # Log batch composition
-                    num_pref = batch.get("num_preferences", 0)
-                    num_prog = batch.get("num_progress", 0)
-                    num_sim = batch.get("num_similarities", 0)
-                    logger.debug(f"  Batch {batch_idx}: pref={num_pref}, prog={num_prog}, sim={num_sim}")
-                    batch_idx += 1
-
-                    if eval_type in [
-                        "reward_alignment",
-                        "policy_ranking",
-                        "confusion_matrix",
-                    ]:
-                        logger.debug(f"    Processing {eval_type} batch")
-                        progress_samples = batch["progress_inputs"]
-                        logger.debug(f"    Calling forward_model for progress")
-                        with torch.no_grad():
-                            outputs, _ = self.forward_model(self.model, progress_samples, sample_type="progress")
-                        logger.debug(f"    Forward pass complete")
-
-                        progress_logits = outputs.progress_logits
-                        progress_pred = progress_logits["A"]
-
-                        # Gather everything
-                        progress_pred = self.accelerator.gather_for_metrics(progress_pred)
-                        target_progress = self.accelerator.gather_for_metrics(progress_samples["target_progress"])
-
-                        # Gather metadata fields
-                        metadata_fields = [
-                            "task",
-                            "data_source",
-                            "data_gen_strategy",
-                            "quality_labels",
-                            "metadata",
-                            "partial_success",
-                        ]
-                        gathered_metadata_dict = self._gather_metadata_fields(progress_samples, metadata_fields)
-                        num_progress_samples = progress_pred.shape[0] if progress_pred is not None else 0
-                        gathered_metadata_dict = self._truncate_metadata_lists(
-                            gathered_metadata_dict, num_progress_samples
-                        )
-
-                        if batch_idx % 10 == 0:
-                            log_memory_usage(f"After gathering metadata (batch {batch_idx})")
-
-                        # Handle success predictions if needed
-                        success_pred_gathered = None
-                        success_probs_gathered = None
-                        success_labels_gathered = None
-                        if self.config.model.train_success_head:
-                            success_pred = outputs.success_logits["A"]
-                            success_probs = torch.sigmoid(success_pred)
-                            success_binary = (success_probs > 0.5).float()
-                            success_pred_gathered = self.accelerator.gather_for_metrics(success_binary)
-                            success_probs_gathered = self.accelerator.gather_for_metrics(success_probs)
-                            success_labels = progress_samples.get("success_labels")
-                            success_labels_gathered = self.accelerator.gather_for_metrics(success_labels)
-
-                            # Clean up intermediate tensors (but keep gathered tensors for eval_results)
-                            del (
-                                success_pred,
-                                success_binary,
-                                success_probs,
-                                success_labels,
-                            )
-
-                        # Build eval_results on all processes for compute_eval_metrics
-                        for i in range(len(progress_pred)):
-                            metadata = gathered_metadata_dict["metadata"][i]
-                            sample_result = {
-                                "task": gathered_metadata_dict["task"][i],
-                                "target_progress": t2n(target_progress[i]),
-                                "progress_pred": t2n(progress_pred[i]),
-                                "data_source": gathered_metadata_dict["data_source"][i],
-                                "data_gen_strategy": gathered_metadata_dict["data_gen_strategy"][i],
-                                "quality_label": gathered_metadata_dict["quality_labels"][i],
-                                "metadata": metadata,
-                                "id": metadata["id"],
-                                "video_path": metadata["video_path"],
-                                "partial_success": gathered_metadata_dict["partial_success"][i],
-                            }
-                            if success_pred_gathered is not None:
-                                sample_result["success_pred"] = t2n(success_pred_gathered[i])
-                            if success_probs_gathered is not None:
-                                sample_result["success_probs"] = t2n(success_probs_gathered[i])
-                            if success_labels_gathered is not None:
-                                sample_result["success_labels"] = t2n(success_labels_gathered[i])
-                            eval_results.append(sample_result)
-
-                        # Clean up gathered tensors and metadata after building results
-                        if batch_idx % 10 == 0:
-                            log_memory_usage(f"Before deleting gathered tensors (batch {batch_idx})")
-                        del progress_pred, target_progress, gathered_metadata_dict
-                        if success_pred_gathered is not None:
-                            del success_pred_gathered
-                        if success_probs_gathered is not None:
-                            del success_probs_gathered
-                        if success_labels_gathered is not None:
-                            del success_labels_gathered
-                        if batch_idx % 10 == 0:
-                            log_memory_usage(f"After deleting gathered tensors (batch {batch_idx})")
-
-                    elif "quality_preference" in eval_type:
-                        # Process preference samples for quality_preference evaluation
-                        logger.debug(f"    Processing quality_preference batch")
-                        preference_samples = batch["preference_inputs"]
-                        logger.debug(f"    Calling forward_model for preference")
-                        with torch.no_grad():
-                            outputs, _ = self.forward_model(self.model, preference_samples, sample_type="preference")
-                        logger.debug(f"    Forward pass complete")
-                        pref_logits = outputs.pref_logits
-
-                        # Gather predictions and labels across all ranks
-                        pref_logits = self.accelerator.gather_for_metrics(pref_logits)
-                        preference_labels = self.accelerator.gather_for_metrics(preference_samples["preference_labels"])
-
-                        # Gather non-tensor metadata using helper (handles single and multi GPU)
-                        gathered_pref_metadata = self._gather_metadata_fields(
-                            preference_samples,
-                            [
-                                "task",
-                                "data_source",
-                                "chosen_data_gen_strategy",
-                                "rejected_data_gen_strategy",
-                                "metadata",
-                            ],
-                        )
-                        num_pref_samples = pref_logits.shape[0] if pref_logits is not None else 0
-                        gathered_pref_metadata = self._truncate_metadata_lists(gathered_pref_metadata, num_pref_samples)
-                        gathered_task = gathered_pref_metadata["task"]
-                        gathered_data_source = gathered_pref_metadata["data_source"]
-                        gathered_chosen_data_gen_strategy = gathered_pref_metadata["chosen_data_gen_strategy"]
-                        gathered_rejected_data_gen_strategy = gathered_pref_metadata["rejected_data_gen_strategy"]
-                        gathered_metadata = gathered_pref_metadata["metadata"]
-
-                        # Build eval_results on all processes for compute_eval_metrics
-                        for i in range(len(pref_logits)):
-                            if pref_logits[i] is None:
-                                continue
-                            sample_result = {
-                                "task": gathered_task[i],
-                                "preference_pred": t2n(pref_logits[i]),
-                                "preference_labels": t2n(preference_labels[i]),
-                                "data_source": gathered_data_source[i],
-                                "chosen_data_gen_strategy": gathered_chosen_data_gen_strategy[i],
-                                "rejected_data_gen_strategy": gathered_rejected_data_gen_strategy[i],
-                                "metadata": gathered_metadata[i],
-                            }
-                            eval_results.append(sample_result)
-
-                        # Clean up gathered tensors and metadata after building results
-                        if batch_idx % 10 == 0:
-                            log_memory_usage(f"Before deleting pref tensors (batch {batch_idx})")
-                        del pref_logits, preference_labels
-                        del gathered_task, gathered_data_source, gathered_chosen_data_gen_strategy
-                        del gathered_rejected_data_gen_strategy, gathered_metadata
-                        if batch_idx % 10 == 0:
-                            log_memory_usage(f"After deleting pref tensors (batch {batch_idx})")
-
-                    elif eval_type == "similarity_score":
-                        # Process similarity samples for similarity_score evaluation
-                        logger.debug(f"    Processing similarity_score batch")
-                        similarity_samples = batch["similarity_inputs"]
-
-                        # Log similarity batch details
-                        num_sim_samples = len(similarity_samples.get("data_source", []))
-                        logger.debug(f"    Similarity samples on this rank: {num_sim_samples}")
-                        if "input_ids" in similarity_samples:
-                            logger.debug(f"    input_ids shape: {similarity_samples['input_ids'].shape}")
-
-                        logger.debug(f"    Calling forward_model for similarity")
-                        log_memory_usage(f"Before similarity forward pass")
-
-                        with torch.no_grad():
-                            outputs, _ = self.forward_model(self.model, similarity_samples, sample_type="similarity")
-
-                        logger.debug(f"    Forward pass complete")
-                        log_memory_usage(f"After similarity forward pass")
-
-                        sim_logits = outputs.sim_logits
-                        logger.debug(f"    sim_logits shape: {sim_logits.shape if sim_logits is not None else 'None'}")
-
-                        # Gather predictions across all ranks
-                        logger.debug(f"    Gathering sim_logits across ranks")
-                        sim_logits = self.accelerator.gather_for_metrics(sim_logits)
-                        logger.debug(
-                            f"    Gathered sim_logits shape: {sim_logits.shape if sim_logits is not None else 'None'}"
-                        )
-
-                        # Gather non-tensor metadata using helper (handles optional/None entries)
-                        logger.debug(f"    Gathering metadata across ranks")
-                        gathered_sim_metadata = self._gather_metadata_fields(
-                            similarity_samples,
-                            ["task", "data_source", "data_gen_strategy", "metadata"],
-                        )
-                        logger.debug(f"    Metadata gathered, building eval_results")
-                        num_sim_samples = len(sim_logits) // 2 if sim_logits is not None else 0
-                        gathered_sim_metadata = self._truncate_metadata_lists(gathered_sim_metadata, num_sim_samples)
-                        gathered_task = gathered_sim_metadata["task"]
-                        gathered_data_source = gathered_sim_metadata["data_source"]
-                        gathered_data_gen_strategy = gathered_sim_metadata["data_gen_strategy"]
-                        gathered_metadata = gathered_sim_metadata["metadata"]
-
-                        # Build eval_results on all processes for compute_eval_metrics
-                        # The sim_logits are batched as [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
-                        # We need to extract ref_sim (even indices) and ref_diff (odd indices)
-                        # The metadata lists have length = num_samples, but sim_logits has length = 2 * num_samples
-                        num_samples = len(sim_logits) // 2
-                        for i in range(num_samples):
-                            ref_sim_idx = i * 2
-                            ref_diff_idx = i * 2 + 1
-
-                            if ref_sim_idx >= len(sim_logits) or ref_diff_idx >= len(sim_logits):
-                                continue
-
-                            # Metadata is indexed by sample index (i), not batched index
-                            sample_result = {
-                                "task": gathered_task[i] if i < len(gathered_task) else None,
-                                "sim_score_ref_sim": t2n(sim_logits[ref_sim_idx]),
-                                "sim_score_ref_diff": t2n(sim_logits[ref_diff_idx]),
-                                "data_source": gathered_data_source[i] if i < len(gathered_data_source) else None,
-                                "data_gen_strategy": gathered_data_gen_strategy[i]
-                                if i < len(gathered_data_gen_strategy)
-                                else None,
-                                "metadata": gathered_metadata[i] if i < len(gathered_metadata) else None,
-                            }
-                            eval_results.append(sample_result)
-
-                        # Clean up gathered tensors and metadata after building results
-                        if batch_idx % 10 == 0:
-                            log_memory_usage(f"Before deleting sim tensors (batch {batch_idx})")
-                        del sim_logits
-                        del gathered_task, gathered_data_source, gathered_data_gen_strategy, gathered_metadata
-                        if batch_idx % 10 == 0:
-                            log_memory_usage(f"After deleting sim tensors (batch {batch_idx})")
-
-                    # Clean up batch tensors and free memory after each batch
-                    # This is critical for VQA with generation to prevent OOM
-                    del batch, outputs
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-
-                    # Log memory after cleanup every 10 batches
-                    if (batch_idx - 1) % 10 == 0:
-                        log_memory_usage(f"After batch {batch_idx - 1} cleanup")
-
-                # Close tqdm iterator to release any held references
-                dataloader_iter.close()
-                del dataloader_iter
-
-                logger.info(f"  Finished processing {len(eval_results)} eval results")
-                log_memory_usage(f"After eval loop, before compute_eval_metrics")
-
-                # Compute metrics on all processes
-                # Initialize variables to None to ensure they exist for cleanup
-                plots = None
-                video_frames_list = None
-                task_groups = None
-                task_details = None
-                confusion_plot = None
-                confusion_matrix = None
-
-                if eval_type == "reward_alignment":
-                    eval_metrics, plots, video_frames_list = compute_eval_metrics(
-                        eval_type, eval_results, self.config.data.progress_pred_type
-                    )
-                    log_memory_usage(f"After compute_eval_metrics (reward_alignment)")
-                elif eval_type == "policy_ranking":
-                    # create task groups from eval_results
-                    eval_metrics, task_groups, task_details = compute_eval_metrics(
-                        eval_type, eval_results, self.config.data.progress_pred_type
-                    )
-                    log_memory_usage(f"After compute_eval_metrics (policy_ranking)")
-                elif eval_type == "confusion_matrix":
-                    confusion_plot, confusion_matrix = compute_eval_metrics(
-                        eval_type, eval_results, self.config.data.progress_pred_type
-                    )
-                    eval_metrics = {}  # no eval metrics
-                    log_memory_usage(f"After compute_eval_metrics (confusion_matrix)")
-                elif "quality_preference" in eval_type:
-                    # quality_preference returns metrics, task_groups, and task_details
-                    eval_metrics, task_groups, task_details = compute_eval_metrics(
-                        eval_type, eval_results, self.config.data.progress_pred_type
-                    )
-                    log_memory_usage(f"After compute_eval_metrics (quality_preference)")
-                elif eval_type == "similarity_score":
-                    # similarity_score returns metrics, task_groups, and task_details
-                    eval_metrics, task_groups, task_details = compute_eval_metrics(
-                        eval_type, eval_results, self.config.data.progress_pred_type
-                    )
-                    log_memory_usage(f"After compute_eval_metrics (similarity_score)")
-                else:
-                    raise ValueError(f"Unsupported eval type: {eval_type}")
-
-                # Store metrics for all processes
-                # For similarity_score, eval_dataset is a list, so use the first element for name mapping
-                dataset_for_mapping = eval_dataset[0] if isinstance(eval_dataset, list) else eval_dataset
-                ds_name = DS_SHORT_NAME_MAPPING.get(dataset_for_mapping, dataset_for_mapping)
-                metrics[ds_name][eval_type] = eval_metrics
-
-                # Only log and visualize on main process
-                if self.accelerator.is_main_process:
-                    banner(
-                        "Completed evaluation",
-                        f"{eval_type} evaluation: {len(eval_results)} samples",
-                        "Metrics",
-                        f"{metrics[ds_name][eval_type]}",
-                        inner_padding=1,
-                    )
-
-                    # Create wandb tables and log visualizations
-                    if eval_type == "reward_alignment":
-                        # Build rows of (video, figure)
-                        rows = []
-                        for plot, frames in zip(plots, video_frames_list):
-                            if frames is not None:
-                                rows.append((frames, plot))
-                        if rows and self.logger.enabled("wandb"):
-                            self.logger.log_video_table(
-                                f"reward_alignment_samples/{ds_name}",
-                                videos_and_figures=rows,
-                                columns=["video", "progress_plot"],
-                                step=eval_step,
-                            )
-                        # For tensorboard (no table support), log each video and its figure separately
-                        if self.logger.enabled("tensorboard"):
-                            for idx, frames in enumerate(video_frames_list):
-                                if frames is not None:
-                                    self.logger.log_video(
-                                        f"reward_alignment_video/{ds_name}/{idx}",
-                                        frames,
-                                        fps=2,
-                                        step=eval_step,
-                                    )
-                            for idx, plot in enumerate(plots):
-                                self.logger.log_figure(f"{ds_name}/reward_alignment_plot/{idx}", plot, step=eval_step)
-                        # Close all plots to avoid accumulating open figures
-                        for plot in plots:
-                            plt.close(plot)
-
-                        # Explicitly delete to free memory and set to None for outer cleanup
-                        log_memory_usage(f"Before deleting plots/videos")
-                        del plots, video_frames_list, rows
-                        plots = None
-                        video_frames_list = None
-                        log_memory_usage(f"After deleting plots/videos")
-
-                    elif eval_type == "policy_ranking":
-                        # Check if this is roboarena by checking if task_groups have partial_reward field
-                        is_roboarena = False
-                        if task_groups:
-                            first_group = next(iter(task_groups.values()))
-                            if first_group and "partial_success" in first_group[0]:
-                                is_roboarena = True
-
-                        data = []
-                        if is_roboarena:
-                            # RoboArena visualization: show partial vs predicted rewards
-                            for task, group in task_groups.items():
-                                partial_successes = np.array([t["partial_success"] for t in group]).round(2)
-                                predicted_rewards = np.array([t["final_predicted_reward"] for t in group]).round(2)
-                                partial_successes = partial_successes.tolist()
-                                predicted_rewards = predicted_rewards.tolist()
-                                data.append([task, f"partial:{partial_successes}", f"predicted:{predicted_rewards}"])
-                            columns = ["task", "partial_successes", "predicted_rewards"]
-                        else:
-                            # Standard policy ranking visualization: show quality labels and rewards
-                            for task, group in task_groups.items():
-                                quality_to_rews = collections.defaultdict(list)
-                                for t in group:
-                                    rew = t["final_reward"]
-                                    quality_to_rews[t["quality_label"]].append(rew)
-
-                                for q, r in quality_to_rews.items():
-                                    quality_to_rews[q] = np.array(r).round(2).tolist()
-                                quality_to_rews = ",".join([f"{q}:{r}" for q, r in quality_to_rews.items()])
-                                
-                                # Get task details for differences
-                                task_detail = task_details.get(task, {})
-                                succ_subopt = task_detail.get("succ_subopt_diff")
-                                subopt_fail = task_detail.get("subopt_fail_diff")
-                                succ_fail = task_detail.get("succ_fail_diff")
-                                
-                                # Format differences
-                                diff_str = []
-                                if succ_subopt is not None:
-                                    diff_str.append(f"succ-subopt:{succ_subopt:.2f}")
-                                if subopt_fail is not None:
-                                    diff_str.append(f"subopt-fail:{subopt_fail:.2f}")
-                                if succ_fail is not None:
-                                    diff_str.append(f"succ-fail:{succ_fail:.2f}")
-                                diff_str = ",".join(diff_str) if diff_str else "N/A"
-                                
-                                data.append([task, quality_to_rews, diff_str])
-                            columns = ["task", "quality_and_rews", "avg_differences"]
-
-                        table_name = f"policy_ranking_samples/{ds_name}"
-
-                        self.logger.log_table(
-                            table_name,
-                            data=data,
-                            columns=columns,
-                            step=eval_step,
-                        )
-                        log_memory_usage(f"Before deleting policy_ranking data")
-                        del data, task_groups, task_details
-                        task_groups = None
-                        task_details = None
-                        log_memory_usage(f"After deleting policy_ranking data")
-
-                    elif "quality_preference" in eval_type:
-                        data = []
-                        for task, details in task_details.items():
-                            task_acc = details["preference_accuracy"]
-                            quality_accs = details["quality_accuracies"]
-                            quality_accs_str = ",".join([f"{k}:{round(v, 3)}" for k, v in quality_accs.items()])
-                            num_correct = details["num_correct"]
-                            num_total = details["num_total"]
-                            data.append([
-                                task,
-                                round(task_acc, 3),
-                                quality_accs_str if quality_accs_str else "N/A",
-                                f"{num_correct}/{num_total}",
-                            ])
-                        columns = ["task", "preference_accuracy", "quality_accuracies", "num_correct/total"]
-
-                        table_name = f"quality_preference_samples/{ds_name}"
-
-                        self.logger.log_table(
-                            table_name,
-                            data=data,
-                            columns=columns,
-                            step=eval_step,
-                        )
-                        log_memory_usage(f"Before deleting quality_preference data")
-                        del data, task_groups, task_details
-                        task_groups = None
-                        task_details = None
-                        log_memory_usage(f"After deleting quality_preference data")
-
-                    elif eval_type == "confusion_matrix":
-                        self.logger.log_figure(f"eval_cm/{ds_name}", confusion_plot, step=eval_step)
-                        plt.close(confusion_plot)
-                        log_memory_usage(f"Before deleting confusion_matrix data")
-                        del confusion_plot, confusion_matrix
-                        confusion_plot = None
-                        confusion_matrix = None
-                        log_memory_usage(f"After deleting confusion_matrix data")
-
-                    elif eval_type == "similarity_score":
-                        # Create wandb table for similarity score results
-                        data = []
-                        for task, group in task_groups.items():
-                            task_margin = task_details.get(task, {}).get("avg_margin", 0.0)
-                            task_same_task_score = task_details.get(task, {}).get("avg_same_task_score", 0.0)
-                            task_diff_task_score = task_details.get(task, {}).get("avg_diff_task_score", 0.0)
-                            num_pairs = task_details.get(task, {}).get("num_pairs", 0)
-                            data.append([
-                                task,
-                                round(task_margin, 3),
-                                round(task_same_task_score, 3),
-                                round(task_diff_task_score, 3),
-                                num_pairs,
-                            ])
-                        columns = ["task", "avg_margin", "avg_same_task_score", "avg_diff_task_score", "num_pairs"]
-                        self.logger.log_table(
-                            f"similarity_score_samples/{ds_name}",
-                            data=data,
-                            columns=columns,
-                            step=eval_step,
-                        )
-                        log_memory_usage(f"Before deleting similarity_score data")
-                        del data, task_groups, task_details
-                        task_groups = None
-                        task_details = None
-                        log_memory_usage(f"After deleting similarity_score data")
-
-                # Clean up after each dataset to prevent memory accumulation
-                # Clean up eval-specific outputs (now properly scoped)
-                if plots is not None:
-                    del plots
-                if video_frames_list is not None:
-                    del video_frames_list
-                if task_groups is not None:
-                    del task_groups
-                if task_details is not None:
-                    del task_details
-                if confusion_plot is not None:
-                    del confusion_plot
-                if confusion_matrix is not None:
-                    del confusion_matrix
-
-                # Clean up dataset, dataloader, and eval_results
-                logger.info(f"  Cleaning up dataset and eval_results")
-                log_memory_usage(f"Before cleanup")
-
-                # Aggressive cleanup to prevent memory leaks
-                # First, delete eval_results which can be large
-                del eval_results
-
-                # For the dataloader, we need to ensure worker processes are shut down
-                # The accelerator.prepare() wraps the dataloader, so we need to clean both
-                # Access the underlying dataloader if it exists and has workers
-                try:
-                    if hasattr(dataloader, "_loader"):
-                        # Accelerator-wrapped dataloader
-                        underlying_dl = dataloader._loader
-                    else:
-                        underlying_dl = dataloader
-
-                    # Shutdown workers if they exist
-                    if hasattr(underlying_dl, "_iterator") and underlying_dl._iterator is not None:
-                        underlying_dl._iterator._shutdown_workers()
-                        underlying_dl._iterator = None
-                except (AttributeError, RuntimeError) as e:
-                    logger.debug(f"Could not explicitly shutdown workers: {e}")
-
-                # Delete dataloader and dataset
-                del dataloader, dataset
-                log_memory_usage(f"After deleting dataloader and dataset")
-
-                # Force garbage collection
-                import gc
-
-                gc.collect()
-                log_memory_usage(f"After first gc.collect()")
-                gc.collect()  # Call twice for cyclic references
-                log_memory_usage(f"After second gc.collect()")
-
-                # Clear GPU cache
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                    torch.cuda.synchronize()
-
-                log_memory_usage(f"After cleanup for {eval_dataset}")
-                logger.info(f"  Finished {eval_type} for {eval_dataset}")
-                logger.info("-" * 80)
-
-            log_memory_usage(f"After completing all datasets for {eval_type}")
-            logger.info(f"Finished eval_type: {eval_type}")
-            logger.info("=" * 80)
+            with _timer(f"time/eval_type/{eval_type}", timing_raw=self.timing_raw):
+                for eval_dataset in eval_datasets_name:
+                    eval_metrics, ds_name = self._run_single_eval_dataset(eval_type, eval_dataset, eval_step)
+                    metrics[ds_name][eval_type] = eval_metrics
+
+                    # Store timing for this eval_dataset
+                    dataset_for_mapping = eval_dataset[0] if isinstance(eval_dataset, list) else eval_dataset
+                    ds_name_mapped = DS_SHORT_NAME_MAPPING.get(dataset_for_mapping, dataset_for_mapping)
+                    timing_key = f"time/eval_dataset/{eval_type}/{ds_name_mapped}"
+                    eval_dataset_time = self.timing_raw.get(timing_key, 0.0)
+                    eval_dataset_timings[timing_key] = eval_dataset_time
+
+                log_memory_usage(f"After completing all datasets for {eval_type}")
+
+                # Store timing for this eval_type
+                eval_type_time = self.timing_raw.get(f"time/eval_type/{eval_type}", 0.0)
+                eval_type_timings[f"time/eval_type/{eval_type}"] = eval_type_time
+                logger.info(f"Finished eval_type: {eval_type} (took {eval_type_time:.2f} seconds)")
+                logger.info("=" * 80)
 
         flat_metrics = {}
         for ds_name, eval_type_metric in metrics.items():
@@ -1260,7 +1296,27 @@ class RFMHeadsTrainer(Trainer):
             # Convert callback_metrics to float for wandb logging
             to_log = {k: float(v) for k, v in callback_metrics.items()}
             to_log["epoch"] = self.state.epoch
+
+            # Add timing metrics
+            for timing_key, timing_value in eval_type_timings.items():
+                to_log[timing_key] = float(timing_value)
+            for timing_key, timing_value in eval_dataset_timings.items():
+                to_log[timing_key] = float(timing_value)
+
             self.logger.log_scalars(to_log, step=eval_step)
+
+            # Log timing summary to console
+            if is_rank_0():
+                logger.info("=" * 80)
+                logger.info("Custom Evaluation Timing Summary")
+                logger.info("=" * 80)
+                logger.info("Per eval_type:")
+                for timing_key, timing_value in sorted(eval_type_timings.items()):
+                    logger.info(f"  {timing_key}: {timing_value:.2f} seconds")
+                logger.info("Per eval_dataset:")
+                for timing_key, timing_value in sorted(eval_dataset_timings.items()):
+                    logger.info(f"  {timing_key}: {timing_value:.2f} seconds")
+                logger.info("=" * 80)
 
         banner("Finished running custom evaluations!")
         log_memory_usage("After all evaluations, before cleanup")
@@ -1343,7 +1399,7 @@ class RFMHeadsTrainer(Trainer):
             metrics.update(custom_metrics)
             # Add custom evaluation time
             metrics["time/custom_evaluations"] = self.timing_raw["time/custom_evaluations"]
-            
+
             if is_rank_0():
                 logger.info(f"Custom evaluations took {self.timing_raw['time/custom_evaluations']:.2f} seconds")
 
@@ -1353,10 +1409,10 @@ class RFMHeadsTrainer(Trainer):
                 for key, value in metrics.items():
                     logger.info(f"{key}: {value:.6f}")
                 logger.info("=" * 50)
-            
+
             if is_rank_0():
                 self.logger.log_scalars(metrics, step=eval_step)
-            
+
             # Trigger the callback handler with all metrics
             self.control = self.callback_handler.on_evaluate(self.args, self.state, self.control, metrics)
 
@@ -1708,7 +1764,9 @@ class RFMHeadsTrainer(Trainer):
         # Check for NaN in final loss
         if torch.isnan(final_loss).any():
             if training:
-                import ipdb; ipdb.set_trace()
+                import ipdb
+
+                ipdb.set_trace()
             logger.warning(f"NaN detected in progress loss, replacing with 0.0")
             final_loss = torch.tensor(0.0, device=final_loss.device, dtype=final_loss.dtype)
 

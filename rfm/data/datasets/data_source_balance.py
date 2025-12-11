@@ -25,7 +25,7 @@ class BalancedRFMDataset(RFMDataset):
                 self.source_indices[source].append(i)
 
         self._normalize_data_source_weights()
-        
+
         logger.info(f"BalancedRFMDataset initialized with {len(self.source_indices)} data sources")
         for source, indices in self.source_indices.items():
             weight = self.normalized_weights.get(source, 0.0)

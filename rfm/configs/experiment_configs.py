@@ -260,7 +260,9 @@ class CustomEvaluationConfig:
     similarity_score: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
     comparisons_per_task: Optional[int] = field(
         default=None,
-        metadata={"help": "Limit number of quality preference comparisons per task. None = use all comparisons. Uniformly samples if limit is set."},
+        metadata={
+            "help": "Limit number of quality preference comparisons per task. None = use all comparisons. Uniformly samples if limit is set."
+        },
     )
 
 
@@ -372,7 +374,9 @@ class SaveBestConfig:
     upload_to_hub: bool = field(default=False, metadata={"help": "Whether to upload best models to HuggingFace Hub"})
     hub_save_every: Optional[int] = field(
         default=None,
-        metadata={"help": "Frequency (in steps) to upload to Hub. None = upload every checkpoint. Local saves always happen regardless."},
+        metadata={
+            "help": "Frequency (in steps) to upload to Hub. None = upload every checkpoint. Local saves always happen regardless."
+        },
     )
     hub_token: Optional[str] = field(default=None, metadata={"help": "HuggingFace token (or set HF_TOKEN env var)"})
     hub_private: bool = field(default=False, metadata={"help": "Whether to make the Hub model private"})

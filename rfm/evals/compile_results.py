@@ -750,15 +750,15 @@ def run_policy_ranking_eval(results: list[dict[str, Any]], progress_pred_type: s
             succ_subopt_diff = None
             subopt_fail_diff = None
             succ_fail_diff = None
-            
+
             if "successful" in avg_rewards_per_quality and "suboptimal" in avg_rewards_per_quality:
                 succ_subopt_diff = avg_rewards_per_quality["successful"] - avg_rewards_per_quality["suboptimal"]
                 all_succ_subopt_diffs.append(succ_subopt_diff)
-            
+
             if "suboptimal" in avg_rewards_per_quality and "failure" in avg_rewards_per_quality:
                 subopt_fail_diff = avg_rewards_per_quality["suboptimal"] - avg_rewards_per_quality["failure"]
                 all_subopt_fail_diffs.append(subopt_fail_diff)
-            
+
             if "successful" in avg_rewards_per_quality and "failure" in avg_rewards_per_quality:
                 succ_fail_diff = avg_rewards_per_quality["successful"] - avg_rewards_per_quality["failure"]
                 all_succ_fail_diffs.append(succ_fail_diff)

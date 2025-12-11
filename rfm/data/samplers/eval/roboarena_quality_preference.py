@@ -20,7 +20,7 @@ class RoboArenaQualityPreferenceSampler(BaseQualityPreferenceSampler):
         dataset_success_cutoff_map=None,
         is_evaluation=False,
         verbose=True,
-        comparisons_per_task=None,  
+        comparisons_per_task=None,
         **kwargs,
     ):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
@@ -115,12 +115,12 @@ class RoboArenaQualityPreferenceSampler(BaseQualityPreferenceSampler):
                         "chosen_partial_success": chosen_partial,
                         "rejected_partial_success": rejected_partial,
                     })
-            
+
             # Apply comparisons_per_task limit if set (sample uniformly across all pairs for this task)
             if self.comparisons_per_task is not None and len(task_pairs) > self.comparisons_per_task:
                 # Uniformly sample comparisons for this task
                 task_pairs = random.sample(task_pairs, self.comparisons_per_task)
-            
+
             sample_indices.extend(task_pairs)
 
         return sample_indices

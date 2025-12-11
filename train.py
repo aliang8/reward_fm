@@ -198,7 +198,7 @@ def train(cfg: ExperimentConfig):
     # Add SaveBestCallback to automatically save and upload best models
     save_best_cfg = cfg.logging.save_best
     save_callback = SaveBestCallback(
-        **OmegaConf.to_container(save_best_cfg),
+        **asdict(save_best_cfg),
         base_model=cfg.model.base_model_id,
     )
 

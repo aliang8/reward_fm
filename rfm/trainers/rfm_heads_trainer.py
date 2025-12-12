@@ -619,6 +619,8 @@ class RFMHeadsTrainer(Trainer):
             )
         if eval_type == "quality_preference":
             kwargs["comparisons_per_task"] = self.config.custom_eval.comparisons_per_task
+        if eval_type == "policy_ranking":
+            kwargs["num_examples_per_quality_pr"] = self.config.custom_eval.num_examples_per_quality_pr
 
         dataset = setup_custom_eval_dataset(eval_cfg, sampler_type=eval_type, is_eval=True, verbose=False, **kwargs)
         # Explicitly delete eval_cfg after dataset creation to free memory

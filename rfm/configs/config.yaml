@@ -91,7 +91,8 @@ data:
   dataset_type: rfm
   
   data_source_weights:
-    metaworld_train: 20
+    metaworld_train: 1
+    roboarena: 1
 
   # Data loading settings
   dataloader_pin_memory: True

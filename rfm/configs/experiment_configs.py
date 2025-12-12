@@ -264,6 +264,12 @@ class CustomEvaluationConfig:
             "help": "Limit number of quality preference comparisons per task. None = use all comparisons. Uniformly samples if limit is set."
         },
     )
+    num_examples_per_quality_pr: int = field(
+        default=5,
+        metadata={
+            "help": "Number of trajectories to sample per quality label for policy ranking evaluation. Only tasks with multiple quality labels are used."
+        },
+    )
 
 
 @dataclass

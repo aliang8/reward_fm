@@ -380,7 +380,13 @@ class RFMBaseSampler:
 
             # Get partial_success for this trajectory
             traj_dict = self.dataset[idx]
-            traj_partial_success = traj_dict.get("partial_success")
+            traj_partial_success = traj_dict.get("partial_success", None)
+
+            if traj_partial_success is None:
+                logger.trace(
+                    f"[BASE SAMPLER] _get_different_partial_success_traj: No partial_success for trajectory {traj_dict.get('id', 'unknown')}, task '{task_name}'"
+                )
+                continue
 
             # Include if partial_success differs from reference by at least the threshold (using abs)
             partial_success_diff = abs(ref_partial_success - traj_partial_success)

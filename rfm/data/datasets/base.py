@@ -397,7 +397,11 @@ class BaseDataset(torch.utils.data.Dataset):
         # Pre-compute RoboArena tasks with only one partial_success category
         all_tasks = dataset["task"]
         data_sources = dataset["data_source"]
-        partial_successes = dataset["partial_success"]
+        # Handle case where partial_success column might not exist
+        if "partial_success" in dataset.column_names:
+            partial_successes = dataset["partial_success"]
+        else:
+            partial_successes = [None] * len(dataset)
 
         # Group RoboArena trajectories by task
         roboarena_tasks_to_partial_success = collections.defaultdict(set)

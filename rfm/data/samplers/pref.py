@@ -50,9 +50,11 @@ class PrefSampler(RFMBaseSampler):
         Otherwise, normal preference sampling logic is used.
         """
         quality_label = item["quality_label"]
+        is_roboarena = "roboarena" in str(item.get("data_source", "")).lower()
 
         # Handle non-successful trajectories: use as rejected, find optimal from same task as chosen
-        if quality_label != "successful":
+        # skip this for RoboArena trajectories which we will handle with partial success
+        if quality_label != "successful" and not is_roboarena:
             traj_id = item["id"]
             task_name = item["task"]
 

@@ -186,6 +186,10 @@ training:
   warmup_steps: 0
   warmup_ratio: 0.1
   max_grad_norm: 10.0
+  
+  # Vision encoder fine-tuning settings
+  vision_encoder_lr: 1e-5  # Learning rate for last N vision encoder layers. If null, uses the same LR as other parameters.
+  vision_encoder_num_layers: 3  # Number of last vision encoder layers to fine-tune with vision_encoder_lr. Only used if vision_encoder_lr is set.
 
   # RFM specific settings
   predict_pref_progress: true

@@ -129,6 +129,7 @@ custom_eval:
   quality_preference:
     - mw
   comparisons_per_task: 5  # Limit number of quality preference comparisons per task. null = use all comparisons. Uniformly samples if limit is set.
+  num_examples_per_quality_pr: 5  # Number of trajectories to sample per quality label for policy ranking evaluation. Only tasks with multiple quality labels are used.
 
 # =====================================================================================
 # Training Configuration

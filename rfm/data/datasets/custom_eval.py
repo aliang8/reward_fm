@@ -23,7 +23,7 @@ class CustomEvalDataset(BaseDataset):
         sampler_cls = {
             "confusion_matrix": ConfusionMatrixSampler,
             "reward_alignment": RewardAlignmentSampler,
-            "policy_ranking": ProgressDefaultSampler,
+            "policy_ranking": ProgressPolicyRankingSampler,
             "quality_preference": QualityPreferenceSampler,
             "similarity_score": SimilarityScoreSampler,
         }

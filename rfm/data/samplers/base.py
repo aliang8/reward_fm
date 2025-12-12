@@ -383,10 +383,9 @@ class RFMBaseSampler:
             traj_partial_success = traj_dict.get("partial_success")
 
             # Include if partial_success differs from reference by at least the threshold (using abs)
-            if traj_partial_success is not None:
-                partial_success_diff = abs(ref_partial_success - traj_partial_success)
-                if partial_success_diff >= min_threshold:
-                    candidate_indices.append(idx)
+            partial_success_diff = abs(ref_partial_success - traj_partial_success)
+            if partial_success_diff >= min_threshold:
+                candidate_indices.append(idx)
 
         if not candidate_indices:
             logger.trace(

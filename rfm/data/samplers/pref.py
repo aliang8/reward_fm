@@ -214,6 +214,8 @@ class PrefSampler(RFMBaseSampler):
 
         if is_roboarena:
             strategies.append((DataGenStrat.ROBOARENA_PARTIAL_SUCCESS, 10.0))
+            # remove suboptimal strategy
+            strategies = [(strat, prob) for strat, prob in strategies if strat != DataGenStrat.SUBOPTIMAL]
 
         max_attempts = 10  # Limit retry attempts to prevent infinite loops
         max_strategy_attempts = 3  # Maximum attempts per strategy before removing it

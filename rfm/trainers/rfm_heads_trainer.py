@@ -1,30 +1,29 @@
 import collections
+import copy
 import os
 from typing import Dict
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.nn.functional as F
+import wandb
+from sklearn.metrics import average_precision_score
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import Trainer
-import matplotlib.pyplot as plt
-from sklearn.metrics import average_precision_score
-from rfm.utils.logger import Logger, get_logger, log_memory_usage
 
-import copy
-import wandb
-from rfm.utils.distributed import is_rank_0, get_rank, log_fsdp_diagnostics
-from rfm.utils.timer import _timer
-from rfm.utils.metrics import compute_spearman_correlation
-from rfm.utils.setup_utils import setup_dataset, setup_batch_collator, setup_custom_eval_dataset
-from torch.utils.data import DataLoader
+from rfm.data.datasets.base import resolve_dataset_keys
 from rfm.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
 from rfm.evals.compile_results import compute_eval_metrics
-import torch.distributed as dist
-from rfm.data.datasets.base import resolve_dataset_keys
-from rfm.utils.distributed import banner
 from rfm.models.utils import ModelOutput
+from rfm.utils.distributed import banner, get_rank, is_rank_0, log_fsdp_diagnostics
+from rfm.utils.logger import Logger, get_logger, log_memory_usage
+from rfm.utils.metrics import compute_spearman_correlation
+from rfm.utils.setup_utils import setup_batch_collator, setup_custom_eval_dataset, setup_dataset
 from rfm.utils.tensor_utils import t2n
+from rfm.utils.timer import _timer
 
 logger = get_logger()
 
@@ -141,6 +140,122 @@ class RFMHeadsTrainer(Trainer):
         # Use loguru logger after it's been initialized
         loguru_logger = get_logger()
         loguru_logger.info(f"DDP find_unused_parameters: {getattr(self.args, 'ddp_find_unused_parameters', 'N/A')}")
+
+    def create_optimizer(self):
+        """
+        Override to create optimizer with separate parameter groups for vision encoder layers.
+        If vision_encoder_lr is set, the last N vision encoder layers will use that LR,
+        while all other parameters use the default learning rate.
+        """
+        # Check if we need to create parameter groups for vision encoder
+        vision_encoder_lr = self.config.training.vision_encoder_lr
+        vision_encoder_num_layers = self.config.training.vision_encoder_num_layers
+
+        if vision_encoder_lr is None or vision_encoder_lr <= 0:
+            # No special vision encoder LR, use default optimizer
+            return super().create_optimizer()
+
+        # Get the model
+        model = self.model
+        if not hasattr(model, "model") or not hasattr(model.model, "visual"):
+            logger.warning(
+                "vision_encoder_lr is set but model doesn't have visual encoder. "
+                "Using default optimizer without parameter groups."
+            )
+            return super().create_optimizer()
+
+        # Get vision encoder blocks
+        visual_encoder = model.model.visual
+        if not hasattr(visual_encoder, "blocks"):
+            logger.warning(
+                "vision_encoder_lr is set but visual encoder doesn't have blocks. "
+                "Using default optimizer without parameter groups."
+            )
+            return super().create_optimizer()
+
+        blocks = visual_encoder.blocks
+        total_blocks = len(blocks)
+        
+        if vision_encoder_num_layers > total_blocks:
+            logger.warning(
+                f"vision_encoder_num_layers ({vision_encoder_num_layers}) is greater than "
+                f"total blocks ({total_blocks}). Using all blocks for vision encoder LR."
+            )
+            vision_encoder_num_layers = total_blocks
+
+        # Identify parameters for last N layers
+        vision_encoder_params = []
+        other_params = []
+        
+        # Get all parameters and their names
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+            
+            # Check if this parameter belongs to the last N vision encoder blocks
+            is_vision_encoder_param = False
+            if "visual.blocks" in name:
+                # Extract block index from parameter name
+                # Format: model.visual.blocks.{idx}.{rest}
+                try:
+                    parts = name.split("visual.blocks.")
+                    if len(parts) > 1:
+                        block_part = parts[1].split(".")[0]
+                        block_idx = int(block_part)
+                        # Check if this is one of the last N blocks
+                        if block_idx >= (total_blocks - vision_encoder_num_layers):
+                            is_vision_encoder_param = True
+                except (ValueError, IndexError):
+                    # If we can't parse the block index, skip this parameter
+                    pass
+            
+            if is_vision_encoder_param:
+                vision_encoder_params.append(param)
+            else:
+                other_params.append(param)
+
+        if not vision_encoder_params:
+            logger.warning(
+                "No vision encoder parameters found for parameter groups. "
+                "Using default optimizer without parameter groups."
+            )
+            return super().create_optimizer()
+
+        # Create optimizer with parameter groups
+        # Use AdamW as default (same as HuggingFace Trainer)
+        optimizer_kwargs = {
+            "betas": (self.args.adam_beta1 if hasattr(self.args, "adam_beta1") else 0.9, 
+                     self.args.adam_beta2 if hasattr(self.args, "adam_beta2") else 0.999),
+            "eps": self.args.adam_epsilon if hasattr(self.args, "adam_epsilon") else 1e-8,
+            "weight_decay": self.args.weight_decay,
+        }
+
+        # Create parameter groups with different learning rates
+        param_groups = [
+            {
+                "params": other_params,
+                "lr": self.args.learning_rate,
+                **optimizer_kwargs,
+            },
+            {
+                "params": vision_encoder_params,
+                "lr": vision_encoder_lr,
+                **optimizer_kwargs,
+            },
+        ]
+
+        # Create optimizer instance (AdamW is the default for HuggingFace Trainer)
+        optimizer = torch.optim.AdamW(param_groups)
+
+        logger.info(
+            f"Created optimizer with parameter groups: "
+            f"{len(other_params)} params at LR={self.args.learning_rate}, "
+            f"{len(vision_encoder_params)} vision encoder params (last {vision_encoder_num_layers} blocks) at LR={vision_encoder_lr}"
+        )
+
+        import ipdb; ipdb.set_trace() # noqa
+
+        return optimizer
 
     def _post_checkpoint_load_reset(self):
         """

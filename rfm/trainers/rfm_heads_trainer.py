@@ -221,7 +221,6 @@ class RFMHeadsTrainer(Trainer):
             )
             return super().create_optimizer()
 
-        # Create optimizer with parameter groups
         # Use AdamW as default (same as HuggingFace Trainer)
         optimizer_kwargs = {
             "betas": (self.args.adam_beta1 if hasattr(self.args, "adam_beta1") else 0.9, 
@@ -244,7 +243,6 @@ class RFMHeadsTrainer(Trainer):
             },
         ]
 
-        # Create optimizer instance (AdamW is the default for HuggingFace Trainer)
         optimizer = torch.optim.AdamW(param_groups)
 
         logger.info(
@@ -252,8 +250,7 @@ class RFMHeadsTrainer(Trainer):
             f"{len(other_params)} params at LR={self.args.learning_rate}, "
             f"{len(vision_encoder_params)} vision encoder params (last {vision_encoder_num_layers} blocks) at LR={vision_encoder_lr}"
         )
-
-        import ipdb; ipdb.set_trace() # noqa
+        self.optimizer = optimizer
 
         return optimizer
 

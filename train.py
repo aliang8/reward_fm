@@ -30,7 +30,7 @@ from rfm.configs.experiment_configs import (
     SaveBestConfig,
     CustomEvaluationConfig,
 )
-from rfm.trainers import ReWiNDTrainer, RFMHeadsTrainer, RFMVQATrainer
+from rfm.trainers import ReWiNDTrainer, RFMHeadsTrainer, RFMVQATrainer, SingleFrameTrainer
 from rfm.data.datasets.helpers import show_available_datasets
 from rfm.utils.distributed import is_rank_0, rank_0_print
 from rfm.utils.timer import _timer
@@ -162,6 +162,7 @@ def train(cfg: ExperimentConfig):
             name=run_name,
             config=config_dict,
             notes=cfg.logging.wandb_notes,
+            mode=cfg.logging.wandb_mode,
         )
         rank_0_print(f"Wandb initialized: {run_name}")
         if cfg.logging.wandb_notes:
@@ -197,6 +198,7 @@ def train(cfg: ExperimentConfig):
         "rewind_transformer": ReWiNDTrainer,
         "rfm_vqa": RFMVQATrainer,
         "rewind_scale_transformer": ReWiNDTrainer,
+        "single_frame": SingleFrameTrainer,
     }[cfg.trainer_cls]
 
     # Add SaveBestCallback to automatically save and upload best models

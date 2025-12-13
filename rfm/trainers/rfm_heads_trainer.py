@@ -24,6 +24,7 @@ from rfm.utils.metrics import compute_spearman_correlation
 from rfm.utils.setup_utils import setup_batch_collator, setup_custom_eval_dataset, setup_dataset
 from rfm.utils.tensor_utils import t2n
 from rfm.utils.timer import _timer
+from rfm.utils.video_utils import create_policy_ranking_grid, create_video_grid_with_progress
 
 logger = get_logger()
 
@@ -974,49 +975,196 @@ class RFMHeadsTrainer(Trainer):
 
     def _compute_and_log_eval_metrics(self, eval_type, eval_results, ds_name, eval_step):
         """Compute metrics and create visualizations for evaluation results."""
-        # Compute metrics on all processes
         # Initialize variables to None to ensure they exist for cleanup
         plots = None
         video_frames_list = None
+        trajectory_progress_data = None
         task_groups = None
         task_details = None
         confusion_plot = None
         confusion_matrix = None
 
         if eval_type == "reward_alignment":
-            eval_metrics, plots, video_frames_list = compute_eval_metrics(
+            eval_metrics, plots, video_frames_list, trajectory_progress_data = compute_eval_metrics(
                 eval_type, eval_results, self.config.data.progress_pred_type
             )
             log_memory_usage(f"After compute_eval_metrics (reward_alignment)")
+
+            banner(
+                f"{eval_type} evaluation: {len(eval_results)} samples",
+                f"Metrics: {eval_metrics}",
+                inner_padding=1,
+            )
+
+            # Build rows of (video, figure)
+            rows = []
+            for plot, frames in zip(plots, video_frames_list):
+                if frames is not None:
+                    rows.append((frames, plot))
+
+            if rows and self.logger.enabled("wandb"):
+                self.logger.log_video_table(
+                    f"reward_alignment_samples/{ds_name}",
+                    videos_and_figures=rows,
+                    columns=["video", "progress_plot"],
+                    step=eval_step,
+                )
+                
+            # Create and log 3x3 grid of videos with progress overlays
+            if video_frames_list and self.logger.enabled("wandb"):
+                grid_video = create_video_grid_with_progress(
+                    video_frames_list,
+                    trajectory_progress_data=trajectory_progress_data,
+                    grid_size=(3, 3),
+                    max_videos=9,
+                    progress_key_pred="progress_pred",
+                    progress_key_target="target_progress"
+                )
+                if grid_video is not None:
+                    self.logger.log_video(
+                        f"reward_alignment_grid/{ds_name}",
+                        grid_video,
+                        fps=2,
+                        step=eval_step,
+                    )
+                    del grid_video
+            
+            # For tensorboard (no table support), log each video and its figure separately
+            if self.logger.enabled("tensorboard"):
+                for idx, frames in enumerate(video_frames_list):
+                    if frames is not None:
+                        self.logger.log_video(
+                            f"reward_alignment_video/{ds_name}/{idx}",
+                            frames,
+                            fps=2,
+                            step=eval_step,
+                        )
+                for idx, plot in enumerate(plots):
+                    self.logger.log_figure(f"{ds_name}/reward_alignment_plot/{idx}", plot, step=eval_step)
+            # Close all plots to avoid accumulating open figures
+            for plot in plots:
+                plt.close(plot)
+
+            # Explicitly delete to free memory and set to None for outer cleanup
+            log_memory_usage(f"Before deleting plots/videos")
+            del plots, video_frames_list, trajectory_progress_data, rows
+            plots = None
+            video_frames_list = None
+            trajectory_progress_data = None
+            log_memory_usage(f"After deleting plots/videos")
         elif eval_type == "policy_ranking":
             # create task groups from eval_results
             eval_metrics, task_groups, task_details = compute_eval_metrics(
                 eval_type, eval_results, self.config.data.progress_pred_type
             )
             log_memory_usage(f"After compute_eval_metrics (policy_ranking)")
+
+            banner(
+                f"{eval_type} evaluation: {len(eval_results)} samples",
+                f"Metrics: {eval_metrics}",
+                inner_padding=1,
+            )
+
+            # Check if this is roboarena by checking if task_groups have partial_reward field
+            is_roboarena = False
+            if task_groups:
+                first_group = next(iter(task_groups.values()))
+                if first_group and "partial_success" in first_group[0]:
+                    is_roboarena = True
+
+            data = []
+            if is_roboarena:
+                # RoboArena visualization: show partial vs predicted rewards
+                for task, group in task_groups.items():
+                    partial_successes = np.array([t["partial_success"] for t in group]).round(2)
+                    predicted_rewards = np.array([t["final_predicted_reward"] for t in group]).round(2)
+                    partial_successes = partial_successes.tolist()
+                    predicted_rewards = predicted_rewards.tolist()
+                    data.append([task, f"partial:{partial_successes}", f"predicted:{predicted_rewards}"])
+                columns = ["task", "partial_successes", "predicted_rewards"]
+            else:
+                # Standard policy ranking visualization: show quality labels and rewards
+                for task, group in task_groups.items():
+                    quality_to_rews = collections.defaultdict(list)
+                    for t in group:
+                        rew = t["final_reward"]
+                        quality_to_rews[t["quality_label"]].append(rew)
+
+                    for q, r in quality_to_rews.items():
+                        quality_to_rews[q] = np.array(r).round(2).tolist()
+                    quality_to_rews = ",".join([f"{q}:{r}" for q, r in quality_to_rews.items()])
+
+                    # Get task details for differences
+                    task_detail = task_details.get(task, {})
+                    succ_subopt = task_detail.get("succ_subopt_diff")
+                    subopt_fail = task_detail.get("subopt_fail_diff")
+                    succ_fail = task_detail.get("succ_fail_diff")
+
+                    # Format differences
+                    diff_str = []
+                    if succ_subopt is not None:
+                        diff_str.append(f"succ-subopt:{succ_subopt:.2f}")
+                    if subopt_fail is not None:
+                        diff_str.append(f"subopt-fail:{subopt_fail:.2f}")
+                    if succ_fail is not None:
+                        diff_str.append(f"succ-fail:{succ_fail:.2f}")
+                    diff_str = ",".join(diff_str) if diff_str else "N/A"
+
+                    data.append([task, quality_to_rews, diff_str])
+                columns = ["task", "quality_and_rews", "avg_differences"]
+
+            table_name = f"policy_ranking_samples/{ds_name}"
+
+            self.logger.log_table(
+                table_name,
+                data=data,
+                columns=columns,
+                step=eval_step,
+            )
+
+            # Create and log grid of frame pairs with progress annotations
+            if self.logger.enabled("wandb"):
+                grid_image = create_policy_ranking_grid(eval_results, grid_size=(2, 2), max_samples=4)
+                if grid_image is not None:
+                    self.logger.log_image(
+                        f"policy_ranking_grid/{ds_name}",
+                        grid_image,
+                        step=eval_step,
+                    )
+                    del grid_image
+            
+            log_memory_usage(f"Before deleting policy_ranking data")
+            del data, task_groups, task_details
+            task_groups = None
+            task_details = None
+            log_memory_usage(f"After deleting policy_ranking data")
         elif eval_type == "confusion_matrix":
             confusion_plot, confusion_matrix = compute_eval_metrics(
                 eval_type, eval_results, self.config.data.progress_pred_type
             )
             eval_metrics = {}  # no eval metrics
             log_memory_usage(f"After compute_eval_metrics (confusion_matrix)")
+
+            banner(
+                f"{eval_type} evaluation: {len(eval_results)} samples",
+                f"Metrics: {eval_metrics}",
+                inner_padding=1,
+            )
+
+            self.logger.log_figure(f"eval_cm/{ds_name}", confusion_plot, step=eval_step)
+            plt.close(confusion_plot)
+            log_memory_usage(f"Before deleting confusion_matrix data")
+            del confusion_plot, confusion_matrix
+            confusion_plot = None
+            confusion_matrix = None
+            log_memory_usage(f"After deleting confusion_matrix data")
         elif "quality_preference" in eval_type:
             # quality_preference returns metrics, task_groups, and task_details
             eval_metrics, task_groups, task_details = compute_eval_metrics(
                 eval_type, eval_results, self.config.data.progress_pred_type
             )
             log_memory_usage(f"After compute_eval_metrics (quality_preference)")
-        elif eval_type == "similarity_score":
-            # similarity_score returns metrics, task_groups, and task_details
-            eval_metrics, task_groups, task_details = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type
-            )
-            log_memory_usage(f"After compute_eval_metrics (similarity_score)")
-        else:
-            raise ValueError(f"Unsupported eval type: {eval_type}")
 
-        # Only log and visualize on main process
-        if self.accelerator.is_main_process:
             banner(
                 "Completed evaluation",
                 f"{eval_type} evaluation: {len(eval_results)} samples",
@@ -1025,178 +1173,83 @@ class RFMHeadsTrainer(Trainer):
                 inner_padding=1,
             )
 
-            # Create wandb tables and log visualizations
-            if eval_type == "reward_alignment":
-                # Build rows of (video, figure)
-                rows = []
-                for plot, frames in zip(plots, video_frames_list):
-                    if frames is not None:
-                        rows.append((frames, plot))
-                if rows and self.logger.enabled("wandb"):
-                    self.logger.log_video_table(
-                        f"reward_alignment_samples/{ds_name}",
-                        videos_and_figures=rows,
-                        columns=["video", "progress_plot"],
-                        step=eval_step,
-                    )
-                # For tensorboard (no table support), log each video and its figure separately
-                if self.logger.enabled("tensorboard"):
-                    for idx, frames in enumerate(video_frames_list):
-                        if frames is not None:
-                            self.logger.log_video(
-                                f"reward_alignment_video/{ds_name}/{idx}",
-                                frames,
-                                fps=2,
-                                step=eval_step,
-                            )
-                    for idx, plot in enumerate(plots):
-                        self.logger.log_figure(f"{ds_name}/reward_alignment_plot/{idx}", plot, step=eval_step)
-                # Close all plots to avoid accumulating open figures
-                for plot in plots:
-                    plt.close(plot)
+            data = []
+            for task, details in task_details.items():
+                task_acc = details["preference_accuracy"]
+                quality_accs = details["quality_accuracies"]
+                quality_accs_str = ",".join([f"{k}:{round(v, 3)}" for k, v in quality_accs.items()])
+                num_correct = details["num_correct"]
+                num_total = details["num_total"]
+                data.append([
+                    task,
+                    round(task_acc, 3),
+                    quality_accs_str if quality_accs_str else "N/A",
+                    f"{num_correct}/{num_total}",
+                ])
+            columns = ["task", "preference_accuracy", "quality_accuracies", "num_correct/total"]
 
-                # Explicitly delete to free memory and set to None for outer cleanup
-                log_memory_usage(f"Before deleting plots/videos")
-                del plots, video_frames_list, rows
-                plots = None
-                video_frames_list = None
-                log_memory_usage(f"After deleting plots/videos")
+            table_name = f"quality_preference_samples/{ds_name}"
 
-            elif eval_type == "policy_ranking":
-                # Check if this is roboarena by checking if task_groups have partial_reward field
-                is_roboarena = False
-                if task_groups:
-                    first_group = next(iter(task_groups.values()))
-                    if first_group and "partial_success" in first_group[0]:
-                        is_roboarena = True
+            self.logger.log_table(
+                table_name,
+                data=data,
+                columns=columns,
+                step=eval_step,
+            )
+            log_memory_usage(f"Before deleting quality_preference data")
+            del data, task_groups, task_details
+            task_groups = None
+            task_details = None
+            log_memory_usage(f"After deleting quality_preference data")
+        elif eval_type == "similarity_score":
+            # similarity_score returns metrics, task_groups, and task_details
+            eval_metrics, task_groups, task_details = compute_eval_metrics(
+                eval_type, eval_results, self.config.data.progress_pred_type
+            )
+            log_memory_usage(f"After compute_eval_metrics (similarity_score)")
 
-                data = []
-                if is_roboarena:
-                    # RoboArena visualization: show partial vs predicted rewards
-                    for task, group in task_groups.items():
-                        partial_successes = np.array([t["partial_success"] for t in group]).round(2)
-                        predicted_rewards = np.array([t["final_predicted_reward"] for t in group]).round(2)
-                        partial_successes = partial_successes.tolist()
-                        predicted_rewards = predicted_rewards.tolist()
-                        data.append([task, f"partial:{partial_successes}", f"predicted:{predicted_rewards}"])
-                    columns = ["task", "partial_successes", "predicted_rewards"]
-                else:
-                    # Standard policy ranking visualization: show quality labels and rewards
-                    for task, group in task_groups.items():
-                        quality_to_rews = collections.defaultdict(list)
-                        for t in group:
-                            rew = t["final_reward"]
-                            quality_to_rews[t["quality_label"]].append(rew)
+            banner(
+                f"{eval_type} evaluation: {len(eval_results)} samples",
+                f"Metrics: {eval_metrics}",
+                inner_padding=1,
+            )
 
-                        for q, r in quality_to_rews.items():
-                            quality_to_rews[q] = np.array(r).round(2).tolist()
-                        quality_to_rews = ",".join([f"{q}:{r}" for q, r in quality_to_rews.items()])
-
-                        # Get task details for differences
-                        task_detail = task_details.get(task, {})
-                        succ_subopt = task_detail.get("succ_subopt_diff")
-                        subopt_fail = task_detail.get("subopt_fail_diff")
-                        succ_fail = task_detail.get("succ_fail_diff")
-
-                        # Format differences
-                        diff_str = []
-                        if succ_subopt is not None:
-                            diff_str.append(f"succ-subopt:{succ_subopt:.2f}")
-                        if subopt_fail is not None:
-                            diff_str.append(f"subopt-fail:{subopt_fail:.2f}")
-                        if succ_fail is not None:
-                            diff_str.append(f"succ-fail:{succ_fail:.2f}")
-                        diff_str = ",".join(diff_str) if diff_str else "N/A"
-
-                        data.append([task, quality_to_rews, diff_str])
-                    columns = ["task", "quality_and_rews", "avg_differences"]
-
-                table_name = f"policy_ranking_samples/{ds_name}"
-
-                self.logger.log_table(
-                    table_name,
-                    data=data,
-                    columns=columns,
-                    step=eval_step,
-                )
-                log_memory_usage(f"Before deleting policy_ranking data")
-                del data, task_groups, task_details
-                task_groups = None
-                task_details = None
-                log_memory_usage(f"After deleting policy_ranking data")
-
-            elif "quality_preference" in eval_type:
-                data = []
-                for task, details in task_details.items():
-                    task_acc = details["preference_accuracy"]
-                    quality_accs = details["quality_accuracies"]
-                    quality_accs_str = ",".join([f"{k}:{round(v, 3)}" for k, v in quality_accs.items()])
-                    num_correct = details["num_correct"]
-                    num_total = details["num_total"]
-                    data.append([
-                        task,
-                        round(task_acc, 3),
-                        quality_accs_str if quality_accs_str else "N/A",
-                        f"{num_correct}/{num_total}",
-                    ])
-                columns = ["task", "preference_accuracy", "quality_accuracies", "num_correct/total"]
-
-                table_name = f"quality_preference_samples/{ds_name}"
-
-                self.logger.log_table(
-                    table_name,
-                    data=data,
-                    columns=columns,
-                    step=eval_step,
-                )
-                log_memory_usage(f"Before deleting quality_preference data")
-                del data, task_groups, task_details
-                task_groups = None
-                task_details = None
-                log_memory_usage(f"After deleting quality_preference data")
-
-            elif eval_type == "confusion_matrix":
-                self.logger.log_figure(f"eval_cm/{ds_name}", confusion_plot, step=eval_step)
-                plt.close(confusion_plot)
-                log_memory_usage(f"Before deleting confusion_matrix data")
-                del confusion_plot, confusion_matrix
-                confusion_plot = None
-                confusion_matrix = None
-                log_memory_usage(f"After deleting confusion_matrix data")
-
-            elif eval_type == "similarity_score":
-                # Create wandb table for similarity score results
-                data = []
-                for task, group in task_groups.items():
-                    task_margin = task_details.get(task, {}).get("avg_margin", 0.0)
-                    task_same_task_score = task_details.get(task, {}).get("avg_same_task_score", 0.0)
-                    task_diff_task_score = task_details.get(task, {}).get("avg_diff_task_score", 0.0)
-                    num_pairs = task_details.get(task, {}).get("num_pairs", 0)
-                    data.append([
-                        task,
-                        round(task_margin, 3),
-                        round(task_same_task_score, 3),
-                        round(task_diff_task_score, 3),
-                        num_pairs,
-                    ])
-                columns = ["task", "avg_margin", "avg_same_task_score", "avg_diff_task_score", "num_pairs"]
-                self.logger.log_table(
-                    f"similarity_score_samples/{ds_name}",
-                    data=data,
-                    columns=columns,
-                    step=eval_step,
-                )
-                log_memory_usage(f"Before deleting similarity_score data")
-                del data, task_groups, task_details
-                task_groups = None
-                task_details = None
-                log_memory_usage(f"After deleting similarity_score data")
+            # Create wandb table for similarity score results
+            data = []
+            for task, group in task_groups.items():
+                task_margin = task_details.get(task, {}).get("avg_margin", 0.0)
+                task_same_task_score = task_details.get(task, {}).get("avg_same_task_score", 0.0)
+                task_diff_task_score = task_details.get(task, {}).get("avg_diff_task_score", 0.0)
+                num_pairs = task_details.get(task, {}).get("num_pairs", 0)
+                data.append([
+                    task,
+                    round(task_margin, 3),
+                    round(task_same_task_score, 3),
+                    round(task_diff_task_score, 3),
+                    num_pairs,
+                ])
+            columns = ["task", "avg_margin", "avg_same_task_score", "avg_diff_task_score", "num_pairs"]
+            self.logger.log_table(
+                f"similarity_score_samples/{ds_name}",
+                data=data,
+                columns=columns,
+                step=eval_step,
+            )
+            log_memory_usage(f"Before deleting similarity_score data")
+            del data, task_groups, task_details
+            task_groups = None
+            task_details = None
+            log_memory_usage(f"After deleting similarity_score data")
+        else:
+            raise ValueError(f"Unsupported eval type: {eval_type}")
 
         # Clean up eval-specific outputs
         if plots is not None:
             del plots
         if video_frames_list is not None:
             del video_frames_list
+        if trajectory_progress_data is not None:
+            del trajectory_progress_data
         if task_groups is not None:
             del task_groups
         if task_details is not None:
@@ -1315,8 +1368,10 @@ class RFMHeadsTrainer(Trainer):
             logger.info(f"  Finished processing {len(eval_results)} eval results")
             log_memory_usage(f"After eval loop, before compute_eval_metrics")
 
-            # Compute metrics and create visualizations
-            eval_metrics = self._compute_and_log_eval_metrics(eval_type, eval_results, ds_name, eval_step)
+            # Compute metrics and create visualizations (only on main process)
+            eval_metrics = {}
+            if self.accelerator.is_main_process:
+                eval_metrics = self._compute_and_log_eval_metrics(eval_type, eval_results, ds_name, eval_step)
 
             # Cleanup
             self._cleanup_eval_dataset(dataset, dataloader, eval_results)

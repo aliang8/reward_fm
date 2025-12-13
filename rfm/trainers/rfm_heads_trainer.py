@@ -740,11 +740,11 @@ class RFMHeadsTrainer(Trainer):
         del eval_cfg
 
         logger.info(f"  Dataset size: {len(dataset)}")
-        log_memory_usage(f"After creating dataset")
+        # log_memory_usage(f"After creating dataset")
 
         dataloader = self._make_eval_dataloader(dataset)
         logger.info(f"  Dataloader created with {len(dataloader)} batches")
-        log_memory_usage(f"After creating dataloader")
+        # log_memory_usage(f"After creating dataloader")
 
         # Ensure model is in eval mode and clear any gradient buffers
         self.model.eval()
@@ -762,12 +762,12 @@ class RFMHeadsTrainer(Trainer):
 
     def _process_batch_progress_eval(self, batch, eval_type):
         """Process a batch for progress-based evaluations (reward_alignment, policy_ranking, confusion_matrix)."""
-        logger.debug(f"    Processing {eval_type} batch")
+        logger.trace(f"    Processing {eval_type} batch")
         progress_samples = batch["progress_inputs"]
-        logger.debug(f"    Calling forward_model for progress")
+        logger.trace(f"    Calling forward_model for progress")
         with torch.no_grad():
             outputs, _ = self.forward_model(self.model, progress_samples, sample_type="progress")
-        logger.debug(f"    Forward pass complete")
+        logger.trace(f"    Forward pass complete")
 
         progress_logits = outputs.progress_logits
         progress_pred = progress_logits["A"]
@@ -847,12 +847,12 @@ class RFMHeadsTrainer(Trainer):
 
     def _process_batch_preference_eval(self, batch):
         """Process a batch for preference-based evaluations (quality_preference)."""
-        logger.debug(f"    Processing quality_preference batch")
+        logger.trace(f"    Processing quality_preference batch")
         preference_samples = batch["preference_inputs"]
-        logger.debug(f"    Calling forward_model for preference")
+        logger.trace(f"    Calling forward_model for preference")
         with torch.no_grad():
             outputs, _ = self.forward_model(self.model, preference_samples, sample_type="preference")
-        logger.debug(f"    Forward pass complete")
+        logger.trace(f"    Forward pass complete")
         pref_logits = outputs.pref_logits
 
         # Gather predictions and labels across all ranks
@@ -903,39 +903,39 @@ class RFMHeadsTrainer(Trainer):
 
     def _process_batch_similarity_eval(self, batch):
         """Process a batch for similarity-based evaluations (similarity_score)."""
-        logger.debug(f"    Processing similarity_score batch")
+        logger.trace(f"    Processing similarity_score batch")
         similarity_samples = batch["similarity_inputs"]
 
         # Log similarity batch details
         num_sim_samples = len(similarity_samples.get("data_source", []))
-        logger.debug(f"    Similarity samples on this rank: {num_sim_samples}")
+        logger.trace(f"    Similarity samples on this rank: {num_sim_samples}")
         if "input_ids" in similarity_samples:
-            logger.debug(f"    input_ids shape: {similarity_samples['input_ids'].shape}")
+            logger.trace(f"    input_ids shape: {similarity_samples['input_ids'].shape}")
 
-        logger.debug(f"    Calling forward_model for similarity")
+        logger.trace(f"    Calling forward_model for similarity")
         log_memory_usage(f"Before similarity forward pass")
 
         with torch.no_grad():
             outputs, _ = self.forward_model(self.model, similarity_samples, sample_type="similarity")
 
-        logger.debug(f"    Forward pass complete")
+        logger.trace(f"    Forward pass complete")
         log_memory_usage(f"After similarity forward pass")
 
         sim_logits = outputs.sim_logits
-        logger.debug(f"    sim_logits shape: {sim_logits.shape if sim_logits is not None else 'None'}")
+        logger.trace(f"    sim_logits shape: {sim_logits.shape if sim_logits is not None else 'None'}")
 
         # Gather predictions across all ranks
-        logger.debug(f"    Gathering sim_logits across ranks")
+        logger.trace(f"    Gathering sim_logits across ranks")
         sim_logits = self.accelerator.gather_for_metrics(sim_logits)
-        logger.debug(f"    Gathered sim_logits shape: {sim_logits.shape if sim_logits is not None else 'None'}")
+        logger.trace(f"    Gathered sim_logits shape: {sim_logits.shape if sim_logits is not None else 'None'}")
 
         # Gather non-tensor metadata using helper (handles optional/None entries)
-        logger.debug(f"    Gathering metadata across ranks")
+        logger.trace(f"    Gathering metadata across ranks")
         gathered_sim_metadata = self._gather_metadata_fields(
             similarity_samples,
             ["task", "data_source", "data_gen_strategy", "metadata"],
         )
-        logger.debug(f"    Metadata gathered, building eval_results")
+        logger.trace(f"    Metadata gathered, building eval_results")
         num_sim_samples = len(sim_logits) // 2 if sim_logits is not None else 0
         gathered_sim_metadata = self._truncate_metadata_lists(gathered_sim_metadata, num_sim_samples)
         gathered_task = gathered_sim_metadata["task"]
@@ -1324,10 +1324,11 @@ class RFMHeadsTrainer(Trainer):
             dataloader_iter = tqdm(
                 dataloader,
                 desc=f"Running {eval_type}, ds: {eval_dataset}, batch size: {self.config.training.per_device_eval_batch_size}",
+                disable=not is_rank_0(),
             )
 
             for batch in dataloader_iter:
-                logger.debug(f"  Processing batch {batch_idx}")
+                logger.trace(f"  Processing batch {batch_idx}")
                 if batch_idx % 10 == 0:  # Log memory every 10 batches
                     log_memory_usage(f"Batch {batch_idx}/{len(dataloader)}")
 
@@ -1337,7 +1338,7 @@ class RFMHeadsTrainer(Trainer):
                 num_pref = batch.get("num_preferences", 0)
                 num_prog = batch.get("num_progress", 0)
                 num_sim = batch.get("num_similarities", 0)
-                logger.debug(f"  Batch {batch_idx}: pref={num_pref}, prog={num_prog}, sim={num_sim}")
+                logger.trace(f"  Batch {batch_idx}: pref={num_pref}, prog={num_prog}, sim={num_sim}")
                 batch_idx += 1
 
                 # Process batch based on eval type
@@ -1513,6 +1514,10 @@ class RFMHeadsTrainer(Trainer):
         logger.info("=" * 100)
         logger.info("FINISHED CUSTOM EVALUATIONS")
         logger.info("=" * 100)
+        
+        # Final synchronization barrier to ensure all processes finish together
+        if dist.is_initialized():
+            dist.barrier()
 
         return callback_metrics
 
@@ -1539,6 +1544,7 @@ class RFMHeadsTrainer(Trainer):
                         enumerate(eval_dataloader),
                         total=len(eval_dataloader),
                         desc="Evaluating",
+                        disable=not is_rank_0(),
                     ):
                         # Move inputs to device
                         inputs = self._prepare_inputs(inputs)
@@ -1585,6 +1591,14 @@ class RFMHeadsTrainer(Trainer):
             # Trigger the callback handler with all metrics
             self.control = self.callback_handler.on_evaluate(self.args, self.state, self.control, metrics)
 
+        # CRITICAL: Final barrier OUTSIDE the if metrics block to ensure ALL ranks wait
+        # This is the absolute final barrier before returning from evaluate(), ensuring no training can start
+        # until all evaluation is completely done, regardless of whether metrics were computed
+        if dist.is_initialized():
+            logger.debug(f"[Rank {get_rank()}] Waiting at final barrier before returning from evaluate()")
+            dist.barrier()
+            logger.debug(f"[Rank {get_rank()}] Passed final barrier, about to return from evaluate()")
+
         # Restore original training mode to prevent state leakage
         self.model.train(was_training)
         # Ensure gradients are cleared before returning to training
@@ -1600,7 +1614,7 @@ class RFMHeadsTrainer(Trainer):
 
     def compute_loss(self, model, inputs, return_outputs=False, training=True, **kwargs):
         """Compute loss for separate preference and similarity batches."""
-        logger.debug("compute_loss: Starting")
+        logger.trace("compute_loss: Starting")
 
         # Set static graph for DDP on first training step to handle multiple forward passes
         # This is necessary because similarity loss does 2 forward passes (ref_sim and ref_diff)
@@ -1631,7 +1645,7 @@ class RFMHeadsTrainer(Trainer):
         total_loss = 0
         log_metadata = {}
 
-        logger.debug(
+        logger.trace(
             f"Num preferences: {num_preferences}, Num similarities: {num_similarities}, Num progress: {num_progress}"
         )
 
@@ -1663,9 +1677,9 @@ class RFMHeadsTrainer(Trainer):
             log_metadata.update(loss_dict)
 
         for key, value in log_metadata.items():
-            logger.debug(f"{key}: {value}, type: {type(value)}")
+            logger.trace(f"{key}: {value}, type: {type(value)}")
             if isinstance(value, torch.Tensor):
-                logger.debug(f"\t{key}: shape={value.shape}")
+                logger.trace(f"\t{key}: shape={value.shape}")
 
         # Check for NaN in total loss before returning
         if torch.isnan(total_loss).any():

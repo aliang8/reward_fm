@@ -428,13 +428,8 @@ def create_frame_pair_with_progress(
             bg_color=(0, 0, 0)
         )
         
-        # Add spacing between the two frames (gray border)
-        spacing_width = 4
-        border_color = np.array([128, 128, 128], dtype=np.uint8)  # Gray border
-        spacing = np.tile(border_color, (target_h, spacing_width, 1))  # (H, spacing_width, C)
-        
-        # Concatenate horizontally with spacing
-        combined_frame = np.concatenate([frame1_resized, spacing, frame2_resized], axis=1)  # (H, 2*W + spacing_width, C)
+        # Concatenate horizontally without spacing between frames (spacing is added between pairs in grid)
+        combined_frame = np.concatenate([frame1_resized, frame2_resized], axis=1)  # (H, 2*W, C)
         
         # Convert back to (C, H, W) format (no time dimension)
         combined_frame_chw = combined_frame.transpose(2, 0, 1)  # (C, H, 2*W)
@@ -487,9 +482,8 @@ def create_policy_ranking_grid(
         return None
     
     # Fill remaining cells with black frames
-    # Each pair has 2 frames + 4px spacing between them
-    spacing_width = 4
-    pair_width = 2 * target_w + spacing_width
+    # Each pair has 2 frames (no spacing between frames in a pair)
+    pair_width = 2 * target_w
     num_black = grid_cells - len(frame_pairs)
     for _ in range(num_black):
         black_pair = np.zeros((3, target_h, pair_width), dtype=np.uint8)
@@ -503,7 +497,7 @@ def create_policy_ranking_grid(
         row_pairs = []
         for col in range(grid_size[1]):
             idx = row * grid_size[1] + col
-            pair = frame_pairs[idx]  # (C, H, pair_width) where pair_width = 2*W + spacing_width
+            pair = frame_pairs[idx]  # (C, H, pair_width) where pair_width = 2*W (no spacing between frames in pair)
             # Convert to (H, pair_width, C) for processing
             pair_hwc = pair.transpose(1, 2, 0)
             

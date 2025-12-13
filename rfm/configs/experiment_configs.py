@@ -422,6 +422,13 @@ class LoggingConfig:
     wandb_notes: Optional[str] = field(
         default=None, metadata={"help": "Optional notes/comment to add to the wandb run"}
     )
+    wandb_mode: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Wandb mode: 'online' (default), 'offline' (local files only, no network I/O), or 'disabled'. "
+            "Offline mode prevents network I/O blocking that can cause deadlocks in distributed training."
+        },
+    )
     # Log level: "TRACE", "DEBUG2", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
     log_level: str = field(
         default="INFO",

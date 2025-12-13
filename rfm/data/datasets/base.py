@@ -9,7 +9,7 @@ from datasets import Dataset, concatenate_datasets
 from rfm.data.datasets.helpers import load_dataset_success_percent
 from rfm.data.dataset_category import DATASET_MAP, DATA_SOURCE_CATEGORY, get_paired_ds
 from rfm.utils.distributed import banner
-from rfm.utils.logger import get_logger, rank_0_info, rank_0_warning
+from rfm.utils.logger import get_logger
 
 logger = get_logger()
 
@@ -41,7 +41,7 @@ def resolve_dataset_keys(dataset_keys: list[str] | list[list[str]], split: str) 
                     if split in DATASET_MAP[key]:
                         resolved_group.extend(DATASET_MAP[key][split])
                     else:
-                        rank_0_warning(f"Key '{key}' found in DATASET_MAP but no '{split}' split defined. Skipping.")
+                        logger.warning(f"Key '{key}' found in DATASET_MAP but no '{split}' split defined. Skipping.")
                 else:
                     # Not a key, assume it's already a dataset name
                     resolved_group.append(key)
@@ -56,7 +56,7 @@ def resolve_dataset_keys(dataset_keys: list[str] | list[list[str]], split: str) 
             if split in DATASET_MAP[key]:
                 resolved_datasets.extend(DATASET_MAP[key][split])
             else:
-                rank_0_warning(f"Key '{key}' found in DATASET_MAP but no '{split}' split defined. Skipping.")
+                logger.warning(f"Key '{key}' found in DATASET_MAP but no '{split}' split defined. Skipping.")
         else:
             # Not a key, assume it's already a dataset name
             resolved_datasets.append(key)
@@ -95,11 +95,11 @@ class BaseDataset(torch.utils.data.Dataset):
         filter_successful_only = False
         if config.sample_type_ratio == [0, 1, 0] and not is_evaluation:
             filter_successful_only = True
-            rank_0_info(
+            logger.info(
                 "Progress-only mode detected (sample_type_ratio=[0, 1, 0]), filtering to only successful trajectories"
             )
 
-        rank_0_info(f"Filtering dataset with {len(self.dataset)} total trajectories")
+        logger.info(f"Filtering dataset with {len(self.dataset)} total trajectories")
         self.dataset, self._combined_indices = self._filter_dataset(
             excluded_keywords=excluded_keywords,
             min_frames=min_frames,
@@ -107,7 +107,7 @@ class BaseDataset(torch.utils.data.Dataset):
             combined_indices=self._combined_indices,
             filter_successful_only=filter_successful_only,
         )
-        rank_0_info(f"Dataset filtered with {len(self.dataset)} total trajectories")
+        logger.info(f"Dataset filtered with {len(self.dataset)} total trajectories")
 
         # Filter out trajectories based on multiple criteria (build indices first, then filter once)
         self.dataset, self._combined_indices = self._filter_task_based_criteria(
@@ -119,7 +119,7 @@ class BaseDataset(torch.utils.data.Dataset):
         self._cached_ids = self.dataset["id"]
         self._cached_is_robot = self.dataset["is_robot"]
 
-        rank_0_info(f"Dataset loaded with {len(self.dataset)} total trajectories")
+        logger.info(f"Dataset loaded with {len(self.dataset)} total trajectories")
 
         # Initialize resampling stats containers shared by subclasses
         self._resample_attempt_stats: dict[str, collections.defaultdict[str, list[int]]] = {
@@ -153,18 +153,18 @@ class BaseDataset(torch.utils.data.Dataset):
 
         # Check if preprocessed cache exists
         if os.path.exists(cache_dir):
-            rank_0_info(f"Found preprocessed cache at {cache_dir}, loading {cache_type} datasets...")
+            logger.debug(f"Found preprocessed cache at {cache_dir}, loading {cache_type} datasets...")
 
             dataset, combined_indices = self._load_preprocessed_cache(cache_dir, is_training=not self.is_evaluation)
 
-            rank_0_info(
+            logger.debug(
                 f"Successfully loaded preprocessed {cache_type} datasets with {len(dataset)} trajectory indices"
             )
 
             return dataset, combined_indices
         else:
             # If no cache exists, we need to run the preprocessor first
-            rank_0_warning("No preprocessed cache found. Please run preprocess_datasets.py first to create the cache.")
+            logger.warning("No preprocessed cache found. Please run preprocess_datasets.py first to create the cache.")
             raise RuntimeError(
                 "Dataset preprocessing required. Please run:\n"
                 "uv run scripts/preprocess_datasets.py\n"
@@ -194,23 +194,23 @@ class BaseDataset(torch.utils.data.Dataset):
                             json.load(f)
 
                         available_datasets.append((dataset_path, individual_cache_dir))
-                        rank_0_info(f"       Found cache: {individual_cache_dir}")
+                        logger.debug(f"Found cache: {individual_cache_dir}")
                     except:
-                        rank_0_warning(f"       Cache info file corrupted, skipping: {individual_cache_dir}")
+                        logger.warning(f"Cache info file corrupted, skipping: {individual_cache_dir}")
                         continue
                 else:
-                    rank_0_info(f"       No info file found, skipping: {individual_cache_dir}")
+                    logger.debug(f"No info file found, skipping: {individual_cache_dir}")
                     continue
             else:
                 missing_datasets.append(dataset_path)
-                rank_0_warning(f"      ❌ Missing cache: {individual_cache_dir}")
+                logger.debug(f"Missing cache: {individual_cache_dir}")
 
         # Warn about missing datasets
         if missing_datasets:
-            rank_0_warning("⚠️  Warning: The following configured datasets are not available in the cache:")
+            logger.warning("⚠️  Warning: The following configured datasets are not available in the cache:")
             for dataset_path in missing_datasets:
-                rank_0_warning(f"    ❌ {dataset_path}")
-            rank_0_warning("  Available datasets will be loaded, but some configured data may be missing.")
+                logger.warning(f"    ❌ {dataset_path}")
+            logger.warning("  Available datasets will be loaded, but some configured data may be missing.")
 
         if not available_datasets:
             raise RuntimeError(
@@ -218,7 +218,7 @@ class BaseDataset(torch.utils.data.Dataset):
                 f"Please run preprocess_datasets.py to create the cache for: {self.datasets}"
             )
 
-        rank_0_info(f"Summary: {len(available_datasets)} available, {len(missing_datasets)} missing")
+        logger.debug(f"Summary: {len(available_datasets)} available, {len(missing_datasets)} missing")
 
         return available_datasets, missing_datasets
 
@@ -240,7 +240,7 @@ class BaseDataset(torch.utils.data.Dataset):
             # Load the processed dataset
             dataset_cache_dir = os.path.join(individual_cache_dir, "processed_dataset")
             if not os.path.exists(dataset_cache_dir):
-                rank_0_warning(f"   Warning: Processed dataset not found at {dataset_cache_dir}, skipping...")
+                logger.warning(f"Processed dataset not found at {dataset_cache_dir}, skipping...")
                 continue
 
             dataset = Dataset.load_from_disk(dataset_cache_dir, keep_in_memory=True)
@@ -255,7 +255,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
             dataset_indices_list.append(indices)
 
-            rank_0_info(f"  ✅ Loaded {len(dataset)} trajectories from {dataset_path}")
+            logger.debug(f"Loaded {len(dataset)} trajectories from {dataset_path}")
 
         if not loaded_datasets:
             raise RuntimeError("No datasets could be loaded from the cache")
@@ -340,23 +340,23 @@ class BaseDataset(torch.utils.data.Dataset):
         combined_indices = self._build_indices(loaded_datasets, dataset_indices_list, dataset["is_robot"])
 
         dataset_type = "training" if is_training else "evaluation"
-        rank_0_info(f"✅ Loaded {len(dataset)} total trajectories from preprocessed {dataset_type} datasets")
-        rank_0_info(
-            f"  📊 Available datasets: {len(available_datasets)}/{len(missing_datasets) + len(available_datasets)}"
+        logger.info(f"✅ Loaded {len(dataset)} total trajectories from preprocessed {dataset_type} datasets")
+        logger.debug(
+            f"Available datasets: {len(available_datasets)}/{len(missing_datasets) + len(available_datasets)}"
         )
-        rank_0_info(f"  📊 Missing datasets: {len(missing_datasets)}")
+        logger.debug(f"Missing datasets: {len(missing_datasets)}")
         banner("Dataset statistics")
-        rank_0_info(f"Robot trajectories: {len(combined_indices['robot_trajectories'])}")
-        rank_0_info(f"Human trajectories: {len(combined_indices['human_trajectories'])}")
-        rank_0_info(f"Number of different tasks: {len(combined_indices['task_indices'])}")
-        rank_0_info(f"Data sources: {len(combined_indices['source_indices'])}")
-        rank_0_info(f"Tasks available: {list[Any](combined_indices['task_indices'].keys())[:10]} ...")
-        rank_0_info(f"Number of quality labels: {len(combined_indices['quality_indices'])}")
+        logger.debug(f"Robot trajectories: {len(combined_indices['robot_trajectories'])}")
+        logger.debug(f"Human trajectories: {len(combined_indices['human_trajectories'])}")
+        logger.debug(f"Number of different tasks: {len(combined_indices['task_indices'])}")
+        logger.debug(f"Data sources: {len(combined_indices['source_indices'])}")
+        logger.debug(f"Tasks available: {list[Any](combined_indices['task_indices'].keys())[:10]} ...")
+        logger.debug(f"Number of quality labels: {len(combined_indices['quality_indices'])}")
         for quality_label in combined_indices["quality_indices"]:
-            rank_0_info(f"  {quality_label}: {len(combined_indices['quality_indices'][quality_label])}")
-        rank_0_info(f"Data sources available: {combined_indices['source_indices'].keys()}")
-        rank_0_info(f"Number of paired tasks: {len(combined_indices['paired_human_robot_by_task'])}")
-        rank_0_info(
+            logger.debug(f"  {quality_label}: {len(combined_indices['quality_indices'][quality_label])}")
+        logger.debug(f"Data sources available: {combined_indices['source_indices'].keys()}")
+        logger.debug(f"Number of paired tasks: {len(combined_indices['paired_human_robot_by_task'])}")
+        logger.debug(
             f"Number of tasks with both multiple quality labels: {len(combined_indices['tasks_with_multiple_quality_labels'])}"
         )
 
@@ -510,7 +510,7 @@ class BaseDataset(torch.utils.data.Dataset):
                     f"{filtered_by_roboarena} RoboArena trajectories from {len(roboarena_tasks_with_single_partial_success)} tasks with only one partial_success category"
                 )
 
-            rank_0_info(f"  Filtering out {total_filtered} trajectories ({', '.join(filter_messages)})")
+            logger.info(f"Filtering out {total_filtered} trajectories ({', '.join(filter_messages)})")
 
             # Build keep_indices from flags (before filtering)
             keep_indices = [
@@ -581,8 +581,8 @@ class BaseDataset(torch.utils.data.Dataset):
             filtered_by_no_optimal = len(indices_to_remove)
             tasks_removed_count = len(tasks_removed)
 
-            rank_0_info(
-                f"  Filtering out {filtered_by_no_optimal} trajectories from {tasks_removed_count} tasks "
+            logger.info(
+                f"Filtering out {filtered_by_no_optimal} trajectories from {tasks_removed_count} tasks "
                 f"that have no optimal trajectories (only suboptimal/failed)"
             )
 
@@ -706,7 +706,7 @@ class BaseDataset(torch.utils.data.Dataset):
                 paired_data_source_indices.update(combined_indices["source_indices"][data_source])
 
         if not paired_data_source_indices:
-            rank_0_info("  No paired data sources found, skipping paired index building")
+            logger.debug("No paired data sources found, skipping paired index building")
             return {}
 
         # Build index from task_indices using cached is_robot field, but only for paired data sources
@@ -731,8 +731,8 @@ class BaseDataset(torch.utils.data.Dataset):
             task for task, task_dict in paired_human_robot_by_task.items() if task_dict["robot"] and task_dict["human"]
         ]
         num_tasks_with_pairs = len(tasks_with_pairs)
-        rank_0_info(
-            f"  Built paired_human_robot_by_task index: {num_tasks_with_pairs} tasks with both robot and human trajectories (from paired data sources only)"
+        logger.debug(
+            f"Built paired_human_robot_by_task index: {num_tasks_with_pairs} tasks with both robot and human trajectories (from paired data sources only)"
         )
 
         return paired_human_robot_by_task

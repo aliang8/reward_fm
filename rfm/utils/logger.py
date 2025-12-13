@@ -116,6 +116,7 @@ class Logger:
         name: Optional[str],
         config: Optional[dict],
         notes: Optional[str] = None,
+        mode: Optional[str] = None,
     ):
         if not (self._use_wandb and self._is_main):
             return None
@@ -124,6 +125,10 @@ class Logger:
         init_kwargs = {"project": project, "entity": entity, "name": name, "config": config}
         if notes:
             init_kwargs["notes"] = notes
+        # Use offline mode if specified, or check environment variable
+        if mode is None:
+            mode = os.environ.get("WANDB_MODE", "online")
+        init_kwargs["mode"] = mode
         self._wandb_run = wandb.init(**init_kwargs)
         return self._wandb_run
 

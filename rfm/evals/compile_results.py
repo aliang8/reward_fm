@@ -166,10 +166,15 @@ def run_quality_preference_eval(results: list[dict[str, Any]], progress_pred_typ
 
 def run_reward_alignment_eval_per_trajectory(
     results: list[dict[str, Any]], progress_pred_type: str, last_frame_only: bool = False
-) -> tuple[dict[str, Any], list, list]:
+) -> tuple[dict[str, Any], list, list, list]:
     """Run reward_alignment evaluation analysis and create plots for each trajectory.
 
     For failure datasets, we visualize predictions but skip metric computation.
+    
+    Returns:
+        Tuple of (metrics, plots, video_frames_list, trajectory_progress_data)
+        where trajectory_progress_data is a list of dicts with progress_pred and target_progress
+        for each trajectory (one per video in video_frames_list)
     """
     # Determine if this is a failure dataset by checking the data_source of the first result
     is_failure_dataset = False
@@ -183,6 +188,7 @@ def run_reward_alignment_eval_per_trajectory(
     spearman_trajectories = []
     plots = []
     video_frames_list = []
+    trajectory_progress_data = []
 
     # Collect all success_probs and success_labels for AUPRC computation
     all_success_probs = []
@@ -301,6 +307,11 @@ def run_reward_alignment_eval_per_trajectory(
             last_preds = np.cumsum(last_preds)
             last_targets = np.cumsum(last_targets)
 
+        trajectory_progress_data.append({
+            "progress_pred": last_preds.tolist() if isinstance(last_preds, np.ndarray) else last_preds,
+            "target_progress": last_targets.tolist() if isinstance(last_targets, np.ndarray) else last_targets,
+        })
+
         # Calculate metrics for this trajectory using vectorized operations (skip for failure datasets)
         if is_failure_dataset:
             traj_mse = 0.0
@@ -410,7 +421,7 @@ def run_reward_alignment_eval_per_trajectory(
     if success_auprc is not None:
         metrics["success_auprc"] = success_auprc
 
-    return metrics, plots, video_frames_list
+    return metrics, plots, video_frames_list, trajectory_progress_data
 
 
 def run_confusion_matrix_eval(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:

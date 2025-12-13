@@ -270,14 +270,14 @@ def create_video_grid_with_progress(
             
             # Add progress text overlay in bottom right corner
             if progress_pred is not None and progress_target is not None:
-                # Get progress value (use last value if it's a sequence)
+                # Get progress value for this frame (index by t)
                 if isinstance(progress_pred, (list, np.ndarray)):
-                    pred_val = float(progress_pred[-1]) if len(progress_pred) > 0 else 0.0
+                    pred_val = float(progress_pred[t]) if t < len(progress_pred) else 0.0
                 else:
                     pred_val = float(progress_pred)
                 
                 if isinstance(progress_target, (list, np.ndarray)):
-                    target_val = float(progress_target[-1]) if len(progress_target) > 0 else 0.0
+                    target_val = float(progress_target[t]) if t < len(progress_target) else 0.0
                 else:
                     target_val = float(progress_target)
                 
@@ -352,7 +352,7 @@ def create_frame_pair_with_progress(
         target_w: Target width for frames
     
     Returns:
-        Single frame with two frames side-by-side in (C, H, 2*W) format, or None if unavailable
+        Single frame with two frames side-by-side with spacing in (C, H, 2*W + spacing_width) format, or None if unavailable
     """
     from rfm.data.datasets.helpers import load_frames_from_npz
     
@@ -428,8 +428,13 @@ def create_frame_pair_with_progress(
             bg_color=(0, 0, 0)
         )
         
-        # Concatenate horizontally
-        combined_frame = np.concatenate([frame1_resized, frame2_resized], axis=1)  # (H, 2*W, C)
+        # Add spacing between the two frames (gray border)
+        spacing_width = 4
+        border_color = np.array([128, 128, 128], dtype=np.uint8)  # Gray border
+        spacing = np.tile(border_color, (target_h, spacing_width, 1))  # (H, spacing_width, C)
+        
+        # Concatenate horizontally with spacing
+        combined_frame = np.concatenate([frame1_resized, spacing, frame2_resized], axis=1)  # (H, 2*W + spacing_width, C)
         
         # Convert back to (C, H, W) format (no time dimension)
         combined_frame_chw = combined_frame.transpose(2, 0, 1)  # (C, H, 2*W)
@@ -443,7 +448,7 @@ def create_policy_ranking_grid(
     eval_results: list[dict],
     grid_size: tuple[int, int] = (2, 2),
     max_samples: int = 4,
-    border_width: int = 2
+    border_width: int = 4
 ) -> Optional[np.ndarray]:
     """
     Create a grid of frame pairs with progress annotations from policy_ranking eval results.
@@ -455,7 +460,7 @@ def create_policy_ranking_grid(
         border_width: Width of border between pairs in pixels
     
     Returns:
-        Grid of frame pairs in (C, total_H, total_W) format, or None if unavailable
+        Grid image in (H, W, C) format, uint8, RGB, or None if unavailable
     """
     # Filter results with valid video_paths
     valid_results = [r for r in eval_results if r.get("video_path") is not None]
@@ -482,9 +487,12 @@ def create_policy_ranking_grid(
         return None
     
     # Fill remaining cells with black frames
+    # Each pair has 2 frames + 4px spacing between them
+    spacing_width = 4
+    pair_width = 2 * target_w + spacing_width
     num_black = grid_cells - len(frame_pairs)
     for _ in range(num_black):
-        black_pair = np.zeros((3, target_h, 2 * target_w), dtype=np.uint8)
+        black_pair = np.zeros((3, target_h, pair_width), dtype=np.uint8)
         frame_pairs.append(black_pair)
     
     # Add borders to each pair and arrange in grid
@@ -495,8 +503,8 @@ def create_policy_ranking_grid(
         row_pairs = []
         for col in range(grid_size[1]):
             idx = row * grid_size[1] + col
-            pair = frame_pairs[idx]  # (C, H, 2*W)
-            # Convert to (H, 2*W, C) for processing
+            pair = frame_pairs[idx]  # (C, H, pair_width) where pair_width = 2*W + spacing_width
+            # Convert to (H, pair_width, C) for processing
             pair_hwc = pair.transpose(1, 2, 0)
             
             # Add left border (except for first column)
@@ -519,8 +527,8 @@ def create_policy_ranking_grid(
     # Concatenate vertically
     grid_frame = np.concatenate(grid_rows, axis=0)  # (total_H, total_W, C)
     
-    # Convert back to (C, H, W) and add time dimension for video format (single frame video)
-    grid_frame_chw = grid_frame.transpose(2, 0, 1)  # (C, total_H, total_W)
-    grid_video = np.expand_dims(grid_frame_chw, axis=0)  # (1, C, total_H, total_W)
+    # Return as static image in (H, W, C) format, uint8
+    if grid_frame.dtype != np.uint8:
+        grid_frame = np.clip(grid_frame, 0, 255).astype(np.uint8)
     
-    return grid_video
+    return grid_frame

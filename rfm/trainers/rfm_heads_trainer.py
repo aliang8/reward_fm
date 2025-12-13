@@ -1124,15 +1124,14 @@ class RFMHeadsTrainer(Trainer):
 
             # Create and log grid of frame pairs with progress annotations
             if self.logger.enabled("wandb"):
-                grid_video = create_policy_ranking_grid(eval_results, grid_size=(2, 2), max_samples=4)
-                if grid_video is not None:
-                    self.logger.log_video(
+                grid_image = create_policy_ranking_grid(eval_results, grid_size=(2, 2), max_samples=4)
+                if grid_image is not None:
+                    self.logger.log_image(
                         f"policy_ranking_grid/{ds_name}",
-                        grid_video,
-                        fps=1,
+                        grid_image,
                         step=eval_step,
                     )
-                    del grid_video
+                    del grid_image
             
             log_memory_usage(f"Before deleting policy_ranking data")
             del data, task_groups, task_details

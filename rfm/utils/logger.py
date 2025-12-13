@@ -153,6 +153,27 @@ class Logger:
         if self.enabled("tensorboard"):
             self._tb_writer.add_figure(tag, figure, global_step=step)
 
+    def log_image(self, tag: str, image: np.ndarray, step: Optional[int] = None):
+        """
+        Log a static image.
+        - image: numpy array in (H, W, C) format, uint8, RGB
+        """
+        if not self._is_main:
+            return
+        if self.enabled("wandb"):
+            # Ensure image is in (H, W, C) format and uint8
+            if image.ndim == 3 and image.shape[2] == 3:
+                if image.dtype != np.uint8:
+                    image = np.clip(image, 0, 255).astype(np.uint8)
+                self._wandb_run.log({tag: wandb.Image(image)}, step=step)
+        if self.enabled("tensorboard"):
+            # Convert to (C, H, W) for tensorboard
+            if image.ndim == 3 and image.shape[2] == 3:
+                image_chw = image.transpose(2, 0, 1)
+                if image_chw.dtype != np.uint8:
+                    image_chw = np.clip(image_chw, 0, 255).astype(np.uint8)
+                self._tb_writer.add_image(tag, image_chw, global_step=step)
+
     def log_video_table(
         self,
         tag: str,

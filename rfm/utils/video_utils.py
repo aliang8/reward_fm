@@ -436,22 +436,64 @@ def create_frame_pair_with_progress(
     quality_label = eval_result.get("quality_label")
     partial_success = eval_result.get("partial_success")
     
-    # Build label text lines
-    label_lines = []
+    # Build label text parts (before wrapping)
+    label_parts = []
     if task is not None:
-        label_lines.append(f"Task: {task}")
+        label_parts.append(f"Task: {task}")
     if partial_success is not None:
         # RoboArena: use partial_success
-        label_lines.append(f"Partial: {partial_success:.2f}")
+        label_parts.append(f"Partial: {partial_success:.2f}")
     elif quality_label is not None:
         # Non-RoboArena: use quality_label
-        label_lines.append(f"Quality: {quality_label}")
+        label_parts.append(f"Quality: {quality_label}")
     
-    if label_lines:
+    if label_parts:
+        # Get available width for text (frame width - padding on both sides)
+        available_width = combined_frame.shape[1] - 20  # 10px padding on each side
+        font_scale = 0.5
+        thickness = 1
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        
+        # Helper function to wrap text to fit available width
+        def wrap_text(text, max_width):
+            """Wrap text into multiple lines that fit within max_width."""
+            words = text.split()
+            lines = []
+            current_line = words[0] if words else ""
+            
+            for word in words[1:]:
+                # Check if adding the next word exceeds width
+                test_line = current_line + " " + word
+                (text_width, _), _ = cv2.getTextSize(test_line, font, font_scale, thickness)
+                
+                if text_width <= max_width:
+                    current_line = test_line
+                else:
+                    # Current line is full, start a new line
+                    lines.append(current_line)
+                    current_line = word
+            
+            if current_line:
+                lines.append(current_line)
+            
+            return lines
+        
+        # Wrap each label part and collect all lines
+        label_lines = []
+        for part in label_parts:
+            wrapped = wrap_text(part, available_width)
+            label_lines.extend(wrapped)
+        
         # Calculate label height based on number of lines
         line_height = 20  # Height per line
         line_spacing = 5  # Spacing between lines
         label_height = len(label_lines) * line_height + (len(label_lines) - 1) * line_spacing + 10  # Add padding
+        
+        # Ensure minimum label height
+        min_label_height = 30
+        if label_height < min_label_height:
+            label_height = min_label_height
+        
         label_frame = np.ones((label_height, combined_frame.shape[1], 3), dtype=np.uint8) * 255  # White background
         
         # Add each line of text
@@ -461,9 +503,9 @@ def create_frame_pair_with_progress(
                 label_frame,
                 label_text,
                 position=(10, y_position),  # Left-aligned
-                font_scale=0.5,
+                font_scale=font_scale,
                 color=(0, 0, 0),  # Black text
-                thickness=1,
+                thickness=thickness,
                 bg_color=None  # No background needed (already white)
             )
         

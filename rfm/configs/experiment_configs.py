@@ -50,6 +50,14 @@ class ModelConfig(PretrainedConfig):
         },
     )
 
+    use_multi_image: bool = field(
+        default=False,
+        metadata={
+            "help": "If True, feed frames as a list of images instead of converting to video (avoids encoding overhead). "
+            "If False, detect automatically based on number of vision_start tokens in the sequence."
+        },
+    )
+
     use_peft: bool = field(default=False, metadata={"help": "Whether to use PEFT/LoRA or train full model"})
     peft_vision_encoder: bool = field(default=False, metadata={"help": "Whether to attach LoRA to the vision encoder"})
 
@@ -421,6 +429,13 @@ class LoggingConfig:
     wandb_entity: Optional[str] = field(default=None, metadata={"help": "Wandb entity/username"})
     wandb_notes: Optional[str] = field(
         default=None, metadata={"help": "Optional notes/comment to add to the wandb run"}
+    )
+    wandb_mode: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Wandb mode: 'online' (default), 'offline' (local files only, no network I/O), or 'disabled'. "
+            "Offline mode prevents network I/O blocking that can cause deadlocks in distributed training."
+        },
     )
     # Log level: "TRACE", "DEBUG2", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
     log_level: str = field(

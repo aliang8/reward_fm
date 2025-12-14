@@ -260,6 +260,12 @@ def linspace_subsample_frames(
         indices = list(range(effective_total))
         return frames_to_subsample, indices
 
+    # Special case: if num_frames == 1, always take the last frame
+    if num_frames == 1:
+        indices = [effective_total - 1]
+        subsampled_frames = frames_to_subsample[indices]
+        return subsampled_frames, indices
+
     # Evenly spaced indices from 0 to effective_total-1, inclusive
     indices_np = np.linspace(0, effective_total - 1, num_frames)
     indices = np.rint(indices_np).astype(int).tolist()

@@ -340,28 +340,18 @@ class SaveBestCallback(TrainerCallback):
         return hub_url, commit_id
 
     def on_evaluate(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, metrics, **kwargs):
-        # Gather metrics across all processes if using distributed training
-        # IMPORTANT: All ranks must participate in this collective operation before any early returns
-        if hasattr(self._trainer, "accelerator") and self._trainer.accelerator.num_processes > 1:
-            # Convert metrics to tensors for gathering
-            gathered_metrics = {}
-            for key, value in metrics.items():
-                if isinstance(value, (int, float)):
-                    # Convert to tensor and gather (collective operation - all ranks must participate)
-                    tensor_value = self._trainer.accelerator.gather_for_metrics(
-                        torch.tensor(value, dtype=torch.float32, device=self._trainer.accelerator.device)
-                    )
-                    # Take the mean across all processes
-                    gathered_metrics[key] = tensor_value.mean().item()
-                else:
-                    # For non-numeric values, just use the local value
-                    gathered_metrics[key] = value
-            metrics = gathered_metrics
+        """
+        Callback triggered after evaluation.
+        Metrics are already gathered across all processes by the trainer before being passed here.
+        """
+        step = state.global_step
 
         # Only rank 0 needs to process metrics and save checkpoints
-        # Early return AFTER collective operations to avoid deadlock
         if not self._is_main_process(self._trainer):
+            logger.debug("Skipping checkpoint save (not main process)")
             return control
+
+        logger.info(f"SaveBestCallback.on_evaluate called at step {step} with {len(metrics)} metrics")
 
         score, missing_metrics = self._compute_averaged_score(metrics)
 

@@ -35,6 +35,7 @@ model:
   average_temporal_patches: false
   pairwise_progress: false
   use_progress_token: false
+  use_multi_image: ${data.use_multi_image}  # Reference from data config - If True, feed frames as a list of images instead of converting to video (avoids encoding overhead)
 
   use_peft: false
   peft_vision_encoder: false

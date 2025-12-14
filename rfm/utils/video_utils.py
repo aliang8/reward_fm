@@ -8,6 +8,8 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from rfm.data.datasets.helpers import load_frames_from_npz
+
 
 def extract_frames_from_video(video_path: str, fps: int = 1) -> np.ndarray:
     """
@@ -344,7 +346,9 @@ def create_frame_pair_with_progress(
     target_w: int = 224
 ) -> Optional[np.ndarray]:
     """
-    Create a side-by-side pair of frames (first and last) with progress annotations.
+    Create a horizontal row of frames from a trajectory with progress annotations.
+    The number of frames is determined by the length of progress_pred or target_progress.
+    Each row represents one trajectory, with frames displayed horizontally.
     
     Args:
         eval_result: Evaluation result dict with video_path, progress_pred, target_progress
@@ -352,57 +356,67 @@ def create_frame_pair_with_progress(
         target_w: Target width for frames
     
     Returns:
-        Single frame with two frames side-by-side with spacing in (C, H, 2*W + spacing_width) format, or None if unavailable
+        Single row image with frames horizontally concatenated in (C, H, W) format, or None if unavailable
     """
-    from rfm.data.datasets.helpers import load_frames_from_npz
-    
     video_path = eval_result.get("video_path")
     if video_path is None:
         return None
     
-    try:
-        frames = load_frames_from_npz(video_path)
-        frames = frames.transpose(0, 3, 1, 2)  # (T, C, H, W)
-        
-        if frames.shape[0] < 2:
-            return None
-        
-        # Get first and last frames
-        frame1 = frames[0]  # (C, H, W)
-        frame2 = frames[-1]  # (C, H, W)
-        
-        # Get progress values (use first and last from sequences)
-        progress_pred = eval_result.get("progress_pred")
-        target_progress = eval_result.get("target_progress")
-        
-        # Extract progress values for first and last frames
-        if isinstance(progress_pred, (list, np.ndarray)):
-            pred_val_first = float(progress_pred[0]) if len(progress_pred) > 0 else 0.0
-            pred_val_last = float(progress_pred[-1]) if len(progress_pred) > 0 else 0.0
+    # Get progress values to determine number of frames
+    progress_pred = eval_result.get("progress_pred")
+    target_progress = eval_result.get("target_progress")
+    
+    # Determine number of frames from progress_pred or target_progress length
+    if isinstance(progress_pred, (list, np.ndarray)) and len(progress_pred) > 0:
+        num_frames = len(progress_pred)
+    elif isinstance(target_progress, (list, np.ndarray)) and len(target_progress) > 0:
+        num_frames = len(target_progress)
+    else:
+        # Fallback: if both are scalars or None, default to 1 frame
+        num_frames = 1
+    
+    # Load frames from video
+    frames = load_frames_from_npz(video_path)
+    frames = frames.transpose(0, 3, 1, 2)  # (T, C, H, W)
+    
+    if frames.shape[0] < 1:
+        return None
+    
+    # Process frames - use evenly spaced indices to sample frames from video
+    # This handles cases where video has more frames than progress_pred indicates
+    processed_frames = []
+    for i in range(num_frames):
+        # Calculate frame index - evenly space across available frames
+        if num_frames == 1:
+            frame_idx = 0
         else:
-            pred_val_first = float(progress_pred) if progress_pred is not None else 0.0
-            pred_val_last = pred_val_first
+            frame_idx = int((i / (num_frames - 1)) * (frames.shape[0] - 1)) if frames.shape[0] > 1 else 0
+        frame_idx = min(frame_idx, frames.shape[0] - 1)
+        
+        frame = frames[frame_idx]  # (C, H, W)
+        frame_hwc = frame.transpose(1, 2, 0)  # (H, W, C)
+        if frame_hwc.dtype != np.uint8:
+            frame_hwc = np.clip(frame_hwc * 255, 0, 255).astype(np.uint8)
+        frame_resized = cv2.resize(frame_hwc, (target_w, target_h))
+        
+        # Get progress values for this frame index
+        if isinstance(progress_pred, (list, np.ndarray)):
+            pred_val = float(progress_pred[i]) if i < len(progress_pred) else 0.0
+        else:
+            pred_val = float(progress_pred) if progress_pred is not None else 0.0
         
         if isinstance(target_progress, (list, np.ndarray)):
-            target_val_first = float(target_progress[0]) if len(target_progress) > 0 else 0.0
-            target_val_last = float(target_progress[-1]) if len(target_progress) > 0 else 0.0
+            target_val = float(target_progress[i]) if i < len(target_progress) else 0.0
         else:
-            target_val_first = float(target_progress) if target_progress is not None else 0.0
-            target_val_last = target_val_first
+            target_val = float(target_progress) if target_progress is not None else 0.0
         
-        # Process first frame
-        frame1_hwc = frame1.transpose(1, 2, 0)  # (H, W, C)
-        if frame1_hwc.dtype != np.uint8:
-            frame1_hwc = np.clip(frame1_hwc * 255, 0, 255).astype(np.uint8)
-        frame1_resized = cv2.resize(frame1_hwc, (target_w, target_h))
-        
-        # Add progress annotation to first frame
-        progress_text1 = f"P:{pred_val_first:.2f} T:{target_val_first:.2f}"
+        # Add progress annotation to frame
+        progress_text = f"P:{pred_val:.2f} T:{target_val:.2f}"
         text_x = target_w - 110
         text_y = target_h - 10
-        frame1_resized = add_text_overlay(
-            frame1_resized,
-            progress_text1,
+        frame_resized = add_text_overlay(
+            frame_resized,
+            progress_text,
             position=(text_x, text_y),
             font_scale=0.4,
             color=(255, 255, 255),
@@ -410,38 +424,56 @@ def create_frame_pair_with_progress(
             bg_color=(0, 0, 0)
         )
         
-        # Process last frame
-        frame2_hwc = frame2.transpose(1, 2, 0)  # (H, W, C)
-        if frame2_hwc.dtype != np.uint8:
-            frame2_hwc = np.clip(frame2_hwc * 255, 0, 255).astype(np.uint8)
-        frame2_resized = cv2.resize(frame2_hwc, (target_w, target_h))
-        
-        # Add progress annotation to last frame
-        progress_text2 = f"P:{pred_val_last:.2f} T:{target_val_last:.2f}"
-        frame2_resized = add_text_overlay(
-            frame2_resized,
-            progress_text2,
-            position=(text_x, text_y),
-            font_scale=0.4,
-            color=(255, 255, 255),
-            thickness=1,
-            bg_color=(0, 0, 0)
-        )
-        
-        # Add spacing between the two frames (gray border)
-        spacing_width = 4
-        border_color = np.array([128, 128, 128], dtype=np.uint8)  # Gray border
-        spacing = np.tile(border_color, (target_h, spacing_width, 1))  # (H, spacing_width, C)
-        
-        # Concatenate horizontally with spacing
-        combined_frame = np.concatenate([frame1_resized, spacing, frame2_resized], axis=1)  # (H, 2*W + spacing_width, C)
-        
-        # Convert back to (C, H, W) format (no time dimension)
-        combined_frame_chw = combined_frame.transpose(2, 0, 1)  # (C, H, 2*W)
-        
-        return combined_frame_chw
-    except Exception:
+        processed_frames.append(frame_resized)
+    
+    # Concatenate all frames horizontally
+    if len(processed_frames) == 0:
         return None
+    combined_frame = np.concatenate(processed_frames, axis=1)  # (H, num_frames*W, C)
+    
+    # Add text label above the frame row (task and quality_label/partial_success)
+    task = eval_result.get("task")
+    quality_label = eval_result.get("quality_label")
+    partial_success = eval_result.get("partial_success")
+    
+    # Build label text lines
+    label_lines = []
+    if task is not None:
+        label_lines.append(f"Task: {task}")
+    if partial_success is not None:
+        # RoboArena: use partial_success
+        label_lines.append(f"Partial: {partial_success:.2f}")
+    elif quality_label is not None:
+        # Non-RoboArena: use quality_label
+        label_lines.append(f"Quality: {quality_label}")
+    
+    if label_lines:
+        # Calculate label height based on number of lines
+        line_height = 20  # Height per line
+        line_spacing = 5  # Spacing between lines
+        label_height = len(label_lines) * line_height + (len(label_lines) - 1) * line_spacing + 10  # Add padding
+        label_frame = np.ones((label_height, combined_frame.shape[1], 3), dtype=np.uint8) * 255  # White background
+        
+        # Add each line of text
+        for i, label_text in enumerate(label_lines):
+            y_position = label_height - 5 - (len(label_lines) - 1 - i) * (line_height + line_spacing)
+            label_frame = add_text_overlay(
+                label_frame,
+                label_text,
+                position=(10, y_position),  # Left-aligned
+                font_scale=0.5,
+                color=(0, 0, 0),  # Black text
+                thickness=1,
+                bg_color=None  # No background needed (already white)
+            )
+        
+        # Concatenate label above the frame row
+        combined_frame = np.concatenate([label_frame, combined_frame], axis=0)  # (H + label_height, num_frames*W, C)
+    
+    # Convert back to (C, H, W) format (no time dimension)
+    combined_frame_chw = combined_frame.transpose(2, 0, 1)  # (C, H + label_height, num_frames*W)
+    
+    return combined_frame_chw
 
 
 def create_policy_ranking_grid(
@@ -451,16 +483,17 @@ def create_policy_ranking_grid(
     border_width: int = 4
 ) -> Optional[np.ndarray]:
     """
-    Create a grid of frame pairs with progress annotations from policy_ranking eval results.
+    Create a vertical stack of trajectory rows, each showing all frames horizontally.
+    Each row represents one trajectory with all its frames displayed horizontally.
     
     Args:
         eval_results: List of evaluation results with video_path, progress_pred, target_progress
-        grid_size: Tuple of (rows, cols) for the grid
-        max_samples: Maximum number of samples to use
-        border_width: Width of border between pairs in pixels
+        grid_size: Not used anymore (kept for compatibility), but ignored
+        max_samples: Maximum number of samples (trajectories) to display (default: 4)
+        border_width: Width of border between rows in pixels
     
     Returns:
-        Grid image in (H, W, C) format, uint8, RGB, or None if unavailable
+        Stacked image in (H, W, C) format, uint8, RGB, or None if unavailable
     """
     # Filter results with valid video_paths
     valid_results = [r for r in eval_results if r.get("video_path") is not None]
@@ -468,64 +501,65 @@ def create_policy_ranking_grid(
     if len(valid_results) == 0:
         return None
     
-    grid_cells = grid_size[0] * grid_size[1]
-    num_to_sample = min(grid_cells, max_samples, len(valid_results))
+    # Limit to max_samples
+    num_to_sample = min(max_samples, len(valid_results))
     
     # Sample random results
     sampled_results = random.sample(valid_results, num_to_sample)
     
-    # Create frame pairs for each sampled result
-    frame_pairs = []
+    # Create frame rows for each sampled result (each row is one trajectory)
+    frame_rows = []
     target_h, target_w = 224, 224
     
     for result in sampled_results:
-        frame_pair = create_frame_pair_with_progress(result, target_h, target_w)
-        if frame_pair is not None:
-            frame_pairs.append(frame_pair)
+        frame_row = create_frame_pair_with_progress(result, target_h, target_w)
+        if frame_row is not None:
+            frame_rows.append(frame_row)
     
-    if len(frame_pairs) == 0:
+    if len(frame_rows) == 0:
         return None
     
-    # Fill remaining cells with black frames
-    # Each pair has 2 frames + 4px spacing between them
-    spacing_width = 4
-    pair_width = 2 * target_w + spacing_width
-    num_black = grid_cells - len(frame_pairs)
-    for _ in range(num_black):
-        black_pair = np.zeros((3, target_h, pair_width), dtype=np.uint8)
-        frame_pairs.append(black_pair)
+    # Get the maximum width across all rows to align them
+    max_width = max(row.shape[2] for row in frame_rows)  # (C, H, W) -> W dimension
+    max_height = max(row.shape[1] for row in frame_rows)  # (C, H, W) -> H dimension
     
-    # Add borders to each pair and arrange in grid
+    # Pad all rows to the same width and height
+    aligned_rows = []
     border_color = np.array([128, 128, 128], dtype=np.uint8)  # Gray border
     
-    grid_rows = []
-    for row in range(grid_size[0]):
-        row_pairs = []
-        for col in range(grid_size[1]):
-            idx = row * grid_size[1] + col
-            pair = frame_pairs[idx]  # (C, H, pair_width) where pair_width = 2*W + spacing_width
-            # Convert to (H, pair_width, C) for processing
-            pair_hwc = pair.transpose(1, 2, 0)
-            
-            # Add left border (except for first column)
-            if col > 0:
-                left_border = np.tile(border_color, (target_h, border_width, 1))
-                pair_hwc = np.concatenate([left_border, pair_hwc], axis=1)
-            
-            row_pairs.append(pair_hwc)
+    for row in frame_rows:
+        # Convert to (H, W, C) for processing
+        row_hwc = row.transpose(1, 2, 0)  # (H, W, C)
+        current_height, current_width = row_hwc.shape[0], row_hwc.shape[1]
         
-        # Concatenate horizontally
-        row_concat = np.concatenate(row_pairs, axis=1)  # (H, total_W, C)
+        # Pad width if necessary (pad on the right)
+        if current_width < max_width:
+            width_padding = max_width - current_width
+            right_padding = np.ones((current_height, width_padding, 3), dtype=np.uint8) * 255  # White padding
+            row_hwc = np.concatenate([row_hwc, right_padding], axis=1)
         
+        # Pad height if necessary (pad on the bottom)
+        if current_height < max_height:
+            height_padding = max_height - current_height
+            bottom_padding = np.ones((height_padding, row_hwc.shape[1], 3), dtype=np.uint8) * 255  # White padding
+            row_hwc = np.concatenate([row_hwc, bottom_padding], axis=0)
+        
+        aligned_rows.append(row_hwc)
+    
+    # Stack rows vertically with borders between them
+    stacked_rows = []
+    for i, row in enumerate(aligned_rows):
+        stacked_rows.append(row)
         # Add horizontal border below (except for last row)
-        if row < grid_size[0] - 1:
-            h_border = np.tile(border_color, (border_width, row_concat.shape[1], 1))
-            row_concat = np.concatenate([row_concat, h_border], axis=0)
-        
-        grid_rows.append(row_concat)
+        if i < len(aligned_rows) - 1:
+            h_border = np.tile(border_color, (border_width, row.shape[1], 1))
+            stacked_rows.append(h_border)
     
     # Concatenate vertically
-    grid_frame = np.concatenate(grid_rows, axis=0)  # (total_H, total_W, C)
+    if len(stacked_rows) == 0:
+        return None
+    
+    grid_frame = np.concatenate(stacked_rows, axis=0)  # (total_H, max_W, C)
     
     # Return as static image in (H, W, C) format, uint8
     if grid_frame.dtype != np.uint8:

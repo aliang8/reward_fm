@@ -691,9 +691,7 @@ class RFMHeadsTrainer(Trainer):
 
     def _make_eval_dataloader(self, dataset):
         """Create a distributed evaluation dataloader with proper sampling."""
-        log_memory_usage("Before creating collator")
         collator = setup_batch_collator(self.model.processor, self.model.tokenizer, self.config, is_eval=True)
-        log_memory_usage("After creating collator")
 
         dl = DataLoader(
             dataset,
@@ -706,9 +704,7 @@ class RFMHeadsTrainer(Trainer):
             persistent_workers=False,
             worker_init_fn=seed_worker,
         )
-        log_memory_usage("After creating DataLoader")
         prepared_dl = self.accelerator.prepare(dl)
-        log_memory_usage("After accelerator.prepare(dataloader)")
         return prepared_dl
 
     def _setup_eval_dataset(self, eval_type, eval_dataset):
@@ -740,11 +736,11 @@ class RFMHeadsTrainer(Trainer):
         del eval_cfg
 
         logger.info(f"  Dataset size: {len(dataset)}")
-        log_memory_usage(f"After creating dataset")
+        # log_memory_usage(f"After creating dataset")
 
         dataloader = self._make_eval_dataloader(dataset)
         logger.info(f"  Dataloader created with {len(dataloader)} batches")
-        log_memory_usage(f"After creating dataloader")
+        # log_memory_usage(f"After creating dataloader")
 
         # Ensure model is in eval mode and clear any gradient buffers
         self.model.eval()
@@ -756,18 +752,18 @@ class RFMHeadsTrainer(Trainer):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
-        log_memory_usage(f"After clearing cache, before eval loop")
+        # log_memory_usage(f"After clearing cache, before eval loop")
 
         return dataset, dataloader
 
     def _process_batch_progress_eval(self, batch, eval_type):
         """Process a batch for progress-based evaluations (reward_alignment, policy_ranking, confusion_matrix)."""
-        logger.debug(f"    Processing {eval_type} batch")
+        logger.trace(f"    Processing {eval_type} batch")
         progress_samples = batch["progress_inputs"]
-        logger.debug(f"    Calling forward_model for progress")
+        logger.trace(f"    Calling forward_model for progress")
         with torch.no_grad():
             outputs, _ = self.forward_model(self.model, progress_samples, sample_type="progress")
-        logger.debug(f"    Forward pass complete")
+        logger.trace(f"    Forward pass complete")
 
         progress_logits = outputs.progress_logits
         progress_pred = progress_logits["A"]
@@ -847,12 +843,12 @@ class RFMHeadsTrainer(Trainer):
 
     def _process_batch_preference_eval(self, batch):
         """Process a batch for preference-based evaluations (quality_preference)."""
-        logger.debug(f"    Processing quality_preference batch")
+        logger.trace(f"    Processing quality_preference batch")
         preference_samples = batch["preference_inputs"]
-        logger.debug(f"    Calling forward_model for preference")
+        logger.trace(f"    Calling forward_model for preference")
         with torch.no_grad():
             outputs, _ = self.forward_model(self.model, preference_samples, sample_type="preference")
-        logger.debug(f"    Forward pass complete")
+        logger.trace(f"    Forward pass complete")
         pref_logits = outputs.pref_logits
 
         # Gather predictions and labels across all ranks
@@ -903,39 +899,39 @@ class RFMHeadsTrainer(Trainer):
 
     def _process_batch_similarity_eval(self, batch):
         """Process a batch for similarity-based evaluations (similarity_score)."""
-        logger.debug(f"    Processing similarity_score batch")
+        logger.trace(f"    Processing similarity_score batch")
         similarity_samples = batch["similarity_inputs"]
 
         # Log similarity batch details
         num_sim_samples = len(similarity_samples.get("data_source", []))
-        logger.debug(f"    Similarity samples on this rank: {num_sim_samples}")
+        logger.trace(f"    Similarity samples on this rank: {num_sim_samples}")
         if "input_ids" in similarity_samples:
-            logger.debug(f"    input_ids shape: {similarity_samples['input_ids'].shape}")
+            logger.trace(f"    input_ids shape: {similarity_samples['input_ids'].shape}")
 
-        logger.debug(f"    Calling forward_model for similarity")
-        log_memory_usage(f"Before similarity forward pass")
+        logger.trace(f"    Calling forward_model for similarity")
+        # log_memory_usage(f"Before similarity forward pass")
 
         with torch.no_grad():
             outputs, _ = self.forward_model(self.model, similarity_samples, sample_type="similarity")
 
-        logger.debug(f"    Forward pass complete")
-        log_memory_usage(f"After similarity forward pass")
+        logger.trace(f"    Forward pass complete")
+        # log_memory_usage(f"After similarity forward pass")
 
         sim_logits = outputs.sim_logits
-        logger.debug(f"    sim_logits shape: {sim_logits.shape if sim_logits is not None else 'None'}")
+        logger.trace(f"    sim_logits shape: {sim_logits.shape if sim_logits is not None else 'None'}")
 
         # Gather predictions across all ranks
-        logger.debug(f"    Gathering sim_logits across ranks")
+        logger.trace(f"    Gathering sim_logits across ranks")
         sim_logits = self.accelerator.gather_for_metrics(sim_logits)
-        logger.debug(f"    Gathered sim_logits shape: {sim_logits.shape if sim_logits is not None else 'None'}")
+        logger.trace(f"    Gathered sim_logits shape: {sim_logits.shape if sim_logits is not None else 'None'}")
 
         # Gather non-tensor metadata using helper (handles optional/None entries)
-        logger.debug(f"    Gathering metadata across ranks")
+        logger.trace(f"    Gathering metadata across ranks")
         gathered_sim_metadata = self._gather_metadata_fields(
             similarity_samples,
             ["task", "data_source", "data_gen_strategy", "metadata"],
         )
-        logger.debug(f"    Metadata gathered, building eval_results")
+        logger.trace(f"    Metadata gathered, building eval_results")
         num_sim_samples = len(sim_logits) // 2 if sim_logits is not None else 0
         gathered_sim_metadata = self._truncate_metadata_lists(gathered_sim_metadata, num_sim_samples)
         gathered_task = gathered_sim_metadata["task"]
@@ -988,7 +984,7 @@ class RFMHeadsTrainer(Trainer):
             eval_metrics, plots, video_frames_list, trajectory_progress_data = compute_eval_metrics(
                 eval_type, eval_results, self.config.data.progress_pred_type
             )
-            log_memory_usage(f"After compute_eval_metrics (reward_alignment)")
+            # log_memory_usage(f"After compute_eval_metrics (reward_alignment)")
 
             banner(
                 f"{eval_type} evaluation: {len(eval_results)} samples",
@@ -1046,18 +1042,18 @@ class RFMHeadsTrainer(Trainer):
                 plt.close(plot)
 
             # Explicitly delete to free memory and set to None for outer cleanup
-            log_memory_usage(f"Before deleting plots/videos")
+            # log_memory_usage(f"Before deleting plots/videos")
             del plots, video_frames_list, trajectory_progress_data, rows
             plots = None
             video_frames_list = None
             trajectory_progress_data = None
-            log_memory_usage(f"After deleting plots/videos")
+            # log_memory_usage(f"After deleting plots/videos")
         elif eval_type == "policy_ranking":
             # create task groups from eval_results
             eval_metrics, task_groups, task_details = compute_eval_metrics(
                 eval_type, eval_results, self.config.data.progress_pred_type
             )
-            log_memory_usage(f"After compute_eval_metrics (policy_ranking)")
+            # log_memory_usage(f"After compute_eval_metrics (policy_ranking)")
 
             banner(
                 f"{eval_type} evaluation: {len(eval_results)} samples",
@@ -1133,17 +1129,17 @@ class RFMHeadsTrainer(Trainer):
                     )
                     del grid_image
             
-            log_memory_usage(f"Before deleting policy_ranking data")
+            # log_memory_usage(f"Before deleting policy_ranking data")
             del data, task_groups, task_details
             task_groups = None
             task_details = None
-            log_memory_usage(f"After deleting policy_ranking data")
+            # log_memory_usage(f"After deleting policy_ranking data")
         elif eval_type == "confusion_matrix":
             confusion_plot, confusion_matrix = compute_eval_metrics(
                 eval_type, eval_results, self.config.data.progress_pred_type
             )
             eval_metrics = {}  # no eval metrics
-            log_memory_usage(f"After compute_eval_metrics (confusion_matrix)")
+            # log_memory_usage(f"After compute_eval_metrics (confusion_matrix)")
 
             banner(
                 f"{eval_type} evaluation: {len(eval_results)} samples",
@@ -1153,17 +1149,17 @@ class RFMHeadsTrainer(Trainer):
 
             self.logger.log_figure(f"eval_cm/{ds_name}", confusion_plot, step=eval_step)
             plt.close(confusion_plot)
-            log_memory_usage(f"Before deleting confusion_matrix data")
+            # log_memory_usage(f"Before deleting confusion_matrix data")
             del confusion_plot, confusion_matrix
             confusion_plot = None
             confusion_matrix = None
-            log_memory_usage(f"After deleting confusion_matrix data")
+            # log_memory_usage(f"After deleting confusion_matrix data")
         elif "quality_preference" in eval_type:
             # quality_preference returns metrics, task_groups, and task_details
             eval_metrics, task_groups, task_details = compute_eval_metrics(
                 eval_type, eval_results, self.config.data.progress_pred_type
             )
-            log_memory_usage(f"After compute_eval_metrics (quality_preference)")
+            # log_memory_usage(f"After compute_eval_metrics (quality_preference)")
 
             banner(
                 "Completed evaluation",
@@ -1196,17 +1192,17 @@ class RFMHeadsTrainer(Trainer):
                 columns=columns,
                 step=eval_step,
             )
-            log_memory_usage(f"Before deleting quality_preference data")
+            # log_memory_usage(f"Before deleting quality_preference data")
             del data, task_groups, task_details
             task_groups = None
             task_details = None
-            log_memory_usage(f"After deleting quality_preference data")
+            # log_memory_usage(f"After deleting quality_preference data")
         elif eval_type == "similarity_score":
             # similarity_score returns metrics, task_groups, and task_details
             eval_metrics, task_groups, task_details = compute_eval_metrics(
                 eval_type, eval_results, self.config.data.progress_pred_type
             )
-            log_memory_usage(f"After compute_eval_metrics (similarity_score)")
+            # log_memory_usage(f"After compute_eval_metrics (similarity_score)")
 
             banner(
                 f"{eval_type} evaluation: {len(eval_results)} samples",
@@ -1235,11 +1231,11 @@ class RFMHeadsTrainer(Trainer):
                 columns=columns,
                 step=eval_step,
             )
-            log_memory_usage(f"Before deleting similarity_score data")
+            # log_memory_usage(f"Before deleting similarity_score data")
             del data, task_groups, task_details
             task_groups = None
             task_details = None
-            log_memory_usage(f"After deleting similarity_score data")
+            # log_memory_usage(f"After deleting similarity_score data")
         else:
             raise ValueError(f"Unsupported eval type: {eval_type}")
 
@@ -1264,7 +1260,7 @@ class RFMHeadsTrainer(Trainer):
     def _cleanup_eval_dataset(self, dataset, dataloader, eval_results):
         """Clean up dataset, dataloader, and eval_results after evaluation."""
         logger.info(f"  Cleaning up dataset and eval_results")
-        log_memory_usage(f"Before cleanup")
+        # log_memory_usage(f"Before cleanup")
 
         # Aggressive cleanup to prevent memory leaks
         # First, delete eval_results which can be large
@@ -1289,15 +1285,15 @@ class RFMHeadsTrainer(Trainer):
 
         # Delete dataloader and dataset
         del dataloader, dataset
-        log_memory_usage(f"After deleting dataloader and dataset")
+        # log_memory_usage(f"After deleting dataloader and dataset")
 
         # Force garbage collection
         import gc
 
         gc.collect()
-        log_memory_usage(f"After first gc.collect()")
+        # log_memory_usage(f"After first gc.collect()")
         gc.collect()  # Call twice for cyclic references
-        log_memory_usage(f"After second gc.collect()")
+        # log_memory_usage(f"After second gc.collect()")
 
         # Clear GPU cache
         if torch.cuda.is_available():
@@ -1307,7 +1303,7 @@ class RFMHeadsTrainer(Trainer):
     def _run_single_eval_dataset(self, eval_type, eval_dataset, eval_step):
         """Run evaluation for a single dataset."""
         logger.info(f"  Processing dataset: {eval_dataset}")
-        log_memory_usage(f"Before dataset {eval_dataset}")
+        # log_memory_usage(f"Before dataset {eval_dataset}")
 
         # Get dataset name for mapping
         dataset_for_mapping = eval_dataset[0] if isinstance(eval_dataset, list) else eval_dataset
@@ -1324,12 +1320,13 @@ class RFMHeadsTrainer(Trainer):
             dataloader_iter = tqdm(
                 dataloader,
                 desc=f"Running {eval_type}, ds: {eval_dataset}, batch size: {self.config.training.per_device_eval_batch_size}",
+                disable=not is_rank_0(),
             )
 
             for batch in dataloader_iter:
-                logger.debug(f"  Processing batch {batch_idx}")
-                if batch_idx % 10 == 0:  # Log memory every 10 batches
-                    log_memory_usage(f"Batch {batch_idx}/{len(dataloader)}")
+                logger.trace(f"  Processing batch {batch_idx}")
+                # if batch_idx % 10 == 0:  # Log memory every 10 batches
+                #     log_memory_usage(f"Batch {batch_idx}/{len(dataloader)}")
 
                 batch = self._prepare_inputs(batch)
 
@@ -1337,7 +1334,7 @@ class RFMHeadsTrainer(Trainer):
                 num_pref = batch.get("num_preferences", 0)
                 num_prog = batch.get("num_progress", 0)
                 num_sim = batch.get("num_similarities", 0)
-                logger.debug(f"  Batch {batch_idx}: pref={num_pref}, prog={num_prog}, sim={num_sim}")
+                logger.trace(f"  Batch {batch_idx}: pref={num_pref}, prog={num_prog}, sim={num_sim}")
                 batch_idx += 1
 
                 # Process batch based on eval type
@@ -1357,16 +1354,16 @@ class RFMHeadsTrainer(Trainer):
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
 
-                # Log memory after cleanup every 10 batches
-                if (batch_idx - 1) % 10 == 0:
-                    log_memory_usage(f"After batch {batch_idx - 1} cleanup")
+                # # Log memory after cleanup every 10 batches
+                # if (batch_idx - 1) % 10 == 0:
+                #     log_memory_usage(f"After batch {batch_idx - 1} cleanup")
 
             # Close tqdm iterator to release any held references
             dataloader_iter.close()
             del dataloader_iter
 
             logger.info(f"  Finished processing {len(eval_results)} eval results")
-            log_memory_usage(f"After eval loop, before compute_eval_metrics")
+            # log_memory_usage(f"After eval loop, before compute_eval_metrics")
 
             # Compute metrics and create visualizations (only on main process)
             eval_metrics = {}
@@ -1376,7 +1373,7 @@ class RFMHeadsTrainer(Trainer):
             # Cleanup
             self._cleanup_eval_dataset(dataset, dataloader, eval_results)
 
-            log_memory_usage(f"After cleanup for {eval_dataset}")
+            # log_memory_usage(f"After cleanup for {eval_dataset}")
 
             # Store timing for this eval_dataset
             eval_dataset_time = self.timing_raw.get(timing_key, 0.0)
@@ -1398,7 +1395,7 @@ class RFMHeadsTrainer(Trainer):
 
         logger.info("=" * 100)
         logger.info("STARTING CUSTOM EVALUATIONS")
-        log_memory_usage("Before custom evaluations")
+        # log_memory_usage("Before custom evaluations")
         logger.info("=" * 100)
 
         metrics = collections.defaultdict(dict)
@@ -1421,7 +1418,7 @@ class RFMHeadsTrainer(Trainer):
         for eval_type in eval_types:
             logger.info("=" * 80)
             logger.info(f"Running evaluation for: {eval_type}")
-            log_memory_usage(f"Before {eval_type}")
+            # log_memory_usage(f"Before {eval_type}")
             logger.info("=" * 80)
 
             datasets = getattr(self.config.custom_eval, eval_type)
@@ -1439,7 +1436,7 @@ class RFMHeadsTrainer(Trainer):
                     eval_dataset_time = self.timing_raw.get(timing_key, 0.0)
                     eval_dataset_timings[timing_key] = eval_dataset_time
 
-                log_memory_usage(f"After completing all datasets for {eval_type}")
+                # log_memory_usage(f"After completing all datasets for {eval_type}")
 
                 # Store timing for this eval_type
                 eval_type_time = self.timing_raw.get(f"time/eval_type/{eval_type}", 0.0)
@@ -1488,7 +1485,7 @@ class RFMHeadsTrainer(Trainer):
                 logger.info("=" * 80)
 
         banner("Finished running custom evaluations!")
-        log_memory_usage("After all evaluations, before cleanup")
+        # log_memory_usage("After all evaluations, before cleanup")
 
         # Reset model to training mode and clear any cached states to prevent leakage
         self.model.train()
@@ -1509,10 +1506,14 @@ class RFMHeadsTrainer(Trainer):
         # Clean up large objects
         del metrics
 
-        log_memory_usage("After final cleanup")
+        # log_memory_usage("After final cleanup")
         logger.info("=" * 100)
         logger.info("FINISHED CUSTOM EVALUATIONS")
         logger.info("=" * 100)
+        
+        # Final synchronization barrier to ensure all processes finish together
+        if dist.is_initialized():
+            dist.barrier()
 
         return callback_metrics
 
@@ -1539,6 +1540,7 @@ class RFMHeadsTrainer(Trainer):
                         enumerate(eval_dataloader),
                         total=len(eval_dataloader),
                         desc="Evaluating",
+                        disable=not is_rank_0(),
                     ):
                         # Move inputs to device
                         inputs = self._prepare_inputs(inputs)
@@ -1585,6 +1587,14 @@ class RFMHeadsTrainer(Trainer):
             # Trigger the callback handler with all metrics
             self.control = self.callback_handler.on_evaluate(self.args, self.state, self.control, metrics)
 
+        # CRITICAL: Final barrier OUTSIDE the if metrics block to ensure ALL ranks wait
+        # This is the absolute final barrier before returning from evaluate(), ensuring no training can start
+        # until all evaluation is completely done, regardless of whether metrics were computed
+        if dist.is_initialized():
+            logger.debug(f"[Rank {get_rank()}] Waiting at final barrier before returning from evaluate()")
+            dist.barrier()
+            logger.debug(f"[Rank {get_rank()}] Passed final barrier, about to return from evaluate()")
+
         # Restore original training mode to prevent state leakage
         self.model.train(was_training)
         # Ensure gradients are cleared before returning to training
@@ -1600,7 +1610,7 @@ class RFMHeadsTrainer(Trainer):
 
     def compute_loss(self, model, inputs, return_outputs=False, training=True, **kwargs):
         """Compute loss for separate preference and similarity batches."""
-        logger.debug("compute_loss: Starting")
+        logger.trace("compute_loss: Starting")
 
         # Set static graph for DDP on first training step to handle multiple forward passes
         # This is necessary because similarity loss does 2 forward passes (ref_sim and ref_diff)
@@ -1631,7 +1641,7 @@ class RFMHeadsTrainer(Trainer):
         total_loss = 0
         log_metadata = {}
 
-        logger.debug(
+        logger.trace(
             f"Num preferences: {num_preferences}, Num similarities: {num_similarities}, Num progress: {num_progress}"
         )
 
@@ -1663,9 +1673,9 @@ class RFMHeadsTrainer(Trainer):
             log_metadata.update(loss_dict)
 
         for key, value in log_metadata.items():
-            logger.debug(f"{key}: {value}, type: {type(value)}")
+            logger.trace(f"{key}: {value}, type: {type(value)}")
             if isinstance(value, torch.Tensor):
-                logger.debug(f"\t{key}: shape={value.shape}")
+                logger.trace(f"\t{key}: shape={value.shape}")
 
         # Check for NaN in total loss before returning
         if torch.isnan(total_loss).any():

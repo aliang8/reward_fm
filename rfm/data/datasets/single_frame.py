@@ -98,6 +98,7 @@ class SingleFrameProgressSampler(RFMBaseSampler):
             text_embedding=text_embedding,
             lang_vector=traj.get("lang_vector"),
             data_source=traj.get("data_source"),
+            quality_label=traj.get("quality_label"),
             success_label=success_label,
         )
 

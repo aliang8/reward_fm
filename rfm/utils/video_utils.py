@@ -431,8 +431,43 @@ def create_frame_pair_with_progress(
         # Concatenate horizontally without spacing between frames (spacing is added between pairs in grid)
         combined_frame = np.concatenate([frame1_resized, frame2_resized], axis=1)  # (H, 2*W, C)
         
+        # Add text label above the frame pair (task and quality_label/partial_success)
+        task = eval_result.get("task")
+        quality_label = eval_result.get("quality_label")
+        partial_success = eval_result.get("partial_success")
+        
+        # Build label text
+        label_parts = []
+        if task is not None:
+            label_parts.append(f"Task: {task}")
+        if partial_success is not None:
+            # RoboArena: use partial_success
+            label_parts.append(f"Partial: {partial_success:.2f}")
+        elif quality_label is not None:
+            # Non-RoboArena: use quality_label
+            label_parts.append(f"Quality: {quality_label}")
+        
+        if label_parts:
+            label_text = " | ".join(label_parts)
+            # Add padding above the frame for the label
+            label_height = 30  # Height for label text
+            label_frame = np.ones((label_height, combined_frame.shape[1], 3), dtype=np.uint8) * 255  # White background
+            label_frame = add_text_overlay(
+                label_frame,
+                label_text,
+                position=(10, label_height - 5),  # Left-aligned, near bottom of label area
+                font_scale=0.5,
+                color=(0, 0, 0),  # Black text
+                thickness=1,
+                bg_color=None  # No background needed (already white)
+            )
+            # Concatenate label above the frame pair
+            combined_frame = np.concatenate([label_frame, combined_frame], axis=0)  # (H + label_height, 2*W, C)
+            # Update target_h to account for label
+            target_h = target_h + label_height
+        
         # Convert back to (C, H, W) format (no time dimension)
-        combined_frame_chw = combined_frame.transpose(2, 0, 1)  # (C, H, 2*W)
+        combined_frame_chw = combined_frame.transpose(2, 0, 1)  # (C, H + label_height, 2*W)
         
         return combined_frame_chw
     except Exception:
@@ -483,10 +518,17 @@ def create_policy_ranking_grid(
     
     # Fill remaining cells with black frames
     # Each pair has 2 frames (no spacing between frames in a pair)
+    # Note: target_h may have been increased by label_height in create_frame_pair_with_progress
+    # Get actual height from first frame pair if available, otherwise use target_h
+    if frame_pairs:
+        actual_pair_height = frame_pairs[0].shape[1]  # (C, H, W) -> H dimension
+    else:
+        actual_pair_height = target_h
     pair_width = 2 * target_w
     num_black = grid_cells - len(frame_pairs)
     for _ in range(num_black):
-        black_pair = np.zeros((3, target_h, pair_width), dtype=np.uint8)
+        # Create black pair with same height as actual pairs (includes label if present)
+        black_pair = np.zeros((3, actual_pair_height, pair_width), dtype=np.uint8)
         frame_pairs.append(black_pair)
     
     # Add borders to each pair and arrange in grid
@@ -502,8 +544,10 @@ def create_policy_ranking_grid(
             pair_hwc = pair.transpose(1, 2, 0)
             
             # Add left border (except for first column)
+            # Use actual height of the pair (may include label)
+            pair_actual_h = pair_hwc.shape[0]
             if col > 0:
-                left_border = np.tile(border_color, (target_h, border_width, 1))
+                left_border = np.tile(border_color, (pair_actual_h, border_width, 1))
                 pair_hwc = np.concatenate([left_border, pair_hwc], axis=1)
             
             row_pairs.append(pair_hwc)

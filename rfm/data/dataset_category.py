@@ -60,7 +60,7 @@ DATASET_CATEGORY = {
     "preference_only": [
         "jesbu1_oxe_rfm_oxe_bc_z",
         "jesbu1_oxe_rfm_oxe_dlr_edan_shared_control_converted_externally_to_rlds",
-        "roboarena",
+        # "roboarena",
         "auto_eval_rfm",
     ],
     "paired": [

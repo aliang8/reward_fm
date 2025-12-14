@@ -1801,7 +1801,7 @@ class RFMHeadsTrainer(Trainer):
         if "Qwen" in self.config.model.base_model_id and not self.config.data.use_multi_image:
             target_progress = target_progress[:, ::2]
             mask = mask[:, ::2]
-
+        
         # If predict_last_frame_progress is True, only compute loss for the last frame
         last_frame_mask = None
         if self.config.loss.predict_last_frame_progress:
@@ -1814,7 +1814,10 @@ class RFMHeadsTrainer(Trainer):
         loss_per_frame = F.mse_loss(progress_pred.float(), target_progress.float(), reduction="none")
         masked_loss = loss_per_frame * mask
 
-        repeated_mask = mask.repeat(1, target_progress.shape[1])
+        if mask.shape[1] != target_progress.shape[1]:
+            repeated_mask = mask.repeat(1, target_progress.shape[1])
+        else:
+            repeated_mask = mask
         masked_spearman_corr = compute_spearman_correlation(
             progress_pred, target_progress, aggregate=False, mask=repeated_mask
         )

@@ -691,9 +691,7 @@ class RFMHeadsTrainer(Trainer):
 
     def _make_eval_dataloader(self, dataset):
         """Create a distributed evaluation dataloader with proper sampling."""
-        log_memory_usage("Before creating collator")
         collator = setup_batch_collator(self.model.processor, self.model.tokenizer, self.config, is_eval=True)
-        log_memory_usage("After creating collator")
 
         dl = DataLoader(
             dataset,
@@ -706,9 +704,7 @@ class RFMHeadsTrainer(Trainer):
             persistent_workers=False,
             worker_init_fn=seed_worker,
         )
-        log_memory_usage("After creating DataLoader")
         prepared_dl = self.accelerator.prepare(dl)
-        log_memory_usage("After accelerator.prepare(dataloader)")
         return prepared_dl
 
     def _setup_eval_dataset(self, eval_type, eval_dataset):

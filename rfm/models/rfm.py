@@ -92,6 +92,7 @@ class RFM(PreTrainedModel):
 
         self.average_temporal_patches = self.model_config.average_temporal_patches
         self.use_progress_token = self.model_config.use_progress_token
+        self.use_multi_image = self.model_config.use_multi_image
 
     def gradient_checkpointing_enable(self, **kwargs):
         """Delegates gradient checkpointing enabling to the base model."""
@@ -494,12 +495,8 @@ class RFM(PreTrainedModel):
                     if len(vision_start_positions) == 0:
                         raise ValueError(f"vision_start_token not found in sequence {i}")
 
-                    # Detect multi-image mode
-                    if sample_type == "progress":
-                        is_multi_image = len(vision_start_positions) > 1
-                    else:
-                        is_multi_image = len(vision_start_positions) > 2
-                    logger.trace(f"RFM._forward_qwen: Sample {i} - is_multi_image={is_multi_image}")
+                    is_multi_image = self.use_multi_image
+                    logger.trace(f"RFM._forward_qwen: Sample {i} - is_multi_image={is_multi_image} (from model config)")
 
                     if is_multi_image:
                         logger.trace(f"RFM._forward_qwen: Sample {i} - Using multi-image mode")

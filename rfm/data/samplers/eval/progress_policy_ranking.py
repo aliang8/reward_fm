@@ -115,7 +115,11 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
             total_frames = len(frames)
             use_embeddings = False
 
-        data, frame_indices = linspace_subsample_frames(data, max_frames)
+        if max_frames == 1:
+            frame_indices = [0]
+            data = data[0:1]
+        else:
+            data, frame_indices = linspace_subsample_frames(data, max_frames)
         frames_shape_orig = data.shape
 
         # Compute progress based on type

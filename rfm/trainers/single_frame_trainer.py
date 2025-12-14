@@ -25,7 +25,7 @@ class SingleFrameTrainer(RFMHeadsTrainer):
         Perform a training step for single-frame progress prediction.
         Simplified version that only handles progress samples.
         """
-        logger.debug("training_step: Starting (single frame)")
+        logger.trace("training_step: Starting (single frame)")
 
         if not self._fsdp_diagnostics_logged:
             from rfm.utils.distributed import log_fsdp_diagnostics
@@ -84,7 +84,7 @@ class SingleFrameTrainer(RFMHeadsTrainer):
         Compute loss for single-frame progress prediction only.
         Simplified version that only handles progress samples.
         """
-        logger.debug("compute_loss: Starting (single frame)")
+        logger.trace("compute_loss: Starting (single frame)")
 
         progress_inputs = inputs.get("progress_inputs", {})
         num_progress = inputs.get("num_progress", 0)
@@ -92,9 +92,8 @@ class SingleFrameTrainer(RFMHeadsTrainer):
         total_loss = 0
         log_metadata = {}
 
-        logger.debug(f"Num progress: {num_progress}")
+        logger.trace(f"Num progress: {num_progress}")
 
-        import ipdb; ipdb.set_trace() # noqa
         # Only compute progress loss
         if num_progress > 0 and progress_inputs and self.config.model.train_progress_head:
             with _timer("time/compute_progress_loss", timing_raw=self.timing_raw):

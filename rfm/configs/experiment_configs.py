@@ -50,6 +50,14 @@ class ModelConfig(PretrainedConfig):
         },
     )
 
+    use_multi_image: bool = field(
+        default=False,
+        metadata={
+            "help": "If True, feed frames as a list of images instead of converting to video (avoids encoding overhead). "
+            "If False, detect automatically based on number of vision_start tokens in the sequence."
+        },
+    )
+
     use_peft: bool = field(default=False, metadata={"help": "Whether to use PEFT/LoRA or train full model"})
     peft_vision_encoder: bool = field(default=False, metadata={"help": "Whether to attach LoRA to the vision encoder"})
 

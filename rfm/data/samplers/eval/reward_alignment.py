@@ -89,7 +89,6 @@ class RewardAlignmentSampler(RFMBaseSampler):
         end_idx = sample_idx_info["end_idx"]
         num_frames = sample_idx_info["num_frames"]
 
-        # Get the original trajectory
         original_traj = self.dataset[traj_idx]
 
         # Get frames and create subsequence

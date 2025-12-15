@@ -96,8 +96,6 @@ def load_model_from_hf(
 
     valid_keys = {f.name for f in fields(ExperimentConfig)}
     filtered_config = {k: v for k, v in model_config_dict.items() if k in valid_keys}
-    filtered_config["training"] = {}
-    filtered_config["logging"] = {}
 
     exp_config = ExperimentConfig(**filtered_config)
     # Use resolved_path for loading the actual model

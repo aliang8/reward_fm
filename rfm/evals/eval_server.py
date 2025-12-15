@@ -3,9 +3,11 @@
 FastAPI server to evaluate RFM model batches with a multi-GPU service layer.
 
 Usage example:
-    RFM_LOG_LEVEL=DEBUG uv run python evals/eval_server.py \
-        --config_path rfm/configs/eval_config_server.yaml \
-        --num_gpus 2 
+    uv run python rfm/evals/eval_server.py \
+        model_path=rewardfm/pref_prog_2frames_all \
+        batch_size=32 \
+        num_gpus=1 \
+        server_port=8000
 
 Endpoints:
   POST /evaluate_batch        - JSON payload
@@ -31,18 +33,16 @@ import queue
 import time
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
-import logging
 from typing import Any, Dict
-import argparse
 
 import uvicorn
 
 import numpy as np
 import torch
-import yaml
+from omegaconf import DictConfig
+from hydra import main as hydra_main
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from rich.console import Console
 
 from rfm.evals.eval_utils import extract_answer_from_text, load_model_from_hf
 from rfm.configs.eval_configs import EvalServerConfig
@@ -50,16 +50,12 @@ from rfm.configs.experiment_configs import ExperimentConfig
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample
 from rfm.utils.setup_utils import setup_model_and_processor, setup_batch_collator
 from rfm.models.utils import ModelOutput
-
+from rfm.utils.config_utils import display_config, convert_hydra_to_dataclass
+from rfm.utils.logger import get_logger, setup_loguru_logging
 
 LOG_LEVEL = os.environ.get("RFM_LOG_LEVEL", "INFO").upper()
-logger = logging.getLogger("rfm.eval_server")
-logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
-    logger.addHandler(handler)
-logger.propagate = False
+setup_loguru_logging(log_level=LOG_LEVEL)
+logger = get_logger()
 logger.info(f"rfm.eval_server logger initialized at level {LOG_LEVEL}")
 
 
@@ -722,46 +718,30 @@ def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | Non
     return app
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config_path", type=str, default="rfm/configs/eval_config.yaml")
-    parser.add_argument("--host", type=str, default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--num_gpus", type=int, default=None, help="Number of GPUs to use (None for all available)")
-    parser.add_argument("--max_workers", type=int, default=None, help="Max worker threads (None for auto)")
-    args = parser.parse_args()
+@hydra_main(version_base=None, config_path="../configs", config_name="eval_config_server")
+def main(cfg: DictConfig):
+    """Main entry point for evaluation server using Hydra configuration."""
+    # Convert Hydra config to dataclass
+    eval_cfg = convert_hydra_to_dataclass(cfg, EvalServerConfig)
 
-    # Load evaluation config manually
-    print(f"Loading evaluation config from: {args.config_path}")
-    with open(args.config_path) as f:
-        config_dict = yaml.safe_load(f)
-
-    cfg = EvalServerConfig(**config_dict)
-
-    # Override config with command line args
-    if args.num_gpus is not None:
-        cfg.num_gpus = args.num_gpus
-    if args.max_workers is not None:
-        cfg.max_workers = args.max_workers
-
-    console = Console()
-    console.print(cfg)
+    # Display the configuration in a nice Rich format
+    display_config(eval_cfg)
 
     # Ensure pretrained checkpoint is specified
-    if not cfg.model_path:
+    if not eval_cfg.model_path:
         raise ValueError("Eval config must set model_path to a pretrained checkpoint.")
 
     multi_gpu_server = MultiGPUEvalServer(
-        model_path=cfg.model_path,
-        num_gpus=getattr(cfg, "num_gpus", None),
-        max_workers=getattr(cfg, "max_workers", None),
+        model_path=eval_cfg.model_path,
+        num_gpus=eval_cfg.num_gpus,
+        max_workers=eval_cfg.max_workers,
     )
-    console.print(multi_gpu_server.exp_config)
+    display_config(multi_gpu_server.exp_config)
 
-    app = create_app(cfg, multi_gpu_server)
-    print(f"Running multi-GPU eval server on {args.host}:{args.port}")
-    print(f"Using {cfg.num_gpus or torch.cuda.device_count()} GPUs")
-    uvicorn.run(app, host=args.host, port=args.port)
+    app = create_app(eval_cfg, multi_gpu_server)
+    print(f"Running multi-GPU eval server on {eval_cfg.server_url}:{eval_cfg.server_port}")
+    print(f"Using {eval_cfg.num_gpus or torch.cuda.device_count()} GPUs")
+    uvicorn.run(app, host=eval_cfg.server_url, port=eval_cfg.server_port)
 
 
 if __name__ == "__main__":

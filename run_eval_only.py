@@ -25,7 +25,6 @@ from typing import Optional
 import torch
 import wandb
 from hydra import main as hydra_main
-from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf, DictConfig
 
 from rfm.configs.eval_configs import OfflineEvalConfig
@@ -41,11 +40,6 @@ from rfm.utils.setup_utils import (
 )    
 
 logger = get_logger()
-
-# Register structured configs with Hydra
-cs = ConfigStore.instance()
-cs.store(name="eval_only_config", node=OfflineEvalConfig)
-
 
 def create_eval_trainer(
     cfg: ExperimentConfig,

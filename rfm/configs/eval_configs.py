@@ -9,6 +9,8 @@ This file contains evaluation configuration classes:
 from dataclasses import dataclass, field
 from typing import Optional
 
+from hydra.core.config_store import ConfigStore
+
 from rfm.configs.experiment_configs import CustomEvaluationConfig
 from rfm.configs.experiment_configs import DataConfig
 
@@ -26,7 +28,7 @@ class EvalServerConfig:
     # GPU Pool settings
     num_gpus: int = field(default=1, metadata={"help": "Number of GPUs to use (None for all available)"})
     max_workers: int = field(
-        default=None, metadata={"help": "Max worker threads (None for auto, typically same as num_gpus)"}
+        default=1, metadata={"help": "Max worker threads (None for auto, typically same as num_gpus)"}
     )
 
     # Evaluation parameters
@@ -61,3 +63,9 @@ class OfflineEvalConfig:
         """Convert nested dict configs to dataclass instances."""
         if isinstance(self.custom_eval, dict):
             self.custom_eval = CustomEvaluationConfig(**self.custom_eval)
+
+
+# Register structured configs with Hydra
+cs = ConfigStore.instance()
+cs.store(name="eval_server_config", node=EvalServerConfig)
+cs.store(name="eval_only_config", node=OfflineEvalConfig)

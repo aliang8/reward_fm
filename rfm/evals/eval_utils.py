@@ -70,18 +70,11 @@ def load_model_from_hf(
 
     if os.path.exists(resolved_path):
         # Local checkpoint: look for config.yaml
-        candidate_paths = [
-            resolved_path if resolved_path.endswith(".yaml") else os.path.join(resolved_path, "config.yaml"),
-            os.path.join(os.path.dirname(resolved_path), "config.yaml"),
-        ]
+        candidate_paths = [os.path.join(resolved_path, "config.yaml"), os.path.join(os.path.dirname(resolved_path), "config.yaml")]
         for candidate in candidate_paths:
             if os.path.isfile(candidate):
                 config_path = candidate
-                break
-        if config_path is None:
-            raise FileNotFoundError(
-                f"config.yaml not found near local checkpoint {resolved_path}. Provide a path that contains config.yaml."
-            )
+                break        
     else:
         if hf_hub_download is None:
             raise ImportError("huggingface_hub not available. Install with: pip install huggingface_hub")

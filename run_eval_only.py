@@ -33,10 +33,11 @@ from rfm.evals.eval_utils import load_model_from_hf, load_wandb_run_info
 from rfm.trainers import RFMHeadsTrainer, RFMVQATrainer, SingleFrameTrainer
 from rfm.utils.distributed import is_rank_0
 from rfm.utils.logger import get_logger
+from rfm.utils.config_utils import display_config, convert_hydra_to_dataclass
 from rfm.utils.setup_utils import (
     create_training_arguments,
     setup_batch_collator,
-)
+)    
 
 logger = get_logger()
 
@@ -136,19 +137,13 @@ def run_custom_evaluations(trainer, output_dir=None):
     return custom_metrics
 
 
-def convert_hydra_to_dataclass(cfg: DictConfig) -> OfflineEvalConfig:
-    """Convert Hydra DictConfig to OfflineEvalConfig dataclass."""
-    if OmegaConf.is_struct(cfg):
-        cfg_dict = OmegaConf.to_container(cfg, resolve=True, structured_config_mode="convert")
-    else:
-        cfg_dict = OmegaConf.to_container(cfg, resolve=True)
-    return OfflineEvalConfig(**cfg_dict)
-
-
 @hydra_main(version_base=None, config_path="rfm/configs", config_name="eval_only_config")
 def main(cfg: DictConfig):
     # Convert Hydra config to dataclass
-    eval_only_cfg = convert_hydra_to_dataclass(cfg)
+    eval_only_cfg = convert_hydra_to_dataclass(cfg, OfflineEvalConfig)
+    
+    # Display the evaluation config
+    display_config(eval_only_cfg)
 
     # Validate model_path is provided
     if not eval_only_cfg.model_path:
@@ -164,6 +159,9 @@ def main(cfg: DictConfig):
     exp_cfg, tokenizer, processor, model = load_model_from_hf(model_path=model_path, device=device)
     logger.info(f"✅ Model and config loaded successfully from {model_path}")
 
+    # Display the experiment config
+    display_config(exp_cfg)
+
     # Try to load existing wandb info from model path
     wandb_info = load_wandb_run_info(model_path)
     resume_id = None
@@ -172,6 +170,7 @@ def main(cfg: DictConfig):
         if resume_id:
             logger.info(f"Found existing wandb run ID: {resume_id}, will resume run")
 
+    
     # Initialize wandb if enabled in experiment config (only on rank 0)
     if "wandb" in exp_cfg.logging.log_to and is_rank_0():
         config_dict = asdict(exp_cfg)

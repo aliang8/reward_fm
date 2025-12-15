@@ -44,6 +44,7 @@ from rfm.utils.setup_utils import (
 )
 from rfm.utils.logger import Logger
 from rfm.utils.distributed import banner
+from rfm.utils.config_utils import display_config, convert_hydra_to_dataclass
 import datasets
 
 datasets.logging.set_verbosity_error()
@@ -284,24 +285,6 @@ def train(cfg: ExperimentConfig):
     rank_0_print(f"Training complete! Check {cfg.training.output_dir} for checkpoints and final model.")
 
 
-def display_config(cfg: ExperimentConfig):
-    """Display the configuration in a nice Rich format."""
-    if not is_rank_0():
-        return  # Only display config on rank 0
-
-    console = Console()
-    console.print(cfg)
-
-
-def convert_hydra_to_dataclass(cfg: DictConfig) -> ExperimentConfig:
-    """Convert Hydra DictConfig to ExperimentConfig dataclass."""
-    # Convert to dict and then to dataclass
-    # Use structured config if available, otherwise convert manually
-    if OmegaConf.is_struct(cfg):
-        cfg_dict = OmegaConf.to_container(cfg, resolve=True, structured_config_mode="convert")
-    else:
-        cfg_dict = OmegaConf.to_container(cfg, resolve=True)
-    return ExperimentConfig(**cfg_dict)
 
 
 @hydra_main(version_base=None, config_path="rfm/configs", config_name="config")
@@ -309,7 +292,7 @@ def main(cfg: DictConfig):
     banner("Starting RFM Training")
 
     # Convert Hydra config to dataclass
-    exp_cfg = convert_hydra_to_dataclass(cfg)
+    exp_cfg = convert_hydra_to_dataclass(cfg, ExperimentConfig)
 
     # Display the configuration in a nice Rich format
     display_config(exp_cfg)

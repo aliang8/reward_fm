@@ -17,6 +17,7 @@ Usage:
     uv run python run_eval_only.py --config-name my_eval_config model_path=path/to/model
 """
 
+import json
 import os
 from dataclasses import asdict
 from typing import Optional
@@ -212,6 +213,27 @@ def main(cfg: DictConfig):
 
     # Run custom evaluations
     metrics = run_custom_evaluations(trainer, output_dir=output_dir)
+
+    # Save evaluation metrics to JSON file
+    if metrics and is_rank_0():
+        metrics_file = os.path.join(output_dir, "eval_metrics.json")
+        # Convert any numpy types to native Python types for JSON serialization
+        metrics_serializable = {}
+        for k, v in metrics.items():
+            if isinstance(v, (int, float)):
+                metrics_serializable[k] = float(v)
+            elif isinstance(v, (list, dict)):
+                metrics_serializable[k] = v
+            else:
+                # Try to convert to float if possible
+                try:
+                    metrics_serializable[k] = float(v)
+                except (ValueError, TypeError):
+                    metrics_serializable[k] = str(v)
+        
+        with open(metrics_file, "w") as f:
+            json.dump(metrics_serializable, f, indent=2)
+        logger.info(f"💾 Saved evaluation metrics to: {metrics_file}")
 
     logger.info("\n✅ Evaluation complete!")
     return metrics

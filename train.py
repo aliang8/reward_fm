@@ -152,6 +152,19 @@ def train(cfg: ExperimentConfig):
         yaml.dump(config_dict, f, default_flow_style=False, indent=2)
     rank_0_print(f"Saved training config to: {config_save_path}")
 
+    # Try to load existing wandb info if resuming training
+    wandb_info_path = os.path.join(output_dir, "wandb_info.json")
+    resume_id = None
+    if os.path.exists(wandb_info_path):
+        try:
+            with open(wandb_info_path) as f:
+                wandb_info = json.load(f)
+            resume_id = wandb_info.get("wandb_id")
+            if resume_id:
+                rank_0_print(f"Found existing wandb run ID: {resume_id}, will resume run")
+        except Exception as e:
+            rank_0_print(f"Could not load wandb info: {e}")
+
     # Initialize wandb via logger if requested
     if "wandb" in (cfg.logging.log_to or []) and is_rank_0():
         # Convert config to dict for wandb using dataclass asdict
@@ -163,8 +176,12 @@ def train(cfg: ExperimentConfig):
             config=config_dict,
             notes=cfg.logging.wandb_notes,
             mode=cfg.logging.wandb_mode,
+            resume_id=resume_id,
         )
-        rank_0_print(f"Wandb initialized: {run_name}")
+        if resume_id:
+            rank_0_print(f"Wandb resumed run: {run_name} (ID: {resume_id})")
+        else:
+            rank_0_print(f"Wandb initialized: {run_name}")
         if cfg.logging.wandb_notes:
             rank_0_print(f"Wandb notes: {cfg.logging.wandb_notes}")
 

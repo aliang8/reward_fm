@@ -1,8 +1,10 @@
 import collections
 import copy
+import io
 import os
 from typing import Dict
 
+import cv2
 import imageio
 import matplotlib.pyplot as plt
 import numpy as np
@@ -10,6 +12,7 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 import wandb
+from PIL import Image, ImageDraw, ImageFont
 from sklearn.metrics import average_precision_score
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -18,6 +21,7 @@ from transformers import Trainer
 from rfm.data.datasets.base import resolve_dataset_keys
 from rfm.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
 from rfm.evals.compile_results import compute_eval_metrics
+from rfm.evals.eval_metrics_utils import compute_pearson, compute_spearman
 from rfm.models.utils import ModelOutput
 from rfm.utils.distributed import banner, get_rank, is_rank_0, log_fsdp_diagnostics
 from rfm.utils.logger import Logger, get_logger, log_memory_usage
@@ -971,9 +975,8 @@ class RFMHeadsTrainer(Trainer):
         return batch_results, outputs
 
     def _save_reward_alignment_videos(
-        self, video_frames_list, plots, eval_results, output_dir, ds_name
+        self, video_frames_list, plots, eval_results, output_dir, ds_name, trajectory_progress_data=None
     ):
-        """Save reward_alignment videos to disk organized by data_source/quality_label/traj_id.mp4."""
         # Check if dataset is RoboArena
         is_roboarena = False
         if eval_results and len(eval_results) > 0:
@@ -990,6 +993,7 @@ class RFMHeadsTrainer(Trainer):
             quality_label = result.get("quality_label", "unknown")
             traj_id = result.get("id", f"traj_{idx}")
             partial_success = result.get("partial_success")
+            task = result.get("task", "unknown")
 
             # Build directory structure: {data_source}/{quality_label}/
             save_dir = os.path.join(output_dir, "reward_alignment_videos", str(data_source), str(quality_label))
@@ -1005,7 +1009,7 @@ class RFMHeadsTrainer(Trainer):
 
             video_path = os.path.join(save_dir, filename)
 
-            # Convert frames from (T, C, H, W) to (T, H, W, C) for imageio
+            # Convert frames from (T, C, H, W) to (T, H, W, C) for processing
             # Frames are currently in (T, C, H, W) format from compile_results.py
             if len(frames.shape) == 4 and frames.shape[1] == 3:  # (T, C, H, W)
                 frames_rgb = frames.transpose(0, 2, 3, 1)  # (T, H, W, C)
@@ -1019,12 +1023,172 @@ class RFMHeadsTrainer(Trainer):
                 else:
                     frames_rgb = np.clip(frames_rgb, 0, 255).astype(np.uint8)
 
-            # Convert to list of frames for imageio
-            frame_list = [frame for frame in frames_rgb]
+            # Get progress data for this trajectory
+            progress_pred = None
+            target_progress = None
+            if trajectory_progress_data and idx < len(trajectory_progress_data):
+                traj_data = trajectory_progress_data[idx]
+                progress_pred = traj_data.get("progress_pred")
+                target_progress = traj_data.get("target_progress")
+            
+            # If we don't have progress data from trajectory_progress_data, try to extract from eval_results
+            if progress_pred is None or target_progress is None:
+                # Group results by trajectory ID to get all timesteps
+                trajectory_results = [r for r in eval_results if r.get("id") == traj_id]
+                trajectory_results.sort(key=lambda r: r.get("metadata", {}).get("subsequence_end", 0))
+                
+                if trajectory_results:
+                    progress_pred = []
+                    target_progress = []
+                    for r in trajectory_results:
+                        pred = r.get("progress_pred")
+                        tgt = r.get("target_progress")
+                        if pred is not None:
+                            # Use prediction at current timestep (or last if past max length)
+                            timestep = len(progress_pred)
+                            if timestep >= len(pred) - 1:
+                                progress_pred.append(float(pred[-1]))
+                            else:
+                                progress_pred.append(float(pred[timestep]))
+                        else:
+                            progress_pred.append(0.0)
+                        
+                        if tgt is not None and len(tgt) > 0:
+                            target_progress.append(float(tgt[-1]))
+                        else:
+                            target_progress.append(0.0)
+                    
+                    # Handle relative progress type
+                    if self.config.data.progress_pred_type == "relative":
+                        progress_pred = np.cumsum(np.array(progress_pred)).tolist()
+                        target_progress = np.cumsum(np.array(target_progress)).tolist()
 
-            # Save video using imageio
+            # Create matplotlib plot similar to compile_results.py
+            if progress_pred is not None and target_progress is not None:
+                # Compute metrics
+                last_preds = np.array(progress_pred)
+                last_targets = np.array(target_progress)
+                
+                # Check if this is a failure dataset
+                from rfm.data.dataset_category import is_failure
+                is_failure_dataset = is_failure(data_source)
+                
+                if is_failure_dataset:
+                    traj_mse = 0.0
+                    traj_pearson = 0.0
+                    traj_spearman = 0.0
+                else:
+                    traj_mse = float(np.mean((last_targets - last_preds) ** 2))
+                    traj_pearson = compute_pearson(last_targets.tolist(), last_preds.tolist())
+                    traj_spearman = compute_spearman(last_targets.tolist(), last_preds.tolist())
+                    
+                    # Handle NaN values
+                    traj_pearson = float(traj_pearson) if not np.isnan(traj_pearson) else 0.0
+                    traj_spearman = float(traj_spearman) if not np.isnan(traj_spearman) else 0.0
+                
+                # Create plot figure
+                fig, ax = plt.subplots(figsize=(6, 3.5))
+                ax.plot(last_preds, linewidth=2, label="Predicted", color="blue")
+                ax.plot(last_targets, linewidth=2, label="Target", color="green", linestyle="--")
+                ax.set_ylabel("Progress")
+                
+                # Build title with task, quality_label, and partial_success (if RoboArena)
+                title_parts = [f"Task: {task}", f"Quality: {quality_label}"]
+                if is_roboarena and partial_success is not None:
+                    title_parts.append(f"Partial Success: {partial_success:.2f}")
+                title_parts.append(f"\nMSE: {traj_mse:.3f}, r: {traj_pearson:.3f}, sp: {traj_spearman:.3f}")
+                ax.set_title("\n".join(title_parts), fontsize=10)
+                ax.set_ylim(0, 1)
+                ax.spines["right"].set_visible(False)
+                ax.spines["top"].set_visible(False)
+                ax.set_yticks([])
+                ax.legend(loc="upper right", fontsize=8)
+                plt.tight_layout()
+                
+                # Convert matplotlib figure to numpy array
+                buf = io.BytesIO()
+                fig.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+                buf.seek(0)
+                plot_img = np.array(Image.open(buf))
+                plt.close(fig)
+                
+                # Resize plot to match video frame height
+                frame_h, frame_w = frames_rgb[0].shape[:2]
+                plot_h, plot_w = plot_img.shape[:2]
+                plot_aspect = plot_w / plot_h
+                new_plot_h = frame_h
+                new_plot_w = int(new_plot_h * plot_aspect)
+                plot_img_resized = cv2.resize(plot_img, (new_plot_w, new_plot_h))
+            else:
+                # No progress data available, create a blank plot
+                frame_h, frame_w = frames_rgb[0].shape[:2]
+                plot_img_resized = np.ones((frame_h, frame_w, 3), dtype=np.uint8) * 255
+                
+                # Add text to blank plot
+                plot_img_pil = Image.fromarray(plot_img_resized)
+                draw = ImageDraw.Draw(plot_img_pil)
+                try:
+                    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 20)
+                except:
+                    font = ImageFont.load_default()
+                
+                text_lines = [f"Task: {task}", f"Quality: {quality_label}"]
+                if is_roboarena and partial_success is not None:
+                    text_lines.append(f"Partial Success: {partial_success:.2f}")
+                text_lines.append("No progress data available")
+                
+                y_offset = 20
+                for line in text_lines:
+                    draw.text((10, y_offset), line, fill=(0, 0, 0), font=font)
+                    y_offset += 30
+                
+                plot_img_resized = np.array(plot_img_pil)
+
+            # Combine video frames with plot side by side
+            combined_frames = []
+            for frame in frames_rgb:
+                # Add text overlay to video frame
+                frame_with_text = frame.copy()
+                # Convert to PIL Image (RGB)
+                frame_pil = Image.fromarray(frame_with_text).convert('RGBA')
+                
+                try:
+                    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24)
+                except:
+                    font = ImageFont.load_default()
+                
+                # Build text label
+                text_lines = [f"Task: {task}"]
+                if is_roboarena and partial_success is not None:
+                    text_lines.append(f"{quality_label} (PS: {partial_success:.2f})")
+                else:
+                    text_lines.append(quality_label)
+                
+                # Draw text with background for readability
+                overlay = Image.new('RGBA', frame_pil.size, (0, 0, 0, 0))
+                overlay_draw = ImageDraw.Draw(overlay)
+                
+                y_offset = 10
+                for line in text_lines:
+                    # Get text bounding box
+                    bbox = overlay_draw.textbbox((10, y_offset), line, font=font)
+                    # Draw semi-transparent background
+                    overlay_draw.rectangle([bbox[0]-5, bbox[1]-2, bbox[2]+5, bbox[3]+2], fill=(0, 0, 0, 180))
+                    # Draw text
+                    overlay_draw.text((10, y_offset), line, fill=(255, 255, 255, 255), font=font)
+                    y_offset += 35
+                
+                # Composite overlay onto frame
+                frame_pil = Image.alpha_composite(frame_pil, overlay).convert('RGB')
+                frame_with_text = np.array(frame_pil)
+                
+                # Concatenate video frame and plot horizontally
+                combined_frame = np.concatenate([frame_with_text, plot_img_resized], axis=1)
+                combined_frames.append(combined_frame)
+
+            # Save combined video using imageio
             try:
-                imageio.mimwrite(video_path, frame_list, fps=2)
+                imageio.mimwrite(video_path, combined_frames, fps=1)
                 saved_count += 1
                 logger.debug(f"Saved reward_alignment video: {video_path}")
             except Exception as e:
@@ -1059,7 +1223,7 @@ class RFMHeadsTrainer(Trainer):
             # Save videos to disk if output_dir is provided
             if output_dir is not None and video_frames_list:
                 self._save_reward_alignment_videos(
-                    video_frames_list, plots, eval_results, output_dir, ds_name
+                    video_frames_list, plots, eval_results, output_dir, ds_name, trajectory_progress_data
                 )
 
             # Build rows of (video, figure)

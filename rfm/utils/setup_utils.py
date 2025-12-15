@@ -259,11 +259,13 @@ def setup_model_and_processor(
                 if "Qwen2.5" in cfg.base_model_id:
                     before_visual = model.model.visual.blocks[0].mlp.down_proj.weight
                     before_progress_head = model.progress_head[0].weight
-                    before_language_model = model.model.language_model.embed_tokens.weight
+                    before_lm_embed_tokens = model.model.language_model.embed_tokens.weight
+                    before_lm_layer = model.model.language_model.layers[0].mlp.up_proj.weight
                 elif "Qwen3" in cfg.base_model_id:
                     before_visual = model.model.visual.blocks[0].mlp.linear_fc1.weight
                     before_progress_head = model.progress_head[0].weight
-                    before_language_model = model.model.language_model.embed_tokens.weight
+                    before_lm_embed_tokens = model.model.language_model.embed_tokens.weight
+                    before_lm_layer = model.model.language_model.layers[0].mlp.up_proj.weight
 
             # load the model from the evaluation path
             model = model_cls.from_pretrained(
@@ -279,18 +281,23 @@ def setup_model_and_processor(
                 if "Qwen2.5" in cfg.base_model_id:
                     after_visual = model.model.visual.blocks[0].mlp.down_proj.weight
                     after_progress_head = model.progress_head[0].weight
-                    after_language_model = model.model.language_model.embed_tokens.weight
+                    after_lm_embed_tokens = model.model.language_model.embed_tokens.weight
+                    after_lm_layer_mlp_up_proj = model.model.language_model.layers[0].mlp.up_proj.weight
                 elif "Qwen3" in cfg.base_model_id:
                     after_visual = model.model.visual.blocks[0].mlp.linear_fc1.weight
                     after_progress_head = model.progress_head[0].weight
-                    after_language_model = model.model.language_model.embed_tokens.weight
+                    after_lm_embed_tokens = model.model.language_model.embed_tokens.weight
+                    after_lm_layer_mlp_up_proj = model.model.language_model.layers[0].mlp.up_proj.weight
 
                 logger.info(f"Before visual: {before_visual.shape}, {before_visual.sum()} | After visual: {after_visual.shape}, {after_visual.sum()}")
                 logger.info(
                     f"Before progress head: {before_progress_head.shape}, {before_progress_head.sum()} | After progress head: {after_progress_head.shape}, {after_progress_head.sum()}"
                 )
                 logger.info(
-                    f"Before language model: {before_language_model.shape}, {before_language_model.sum()} | After language model: {after_language_model.shape}, {after_language_model.sum()}"
+                    f"Before LM embed tokens: {before_lm_embed_tokens.shape}, {before_lm_embed_tokens.sum()} | After LM embed tokens: {after_lm_embed_tokens.shape}, {after_lm_embed_tokens.sum()}"
+                )
+                logger.info(
+                    f"Before LM layer: {before_lm_layer.shape}, {before_lm_layer.sum()} | After LM layer: {after_lm_layer_mlp_up_proj.shape}, {after_lm_layer_mlp_up_proj.sum()}"
                 )
                 # check that before and after are different
                 if torch.allclose(before_visual, after_visual):
@@ -299,9 +306,9 @@ def setup_model_and_processor(
                     logger.warning(
                         "Before and after progress head are the same! Check if you loaded the pretrained model correctly"
                     )
-                if torch.allclose(before_language_model, after_language_model):
+                if torch.allclose(before_lm_embed_tokens, after_lm_embed_tokens):
                     logger.warning(
-                        "Before and after language model are the same! Check if you loaded the pretrained model correctly"
+                        "Before and after LM embed tokens are the same! Check if you loaded the pretrained model correctly"
                     )
 
     # elif "rewind_transformer" in cfg.base_model_id or "rewind_scale_transformer" in cfg.base_model_id:

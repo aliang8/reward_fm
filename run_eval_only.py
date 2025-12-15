@@ -112,32 +112,6 @@ def create_eval_trainer(
     return trainer
 
 
-def run_custom_evaluations(trainer, output_dir=None):
-    """Run custom evaluations using the trainer."""
-    logger.info("=" * 100)
-    logger.info("Starting custom evaluations...")
-    logger.info("=" * 100)
-
-    # Ensure model is in eval mode
-    trainer.model.eval()
-
-    # Run custom evaluations
-    # This method creates datasets internally based on config.custom_eval settings
-    custom_metrics = trainer._run_custom_evaluations(output_dir=output_dir)
-
-    logger.info("=" * 100)
-    logger.info("Custom evaluations completed!")
-    logger.info("=" * 100)
-
-    # Print metrics summary
-    if is_rank_0():
-        logger.info("\nEvaluation Metrics Summary:")
-        for metric_name, metric_value in custom_metrics.items():
-            logger.info(f"  {metric_name}: {metric_value}")
-
-    return custom_metrics
-
-
 @hydra_main(version_base=None, config_path="rfm/configs", config_name="eval_only_config")
 def main(cfg: DictConfig):
     # Convert Hydra config to dataclass
@@ -214,8 +188,12 @@ def main(cfg: DictConfig):
     # Set output_dir in config for video saving
     exp_cfg.output_dir = output_dir
 
+    # Ensure model is in eval mode
+    trainer.model.eval()
+
     # Run custom evaluations
-    metrics = run_custom_evaluations(trainer, output_dir=output_dir)
+    # This method creates datasets internally based on config.custom_eval settings
+    metrics = trainer._run_custom_evaluations(output_dir=output_dir)
 
     # Save evaluation metrics to JSON file
     if metrics and is_rank_0():

@@ -205,6 +205,9 @@ def main(cfg: DictConfig):
         model_name = model_path.replace("/", "_").replace("@", "_")
         output_dir = os.path.join("./eval_output", model_name)
 
+    # Override custom_eval settings from OfflineEvalConfig
+    exp_cfg.custom_eval = eval_only_cfg.custom_eval
+
     # Create trainer
     trainer = create_eval_trainer(exp_cfg, model, processor, tokenizer, output_dir)
 

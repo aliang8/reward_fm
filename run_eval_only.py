@@ -9,31 +9,34 @@ Usage:
     # Override config values
     uv run python run_eval_only.py \
         model_path=rewardfm/ant-rfm-qwen-prog-only-images-bs12-prog-only-more-rewind \
-        custom_eval.eval_types=[policy_ranking,reward_alignment]
-    
+        custom_eval.eval_types=[policy_ranking,reward_alignment] \
+        custom_eval.reward_alignment=[reward_alignment] \
+        custom_eval.policy_ranking=[policy_ranking]
+
     # Use a different config file
     uv run python run_eval_only.py --config-name my_eval_config model_path=path/to/model
 """
 
 import os
-import torch
+from dataclasses import asdict
 from typing import Optional
 
-from omegaconf import OmegaConf, DictConfig
+import torch
+import wandb
 from hydra import main as hydra_main
 from hydra.core.config_store import ConfigStore
+from omegaconf import OmegaConf, DictConfig
 
-from rfm.configs.experiment_configs import ExperimentConfig
 from rfm.configs.eval_configs import OfflineEvalConfig
+from rfm.configs.experiment_configs import ExperimentConfig
+from rfm.evals.eval_utils import load_model_from_hf, load_wandb_run_info
 from rfm.trainers import RFMHeadsTrainer, RFMVQATrainer, SingleFrameTrainer
-from rfm.utils.setup_utils import (
-    setup_batch_collator,
-    create_training_arguments,
-)
 from rfm.utils.distributed import is_rank_0
 from rfm.utils.logger import get_logger
-import wandb
-from rfm.evals.eval_utils import load_model_from_hf
+from rfm.utils.setup_utils import (
+    create_training_arguments,
+    setup_batch_collator,
+)
 
 logger = get_logger()
 
@@ -161,10 +164,16 @@ def main(cfg: DictConfig):
     exp_cfg, tokenizer, processor, model = load_model_from_hf(model_path=model_path, device=device)
     logger.info(f"✅ Model and config loaded successfully from {model_path}")
 
+    # Try to load existing wandb info from model path
+    wandb_info = load_wandb_run_info(model_path)
+    resume_id = None
+    if wandb_info:
+        resume_id = wandb_info.get("wandb_id")
+        if resume_id:
+            logger.info(f"Found existing wandb run ID: {resume_id}, will resume run")
+
     # Initialize wandb if enabled in experiment config (only on rank 0)
     if "wandb" in exp_cfg.logging.log_to and is_rank_0():
-        from dataclasses import asdict
-
         config_dict = asdict(exp_cfg)
         model_name = model_path.replace("/", "_") if "/" in model_path else model_path
         init_kwargs = {
@@ -175,30 +184,19 @@ def main(cfg: DictConfig):
         }
         if exp_cfg.logging.wandb_notes:
             init_kwargs["notes"] = exp_cfg.logging.wandb_notes
+        # Resume existing run if resume_id is found
+        if resume_id:
+            init_kwargs["id"] = resume_id
+            init_kwargs["resume"] = "must"
         wandb.init(**init_kwargs)
-        logger.info(f"Wandb initialized for evaluation: eval_{model_name}")
+        if resume_id:
+            logger.info(f"Wandb resumed run: eval_{model_name} (ID: {resume_id})")
+        else:
+            logger.info(f"Wandb initialized for evaluation: eval_{model_name}")
         if exp_cfg.logging.wandb_notes:
             logger.info(f"Wandb notes: {exp_cfg.logging.wandb_notes}")
     elif "wandb" in exp_cfg.logging.log_to:
         logger.info("Wandb logging enabled but skipped on non-rank-0 processes")
-
-    # Merge custom_eval from OfflineEvalConfig if provided
-    # Only override fields that are explicitly set (non-empty lists)
-    if eval_only_cfg.custom_eval.eval_types:
-        exp_cfg.custom_eval.eval_types = eval_only_cfg.custom_eval.eval_types
-        logger.info(f"Using eval_types from OfflineEvalConfig: {eval_only_cfg.custom_eval.eval_types}")
-
-    # Override specific eval dataset lists if provided
-    for eval_type in ["reward_alignment", "policy_ranking", "confusion_matrix"]:
-        eval_datasets = getattr(eval_only_cfg.custom_eval, eval_type, None)
-        if eval_datasets and len(eval_datasets) > 0:
-            setattr(exp_cfg.custom_eval, eval_type, eval_datasets)
-            logger.info(f"Using {eval_type} datasets from OfflineEvalConfig: {eval_datasets}")
-
-    # Ensure custom eval is configured
-    if not hasattr(exp_cfg.custom_eval, "eval_types") or not exp_cfg.custom_eval.eval_types:
-        logger.warning("No eval_types configured in custom_eval. Please set custom_eval.eval_types in your config.")
-        return
 
     # Determine output directory
     output_dir = eval_only_cfg.output_dir

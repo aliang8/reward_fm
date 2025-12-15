@@ -25,13 +25,13 @@ from hydra.core.config_store import ConfigStore
 
 from rfm.configs.experiment_configs import ExperimentConfig
 from rfm.configs.eval_configs import OfflineEvalConfig
-from rfm.trainers import RFMHeadsTrainer, RFMVQATrainer
+from rfm.trainers import RFMHeadsTrainer, RFMVQATrainer, SingleFrameTrainer
 from rfm.utils.setup_utils import (
     setup_batch_collator,
     create_training_arguments,
 )
 from rfm.utils.distributed import is_rank_0
-from rfm.utils.logger import rank_0_info, get_logger
+from rfm.utils.logger import get_logger
 import wandb
 from rfm.evals.eval_utils import load_model_from_hf
 
@@ -49,8 +49,11 @@ def create_eval_trainer(
     tokenizer,
     output_dir: str,
 ):
-    """Create RFMHeadsTrainer configured for evaluation only."""
-    rank_0_info("Setting up trainer for evaluation...")
+    """Create trainer configured for evaluation only.
+    
+    Supports RFMHeadsTrainer, SingleFrameTrainer, and RFMVQATrainer based on config.trainer_cls.
+    """
+    logger.info("Setting up trainer for evaluation...")
 
     # Create minimal training arguments (needed for trainer initialization)
     # Most settings don't matter since we're only evaluating
@@ -70,7 +73,19 @@ def create_eval_trainer(
     # Set up batch collator
     batch_collator = setup_batch_collator(processor, tokenizer, cfg)
 
-    if cfg.model.model_type == "vqa":
+    # Determine trainer class based on config (check trainer_cls first, then model_type)
+    trainer_cls_name = getattr(cfg, "trainer_cls", None) or "rfm_heads"
+    
+    if trainer_cls_name == "single_frame":
+        trainer = SingleFrameTrainer(
+            model=model,
+            args=training_args,
+            train_dataset=None,  # Not needed for eval
+            eval_dataset=None,  # Will be created in _run_custom_evaluations
+            data_collator=batch_collator,
+            config=cfg,
+        )
+    elif cfg.model.model_type == "vqa":
         trainer = RFMVQATrainer(
             model=model,
             args=training_args,
@@ -92,28 +107,28 @@ def create_eval_trainer(
     return trainer
 
 
-def run_custom_evaluations(trainer: RFMHeadsTrainer):
+def run_custom_evaluations(trainer, output_dir=None):
     """Run custom evaluations using the trainer."""
-    rank_0_info("=" * 100)
-    rank_0_info("Starting custom evaluations...")
-    rank_0_info("=" * 100)
+    logger.info("=" * 100)
+    logger.info("Starting custom evaluations...")
+    logger.info("=" * 100)
 
     # Ensure model is in eval mode
     trainer.model.eval()
 
     # Run custom evaluations
     # This method creates datasets internally based on config.custom_eval settings
-    custom_metrics = trainer._run_custom_evaluations()
+    custom_metrics = trainer._run_custom_evaluations(output_dir=output_dir)
 
-    rank_0_info("=" * 100)
-    rank_0_info("Custom evaluations completed!")
-    rank_0_info("=" * 100)
+    logger.info("=" * 100)
+    logger.info("Custom evaluations completed!")
+    logger.info("=" * 100)
 
     # Print metrics summary
     if is_rank_0():
-        rank_0_info("\nEvaluation Metrics Summary:")
+        logger.info("\nEvaluation Metrics Summary:")
         for metric_name, metric_value in custom_metrics.items():
-            rank_0_info(f"  {metric_name}: {metric_value}")
+            logger.info(f"  {metric_name}: {metric_value}")
 
     return custom_metrics
 
@@ -142,9 +157,9 @@ def main(cfg: DictConfig):
 
     # Load experiment config and model using load_model_from_hf
     # This function handles both HuggingFace repos and local paths
-    rank_0_info(f"Loading model and config from: {model_path}")
+    logger.info(f"Loading model and config from: {model_path}")
     exp_cfg, tokenizer, processor, model = load_model_from_hf(model_path=model_path, device=device)
-    rank_0_info(f"✅ Model and config loaded successfully from {model_path}")
+    logger.info(f"✅ Model and config loaded successfully from {model_path}")
 
     # Initialize wandb if enabled in experiment config (only on rank 0)
     if "wandb" in exp_cfg.logging.log_to and is_rank_0():
@@ -161,24 +176,24 @@ def main(cfg: DictConfig):
         if exp_cfg.logging.wandb_notes:
             init_kwargs["notes"] = exp_cfg.logging.wandb_notes
         wandb.init(**init_kwargs)
-        rank_0_info(f"Wandb initialized for evaluation: eval_{model_name}")
+        logger.info(f"Wandb initialized for evaluation: eval_{model_name}")
         if exp_cfg.logging.wandb_notes:
-            rank_0_info(f"Wandb notes: {exp_cfg.logging.wandb_notes}")
+            logger.info(f"Wandb notes: {exp_cfg.logging.wandb_notes}")
     elif "wandb" in exp_cfg.logging.log_to:
-        rank_0_info("Wandb logging enabled but skipped on non-rank-0 processes")
+        logger.info("Wandb logging enabled but skipped on non-rank-0 processes")
 
     # Merge custom_eval from OfflineEvalConfig if provided
     # Only override fields that are explicitly set (non-empty lists)
     if eval_only_cfg.custom_eval.eval_types:
         exp_cfg.custom_eval.eval_types = eval_only_cfg.custom_eval.eval_types
-        rank_0_info(f"Using eval_types from OfflineEvalConfig: {eval_only_cfg.custom_eval.eval_types}")
+        logger.info(f"Using eval_types from OfflineEvalConfig: {eval_only_cfg.custom_eval.eval_types}")
 
     # Override specific eval dataset lists if provided
     for eval_type in ["reward_alignment", "policy_ranking", "confusion_matrix"]:
         eval_datasets = getattr(eval_only_cfg.custom_eval, eval_type, None)
         if eval_datasets and len(eval_datasets) > 0:
             setattr(exp_cfg.custom_eval, eval_type, eval_datasets)
-            rank_0_info(f"Using {eval_type} datasets from OfflineEvalConfig: {eval_datasets}")
+            logger.info(f"Using {eval_type} datasets from OfflineEvalConfig: {eval_datasets}")
 
     # Ensure custom eval is configured
     if not hasattr(exp_cfg.custom_eval, "eval_types") or not exp_cfg.custom_eval.eval_types:
@@ -195,10 +210,13 @@ def main(cfg: DictConfig):
     # Create trainer
     trainer = create_eval_trainer(exp_cfg, model, processor, tokenizer, output_dir)
 
-    # Run custom evaluations
-    metrics = run_custom_evaluations(trainer)
+    # Set output_dir in config for video saving
+    exp_cfg.output_dir = output_dir
 
-    rank_0_info("\n✅ Evaluation complete!")
+    # Run custom evaluations
+    metrics = run_custom_evaluations(trainer, output_dir=output_dir)
+
+    logger.info("\n✅ Evaluation complete!")
     return metrics
 
 

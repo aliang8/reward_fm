@@ -3,6 +3,7 @@ import copy
 import os
 from typing import Dict
 
+import imageio
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -969,7 +970,70 @@ class RFMHeadsTrainer(Trainer):
 
         return batch_results, outputs
 
-    def _compute_and_log_eval_metrics(self, eval_type, eval_results, ds_name, eval_step):
+    def _save_reward_alignment_videos(
+        self, video_frames_list, plots, eval_results, output_dir, ds_name
+    ):
+        """Save reward_alignment videos to disk organized by data_source/quality_label/traj_id.mp4."""
+        # Check if dataset is RoboArena
+        is_roboarena = False
+        if eval_results and len(eval_results) > 0:
+            first_data_source = eval_results[0].get("data_source", "")
+            is_roboarena = "roboarena" in str(first_data_source).lower()
+
+        saved_count = 0
+        for idx, (frames, plot) in enumerate(zip(video_frames_list, plots)):
+            if frames is None or idx >= len(eval_results):
+                continue
+
+            result = eval_results[idx]
+            data_source = result.get("data_source", "unknown")
+            quality_label = result.get("quality_label", "unknown")
+            traj_id = result.get("id", f"traj_{idx}")
+            partial_success = result.get("partial_success")
+
+            # Build directory structure: {data_source}/{quality_label}/
+            save_dir = os.path.join(output_dir, "reward_alignment_videos", str(data_source), str(quality_label))
+            os.makedirs(save_dir, exist_ok=True)
+
+            # Build filename
+            if is_roboarena and partial_success is not None:
+                # For RoboArena: {quality_label}_{partial_success}_{traj_id}.mp4
+                filename = f"{quality_label}_{partial_success}_{traj_id}.mp4"
+            else:
+                # Standard: {traj_id}.mp4
+                filename = f"{traj_id}.mp4"
+
+            video_path = os.path.join(save_dir, filename)
+
+            # Convert frames from (T, C, H, W) to (T, H, W, C) for imageio
+            # Frames are currently in (T, C, H, W) format from compile_results.py
+            if len(frames.shape) == 4 and frames.shape[1] == 3:  # (T, C, H, W)
+                frames_rgb = frames.transpose(0, 2, 3, 1)  # (T, H, W, C)
+            else:
+                frames_rgb = frames
+
+            # Ensure frames are uint8 and in correct range [0, 255]
+            if frames_rgb.dtype != np.uint8:
+                if frames_rgb.max() <= 1.0:
+                    frames_rgb = (frames_rgb * 255).astype(np.uint8)
+                else:
+                    frames_rgb = np.clip(frames_rgb, 0, 255).astype(np.uint8)
+
+            # Convert to list of frames for imageio
+            frame_list = [frame for frame in frames_rgb]
+
+            # Save video using imageio
+            try:
+                imageio.mimwrite(video_path, frame_list, fps=2)
+                saved_count += 1
+                logger.debug(f"Saved reward_alignment video: {video_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save video {video_path}: {e}")
+
+        if saved_count > 0:
+            logger.info(f"Saved {saved_count} reward_alignment videos to {output_dir}/reward_alignment_videos/")
+
+    def _compute_and_log_eval_metrics(self, eval_type, eval_results, ds_name, eval_step, output_dir=None):
         """Compute metrics and create visualizations for evaluation results."""
         # Initialize variables to None to ensure they exist for cleanup
         plots = None
@@ -991,6 +1055,12 @@ class RFMHeadsTrainer(Trainer):
                 f"Metrics: {eval_metrics}",
                 inner_padding=1,
             )
+
+            # Save videos to disk if output_dir is provided
+            if output_dir is not None and video_frames_list:
+                self._save_reward_alignment_videos(
+                    video_frames_list, plots, eval_results, output_dir, ds_name
+                )
 
             # Build rows of (video, figure)
             rows = []
@@ -1300,7 +1370,7 @@ class RFMHeadsTrainer(Trainer):
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
 
-    def _run_single_eval_dataset(self, eval_type, eval_dataset, eval_step):
+    def _run_single_eval_dataset(self, eval_type, eval_dataset, eval_step, output_dir=None):
         """Run evaluation for a single dataset."""
         logger.info(f"  Processing dataset: {eval_dataset}")
         # log_memory_usage(f"Before dataset {eval_dataset}")
@@ -1368,7 +1438,9 @@ class RFMHeadsTrainer(Trainer):
             # Compute metrics and create visualizations (only on main process)
             eval_metrics = {}
             if self.accelerator.is_main_process:
-                eval_metrics = self._compute_and_log_eval_metrics(eval_type, eval_results, ds_name, eval_step)
+                # Get output_dir from config if available (for offline eval)
+                output_dir = getattr(self.config, "output_dir", None)
+                eval_metrics = self._compute_and_log_eval_metrics(eval_type, eval_results, ds_name, eval_step, output_dir=output_dir)
 
             # Cleanup
             self._cleanup_eval_dataset(dataset, dataloader, eval_results)
@@ -1382,13 +1454,14 @@ class RFMHeadsTrainer(Trainer):
 
             return eval_metrics, ds_name
 
-    def _run_custom_evaluations(self, eval_step=None):
+    def _run_custom_evaluations(self, eval_step=None, output_dir=None):
         """
         Run custom evaluations.
 
         Args:
             eval_step: Step number to use for logging. If None, uses self.state.global_step.
                       This ensures consistent step logging to prevent wandb warnings.
+            output_dir: Optional directory to save evaluation outputs (e.g., videos for reward_alignment).
         """
         if eval_step is None:
             eval_step = self.state.global_step
@@ -1426,7 +1499,7 @@ class RFMHeadsTrainer(Trainer):
 
             with _timer(f"time/eval_type/{eval_type}", timing_raw=self.timing_raw):
                 for eval_dataset in eval_datasets_name:
-                    eval_metrics, ds_name = self._run_single_eval_dataset(eval_type, eval_dataset, eval_step)
+                    eval_metrics, ds_name = self._run_single_eval_dataset(eval_type, eval_dataset, eval_step, output_dir=output_dir)
                     metrics[ds_name][eval_type] = eval_metrics
 
                     # Store timing for this eval_dataset
@@ -1565,7 +1638,9 @@ class RFMHeadsTrainer(Trainer):
         )
         if custom_eval_should_run:
             with _timer("time/custom_evaluations", timing_raw=self.timing_raw):
-                custom_metrics = self._run_custom_evaluations(eval_step=eval_step)
+                # Get output_dir from config if available (for offline eval)
+                output_dir = getattr(self.config, "output_dir", None)
+                custom_metrics = self._run_custom_evaluations(eval_step=eval_step, output_dir=output_dir)
 
             metrics.update(custom_metrics)
             # Add custom evaluation time
@@ -1917,8 +1992,18 @@ class RFMHeadsTrainer(Trainer):
             self.timing_raw.update(model_timing_raw)
             return model_output, model_timing_raw
 
-    def _compute_progress_loss(self, model, inputs, return_outputs=False, training=True):
-        """Compute progress prediction loss."""
+    def _compute_progress_loss(self, model, inputs, return_outputs=False, training=True, stratify_by_strategy=True):
+        """
+        Compute progress prediction loss.
+        
+        Args:
+            model: The model to use for forward pass
+            inputs: Input dictionary containing progress data
+            return_outputs: Whether to return detailed outputs dict
+            training: Whether in training mode
+            stratify_by_strategy: Whether to stratify metrics by data_gen_strategy (default: True)
+                                 Set to False for single-frame training where strategies aren't used
+        """
         model_output, _ = self.forward_model(model, inputs, sample_type="progress")
         progress_logits = model_output.progress_logits
         progress_pred = progress_logits["A"]
@@ -1961,10 +2046,11 @@ class RFMHeadsTrainer(Trainer):
                 "prog_loss": progress_metrics["masked_loss"],
             }
 
+            strategy_values = inputs.get("data_gen_strategy") if stratify_by_strategy else None
             self._add_stratified_metrics(
                 outputs_dict,
                 prefix,
-                inputs["data_gen_strategy"],
+                strategy_values,
                 inputs["data_source"],
                 stratified_metrics,
             )

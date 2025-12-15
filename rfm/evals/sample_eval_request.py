@@ -39,27 +39,33 @@ def build_preference_sample(seed: int, embedding_dim: int = 8, use_frames: bool 
     rng = np.random.default_rng(seed)
 
     def make_traj(tag: str) -> Trajectory:
+        num_frames = 4
+        target_progress = np.linspace(0.0, 1.0, num=num_frames)
+        # Create success labels: 1.0 if progress > 0.5 (task completed), 0.0 otherwise
+        success_label = [1.0 if prog > 0.5 else 0.0 for prog in target_progress]
+        
         if use_frames:
             # Create dummy video frames for frame-based models
-            frames = create_dummy_frames(num_frames=4, height=224, width=224, seed=seed + hash(tag))
+            frames = create_dummy_frames(num_frames=num_frames, height=224, width=224, seed=seed + hash(tag))
             frames_shape = frames.shape  # (T, H, W, C)
             return Trajectory(
                 task=f"demo_task_{tag}",
                 frames=frames,
                 frames_shape=frames_shape,
-                target_progress=np.linspace(0.0, 1.0, num=4).tolist(),
+                target_progress=target_progress.tolist(),
+                success_label=success_label,
                 metadata={"source": "sample_eval_request.py", "use_frames": True},
             )
         else:
             # Use embeddings for embedding-based models
-            video_embeddings = rng.normal(size=(4, 768))
+            video_embeddings = rng.normal(size=(num_frames, 768))
             text_embedding = rng.normal(size=(384,))
-            target_progress = np.linspace(0.0, 1.0, num=4)
             return Trajectory(
                 task=f"demo_task_{tag}",
                 video_embeddings=video_embeddings,
                 text_embedding=text_embedding,
                 target_progress=target_progress.tolist(),
+                success_label=success_label,
                 frames_shape=tuple(video_embeddings.shape),
                 metadata={"source": "sample_eval_request.py", "use_frames": False},
             )
@@ -75,6 +81,10 @@ def build_progress_sample(seed: int, num_frames: int = 4, use_frames: bool = Fal
     """Create a toy progress sample with reproducible random embeddings or frames."""
     rng = np.random.default_rng(seed)
 
+    target_progress = np.linspace(0.0, 1.0, num=num_frames)
+    # Create success labels: 1.0 if progress > 0.5 (task completed), 0.0 otherwise
+    success_label = [1.0 if prog > 0.5 else 0.0 for prog in target_progress]
+    
     if use_frames:
         print(f"Creating progress sample with {num_frames} frames")
         # Create dummy video frames for frame-based models
@@ -85,7 +95,8 @@ def build_progress_sample(seed: int, num_frames: int = 4, use_frames: bool = Fal
             task="demo_progress_task",
             frames=frames,
             frames_shape=frames_shape,
-            target_progress=np.linspace(0.0, 1.0, num=num_frames).tolist(),
+            target_progress=target_progress.tolist(),
+            success_label=success_label,
             metadata={"source": "sample_eval_request.py", "use_frames": True},
         )
     else:
@@ -96,7 +107,8 @@ def build_progress_sample(seed: int, num_frames: int = 4, use_frames: bool = Fal
             task="demo_progress_task",
             video_embeddings=video_embeddings,
             text_embedding=text_embedding,
-            target_progress=np.linspace(0.0, 1.0, num=num_frames).tolist(),
+            target_progress=target_progress.tolist(),
+            success_label=success_label,
             frames_shape=tuple(video_embeddings.shape),
             metadata={"source": "sample_eval_request.py", "use_frames": False},
         )

@@ -690,10 +690,13 @@ def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | Non
                                     file_key = traj_value["__numpy_file__"]
                                     if file_key in numpy_arrays:
                                         value[traj_key] = numpy_arrays[file_key]
-
+                                        
                                 if traj_key in ["video_embeddings", "text_embedding"]:
-                                    # convert to tensor
-                                    value[traj_key] = torch.tensor(value[traj_key])
+                                    if traj_key in value and value[traj_key] is not None:
+                                        if isinstance(value[traj_key], np.ndarray):
+                                            value[traj_key] = torch.tensor(value[traj_key])
+                                        elif isinstance(value[traj_key], list):
+                                            value[traj_key] = torch.tensor(value[traj_key])
 
                 samples.append(sample_data)
 

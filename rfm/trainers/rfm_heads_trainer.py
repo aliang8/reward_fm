@@ -1157,8 +1157,7 @@ class RFMHeadsTrainer(Trainer):
                 ax_progress.set_ylabel("Progress", fontsize=24, fontweight='bold')
                 ax_progress.set_xlabel("Timestep", fontsize=24, fontweight='bold')
                 
-                title_parts = [f"Task: {task}"]
-                title_parts.append(f"Quality: {quality_label}")
+                title_parts = [f"Task: {task}, Quality: {quality_label}"]
                 if is_roboarena and partial_success is not None:
                     title_parts.append(f"Partial Success: {partial_success:.2f}")
                 title_parts.append(f"MSE: {traj_mse:.3f}, r: {traj_pearson:.3f}, sp: {traj_spearman:.3f}")

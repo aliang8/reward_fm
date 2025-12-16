@@ -5,6 +5,14 @@ Send a demo batch to the local evaluation server.
 The payload mirrors the dataclasses in `rfm/data/dataset_types.py`.
 Replace the randomly generated tensors with real embeddings / trajectories
 when running against a trained checkpoint.
+
+uv run python rfm/evals/sample_eval_request.py \
+    --base-url http://40.119.56.66:8000 \
+    --num-samples 1 \
+    --sample-type progress \
+    --num-frames 4 \
+    --use-frames \
+    --use-npy
 """
 
 from __future__ import annotations

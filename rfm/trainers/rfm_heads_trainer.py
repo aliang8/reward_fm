@@ -17,6 +17,7 @@ from tqdm import tqdm
 from transformers import Trainer
 
 from rfm.data.datasets.base import resolve_dataset_keys
+from rfm.data.datasets.helpers import load_frames_from_npz
 from rfm.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
 from rfm.evals.compile_results import compute_eval_metrics
 from rfm.evals.eval_metrics_utils import compute_pearson, compute_spearman
@@ -28,6 +29,7 @@ from rfm.utils.setup_utils import setup_batch_collator, setup_custom_eval_datase
 from rfm.utils.tensor_utils import t2n
 from rfm.utils.timer import _timer
 from rfm.utils.video_utils import create_policy_ranking_grid, create_video_grid_with_progress
+from PIL import Image, ImageDraw, ImageFont
 
 logger = get_logger()
 
@@ -666,7 +668,11 @@ class RFMHeadsTrainer(Trainer):
         logger.trace("logging global metadata")
         global_metadata = reduce_metrics_with_accelerate(self.global_metadata, self.accelerator, aggregate_method="sum")
         logger.trace("finished aggregating global metadata")
-        log_global = {f"counts/{key}": global_metadata[key] for key in global_metadata}
+        
+        # Convert counts to fractions of total samples
+        total_samples = global_metadata["total_samples"]
+        log_global = {f"counts/{key}": value / total_samples for key, value in global_metadata.items() if key != "total_samples"}
+        
         log_data.update(log_global)
 
         # Log optimizer and gradient statistics
@@ -1024,18 +1030,23 @@ class RFMHeadsTrainer(Trainer):
 
             video_path = os.path.join(save_dir, filename)
 
-            # Convert frames from (T, C, H, W) to (T, H, W, C) for processing
-            if len(frames.shape) == 4 and frames.shape[1] == 3:  # (T, C, H, W)
-                frames_rgb = frames.transpose(0, 2, 3, 1)  # (T, H, W, C)
+            # Load original frames at full resolution from video_path
+            video_path_from_result = result.get("video_path")
+            original_frames = load_frames_from_npz(video_path_from_result)
+            # frames are in (T, H, W, C) format from load_frames_from_npz
+            if original_frames.shape[-1] == 3:
+                frames_rgb = original_frames.astype(np.uint8)
+            elif original_frames.shape[1] == 3:
+                # If in (T, C, H, W) format, transpose to (T, H, W, C)
+                frames_rgb = original_frames.transpose(0, 2, 3, 1).astype(np.uint8)
             else:
-                frames_rgb = frames
-
-            # Ensure frames are uint8 and in correct range [0, 255]
-            if frames_rgb.dtype != np.uint8:
-                if frames_rgb.max() <= 1.0:
-                    frames_rgb = (frames_rgb * 255).astype(np.uint8)
-                else:
-                    frames_rgb = np.clip(frames_rgb, 0, 255).astype(np.uint8)
+                frames_rgb = original_frames.astype(np.uint8)
+            
+            # Ensure frames are in correct range [0, 255]
+            if frames_rgb.max() <= 1.0:
+                frames_rgb = (frames_rgb * 255).astype(np.uint8)
+            else:
+                frames_rgb = np.clip(frames_rgb, 0, 255).astype(np.uint8)
 
             # Get progress data for this trajectory (should always be available)
             progress_pred = None
@@ -1228,6 +1239,208 @@ class RFMHeadsTrainer(Trainer):
         if saved_count > 0:
             logger.info(f"Saved {saved_count} reward_alignment videos to {output_dir}/reward_alignment_videos/")
 
+    def _save_policy_ranking_incorrect_pairs(
+        self, task_groups, eval_results, output_dir, ds_name, is_roboarena
+    ):
+        """Save incorrectly ranked policy pairs to disk.
+        
+        Finds pairs where the predicted reward ordering doesn't match the ground truth ordering:
+        - For non-RoboArena: successful < failure, successful < suboptimal, suboptimal < failure
+        - For RoboArena: partial_success ordering doesn't match predicted reward ordering
+        
+        Saves final frames side by side with metadata.
+        """
+        quality_order = {"failure": 1, "suboptimal": 2, "successful": 3}
+        incorrect_pairs = []
+        
+        for task, trajectories in task_groups.items():
+            if len(trajectories) < 2:
+                continue
+            
+            if is_roboarena:
+                # RoboArena: Check pairs where partial_success ordering doesn't match predicted reward ordering
+                for i in range(len(trajectories)):
+                    for j in range(i + 1, len(trajectories)):
+                        traj1 = trajectories[i]
+                        traj2 = trajectories[j]
+                        
+                        partial1 = traj1.get("partial_success")
+                        partial2 = traj2.get("partial_success")
+                        pred1 = traj1.get("final_predicted_reward")
+                        pred2 = traj2.get("final_predicted_reward")
+                        
+                        if partial1 is None or partial2 is None or pred1 is None or pred2 is None:
+                            continue
+                        
+                        # Check if ordering is incorrect
+                        partial_order_correct = partial1 > partial2  # traj1 should have higher partial_success
+                        pred_order = pred1 > pred2  # traj1 has higher predicted reward
+                        
+                        # Incorrect if partial_success ordering doesn't match predicted reward ordering
+                        if partial_order_correct != pred_order:
+                            incorrect_pairs.append({
+                                "task": task,
+                                "traj1": traj1,
+                                "traj2": traj2,
+                                "partial1": partial1,
+                                "partial2": partial2,
+                                "pred1": pred1,
+                                "pred2": pred2,
+                                "error_type": "partial_success_mismatch",
+                            })
+            else:
+                # Non-RoboArena: Check pairs where quality ordering doesn't match predicted reward ordering
+                for i in range(len(trajectories)):
+                    for j in range(i + 1, len(trajectories)):
+                        traj1 = trajectories[i]
+                        traj2 = trajectories[j]
+                        
+                        quality1 = traj1.get("quality_label")
+                        quality2 = traj2.get("quality_label")
+                        pred1 = traj1.get("final_reward")
+                        pred2 = traj2.get("final_reward")
+                        
+                        if quality1 is None or quality2 is None or pred1 is None or pred2 is None:
+                            continue
+                        
+                        order1 = quality_order.get(quality1, 0)
+                        order2 = quality_order.get(quality2, 0)
+                        
+                        # Skip if same quality
+                        if order1 == order2:
+                            continue
+                        
+                        # Check if ordering is incorrect
+                        quality_order_correct = order1 > order2  # traj1 should have higher quality
+                        pred_order = pred1 > pred2  # traj1 has higher predicted reward
+                        
+                        # Incorrect if quality ordering doesn't match predicted reward ordering
+                        if quality_order_correct != pred_order:
+                            error_type = f"{quality1}_vs_{quality2}"
+                            incorrect_pairs.append({
+                                "task": task,
+                                "traj1": traj1,
+                                "traj2": traj2,
+                                "quality1": quality1,
+                                "quality2": quality2,
+                                "pred1": pred1,
+                                "pred2": pred2,
+                                "error_type": error_type,
+                            })
+        
+        if not incorrect_pairs:
+            logger.info(f"No incorrectly ranked pairs found for policy_ranking/{ds_name}")
+            return
+        
+        # Create output directory
+        save_dir = os.path.join(output_dir, "policy_ranking_viz", ds_name)
+        os.makedirs(save_dir, exist_ok=True)
+        
+        saved_count = 0
+        for idx, pair in enumerate(incorrect_pairs):
+            traj1 = pair["traj1"]
+            traj2 = pair["traj2"]
+            task = pair["task"]
+            
+            # Load final frames from video paths
+            video_path1 = traj1.get("video_path")
+            video_path2 = traj2.get("video_path")
+            
+            if not video_path1 or not video_path2:
+                continue
+            
+            try:
+                # Load frames and get final frame
+                frames1 = load_frames_from_npz(video_path1)
+                frames2 = load_frames_from_npz(video_path2)
+                
+                # Get final frame (last frame in sequence)
+                final_frame1 = frames1[-1] if len(frames1.shape) == 4 else frames1
+                final_frame2 = frames2[-1] if len(frames2.shape) == 4 else frames2
+                
+                # Ensure frames are in (H, W, C) format
+                if len(final_frame1.shape) == 3 and final_frame1.shape[0] == 3:
+                    final_frame1 = final_frame1.transpose(1, 2, 0)
+                if len(final_frame2.shape) == 3 and final_frame2.shape[0] == 3:
+                    final_frame2 = final_frame2.transpose(1, 2, 0)
+                
+                # Ensure uint8 and correct range
+                if final_frame1.dtype != np.uint8:
+                    if final_frame1.max() <= 1.0:
+                        final_frame1 = (final_frame1 * 255).astype(np.uint8)
+                    else:
+                        final_frame1 = np.clip(final_frame1, 0, 255).astype(np.uint8)
+                if final_frame2.dtype != np.uint8:
+                    if final_frame2.max() <= 1.0:
+                        final_frame2 = (final_frame2 * 255).astype(np.uint8)
+                    else:
+                        final_frame2 = np.clip(final_frame2, 0, 255).astype(np.uint8)
+                
+                # Create matplotlib figure with two subplots side by side
+                fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+                
+                # Display frames
+                ax1.imshow(final_frame1)
+                ax1.axis('off')
+                ax2.imshow(final_frame2)
+                ax2.axis('off')
+                
+                # Build labels for each trajectory
+                traj_id1 = traj1.get("id", "unknown")
+                traj_id2 = traj2.get("id", "unknown")
+                
+                if is_roboarena:
+                    label1_parts = [
+                        f"Task: {task}",
+                        f"Partial Success: {pair['partial1']:.2f}",
+                        f"Predicted Reward: {pair['pred1']:.3f}",
+                        f"ID: {traj_id1}",
+                    ]
+                    label2_parts = [
+                        f"Task: {task}",
+                        f"Partial Success: {pair['partial2']:.2f}",
+                        f"Predicted Reward: {pair['pred2']:.3f}",
+                        f"ID: {traj_id2}",
+                    ]
+                else:
+                    label1_parts = [
+                        f"Task: {task}",
+                        f"Quality: {pair['quality1']}",
+                        f"Predicted Reward: {pair['pred1']:.3f}",
+                        f"ID: {traj_id1}",
+                    ]
+                    label2_parts = [
+                        f"Task: {task}",
+                        f"Quality: {pair['quality2']}",
+                        f"Predicted Reward: {pair['pred2']:.3f}",
+                        f"ID: {traj_id2}",
+                    ]
+                
+                # Add labels above frames
+                ax1.set_title("\n".join(label1_parts), fontsize=14, fontweight='bold', pad=10)
+                ax2.set_title("\n".join(label2_parts), fontsize=14, fontweight='bold', pad=10)
+                
+                # Add error type to overall title
+                error_type = pair["error_type"]
+                fig.suptitle(f"Incorrectly Ranked Pair: {error_type}", fontsize=16, fontweight='bold', y=0.98)
+                
+                plt.tight_layout()
+                
+                # Save figure
+                filename = f"{task}_{error_type}_{idx}.png"
+                # Sanitize filename
+                filename = filename.replace("/", "_").replace("\\", "_")
+                save_path = os.path.join(save_dir, filename)
+                fig.savefig(save_path, dpi=150, bbox_inches='tight')
+                plt.close(fig)
+                
+                saved_count += 1
+            except Exception as e:
+                logger.warning(f"Failed to save incorrect pair {idx} for task {task}: {e}")
+        
+        if saved_count > 0:
+            logger.info(f"Saved {saved_count} incorrectly ranked pairs to {save_dir}/")
+
     def _compute_and_log_eval_metrics(self, eval_type, eval_results, ds_name, eval_step, output_dir=None):
         """Compute metrics and create visualizations for evaluation results."""
         # Initialize variables to None to ensure they exist for cleanup
@@ -1393,6 +1606,12 @@ class RFMHeadsTrainer(Trainer):
                         step=eval_step,
                     )
                     del grid_image
+            
+            # Save incorrectly ranked pairs to disk if output_dir is provided
+            if output_dir is not None:
+                self._save_policy_ranking_incorrect_pairs(
+                    task_groups, eval_results, output_dir, ds_name, is_roboarena
+                )
             
             # log_memory_usage(f"Before deleting policy_ranking data")
             del data, task_groups, task_details

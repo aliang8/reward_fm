@@ -3,18 +3,20 @@
 Script to load an existing model checkpoint and run custom evaluations.
 
 Usage:
-    # Using default config
-    uv run python run_eval_only.py model_path=rewardfm/rewardfm/ant-rfm-qwen-4gpu-bs12-pref-prog-20251205-132026
-    
-    # Override config values
+    # Single GPU
     uv run python run_eval_only.py \
         model_path=rewardfm/pref_prog_2frames_all \
         custom_eval.eval_types=[reward_alignment] \
         custom_eval.reward_alignment=[reward_alignment] \
         custom_eval.policy_ranking=[policy_ranking]
-
-    # Use a different config file
-    uv run python run_eval_only.py --config-name my_eval_config model_path=path/to/model
+    
+    # Multi-GPU with accelerate launch
+    uv run accelerate launch --config_file rfm/configs/distributed/fsdp.yaml --num_processes=2 \
+        run_eval_only.py \
+        model_path=rewardfm/pref_prog_2frames_all \
+        custom_eval.eval_types=[reward_alignment] \
+        custom_eval.reward_alignment=[reward_alignment] \
+        custom_eval.policy_ranking=[policy_ranking]
 """
 
 import json

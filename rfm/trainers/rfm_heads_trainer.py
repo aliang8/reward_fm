@@ -1,6 +1,7 @@
 import collections
 import copy
 import os
+import random
 from typing import Dict
 
 import cv2
@@ -1242,16 +1243,18 @@ class RFMHeadsTrainer(Trainer):
     def _save_policy_ranking_incorrect_pairs(
         self, task_groups, eval_results, output_dir, ds_name, is_roboarena
     ):
-        """Save incorrectly ranked policy pairs to disk.
+        """Save incorrectly and correctly ranked policy pairs to disk.
         
         Finds pairs where the predicted reward ordering doesn't match the ground truth ordering:
         - For non-RoboArena: successful < failure, successful < suboptimal, suboptimal < failure
         - For RoboArena: partial_success ordering doesn't match predicted reward ordering
         
         Saves final frames side by side with metadata.
+        Saves up to 10 incorrect pairs and 10 correct pairs (randomly sampled).
         """
         quality_order = {"failure": 1, "suboptimal": 2, "successful": 3}
         incorrect_pairs = []
+        correct_pairs = []
         
         for task, trajectories in task_groups.items():
             if len(trajectories) < 2:
@@ -1280,7 +1283,7 @@ class RFMHeadsTrainer(Trainer):
                         partial_order_correct = partial1 > partial2  # traj1 should have higher partial_success
                         pred_order = pred1 > pred2  # traj1 has higher predicted reward
                         
-                        # Incorrect if partial_success ordering doesn't match predicted reward ordering
+                        # Check if ranking is correct or incorrect
                         if partial_order_correct != pred_order:
                             incorrect_pairs.append({
                                 "task": task,
@@ -1291,6 +1294,17 @@ class RFMHeadsTrainer(Trainer):
                                 "pred1": pred1,
                                 "pred2": pred2,
                                 "error_type": "partial_success_mismatch",
+                            })
+                        else:
+                            correct_pairs.append({
+                                "task": task,
+                                "traj1": traj1,
+                                "traj2": traj2,
+                                "partial1": partial1,
+                                "partial2": partial2,
+                                "pred1": pred1,
+                                "pred2": pred2,
+                                "error_type": "partial_success_correct",
                             })
             else:
                 # Non-RoboArena: Check pairs where quality ordering doesn't match predicted reward ordering
@@ -1318,9 +1332,9 @@ class RFMHeadsTrainer(Trainer):
                         quality_order_correct = order1 > order2  # traj1 should have higher quality
                         pred_order = pred1 > pred2  # traj1 has higher predicted reward
                         
-                        # Incorrect if quality ordering doesn't match predicted reward ordering
+                        # Check if ranking is correct or incorrect
+                        error_type = f"{quality1}_vs_{quality2}"
                         if quality_order_correct != pred_order:
-                            error_type = f"{quality1}_vs_{quality2}"
                             incorrect_pairs.append({
                                 "task": task,
                                 "traj1": traj1,
@@ -1331,17 +1345,77 @@ class RFMHeadsTrainer(Trainer):
                                 "pred2": pred2,
                                 "error_type": error_type,
                             })
+                        else:
+                            correct_pairs.append({
+                                "task": task,
+                                "traj1": traj1,
+                                "traj2": traj2,
+                                "quality1": quality1,
+                                "quality2": quality2,
+                                "pred1": pred1,
+                                "pred2": pred2,
+                                "error_type": f"{error_type}_correct",
+                            })
         
-        if not incorrect_pairs:
-            logger.info(f"No incorrectly ranked pairs found for policy_ranking/{ds_name}")
+        max_pairs = 10
+        
+        def sample_diverse_pairs(pairs, max_count):
+            """Sample pairs ensuring each trajectory appears at most once."""
+            if len(pairs) <= max_count:
+                return pairs
+            
+            # Track which trajectory IDs we've already used
+            used_traj_ids = set()
+            selected_pairs = []
+            
+            # Shuffle pairs to randomize selection
+            shuffled_pairs = pairs.copy()
+            random.shuffle(shuffled_pairs)
+            
+            for pair in shuffled_pairs:
+                if len(selected_pairs) >= max_count:
+                    break
+                
+                traj1_id = pair["traj1"].get("id")
+                traj2_id = pair["traj2"].get("id")
+                
+                # Check if either trajectory has been used
+                if traj1_id not in used_traj_ids and traj2_id not in used_traj_ids:
+                    selected_pairs.append(pair)
+                    used_traj_ids.add(traj1_id)
+                    used_traj_ids.add(traj2_id)
+            
+            # If we haven't filled up to max_count, add remaining pairs even if they repeat
+            if len(selected_pairs) < max_count:
+                remaining = [p for p in shuffled_pairs if p not in selected_pairs]
+                needed = max_count - len(selected_pairs)
+                selected_pairs.extend(remaining[:needed])
+            
+            return selected_pairs
+        
+        incorrect_pairs = sample_diverse_pairs(incorrect_pairs, max_pairs)
+        correct_pairs = sample_diverse_pairs(correct_pairs, max_pairs)
+        
+        if not incorrect_pairs and not correct_pairs:
+            logger.info(f"No pairs found for policy_ranking/{ds_name}")
             return
         
-        # Create output directory
+        # Create output directories
         save_dir = os.path.join(output_dir, "policy_ranking_viz", ds_name)
         os.makedirs(save_dir, exist_ok=True)
         
-        saved_count = 0
-        for idx, pair in enumerate(incorrect_pairs):
+        def save_pair_visualization(pair, idx, pair_type, save_dir):
+            """Helper function to save a single pair visualization.
+            
+            Args:
+                pair: Dictionary containing traj1, traj2, task, and metadata
+                idx: Index of the pair
+                pair_type: "incorrect" or "correct"
+                save_dir: Directory to save the visualization
+            
+            Returns:
+                True if saved successfully, False otherwise
+            """
             traj1 = pair["traj1"]
             traj2 = pair["traj2"]
             task = pair["task"]
@@ -1351,7 +1425,7 @@ class RFMHeadsTrainer(Trainer):
             video_path2 = traj2.get("video_path")
             
             if not video_path1 or not video_path2:
-                continue
+                return False
             
             try:
                 # Load frames and get final frame
@@ -1424,9 +1498,10 @@ class RFMHeadsTrainer(Trainer):
                 ax1.set_title("\n".join(label1_parts), fontsize=14, fontweight='bold', pad=10)
                 ax2.set_title("\n".join(label2_parts), fontsize=14, fontweight='bold', pad=10)
                 
-                # Add error type to overall title
+                # Add title based on pair type
                 error_type = pair["error_type"]
-                fig.suptitle(f"Incorrectly Ranked Pair: {error_type}", fontsize=16, fontweight='bold', y=0.98)
+                title_prefix = "Incorrectly" if pair_type == "incorrect" else "Correctly"
+                fig.suptitle(f"{title_prefix} Ranked Pair: {error_type}", fontsize=16, fontweight='bold', y=0.98)
                 
                 plt.tight_layout()
                 
@@ -1438,12 +1513,25 @@ class RFMHeadsTrainer(Trainer):
                 fig.savefig(save_path, dpi=150, bbox_inches='tight')
                 plt.close(fig)
                 
-                saved_count += 1
+                return True
             except Exception as e:
-                logger.warning(f"Failed to save incorrect pair {idx} for task {task}: {e}")
+                logger.warning(f"Failed to save {pair_type} pair {idx} for task {task}: {e}")
+                return False
         
-        if saved_count > 0:
-            logger.info(f"Saved {saved_count} incorrectly ranked pairs to {save_dir}/")
+        # Save incorrect pairs
+        saved_incorrect = 0
+        for idx, pair in enumerate(incorrect_pairs):
+            if save_pair_visualization(pair, idx, "incorrect", save_dir):
+                saved_incorrect += 1
+        
+        # Save correct pairs
+        saved_correct = 0
+        for idx, pair in enumerate(correct_pairs):
+            if save_pair_visualization(pair, idx, "correct", save_dir):
+                saved_correct += 1
+        
+        if saved_incorrect > 0 or saved_correct > 0:
+            logger.info(f"Saved {saved_incorrect} incorrectly ranked pairs and {saved_correct} correctly ranked pairs to {save_dir}/")
 
     def _compute_and_log_eval_metrics(self, eval_type, eval_results, ds_name, eval_step, output_dir=None):
         """Compute metrics and create visualizations for evaluation results."""

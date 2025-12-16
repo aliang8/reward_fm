@@ -1272,6 +1272,10 @@ class RFMHeadsTrainer(Trainer):
                         if partial1 is None or partial2 is None or pred1 is None or pred2 is None:
                             continue
                         
+                        # Skip if partial_success values are the same
+                        if partial1 == partial2:
+                            continue
+                        
                         # Check if ordering is incorrect
                         partial_order_correct = partial1 > partial2  # traj1 should have higher partial_success
                         pred_order = pred1 > pred2  # traj1 has higher predicted reward

@@ -134,6 +134,7 @@ DATASET_MAP = {
         "eval": [
             "aliangdw_metaworld_metaworld_eval",
             "abraranwar_usc_koch_rewind_rfm_usc_koch_rewind",
+            "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
             # "jesbu1_egodex_rfm_egodex_test",
         ]
     },

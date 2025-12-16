@@ -1,18 +1,16 @@
 import collections
 import copy
-import io
 import os
 from typing import Dict
 
 import cv2
-import imageio
+import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 import wandb
-from PIL import Image, ImageDraw, ImageFont
 from sklearn.metrics import average_precision_score
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -983,12 +981,29 @@ class RFMHeadsTrainer(Trainer):
             first_data_source = eval_results[0].get("data_source", "")
             is_roboarena = "roboarena" in str(first_data_source).lower()
 
+        # Group eval_results by trajectory ID (like compile_results.py does)
+        # Since compile_results processes trajectories in order and creates video_frames_list/plots
+        # in that same order, we can reconstruct the mapping by collecting unique trajectory IDs
+        processed_trajectory_ids = []
+        for r in eval_results:
+            trajectory_id = r.get("id")
+            if trajectory_id and trajectory_id not in processed_trajectory_ids:
+                processed_trajectory_ids.append(trajectory_id)
+
         saved_count = 0
         for idx, (frames, plot) in enumerate(zip(video_frames_list, plots)):
-            if frames is None or idx >= len(eval_results):
+            if frames is None or idx >= len(processed_trajectory_ids):
                 continue
 
-            result = eval_results[idx]
+            trajectory_id = processed_trajectory_ids[idx]
+            # Get all results for this trajectory
+            results_for_trajectory = [r for r in eval_results if r.get("id") == trajectory_id]
+            results_for_trajectory.sort(key=lambda r: r.get("metadata", {}).get("subsequence_end", 0))
+            
+            if not results_for_trajectory:
+                continue
+                
+            result = results_for_trajectory[0]
             data_source = result.get("data_source", "unknown")
             quality_label = result.get("quality_label", "unknown")
             traj_id = result.get("id", f"traj_{idx}")
@@ -1010,7 +1025,6 @@ class RFMHeadsTrainer(Trainer):
             video_path = os.path.join(save_dir, filename)
 
             # Convert frames from (T, C, H, W) to (T, H, W, C) for processing
-            # Frames are currently in (T, C, H, W) format from compile_results.py
             if len(frames.shape) == 4 and frames.shape[1] == 3:  # (T, C, H, W)
                 frames_rgb = frames.transpose(0, 2, 3, 1)  # (T, H, W, C)
             else:
@@ -1023,7 +1037,7 @@ class RFMHeadsTrainer(Trainer):
                 else:
                     frames_rgb = np.clip(frames_rgb, 0, 255).astype(np.uint8)
 
-            # Get progress data for this trajectory
+            # Get progress data for this trajectory (should always be available)
             progress_pred = None
             target_progress = None
             if trajectory_progress_data and idx < len(trajectory_progress_data):
@@ -1031,40 +1045,82 @@ class RFMHeadsTrainer(Trainer):
                 progress_pred = traj_data.get("progress_pred")
                 target_progress = traj_data.get("target_progress")
             
-            # If we don't have progress data from trajectory_progress_data, try to extract from eval_results
+            # If we don't have progress data from trajectory_progress_data, extract from results_for_trajectory
             if progress_pred is None or target_progress is None:
-                # Group results by trajectory ID to get all timesteps
-                trajectory_results = [r for r in eval_results if r.get("id") == traj_id]
-                trajectory_results.sort(key=lambda r: r.get("metadata", {}).get("subsequence_end", 0))
-                
-                if trajectory_results:
-                    progress_pred = []
-                    target_progress = []
-                    for r in trajectory_results:
-                        pred = r.get("progress_pred")
-                        tgt = r.get("target_progress")
-                        if pred is not None:
-                            # Use prediction at current timestep (or last if past max length)
-                            timestep = len(progress_pred)
-                            if timestep >= len(pred) - 1:
-                                progress_pred.append(float(pred[-1]))
-                            else:
-                                progress_pred.append(float(pred[timestep]))
+                progress_pred = []
+                target_progress = []
+                for r in results_for_trajectory:
+                    pred = r.get("progress_pred")
+                    tgt = r.get("target_progress")
+                    if pred is not None:
+                        # Use prediction at current timestep (or last if past max length)
+                        timestep = len(progress_pred)
+                        if timestep >= len(pred) - 1:
+                            progress_pred.append(float(pred[-1]))
                         else:
-                            progress_pred.append(0.0)
-                        
-                        if tgt is not None and len(tgt) > 0:
-                            target_progress.append(float(tgt[-1]))
-                        else:
-                            target_progress.append(0.0)
+                            progress_pred.append(float(pred[timestep]))
+                    else:
+                        progress_pred.append(0.0)
                     
-                    # Handle relative progress type
-                    if self.config.data.progress_pred_type == "relative":
-                        progress_pred = np.cumsum(np.array(progress_pred)).tolist()
-                        target_progress = np.cumsum(np.array(target_progress)).tolist()
+                    if tgt is not None and len(tgt) > 0:
+                        target_progress.append(float(tgt[-1]))
+                    else:
+                        target_progress.append(0.0)
+                
+                # Handle relative progress type
+                if self.config.data.progress_pred_type == "relative":
+                    progress_pred = np.cumsum(np.array(progress_pred)).tolist()
+                    target_progress = np.cumsum(np.array(target_progress)).tolist()
 
-            # Create matplotlib plot similar to compile_results.py
-            if progress_pred is not None and target_progress is not None:
+            # Get success data for this trajectory (if available)
+            success_probs = None
+            success_labels = None
+            for r in results_for_trajectory:
+                if r.get("success_probs") is not None:
+                    if success_probs is None:
+                        success_probs = []
+                    sp = r.get("success_probs")
+                    if sp is not None:
+                        # Use probability at current timestep (or last if past max length)
+                        timestep = len(success_probs)
+                        if isinstance(sp, (list, np.ndarray)):
+                            if timestep >= len(sp) - 1:
+                                success_probs.append(float(sp[-1]))
+                            else:
+                                success_probs.append(float(sp[timestep]))
+                        else:
+                            success_probs.append(float(sp))
+                    else:
+                        success_probs.append(0.0)
+                
+                if r.get("success_labels") is not None:
+                    if success_labels is None:
+                        success_labels = []
+                    sl = r.get("success_labels")
+                    if sl is not None:
+                        # Use label at current timestep (or last if past max length)
+                        timestep = len(success_labels)
+                        if isinstance(sl, (list, np.ndarray)):
+                            if timestep >= len(sl) - 1:
+                                success_labels.append(float(sl[-1]))
+                            else:
+                                success_labels.append(float(sl[timestep]))
+                        else:
+                            success_labels.append(float(sl))
+                    else:
+                        success_labels.append(0.0)
+            
+            # Ensure we have progress data (should always be available)
+            if progress_pred is None or target_progress is None:
+                logger.warning(f"No progress data available for trajectory {traj_id}, skipping video")
+                continue
+
+            # Create matplotlib animated plot video
+            # Define DPI for animation quality
+            fig_dpi = 300
+            
+            # Use matplotlib animation to save video with subplots
+            try:
                 # Compute metrics
                 last_preds = np.array(progress_pred)
                 last_targets = np.array(target_progress)
@@ -1086,109 +1142,85 @@ class RFMHeadsTrainer(Trainer):
                     traj_pearson = float(traj_pearson) if not np.isnan(traj_pearson) else 0.0
                     traj_spearman = float(traj_spearman) if not np.isnan(traj_spearman) else 0.0
                 
-                # Create plot figure
-                fig, ax = plt.subplots(figsize=(6, 3.5))
-                ax.plot(last_preds, linewidth=2, label="Predicted", color="blue")
-                ax.plot(last_targets, linewidth=2, label="Target", color="green", linestyle="--")
-                ax.set_ylabel("Progress")
+                # Determine number of subplots: 3 if success data available, 2 otherwise
+                has_success_data = success_probs is not None and len(success_probs) > 0
+                num_subplots = 3 if has_success_data else 2
                 
-                # Build title with task, quality_label, and partial_success (if RoboArena)
-                title_parts = [f"Task: {task}", f"Quality: {quality_label}"]
+                # Create figure with subplots: video, progress plot, and optionally success plot
+                if has_success_data:
+                    fig_anim, (ax_video, ax_progress, ax_success) = plt.subplots(1, 3, figsize=(24, 8), dpi=fig_dpi)
+                else:
+                    fig_anim, (ax_video, ax_progress) = plt.subplots(1, 2, figsize=(16, 8), dpi=fig_dpi)
+                ax_video.axis('off')
+                
+                # Set up progress plot
+                ax_progress.set_ylabel("Progress", fontsize=24, fontweight='bold')
+                ax_progress.set_xlabel("Timestep", fontsize=24, fontweight='bold')
+                
+                title_parts = [f"Task: {task}"]
+                title_parts.append(f"Quality: {quality_label}")
                 if is_roboarena and partial_success is not None:
                     title_parts.append(f"Partial Success: {partial_success:.2f}")
-                title_parts.append(f"\nMSE: {traj_mse:.3f}, r: {traj_pearson:.3f}, sp: {traj_spearman:.3f}")
-                ax.set_title("\n".join(title_parts), fontsize=10)
-                ax.set_ylim(0, 1)
-                ax.spines["right"].set_visible(False)
-                ax.spines["top"].set_visible(False)
-                ax.set_yticks([])
-                ax.legend(loc="upper right", fontsize=8)
-                plt.tight_layout()
+                title_parts.append(f"MSE: {traj_mse:.3f}, r: {traj_pearson:.3f}, sp: {traj_spearman:.3f}")
+                ax_progress.set_title("\n".join(title_parts), fontsize=20, fontweight='bold', pad=30)
+                ax_progress.set_ylim(0, 1)
+                ax_progress.set_xlim(0, max(len(last_preds), 1))
+                ax_progress.set_yticks([0, 1])
+                ax_progress.spines["right"].set_visible(False)
+                ax_progress.spines["top"].set_visible(False)
+                ax_progress.tick_params(axis='both', which='major', labelsize=18)
                 
-                # Convert matplotlib figure to numpy array
-                buf = io.BytesIO()
-                fig.savefig(buf, format='png', dpi=100, bbox_inches='tight')
-                buf.seek(0)
-                plot_img = np.array(Image.open(buf))
-                plt.close(fig)
+                im_video = ax_video.imshow(frames_rgb[0])
+                line_progress, = ax_progress.plot([], [], linewidth=4, color="blue")
                 
-                # Resize plot to match video frame height
-                frame_h, frame_w = frames_rgb[0].shape[:2]
-                plot_h, plot_w = plot_img.shape[:2]
-                plot_aspect = plot_w / plot_h
-                new_plot_h = frame_h
-                new_plot_w = int(new_plot_h * plot_aspect)
-                plot_img_resized = cv2.resize(plot_img, (new_plot_w, new_plot_h))
-            else:
-                # No progress data available, create a blank plot
-                frame_h, frame_w = frames_rgb[0].shape[:2]
-                plot_img_resized = np.ones((frame_h, frame_w, 3), dtype=np.uint8) * 255
+                line_success = None
+                if has_success_data:
+                    last_success_probs = np.array(success_probs)
+                    last_success_labels = np.array(success_labels) if success_labels is not None else None
+                    
+                    ax_success.set_ylabel("Success Probability", fontsize=24, fontweight='bold')
+                    ax_success.set_xlabel("Timestep", fontsize=24, fontweight='bold')
+                    ax_success.set_title("Success Prediction", fontsize=20, fontweight='bold', pad=30)
+                    ax_success.set_ylim(0, 1)
+                    ax_success.set_xlim(0, max(len(last_success_probs), 1))
+                    ax_success.set_yticks([0, 1])
+                    ax_success.spines["right"].set_visible(False)
+                    ax_success.spines["top"].set_visible(False)
+                    ax_success.tick_params(axis='both', which='major', labelsize=18)
+                    
+                    line_success, = ax_success.plot([], [], linewidth=4, color="green", label="Predicted")
+                    if last_success_labels is not None:
+                        ax_success.plot(range(len(last_success_labels)), last_success_labels, 
+                                       linewidth=2, color="red", linestyle="--", label="Ground Truth", alpha=0.7)
+                    ax_success.legend(fontsize=16)
                 
-                # Add text to blank plot
-                plot_img_pil = Image.fromarray(plot_img_resized)
-                draw = ImageDraw.Draw(plot_img_pil)
-                try:
-                    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 20)
-                except:
-                    font = ImageFont.load_default()
+                def animate(frame_idx):
+                    # Update video frame
+                    im_video.set_array(frames_rgb[frame_idx])
+                    
+                    # Update progress plot up to current frame
+                    max_idx = min(frame_idx + 1, len(last_preds))
+                    line_progress.set_data(range(max_idx), last_preds[:max_idx])
+                    
+                    # Update success plot up to current frame if available
+                    if has_success_data and line_success is not None:
+                        max_idx_success = min(frame_idx + 1, len(last_success_probs))
+                        line_success.set_data(range(max_idx_success), last_success_probs[:max_idx_success])
+                        return [im_video, line_progress, line_success]
+                    
+                    return [im_video, line_progress]
                 
-                text_lines = [f"Task: {task}", f"Quality: {quality_label}"]
-                if is_roboarena and partial_success is not None:
-                    text_lines.append(f"Partial Success: {partial_success:.2f}")
-                text_lines.append("No progress data available")
+                # Create animation
+                anim = animation.FuncAnimation(
+                    fig_anim, animate, frames=len(frames_rgb),
+                    interval=500, blit=True, repeat=True
+                )
                 
-                y_offset = 20
-                for line in text_lines:
-                    draw.text((10, y_offset), line, fill=(0, 0, 0), font=font)
-                    y_offset += 30
+                Writer = animation.writers['ffmpeg']
+                writer = Writer(fps=2, metadata=dict(artist='RFM'), bitrate=5000)
+                anim.save(video_path, writer=writer, dpi=fig_dpi)
+                plt.close(fig_anim)
                 
-                plot_img_resized = np.array(plot_img_pil)
-
-            # Combine video frames with plot side by side
-            combined_frames = []
-            for frame in frames_rgb:
-                # Add text overlay to video frame
-                frame_with_text = frame.copy()
-                # Convert to PIL Image (RGB)
-                frame_pil = Image.fromarray(frame_with_text).convert('RGBA')
-                
-                try:
-                    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24)
-                except:
-                    font = ImageFont.load_default()
-                
-                # Build text label
-                text_lines = [f"Task: {task}"]
-                if is_roboarena and partial_success is not None:
-                    text_lines.append(f"{quality_label} (PS: {partial_success:.2f})")
-                else:
-                    text_lines.append(quality_label)
-                
-                # Draw text with background for readability
-                overlay = Image.new('RGBA', frame_pil.size, (0, 0, 0, 0))
-                overlay_draw = ImageDraw.Draw(overlay)
-                
-                y_offset = 10
-                for line in text_lines:
-                    # Get text bounding box
-                    bbox = overlay_draw.textbbox((10, y_offset), line, font=font)
-                    # Draw semi-transparent background
-                    overlay_draw.rectangle([bbox[0]-5, bbox[1]-2, bbox[2]+5, bbox[3]+2], fill=(0, 0, 0, 180))
-                    # Draw text
-                    overlay_draw.text((10, y_offset), line, fill=(255, 255, 255, 255), font=font)
-                    y_offset += 35
-                
-                # Composite overlay onto frame
-                frame_pil = Image.alpha_composite(frame_pil, overlay).convert('RGB')
-                frame_with_text = np.array(frame_pil)
-                
-                # Concatenate video frame and plot horizontally
-                combined_frame = np.concatenate([frame_with_text, plot_img_resized], axis=1)
-                combined_frames.append(combined_frame)
-
-            # Save combined video using imageio
-            try:
-                imageio.mimwrite(video_path, combined_frames, fps=1)
                 saved_count += 1
                 logger.debug(f"Saved reward_alignment video: {video_path}")
             except Exception as e:

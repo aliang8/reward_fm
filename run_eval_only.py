@@ -8,8 +8,8 @@ Usage:
     
     # Override config values
     uv run python run_eval_only.py \
-        model_path=rewardfm/ant-rfm-qwen-prog-only-images-bs12-prog-only-more-rewind \
-        custom_eval.eval_types=[policy_ranking,reward_alignment] \
+        model_path=rewardfm/pref_prog_2frames_all \
+        custom_eval.eval_types=[reward_alignment] \
         custom_eval.reward_alignment=[reward_alignment] \
         custom_eval.policy_ranking=[policy_ranking]
 
@@ -139,30 +139,32 @@ def main(cfg: DictConfig):
         if resume_id:
             logger.info(f"Found existing wandb run ID: {resume_id}, will resume run")
 
-    
     # Initialize wandb if enabled in experiment config (only on rank 0)
     if "wandb" in exp_cfg.logging.log_to and is_rank_0():
-        config_dict = asdict(exp_cfg)
-        model_name = model_path.replace("/", "_") if "/" in model_path else model_path
-        init_kwargs = {
-            "project": exp_cfg.logging.wandb_project,
-            "entity": exp_cfg.logging.wandb_entity,
-            "name": f"eval_{model_name}",
-            "config": config_dict,
-        }
-        if exp_cfg.logging.wandb_notes:
-            init_kwargs["notes"] = exp_cfg.logging.wandb_notes
-        # Resume existing run if resume_id is found
-        if resume_id:
-            init_kwargs["id"] = resume_id
-            init_kwargs["resume"] = "must"
-        wandb.init(**init_kwargs)
-        if resume_id:
-            logger.info(f"Wandb resumed run: eval_{model_name} (ID: {resume_id})")
-        else:
-            logger.info(f"Wandb initialized for evaluation: eval_{model_name}")
-        if exp_cfg.logging.wandb_notes:
-            logger.info(f"Wandb notes: {exp_cfg.logging.wandb_notes}")
+        try:
+            config_dict = asdict(exp_cfg)
+            model_name = model_path.replace("/", "_") if "/" in model_path else model_path
+            init_kwargs = {
+                "project": exp_cfg.logging.wandb_project,
+                "entity": exp_cfg.logging.wandb_entity,
+                "name": f"eval_{model_name}",
+                "config": config_dict,
+            }
+            if exp_cfg.logging.wandb_notes:
+                init_kwargs["notes"] = exp_cfg.logging.wandb_notes
+            # Resume existing run if resume_id is found
+            if resume_id:
+                init_kwargs["id"] = resume_id
+                init_kwargs["resume"] = "must"
+            wandb.init(**init_kwargs)
+            if resume_id:
+                logger.info(f"Wandb resumed run: eval_{model_name} (ID: {resume_id})")
+            else:
+                logger.info(f"Wandb initialized for evaluation: eval_{model_name}")
+            if exp_cfg.logging.wandb_notes:
+                logger.info(f"Wandb notes: {exp_cfg.logging.wandb_notes}")
+        except Exception as e:
+            logger.error(f"Error initializing wandb: {e}")
     elif "wandb" in exp_cfg.logging.log_to:
         logger.info("Wandb logging enabled but skipped on non-rank-0 processes")
 

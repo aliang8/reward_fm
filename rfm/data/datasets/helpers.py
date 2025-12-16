@@ -21,6 +21,7 @@ class DataGenStrat(Enum):
     SUCCESSFUL = "successful"
     SUBSEQUENCE = "subsequence"
     REVERSE_PROGRESS = "reverse_progress"
+    UNIFORM_SAMPLE = "uniform_sample"
     SUBOPTIMAL = "suboptimal"
     REWOUND = "rewound"
     DIFFERENT_TASK = "different_task"
@@ -334,10 +335,21 @@ def subsample_segment_frames(
     method: str = "linspace",
     perc_start: float = 0.5,
     perc_end: float = 2.0 / 3.0,
+    start_idx: int | None = None,
+    end_idx: int | None = None,
 ) -> tuple[np.ndarray, int, int, list[int]]:
     """Choose a random segment [start_idx, end_idx) and subsample frames.
 
     Returns subsampled frames along with (start_idx, end_idx, subsampled_indices).
+
+    Args:
+        frames: Input frames array
+        max_frames: Maximum number of frames to subsample
+        method: Subsampling method ("linspace" or "random")
+        perc_start: Percentage for start bound (used if start_idx is None)
+        perc_end: Percentage for end bound (used if end_idx is None)
+        start_idx: Optional start index (if provided, overrides perc_start)
+        end_idx: Optional end index (if provided, overrides perc_end)
     """
     num_frames_total = len(frames)
 
@@ -345,31 +357,37 @@ def subsample_segment_frames(
     if num_frames_total < max_frames:
         return frames, 0, num_frames_total, list(range(num_frames_total))
 
-    # Clamp percentages to valid ranges
-    perc_start = max(0.0, min(1.0, perc_start))
-    perc_end = max(0.0, min(1.0, perc_end))
+    # If start_idx and end_idx are provided, use them directly
+    if start_idx is not None and end_idx is not None:
+        # Ensure indices are valid
+        start_idx = max(0, min(start_idx, num_frames_total - 1))
+        end_idx = max(start_idx + 1, min(end_idx, num_frames_total))
+    else:
+        # Clamp percentages to valid ranges
+        perc_start = max(0.0, min(1.0, perc_start))
+        perc_end = max(0.0, min(1.0, perc_end))
 
-    # Select start and end indices for the chosen trajectory segment
-    start_bound = int(perc_start * num_frames_total)
-    end_bound = int(perc_end * num_frames_total)
+        # Select start and end indices for the chosen trajectory segment
+        start_bound = int(perc_start * num_frames_total)
+        end_bound = int(perc_end * num_frames_total)
 
-    # Ensure end_bound is at least start_bound + 1
-    end_bound = max(end_bound, start_bound + 1)
+        # Ensure end_bound is at least start_bound + 1
+        end_bound = max(end_bound, start_bound + 1)
 
-    start_idx = random.randint(0, max(0, start_bound))
-    end_idx = random.randint(end_bound, num_frames_total)
-
-    # Ensure we have enough frames between start and end
-    attempts = 0
-    max_attempts = 10
-    while end_idx - start_idx < 5 and attempts < max_attempts:
         start_idx = random.randint(0, max(0, start_bound))
         end_idx = random.randint(end_bound, num_frames_total)
-        attempts += 1
 
-    if end_idx - start_idx < 5:
-        start_idx = 0
-        end_idx = num_frames_total
+        # Ensure we have enough frames between start and end
+        attempts = 0
+        max_attempts = 10
+        while end_idx - start_idx < 5 and attempts < max_attempts:
+            start_idx = random.randint(0, max(0, start_bound))
+            end_idx = random.randint(end_bound, num_frames_total)
+            attempts += 1
+
+        if end_idx - start_idx < 5:
+            start_idx = 0
+            end_idx = num_frames_total
 
     # Extract the chosen segment
     segment_frames = frames[start_idx:end_idx]

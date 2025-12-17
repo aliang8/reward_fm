@@ -117,6 +117,7 @@ class Logger:
         config: Optional[dict],
         notes: Optional[str] = None,
         mode: Optional[str] = None,
+        resume_id: Optional[str] = None,
     ):
         if not (self._use_wandb and self._is_main):
             return None
@@ -129,6 +130,10 @@ class Logger:
         if mode is None:
             mode = os.environ.get("WANDB_MODE", "online")
         init_kwargs["mode"] = mode
+        # Resume existing run if resume_id is provided
+        if resume_id:
+            init_kwargs["id"] = resume_id
+            init_kwargs["resume"] = "must"
         self._wandb_run = wandb.init(**init_kwargs)
         return self._wandb_run
 

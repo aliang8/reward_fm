@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """
 Simple script to upload a trained model to HuggingFace Hub.
+
+uv run python rfm/utils/upload_to_hub.py \
+    --model_dir ./checkpoints/my_model \
+    --hub_model_id rewardfm/my-rfm-model \
+    --private \
+    --commit_message "Upload trained RFM model checkpoint" \
+    --base_model "Qwen/Qwen3-VL-4B-Instruct"
 """
 
 import argparse

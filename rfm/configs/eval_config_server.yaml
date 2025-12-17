@@ -9,7 +9,7 @@ model_path: "rewardfm/ant-rfm-rewind-bs1024-pref-prog-sim"
 
 # GPU Pool settings
 num_gpus: 1  # Number of GPUs to use (null for all available)
-max_workers: null  # Max worker threads (null for auto, typically same as num_gpus)
+max_workers: 8 # Max worker threads (null for auto, typically same as num_gpus)
 
 # Evaluation parameters
 batch_size: 4  # Batch size for evaluation

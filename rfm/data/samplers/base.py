@@ -435,6 +435,53 @@ class RFMBaseSampler:
         logger.trace(f"[BASE SAMPLER] _get_rewound_traj: Successfully created rewound trajectory for ID: {traj_id}")
         return result
 
+    def _get_uniform_sample_indices(self, data) -> tuple[int, int] | None:
+        """Get start and end indices for uniform_sample strategy.
+        
+        Samples two random frames from the trajectory, one from before or after the first frame,
+        and returns them as segment bounds.
+        
+        Args:
+            data: Trajectory data (frames or embeddings) to sample from
+            
+        Returns:
+            Tuple of (start_idx, end_idx) for the segment, or None if insufficient frames
+        """
+        num_frames_total = len(data) if hasattr(data, "__len__") else data.shape[0]
+        
+        if num_frames_total < 2:
+            logger.trace(f"[BASE SAMPLER] _get_uniform_sample_indices: Not enough frames ({num_frames_total})")
+            return None
+        
+        # Sample first random frame
+        frame1_idx = random.randint(0, num_frames_total - 1)
+        
+        # Randomly choose to sample from before or after
+        if frame1_idx == 0:
+            # Can only sample after
+            frame2_idx = random.randint(1, num_frames_total - 1)
+        elif frame1_idx == num_frames_total - 1:
+            # Can only sample before
+            frame2_idx = random.randint(0, frame1_idx - 1)
+        else:
+            # Can sample from either side
+            if random.random() < 0.5:
+                # Sample from before
+                frame2_idx = random.randint(0, frame1_idx - 1)
+            else:
+                # Sample from after
+                frame2_idx = random.randint(frame1_idx + 1, num_frames_total - 1)
+        
+        # Ensure start_idx < end_idx (end_idx is exclusive)
+        start_idx = min(frame1_idx, frame2_idx)
+        end_idx = max(frame1_idx, frame2_idx) + 1
+        
+        logger.trace(
+            f"[BASE SAMPLER] _get_uniform_sample_indices: Selected segment [{start_idx}, {end_idx}) "
+            f"from {num_frames_total} total frames"
+        )
+        return start_idx, end_idx
+
     def _get_traj_from_data(self, traj: dict | Trajectory, subsample_strategy: str | None = None) -> Trajectory:
         """Load, subsample, and optionally pad trajectory data and create a Trajectory object.
 
@@ -490,9 +537,22 @@ class RFMBaseSampler:
         else:
             ds_key = traj["data_source"]
             success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+            
+            # Handle uniform_sample strategy: pick two random frames as segment bounds
+            start_idx = None
+            end_idx = None
+            if subsample_strategy == "uniform_sample":
+                uniform_indices = self._get_uniform_sample_indices(data)
+                if uniform_indices is None:
+                    # Not enough frames for uniform_sample, fall back to subsequence
+                    subsample_strategy = "subsequence"
+                else:
+                    start_idx, end_idx = uniform_indices
+            
             perc_end = success_cutoff if subsample_strategy == "successful" else 2.0 / 3.0
             subsampled, start_idx, end_idx, indices = subsample_segment_frames(
-                data, self.config.max_frames, method="linspace", perc_end=perc_end
+                data, self.config.max_frames, method="linspace", perc_end=perc_end,
+                start_idx=start_idx, end_idx=end_idx
             )
             frames_shape = subsampled.shape
             # For successful, progress previously ignored success_cutoff in computation

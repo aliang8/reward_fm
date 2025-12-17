@@ -185,6 +185,12 @@ class DataConfig:
     # Tunable strategy ratios for progress generation: [successful, rewind, different_task, subsequence, reverse_progress]
     progress_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 1, 0])
     similarity_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1])
+    use_uniform_sampling: bool = field(
+        default=False,
+        metadata={
+            "help": "If True, use uniform sampling when selecting rejected trajectories for SUBOPTIMAL and DIFFERENT_TASK strategies in preference sampling"
+        },
+    )
 
     data_source_weights: Optional[Dict[str, float]] = field(
         default=None,

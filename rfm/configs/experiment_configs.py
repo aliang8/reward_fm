@@ -72,6 +72,10 @@ class ModelConfig(PretrainedConfig):
         default=False,
         metadata={"help": "Use ReWINDScaleTransformer instead of standard ReWINDTransformer"},
     )
+    causal_mask: bool = field(
+        default=False,
+        metadata={"help": "Whether to use casual masking in ReWINDTransformer"},
+    )
     # rewind sub-config
     rewind: Optional[Dict[str, Any]] = field(default=None)
 
@@ -80,10 +84,13 @@ class ModelConfig(PretrainedConfig):
         from rfm.models.rewind_transformer_scale import ReWINDScaleTransformerConfig
 
         if self.rewind is not None and isinstance(self.rewind, dict):
+            import pdb ; pdb.set_trace()
             if self.rewind_scale_model:
-                self.rewind = ReWINDScaleTransformerConfig(**self.rewind)
+                self.rewind = ReWINDScaleTransformerConfig(
+                    **self.rewind)
             else:
-                self.rewind = ReWINDTransformerConfig(**self.rewind)
+                self.rewind = ReWINDTransformerConfig(
+                    **self.rewind)
 
 
 @dataclass

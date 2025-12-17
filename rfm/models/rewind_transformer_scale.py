@@ -33,6 +33,7 @@ class ReWINDScaleTransformerConfig(PretrainedConfig):
         num_attention_heads: int = 8,
         dropout: float = 0.1,
         max_len: int = 16,
+        causal_mask=False, 
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -43,6 +44,9 @@ class ReWINDScaleTransformerConfig(PretrainedConfig):
         self.num_attention_heads = num_attention_heads
         self.dropout = dropout
         self.max_len = max_len
+        self.causal_mask = causal_mask
+
+
 
 
 class ReWiNDScaleTransformer(PreTrainedModel):
@@ -70,8 +74,6 @@ class ReWiNDScaleTransformer(PreTrainedModel):
         self.video_proj = nn.Linear(video_feature_dim, hidden_dim)
         self.text_proj = nn.Linear(text_feature_dim, hidden_dim)
 
-        # self.first_embedding_A = nn.Parameter(torch.randn(1, 1, hidden_dim))
-        # self.first_embedding_B = nn.Parameter(torch.randn(1, 1, hidden_dim))
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=hidden_dim,
@@ -152,6 +154,13 @@ class ReWiNDScaleTransformer(PreTrainedModel):
         # 2) pred_token cannot see A_out_tokens
         mask[idx_pred, idx_Ao : idx_Ao + half] = True
         self.atten_mask = mask
+
+        self.causal_mask = None
+
+        if config.causal_mask:
+            self.causal_mask = torch.triu(torch.ones((config.max_len * 2 + 1, 
+                                                      config.max_len* 2 + 1), 
+                                                      dtype=torch.bool), diagonal=1) #  double for output token, +1 for text token
 
     def forward(
         self,
@@ -279,8 +288,11 @@ class ReWiNDScaleTransformer(PreTrainedModel):
             token_sequence = torch.cat(
                 [text_embeddings, video_embeddings, output_empty_tokens], dim=1
             )  # shape: [B, 2T + 1, D]
+            if self.causal_mask is not None:
+                self.causal_mask = self.causal_mask[: 2 * T + 1, : 2 * T + 1]
+                self.causal_mask = self.causal_mask.to(token_sequence.device)
 
-            token_embeddings = self.transformer(token_sequence)
+            token_embeddings = self.transformer(token_sequence, src_key_padding_mask=None, mask=self.causal_mask)
             D = token_embeddings.shape[-1]
             final_embeddings = token_embeddings[:, 1 + T :, :]  # take the output empty token embeddings
 
@@ -297,7 +309,6 @@ class ReWiNDScaleTransformer(PreTrainedModel):
             success_logits = {"A": success_logits, "B": None}
             output.progress_logits = progress_logits
             output.success_logits = success_logits
-        print("ReWiNDScaleTransformer forward pass complete.")
         return output, timing_raw
 
 

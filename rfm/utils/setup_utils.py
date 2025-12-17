@@ -325,7 +325,7 @@ def setup_model_and_processor(
 
             rewind_config = cfg.rewind if cfg.rewind is not None else ReWINDTransformerConfig()
             if cfg.rewind_scale_model:
-                rewind_config = ReWINDScaleTransformerConfig()
+                rewind_config = ReWINDScaleTransformerConfig(causal_mask=cfg.causal_mask)
                 model = ReWiNDScaleTransformer(
                     config=rewind_config,
                     processor=processor,

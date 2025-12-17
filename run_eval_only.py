@@ -31,7 +31,7 @@ from omegaconf import OmegaConf, DictConfig
 
 from rfm.configs.eval_configs import OfflineEvalConfig
 from rfm.configs.experiment_configs import ExperimentConfig
-from rfm.evals.eval_utils import load_model_from_hf, load_wandb_run_info
+from rfm.utils.save import load_model_from_hf, load_wandb_run_info
 from rfm.trainers import RFMHeadsTrainer, RFMVQATrainer, SingleFrameTrainer
 from rfm.utils.distributed import is_rank_0
 from rfm.utils.logger import get_logger
@@ -192,6 +192,7 @@ def main(cfg: DictConfig):
     # Run custom evaluations
     # This method creates datasets internally based on config.custom_eval settings
     metrics = trainer._run_custom_evaluations(output_dir=output_dir)
+    # metrics = trainer._run_custom_evaluations()
 
     # Save evaluation metrics to JSON file
     if metrics and is_rank_0():

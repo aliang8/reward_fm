@@ -1,5 +1,6 @@
 import collections
 import copy
+import json
 import os
 import random
 from typing import Dict
@@ -1833,6 +1834,50 @@ class RFMHeadsTrainer(Trainer):
 
         return eval_metrics
 
+    def _save_eval_results_json(self, eval_results, eval_type, ds_name, output_dir):
+        """Save eval_results as JSON file.
+        
+        Args:
+            eval_results: List of evaluation result dictionaries
+            eval_type: Type of evaluation (e.g., "reward_alignment", "policy_ranking")
+            ds_name: Dataset name
+            output_dir: Directory to save the JSON file
+        """
+        
+        def serialize_value(value):
+            """Recursively serialize a value to JSON-compatible format."""
+            if isinstance(value, np.ndarray):
+                return value.tolist()
+            elif isinstance(value, (np.integer, np.floating)):
+                return float(value)
+            elif isinstance(value, (np.bool_, bool)):
+                return bool(value)
+            elif isinstance(value, dict):
+                return {k: serialize_value(v) for k, v in value.items()}
+            elif isinstance(value, list):
+                return [serialize_value(v) for v in value]
+            elif isinstance(value, (int, float, str, type(None))):
+                return value
+            else:
+                # Fallback: try to convert to string
+                return str(value)
+        
+        # Serialize eval_results
+        serialized_results = [serialize_value(result) for result in eval_results]
+        
+        # Create output directory if it doesn't exist
+        eval_results_dir = os.path.join(output_dir, "eval_results")
+        os.makedirs(eval_results_dir, exist_ok=True)
+        
+        # Create filename: {eval_type}_{ds_name}.json
+        filename = f"{eval_type}_{ds_name}.json"
+        filepath = os.path.join(eval_results_dir, filename)
+        
+        # Save to JSON file
+        with open(filepath, "w") as f:
+            json.dump(serialized_results, f, indent=2)
+        logger.info(f"Saved {len(eval_results)} eval results to: {filepath}")
+
     def _cleanup_eval_dataset(self, dataset, dataloader, eval_results):
         """Clean up dataset, dataloader, and eval_results after evaluation."""
         logger.info(f"  Cleaning up dataset and eval_results")
@@ -1944,9 +1989,13 @@ class RFMHeadsTrainer(Trainer):
             # Compute metrics and create visualizations (only on main process)
             eval_metrics = {}
             if self.accelerator.is_main_process:
-                # Get output_dir from config if available (for offline eval)
-                output_dir = getattr(self.config, "output_dir", None)
-                eval_metrics = self._compute_and_log_eval_metrics(eval_type, eval_results, ds_name, eval_step, output_dir=output_dir)
+                # Use output_dir parameter if provided, otherwise fall back to config
+                actual_output_dir = output_dir if output_dir is not None else getattr(self.config, "output_dir", None)
+                eval_metrics = self._compute_and_log_eval_metrics(eval_type, eval_results, ds_name, eval_step, output_dir=actual_output_dir)
+                
+                # Save eval_results as JSON if output_dir is available
+                if actual_output_dir is not None:
+                    self._save_eval_results_json(eval_results, eval_type, ds_name, actual_output_dir)
 
             # Cleanup
             self._cleanup_eval_dataset(dataset, dataloader, eval_results)

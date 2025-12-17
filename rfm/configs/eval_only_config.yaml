@@ -16,4 +16,4 @@ model_path: "logs/rfm_st_2gpu_bs16_oxe_mw_rewind5x_vqa/ckpt-avg-6metrics=0.7242_
 # Custom evaluation configuration
 # This will override the custom_eval settings from the checkpoint's config.yaml
 custom_eval:
-  eval_types: ["policy_ranking", "confusion_matrix"]  # Options: ["reward_alignment", "policy_ranking", "confusion_matrix"]
+  eval_types: ["reward_alignment", "policy_ranking", "confusion_matrix"]  # Options: ["reward_alignment", "policy_ranking", "confusion_matrix"]

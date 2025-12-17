@@ -600,6 +600,10 @@ def run_policy_ranking_eval(results: list[dict[str, Any]], progress_pred_type: s
     all_succ_subopt_diffs = []
     all_subopt_fail_diffs = []
     all_succ_fail_diffs = []
+    
+    # Track ranking accuracy: count of correct pairs and total pairs
+    all_correct_pairs = []
+    all_total_pairs = []
 
     if use_partial_success:
         # RoboArena: Sample pairs of trajectories, rank based on partial_success vs predicted rewards
@@ -620,29 +624,43 @@ def run_policy_ranking_eval(results: list[dict[str, Any]], progress_pred_type: s
             # Create pairs: for each pair (i, j) where i < j
             gold_ranks = []
             pred_ranks = []
+            correct_pairs = 0
+            total_pairs = 0
 
             for i in range(n):
                 for j in range(i + 1, n):
-                    # Gold rank: 1 if i has higher partial_success, 0 otherwise
-                    if partial_successes[i] > partial_successes[j]:
-                        gold_ranks.append(1.0)
-                    elif partial_successes[i] < partial_successes[j]:
-                        gold_ranks.append(0.0)
-                    else:
-                        # Skip ties
+                    # Skip if partial_success values are the same
+                    if partial_successes[i] == partial_successes[j]:
                         continue
+                    
+                    total_pairs += 1
+                    
+                    # Gold rank: 1 if i has higher partial_success, 0 otherwise
+                    gold_rank = 1.0 if partial_successes[i] > partial_successes[j] else 0.0
+                    gold_ranks.append(gold_rank)
 
                     # Predicted rank: 1 if i has higher predicted reward, 0 otherwise
                     if predicted_rewards[i] > predicted_rewards[j]:
-                        pred_ranks.append(1.0)
+                        pred_rank = 1.0
                     elif predicted_rewards[i] < predicted_rewards[j]:
-                        pred_ranks.append(0.0)
+                        pred_rank = 0.0
                     else:
-                        # For ties, use 0.5 (middle ground)
-                        pred_ranks.append(0.5)
+                        # For ties, use 0.5 (middle ground) - count as incorrect
+                        pred_rank = 0.5
+                    pred_ranks.append(pred_rank)
+                    
+                    # Check if ranking is correct (gold_rank matches pred_rank)
+                    if gold_rank == pred_rank:
+                        correct_pairs += 1
 
             if len(gold_ranks) == 0:
                 continue
+            
+            # Store ranking accuracy for this task
+            if total_pairs > 0:
+                task_ranking_acc = correct_pairs / total_pairs
+                all_correct_pairs.append(correct_pairs)
+                all_total_pairs.append(total_pairs)
 
             # Compute Spearman correlation between gold and predicted rankings
             spearman_corr = compute_spearman(gold_ranks, pred_ranks)
@@ -748,6 +766,31 @@ def run_policy_ranking_eval(results: list[dict[str, Any]], progress_pred_type: s
                     avg_rewards_per_quality[q] = avg_reward
                     quality_ranks.append(quality_order[q])
                     avg_reward_values.append(avg_reward)
+            
+            # Compute ranking accuracy: check pairs where quality ordering matches predicted reward ordering
+            correct_pairs = 0
+            total_pairs = 0
+            
+            # Check all pairs of quality labels
+            for i, quality1 in enumerate(present_labels):
+                for quality2 in present_labels[i + 1:]:
+                    # Get average rewards for each quality
+                    avg_reward1 = avg_rewards_per_quality[quality1]
+                    avg_reward2 = avg_rewards_per_quality[quality2]
+                    
+                    # Expected ordering: higher quality should have higher reward
+                    expected_order = quality_order[quality1] > quality_order[quality2]
+                    actual_order = avg_reward1 > avg_reward2
+                    
+                    total_pairs += 1
+                    if expected_order == actual_order:
+                        correct_pairs += 1
+            
+            # Store ranking accuracy for this task
+            if total_pairs > 0:
+                task_ranking_acc = correct_pairs / total_pairs
+                all_correct_pairs.append(correct_pairs)
+                all_total_pairs.append(total_pairs)
 
             spearman_rewind = None
             if len(quality_ranks) >= 2:
@@ -786,13 +829,29 @@ def run_policy_ranking_eval(results: list[dict[str, Any]], progress_pred_type: s
     if len(all_spearman) == 0:
         return {"error": "No valid correlations computed"}, {}, {}
 
+    # Compute overall ranking accuracy
+    ranking_acc = None
+    total_pairs = 0
+    if all_total_pairs:
+        total_correct = sum(all_correct_pairs)
+        total_pairs = sum(all_total_pairs)
+        ranking_acc = total_correct / total_pairs if total_pairs > 0 else 0.0
+
     # Average metrics across all tasks
     policy_ranking_metrics = {
         "spearman": np.mean(all_spearman).item(),
         "spearman_rewind": np.mean(all_spearman_rewind).item() if all_spearman_rewind else None,
         "avg_succ_subopt_diff": np.mean(all_succ_subopt_diffs).item() if all_succ_subopt_diffs else None,
+        "min_succ_subopt_diff": np.min(all_succ_subopt_diffs).item() if all_succ_subopt_diffs else None,
+        "max_succ_subopt_diff": np.max(all_succ_subopt_diffs).item() if all_succ_subopt_diffs else None,
         "avg_subopt_fail_diff": np.mean(all_subopt_fail_diffs).item() if all_subopt_fail_diffs else None,
+        "min_subopt_fail_diff": np.min(all_subopt_fail_diffs).item() if all_subopt_fail_diffs else None,
+        "max_subopt_fail_diff": np.max(all_subopt_fail_diffs).item() if all_subopt_fail_diffs else None,
         "avg_succ_fail_diff": np.mean(all_succ_fail_diffs).item() if all_succ_fail_diffs else None,
+        "min_succ_fail_diff": np.min(all_succ_fail_diffs).item() if all_succ_fail_diffs else None,
+        "max_succ_fail_diff": np.max(all_succ_fail_diffs).item() if all_succ_fail_diffs else None,
+        "ranking_acc": ranking_acc,
+        "ranking_total_pairs": total_pairs,
     }
 
     return policy_ranking_metrics, task_groups, task_details

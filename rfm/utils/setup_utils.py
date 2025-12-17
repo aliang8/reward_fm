@@ -54,7 +54,9 @@ from rfm.data.datasets.custom_eval import CustomEvalDataset
 from rfm.models import RFM, RFMVQA, ReWiNDTransformer
 from rfm.models.rewind_transformer import ReWINDTransformerConfig
 from rfm.models.rewind_transformer_scale import ReWINDScaleTransformerConfig, ReWiNDScaleTransformer
-from rfm.utils.logger import rank_0_info
+from rfm.utils.logger import get_logger
+
+logger = get_logger()
 from rfm.utils.save import resolve_checkpoint_path, parse_hf_model_id_and_revision, find_best_model_tag
 
 
@@ -78,13 +80,13 @@ def setup_model_and_processor(
 
     # Convert string dtype to torch dtype (used across all model loading paths)
     torch_dtype = getattr(torch, cfg.torch_dtype, torch.bfloat16)
-    rank_0_info(f"Using torch dtype: {torch_dtype}")
+    logger.info(f"Using torch dtype: {torch_dtype}")
 
     # Check if unsloth should be used
     use_unsloth = cfg.use_unsloth and "Qwen" in cfg.base_model_id
 
     if use_unsloth:
-        rank_0_info("Unsloth mode enabled for faster training")
+        logger.info("Unsloth mode enabled for faster training")
 
     # If quantization is enabled, use bitsandbytes (unless using unsloth)
     if cfg.quantization and not use_unsloth:
@@ -98,10 +100,10 @@ def setup_model_and_processor(
     try:
         import flash_attn
 
-        rank_0_info("Flash Attention 2 CUDA is available")
+        logger.info("Flash Attention 2 CUDA is available")
         has_flash_attn = True
     except:
-        rank_0_info("Flash Attention 2 CUDA is not available")
+        logger.info("Flash Attention 2 CUDA is not available")
         has_flash_attn = False
 
     if has_flash_attn:
@@ -121,7 +123,7 @@ def setup_model_and_processor(
                 use_fast=True,
             )
 
-            rank_0_info(f"SmolVLM Processor: {processor}")
+            logger.info(f"SmolVLM Processor: {processor}")
 
             base_model = AutoModelForImageTextToText.from_pretrained(
                 cfg.base_model_id,
@@ -135,7 +137,7 @@ def setup_model_and_processor(
         elif "Qwen" in cfg.base_model_id:
             # Check if unsloth should be used
             if use_unsloth:
-                rank_0_info("Using Unsloth for faster training with Qwen model")
+                logger.info("Using Unsloth for faster training with Qwen model")
 
                 # Load model with unsloth
                 base_model, tokenizer = FastVisionModel.from_pretrained(
@@ -170,12 +172,12 @@ def setup_model_and_processor(
                 # Select appropriate model classes based on version and model type
                 if is_qwen3:
                     qwen_model_cls = Qwen3VLModel if cfg.model_type == "default" else Qwen3VLForConditionalGeneration
-                    rank_0_info("Using Qwen3 models")
+                    logger.info("Using Qwen3 models")
                 else:
                     qwen_model_cls = (
                         Qwen2_5_VLModel if cfg.model_type == "default" else Qwen2_5_VLForConditionalGeneration
                     )
-                    rank_0_info("Using Qwen2/2.5 models")
+                    logger.info("Using Qwen2/2.5 models")
 
                 base_model = qwen_model_cls.from_pretrained(
                     cfg.base_model_id,
@@ -196,7 +198,7 @@ def setup_model_and_processor(
                 # max_frames=cfg.data.max_frames,
                 padding_side="left",
             )
-            rank_0_info(f"Qwen Processor: {processor}")
+            logger.info(f"Qwen Processor: {processor}")
         else:
             raise ValueError(f"Invalid base model id: {cfg.base_model_id}")
 
@@ -223,7 +225,7 @@ def setup_model_and_processor(
             for token in special_tokens:
                 if token not in processor.tokenizer.get_vocab():
                     processor.tokenizer.add_special_tokens({"additional_special_tokens": [token]})
-                    rank_0_info(f"Added special token: {token}")
+                    logger.info(f"Added special token: {token}")
 
             # Resize token embeddings if new tokens were added
             vocab_size = (
@@ -233,12 +235,12 @@ def setup_model_and_processor(
             )
 
             if len(processor.tokenizer) != vocab_size:
-                rank_0_info(f"Resizing token embeddings from {vocab_size} to {len(processor.tokenizer)}")
+                logger.info(f"Resizing token embeddings from {vocab_size} to {len(processor.tokenizer)}")
                 base_model.resize_token_embeddings(len(processor.tokenizer))
-                rank_0_info(f"Resized token embeddings to {len(processor.tokenizer)}")
+                logger.info(f"Resized token embeddings to {len(processor.tokenizer)}")
 
         # Initialize RFM model wrapper with the pre-loaded base model
-        rank_0_info("Initializing RFM model...")
+        logger.info("Initializing RFM model...")
         tokenizer = processor.tokenizer
 
         model = model_cls(
@@ -255,11 +257,15 @@ def setup_model_and_processor(
 
             if cfg.model_type != "vqa":
                 if "Qwen2.5" in cfg.base_model_id:
-                    before = model.model.visual.blocks[0].mlp.down_proj.weight
+                    before_visual = model.model.visual.blocks[0].mlp.down_proj.weight
                     before_progress_head = model.progress_head[0].weight
+                    before_lm_embed_tokens = model.model.language_model.embed_tokens.weight
+                    before_lm_layer = model.model.language_model.layers[0].mlp.up_proj.weight
                 elif "Qwen3" in cfg.base_model_id:
-                    before = model.model.visual.blocks[0].mlp.linear_fc1.weight
+                    before_visual = model.model.visual.blocks[0].mlp.linear_fc1.weight
                     before_progress_head = model.progress_head[0].weight
+                    before_lm_embed_tokens = model.model.language_model.embed_tokens.weight
+                    before_lm_layer = model.model.language_model.layers[0].mlp.up_proj.weight
 
             # load the model from the evaluation path
             model = model_cls.from_pretrained(
@@ -273,22 +279,36 @@ def setup_model_and_processor(
             )
             if cfg.model_type != "vqa":
                 if "Qwen2.5" in cfg.base_model_id:
-                    after = model.model.visual.blocks[0].mlp.down_proj.weight
+                    after_visual = model.model.visual.blocks[0].mlp.down_proj.weight
                     after_progress_head = model.progress_head[0].weight
+                    after_lm_embed_tokens = model.model.language_model.embed_tokens.weight
+                    after_lm_layer_mlp_up_proj = model.model.language_model.layers[0].mlp.up_proj.weight
                 elif "Qwen3" in cfg.base_model_id:
-                    after = model.model.visual.blocks[0].mlp.linear_fc1.weight
+                    after_visual = model.model.visual.blocks[0].mlp.linear_fc1.weight
                     after_progress_head = model.progress_head[0].weight
+                    after_lm_embed_tokens = model.model.language_model.embed_tokens.weight
+                    after_lm_layer_mlp_up_proj = model.model.language_model.layers[0].mlp.up_proj.weight
 
-                rank_0_info(f"Before: {before.shape}, {before.sum()} | After: {after.shape}, {after.sum()}")
-                rank_0_info(
+                logger.info(f"Before visual: {before_visual.shape}, {before_visual.sum()} | After visual: {after_visual.shape}, {after_visual.sum()}")
+                logger.info(
                     f"Before progress head: {before_progress_head.shape}, {before_progress_head.sum()} | After progress head: {after_progress_head.shape}, {after_progress_head.sum()}"
                 )
+                logger.info(
+                    f"Before LM embed tokens: {before_lm_embed_tokens.shape}, {before_lm_embed_tokens.sum()} | After LM embed tokens: {after_lm_embed_tokens.shape}, {after_lm_embed_tokens.sum()}"
+                )
+                logger.info(
+                    f"Before LM layer: {before_lm_layer.shape}, {before_lm_layer.sum()} | After LM layer: {after_lm_layer_mlp_up_proj.shape}, {after_lm_layer_mlp_up_proj.sum()}"
+                )
                 # check that before and after are different
-                if torch.allclose(before, after):
-                    rank_0_info("Before and after are the same! Check if you loaded the pretrained model correctly")
+                if torch.allclose(before_visual, after_visual):
+                    logger.warning("Before and after visual are the same! Check if you loaded the pretrained model correctly")
                 if torch.allclose(before_progress_head, after_progress_head):
-                    rank_0_info(
+                    logger.warning(
                         "Before and after progress head are the same! Check if you loaded the pretrained model correctly"
+                    )
+                if torch.allclose(before_lm_embed_tokens, after_lm_embed_tokens):
+                    logger.warning(
+                        "Before and after LM embed tokens are the same! Check if you loaded the pretrained model correctly"
                     )
 
     # elif "rewind_transformer" in cfg.base_model_id or "rewind_scale_transformer" in cfg.base_model_id:
@@ -321,7 +341,7 @@ def setup_model_and_processor(
             for p in text_encoder.parameters():
                 p.requires_grad = train_text
 
-            rank_0_info("Initializing ReWiND model...")
+            logger.info("Initializing ReWiND model...")
 
             rewind_config = cfg.rewind if cfg.rewind is not None else ReWINDTransformerConfig()
             if cfg.rewind_scale_model:
@@ -342,8 +362,8 @@ def setup_model_and_processor(
                     text_encoder=text_encoder,
                 )
 
-    rank_0_info("Model architecture initialized")
-    rank_0_info(f"Model architecture: {model}")
+    logger.info("Model architecture initialized")
+    logger.info(f"Model architecture: {model}")
 
     # Configure which parts of the model to train based on config
     for name, param in model.named_parameters():
@@ -384,21 +404,21 @@ def setup_model_and_processor(
             if "lm_head" in name:
                 param.requires_grad = False
 
-    rank_0_info("Training configuration:")
-    rank_0_info(f"  - Vision encoder: {cfg.train_vision_encoder}")
-    rank_0_info(f"  - Language model: {cfg.train_language_model}")
-    rank_0_info(f"  - Progress head: {cfg.train_progress_head}")
-    rank_0_info(f"  - Success head: {getattr(cfg, 'train_success_head', False)}")
-    rank_0_info(f"  - Preference head: {cfg.train_preference_head}")
-    rank_0_info(f"  - Similarity head: {cfg.train_similarity_head}")
+    logger.info("Training configuration:")
+    logger.info(f"  - Vision encoder: {cfg.train_vision_encoder}")
+    logger.info(f"  - Language model: {cfg.train_language_model}")
+    logger.info(f"  - Progress head: {cfg.train_progress_head}")
+    logger.info(f"  - Success head: {getattr(cfg, 'train_success_head', False)}")
+    logger.info(f"  - Preference head: {cfg.train_preference_head}")
+    logger.info(f"  - Similarity head: {cfg.train_similarity_head}")
 
     for name, param in model.named_parameters():
         if param.requires_grad:
-            rank_0_info(f"{name:60} | {param.shape} | RG: {param.requires_grad}")
+            logger.info(f"{name:60} | {param.shape} | RG: {param.requires_grad}")
 
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     all_params = sum(p.numel() for p in model.parameters())
-    rank_0_info(
+    logger.info(
         f"trainable params: {trainable_params:,} || all params: {all_params:,} || trainable%: {100 * trainable_params / all_params:.4f}"
     )
     return tokenizer, processor, model
@@ -407,7 +427,7 @@ def setup_model_and_processor(
 def setup_peft_model(rfm_model: RFM, cfg: PEFTConfig) -> RFM:
     """Shared function to apply PEFT configuration to the model"""
 
-    rank_0_info("Using PEFT/LoRA training...")
+    logger.info("Using PEFT/LoRA training...")
     lora_config = LoraConfig(
         r=cfg.r,
         lora_alpha=cfg.lora_alpha,
@@ -417,13 +437,13 @@ def setup_peft_model(rfm_model: RFM, cfg: PEFTConfig) -> RFM:
     )
     if cfg.peft_vision_encoder:
         # vision backbone is frozen, but we can still train the LoRA parameters
-        rank_0_info("Attaching LoRA to only the vision encoder...")
+        logger.info("Attaching LoRA to only the vision encoder...")
         rfm_model.base_model.model.visual = get_peft_model(rfm_model.base_model.model.visual, lora_config)
 
     # Count trainable parameters manually - defer printing until after FSDP setup
     trainable_params = sum(p.numel() for p in rfm_model.parameters() if p.requires_grad)
     all_params = sum(p.numel() for p in rfm_model.parameters())
-    rank_0_info(
+    logger.info(
         f"AFTER PEFT: trainable params: {trainable_params:,} || all params: {all_params:,} || trainable%: {100 * trainable_params / all_params:.4f}"
     )
     return rfm_model

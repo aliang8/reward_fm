@@ -44,6 +44,7 @@ from rfm.utils.setup_utils import (
 )
 from rfm.utils.logger import Logger
 from rfm.utils.distributed import banner
+from rfm.utils.config_utils import display_config, convert_hydra_to_dataclass
 import datasets
 
 datasets.logging.set_verbosity_error()
@@ -152,6 +153,19 @@ def train(cfg: ExperimentConfig):
         yaml.dump(config_dict, f, default_flow_style=False, indent=2)
     rank_0_print(f"Saved training config to: {config_save_path}")
 
+    # Try to load existing wandb info if resuming training
+    wandb_info_path = os.path.join(output_dir, "wandb_info.json")
+    resume_id = None
+    if os.path.exists(wandb_info_path):
+        try:
+            with open(wandb_info_path) as f:
+                wandb_info = json.load(f)
+            resume_id = wandb_info.get("wandb_id")
+            if resume_id:
+                rank_0_print(f"Found existing wandb run ID: {resume_id}, will resume run")
+        except Exception as e:
+            rank_0_print(f"Could not load wandb info: {e}")
+
     # Initialize wandb via logger if requested
     if "wandb" in (cfg.logging.log_to or []) and is_rank_0():
         # Convert config to dict for wandb using dataclass asdict
@@ -163,8 +177,12 @@ def train(cfg: ExperimentConfig):
             config=config_dict,
             notes=cfg.logging.wandb_notes,
             mode=cfg.logging.wandb_mode,
+            resume_id=resume_id,
         )
-        rank_0_print(f"Wandb initialized: {run_name}")
+        if resume_id:
+            rank_0_print(f"Wandb resumed run: {run_name} (ID: {resume_id})")
+        else:
+            rank_0_print(f"Wandb initialized: {run_name}")
         if cfg.logging.wandb_notes:
             rank_0_print(f"Wandb notes: {cfg.logging.wandb_notes}")
 
@@ -267,24 +285,6 @@ def train(cfg: ExperimentConfig):
     rank_0_print(f"Training complete! Check {cfg.training.output_dir} for checkpoints and final model.")
 
 
-def display_config(cfg: ExperimentConfig):
-    """Display the configuration in a nice Rich format."""
-    if not is_rank_0():
-        return  # Only display config on rank 0
-
-    console = Console()
-    console.print(cfg)
-
-
-def convert_hydra_to_dataclass(cfg: DictConfig) -> ExperimentConfig:
-    """Convert Hydra DictConfig to ExperimentConfig dataclass."""
-    # Convert to dict and then to dataclass
-    # Use structured config if available, otherwise convert manually
-    if OmegaConf.is_struct(cfg):
-        cfg_dict = OmegaConf.to_container(cfg, resolve=True, structured_config_mode="convert")
-    else:
-        cfg_dict = OmegaConf.to_container(cfg, resolve=True)
-    return ExperimentConfig(**cfg_dict)
 
 
 @hydra_main(version_base=None, config_path="rfm/configs", config_name="config")
@@ -292,7 +292,7 @@ def main(cfg: DictConfig):
     banner("Starting RFM Training")
 
     # Convert Hydra config to dataclass
-    exp_cfg = convert_hydra_to_dataclass(cfg)
+    exp_cfg = convert_hydra_to_dataclass(cfg, ExperimentConfig)
 
     # Display the configuration in a nice Rich format
     display_config(exp_cfg)

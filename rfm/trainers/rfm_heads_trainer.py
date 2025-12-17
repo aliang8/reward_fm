@@ -1,8 +1,12 @@
 import collections
 import copy
+import json
 import os
+import random
 from typing import Dict
 
+import cv2
+import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -15,8 +19,10 @@ from tqdm import tqdm
 from transformers import Trainer
 
 from rfm.data.datasets.base import resolve_dataset_keys
+from rfm.data.datasets.helpers import load_frames_from_npz
 from rfm.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
 from rfm.evals.compile_results import compute_eval_metrics
+from rfm.evals.eval_metrics_utils import compute_pearson, compute_spearman
 from rfm.models.utils import ModelOutput
 from rfm.utils.distributed import banner, get_rank, is_rank_0, log_fsdp_diagnostics
 from rfm.utils.logger import Logger, get_logger, log_memory_usage
@@ -25,6 +31,7 @@ from rfm.utils.setup_utils import setup_batch_collator, setup_custom_eval_datase
 from rfm.utils.tensor_utils import t2n
 from rfm.utils.timer import _timer
 from rfm.utils.video_utils import create_policy_ranking_grid, create_video_grid_with_progress
+from PIL import Image, ImageDraw, ImageFont
 
 logger = get_logger()
 
@@ -663,7 +670,11 @@ class RFMHeadsTrainer(Trainer):
         logger.trace("logging global metadata")
         global_metadata = reduce_metrics_with_accelerate(self.global_metadata, self.accelerator, aggregate_method="sum")
         logger.trace("finished aggregating global metadata")
-        log_global = {f"counts/{key}": global_metadata[key] for key in global_metadata}
+        
+        # Convert counts to fractions of total samples
+        total_samples = global_metadata["total_samples"]
+        log_global = {f"counts/{key}": value / total_samples for key, value in global_metadata.items() if key != "total_samples"}
+        
         log_data.update(log_global)
 
         # Log optimizer and gradient statistics
@@ -969,7 +980,561 @@ class RFMHeadsTrainer(Trainer):
 
         return batch_results, outputs
 
-    def _compute_and_log_eval_metrics(self, eval_type, eval_results, ds_name, eval_step):
+    def _save_reward_alignment_videos(
+        self, video_frames_list, plots, eval_results, output_dir, ds_name, trajectory_progress_data=None
+    ):
+        # Check if dataset is RoboArena
+        is_roboarena = False
+        if eval_results and len(eval_results) > 0:
+            first_data_source = eval_results[0].get("data_source", "")
+            is_roboarena = "roboarena" in str(first_data_source).lower()
+
+        # Group eval_results by trajectory ID (like compile_results.py does)
+        # Since compile_results processes trajectories in order and creates video_frames_list/plots
+        # in that same order, we can reconstruct the mapping by collecting unique trajectory IDs
+        processed_trajectory_ids = []
+        for r in eval_results:
+            trajectory_id = r.get("id")
+            if trajectory_id and trajectory_id not in processed_trajectory_ids:
+                processed_trajectory_ids.append(trajectory_id)
+
+        saved_count = 0
+        for idx, (frames, plot) in enumerate(zip(video_frames_list, plots)):
+            if frames is None or idx >= len(processed_trajectory_ids):
+                continue
+
+            trajectory_id = processed_trajectory_ids[idx]
+            # Get all results for this trajectory
+            results_for_trajectory = [r for r in eval_results if r.get("id") == trajectory_id]
+            results_for_trajectory.sort(key=lambda r: r.get("metadata", {}).get("subsequence_end", 0))
+            
+            if not results_for_trajectory:
+                continue
+                
+            result = results_for_trajectory[0]
+            data_source = result.get("data_source", "unknown")
+            quality_label = result.get("quality_label", "unknown")
+            traj_id = result.get("id", f"traj_{idx}")
+            partial_success = result.get("partial_success")
+            task = result.get("task", "unknown")
+
+            # Build directory structure: {data_source}/{quality_label}/
+            save_dir = os.path.join(output_dir, "reward_alignment_videos", str(data_source), str(quality_label))
+            os.makedirs(save_dir, exist_ok=True)
+
+            # Build filename
+            if is_roboarena and partial_success is not None:
+                # For RoboArena: {quality_label}_{partial_success}_{traj_id}.mp4
+                filename = f"{quality_label}_{partial_success}_{traj_id}.mp4"
+            else:
+                # Standard: {traj_id}.mp4
+                filename = f"{traj_id}.mp4"
+
+            video_path = os.path.join(save_dir, filename)
+
+            # Load original frames at full resolution from video_path
+            video_path_from_result = result.get("video_path")
+            original_frames = load_frames_from_npz(video_path_from_result)
+            # frames are in (T, H, W, C) format from load_frames_from_npz
+            if original_frames.shape[-1] == 3:
+                frames_rgb = original_frames.astype(np.uint8)
+            elif original_frames.shape[1] == 3:
+                # If in (T, C, H, W) format, transpose to (T, H, W, C)
+                frames_rgb = original_frames.transpose(0, 2, 3, 1).astype(np.uint8)
+            else:
+                frames_rgb = original_frames.astype(np.uint8)
+            
+            # Ensure frames are in correct range [0, 255]
+            if frames_rgb.max() <= 1.0:
+                frames_rgb = (frames_rgb * 255).astype(np.uint8)
+            else:
+                frames_rgb = np.clip(frames_rgb, 0, 255).astype(np.uint8)
+
+            # Get progress data for this trajectory (should always be available)
+            progress_pred = None
+            target_progress = None
+            if trajectory_progress_data and idx < len(trajectory_progress_data):
+                traj_data = trajectory_progress_data[idx]
+                progress_pred = traj_data.get("progress_pred")
+                target_progress = traj_data.get("target_progress")
+            
+            # If we don't have progress data from trajectory_progress_data, extract from results_for_trajectory
+            if progress_pred is None or target_progress is None:
+                progress_pred = []
+                target_progress = []
+                for r in results_for_trajectory:
+                    pred = r.get("progress_pred")
+                    tgt = r.get("target_progress")
+                    if pred is not None:
+                        # Use prediction at current timestep (or last if past max length)
+                        timestep = len(progress_pred)
+                        if timestep >= len(pred) - 1:
+                            progress_pred.append(float(pred[-1]))
+                        else:
+                            progress_pred.append(float(pred[timestep]))
+                    else:
+                        progress_pred.append(0.0)
+                    
+                    if tgt is not None and len(tgt) > 0:
+                        target_progress.append(float(tgt[-1]))
+                    else:
+                        target_progress.append(0.0)
+                
+                # Handle relative progress type
+                if self.config.data.progress_pred_type == "relative":
+                    progress_pred = np.cumsum(np.array(progress_pred)).tolist()
+                    target_progress = np.cumsum(np.array(target_progress)).tolist()
+
+            # Get success data for this trajectory (if available)
+            success_probs = None
+            success_labels = None
+            for r in results_for_trajectory:
+                if r.get("success_probs") is not None:
+                    if success_probs is None:
+                        success_probs = []
+                    sp = r.get("success_probs")
+                    if sp is not None:
+                        # Use probability at current timestep (or last if past max length)
+                        timestep = len(success_probs)
+                        if isinstance(sp, (list, np.ndarray)):
+                            if timestep >= len(sp) - 1:
+                                success_probs.append(float(sp[-1]))
+                            else:
+                                success_probs.append(float(sp[timestep]))
+                        else:
+                            success_probs.append(float(sp))
+                    else:
+                        success_probs.append(0.0)
+                
+                if r.get("success_labels") is not None:
+                    if success_labels is None:
+                        success_labels = []
+                    sl = r.get("success_labels")
+                    if sl is not None:
+                        # Use label at current timestep (or last if past max length)
+                        timestep = len(success_labels)
+                        if isinstance(sl, (list, np.ndarray)):
+                            if timestep >= len(sl) - 1:
+                                success_labels.append(float(sl[-1]))
+                            else:
+                                success_labels.append(float(sl[timestep]))
+                        else:
+                            success_labels.append(float(sl))
+                    else:
+                        success_labels.append(0.0)
+            
+            # Ensure we have progress data (should always be available)
+            if progress_pred is None or target_progress is None:
+                logger.warning(f"No progress data available for trajectory {traj_id}, skipping video")
+                continue
+
+            # Create matplotlib animated plot video
+            # Define DPI for animation quality
+            fig_dpi = 300
+            
+            # Use matplotlib animation to save video with subplots
+            try:
+                # Compute metrics
+                last_preds = np.array(progress_pred)
+                last_targets = np.array(target_progress)
+                
+                # Check if this is a failure dataset
+                from rfm.data.dataset_category import is_failure
+                is_failure_dataset = is_failure(data_source)
+                
+                if is_failure_dataset:
+                    traj_mse = 0.0
+                    traj_pearson = 0.0
+                    traj_spearman = 0.0
+                else:
+                    traj_mse = float(np.mean((last_targets - last_preds) ** 2))
+                    traj_pearson = compute_pearson(last_targets.tolist(), last_preds.tolist())
+                    traj_spearman = compute_spearman(last_targets.tolist(), last_preds.tolist())
+                    
+                    # Handle NaN values
+                    traj_pearson = float(traj_pearson) if not np.isnan(traj_pearson) else 0.0
+                    traj_spearman = float(traj_spearman) if not np.isnan(traj_spearman) else 0.0
+                
+                # Determine number of subplots: 3 if success data available, 2 otherwise
+                has_success_data = success_probs is not None and len(success_probs) > 0
+                num_subplots = 3 if has_success_data else 2
+                
+                # Create figure with subplots: video, progress plot, and optionally success plot
+                if has_success_data:
+                    fig_anim, (ax_video, ax_progress, ax_success) = plt.subplots(1, 3, figsize=(24, 8), dpi=fig_dpi)
+                else:
+                    fig_anim, (ax_video, ax_progress) = plt.subplots(1, 2, figsize=(16, 8), dpi=fig_dpi)
+                ax_video.axis('off')
+                
+                # Set up progress plot
+                ax_progress.set_ylabel("Progress", fontsize=24, fontweight='bold')
+                ax_progress.set_xlabel("Timestep", fontsize=24, fontweight='bold')
+                
+                title_parts = [f"Task: {task}, Quality: {quality_label}"]
+                if is_roboarena and partial_success is not None:
+                    title_parts.append(f"Partial Success: {partial_success:.2f}")
+                title_parts.append(f"MSE: {traj_mse:.3f}, r: {traj_pearson:.3f}, sp: {traj_spearman:.3f}")
+                ax_progress.set_title("\n".join(title_parts), fontsize=20, fontweight='bold', pad=30)
+                ax_progress.set_ylim(0, 1)
+                ax_progress.set_xlim(0, max(len(last_preds), 1))
+                ax_progress.set_yticks([0, 1])
+                ax_progress.spines["right"].set_visible(False)
+                ax_progress.spines["top"].set_visible(False)
+                ax_progress.tick_params(axis='both', which='major', labelsize=18)
+                
+                im_video = ax_video.imshow(frames_rgb[0])
+                line_progress, = ax_progress.plot([], [], linewidth=4, color="blue")
+                
+                line_success = None
+                if has_success_data:
+                    last_success_probs = np.array(success_probs)
+                    last_success_labels = np.array(success_labels) if success_labels is not None else None
+                    
+                    ax_success.set_ylabel("Success Probability", fontsize=24, fontweight='bold')
+                    ax_success.set_xlabel("Timestep", fontsize=24, fontweight='bold')
+                    ax_success.set_title("Success Prediction", fontsize=20, fontweight='bold', pad=30)
+                    ax_success.set_ylim(0, 1)
+                    ax_success.set_xlim(0, max(len(last_success_probs), 1))
+                    ax_success.set_yticks([0, 1])
+                    ax_success.spines["right"].set_visible(False)
+                    ax_success.spines["top"].set_visible(False)
+                    ax_success.tick_params(axis='both', which='major', labelsize=18)
+                    
+                    line_success, = ax_success.plot([], [], linewidth=4, color="green", label="Predicted")
+                    if last_success_labels is not None:
+                        ax_success.plot(range(len(last_success_labels)), last_success_labels, 
+                                       linewidth=2, color="red", linestyle="--", label="Ground Truth", alpha=0.7)
+                    ax_success.legend(fontsize=16)
+                
+                def animate(frame_idx):
+                    # Update video frame
+                    im_video.set_array(frames_rgb[frame_idx])
+                    
+                    # Update progress plot up to current frame
+                    max_idx = min(frame_idx + 1, len(last_preds))
+                    line_progress.set_data(range(max_idx), last_preds[:max_idx])
+                    
+                    # Update success plot up to current frame if available
+                    if has_success_data and line_success is not None:
+                        max_idx_success = min(frame_idx + 1, len(last_success_probs))
+                        line_success.set_data(range(max_idx_success), last_success_probs[:max_idx_success])
+                        return [im_video, line_progress, line_success]
+                    
+                    return [im_video, line_progress]
+                
+                # Create animation
+                anim = animation.FuncAnimation(
+                    fig_anim, animate, frames=len(frames_rgb),
+                    interval=500, blit=True, repeat=True
+                )
+                
+                Writer = animation.writers['ffmpeg']
+                writer = Writer(fps=2, metadata=dict(artist='RFM'), bitrate=5000)
+                anim.save(video_path, writer=writer, dpi=fig_dpi)
+                plt.close(fig_anim)
+                
+                saved_count += 1
+                logger.debug(f"Saved reward_alignment video: {video_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save video {video_path}: {e}")
+
+        if saved_count > 0:
+            logger.info(f"Saved {saved_count} reward_alignment videos to {output_dir}/reward_alignment_videos/")
+
+    def _save_policy_ranking_incorrect_pairs(
+        self, task_groups, eval_results, output_dir, ds_name, is_roboarena
+    ):
+        """Save incorrectly and correctly ranked policy pairs to disk.
+        
+        Finds pairs where the predicted reward ordering doesn't match the ground truth ordering:
+        - For non-RoboArena: successful < failure, successful < suboptimal, suboptimal < failure
+        - For RoboArena: partial_success ordering doesn't match predicted reward ordering
+        
+        Saves final frames side by side with metadata.
+        Saves up to 10 incorrect pairs and 10 correct pairs (randomly sampled).
+        """
+        quality_order = {"failure": 1, "suboptimal": 2, "successful": 3}
+        incorrect_pairs = []
+        correct_pairs = []
+        
+        for task, trajectories in task_groups.items():
+            if len(trajectories) < 2:
+                continue
+            
+            if is_roboarena:
+                # RoboArena: Check pairs where partial_success ordering doesn't match predicted reward ordering
+                for i in range(len(trajectories)):
+                    for j in range(i + 1, len(trajectories)):
+                        traj1 = trajectories[i]
+                        traj2 = trajectories[j]
+                        
+                        partial1 = traj1.get("partial_success")
+                        partial2 = traj2.get("partial_success")
+                        pred1 = traj1.get("final_predicted_reward")
+                        pred2 = traj2.get("final_predicted_reward")
+                        
+                        if partial1 is None or partial2 is None or pred1 is None or pred2 is None:
+                            continue
+                        
+                        # Skip if partial_success values are the same
+                        if partial1 == partial2:
+                            continue
+                        
+                        # Check if ordering is incorrect
+                        partial_order_correct = partial1 > partial2  # traj1 should have higher partial_success
+                        pred_order = pred1 > pred2  # traj1 has higher predicted reward
+                        
+                        # Check if ranking is correct or incorrect
+                        if partial_order_correct != pred_order:
+                            incorrect_pairs.append({
+                                "task": task,
+                                "traj1": traj1,
+                                "traj2": traj2,
+                                "partial1": partial1,
+                                "partial2": partial2,
+                                "pred1": pred1,
+                                "pred2": pred2,
+                                "error_type": "partial_success_mismatch",
+                            })
+                        else:
+                            correct_pairs.append({
+                                "task": task,
+                                "traj1": traj1,
+                                "traj2": traj2,
+                                "partial1": partial1,
+                                "partial2": partial2,
+                                "pred1": pred1,
+                                "pred2": pred2,
+                                "error_type": "partial_success_correct",
+                            })
+            else:
+                # Non-RoboArena: Check pairs where quality ordering doesn't match predicted reward ordering
+                for i in range(len(trajectories)):
+                    for j in range(i + 1, len(trajectories)):
+                        traj1 = trajectories[i]
+                        traj2 = trajectories[j]
+                        
+                        quality1 = traj1.get("quality_label")
+                        quality2 = traj2.get("quality_label")
+                        pred1 = traj1.get("final_reward")
+                        pred2 = traj2.get("final_reward")
+                        
+                        if quality1 is None or quality2 is None or pred1 is None or pred2 is None:
+                            continue
+                        
+                        order1 = quality_order.get(quality1, 0)
+                        order2 = quality_order.get(quality2, 0)
+                        
+                        # Skip if same quality
+                        if order1 == order2:
+                            continue
+                        
+                        # Check if ordering is incorrect
+                        quality_order_correct = order1 > order2  # traj1 should have higher quality
+                        pred_order = pred1 > pred2  # traj1 has higher predicted reward
+                        
+                        # Check if ranking is correct or incorrect
+                        error_type = f"{quality1}_vs_{quality2}"
+                        if quality_order_correct != pred_order:
+                            incorrect_pairs.append({
+                                "task": task,
+                                "traj1": traj1,
+                                "traj2": traj2,
+                                "quality1": quality1,
+                                "quality2": quality2,
+                                "pred1": pred1,
+                                "pred2": pred2,
+                                "error_type": error_type,
+                            })
+                        else:
+                            correct_pairs.append({
+                                "task": task,
+                                "traj1": traj1,
+                                "traj2": traj2,
+                                "quality1": quality1,
+                                "quality2": quality2,
+                                "pred1": pred1,
+                                "pred2": pred2,
+                                "error_type": f"{error_type}_correct",
+                            })
+        
+        max_pairs = 10
+        
+        def sample_diverse_pairs(pairs, max_count):
+            """Sample pairs ensuring each trajectory appears at most once."""
+            if len(pairs) <= max_count:
+                return pairs
+            
+            # Track which trajectory IDs we've already used
+            used_traj_ids = set()
+            selected_pairs = []
+            
+            # Shuffle pairs to randomize selection
+            shuffled_pairs = pairs.copy()
+            random.shuffle(shuffled_pairs)
+            
+            for pair in shuffled_pairs:
+                if len(selected_pairs) >= max_count:
+                    break
+                
+                traj1_id = pair["traj1"].get("id")
+                traj2_id = pair["traj2"].get("id")
+                
+                # Check if either trajectory has been used
+                if traj1_id not in used_traj_ids and traj2_id not in used_traj_ids:
+                    selected_pairs.append(pair)
+                    used_traj_ids.add(traj1_id)
+                    used_traj_ids.add(traj2_id)
+            
+            # If we haven't filled up to max_count, add remaining pairs even if they repeat
+            if len(selected_pairs) < max_count:
+                remaining = [p for p in shuffled_pairs if p not in selected_pairs]
+                needed = max_count - len(selected_pairs)
+                selected_pairs.extend(remaining[:needed])
+            
+            return selected_pairs
+        
+        incorrect_pairs = sample_diverse_pairs(incorrect_pairs, max_pairs)
+        correct_pairs = sample_diverse_pairs(correct_pairs, max_pairs)
+        
+        if not incorrect_pairs and not correct_pairs:
+            logger.info(f"No pairs found for policy_ranking/{ds_name}")
+            return
+        
+        # Create output directories
+        save_dir = os.path.join(output_dir, "policy_ranking_viz", ds_name)
+        os.makedirs(save_dir, exist_ok=True)
+        
+        def save_pair_visualization(pair, idx, pair_type, save_dir):
+            """Helper function to save a single pair visualization.
+            
+            Args:
+                pair: Dictionary containing traj1, traj2, task, and metadata
+                idx: Index of the pair
+                pair_type: "incorrect" or "correct"
+                save_dir: Directory to save the visualization
+            
+            Returns:
+                True if saved successfully, False otherwise
+            """
+            traj1 = pair["traj1"]
+            traj2 = pair["traj2"]
+            task = pair["task"]
+            
+            # Load final frames from video paths
+            video_path1 = traj1.get("video_path")
+            video_path2 = traj2.get("video_path")
+            
+            if not video_path1 or not video_path2:
+                return False
+            
+            try:
+                # Load frames and get final frame
+                frames1 = load_frames_from_npz(video_path1)
+                frames2 = load_frames_from_npz(video_path2)
+                
+                # Get final frame (last frame in sequence)
+                final_frame1 = frames1[-1] if len(frames1.shape) == 4 else frames1
+                final_frame2 = frames2[-1] if len(frames2.shape) == 4 else frames2
+                
+                # Ensure frames are in (H, W, C) format
+                if len(final_frame1.shape) == 3 and final_frame1.shape[0] == 3:
+                    final_frame1 = final_frame1.transpose(1, 2, 0)
+                if len(final_frame2.shape) == 3 and final_frame2.shape[0] == 3:
+                    final_frame2 = final_frame2.transpose(1, 2, 0)
+                
+                # Ensure uint8 and correct range
+                if final_frame1.dtype != np.uint8:
+                    if final_frame1.max() <= 1.0:
+                        final_frame1 = (final_frame1 * 255).astype(np.uint8)
+                    else:
+                        final_frame1 = np.clip(final_frame1, 0, 255).astype(np.uint8)
+                if final_frame2.dtype != np.uint8:
+                    if final_frame2.max() <= 1.0:
+                        final_frame2 = (final_frame2 * 255).astype(np.uint8)
+                    else:
+                        final_frame2 = np.clip(final_frame2, 0, 255).astype(np.uint8)
+                
+                # Create matplotlib figure with two subplots side by side
+                fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+                
+                # Display frames
+                ax1.imshow(final_frame1)
+                ax1.axis('off')
+                ax2.imshow(final_frame2)
+                ax2.axis('off')
+                
+                # Build labels for each trajectory
+                traj_id1 = traj1.get("id", "unknown")
+                traj_id2 = traj2.get("id", "unknown")
+                
+                if is_roboarena:
+                    label1_parts = [
+                        f"Task: {task}",
+                        f"Partial Success: {pair['partial1']:.2f}",
+                        f"Predicted Reward: {pair['pred1']:.3f}",
+                        f"ID: {traj_id1}",
+                    ]
+                    label2_parts = [
+                        f"Task: {task}",
+                        f"Partial Success: {pair['partial2']:.2f}",
+                        f"Predicted Reward: {pair['pred2']:.3f}",
+                        f"ID: {traj_id2}",
+                    ]
+                else:
+                    label1_parts = [
+                        f"Task: {task}",
+                        f"Quality: {pair['quality1']}",
+                        f"Predicted Reward: {pair['pred1']:.3f}",
+                        f"ID: {traj_id1}",
+                    ]
+                    label2_parts = [
+                        f"Task: {task}",
+                        f"Quality: {pair['quality2']}",
+                        f"Predicted Reward: {pair['pred2']:.3f}",
+                        f"ID: {traj_id2}",
+                    ]
+                
+                # Add labels above frames
+                ax1.set_title("\n".join(label1_parts), fontsize=14, fontweight='bold', pad=10)
+                ax2.set_title("\n".join(label2_parts), fontsize=14, fontweight='bold', pad=10)
+                
+                # Add title based on pair type
+                error_type = pair["error_type"]
+                title_prefix = "Incorrectly" if pair_type == "incorrect" else "Correctly"
+                fig.suptitle(f"{title_prefix} Ranked Pair: {error_type}", fontsize=16, fontweight='bold', y=0.98)
+                
+                plt.tight_layout()
+                
+                # Save figure
+                filename = f"{task}_{error_type}_{idx}.png"
+                # Sanitize filename
+                filename = filename.replace("/", "_").replace("\\", "_")
+                save_path = os.path.join(save_dir, filename)
+                fig.savefig(save_path, dpi=150, bbox_inches='tight')
+                plt.close(fig)
+                
+                return True
+            except Exception as e:
+                logger.warning(f"Failed to save {pair_type} pair {idx} for task {task}: {e}")
+                return False
+        
+        # Save incorrect pairs
+        saved_incorrect = 0
+        for idx, pair in enumerate(incorrect_pairs):
+            if save_pair_visualization(pair, idx, "incorrect", save_dir):
+                saved_incorrect += 1
+        
+        # Save correct pairs
+        saved_correct = 0
+        for idx, pair in enumerate(correct_pairs):
+            if save_pair_visualization(pair, idx, "correct", save_dir):
+                saved_correct += 1
+        
+        if saved_incorrect > 0 or saved_correct > 0:
+            logger.info(f"Saved {saved_incorrect} incorrectly ranked pairs and {saved_correct} correctly ranked pairs to {save_dir}/")
+
+    def _compute_and_log_eval_metrics(self, eval_type, eval_results, ds_name, eval_step, output_dir=None):
         """Compute metrics and create visualizations for evaluation results."""
         # Initialize variables to None to ensure they exist for cleanup
         plots = None
@@ -991,6 +1556,12 @@ class RFMHeadsTrainer(Trainer):
                 f"Metrics: {eval_metrics}",
                 inner_padding=1,
             )
+
+            # Save videos to disk if output_dir is provided
+            if output_dir is not None and video_frames_list:
+                self._save_reward_alignment_videos(
+                    video_frames_list, plots, eval_results, output_dir, ds_name, trajectory_progress_data
+                )
 
             # Build rows of (video, figure)
             rows = []
@@ -1129,6 +1700,12 @@ class RFMHeadsTrainer(Trainer):
                     )
                     del grid_image
             
+            # Save incorrectly ranked pairs to disk if output_dir is provided
+            if output_dir is not None:
+                self._save_policy_ranking_incorrect_pairs(
+                    task_groups, eval_results, output_dir, ds_name, is_roboarena
+                )
+            
             # log_memory_usage(f"Before deleting policy_ranking data")
             del data, task_groups, task_details
             task_groups = None
@@ -1257,6 +1834,50 @@ class RFMHeadsTrainer(Trainer):
 
         return eval_metrics
 
+    def _save_eval_results_json(self, eval_results, eval_type, ds_name, output_dir):
+        """Save eval_results as JSON file.
+        
+        Args:
+            eval_results: List of evaluation result dictionaries
+            eval_type: Type of evaluation (e.g., "reward_alignment", "policy_ranking")
+            ds_name: Dataset name
+            output_dir: Directory to save the JSON file
+        """
+        
+        def serialize_value(value):
+            """Recursively serialize a value to JSON-compatible format."""
+            if isinstance(value, np.ndarray):
+                return value.tolist()
+            elif isinstance(value, (np.integer, np.floating)):
+                return float(value)
+            elif isinstance(value, (np.bool_, bool)):
+                return bool(value)
+            elif isinstance(value, dict):
+                return {k: serialize_value(v) for k, v in value.items()}
+            elif isinstance(value, list):
+                return [serialize_value(v) for v in value]
+            elif isinstance(value, (int, float, str, type(None))):
+                return value
+            else:
+                # Fallback: try to convert to string
+                return str(value)
+        
+        # Serialize eval_results
+        serialized_results = [serialize_value(result) for result in eval_results]
+        
+        # Create output directory if it doesn't exist
+        eval_results_dir = os.path.join(output_dir, "eval_results")
+        os.makedirs(eval_results_dir, exist_ok=True)
+        
+        # Create filename: {eval_type}_{ds_name}.json
+        filename = f"{eval_type}_{ds_name}.json"
+        filepath = os.path.join(eval_results_dir, filename)
+        
+        # Save to JSON file
+        with open(filepath, "w") as f:
+            json.dump(serialized_results, f, indent=2)
+        logger.info(f"Saved {len(eval_results)} eval results to: {filepath}")
+
     def _cleanup_eval_dataset(self, dataset, dataloader, eval_results):
         """Clean up dataset, dataloader, and eval_results after evaluation."""
         logger.info(f"  Cleaning up dataset and eval_results")
@@ -1300,7 +1921,7 @@ class RFMHeadsTrainer(Trainer):
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
 
-    def _run_single_eval_dataset(self, eval_type, eval_dataset, eval_step):
+    def _run_single_eval_dataset(self, eval_type, eval_dataset, eval_step, output_dir=None):
         """Run evaluation for a single dataset."""
         logger.info(f"  Processing dataset: {eval_dataset}")
         # log_memory_usage(f"Before dataset {eval_dataset}")
@@ -1368,7 +1989,13 @@ class RFMHeadsTrainer(Trainer):
             # Compute metrics and create visualizations (only on main process)
             eval_metrics = {}
             if self.accelerator.is_main_process:
-                eval_metrics = self._compute_and_log_eval_metrics(eval_type, eval_results, ds_name, eval_step)
+                # Use output_dir parameter if provided, otherwise fall back to config
+                actual_output_dir = output_dir if output_dir is not None else getattr(self.config, "output_dir", None)
+                eval_metrics = self._compute_and_log_eval_metrics(eval_type, eval_results, ds_name, eval_step, output_dir=actual_output_dir)
+                
+                # Save eval_results as JSON if output_dir is available
+                if actual_output_dir is not None:
+                    self._save_eval_results_json(eval_results, eval_type, ds_name, actual_output_dir)
 
             # Cleanup
             self._cleanup_eval_dataset(dataset, dataloader, eval_results)
@@ -1382,13 +2009,14 @@ class RFMHeadsTrainer(Trainer):
 
             return eval_metrics, ds_name
 
-    def _run_custom_evaluations(self, eval_step=None):
+    def _run_custom_evaluations(self, eval_step=None, output_dir=None):
         """
         Run custom evaluations.
 
         Args:
             eval_step: Step number to use for logging. If None, uses self.state.global_step.
                       This ensures consistent step logging to prevent wandb warnings.
+            output_dir: Optional directory to save evaluation outputs (e.g., videos for reward_alignment).
         """
         if eval_step is None:
             eval_step = self.state.global_step
@@ -1426,7 +2054,7 @@ class RFMHeadsTrainer(Trainer):
 
             with _timer(f"time/eval_type/{eval_type}", timing_raw=self.timing_raw):
                 for eval_dataset in eval_datasets_name:
-                    eval_metrics, ds_name = self._run_single_eval_dataset(eval_type, eval_dataset, eval_step)
+                    eval_metrics, ds_name = self._run_single_eval_dataset(eval_type, eval_dataset, eval_step, output_dir=output_dir)
                     metrics[ds_name][eval_type] = eval_metrics
 
                     # Store timing for this eval_dataset
@@ -1565,7 +2193,9 @@ class RFMHeadsTrainer(Trainer):
         )
         if custom_eval_should_run:
             with _timer("time/custom_evaluations", timing_raw=self.timing_raw):
-                custom_metrics = self._run_custom_evaluations(eval_step=eval_step)
+                # Get output_dir from config if available (for offline eval)
+                output_dir = getattr(self.config, "output_dir", None)
+                custom_metrics = self._run_custom_evaluations(eval_step=eval_step, output_dir=output_dir)
 
             metrics.update(custom_metrics)
             # Add custom evaluation time
@@ -1917,8 +2547,18 @@ class RFMHeadsTrainer(Trainer):
             self.timing_raw.update(model_timing_raw)
             return model_output, model_timing_raw
 
-    def _compute_progress_loss(self, model, inputs, return_outputs=False, training=True):
-        """Compute progress prediction loss."""
+    def _compute_progress_loss(self, model, inputs, return_outputs=False, training=True, stratify_by_strategy=True):
+        """
+        Compute progress prediction loss.
+        
+        Args:
+            model: The model to use for forward pass
+            inputs: Input dictionary containing progress data
+            return_outputs: Whether to return detailed outputs dict
+            training: Whether in training mode
+            stratify_by_strategy: Whether to stratify metrics by data_gen_strategy (default: True)
+                                 Set to False for single-frame training where strategies aren't used
+        """
         model_output, _ = self.forward_model(model, inputs, sample_type="progress")
         progress_logits = model_output.progress_logits
         progress_pred = progress_logits["A"]
@@ -1961,10 +2601,11 @@ class RFMHeadsTrainer(Trainer):
                 "prog_loss": progress_metrics["masked_loss"],
             }
 
+            strategy_values = inputs.get("data_gen_strategy") if stratify_by_strategy else None
             self._add_stratified_metrics(
                 outputs_dict,
                 prefix,
-                inputs["data_gen_strategy"],
+                strategy_values,
                 inputs["data_source"],
                 stratified_metrics,
             )

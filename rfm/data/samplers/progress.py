@@ -34,12 +34,13 @@ class ProgressSampler(RFMBaseSampler):
     def _create_progress_sample(self, traj: dict):
         """Create a progress sample using normalized and rebalanced strategy selection.
 
-        Implements five strategies:
+        Implements six strategies:
         1. Successful: Linspace subsample with end_idx between cutoff and total
         2. Rewind: Create rewound trajectory from same task
         3. Different Task: Use trajectory from different task (progress set to 0.0)
         4. Subsequence: Segment subsampling (same as previous default)
         5. Reverse Progress: Same as subsequence but reverses frames and progress targets
+        6. Uniform Sample: Sample two random frames, use them as segment bounds, then linspace subsample
         """
         # Initialize variables for strategy selection
         processed_traj = None
@@ -47,7 +48,7 @@ class ProgressSampler(RFMBaseSampler):
         subsample_strategy = None
 
         # Strategy setup with rebalancing on failure
-        # [successful, rewind, different_task_instruction, subsequence, reverse_progress]
+        # [successful, rewind, different_task_instruction, subsequence, reverse_progress, uniform_sample]
         strategies = [
             (DataGenStrat.SUCCESSFUL, self.config.progress_strategy_ratio[0]),
             (DataGenStrat.REWOUND, self.config.progress_strategy_ratio[1]),
@@ -62,6 +63,10 @@ class ProgressSampler(RFMBaseSampler):
             (
                 DataGenStrat.REVERSE_PROGRESS,
                 self.config.progress_strategy_ratio[4] if len(self.config.progress_strategy_ratio) > 4 else 0.0,
+            ),
+            (
+                DataGenStrat.UNIFORM_SAMPLE,
+                self.config.progress_strategy_ratio[5] if len(self.config.progress_strategy_ratio) > 5 else 0.0,
             ),
         ]
 
@@ -114,6 +119,9 @@ class ProgressSampler(RFMBaseSampler):
             elif selected_strategy == DataGenStrat.REVERSE_PROGRESS:
                 processed_traj = traj
                 subsample_strategy = "reverse_progress"
+            elif selected_strategy == DataGenStrat.UNIFORM_SAMPLE:
+                processed_traj = traj
+                subsample_strategy = "uniform_sample"
             elif selected_strategy == DataGenStrat.REWOUND:
                 processed_traj = self._get_rewound_traj(traj)
                 subsample_strategy = None  # Rewound trajectories are already processed

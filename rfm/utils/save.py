@@ -16,7 +16,7 @@ from .upload_to_hub import upload_model_to_hub
 from rfm.utils.distributed import is_rank_0
 from rfm.utils.logger import loguru_logger as logger
 from rfm.configs.experiment_configs import ExperimentConfig
-from rfm.utils.setup_utils import setup_model_and_processor
+# from rfm.utils.setup_utils import setup_model_and_processor
 from pathlib import Path
 from dataclasses import fields
 from typing import Any, Optional, Tuple
@@ -647,7 +647,7 @@ def load_model_from_hf(
         "tag:yaml.org,2002:python/object:rfm.models.rewind_transformer.ReWINDTransformerConfig",
         lambda loader, node: loader.construct_mapping(node),
     )
-
+    from rfm.utils.setup_utils import setup_model_and_processor
     model_config_dict = yaml.load(yaml_text, Loader=_ConfigSafeLoader)
 
     valid_keys = {f.name for f in fields(ExperimentConfig)}

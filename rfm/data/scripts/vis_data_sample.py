@@ -678,6 +678,19 @@ def main():
         default=0.0,
         help="Ratio for using dataset preferences (default: 0.0)",
     )
+    parser.add_argument(
+        "--progress_loss_type",
+        type=str,
+        default="l2",
+        choices=["l1", "l2", "discrete"],
+        help="Progress loss type: 'l1', 'l2', or 'discrete' (default: l2)",
+    )
+    parser.add_argument(
+        "--progress_discrete_bins",
+        type=int,
+        default=10,
+        help="Number of discrete bins for progress when using discrete loss (default: 10)",
+    )
 
     args = parser.parse_args()
 
@@ -706,6 +719,8 @@ def main():
         dataset_success_cutoff_file=args.dataset_success_cutoff_file,
         min_frames_per_trajectory=10,
         sample_type_ratio=[1, 0, 0] if args.viz_type == "preference" else [0, 1, 0],  # Preference or progress
+        progress_loss_type=args.progress_loss_type,
+        progress_discrete_bins=args.progress_discrete_bins,
     )
 
     # Load dataset using BaseDataset (reuses all the loading logic)

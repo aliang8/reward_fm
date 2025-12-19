@@ -128,19 +128,6 @@ class DataConfig:
         metadata={"help": "Dataset type: 'default', 'rewound', 'success_failure'"},
     )
 
-    # Rewound dataset specific parameters
-    # Example rewound config:
-    # dataset_type: "rewound"
-    # rewind_lengths: [1, 2, 4, 8]  # Generate rewinds of 1, 2, 4, and 8 frames
-    # samples_per_trajectory: 2  # Generate 2 preference samples per trajectory
-    # Note: Original trajectories are preferred over rewound versions
-    rewind_lengths: Optional[List[int]] = field(
-        default=None, metadata={"help": "List of rewind lengths for rewound dataset (default: 1 to max_frames)"}
-    )
-    samples_per_trajectory: int = field(
-        default=1, metadata={"help": "Number of preference samples to generate per trajectory for rewound dataset"}
-    )
-
     max_frames_after_preprocessing: int = field(
         default=64, metadata={"help": "Maximum number of frames to extract from videos after preprocessing"}
     )

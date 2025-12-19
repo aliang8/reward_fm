@@ -170,7 +170,7 @@ def run_reward_alignment_eval_per_trajectory(
     """Run reward_alignment evaluation analysis and create plots for each trajectory.
 
     For failure datasets, we visualize predictions but skip metric computation.
-    
+
     Returns:
         Tuple of (metrics, plots, video_frames_list, trajectory_progress_data)
         where trajectory_progress_data is a list of dicts with progress_pred and target_progress
@@ -600,7 +600,7 @@ def run_policy_ranking_eval(results: list[dict[str, Any]], progress_pred_type: s
     all_succ_subopt_diffs = []
     all_subopt_fail_diffs = []
     all_succ_fail_diffs = []
-    
+
     # Track ranking accuracy: count of correct pairs and total pairs
     all_correct_pairs = []
     all_total_pairs = []
@@ -632,9 +632,9 @@ def run_policy_ranking_eval(results: list[dict[str, Any]], progress_pred_type: s
                     # Skip if partial_success values are the same
                     if partial_successes[i] == partial_successes[j]:
                         continue
-                    
+
                     total_pairs += 1
-                    
+
                     # Gold rank: 1 if i has higher partial_success, 0 otherwise
                     gold_rank = 1.0 if partial_successes[i] > partial_successes[j] else 0.0
                     gold_ranks.append(gold_rank)
@@ -648,14 +648,14 @@ def run_policy_ranking_eval(results: list[dict[str, Any]], progress_pred_type: s
                         # For ties, use 0.5 (middle ground) - count as incorrect
                         pred_rank = 0.5
                     pred_ranks.append(pred_rank)
-                    
+
                     # Check if ranking is correct (gold_rank matches pred_rank)
                     if gold_rank == pred_rank:
                         correct_pairs += 1
 
             if len(gold_ranks) == 0:
                 continue
-            
+
             # Store ranking accuracy for this task
             if total_pairs > 0:
                 task_ranking_acc = correct_pairs / total_pairs
@@ -766,26 +766,26 @@ def run_policy_ranking_eval(results: list[dict[str, Any]], progress_pred_type: s
                     avg_rewards_per_quality[q] = avg_reward
                     quality_ranks.append(quality_order[q])
                     avg_reward_values.append(avg_reward)
-            
+
             # Compute ranking accuracy: check pairs where quality ordering matches predicted reward ordering
             correct_pairs = 0
             total_pairs = 0
-            
+
             # Check all pairs of quality labels
             for i, quality1 in enumerate(present_labels):
-                for quality2 in present_labels[i + 1:]:
+                for quality2 in present_labels[i + 1 :]:
                     # Get average rewards for each quality
                     avg_reward1 = avg_rewards_per_quality[quality1]
                     avg_reward2 = avg_rewards_per_quality[quality2]
-                    
+
                     # Expected ordering: higher quality should have higher reward
                     expected_order = quality_order[quality1] > quality_order[quality2]
                     actual_order = avg_reward1 > avg_reward2
-                    
+
                     total_pairs += 1
                     if expected_order == actual_order:
                         correct_pairs += 1
-            
+
             # Store ranking accuracy for this task
             if total_pairs > 0:
                 task_ranking_acc = correct_pairs / total_pairs

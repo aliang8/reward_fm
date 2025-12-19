@@ -453,7 +453,7 @@ def compute_progress_from_segment(
         if success_cutoff is not None and success_cutoff > 0:
             # Index of the first frame where progress exceeds the cutoff
             cutoff_index = int(success_cutoff * num_frames_total)
-        
+
         for idx in frame_indices:
             # Calculate absolute index in original trajectory
             abs_idx = start_idx + idx
@@ -698,7 +698,7 @@ def create_rewind_trajectory(
     if progress_pred_type == "absolute_wrt_total_frames":
         # For absolute_wrt_total_frames, calculate progress as (absolute_idx + 1) / num_frames
         # cutoff_index is already calculated above
-        
+
         # Forward segment: indices from start_idx to end_idx-1
         forward_progress_abs = []
         for i in range(len(forward_indices)):
@@ -708,7 +708,7 @@ def create_rewind_trajectory(
             else:
                 progress = (abs_idx + 1) / num_frames
             forward_progress_abs.append(progress)
-        
+
         # Rewind segment: reverse the forward progress (but we need to map to actual indices)
         # The rewind segment goes from end_idx-2 down to rewind_point
         rewind_actual_indices = list(range(end_idx - 2, rewind_point - 1, -1))  # Reverse order

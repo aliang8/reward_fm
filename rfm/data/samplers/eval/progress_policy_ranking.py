@@ -35,9 +35,7 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
 
         self.num_examples_per_quality_pr = num_examples_per_quality_pr
-        logger.info(
-            f"ProgressPolicyRankingSampler initialized with {len(self.robot_trajectories)} trajectories"
-        )
+        logger.info(f"ProgressPolicyRankingSampler initialized with {len(self.robot_trajectories)} trajectories")
 
         self.sample_indices = self._generate_all_sample_indices()
 
@@ -47,7 +45,7 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
         """Generate sample indices by selecting tasks with multiple quality labels and sampling N trajectories per quality label."""
         # Group trajectories by task and quality label
         task_to_quality_to_trajs = defaultdict(lambda: defaultdict(list))
-        
+
         for traj_idx in self.robot_trajectories:
             traj = self.dataset[traj_idx]
             task = traj["task"]
@@ -61,9 +59,7 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
             if len(quality_to_trajs) > 1
         }
 
-        logger.info(
-            f"Found {len(tasks_with_multiple_qualities)} tasks with multiple quality labels"
-        )
+        logger.info(f"Found {len(tasks_with_multiple_qualities)} tasks with multiple quality labels")
 
         # Sample N trajectories per quality label for each task
         sample_indices = []
@@ -72,17 +68,15 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
                 # Sample up to num_examples_per_quality_pr trajectories for this quality label
                 num_to_sample = min(self.num_examples_per_quality_pr, len(traj_indices))
                 sampled_traj_indices = random.sample(traj_indices, num_to_sample)
-                
+
                 for traj_idx in sampled_traj_indices:
                     sample_indices.append({
                         "traj_idx": traj_idx,
                         "video_path": self.dataset[traj_idx]["frames"],
-                        "id": self.dataset[traj_idx]["id"]
+                        "id": self.dataset[traj_idx]["id"],
                     })
 
-        logger.info(
-            f"Sampled {len(sample_indices)} trajectories across {len(tasks_with_multiple_qualities)} tasks"
-        )
+        logger.info(f"Sampled {len(sample_indices)} trajectories across {len(tasks_with_multiple_qualities)} tasks")
 
         return sample_indices
 
@@ -182,4 +176,3 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
 
     def __getitem__(self, idx):
         return self._generate_sample_from_indices(self.sample_indices[idx])
-

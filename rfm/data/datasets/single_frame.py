@@ -42,14 +42,14 @@ class SingleFrameProgressSampler(RFMBaseSampler):
         else:
             frames = traj["frames"]
         num_frames = frames.shape[0]
-        
+
         if num_frames == 0:
             logger.trace(f"[SingleFrameProgressSampler] No frames in trajectory {traj.get('id', 'unknown')}")
             return None
 
         # Randomly select a single frame index
         frame_idx = random.randint(0, num_frames - 1)
-        
+
         # Get the progress value at this frame
         target_progress_list = traj.get("target_progress", [])
         if target_progress_list:
@@ -64,9 +64,9 @@ class SingleFrameProgressSampler(RFMBaseSampler):
             progress_value = float(frame_idx) / max(num_frames - 1, 1)
 
         # Extract single frame (keep the time dimension with size 1)
-        single_frame = frames[frame_idx:frame_idx+1]  # (1, H, W, C)
+        single_frame = frames[frame_idx : frame_idx + 1]  # (1, H, W, C)
         frames_shape = single_frame.shape  # Store shape for collator
-        
+
         # Load embeddings if available
         video_embeddings = None
         text_embedding = None
@@ -77,7 +77,7 @@ class SingleFrameProgressSampler(RFMBaseSampler):
             if video_embeddings is not None:
                 # Extract embedding for the selected frame
                 if frame_idx < len(video_embeddings):
-                    video_embeddings = video_embeddings[frame_idx:frame_idx+1]  # Keep time dimension
+                    video_embeddings = video_embeddings[frame_idx : frame_idx + 1]  # Keep time dimension
 
         # Compute success labels for the single frame
         success_label = compute_success_labels(
@@ -224,7 +224,7 @@ class SingleFrameDataset(BaseDataset):
 
         # Generate sample (progress or preference)
         sample = self._generate_sample_from_item(item)
-        
+
         logger.trace(f"[SingleFrameDataset] __getitem__: Successfully generated sample for idx={idx}, ID={traj_id}")
         return sample
 
@@ -255,7 +255,7 @@ class SingleFramePreferenceSampler(RFMBaseSampler):
             frames = load_frames_from_npz(traj["frames"])
         else:
             frames = traj["frames"]
-        
+
         num_frames = frames.shape[0]
         if num_frames == 0:
             return None
@@ -274,7 +274,7 @@ class SingleFramePreferenceSampler(RFMBaseSampler):
             progress_value = float(frame_idx) / max(num_frames - 1, 1)
 
         # Extract single frame
-        single_frame = frames[frame_idx:frame_idx+1]  # (1, H, W, C)
+        single_frame = frames[frame_idx : frame_idx + 1]  # (1, H, W, C)
         frames_shape = single_frame.shape
 
         # Load embeddings if available
@@ -286,7 +286,7 @@ class SingleFramePreferenceSampler(RFMBaseSampler):
             text_embedding = embeddings.get("text_embedding")
             if video_embeddings is not None:
                 if frame_idx < len(video_embeddings):
-                    video_embeddings = video_embeddings[frame_idx:frame_idx+1]
+                    video_embeddings = video_embeddings[frame_idx : frame_idx + 1]
 
         # Compute success labels
         success_label = compute_success_labels(
@@ -317,10 +317,10 @@ class SingleFramePreferenceSampler(RFMBaseSampler):
         2. Two frames: one from first half, one from second half (successful trajectories only)
         """
         quality_label = traj.get("quality_label", "successful")
-        
+
         # Strategy 1: Two frames from same trajectory (only for successful)
         # Strategy 2: Different task
-        
+
         # For successful trajectories, randomly choose between two strategies
         if quality_label == "successful":
             # Randomly choose strategy: 0 = two frames, 1 = different task
@@ -343,7 +343,7 @@ class SingleFramePreferenceSampler(RFMBaseSampler):
             frames = load_frames_from_npz(traj["frames"])
         else:
             frames = traj["frames"]
-        
+
         num_frames = frames.shape[0]
         if num_frames < 2:
             logger.trace(f"[SingleFramePreferenceSampler] Not enough frames for two-frames strategy: {num_frames}")
@@ -374,7 +374,7 @@ class SingleFramePreferenceSampler(RFMBaseSampler):
     def _create_different_task_preference(self, traj: dict):
         """Create preference sample with frames from different tasks."""
         current_task = traj["task"]
-        
+
         # Get a different task trajectory
         other_tasks = [task for task in self.optimal_by_task.keys() if task != current_task]
         if not other_tasks:
@@ -397,7 +397,7 @@ class SingleFramePreferenceSampler(RFMBaseSampler):
             current_frames = load_frames_from_npz(traj["frames"])
         else:
             current_frames = traj["frames"]
-        
+
         if isinstance(other_traj["frames"], str):
             other_frames = load_frames_from_npz(other_traj["frames"])
         else:

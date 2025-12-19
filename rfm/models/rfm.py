@@ -63,6 +63,8 @@ class RFM(PreTrainedModel):
         else:
             self.use_discrete_progress = False
 
+        logger.info(f"RFM. __init__: use_discrete_progress: {self.use_discrete_progress}, progress_output_size: {progress_output_size}")
+
         # Create progress head: for discrete mode, output logits (no sigmoid); for continuous, output with sigmoid
         if self.use_discrete_progress:
             self.progress_head = nn.Sequential(

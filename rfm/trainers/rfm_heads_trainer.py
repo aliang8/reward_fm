@@ -2471,6 +2471,24 @@ class RFMHeadsTrainer(Trainer):
             # progress_pred should be [batch_size, seq_len, num_bins] logits
             # Reshape for cross-entropy: [batch_size * seq_len, num_bins] and [batch_size * seq_len]
             batch_size, seq_len = target_bins.shape
+            
+            # Check if progress_pred has the correct shape for discrete mode
+            if len(progress_pred.shape) == 2:
+                # Model is outputting [batch_size, seq_len] instead of [batch_size, seq_len, num_bins]
+                # This means the model wasn't configured for discrete mode
+                raise ValueError(
+                    f"Discrete loss requires progress_pred shape [batch_size, seq_len, num_bins], "
+                    f"but got shape {progress_pred.shape}. "
+                    f"The model's progress head may not be configured for discrete mode. "
+                    f"Check that loss.progress_loss_type='discrete' is set before model initialization."
+                )
+            
+            if progress_pred.shape[:2] != (batch_size, seq_len) or progress_pred.shape[2] != num_bins:
+                raise ValueError(
+                    f"Shape mismatch: progress_pred has shape {progress_pred.shape}, "
+                    f"but expected [batch_size={batch_size}, seq_len={seq_len}, num_bins={num_bins}]"
+                )
+            
             progress_pred_flat = progress_pred.view(batch_size * seq_len, num_bins)  # [B*T, num_bins]
             target_bins_flat = target_bins.view(batch_size * seq_len)  # [B*T]
             mask_flat = mask.view(batch_size * seq_len)  # [B*T]

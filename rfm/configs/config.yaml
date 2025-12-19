@@ -41,6 +41,7 @@ model:
   peft_vision_encoder: false
   quantization: false
   use_unsloth: false  # Set to true to use unsloth for faster training with Qwen models
+  progress_discrete_bins: ${loss.progress_discrete_bins}  # Number of discrete bins for progress (synced from loss config)
 
 # =====================================================================================
 # PEFT Configuration
@@ -110,7 +111,10 @@ data:
   min_success: 0.8  # Progress threshold below which success label is 0
   max_success: 1.0  # Progress threshold above which success label is 1
   # Dataset-specific success thresholds (CSV format: dataset_name,success_percentage)
-  dataset_success_cutoff_file: "rfm/data/dataset_success_cutoff.txt"  
+  dataset_success_cutoff_file: "rfm/data/dataset_success_cutoff.txt"
+  
+  progress_loss_type: ${loss.progress_loss_type}  # Type of progress loss: "l1", "l2", or "discrete"
+  progress_discrete_bins: ${loss.progress_discrete_bins}  # Number of discrete bins for progress when using discrete loss
 
 # =====================================================================================
 # Custom Evaluation Configuration

@@ -638,8 +638,7 @@ class RFMBaseSampler:
             progress = list(reversed(progress))
             success_label = list(reversed(success_label)) if success_label is not None else None
 
-        # Convert progress to discrete bins if discrete loss is enabled
-        if self.config.progress_loss_type == "discrete":
+        if self.config.progress_loss_type.lower() == "discrete":
             num_bins = self.config.progress_discrete_bins
             # Convert continuous progress [0, 1] to discrete bins [0, num_bins-1]
             progress = [int(min(max(p, 0.0), 1.0) * (num_bins - 1)) for p in progress]

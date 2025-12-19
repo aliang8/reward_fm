@@ -180,9 +180,9 @@ class DataConfig:
     dataset_preference_ratio: float = field(
         default=0.8, metadata={"help": "Ratio of dataset preference samples to generated preference samples"}
     )
-    # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task]
-    preference_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1])
-    # Tunable strategy ratios for progress generation: [successful, rewind, different_task, subsequence, reverse_progress]
+    # [rewind, suboptimal_same_task, different_task, reverse_progress]
+    preference_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 0])
+    # [successful, rewind, different_task, subsequence, reverse_progress]
     progress_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 1, 0])
     similarity_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1])
     use_uniform_sampling: bool = field(

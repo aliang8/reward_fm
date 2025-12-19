@@ -102,6 +102,13 @@ class RFM(PreTrainedModel):
         self.use_progress_token = self.model_config.use_progress_token
         self.use_multi_image = self.model_config.use_multi_image
 
+        # Molmo2 only supports multi-image mode, not video
+        if "Molmo" in self.base_model_id and not self.use_multi_image:
+            raise ValueError(
+                "Molmo2 does not support video mode (use_multi_image=False). "
+                "Please set data.use_multi_image=True to use Molmo2 with multi-image input."
+            )
+
     def gradient_checkpointing_enable(self, **kwargs):
         """Delegates gradient checkpointing enabling to the base model."""
         self.model.gradient_checkpointing_enable(**kwargs)

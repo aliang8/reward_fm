@@ -569,6 +569,13 @@ def setup_batch_collator(
         "shuffle_progress_frames": cfg.data.shuffle_progress_frames,
         "inference": is_eval,
     }
+    # Check for unsupported Molmo2 video mode
+    if "Molmo" in cfg.model.base_model_id and not cfg.data.use_multi_image:
+        raise ValueError(
+            "Molmo2 implementation does not yet support video mode as it requires extra imports (use_multi_image=False). "
+            "Please set data.use_multi_image=True to use Molmo2 with multi-image input."
+        )
+
     if "Qwen" in cfg.model.base_model_id or "SmolVLM" in cfg.model.base_model_id or "Molmo" in cfg.model.base_model_id:
         if cfg.model.model_type == "default":
             batch_collator = RFMBatchCollator(**collator_kwargs)

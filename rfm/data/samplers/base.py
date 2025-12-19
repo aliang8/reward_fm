@@ -11,6 +11,7 @@ from rfm.data.datasets.helpers import (
     pad_trajectory_to_max_frames_np,
     subsample_pairs_and_progress,
     compute_success_labels,
+    convert_continuous_to_discrete_bins,
 )
 from rfm.data.dataset_types import Trajectory
 from rfm.data.datasets.helpers import create_rewind_trajectory, load_embeddings_from_path
@@ -641,7 +642,7 @@ class RFMBaseSampler:
         if self.config.progress_loss_type.lower() == "discrete":
             num_bins = self.config.progress_discrete_bins
             # Convert continuous progress [0, 1] to discrete bins [0, num_bins-1]
-            progress = [int(min(max(p, 0.0), 1.0) * (num_bins - 1)) for p in progress]
+            progress = convert_continuous_to_discrete_bins(progress, num_bins)
 
         return Trajectory(
             frames=frames,

@@ -507,6 +507,9 @@ class ExperimentConfig:
     custom_eval: CustomEvaluationConfig = field(default_factory=CustomEvaluationConfig)
 
     def __post_init__(self):
+        if isinstance(self.loss, dict):
+            self.loss = LossConfig(**self.loss)
+
         if isinstance(self.model, dict):
             self.model = ModelConfig(**self.model)
 
@@ -518,9 +521,6 @@ class ExperimentConfig:
 
         if isinstance(self.training, dict):
             self.training = TrainingConfig(**self.training)
-
-        if isinstance(self.loss, dict):
-            self.loss = LossConfig(**self.loss)
 
         if isinstance(self.logging, dict):
             self.logging = LoggingConfig(**self.logging)

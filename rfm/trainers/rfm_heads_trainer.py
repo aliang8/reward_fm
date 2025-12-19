@@ -1556,9 +1556,16 @@ class RFMHeadsTrainer(Trainer):
         confusion_plot = None
         confusion_matrix = None
 
+        is_discrete_mode = self.config.loss.progress_loss_type.lower() == "discrete"
+        num_bins = self.config.loss.progress_discrete_bins if is_discrete_mode else None
+        
+        data_source = None
+        if eval_results and len(eval_results) > 0:
+            data_source = eval_results[0]["data_source"]
+
         if eval_type == "reward_alignment":
             eval_metrics, plots, video_frames_list, trajectory_progress_data = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type
+                eval_type, eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins, data_source
             )
             # log_memory_usage(f"After compute_eval_metrics (reward_alignment)")
 
@@ -1633,7 +1640,7 @@ class RFMHeadsTrainer(Trainer):
         elif eval_type == "policy_ranking":
             # create task groups from eval_results
             eval_metrics, task_groups, task_details = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type
+                eval_type, eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins
             )
             # log_memory_usage(f"After compute_eval_metrics (policy_ranking)")
 
@@ -1722,7 +1729,7 @@ class RFMHeadsTrainer(Trainer):
             # log_memory_usage(f"After deleting policy_ranking data")
         elif eval_type == "confusion_matrix":
             confusion_plot, confusion_matrix = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type
+                eval_type, eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins
             )
             eval_metrics = {}  # no eval metrics
             # log_memory_usage(f"After compute_eval_metrics (confusion_matrix)")

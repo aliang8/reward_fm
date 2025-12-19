@@ -18,20 +18,28 @@ import cv2
 import torch
 import torch.nn.functional as F
 from sklearn.metrics import average_precision_score
-from rfm.data.datasets.helpers import load_frames_from_npz
+from rfm.data.datasets.helpers import load_frames_from_npz, convert_continuous_to_discrete_bins
 from rfm.data.dataset_category import is_failure
 from rfm.evals.eval_metrics_utils import compute_pearson, compute_preference_accuracy, compute_spearman
 
 
-def compute_eval_metrics(eval_type: str, results: list[dict[str, Any]], progress_pred_type: str):
+def compute_eval_metrics(
+    eval_type: str,
+    results: list[dict[str, Any]],
+    progress_pred_type: str,
+    is_discrete_mode: bool = False,
+    num_bins: int = 10,
+    data_source: str | None = None,
+):
+    # Route to appropriate evaluation function
     if eval_type == "quality_preference" or eval_type == "quality_preference_roboarena":
         return run_quality_preference_eval(results, progress_pred_type)
     elif eval_type == "reward_alignment":
-        return run_reward_alignment_eval_per_trajectory(results, progress_pred_type)
+        return run_reward_alignment_eval_per_trajectory(results, progress_pred_type, is_discrete_mode, num_bins, data_source)
     elif eval_type == "confusion_matrix":
-        return run_confusion_matrix_eval(results, progress_pred_type)
+        return run_confusion_matrix_eval(results, progress_pred_type, is_discrete_mode, num_bins)
     elif eval_type == "policy_ranking":
-        return run_policy_ranking_eval(results, progress_pred_type)
+        return run_policy_ranking_eval(results, progress_pred_type, is_discrete_mode, num_bins)
     elif eval_type == "similarity_score":
         return run_similarity_score_eval(results, progress_pred_type)
 
@@ -167,7 +175,7 @@ def run_quality_preference_eval(results: list[dict[str, Any]], progress_pred_typ
 
 
 def run_reward_alignment_eval_per_trajectory(
-    results: list[dict[str, Any]], progress_pred_type: str, last_frame_only: bool = False
+    results: list[dict[str, Any]], progress_pred_type: str, is_discrete_mode: bool, num_bins: int, data_source: str | None, last_frame_only: bool = False
 ) -> tuple[dict[str, Any], list, list, list]:
     """Run reward_alignment evaluation analysis and create plots for each trajectory.
 
@@ -178,11 +186,10 @@ def run_reward_alignment_eval_per_trajectory(
         where trajectory_progress_data is a list of dicts with progress_pred and target_progress
         for each trajectory (one per video in video_frames_list)
     """
-    # Determine if this is a failure dataset by checking the data_source of the first result
+    # Determine if this is a failure dataset
     is_failure_dataset = False
-    if results and len(results) > 0:
-        first_data_source = results[0].get("data_source", "")
-        is_failure_dataset = is_failure(first_data_source)
+    if data_source:
+        is_failure_dataset = is_failure(data_source)
 
     unique_trajectory_ids = set()
     loss_per_trajectory = np.zeros(1)
@@ -191,17 +198,6 @@ def run_reward_alignment_eval_per_trajectory(
     plots = []
     video_frames_list = []
     trajectory_progress_data = []
-    
-    # Detect if we're using discrete predictions by checking the first result
-    is_discrete_mode = False
-    if results and len(results) > 0:
-        first_pred = results[0].get("progress_pred")
-        if first_pred is not None:
-            pred_array = np.array(first_pred)
-            # Check if it's logits: should have shape [seq_len, num_bins] or [num_bins]
-            if pred_array.ndim >= 1 and pred_array.shape[-1] > 1:
-                num_bins = int(pred_array.shape[-1])
-                is_discrete_mode = True
 
     # Collect all success_probs and success_labels for AUPRC computation
     all_success_probs = []
@@ -468,7 +464,7 @@ def run_reward_alignment_eval_per_trajectory(
     return metrics, plots, video_frames_list, trajectory_progress_data
 
 
-def run_confusion_matrix_eval(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:
+def run_confusion_matrix_eval(results: list[dict[str, Any]], progress_pred_type: str, is_discrete_mode: bool, num_bins: int) -> dict[str, Any]:
     """Run confusion_matrix evaluation analysis."""
     # First, gather all progress predictions, lang_tasks, and video_tasks
     all_progress_preds = []
@@ -499,9 +495,21 @@ def run_confusion_matrix_eval(results: list[dict[str, Any]], progress_pred_type:
     # Extract final rewards vectorized
     all_final_rewards = []
     for progress_pred in all_progress_preds:
-        if progress_pred_type == "relative":
-            progress_pred = np.cumsum(progress_pred)
-        all_final_rewards.append(float(progress_pred[-1]))
+        pred_array = np.array(progress_pred)
+        
+        if is_discrete_mode:
+            # Discrete mode: progress_pred is logits [seq_len, num_bins]
+            # Use argmax on the last frame to get predicted bin index
+            last_frame_logits = pred_array[-1] if pred_array.ndim > 1 else pred_array
+            pred_bin = np.argmax(last_frame_logits)
+            final_reward = int(pred_bin)  # Use raw bin index as reward
+        else:
+            # Continuous mode: use last frame value
+            if progress_pred_type == "relative":
+                pred_array = np.cumsum(pred_array)
+            final_reward = float(pred_array[-1] if pred_array.ndim > 0 else pred_array)
+        
+        all_final_rewards.append(final_reward)
 
     all_final_rewards = np.array(all_final_rewards)
     all_lang_indices = np.array([task_to_idx[task] for task in all_lang_tasks])
@@ -553,7 +561,7 @@ def run_confusion_matrix_eval(results: list[dict[str, Any]], progress_pred_type:
     return fig, confusion_matrix
 
 
-def run_policy_ranking_eval(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:
+def run_policy_ranking_eval(results: list[dict[str, Any]], progress_pred_type: str, is_discrete_mode: bool, num_bins: int) -> dict[str, Any]:
     """Run policy_ranking evaluation analysis.
 
     For non-RoboArena: Uses quality_label and quality_order for ranking.
@@ -606,13 +614,29 @@ def run_policy_ranking_eval(results: list[dict[str, Any]], progress_pred_type: s
     # Extract final rewards vectorized
     all_final_rewards = []
     for progress_pred in all_progress_preds:
-        if progress_pred_type == "relative":
-            progress_pred = np.cumsum(progress_pred)
-        all_final_rewards.append(float(progress_pred[-1]))
+        pred_array = np.array(progress_pred)
+        
+        if is_discrete_mode:
+            # Discrete mode: progress_pred is logits [seq_len, num_bins]
+            # Use argmax on the last frame to get predicted bin index
+            last_frame_logits = pred_array[-1] if pred_array.ndim > 1 else pred_array
+            pred_bin = np.argmax(last_frame_logits)
+            final_reward = int(pred_bin)  # Use raw bin index as reward
+        else:
+            # Continuous mode: use last frame value
+            if progress_pred_type == "relative":
+                pred_array = np.cumsum(pred_array)
+            final_reward = float(pred_array[-1] if pred_array.ndim > 0 else pred_array)
+        
+        all_final_rewards.append(final_reward)
 
     all_final_rewards = np.array(all_final_rewards)
     if use_partial_success:
         all_partial_successes = np.array(all_partial_successes)
+        
+        # Convert partial_success values to discrete labels if in discrete mode
+        if is_discrete_mode and num_bins is not None:
+            all_partial_successes = np.array(convert_continuous_to_discrete_bins(all_partial_successes.tolist(), num_bins), dtype=int)
 
     # Group by task
     task_groups = {}

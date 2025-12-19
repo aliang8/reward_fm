@@ -57,7 +57,7 @@ from rfm.models.rewind_transformer_scale import ReWINDScaleTransformerConfig, Re
 from rfm.utils.logger import get_logger
 
 logger = get_logger()
-from rfm.utils.save import resolve_checkpoint_path, parse_hf_model_id_and_revision, find_best_model_tag
+from rfm.utils.save import parse_hf_model_id_and_revision
 
 
 def setup_model_and_processor(

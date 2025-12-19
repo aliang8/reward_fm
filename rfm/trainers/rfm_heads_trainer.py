@@ -2432,9 +2432,10 @@ class RFMHeadsTrainer(Trainer):
         Helper function to compute progress loss.
 
         Args:
-            progress_pred: Progress prediction tensors (can be tensor or list of tensors) of shape (batch_size, seq_len)
-            target_progress: Target progress tensors (can be tensor or list of tensors) of shape (batch_size, seq_len)
-            mask: Per-sample mask tensor of shape (batch_size,) with 1.0 for samples where we should compute loss
+            progress_pred: Progress prediction tensors of shape (batch_size, seq_len) for L1/L2 loss,
+                          or (batch_size, seq_len, num_bins) for discrete loss (logits)
+            target_progress: Target progress tensors of shape (batch_size, seq_len) with values in [0, 1]
+            mask: Per-sample mask tensor of shape (batch_size, seq_len) with 1.0 for samples where we should compute loss
 
         Returns:
             tuple: (masked_loss, spearman_correlations, metrics)
@@ -2453,16 +2454,62 @@ class RFMHeadsTrainer(Trainer):
             last_frame_mask[:, -1] = 1.0  # Set last frame to 1.0 for all sequences
             mask = mask * last_frame_mask
 
-        # Compute MSE loss per frame
-        loss_per_frame = F.mse_loss(progress_pred.float(), target_progress.float(), reduction="none")
-        masked_loss = loss_per_frame * mask
+        # Determine loss type from config
+        loss_type = self.config.loss.progress_loss_type.lower()
+        
+        # Set loss function based on loss type
+        if loss_type == "discrete":
+            # Discrete loss: target progress is already binned in data sampling
+            num_bins = self.config.loss.progress_discrete_bins
+            
+            # Target progress is already discrete bins [0, num_bins-1] from data sampling
+            # Convert to long tensor
+            target_bins = target_progress.long()  # [batch_size, seq_len]
+            # Ensure bins are in valid range [0, num_bins-1]
+            target_bins = torch.clamp(target_bins, 0, num_bins - 1)
+                        
+            # progress_pred should be [batch_size, seq_len, num_bins] logits
+            # Reshape for cross-entropy: [batch_size * seq_len, num_bins] and [batch_size * seq_len]
+            batch_size, seq_len = target_bins.shape
+            progress_pred_flat = progress_pred.view(batch_size * seq_len, num_bins)  # [B*T, num_bins]
+            target_bins_flat = target_bins.view(batch_size * seq_len)  # [B*T]
+            mask_flat = mask.view(batch_size * seq_len)  # [B*T]
+            
+            # Compute cross-entropy loss per sample
+            loss_per_sample_flat = F.cross_entropy(progress_pred_flat, target_bins_flat, reduction="none")  # [B*T]
+            
+            # Apply mask and reshape back
+            masked_loss_flat = loss_per_sample_flat * mask_flat  # [B*T]
+            loss_per_sample = loss_per_sample_flat.view(batch_size, seq_len)  # [B, T]
+            masked_loss = masked_loss_flat.view(batch_size, seq_len)  # [B, T]
+        elif loss_type == "l1":
+            loss_fn = F.l1_loss
+        else:  
+            loss_fn = F.mse_loss
+        
+        # Compute loss_per_sample and masked_loss for L1/L2
+        if loss_type != "discrete":
+            loss_per_sample = loss_fn(progress_pred.float(), target_progress.float(), reduction="none")
+            masked_loss = loss_per_sample * mask
 
+        # For discrete mode, convert predictions back to continuous for spearman correlation
+        # For L1/L2, use predictions as-is
+        if loss_type == "discrete":
+            # Convert logits to probabilities, then to expected value (weighted sum)
+            progress_pred_continuous = torch.softmax(progress_pred, dim=-1)  # [B, T, num_bins]
+            # Create bin centers: [0, 1/(num_bins-1), 2/(num_bins-1), ..., 1]
+            bin_centers = torch.linspace(0.0, 1.0, num_bins, device=progress_pred.device, dtype=progress_pred.dtype)
+            # Compute expected value: sum(prob * bin_center) for each timestep
+            progress_pred_for_corr = (progress_pred_continuous * bin_centers.unsqueeze(0).unsqueeze(0)).sum(dim=-1)  # [B, T]
+        else:
+            progress_pred_for_corr = progress_pred
+        
         if mask.shape[1] != target_progress.shape[1]:
             repeated_mask = mask.repeat(1, target_progress.shape[1])
         else:
             repeated_mask = mask
         masked_spearman_corr = compute_spearman_correlation(
-            progress_pred, target_progress, aggregate=False, mask=repeated_mask
+            progress_pred_for_corr, target_progress, aggregate=False, mask=repeated_mask
         )
         masked_spearman_corr = masked_spearman_corr.detach()
 

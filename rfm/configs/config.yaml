@@ -203,6 +203,8 @@ loss:
   # 6:1 ratio of success to failure for BCEWithLogits loss
   success_positive_weight: 6
   predict_last_frame_progress: false  # If true, only compute progress loss for the last frame
+  progress_loss_type: "l2"  # Options: "l1", "l2", or "discrete" (default: "l2")
+  progress_discrete_bins: 10  # Number of discrete bins for progress when using discrete loss (default: 10)
 
 # =====================================================================================
 # Logging and Output Configuration

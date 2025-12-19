@@ -76,6 +76,10 @@ class ModelConfig(PretrainedConfig):
         default=False,
         metadata={"help": "Whether to use casual masking in ReWINDTransformer"},
     )
+    progress_discrete_bins: Optional[int] = field(
+        default=None,
+        metadata={"help": "Number of discrete bins for progress when using discrete loss (None for continuous)"},
+    )
     # rewind sub-config
     rewind: Optional[Dict[str, Any]] = field(default=None)
 
@@ -267,6 +271,16 @@ class DataConfig:
             "help": "Minimum difference in partial_success required between chosen and rejected trajectories for RoboArena preference sampling"
         },
     )
+    
+    # Progress loss configuration
+    progress_loss_type: str = field(
+        default="l2",
+        metadata={"help": "Type of progress loss: 'l1', 'l2', or 'discrete' (synced from loss config)"},
+    )
+    progress_discrete_bins: int = field(
+        default=10,
+        metadata={"help": "Number of discrete bins for progress when using discrete loss (synced from loss config)"},
+    )
 
 
 @dataclass
@@ -389,6 +403,14 @@ class LossConfig:
     predict_last_frame_progress: bool = field(
         default=False,
         metadata={"help": "If True, only compute progress loss for the last frame in the sequence"},
+    )
+    progress_loss_type: str = field(
+        default="l2",
+        metadata={"help": "Type of progress loss: 'l1', 'l2', or 'discrete'"},
+    )
+    progress_discrete_bins: int = field(
+        default=10,
+        metadata={"help": "Number of discrete bins for progress when using discrete loss (default: 10)"},
     )
 
 

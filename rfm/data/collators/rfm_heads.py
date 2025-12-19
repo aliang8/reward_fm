@@ -130,7 +130,7 @@ class RFMBatchCollator(BaseCollator):
                 "resized_height": self.resized_height,
                 "resized_width": self.resized_width,
             }
-        elif "Qwen" in self.base_model_id:
+        elif "Qwen" or "Molmo" in self.base_model_id:
             # Qwen accepts list of PIL Images directly
             return frames, {
                 "resized_height": self.resized_height,
@@ -185,7 +185,7 @@ class RFMBatchCollator(BaseCollator):
         Returns:
             Batch of inputs
         """
-        if "Qwen" in self.base_model_id:
+        if "Qwen" or "Molmo" in self.base_model_id:
             # Process all messages in one batch
             texts = [
                 self.processor.apply_chat_template(
@@ -199,7 +199,7 @@ class RFMBatchCollator(BaseCollator):
                 for msg in conversations
             ]
 
-            is_qwen3 = "Qwen3" in self.base_model_id
+            is_qwen3 = "Qwen3" in self.base_model_id or "Molmo2" in self.base_model_id
 
             # For Qwen3, pass image_patch_size to process_vision_info
             process_kwargs = {

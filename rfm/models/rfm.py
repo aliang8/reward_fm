@@ -9,7 +9,7 @@ heads or there will be some problems with FSDP sharding.
 
 import torch
 import torch.nn as nn
-from transformers import PreTrainedModel, Qwen2_5_VLModel, Qwen3VLModel
+from transformers import PreTrainedModel, Qwen2_5_VLModel, Qwen3VLModel, Molmo2VLModel
 from transformers import SmolVLMModel
 import torch.distributed as dist
 
@@ -46,6 +46,9 @@ class RFM(PreTrainedModel):
         elif "Qwen3" in base_model_id:
             hidden_size = config.text_config.hidden_size
             self.model_cls = Qwen3VLModel
+        elif "Molmo2" in base_model_id:
+            hidden_size = config.text_config.hidden_size
+            self.model_cls = Molmo2VLModel
 
         if base_model is not None:
             self.model = base_model

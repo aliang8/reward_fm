@@ -2347,10 +2347,10 @@ class RFMHeadsTrainer(Trainer):
         # Get base thresholds from config
         min_success = self.config.data.min_success
 
-        # Handle Qwen downsampling: take every 2nd frame if using Qwen and NOT using multi_image
+        # Handle Qwen/Molmo downsampling: take every 2nd frame if using Qwen/Molmo and NOT using multi_image
         # In multi_image mode, we already get one embedding per frame, so no downsampling needed
         # Ensure success_logits matches target_progress length after downsampling
-        if "Qwen" in self.config.model.base_model_id and not self.config.data.use_multi_image:
+        if "Qwen" or "Molmo" in self.config.model.base_model_id and not self.config.data.use_multi_image:
             success_logits = success_logits[:, ::2]
             target_progress = target_progress[:, ::2]
             success_labels = success_labels[:, ::2]
@@ -2428,7 +2428,7 @@ class RFMHeadsTrainer(Trainer):
         """
         # Handle Qwen downsampling: take every 2nd frame if using Qwen and NOT using multi_image
         # In multi_image mode, we already get one embedding per frame, so no downsampling needed
-        if "Qwen" in self.config.model.base_model_id and not self.config.data.use_multi_image:
+        if "Qwen" or "Molmo" in self.config.model.base_model_id and not self.config.data.use_multi_image:
             target_progress = target_progress[:, ::2]
             mask = mask[:, ::2]
         
@@ -2526,7 +2526,7 @@ class RFMHeadsTrainer(Trainer):
                     timing_raw=self.timing_raw,
                 )
             else:
-                logger.trace("forward_model: Using Qwen/RFM model path, calling model forward")
+                logger.trace("forward_model: Using Qwen/Molmo/RFM model path, calling model forward")
                 logger.trace(
                     f"forward_model: input_ids shape: {inputs['input_ids'].shape if 'input_ids' in inputs else 'N/A'}"
                 )

@@ -9,7 +9,8 @@ heads or there will be some problems with FSDP sharding.
 
 import torch
 import torch.nn as nn
-from transformers import PreTrainedModel, Qwen2_5_VLModel, Qwen3VLModel, Molmo2VLModel
+from transformers import PreTrainedModel, Qwen2_5_VLModel, Qwen3VLModel
+#from transformers import AutoModelForImageTextToText as Molmo2VLModel  # Molmo2 uses AutoModelForImageTextToText
 from transformers import SmolVLMModel
 import torch.distributed as dist
 
@@ -46,14 +47,18 @@ class RFM(PreTrainedModel):
         elif "Qwen3" in base_model_id:
             hidden_size = config.text_config.hidden_size
             self.model_cls = Qwen3VLModel
-        elif "Molmo2" in base_model_id:
+        elif "Molmo" in base_model_id:
+            # Molmo2 is based on Qwen3 architecture
             hidden_size = config.text_config.hidden_size
-            self.model_cls = Molmo2VLModel
+            self.model_cls = Qwen3VLModel
+            #self.model_cls = Molmo2VLModel
+        else:
+            raise ValueError(f"Unsupported base model: {base_model_id}")
 
         if base_model is not None:
             self.model = base_model
         else:
-            self.model = self.model_class(config)
+            self.model = self.model_cls(config)
 
         self.config_class = self.model_cls.config_class
         self.base_model_id = base_model_id

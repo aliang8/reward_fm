@@ -130,8 +130,8 @@ class RFMBatchCollator(BaseCollator):
                 "resized_height": self.resized_height,
                 "resized_width": self.resized_width,
             }
-        elif "Qwen" or "Molmo" in self.base_model_id:
-            # Qwen accepts list of PIL Images directly
+        elif "Qwen" in self.base_model_id or "Molmo" in self.base_model_id:
+            # Qwen and Molmo accept list of PIL Images directly
             return frames, {
                 "resized_height": self.resized_height,
                 "resized_width": self.resized_width,
@@ -185,7 +185,7 @@ class RFMBatchCollator(BaseCollator):
         Returns:
             Batch of inputs
         """
-        if "Qwen" or "Molmo" in self.base_model_id:
+        if "Qwen" in self.base_model_id or "Molmo" in self.base_model_id:
             # Process all messages in one batch
             texts = [
                 self.processor.apply_chat_template(

@@ -51,7 +51,7 @@ def build_preference_sample(seed: int, embedding_dim: int = 8, use_frames: bool 
         target_progress = np.linspace(0.0, 1.0, num=num_frames)
         # Create success labels: 1.0 if progress > 0.5 (task completed), 0.0 otherwise
         success_label = [1.0 if prog > 0.5 else 0.0 for prog in target_progress]
-        
+
         if use_frames:
             # Create dummy video frames for frame-based models
             frames = create_dummy_frames(num_frames=num_frames, height=224, width=224, seed=seed + hash(tag))
@@ -92,7 +92,7 @@ def build_progress_sample(seed: int, num_frames: int = 4, use_frames: bool = Fal
     target_progress = np.linspace(0.0, 1.0, num=num_frames)
     # Create success labels: 1.0 if progress > 0.5 (task completed), 0.0 otherwise
     success_label = [1.0 if prog > 0.5 else 0.0 for prog in target_progress]
-    
+
     if use_frames:
         print(f"Creating progress sample with {num_frames} frames")
         # Create dummy video frames for frame-based models

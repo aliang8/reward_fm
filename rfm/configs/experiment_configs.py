@@ -84,13 +84,13 @@ class ModelConfig(PretrainedConfig):
         from rfm.models.rewind_transformer_scale import ReWINDScaleTransformerConfig
 
         if self.rewind is not None and isinstance(self.rewind, dict):
-            import pdb ; pdb.set_trace()
+            import pdb
+
+            pdb.set_trace()
             if self.rewind_scale_model:
-                self.rewind = ReWINDScaleTransformerConfig(
-                    **self.rewind)
+                self.rewind = ReWINDScaleTransformerConfig(**self.rewind)
             else:
-                self.rewind = ReWINDTransformerConfig(
-                    **self.rewind)
+                self.rewind = ReWINDTransformerConfig(**self.rewind)
 
 
 @dataclass
@@ -354,15 +354,19 @@ class TrainingConfig:
     warmup_ratio: float = field(default=0.1)
     max_grad_norm: float = field(default=1.0)
     weight_decay: float = field(default=0.01, metadata={"help": "Weight decay for optimizer"})
-    
+
     # Vision encoder fine-tuning settings
     vision_encoder_lr: Optional[float] = field(
         default=None,
-        metadata={"help": "Learning rate for last N vision encoder layers. If None, uses the same LR as other parameters."},
+        metadata={
+            "help": "Learning rate for last N vision encoder layers. If None, uses the same LR as other parameters."
+        },
     )
     vision_encoder_num_layers: int = field(
         default=2,
-        metadata={"help": "Number of last vision encoder layers to fine-tune with vision_encoder_lr. Only used if vision_encoder_lr is set."},
+        metadata={
+            "help": "Number of last vision encoder layers to fine-tune with vision_encoder_lr. Only used if vision_encoder_lr is set."
+        },
     )
 
     # RFM specific settings

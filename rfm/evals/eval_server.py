@@ -692,7 +692,7 @@ def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | Non
                                     file_key = traj_value["__numpy_file__"]
                                     if file_key in numpy_arrays:
                                         value[traj_key] = numpy_arrays[file_key]
-                                        
+
                                 if traj_key in ["video_embeddings", "text_embedding"]:
                                     if traj_key in value and value[traj_key] is not None:
                                         if isinstance(value[traj_key], np.ndarray):
@@ -718,6 +718,7 @@ def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | Non
     @app.get("/model_info")
     def get_model_info():
         """Get model information and experiment configuration."""
+
         def serialize_config(config_obj):
             """Recursively serialize dataclass to dict, handling nested dataclasses."""
             if hasattr(config_obj, "__dataclass_fields__"):
@@ -734,20 +735,20 @@ def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | Non
             else:
                 # Fallback: convert to string for non-serializable types
                 return str(config_obj)
-        
+
         def get_model_architecture_info(model):
             """Extract model architecture information."""
             model_info = {
                 "model_class": model.__class__.__name__,
                 "model_module": model.__class__.__module__,
             }
-            
+
             # Count parameters
             try:
                 all_params = sum(p.numel() for p in model.parameters())
                 trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
                 frozen_params = all_params - trainable_params
-                
+
                 model_info.update({
                     "total_parameters": all_params,
                     "trainable_parameters": trainable_params,
@@ -757,7 +758,7 @@ def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | Non
             except Exception as e:
                 logger.warning(f"Could not count model parameters: {e}")
                 model_info["parameter_count_error"] = str(e)
-            
+
             # Get model architecture summary (first few layers)
             try:
                 architecture_summary = []
@@ -773,11 +774,11 @@ def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | Non
             except Exception as e:
                 logger.warning(f"Could not get architecture summary: {e}")
                 model_info["architecture_summary_error"] = str(e)
-            
+
             return model_info
-        
+
         exp_config_dict = serialize_config(multi_gpu_server.exp_config)
-        
+
         # Get model architecture info from the base model
         model_arch_info = None
         try:
@@ -785,7 +786,7 @@ def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | Non
         except Exception as e:
             logger.warning(f"Could not get model architecture info: {e}")
             model_arch_info = {"error": str(e)}
-        
+
         return {
             "model_path": multi_gpu_server.model_path,
             "num_gpus": multi_gpu_server.num_gpus,

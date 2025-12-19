@@ -339,7 +339,7 @@ class PrefSampler(RFMBaseSampler):
             return None
 
         chosen_trajectory = self._get_traj_from_data(chosen_traj)
-        
+
         # Determine subsample strategy for rejected trajectory
         rejected_subsample_strategy = None
         if strategy_used == DataGenStrat.REVERSE_PROGRESS:

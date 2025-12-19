@@ -16,7 +16,6 @@ from .upload_to_hub import upload_model_to_hub
 from rfm.utils.distributed import is_rank_0
 from rfm.utils.logger import loguru_logger as logger
 from rfm.configs.experiment_configs import ExperimentConfig
-from rfm.utils.setup_utils import setup_model_and_processor
 from pathlib import Path
 from dataclasses import fields
 from typing import Any, Optional, Tuple
@@ -624,11 +623,14 @@ def load_model_from_hf(
 
     if os.path.exists(resolved_path):
         # Local checkpoint: look for config.yaml
-        candidate_paths = [os.path.join(resolved_path, "config.yaml"), os.path.join(os.path.dirname(resolved_path), "config.yaml")]
+        candidate_paths = [
+            os.path.join(resolved_path, "config.yaml"),
+            os.path.join(os.path.dirname(resolved_path), "config.yaml"),
+        ]
         for candidate in candidate_paths:
             if os.path.isfile(candidate):
                 config_path = candidate
-                break        
+                break
     else:
         try:
             from huggingface_hub import hf_hub_download
@@ -655,6 +657,9 @@ def load_model_from_hf(
 
     exp_config = ExperimentConfig(**filtered_config)
     # Use resolved_path for loading the actual model
+    # Import here to avoid circular dependency with setup_utils
+    from rfm.utils.setup_utils import setup_model_and_processor
+
     tokenizer, processor, reward_model = setup_model_and_processor(exp_config.model, resolved_path)
     reward_model = reward_model.to(device)
     reward_model.eval()

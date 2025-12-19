@@ -24,11 +24,11 @@ def display_config(cfg):
 def convert_hydra_to_dataclass(cfg: DictConfig, dataclass_type: Type[T]) -> T:
     """
     Convert Hydra DictConfig to a dataclass instance.
-    
+
     Args:
         cfg: Hydra DictConfig to convert
         dataclass_type: The dataclass type to convert to (e.g., ExperimentConfig, OfflineEvalConfig)
-    
+
     Returns:
         Instance of the specified dataclass type
     """
@@ -39,4 +39,3 @@ def convert_hydra_to_dataclass(cfg: DictConfig, dataclass_type: Type[T]) -> T:
     else:
         cfg_dict = OmegaConf.to_container(cfg, resolve=True)
     return dataclass_type(**cfg_dict)
-

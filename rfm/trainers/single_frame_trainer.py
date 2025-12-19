@@ -29,6 +29,7 @@ class SingleFrameTrainer(RFMHeadsTrainer):
 
         if not self._fsdp_diagnostics_logged:
             from rfm.utils.distributed import log_fsdp_diagnostics
+
             log_fsdp_diagnostics(model, accelerator=self.accelerator, logger=logger)
             self._fsdp_diagnostics_logged = True
 

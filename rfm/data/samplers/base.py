@@ -578,6 +578,7 @@ class RFMBaseSampler:
                 else:
                     start_idx, end_idx = uniform_indices
 
+            logger.trace(f"[BASE SAMPLER] _get_traj_from_data: Subsampling trajectory with strategy: {subsample_strategy}, start_idx: {start_idx}, end_idx: {end_idx}")
             perc_end = success_cutoff if subsample_strategy == "successful" else 2.0 / 3.0
             subsampled, start_idx, end_idx, indices = subsample_segment_frames(
                 data, self.config.max_frames, method="linspace", perc_end=perc_end, start_idx=start_idx, end_idx=end_idx
@@ -636,6 +637,12 @@ class RFMBaseSampler:
             # Reverse progress and success labels
             progress = list(reversed(progress))
             success_label = list(reversed(success_label)) if success_label is not None else None
+
+        # Convert progress to discrete bins if discrete loss is enabled
+        if self.config.progress_loss_type == "discrete":
+            num_bins = self.config.progress_discrete_bins
+            # Convert continuous progress [0, 1] to discrete bins [0, num_bins-1]
+            progress = [int(min(max(p, 0.0), 1.0) * (num_bins - 1)) for p in progress]
 
         return Trajectory(
             frames=frames,

@@ -78,10 +78,6 @@ class PrefSampler(RFMBaseSampler):
             chosen_trajectory = self._get_traj_from_data(chosen_traj_dict)
             rejected_trajectory = self._get_traj_from_data(item)
 
-            # Set rejected trajectory progress to 0 (as per suboptimal strategy)
-            rejected_trajectory.target_progress = [0.0] * len(rejected_trajectory.target_progress)
-
-            # Create preference sample with suboptimal strategy
             sample = PreferenceSample(
                 chosen_trajectory=chosen_trajectory,
                 rejected_trajectory=rejected_trajectory,
@@ -338,24 +334,26 @@ class PrefSampler(RFMBaseSampler):
             )
             return None
 
-        chosen_trajectory = self._get_traj_from_data(chosen_traj)
+        chosen_subsample_strategy = None
+        if self.config.use_uniform_sampling:
+            chosen_subsample_strategy = "uniform_sample_forward"
+        
+        chosen_trajectory = self._get_traj_from_data(chosen_traj, subsample_strategy=chosen_subsample_strategy)
 
-        # Determine subsample strategy for rejected trajectory
         rejected_subsample_strategy = None
         if strategy_used == DataGenStrat.REVERSE_PROGRESS:
             # REVERSE_PROGRESS: use reverse uniform sampling on the same trajectory
             rejected_subsample_strategy = "uniform_sample_reverse"
-        elif self.config.use_uniform_sampling and strategy_used in [DataGenStrat.SUBOPTIMAL, DataGenStrat.REWOUND]:
+        elif self.config.use_uniform_sampling and strategy_used in [DataGenStrat.SUBOPTIMAL, DataGenStrat.DIFFERENT_TASK]:
             rejected_subsample_strategy = "uniform_sample_forward"
 
         rejected_trajectory = self._get_traj_from_data(rejected_traj, subsample_strategy=rejected_subsample_strategy)
 
-        # If our strategy is different task or suboptimal, make sure the rejected trajectory has 0 progress
+        # If our strategy is different task, make sure the rejected trajectory has 0 progress
         # For RoboArena partial_success, keep the original progress (chosen has higher partial_success, rejected has lower)
         if strategy_used in [
             DataGenStrat.DIFFERENT_TASK,
             DataGenStrat.DIFFERENT_TASK_INSTRUCTION,
-            DataGenStrat.SUBOPTIMAL,
         ]:
             rejected_trajectory.target_progress = [0.0] * len(rejected_trajectory.target_progress)
 

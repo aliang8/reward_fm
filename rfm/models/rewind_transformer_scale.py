@@ -33,7 +33,7 @@ class ReWINDScaleTransformerConfig(PretrainedConfig):
         num_attention_heads: int = 8,
         dropout: float = 0.1,
         max_len: int = 16,
-        causal_mask=False, 
+        causal_mask=False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -45,8 +45,6 @@ class ReWINDScaleTransformerConfig(PretrainedConfig):
         self.dropout = dropout
         self.max_len = max_len
         self.causal_mask = causal_mask
-
-
 
 
 class ReWiNDScaleTransformer(PreTrainedModel):
@@ -73,7 +71,6 @@ class ReWiNDScaleTransformer(PreTrainedModel):
 
         self.video_proj = nn.Linear(video_feature_dim, hidden_dim)
         self.text_proj = nn.Linear(text_feature_dim, hidden_dim)
-
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=hidden_dim,
@@ -158,9 +155,9 @@ class ReWiNDScaleTransformer(PreTrainedModel):
         self.causal_mask = None
 
         if config.causal_mask:
-            self.causal_mask = torch.triu(torch.ones((config.max_len * 2 + 1, 
-                                                      config.max_len* 2 + 1), 
-                                                      dtype=torch.bool), diagonal=1) #  double for output token, +1 for text token
+            self.causal_mask = torch.triu(
+                torch.ones((config.max_len * 2 + 1, config.max_len * 2 + 1), dtype=torch.bool), diagonal=1
+            )  #  double for output token, +1 for text token
 
     def forward(
         self,

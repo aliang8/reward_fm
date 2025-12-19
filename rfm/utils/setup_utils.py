@@ -308,7 +308,9 @@ def setup_model_and_processor(
                     after_lm_embed_tokens = model.model.language_model.embed_tokens.weight
                     after_lm_layer_mlp_up_proj = model.model.language_model.layers[0].mlp.up_proj.weight
 
-                logger.info(f"Before visual: {before_visual.shape}, {before_visual.sum()} | After visual: {after_visual.shape}, {after_visual.sum()}")
+                logger.info(
+                    f"Before visual: {before_visual.shape}, {before_visual.sum()} | After visual: {after_visual.shape}, {after_visual.sum()}"
+                )
                 logger.info(
                     f"Before progress head: {before_progress_head.shape}, {before_progress_head.sum()} | After progress head: {after_progress_head.shape}, {after_progress_head.sum()}"
                 )
@@ -320,7 +322,9 @@ def setup_model_and_processor(
                 )
                 # check that before and after are different
                 if torch.allclose(before_visual, after_visual):
-                    logger.warning("Before and after visual are the same! Check if you loaded the pretrained model correctly")
+                    logger.warning(
+                        "Before and after visual are the same! Check if you loaded the pretrained model correctly"
+                    )
                 if torch.allclose(before_progress_head, after_progress_head):
                     logger.warning(
                         "Before and after progress head are the same! Check if you loaded the pretrained model correctly"

@@ -437,26 +437,26 @@ class RFMBaseSampler:
 
     def _get_uniform_sample_indices(self, data, direction: str = "bidirectional") -> tuple[int, int] | None:
         """Get start and end indices for uniform_sample strategy.
-        
+
         Samples two random frames from the trajectory based on the specified direction.
-        
+
         Args:
             data: Trajectory data (frames or embeddings) to sample from
-            direction: Sampling direction - "forward" (second frame after first), 
+            direction: Sampling direction - "forward" (second frame after first),
                       "reverse" (second frame before first), or "bidirectional" (either direction)
-            
+
         Returns:
             Tuple of (start_idx, end_idx) for the segment, or None if insufficient frames
         """
         num_frames_total = len(data) if hasattr(data, "__len__") else data.shape[0]
-        
+
         if num_frames_total < 2:
             logger.trace(f"[BASE SAMPLER] _get_uniform_sample_indices: Not enough frames ({num_frames_total})")
             return None
-        
+
         # Sample first random frame
         frame1_idx = random.randint(0, num_frames_total - 1)
-        
+
         # Sample second frame based on direction
         if direction == "forward":
             # Second frame must be after the first
@@ -486,11 +486,11 @@ class RFMBaseSampler:
                 else:
                     # Sample from after
                     frame2_idx = random.randint(frame1_idx + 1, num_frames_total - 1)
-        
+
         # Ensure start_idx < end_idx (end_idx is exclusive)
         start_idx = min(frame1_idx, frame2_idx)
         end_idx = max(frame1_idx, frame2_idx) + 1
-        
+
         logger.trace(
             f"[BASE SAMPLER] _get_uniform_sample_indices: Selected segment [{start_idx}, {end_idx}) "
             f"from {num_frames_total} total frames (direction: {direction})"
@@ -552,7 +552,7 @@ class RFMBaseSampler:
         else:
             ds_key = traj["data_source"]
             success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
-            
+
             # Handle uniform_sample strategy: pick two random frames as segment bounds
             start_idx = None
             end_idx = None
@@ -577,11 +577,10 @@ class RFMBaseSampler:
                     subsample_strategy = "subsequence"
                 else:
                     start_idx, end_idx = uniform_indices
-            
+
             perc_end = success_cutoff if subsample_strategy == "successful" else 2.0 / 3.0
             subsampled, start_idx, end_idx, indices = subsample_segment_frames(
-                data, self.config.max_frames, method="linspace", perc_end=perc_end,
-                start_idx=start_idx, end_idx=end_idx
+                data, self.config.max_frames, method="linspace", perc_end=perc_end, start_idx=start_idx, end_idx=end_idx
             )
             frames_shape = subsampled.shape
             # For successful, progress previously ignored success_cutoff in computation

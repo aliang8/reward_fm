@@ -623,11 +623,14 @@ def load_model_from_hf(
 
     if os.path.exists(resolved_path):
         # Local checkpoint: look for config.yaml
-        candidate_paths = [os.path.join(resolved_path, "config.yaml"), os.path.join(os.path.dirname(resolved_path), "config.yaml")]
+        candidate_paths = [
+            os.path.join(resolved_path, "config.yaml"),
+            os.path.join(os.path.dirname(resolved_path), "config.yaml"),
+        ]
         for candidate in candidate_paths:
             if os.path.isfile(candidate):
                 config_path = candidate
-                break        
+                break
     else:
         try:
             from huggingface_hub import hf_hub_download
@@ -656,6 +659,7 @@ def load_model_from_hf(
     # Use resolved_path for loading the actual model
     # Import here to avoid circular dependency with setup_utils
     from rfm.utils.setup_utils import setup_model_and_processor
+
     tokenizer, processor, reward_model = setup_model_and_processor(exp_config.model, resolved_path)
     reward_model = reward_model.to(device)
     reward_model.eval()

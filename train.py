@@ -285,8 +285,6 @@ def train(cfg: ExperimentConfig):
     rank_0_print(f"Training complete! Check {cfg.training.output_dir} for checkpoints and final model.")
 
 
-
-
 @hydra_main(version_base=None, config_path="rfm/configs", config_name="config")
 def main(cfg: DictConfig):
     banner("Starting RFM Training")

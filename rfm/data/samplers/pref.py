@@ -4,7 +4,6 @@ PrefSampler class for producing batches of preference data.
 """
 
 import random
-import torch
 
 from rfm.data.dataset_types import PreferenceSample, Trajectory
 from rfm.data.samplers.base import RFMBaseSampler
@@ -213,6 +212,8 @@ class PrefSampler(RFMBaseSampler):
             strategies.append((DataGenStrat.SUBOPTIMAL, self.preference_strategy_ratio[1]))
         if self.preference_strategy_ratio[2] > 0:
             strategies.append((DataGenStrat.DIFFERENT_TASK, self.preference_strategy_ratio[2]))
+        if self.preference_strategy_ratio[3] > 0:
+            strategies.append((DataGenStrat.REVERSE_PROGRESS, self.preference_strategy_ratio[3]))
 
         if is_roboarena:
             strategies.append((DataGenStrat.ROBOARENA_PARTIAL_SUCCESS, 10.0))
@@ -302,6 +303,10 @@ class PrefSampler(RFMBaseSampler):
                     rejected_traj = self._get_different_video_traj(chosen_traj)
                     if rejected_traj is not None:
                         break
+            elif selected_strategy == DataGenStrat.REVERSE_PROGRESS:
+                # REVERSE_PROGRESS: use the same trajectory but with reverse uniform sampling
+                # The rejected trajectory will be the same trajectory sampled with reverse direction
+                rejected_traj = chosen_traj
             else:
                 return None
 
@@ -337,9 +342,12 @@ class PrefSampler(RFMBaseSampler):
         
         # Determine subsample strategy for rejected trajectory
         rejected_subsample_strategy = None
-        if self.config.use_uniform_sampling and strategy_used in [DataGenStrat.SUBOPTIMAL, DataGenStrat.DIFFERENT_TASK]:
-            rejected_subsample_strategy = "uniform_sample"
-        
+        if strategy_used == DataGenStrat.REVERSE_PROGRESS:
+            # REVERSE_PROGRESS: use reverse uniform sampling on the same trajectory
+            rejected_subsample_strategy = "uniform_sample_reverse"
+        elif self.config.use_uniform_sampling and strategy_used in [DataGenStrat.SUBOPTIMAL, DataGenStrat.REWOUND]:
+            rejected_subsample_strategy = "uniform_sample_forward"
+
         rejected_trajectory = self._get_traj_from_data(rejected_traj, subsample_strategy=rejected_subsample_strategy)
 
         # If our strategy is different task or suboptimal, make sure the rejected trajectory has 0 progress

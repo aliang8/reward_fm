@@ -7,26 +7,24 @@ and generates videos with overlayed metadata (task, progress, etc.).
 
 Example commands:
     # Visualize multiple preference samples
-    uv run python rfm/data/scripts/visualize_base_sampler_trajectory.py \
+    uv run python rfm/data/scripts/vis_data_sample.py \
         --dataset jesbu1/oxe_rfm_oxe_bc_z \
         --viz_type preference \
-        --strategy rewound \
+        --preference_strategy rewound \
         --num_videos 10 \
-        --max_frames 2 \
         --progress_pred_type absolute_wrt_total_frames \
         --output data_strategy_visualization
 
-    uv run python rfm/data/scripts/visualize_base_sampler_trajectory.py \
+    uv run python rfm/data/scripts/vis_data_sample.py \
         --dataset jesbu1/oxe_rfm_oxe_bc_z \
         --viz_type progress \
-        --strategy rewound \
+        --progress_strategy rewound \
         --num_videos 10 \
-        --max_frames 2 \
         --progress_pred_type absolute_wrt_total_frames \
         --output data_strategy_visualization
 
     # List available datasets
-    uv run python rfm/data/scripts/visualize_base_sampler_trajectory.py --list_datasets
+    uv run python rfm/data/scripts/vis_data_sample.py --list_datasets
 """
 
 import argparse
@@ -40,9 +38,6 @@ import cv2
 import numpy as np
 from datasets import Dataset
 import imageio
-
-# Add parent directory to path to import RFM modules
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from rfm.data.datasets.helpers import (
     load_frames_from_npz,
@@ -607,12 +602,6 @@ def main():
         help="Frames per second for output video (default: 1)",
     )
     parser.add_argument(
-        "--max_frames",
-        type=int,
-        default=16,
-        help="Maximum number of frames (default: 16)",
-    )
-    parser.add_argument(
         "--progress_pred_type",
         type=str,
         default="absolute_first_frame",
@@ -623,6 +612,11 @@ def main():
         "--pairwise_progress",
         action="store_true",
         help="Use pairwise progress sampling",
+    )
+    parser.add_argument(
+        "--use_uniform_sampling",
+        action="store_true",
+        help="Use uniform sampling for trajectory subsampling",
     )
     parser.add_argument(
         "--load_embeddings",
@@ -643,7 +637,7 @@ def main():
         help="Visualization type: 'progress' for single progress trajectory or 'preference' for preference sample (default: progress)",
     )
     parser.add_argument(
-        "--strategy",
+        "--preference_strategy",
         type=str,
         default=None,
         choices=[
@@ -652,23 +646,27 @@ def main():
             "different_task",
             "roboarena_partial_success",
             "reverse_progress",
+        ],
+        help="Preference data generation strategy: rewound, suboptimal, different_task, roboarena_partial_success, reverse_progress",
+    )
+    parser.add_argument(
+        "--progress_strategy",
+        type=str,
+        default=None,
+        choices=[
             "successful",
+            "rewound",
             "subsequence",
+            "reverse_progress",
             "different_task_instruction",
         ],
-        help="Data generation strategy. For preference: rewound, suboptimal, different_task, roboarena_partial_success. For progress: successful, rewound, subsequence, reverse_progress, different_task_instruction.",
+        help="Progress data generation strategy: successful, rewound, subsequence, reverse_progress, different_task_instruction",
     )
     parser.add_argument(
         "--dataset_preference_ratio",
         type=float,
         default=0.0,
         help="Ratio for using dataset preferences (default: 0.0)",
-    )
-    parser.add_argument(
-        "--preference_strategy_ratio",
-        type=str,
-        default="1,1,1",
-        help="Comma-separated ratios for preference strategies [rewound, suboptimal, different_task] (default: 1,1,1)",
     )
 
     args = parser.parse_args()
@@ -682,25 +680,21 @@ def main():
     if args.dataset is None:
         parser.error("--dataset is required unless --list_datasets is specified")
 
-    # Parse preference_strategy_ratio
-    strategy_ratios = [float(x.strip()) for x in args.preference_strategy_ratio.split(",")]
-    if len(strategy_ratios) != 3:
-        raise ValueError(f"preference_strategy_ratio must have 3 values, got {len(strategy_ratios)}")
-
-    # Create DataConfig using setup utilities
+    # Create DataConfig
     data_config = DataConfig(
         train_datasets=[args.dataset],  # Use the specified dataset for both train and eval
         eval_datasets=[args.dataset],
-        max_frames=args.max_frames,
+        max_frames=16,  # Default value
         progress_pred_type=args.progress_pred_type,
         pairwise_progress=args.pairwise_progress,
+        use_uniform_sampling=args.use_uniform_sampling,
         load_embeddings=args.load_embeddings,
-        max_success=0.95,  # Default
-        max_frames_after_preprocessing=64,  # Default
+        max_success=1.00,
+        max_frames_after_preprocessing=16,
         dataset_preference_ratio=args.dataset_preference_ratio,
-        preference_strategy_ratio=strategy_ratios,
+        preference_strategy_ratio=[1, 1, 1, 0],  # Default ratios
         dataset_success_cutoff_file=args.dataset_success_cutoff_file,
-        min_frames_per_trajectory=0,
+        min_frames_per_trajectory=10,
         sample_type_ratio=[1, 0, 0] if args.viz_type == "preference" else [0, 1, 0],  # Preference or progress
     )
 
@@ -738,19 +732,11 @@ def main():
             verbose=True,
         )
 
-    # Set up output folder
-    if args.num_videos > 1:
-        # If multiple videos, create a folder
-        output_folder = args.output
-        if output_folder.endswith(".mp4"):
-            # Remove .mp4 extension if present
-            output_folder = os.path.splitext(output_folder)[0]
-        if not os.path.exists(output_folder):
-            os.makedirs(output_folder, exist_ok=True)
-            print(f"Created output folder: {output_folder}")
-    else:
-        # Single video - use output path as-is
-        output_folder = None
+    # Set up base output directory
+    base_output_dir = args.output
+    if base_output_dir.endswith(".mp4"):
+        # Remove .mp4 extension if present
+        base_output_dir = os.path.splitext(base_output_dir)[0]
 
     # Generate videos
     num_successful = 0
@@ -778,234 +764,186 @@ def main():
         print(f"Using trajectory {traj_idx}: {trajectory_dict.get('id', 'unknown')}")
 
         if args.viz_type == "preference":
-            # Generate preference sample
-            print("Generating preference sample...")
-            try:
-                # If strategy is specified, override the strategy ratios
-                if args.strategy:
-                    strategy_map = {
-                        "rewound": DataGenStrat.REWOUND,
-                        "suboptimal": DataGenStrat.SUBOPTIMAL,
-                        "different_task": DataGenStrat.DIFFERENT_TASK,
-                        "roboarena_partial_success": DataGenStrat.ROBOARENA_PARTIAL_SUCCESS,
-                    }
-                    target_strategy = strategy_map.get(args.strategy)
-
-                    if target_strategy is not None:
-                        # Temporarily override strategy ratios to force the desired strategy
-                        original_ratios = data_config.preference_strategy_ratio.copy()
-                        if target_strategy == DataGenStrat.REWOUND:
-                            data_config.preference_strategy_ratio = [1.0, 0.0, 0.0]
-                        elif target_strategy == DataGenStrat.SUBOPTIMAL:
-                            data_config.preference_strategy_ratio = [0.0, 1.0, 0.0]
-                        elif target_strategy == DataGenStrat.DIFFERENT_TASK:
-                            data_config.preference_strategy_ratio = [0.0, 0.0, 1.0]
-                        elif target_strategy == DataGenStrat.ROBOARENA_PARTIAL_SUCCESS:
-                            # For RoboArena, the strategy will be automatically selected if it's RoboArena
-                            pass
-                        if target_strategy is not None:
-                            sampler.preference_strategy_ratio = data_config.preference_strategy_ratio
-
-                # Generate preference sample using _generate_sample (which internally calls _create_pref_sample)
-                preference_sample = sampler._generate_sample(trajectory_dict)
-
-                if preference_sample is None:
-                    print(f"Error: Failed to generate preference sample for trajectory {traj_idx}")
-                    num_failed += 1
-                    continue
-
-                print("Preference sample generated successfully!")
-                print(f"  Task: {preference_sample.chosen_trajectory.task}")
-                print(f"  Strategy: {preference_sample.data_gen_strategy}")
-                print(f"  Chosen ID: {preference_sample.chosen_trajectory.id}")
-                print(f"  Rejected ID: {preference_sample.rejected_trajectory.id}")
-                print(
-                    f"  Chosen progress: {preference_sample.chosen_trajectory.target_progress[-1] if preference_sample.chosen_trajectory.target_progress else 'N/A'}"
-                )
-                print(
-                    f"  Rejected progress: {preference_sample.rejected_trajectory.target_progress[-1] if preference_sample.rejected_trajectory.target_progress else 'N/A'}"
-                )
-
-                # Print frame indices for both trajectories
-                chosen_metadata = preference_sample.chosen_trajectory.metadata or {}
-                rejected_metadata = preference_sample.rejected_trajectory.metadata or {}
-
-                if "subsampled_indices" in chosen_metadata:
-                    chosen_indices = chosen_metadata["subsampled_indices"]
-                    print(f"  Chosen frame indices: {chosen_indices}")
-                if "start_idx" in chosen_metadata and "end_idx" in chosen_metadata:
-                    print(f"  Chosen frame range: {chosen_metadata['start_idx']} to {chosen_metadata['end_idx']}")
-                else:
-                    print(f"  Chosen frame indices: All frames (no subsampling)")
-
-                if "subsampled_indices" in rejected_metadata:
-                    rejected_indices = rejected_metadata["subsampled_indices"]
-                    print(f"  Rejected frame indices: {rejected_indices}")
-                if "start_idx" in rejected_metadata and "end_idx" in rejected_metadata:
-                    print(f"  Rejected frame range: {rejected_metadata['start_idx']} to {rejected_metadata['end_idx']}")
-                else:
-                    print(f"  Rejected frame indices: All frames (no subsampling)")
-
-                # Restore original ratios if we overrode them
-                if args.strategy:
-                    data_config.preference_strategy_ratio = original_ratios
-                    sampler.preference_strategy_ratio = original_ratios
-
-            except Exception as e:
-                print(f"Error: Failed to generate preference sample: {e}")
-                import traceback
-
-                traceback.print_exc()
+            # Check that preference_strategy is specified
+            if not args.preference_strategy:
+                print("Error: --preference_strategy is required when --viz_type=preference")
                 num_failed += 1
                 continue
 
-            # Determine output path
-            strategy_suffix = f"_{args.strategy}" if args.strategy else ""
-            if args.num_videos > 1:
-                output_filename = f"{ds_short_name}_preference{strategy_suffix}_{video_idx + 1:04d}.mp4"
-                output_path = os.path.join(output_folder, output_filename)
-            else:
-                if output_folder and not args.output.endswith(".mp4"):
-                    output_path = os.path.join(output_folder, f"{ds_short_name}_preference{strategy_suffix}.mp4")
-                elif not args.output.endswith(".mp4"):
-                    output_path = f"{ds_short_name}_preference{strategy_suffix}_{args.output}.mp4"
-                else:
-                    output_dir = os.path.dirname(args.output)
-                    base_filename = os.path.basename(args.output)
-                    base_name = os.path.splitext(base_filename)[0]
-                    if output_dir:
-                        output_path = os.path.join(
-                            output_dir, f"{ds_short_name}_preference{strategy_suffix}_{base_name}.mp4"
-                        )
-                    else:
-                        output_path = f"{ds_short_name}_preference{strategy_suffix}_{base_name}.mp4"
+            # Get data_source from trajectory for output folder
+            data_source = trajectory_dict.get("data_source", "unknown")
+            # Sanitize data_source for filesystem
+            data_source_safe = data_source.replace("/", "_").replace(":", "_").replace(" ", "_")
+
+            # Create output directory: {data_source}/pref/
+            output_dir = os.path.join(base_output_dir, data_source_safe, "pref")
+            os.makedirs(output_dir, exist_ok=True)
+
+            # Map strategy string to enum
+            strategy_map = {
+                "rewound": DataGenStrat.REWOUND,
+                "suboptimal": DataGenStrat.SUBOPTIMAL,
+                "different_task": DataGenStrat.DIFFERENT_TASK,
+                "roboarena_partial_success": DataGenStrat.ROBOARENA_PARTIAL_SUCCESS,
+                "reverse_progress": DataGenStrat.REVERSE_PROGRESS,
+            }
+            target_strategy = strategy_map.get(args.preference_strategy)
+
+            if target_strategy is None:
+                print(f"Error: Unknown preference strategy: {args.preference_strategy}")
+                num_failed += 1
+                continue
+
+            print(f"Generating preference sample with strategy: {target_strategy.value}...")
+            # Temporarily override strategy ratios to force the desired strategy
+            original_ratios = data_config.preference_strategy_ratio.copy()
+            if target_strategy == DataGenStrat.REWOUND:
+                data_config.preference_strategy_ratio = [1.0, 0.0, 0.0, 0.0]
+            elif target_strategy == DataGenStrat.SUBOPTIMAL:
+                data_config.preference_strategy_ratio = [0.0, 1.0, 0.0, 0.0]
+            elif target_strategy == DataGenStrat.DIFFERENT_TASK:
+                data_config.preference_strategy_ratio = [0.0, 0.0, 1.0, 0.0]
+            elif target_strategy == DataGenStrat.REVERSE_PROGRESS:
+                data_config.preference_strategy_ratio = [0.0, 0.0, 0.0, 1.0]
+            elif target_strategy == DataGenStrat.ROBOARENA_PARTIAL_SUCCESS:
+                # For RoboArena, the strategy will be automatically selected if it's RoboArena
+                pass
+
+            sampler.preference_strategy_ratio = data_config.preference_strategy_ratio
+
+            # Generate preference sample
+            preference_sample = sampler._generate_sample(trajectory_dict)
+
+            if preference_sample is None:
+                print(
+                    f"Error: Failed to generate preference sample for trajectory {traj_idx} with strategy {target_strategy.value}"
+                )
+                num_failed += 1
+                # Restore original ratios
+                data_config.preference_strategy_ratio = original_ratios
+                sampler.preference_strategy_ratio = original_ratios
+                continue
+
+            print(f"Preference sample generated successfully!")
+            print(f"  Task: {preference_sample.chosen_trajectory.task}")
+            print(f"  Strategy: {preference_sample.data_gen_strategy}")
+            print(f"  Chosen ID: {preference_sample.chosen_trajectory.id}")
+            print(f"  Rejected ID: {preference_sample.rejected_trajectory.id}")
+
+            # Determine output path: {data_source}/pref/{data_strategy}_{index}.mp4
+            strategy_name = target_strategy.value
+            output_filename = f"{strategy_name}_{video_idx + 1:04d}.mp4"
+            output_path = os.path.join(output_dir, output_filename)
 
             # Create preference video
             print(f"\nCreating preference video with {args.fps} fps...")
-            try:
-                create_preference_video(
-                    preference_sample=preference_sample,
-                    output_path=output_path,
-                    fps=args.fps,
-                    use_embeddings=args.load_embeddings,
-                )
-                num_successful += 1
-                print(f"✅ Saved preference video {video_idx + 1}/{args.num_videos}: {output_path}")
-            except Exception as e:
-                print(f"❌ Failed to create preference video {video_idx + 1}: {e}")
-                import traceback
+            create_preference_video(
+                preference_sample=preference_sample,
+                output_path=output_path,
+                fps=args.fps,
+                use_embeddings=args.load_embeddings,
+            )
+            num_successful += 1
+            print(f"✅ Saved preference video: {output_path}")
 
-                traceback.print_exc()
-                num_failed += 1
+            # Restore original ratios
+            data_config.preference_strategy_ratio = original_ratios
+            sampler.preference_strategy_ratio = original_ratios
         else:  # progress
-            # Generate progress sample
-            print("Generating progress sample...")
-            try:
-                # If strategy is specified, override the strategy ratios
-                if args.strategy:
-                    strategy_map = {
-                        "successful": DataGenStrat.SUCCESSFUL,
-                        "rewound": DataGenStrat.REWOUND,
-                        "subsequence": DataGenStrat.SUBSEQUENCE,
-                        "reverse_progress": DataGenStrat.REVERSE_PROGRESS,
-                        "different_task_instruction": DataGenStrat.DIFFERENT_TASK_INSTRUCTION,
-                    }
-                    target_strategy = strategy_map.get(args.strategy)
-
-                    if target_strategy is not None:
-                        # Temporarily override strategy ratios to force the desired strategy
-                        original_ratios = data_config.progress_strategy_ratio.copy()
-                        # progress_strategy_ratio: [successful, rewind, different_task, subsequence, reverse_progress]
-                        if target_strategy == DataGenStrat.SUCCESSFUL:
-                            data_config.progress_strategy_ratio = [1.0, 0.0, 0.0, 0.0, 0.0]
-                        elif target_strategy == DataGenStrat.REWOUND:
-                            data_config.progress_strategy_ratio = [0.0, 1.0, 0.0, 0.0, 0.0]
-                        elif target_strategy == DataGenStrat.DIFFERENT_TASK_INSTRUCTION:
-                            data_config.progress_strategy_ratio = [0.0, 0.0, 1.0, 0.0, 0.0]
-                        elif target_strategy == DataGenStrat.SUBSEQUENCE:
-                            data_config.progress_strategy_ratio = [0.0, 0.0, 0.0, 1.0, 0.0]
-                        elif target_strategy == DataGenStrat.REVERSE_PROGRESS:
-                            data_config.progress_strategy_ratio = [0.0, 0.0, 0.0, 0.0, 1.0]
-
-                # Generate progress sample using _generate_sample (which internally calls _create_progress_sample)
-                progress_sample = sampler._generate_sample(trajectory_dict)
-
-                if progress_sample is None:
-                    print(f"Error: Failed to generate progress sample for trajectory {traj_idx}")
-                    num_failed += 1
-                    continue
-
-                processed_trajectory = progress_sample.trajectory
-
-                print("Progress sample generated successfully!")
-                print(f"  Task: {processed_trajectory.task}")
-                print(f"  Strategy: {progress_sample.data_gen_strategy}")
-                print(
-                    f"  Frames: {len(processed_trajectory.frames) if processed_trajectory.frames is not None else 'N/A'}"
-                )
-                print(f"  Progress values: {processed_trajectory.target_progress}")
-                print(
-                    f"  Final progress: {processed_trajectory.target_progress[-1] if processed_trajectory.target_progress else 'N/A'}"
-                )
-
-                # Restore original ratios if we overrode them
-                if args.strategy and target_strategy is not None:
-                    data_config.progress_strategy_ratio = original_ratios
-
-            except Exception as e:
-                print(f"Error: Failed to generate progress sample: {e}")
-                import traceback
-
-                traceback.print_exc()
+            # Check that progress_strategy is specified
+            if not args.progress_strategy:
+                print("Error: --progress_strategy is required when --viz_type=progress")
                 num_failed += 1
                 continue
 
-            # Determine output path
-            strategy_suffix = f"_{args.strategy}" if args.strategy else ""
-            if args.num_videos > 1:
-                # Multiple videos: save in folder with indexed name
-                output_filename = f"{ds_short_name}_progress{strategy_suffix}_{video_idx + 1:04d}.mp4"
-                output_path = os.path.join(output_folder, output_filename)
-            else:
-                # Single video: use specified path or default
-                if output_folder and not args.output.endswith(".mp4"):
-                    output_path = os.path.join(output_folder, f"{ds_short_name}_progress{strategy_suffix}.mp4")
-                elif not args.output.endswith(".mp4"):
-                    output_path = f"{ds_short_name}_progress{strategy_suffix}_{args.output}.mp4"
-                else:
-                    # If user provided .mp4 extension, preserve directory and insert short name in filename
-                    output_dir = os.path.dirname(args.output)
-                    base_filename = os.path.basename(args.output)
-                    base_name = os.path.splitext(base_filename)[0]
-                    if output_dir:
-                        output_path = os.path.join(
-                            output_dir, f"{ds_short_name}_progress{strategy_suffix}_{base_name}.mp4"
-                        )
-                    else:
-                        output_path = f"{ds_short_name}_progress{strategy_suffix}_{base_name}.mp4"
+            # Get data_source from trajectory for output folder
+            data_source = trajectory_dict.get("data_source", "unknown")
+            # Sanitize data_source for filesystem
+            data_source_safe = data_source.replace("/", "_").replace(":", "_").replace(" ", "_")
+
+            # Create output directory: {data_source}/prog/
+            output_dir = os.path.join(base_output_dir, data_source_safe, "prog")
+            os.makedirs(output_dir, exist_ok=True)
+
+            # Map strategy string to enum
+            strategy_map = {
+                "successful": DataGenStrat.SUCCESSFUL,
+                "rewound": DataGenStrat.REWOUND,
+                "subsequence": DataGenStrat.SUBSEQUENCE,
+                "reverse_progress": DataGenStrat.REVERSE_PROGRESS,
+                "different_task_instruction": DataGenStrat.DIFFERENT_TASK_INSTRUCTION,
+            }
+            target_strategy = strategy_map.get(args.progress_strategy)
+
+            if target_strategy is None:
+                print(f"Error: Unknown progress strategy: {args.progress_strategy}")
+                num_failed += 1
+                continue
+
+            print(f"Generating progress sample with strategy: {target_strategy.value}...")
+            # Temporarily override strategy ratios to force the desired strategy
+            original_ratios = data_config.progress_strategy_ratio.copy()
+            # progress_strategy_ratio: [successful, rewind, different_task, subsequence, reverse_progress]
+            if target_strategy == DataGenStrat.SUCCESSFUL:
+                data_config.progress_strategy_ratio = [1.0, 0.0, 0.0, 0.0, 0.0]
+            elif target_strategy == DataGenStrat.REWOUND:
+                data_config.progress_strategy_ratio = [0.0, 1.0, 0.0, 0.0, 0.0]
+            elif target_strategy == DataGenStrat.DIFFERENT_TASK_INSTRUCTION:
+                data_config.progress_strategy_ratio = [0.0, 0.0, 1.0, 0.0, 0.0]
+            elif target_strategy == DataGenStrat.SUBSEQUENCE:
+                data_config.progress_strategy_ratio = [0.0, 0.0, 0.0, 1.0, 0.0]
+            elif target_strategy == DataGenStrat.REVERSE_PROGRESS:
+                data_config.progress_strategy_ratio = [0.0, 0.0, 0.0, 0.0, 1.0]
+            sampler.progress_strategy_ratio = data_config.progress_strategy_ratio
+
+            # Generate progress sample using _generate_sample (which internally calls _create_progress_sample)
+            progress_sample = sampler._generate_sample(trajectory_dict)
+
+            if progress_sample is None:
+                print(f"Error: Failed to generate progress sample for trajectory {traj_idx}")
+                num_failed += 1
+                data_config.progress_strategy_ratio = original_ratios
+                sampler.progress_strategy_ratio = original_ratios
+                continue
+
+            processed_trajectory = progress_sample.trajectory
+
+            print("Progress sample generated successfully!")
+            print(f"  Task: {processed_trajectory.task}")
+            print(f"  Strategy: {progress_sample.data_gen_strategy}")
+            print(f"  Frames: {len(processed_trajectory.frames) if processed_trajectory.frames is not None else 'N/A'}")
+            print(f"  Progress values: {processed_trajectory.target_progress}")
+            print(
+                f"  Final progress: {processed_trajectory.target_progress[-1] if processed_trajectory.target_progress else 'N/A'}"
+            )
+
+            # Determine output path: {data_source}/prog/{data_strategy}_{index}.mp4
+            strategy_name = target_strategy.value
+            output_filename = f"{strategy_name}_{video_idx + 1:04d}.mp4"
+            output_path = os.path.join(output_dir, output_filename)
+
+            # Restore original ratios
+            data_config.progress_strategy_ratio = original_ratios
+            sampler.progress_strategy_ratio = original_ratios
 
             # Create video
             print(f"\nCreating video with {args.fps} fps...")
-            try:
-                create_video_from_trajectory(
-                    trajectory=processed_trajectory,
-                    output_path=output_path,
-                    fps=args.fps,
-                    use_embeddings=args.load_embeddings,
-                )
-                num_successful += 1
-                print(f"✅ Saved video {video_idx + 1}/{args.num_videos}: {output_path}")
-            except Exception as e:
-                print(f"❌ Failed to create video {video_idx + 1}: {e}")
-                num_failed += 1
+            create_video_from_trajectory(
+                trajectory=processed_trajectory,
+                output_path=output_path,
+                fps=args.fps,
+                use_embeddings=args.load_embeddings,
+            )
+            num_successful += 1
+            print(f"✅ Saved video {video_idx + 1}/{args.num_videos}: {output_path}")
 
     # Print summary
     print(f"\n{'=' * 60}")
     print("Summary:")
     print(f"  Successful: {num_successful}/{args.num_videos}")
     print(f"  Failed: {num_failed}/{args.num_videos}")
-    if args.num_videos > 1 and num_successful > 0:
-        print(f"  Output folder: {os.path.abspath(output_folder)}")
+    if num_successful > 0:
+        print(f"  Output directory: {os.path.abspath(base_output_dir)}")
     print(f"{'=' * 60}")
     print("\n✅ Done!")
 

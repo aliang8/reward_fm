@@ -341,9 +341,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         dataset_type = "training" if is_training else "evaluation"
         logger.info(f"✅ Loaded {len(dataset)} total trajectories from preprocessed {dataset_type} datasets")
-        logger.debug(
-            f"Available datasets: {len(available_datasets)}/{len(missing_datasets) + len(available_datasets)}"
-        )
+        logger.debug(f"Available datasets: {len(available_datasets)}/{len(missing_datasets) + len(available_datasets)}")
         logger.debug(f"Missing datasets: {len(missing_datasets)}")
         banner("Dataset statistics")
         logger.debug(f"Robot trajectories: {len(combined_indices['robot_trajectories'])}")
@@ -416,7 +414,9 @@ class BaseDataset(torch.utils.data.Dataset):
 
         # Find tasks with only one unique partial_success category
         roboarena_tasks_with_single_partial_success = {
-            task for task, partial_success_set in roboarena_tasks_to_partial_success.items() if len(partial_success_set) == 1
+            task
+            for task, partial_success_set in roboarena_tasks_to_partial_success.items()
+            if len(partial_success_set) == 1
         }
 
         def add_filter_flags(batch):
@@ -515,7 +515,9 @@ class BaseDataset(torch.utils.data.Dataset):
             # Build keep_indices from flags (before filtering)
             keep_indices = [
                 i
-                for i, (dkw, dfr, dq, dr) in enumerate(zip(drop_kw_list, drop_frames_list, drop_quality_list, drop_roboarena_list))
+                for i, (dkw, dfr, dq, dr) in enumerate(
+                    zip(drop_kw_list, drop_frames_list, drop_quality_list, drop_roboarena_list)
+                )
                 if not (dkw or dfr or dq or dr)
             ]
 

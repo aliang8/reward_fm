@@ -435,50 +435,65 @@ class RFMBaseSampler:
         logger.trace(f"[BASE SAMPLER] _get_rewound_traj: Successfully created rewound trajectory for ID: {traj_id}")
         return result
 
-    def _get_uniform_sample_indices(self, data) -> tuple[int, int] | None:
+    def _get_uniform_sample_indices(self, data, direction: str = "bidirectional") -> tuple[int, int] | None:
         """Get start and end indices for uniform_sample strategy.
-        
-        Samples two random frames from the trajectory, one from before or after the first frame,
-        and returns them as segment bounds.
-        
+
+        Samples two random frames from the trajectory based on the specified direction.
+
         Args:
             data: Trajectory data (frames or embeddings) to sample from
-            
+            direction: Sampling direction - "forward" (second frame after first),
+                      "reverse" (second frame before first), or "bidirectional" (either direction)
+
         Returns:
             Tuple of (start_idx, end_idx) for the segment, or None if insufficient frames
         """
         num_frames_total = len(data) if hasattr(data, "__len__") else data.shape[0]
-        
+
         if num_frames_total < 2:
             logger.trace(f"[BASE SAMPLER] _get_uniform_sample_indices: Not enough frames ({num_frames_total})")
             return None
-        
+
         # Sample first random frame
         frame1_idx = random.randint(0, num_frames_total - 1)
-        
-        # Randomly choose to sample from before or after
-        if frame1_idx == 0:
-            # Can only sample after
-            frame2_idx = random.randint(1, num_frames_total - 1)
-        elif frame1_idx == num_frames_total - 1:
-            # Can only sample before
+
+        # Sample second frame based on direction
+        if direction == "forward":
+            # Second frame must be after the first
+            if frame1_idx == num_frames_total - 1:
+                # Can't sample forward from last frame, need to adjust
+                frame1_idx = random.randint(0, num_frames_total - 2)
+            frame2_idx = random.randint(frame1_idx + 1, num_frames_total - 1)
+        elif direction == "reverse":
+            # Second frame must be before the first
+            if frame1_idx == 0:
+                # Can't sample reverse from first frame, need to adjust
+                frame1_idx = random.randint(1, num_frames_total - 1)
             frame2_idx = random.randint(0, frame1_idx - 1)
-        else:
-            # Can sample from either side
-            if random.random() < 0.5:
-                # Sample from before
+        else:  # bidirectional (default)
+            # Randomly choose to sample from before or after
+            if frame1_idx == 0:
+                # Can only sample after
+                frame2_idx = random.randint(1, num_frames_total - 1)
+            elif frame1_idx == num_frames_total - 1:
+                # Can only sample before
                 frame2_idx = random.randint(0, frame1_idx - 1)
             else:
-                # Sample from after
-                frame2_idx = random.randint(frame1_idx + 1, num_frames_total - 1)
-        
+                # Can sample from either side
+                if random.random() < 0.5:
+                    # Sample from before
+                    frame2_idx = random.randint(0, frame1_idx - 1)
+                else:
+                    # Sample from after
+                    frame2_idx = random.randint(frame1_idx + 1, num_frames_total - 1)
+
         # Ensure start_idx < end_idx (end_idx is exclusive)
         start_idx = min(frame1_idx, frame2_idx)
         end_idx = max(frame1_idx, frame2_idx) + 1
-        
+
         logger.trace(
             f"[BASE SAMPLER] _get_uniform_sample_indices: Selected segment [{start_idx}, {end_idx}) "
-            f"from {num_frames_total} total frames"
+            f"from {num_frames_total} total frames (direction: {direction})"
         )
         return start_idx, end_idx
 
@@ -537,22 +552,35 @@ class RFMBaseSampler:
         else:
             ds_key = traj["data_source"]
             success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
-            
+
             # Handle uniform_sample strategy: pick two random frames as segment bounds
             start_idx = None
             end_idx = None
             if subsample_strategy == "uniform_sample":
-                uniform_indices = self._get_uniform_sample_indices(data)
+                uniform_indices = self._get_uniform_sample_indices(data, direction="bidirectional")
                 if uniform_indices is None:
                     # Not enough frames for uniform_sample, fall back to subsequence
                     subsample_strategy = "subsequence"
                 else:
                     start_idx, end_idx = uniform_indices
-            
+            elif subsample_strategy == "uniform_sample_forward":
+                uniform_indices = self._get_uniform_sample_indices(data, direction="forward")
+                if uniform_indices is None:
+                    # Not enough frames for uniform_sample, fall back to subsequence
+                    subsample_strategy = "subsequence"
+                else:
+                    start_idx, end_idx = uniform_indices
+            elif subsample_strategy == "uniform_sample_reverse":
+                uniform_indices = self._get_uniform_sample_indices(data, direction="reverse")
+                if uniform_indices is None:
+                    # Not enough frames for uniform_sample, fall back to subsequence
+                    subsample_strategy = "subsequence"
+                else:
+                    start_idx, end_idx = uniform_indices
+
             perc_end = success_cutoff if subsample_strategy == "successful" else 2.0 / 3.0
             subsampled, start_idx, end_idx, indices = subsample_segment_frames(
-                data, self.config.max_frames, method="linspace", perc_end=perc_end,
-                start_idx=start_idx, end_idx=end_idx
+                data, self.config.max_frames, method="linspace", perc_end=perc_end, start_idx=start_idx, end_idx=end_idx
             )
             frames_shape = subsampled.shape
             # For successful, progress previously ignored success_cutoff in computation
@@ -564,16 +592,6 @@ class RFMBaseSampler:
                 progress_pred_type=self.config.progress_pred_type,
                 success_cutoff=success_cutoff,
             )
-
-            # Handle reverse_progress strategy: reverse both frames and progress
-            if subsample_strategy == "reverse_progress":
-                # Reverse the frames/embeddings along the time dimension (first dimension)
-                if isinstance(subsampled, torch.Tensor):
-                    subsampled = torch.flip(subsampled, dims=[0])
-                else:
-                    subsampled = np.flip(subsampled, axis=0)
-                # Reverse the progress list
-                progress = list(reversed(progress))
 
             metadata = {
                 "start_idx": start_idx,
@@ -602,6 +620,22 @@ class RFMBaseSampler:
             dataset_success_percent=self.dataset_success_cutoff_map,
             max_success=self.config.max_success,
         )
+
+        if subsample_strategy and "reverse" in subsample_strategy:
+            # Reverse frames/embeddings along time dimension
+            if frames is not None:
+                if isinstance(frames, np.ndarray):
+                    frames = np.flip(frames, axis=0)
+                elif isinstance(frames, torch.Tensor):
+                    frames = torch.flip(frames, dims=[0])
+            if video_embeddings is not None:
+                if isinstance(video_embeddings, np.ndarray):
+                    video_embeddings = np.flip(video_embeddings, axis=0)
+                elif isinstance(video_embeddings, torch.Tensor):
+                    video_embeddings = torch.flip(video_embeddings, dims=[0])
+            # Reverse progress and success labels
+            progress = list(reversed(progress))
+            success_label = list(reversed(success_label)) if success_label is not None else None
 
         return Trajectory(
             frames=frames,

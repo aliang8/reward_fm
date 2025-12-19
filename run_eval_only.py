@@ -39,9 +39,10 @@ from rfm.utils.config_utils import display_config, convert_hydra_to_dataclass
 from rfm.utils.setup_utils import (
     create_training_arguments,
     setup_batch_collator,
-)    
+)
 
 logger = get_logger()
+
 
 def create_eval_trainer(
     cfg: ExperimentConfig,
@@ -51,7 +52,7 @@ def create_eval_trainer(
     output_dir: str,
 ):
     """Create trainer configured for evaluation only.
-    
+
     Supports RFMHeadsTrainer, SingleFrameTrainer, and RFMVQATrainer based on config.trainer_cls.
     """
     logger.info("Setting up trainer for evaluation...")
@@ -76,7 +77,7 @@ def create_eval_trainer(
 
     # Determine trainer class based on config (check trainer_cls first, then model_type)
     trainer_cls_name = getattr(cfg, "trainer_cls", None) or "rfm_heads"
-    
+
     if trainer_cls_name == "single_frame":
         trainer = SingleFrameTrainer(
             model=model,
@@ -112,7 +113,7 @@ def create_eval_trainer(
 def main(cfg: DictConfig):
     # Convert Hydra config to dataclass
     eval_only_cfg = convert_hydra_to_dataclass(cfg, OfflineEvalConfig)
-    
+
     # Display the evaluation config
     display_config(eval_only_cfg)
 
@@ -210,7 +211,7 @@ def main(cfg: DictConfig):
                     metrics_serializable[k] = float(v)
                 except (ValueError, TypeError):
                     metrics_serializable[k] = str(v)
-        
+
         with open(metrics_file, "w") as f:
             json.dump(metrics_serializable, f, indent=2)
         logger.info(f"💾 Saved evaluation metrics to: {metrics_file}")

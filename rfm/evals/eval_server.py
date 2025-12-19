@@ -32,6 +32,7 @@ import os
 import queue
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
 from threading import Lock
 from typing import Any, Dict
 
@@ -713,6 +714,84 @@ def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | Non
         """Health check endpoint."""
         status = multi_gpu_server.get_pool_status()
         return {"status": "healthy", "available_gpus": status["available_gpus"], "total_gpus": status["total_gpus"]}
+
+    @app.get("/model_info")
+    def get_model_info():
+        """Get model information and experiment configuration."""
+        def serialize_config(config_obj):
+            """Recursively serialize dataclass to dict, handling nested dataclasses."""
+            if hasattr(config_obj, "__dataclass_fields__"):
+                result = {}
+                for field_name, field_value in asdict(config_obj).items():
+                    result[field_name] = serialize_config(field_value)
+                return result
+            elif isinstance(config_obj, dict):
+                return {k: serialize_config(v) for k, v in config_obj.items()}
+            elif isinstance(config_obj, list):
+                return [serialize_config(item) for item in config_obj]
+            elif isinstance(config_obj, (str, int, float, bool, type(None))):
+                return config_obj
+            else:
+                # Fallback: convert to string for non-serializable types
+                return str(config_obj)
+        
+        def get_model_architecture_info(model):
+            """Extract model architecture information."""
+            model_info = {
+                "model_class": model.__class__.__name__,
+                "model_module": model.__class__.__module__,
+            }
+            
+            # Count parameters
+            try:
+                all_params = sum(p.numel() for p in model.parameters())
+                trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+                frozen_params = all_params - trainable_params
+                
+                model_info.update({
+                    "total_parameters": all_params,
+                    "trainable_parameters": trainable_params,
+                    "frozen_parameters": frozen_params,
+                    "trainable_percentage": (100 * trainable_params / all_params) if all_params > 0 else 0.0,
+                })
+            except Exception as e:
+                logger.warning(f"Could not count model parameters: {e}")
+                model_info["parameter_count_error"] = str(e)
+            
+            # Get model architecture summary (first few layers)
+            try:
+                architecture_summary = []
+                for name, module in list(model.named_children())[:10]:  # First 10 top-level modules
+                    module_type = module.__class__.__name__
+                    num_params = sum(p.numel() for p in module.parameters())
+                    architecture_summary.append({
+                        "name": name,
+                        "type": module_type,
+                        "parameters": num_params,
+                    })
+                model_info["architecture_summary"] = architecture_summary
+            except Exception as e:
+                logger.warning(f"Could not get architecture summary: {e}")
+                model_info["architecture_summary_error"] = str(e)
+            
+            return model_info
+        
+        exp_config_dict = serialize_config(multi_gpu_server.exp_config)
+        
+        # Get model architecture info from the base model
+        model_arch_info = None
+        try:
+            model_arch_info = get_model_architecture_info(multi_gpu_server.base_model)
+        except Exception as e:
+            logger.warning(f"Could not get model architecture info: {e}")
+            model_arch_info = {"error": str(e)}
+        
+        return {
+            "model_path": multi_gpu_server.model_path,
+            "num_gpus": multi_gpu_server.num_gpus,
+            "experiment_config": exp_config_dict,
+            "model_architecture": model_arch_info,
+        }
 
     @app.on_event("shutdown")
     async def shutdown_event():

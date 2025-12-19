@@ -5,7 +5,14 @@ Contains the RFM class by using the standard Qwen2.5-VL model, training it with 
 """
 
 from transformers import PreTrainedModel, Qwen2_5_VLForConditionalGeneration, SmolVLMForConditionalGeneration
-# , Qwen3VLForConditionalGeneration
+from transformers import AutoModelForImageTextToText as Molmo2VLForConditionalGeneration
+# Try to import Qwen3 if available
+try:
+    from transformers import Qwen3VLForConditionalGeneration
+    HAS_QWEN3 = True
+except ImportError:
+    HAS_QWEN3 = False
+    Qwen3VLForConditionalGeneration = None
 
 import torch
 
@@ -29,7 +36,12 @@ class RFMVQA(PreTrainedModel):
         elif "Qwen2.5" in base_model_id:
             self.model = Qwen2_5_VLForConditionalGeneration(config)
         elif "Qwen3" in base_model_id:
-            self.model = Qwen3VLForConditionalGeneration(config)
+            if HAS_QWEN3 and Qwen3VLForConditionalGeneration is not None:
+                self.model = Qwen3VLForConditionalGeneration(config)
+            else:
+                raise ImportError("Qwen3VLForConditionalGeneration not available. Please update transformers.")
+        elif "Molmo" in base_model_id:
+            self.model = Molmo2VLForConditionalGeneration(config)
         else:
             raise ValueError(f"Base model id not supported in RFMVQA yet: {base_model_id}")
 

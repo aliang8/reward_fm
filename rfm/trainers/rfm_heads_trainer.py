@@ -2498,7 +2498,9 @@ class RFMHeadsTrainer(Trainer):
             
             progress_pred_flat = progress_pred.view(batch_size * seq_len, num_bins)  # [B*T, num_bins]
             target_bins_flat = target_bins.view(batch_size * seq_len)  # [B*T]
-            mask_flat = mask.flatten()  # [B]
+            # Mask is [B, 1] per-sample, expand to [B, T] then flatten to [B*T]
+            mask_expanded = mask.expand(batch_size, seq_len)  # [B, T]
+            mask_flat = mask_expanded.flatten()  # [B*T]
             
             # Compute cross-entropy loss per sample
             loss_per_sample_flat = F.cross_entropy(progress_pred_flat, target_bins_flat, reduction="none")  # [B*T]

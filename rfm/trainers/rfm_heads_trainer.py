@@ -2543,17 +2543,28 @@ class RFMHeadsTrainer(Trainer):
                 logger.trace(
                     f"forward_model: input_ids shape: {inputs['input_ids'].shape if 'input_ids' in inputs else 'N/A'}"
                 )
-                model_output, model_timing_raw = model(
-                    input_ids=inputs["input_ids"],
-                    attention_mask=inputs["attention_mask"],
-                    pixel_values=inputs.get("pixel_values", None),
-                    pixel_values_videos=inputs.get("pixel_values_videos", None),
-                    image_grid_thw=inputs.get("image_grid_thw", None),
-                    video_grid_thw=inputs.get("video_grid_thw", None),
-                    second_per_grid_ts=inputs.get("second_per_grid_ts", None),
-                    sample_type=sample_type,
-                    timing_raw=self.timing_raw,
-                )
+                
+                # Build model kwargs - include both Qwen and Molmo2 specific parameters
+                model_kwargs = {
+                    "input_ids": inputs["input_ids"],
+                    "attention_mask": inputs["attention_mask"],
+                    "pixel_values": inputs.get("pixel_values", None),
+                    "pixel_values_videos": inputs.get("pixel_values_videos", None),
+                    # Qwen-specific parameters
+                    "image_grid_thw": inputs.get("image_grid_thw", None),
+                    "video_grid_thw": inputs.get("video_grid_thw", None),
+                    "second_per_grid_ts": inputs.get("second_per_grid_ts", None),
+                    # Molmo2-specific parameters
+                    "image_grids": inputs.get("image_grids", None),
+                    "image_token_pooling": inputs.get("image_token_pooling", None),
+                    "image_num_crops": inputs.get("image_num_crops", None),
+                    "video_grids": inputs.get("video_grids", None),
+                    "video_token_pooling": inputs.get("video_token_pooling", None),
+                    # Common parameters
+                    "sample_type": sample_type,
+                    "timing_raw": self.timing_raw,
+                }
+                model_output, model_timing_raw = model(**model_kwargs)
                 logger.trace("forward_model: Model forward pass completed")
 
             logger.trace("forward_model: Updating timing and returning")

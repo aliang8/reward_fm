@@ -139,18 +139,29 @@ class RFM(PreTrainedModel):
                             embeddings for each frame/image between token pairs
         """
         # Detect model type and get appropriate tokenizer and tokens
+        is_molmo = "Molmo" in self.base_model_id
         if "SmolVLM" in self.base_model_id:
             # SmolVLM mode: same token appears in pairs
             tokenizer = self.tokenizer
             start_token = "<fake_token_around_image>"
             end_token = None  # Same token for both start and end
             use_same_token = True
+            use_molmo_mode = False
+        elif is_molmo:
+            # Molmo2 mode: <low_res_im_start> followed by <im_patch> tokens
+            tokenizer = self.processor.tokenizer
+            start_token = "<low_res_im_start>"
+            end_token = None  # No explicit end token
+            patch_token = "<im_patch>"
+            use_same_token = False
+            use_molmo_mode = True
         else:
             # Qwen mode: different start and end tokens
             tokenizer = self.processor.tokenizer
             start_token = "<|vision_start|>"
             end_token = "<|vision_end|>"
             use_same_token = False
+            use_molmo_mode = False
 
         # Get token IDs
         start_token_id = tokenizer.convert_tokens_to_ids(start_token)
@@ -175,6 +186,26 @@ class RFM(PreTrainedModel):
             token_pairs = []
             for i in range(0, len(start_positions), 2):
                 token_pairs.append((start_positions[i].item(), start_positions[i + 1].item()))
+        elif use_molmo_mode:
+            # Molmo2 mode: <low_res_im_start> followed by <im_patch> tokens
+            patch_token_id = tokenizer.convert_tokens_to_ids(patch_token)
+            im_patch_positions = (input_ids == patch_token_id).nonzero(as_tuple=True)[0]
+            
+            token_pairs = []
+            for start_idx, start_pos in enumerate(start_positions):
+                start_pos_val = start_pos.item()
+                # Find the last consecutive im_patch token after this start
+                patches_after_start = im_patch_positions[im_patch_positions > start_pos]
+                if len(patches_after_start) > 0:
+                    # Find where patches stop (at next image start or end of sequence)
+                    if start_idx + 1 < len(start_positions):
+                        next_start = start_positions[start_idx + 1].item()
+                        patches_for_this_image = patches_after_start[patches_after_start < next_start]
+                    else:
+                        patches_for_this_image = patches_after_start
+                    if len(patches_for_this_image) > 0:
+                        end_pos = patches_for_this_image[-1].item()
+                        token_pairs.append((start_pos_val, end_pos))
         else:
             # Qwen mode: different start and end tokens
             end_token_id = tokenizer.convert_tokens_to_ids(end_token)
@@ -478,8 +509,19 @@ class RFM(PreTrainedModel):
         logger.trace(f"RFM._forward_qwen: hidden_state shape: {hidden_state.shape}")
 
         # Get token IDs for vision tokens
-        vision_start_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|vision_start|>")
-        vision_end_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|vision_end|>")
+        # Qwen uses <|vision_start|> and <|vision_end|>
+        # Molmo2 uses <low_res_im_start> and <im_patch> tokens instead
+        is_molmo = "Molmo" in self.base_model_id
+        
+        if is_molmo:
+            # Molmo2 uses different tokens for images
+            vision_start_token_id = self.processor.tokenizer.convert_tokens_to_ids("<low_res_im_start>")
+            vision_end_token_id = self.processor.tokenizer.convert_tokens_to_ids("<low_res_im_end>")
+            im_patch_token_id = self.processor.tokenizer.convert_tokens_to_ids("<im_patch>")
+        else:
+            vision_start_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|vision_start|>")
+            vision_end_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|vision_end|>")
+            im_patch_token_id = None
         split_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|split_token|>")
 
         progress_logits_A = []
@@ -488,8 +530,11 @@ class RFM(PreTrainedModel):
         success_logits_B = []
 
         # temporal patch size (only needed for video mode)
-        tps = self.processor.video_processor.temporal_patch_size if hasattr(self.processor, "video_processor") else 2
-        merge_size = self.processor.video_processor.merge_size if hasattr(self.processor, "video_processor") else 14
+        # Check both that video_processor exists AND has the required attributes (Molmo2 doesn't have these)
+        has_tps = hasattr(self.processor, "video_processor") and hasattr(self.processor.video_processor, "temporal_patch_size")
+        has_merge = hasattr(self.processor, "video_processor") and hasattr(self.processor.video_processor, "merge_size")
+        tps = self.processor.video_processor.temporal_patch_size if has_tps else 2
+        merge_size = self.processor.video_processor.merge_size if has_merge else 14
 
         # Skip all frame extraction when using progress token
         skip_frame_extraction = self.use_progress_token
@@ -500,15 +545,42 @@ class RFM(PreTrainedModel):
                 # Compute per-frame embeddings and predictions
                 for i, seq_ids in enumerate(input_ids):
                     logger.trace(f"RFM._forward_qwen: Processing sample {i}/{len(input_ids) - 1}")
+                    
                     # Find all vision token positions
                     vision_start_positions = (seq_ids == vision_start_token_id).nonzero(as_tuple=True)[0]
-                    vision_end_positions = (seq_ids == vision_end_token_id).nonzero(as_tuple=True)[0]
+                    
+                    # For Molmo2, vision_end_token_id is None, so we need to find image regions differently
+                    if is_molmo and im_patch_token_id is not None:
+                        # For Molmo2: find where <im_patch> tokens are
+                        im_patch_positions = (seq_ids == im_patch_token_id).nonzero(as_tuple=True)[0]
+                        # Find boundaries: where patches end for each image (where non-patch token appears)
+                        # Each <low_res_im_start> marks a new image
+                        vision_end_positions = []
+                        for start_idx, start_pos in enumerate(vision_start_positions):
+                            start_pos_val = start_pos.item()
+                            # Find the last consecutive im_patch token after this start
+                            patches_after_start = im_patch_positions[im_patch_positions > start_pos]
+                            if len(patches_after_start) > 0:
+                                # Find where patches stop being consecutive or hit next image start
+                                if start_idx + 1 < len(vision_start_positions):
+                                    next_start = vision_start_positions[start_idx + 1].item()
+                                    patches_for_this_image = patches_after_start[patches_after_start < next_start]
+                                else:
+                                    patches_for_this_image = patches_after_start
+                                if len(patches_for_this_image) > 0:
+                                    vision_end_positions.append(patches_for_this_image[-1])
+                        vision_end_positions = torch.tensor(vision_end_positions, device=seq_ids.device)
+                    elif vision_end_token_id is not None:
+                        vision_end_positions = (seq_ids == vision_end_token_id).nonzero(as_tuple=True)[0]
+                    else:
+                        vision_end_positions = torch.tensor([], device=seq_ids.device)
+                    
                     logger.trace(
                         f"RFM._forward_qwen: Sample {i} - found {len(vision_start_positions)} vision_start tokens, {len(vision_end_positions)} vision_end tokens"
                     )
 
                     if len(vision_start_positions) == 0:
-                        raise ValueError(f"vision_start_token not found in sequence {i}")
+                        raise ValueError(f"vision_start_token (id={vision_start_token_id}) not found in sequence {i}")
 
                     is_multi_image = self.use_multi_image
                     logger.trace(f"RFM._forward_qwen: Sample {i} - is_multi_image={is_multi_image} (from model config)")
@@ -628,6 +700,12 @@ class RFM(PreTrainedModel):
         sample_type=None,  # "preference", "progress", "similarity"
         second_per_grid_ts=None,
         timing_raw=None,
+        # Molmo2-specific parameters
+        image_grids=None,
+        image_token_pooling=None,
+        image_num_crops=None,
+        video_grids=None,
+        video_token_pooling=None,
         **kwargs,
     ):
         """
@@ -710,6 +788,12 @@ class RFM(PreTrainedModel):
                 sample_type,
                 timing_raw,
                 second_per_grid_ts=second_per_grid_ts,
+                # Molmo2-specific parameters
+                image_grids=image_grids,
+                image_token_pooling=image_token_pooling,
+                image_num_crops=image_num_crops,
+                video_grids=video_grids,
+                video_token_pooling=video_token_pooling,
                 **kwargs,
             )
             logger.trace("RFM.forward: _forward_qwen completed")

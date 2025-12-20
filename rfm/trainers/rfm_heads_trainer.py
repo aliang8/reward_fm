@@ -1604,6 +1604,7 @@ class RFMHeadsTrainer(Trainer):
                     max_videos=9,
                     progress_key_pred="progress_pred",
                     progress_key_target="target_progress",
+                    is_discrete_mode=is_discrete_mode,
                 )
                 if grid_video is not None:
                     self.logger.log_video(
@@ -1709,7 +1710,7 @@ class RFMHeadsTrainer(Trainer):
 
             # Create and log grid of frame pairs with progress annotations
             if self.logger.enabled("wandb"):
-                grid_image = create_policy_ranking_grid(eval_results, grid_size=(2, 2), max_samples=4)
+                grid_image = create_policy_ranking_grid(eval_results, grid_size=(2, 2), max_samples=4, is_discrete_mode=is_discrete_mode)
                 if grid_image is not None:
                     self.logger.log_image(
                         f"policy_ranking_grid/{ds_name}",
@@ -2464,6 +2465,8 @@ class RFMHeadsTrainer(Trainer):
         # Determine loss type from config
         loss_type = self.config.loss.progress_loss_type.lower()
         
+        masked_correct = None
+        
         # Set loss function based on loss type
         if loss_type == "discrete":
             # Discrete loss: target progress is already binned in data sampling
@@ -2498,17 +2501,29 @@ class RFMHeadsTrainer(Trainer):
             
             progress_pred_flat = progress_pred.view(batch_size * seq_len, num_bins)  # [B*T, num_bins]
             target_bins_flat = target_bins.view(batch_size * seq_len)  # [B*T]
-            # Mask is [B, 1] per-sample, expand to [B, T] then flatten to [B*T]
-            mask_expanded = mask.expand(batch_size, seq_len)  # [B, T]
+            # Mask shape may be [B, 1] or [B, seq_len] depending on downsampling/last_frame_mask
+            # Ensure it matches target_bins shape [B, seq_len] before flattening
+            if mask.shape[1] != seq_len:
+                # Mask is [B, 1], expand to [B, seq_len]
+                mask_expanded = mask.expand(batch_size, seq_len)  # [B, seq_len]
+            else:
+                # Mask is already [B, seq_len]
+                mask_expanded = mask
             mask_flat = mask_expanded.flatten()  # [B*T]
             
             # Compute cross-entropy loss per sample
             loss_per_sample_flat = F.cross_entropy(progress_pred_flat, target_bins_flat, reduction="none")  # [B*T]
             
+            # Compute accuracy: compare predicted bins (argmax) with target bins
+            pred_bins_flat = torch.argmax(progress_pred_flat, dim=-1)  # [B*T]
+            correct_flat = (pred_bins_flat == target_bins_flat).float()  # [B*T]
+            
             # Apply mask and reshape back
             masked_loss_flat = loss_per_sample_flat * mask_flat  # [B*T]
+            masked_correct_flat = correct_flat * mask_flat  # [B*T]
             loss_per_sample = loss_per_sample_flat.view(batch_size, seq_len)  # [B, T]
             masked_loss = masked_loss_flat.view(batch_size, seq_len)  # [B, T]
+            masked_correct = masked_correct_flat.view(batch_size, seq_len)  # [B, T]
         elif loss_type == "l1":
             loss_fn = F.l1_loss
         else:  
@@ -2547,6 +2562,10 @@ class RFMHeadsTrainer(Trainer):
 
         # Keep track of the per-sample metrics
         metrics = {"masked_loss": masked_loss, "masked_spearman_corr": masked_spearman_corr}
+        
+        # Add progress accuracy for discrete mode
+        if loss_type == "discrete" and masked_correct is not None:
+            metrics["masked_progress_accuracy"] = masked_correct
 
         return progress_loss, spearman_corr, metrics
 
@@ -2701,6 +2720,11 @@ class RFMHeadsTrainer(Trainer):
                 f"{prefix}/prog_loss": progress_loss.item(),
                 f"{prefix}/spearman_corr": spearman_corr.item(),
             })
+            
+            # Add progress accuracy for discrete mode
+            if "masked_progress_accuracy" in progress_metrics:
+                progress_accuracy = progress_metrics["masked_progress_accuracy"].sum() / (progress_target_mask.sum() + 1e-8)
+                outputs_dict[f"{prefix}/prog_accuracy"] = progress_accuracy.item()
 
             if self.config.model.train_success_head:
                 outputs_dict.update({
@@ -2781,6 +2805,11 @@ class RFMHeadsTrainer(Trainer):
                     f"{prefix}/pref_prog_loss": progress_loss_A.item(),
                     f"{prefix}/pref_prog_spearman_corr": spearman_corr_A.item(),
                 })
+                
+                # Add progress accuracy for discrete mode
+                if "masked_progress_accuracy" in progress_metrics_A:
+                    progress_accuracy_A = progress_metrics_A["masked_progress_accuracy"].sum() / (target_progress_A_mask.sum() + 1e-8)
+                    outputs_dict[f"{prefix}/pref_prog_accuracy"] = progress_accuracy_A.item()
 
                 stratified_progress_metrics = {
                     "spearman_corr": progress_metrics_A["masked_spearman_corr"],
@@ -3133,6 +3162,15 @@ class RFMHeadsTrainer(Trainer):
                     f"{prefix}/sim_prog_loss_ref_diff": progress_loss_ref_diff.item(),
                     f"{prefix}/sim_prog_spearman_corr": (spearman_corr_ref_sim + spearman_corr_ref_diff).item() / 2.0,
                 })
+                
+                # Add progress accuracy for discrete mode
+                if "masked_progress_accuracy" in progress_metrics_ref_sim and "masked_progress_accuracy" in progress_metrics_ref_diff:
+                    progress_accuracy_ref_sim = progress_metrics_ref_sim["masked_progress_accuracy"].sum() / (target_progress_ref_sim_mask.sum() + 1e-8)
+                    progress_accuracy_ref_diff = progress_metrics_ref_diff["masked_progress_accuracy"].sum() / (target_progress_ref_diff_mask.sum() + 1e-8)
+                    avg_progress_accuracy = (progress_accuracy_ref_sim + progress_accuracy_ref_diff) / 2.0
+                    outputs_dict[f"{prefix}/sim_prog_accuracy"] = avg_progress_accuracy.item()
+                    outputs_dict[f"{prefix}/sim_prog_accuracy_ref_sim"] = progress_accuracy_ref_sim.item()
+                    outputs_dict[f"{prefix}/sim_prog_accuracy_ref_diff"] = progress_accuracy_ref_diff.item()
 
                 # Combine metrics from both ref_sim and ref_diff for stratification
                 # Average the metrics across both comparisons

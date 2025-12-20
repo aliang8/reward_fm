@@ -57,7 +57,7 @@ class RFM(PreTrainedModel):
 
         # Determine progress head output size based on model_config
         progress_output_size = 1  # Default: continuous output
-        if model_config is not None and model_config.progress_discrete_bins is not None and model_config.progress_discrete_bins > 0:
+        if model_config.progress_loss_type.lower() == "discrete":
             progress_output_size = model_config.progress_discrete_bins
             self.use_discrete_progress = True
         else:

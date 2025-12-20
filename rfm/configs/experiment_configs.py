@@ -76,6 +76,10 @@ class ModelConfig(PretrainedConfig):
         default=False,
         metadata={"help": "Whether to use casual masking in ReWINDTransformer"},
     )
+    progress_loss_type: str = field(
+        default="l2",
+        metadata={"help": "Type of progress loss: 'l1', 'l2', or 'discrete'"},
+    )
     progress_discrete_bins: Optional[int] = field(
         default=None,
         metadata={"help": "Number of discrete bins for progress when using discrete loss (None for continuous)"},

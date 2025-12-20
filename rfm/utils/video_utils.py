@@ -195,6 +195,7 @@ def create_video_grid_with_progress(
     max_videos: int = 9,
     progress_key_pred: str = "progress_pred",
     progress_key_target: str = "target_progress",
+    is_discrete_mode: bool = False,
 ) -> Optional[np.ndarray]:
     """
     Create a grid of videos with progress information overlaid on each video.
@@ -268,14 +269,21 @@ def create_video_grid_with_progress(
             if progress_pred is not None and progress_target is not None:
                 # Get progress value for this frame (index by t)
                 if isinstance(progress_pred, (list, np.ndarray)):
-                    pred_val = float(progress_pred[t]) if t < len(progress_pred) else 0.0
+                    pred_elem = progress_pred[t]
+                    if is_discrete_mode:
+                        # Discrete mode: apply argmax to get predicted bin index
+                        pred_val = float(np.argmax(pred_elem))
+                    else:
+                        # Continuous mode: convert to float directly
+                        pred_val = float(pred_elem)
                 else:
-                    pred_val = float(progress_pred)
+                    pred_val = float(progress_pred) if progress_pred is not None else 0.0
 
                 if isinstance(progress_target, (list, np.ndarray)):
-                    target_val = float(progress_target[t]) if t < len(progress_target) else 0.0
+                    # Target is already a discrete bin index (integer) in discrete mode, or continuous in continuous mode
+                    target_val = float(progress_target[t])
                 else:
-                    target_val = float(progress_target)
+                    target_val = float(progress_target) if progress_target is not None else 0.0
 
                 # Format text
                 progress_text = f"P:{pred_val:.2f} T:{target_val:.2f}"
@@ -335,7 +343,7 @@ def create_video_grid_with_progress(
 
 
 def create_frame_pair_with_progress(
-    eval_result: dict, target_h: int = 224, target_w: int = 224
+    eval_result: dict, target_h: int = 224, target_w: int = 224, is_discrete_mode: bool = False
 ) -> Optional[np.ndarray]:
     """
     Create a horizontal row of frames from a trajectory with progress annotations.
@@ -393,12 +401,19 @@ def create_frame_pair_with_progress(
 
         # Get progress values for this frame index
         if isinstance(progress_pred, (list, np.ndarray)):
-            pred_val = float(progress_pred[i]) if i < len(progress_pred) else 0.0
+            pred_elem = progress_pred[i]
+            if is_discrete_mode:
+                # Discrete mode: apply argmax to get predicted bin index
+                pred_val = float(np.argmax(pred_elem))
+            else:
+                # Continuous mode: convert to float directly
+                pred_val = float(pred_elem)
         else:
             pred_val = float(progress_pred) if progress_pred is not None else 0.0
 
         if isinstance(target_progress, (list, np.ndarray)):
-            target_val = float(target_progress[i]) if i < len(target_progress) else 0.0
+            # Target is already a discrete bin index (integer) in discrete mode, or continuous in continuous mode
+            target_val = float(target_progress[i])
         else:
             target_val = float(target_progress) if target_progress is not None else 0.0
 
@@ -511,7 +526,7 @@ def create_frame_pair_with_progress(
 
 
 def create_policy_ranking_grid(
-    eval_results: list[dict], grid_size: tuple[int, int] = (2, 2), max_samples: int = 4, border_width: int = 4
+    eval_results: list[dict], grid_size: tuple[int, int] = (2, 2), max_samples: int = 4, border_width: int = 4, is_discrete_mode: bool = False
 ) -> Optional[np.ndarray]:
     """
     Create a vertical stack of trajectory rows, each showing all frames horizontally.
@@ -543,7 +558,7 @@ def create_policy_ranking_grid(
     target_h, target_w = 224, 224
 
     for result in sampled_results:
-        frame_row = create_frame_pair_with_progress(result, target_h, target_w)
+        frame_row = create_frame_pair_with_progress(result, target_h, target_w, is_discrete_mode=is_discrete_mode)
         if frame_row is not None:
             frame_rows.append(frame_row)
 

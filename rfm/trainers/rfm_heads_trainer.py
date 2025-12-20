@@ -2474,7 +2474,7 @@ class RFMHeadsTrainer(Trainer):
             target_bins = target_progress.long()  # [batch_size, seq_len]
             # Ensure bins are in valid range [0, num_bins-1]
             target_bins = torch.clamp(target_bins, 0, num_bins - 1)
-                        
+            
             # progress_pred should be [batch_size, seq_len, num_bins] logits
             # Reshape for cross-entropy: [batch_size * seq_len, num_bins] and [batch_size * seq_len]
             batch_size, seq_len = target_bins.shape
@@ -2498,7 +2498,7 @@ class RFMHeadsTrainer(Trainer):
             
             progress_pred_flat = progress_pred.view(batch_size * seq_len, num_bins)  # [B*T, num_bins]
             target_bins_flat = target_bins.view(batch_size * seq_len)  # [B*T]
-            mask_flat = mask.view(batch_size * seq_len)  # [B*T]
+            mask_flat = mask.flatten()  # [B]
             
             # Compute cross-entropy loss per sample
             loss_per_sample_flat = F.cross_entropy(progress_pred_flat, target_bins_flat, reduction="none")  # [B*T]

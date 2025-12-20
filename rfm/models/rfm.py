@@ -63,14 +63,34 @@ class RFM(PreTrainedModel):
         self.config_class = self.model_cls.config_class
         self.base_model_id = base_model_id
 
-        self.progress_head = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.LayerNorm(hidden_size // 2),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Linear(hidden_size // 2, 1),
-            nn.Sigmoid(),
-        )
+        # Determine progress head output size based on model_config
+        progress_output_size = 1  # Default: continuous output
+        if model_config.progress_loss_type.lower() == "discrete":
+            progress_output_size = model_config.progress_discrete_bins
+            self.use_discrete_progress = True
+        else:
+            self.use_discrete_progress = False
+
+        logger.info(f"RFM. __init__: use_discrete_progress: {self.use_discrete_progress}, progress_output_size: {progress_output_size}")
+
+        # Create progress head: for discrete mode, output logits (no sigmoid); for continuous, output with sigmoid
+        if self.use_discrete_progress:
+            self.progress_head = nn.Sequential(
+                nn.Linear(hidden_size, hidden_size // 2),
+                nn.LayerNorm(hidden_size // 2),
+                nn.GELU(),
+                nn.Dropout(0.1),
+                nn.Linear(hidden_size // 2, progress_output_size),
+            )
+        else:
+            self.progress_head = nn.Sequential(
+                nn.Linear(hidden_size, hidden_size // 2),
+                nn.LayerNorm(hidden_size // 2),
+                nn.GELU(),
+                nn.Dropout(0.1),
+                nn.Linear(hidden_size // 2, 1),
+                nn.Sigmoid(),
+            )
         self.preference_head = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
             nn.LayerNorm(hidden_size // 2),
@@ -314,7 +334,11 @@ class RFM(PreTrainedModel):
             boundary_hidden_states = hidden_state[trajectory_boundaries]  # [T, hidden_dim]
 
         assert boundary_hidden_states.shape[0] == T, f"Expected {T} frames, got {boundary_hidden_states.shape[0]}"
-        progress = self.progress_head(boundary_hidden_states).squeeze(-1)  # [T]
+        progress_output = self.progress_head(boundary_hidden_states)  # [T, 1] or [T, num_bins] for discrete
+        if self.use_discrete_progress:
+            progress = progress_output  # [T, num_bins] - keep logits
+        else:
+            progress = progress_output.squeeze(-1)  # [T]
         success = self.success_head(boundary_hidden_states).squeeze(-1)  # [T]
 
         return progress, success
@@ -429,14 +453,22 @@ class RFM(PreTrainedModel):
                         trajectory_B_frames = frame_embeddings[mid_point:]
 
                     # Apply heads to trajectory A frames
-                    progress_A = self.progress_head(trajectory_A_frames).squeeze(-1)  # [T_A]
+                    progress_A_output = self.progress_head(trajectory_A_frames)  # [T_A, 1] or [T_A, num_bins] for discrete
+                    if self.use_discrete_progress:
+                        progress_A = progress_A_output  # [T_A, num_bins] - keep logits
+                    else:
+                        progress_A = progress_A_output.squeeze(-1)  # [T_A]
                     success_A = self.success_head(trajectory_A_frames).squeeze(-1)  # [T_A]
                     progress_logits_A.append(progress_A)
                     success_logits_A.append(success_A)
 
                     # Apply heads to trajectory B frames (if available)
                     if trajectory_B_frames is not None:
-                        progress_B = self.progress_head(trajectory_B_frames).squeeze(-1)  # [T_B]
+                        progress_B_output = self.progress_head(trajectory_B_frames)  # [T_B, 1] or [T_B, num_bins] for discrete
+                        if self.use_discrete_progress:
+                            progress_B = progress_B_output  # [T_B, num_bins] - keep logits
+                        else:
+                            progress_B = progress_B_output.squeeze(-1)  # [T_B]
                         success_B = self.success_head(trajectory_B_frames).squeeze(-1)  # [T_B]
                         progress_logits_B.append(progress_B)
                         success_logits_B.append(success_B)
@@ -614,14 +646,22 @@ class RFM(PreTrainedModel):
                             trajectory_B_frames = frame_embeddings[traj_a_pairs:]
 
                         # Apply heads to trajectory A frames
-                        progress_A = self.progress_head(trajectory_A_frames).squeeze(-1)  # [T_A]
+                        progress_A_output = self.progress_head(trajectory_A_frames)  # [T_A, 1] or [T_A, num_bins] for discrete
+                        if self.use_discrete_progress:
+                            progress_A = progress_A_output  # [T_A, num_bins] - keep logits
+                        else:
+                            progress_A = progress_A_output.squeeze(-1)  # [T_A]
                         success_A = self.success_head(trajectory_A_frames).squeeze(-1)  # [T_A]
                         progress_logits_A.append(progress_A)
                         success_logits_A.append(success_A)
 
                         # Apply heads to trajectory B frames (if available)
                         if trajectory_B_frames is not None:
-                            progress_B = self.progress_head(trajectory_B_frames).squeeze(-1)  # [T_B]
+                            progress_B_output = self.progress_head(trajectory_B_frames)  # [T_B, 1] or [T_B, num_bins] for discrete
+                            if self.use_discrete_progress:
+                                progress_B = progress_B_output  # [T_B, num_bins] - keep logits
+                            else:
+                                progress_B = progress_B_output.squeeze(-1)  # [T_B]
                             success_B = self.success_head(trajectory_B_frames).squeeze(-1)  # [T_B]
                             progress_logits_B.append(progress_B)
                             success_logits_B.append(success_B)
@@ -848,7 +888,11 @@ class RFM(PreTrainedModel):
 
                 # Apply heads to get predictions
                 logger.trace("RFM.forward: Applying progress and success heads")
-                progress_pred = self.progress_head(prog_token_A_hidden_states).squeeze(-1)  # [B]
+                progress_pred_output = self.progress_head(prog_token_A_hidden_states)  # [B, 1] or [B, num_bins] for discrete
+                if self.use_discrete_progress:
+                    progress_pred = progress_pred_output  # [B, num_bins] - keep logits
+                else:
+                    progress_pred = progress_pred_output.squeeze(-1)  # [B]
                 success_pred = self.success_head(succ_token_A_hidden_states).squeeze(-1)  # [B]
                 logger.trace(
                     f"RFM.forward: progress_pred shape: {progress_pred.shape}, success_pred shape: {success_pred.shape}"
@@ -895,8 +939,14 @@ class RFM(PreTrainedModel):
 
                 # Apply heads to get progress and success values for both trajectories
                 logger.trace("RFM.forward: Applying progress and success heads for A and B")
-                progress_pred_A = self.progress_head(prog_token_A_hidden_states).squeeze(-1)  # [B]
-                progress_pred_B = self.progress_head(prog_token_B_hidden_states).squeeze(-1)  # [B]
+                progress_pred_A_output = self.progress_head(prog_token_A_hidden_states)  # [B, 1] or [B, num_bins] for discrete
+                progress_pred_B_output = self.progress_head(prog_token_B_hidden_states)  # [B, 1] or [B, num_bins] for discrete
+                if self.use_discrete_progress:
+                    progress_pred_A = progress_pred_A_output  # [B, num_bins] - keep logits
+                    progress_pred_B = progress_pred_B_output  # [B, num_bins] - keep logits
+                else:
+                    progress_pred_A = progress_pred_A_output.squeeze(-1)  # [B]
+                    progress_pred_B = progress_pred_B_output.squeeze(-1)  # [B]
                 success_pred_A = self.success_head(succ_token_A_hidden_states).squeeze(-1)  # [B]
                 success_pred_B = self.success_head(succ_token_B_hidden_states).squeeze(-1)  # [B]
                 logger.trace(f"RFM.forward: Progress/success predictions completed")

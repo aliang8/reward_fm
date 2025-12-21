@@ -147,7 +147,7 @@ def setup_model_and_processor(
                     dtype=torch_dtype,  # Set the dtype from config,
                     full_finetuning=True,
                     device_map=None,
-                    attn_implementation="sdpa",
+                    attn_implementation=extra_kwargs["attn_implementation"],
                 )
                 if cfg.model_type == "default":
                     base_model = base_model.model

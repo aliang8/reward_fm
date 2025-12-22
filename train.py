@@ -76,8 +76,13 @@ def train(cfg: ExperimentConfig):
     run_name = cfg.training.exp_name
     if cfg.debug:
         run_name += "_debug"
-
-    # will initialize wandb later via logger (after logger is constructed)
+        cfg.training.logging_steps = 5
+        cfg.training.eval_steps = 5
+        # cfg.data.eval_subset_size = 100
+        cfg.training.custom_eval_steps = 5
+        cfg.logging.save_best.save_every = 5
+        cfg.data.dataloader_num_workers = 0
+        cfg.data.dataloader_persistent_workers = False
 
     # Set memory management
     torch.backends.cudnn.benchmark = True
@@ -98,14 +103,6 @@ def train(cfg: ExperimentConfig):
 
     if cfg.model.quantization:
         peft_rfm_model = prepare_model_for_kbit_training(peft_rfm_model)
-
-    # Create training arguments from config
-    if cfg.debug:
-        cfg.training.logging_steps = 5
-        cfg.training.eval_steps = 5
-        # cfg.data.eval_subset_size = 100
-        cfg.training.custom_eval_steps = 5
-        cfg.logging.save_best.save_every = 5
 
     output_dir = os.path.join(cfg.training.output_dir, run_name)
 

@@ -201,7 +201,7 @@ def run_reward_alignment_eval_per_trajectory(
     unique_trajectory_ids = set()
     loss_per_trajectory = np.zeros(1)
     loss_trajectories = []
-    spearman_trajectories = []
+    pearson_trajectories = []
     plots = []
     video_frames_list = []
     trajectory_progress_data = []
@@ -367,7 +367,7 @@ def run_reward_alignment_eval_per_trajectory(
         # Calculate metrics for this trajectory using vectorized operations (skip for failure datasets)
         if is_failure_dataset:
             traj_loss = 0.0
-            traj_spearman = 0.0
+            traj_pearson = 0.0
         else:
             # Compute loss based on mode
             if is_discrete_mode and all_pred_logits and all_target_bins:
@@ -381,10 +381,10 @@ def run_reward_alignment_eval_per_trajectory(
                 # Continuous mode: compute MSE loss
                 traj_loss = float(np.mean((last_targets - last_preds) ** 2))
 
-            # Compute Spearman correlation (shared for both modes)
-            traj_spearman = compute_spearman(last_targets.tolist(), last_preds.tolist())
+            # Compute Pearson correlation (shared for both modes)
+            traj_pearson = compute_pearson(last_targets.tolist(), last_preds.tolist())
             # Handle NaN values
-            traj_spearman = float(traj_spearman) if not np.isnan(traj_spearman) else 0.0
+            traj_pearson = float(traj_pearson) if not np.isnan(traj_pearson) else 0.0
 
         # Create a wandb plot for progress predictions and, if available, success predictions
         if have_success and last_success is not None and len(last_success) == len(last_preds):
@@ -400,7 +400,7 @@ def run_reward_alignment_eval_per_trajectory(
         # Setup progress plot (shared code for both cases)
         ax.plot(last_preds, linewidth=2)
         ax.set_ylabel("Progress")
-        title = f"Progress - {task} - {quality_label}\nLoss: {traj_loss:.3f}, sp: {traj_spearman:.2f}"
+        title = f"Progress - {task} - {quality_label}\nLoss: {traj_loss:.3f}, pearson: {traj_pearson:.2f}"
         ax.set_ylim(0, num_bins - 1 if is_discrete_mode else 1)
         ax.spines["right"].set_visible(False)
         ax.spines["top"].set_visible(False)
@@ -438,15 +438,15 @@ def run_reward_alignment_eval_per_trajectory(
         # Only accumulate metrics for non-failure datasets (using already computed values)
         if not is_failure_dataset:
             loss_trajectories.append(traj_loss)
-            if not np.isnan(traj_spearman):
-                spearman_trajectories.append(traj_spearman)
+            if not np.isnan(traj_pearson):
+                pearson_trajectories.append(traj_pearson)
 
     if len(unique_trajectory_ids) == 0:
         loss_per_trajectory = np.nan
-        spearman_per_trajectory = np.nan
+        pearson_per_trajectory = np.nan
     else:
         loss_per_trajectory = np.mean(loss_trajectories).item() if loss_trajectories else np.nan
-        spearman_per_trajectory = np.mean(spearman_trajectories).item() if spearman_trajectories else np.nan
+        pearson_per_trajectory = np.mean(pearson_trajectories).item() if pearson_trajectories else np.nan
 
     # Compute success_auprc across all collected success predictions and labels
     success_auprc = None
@@ -463,7 +463,7 @@ def run_reward_alignment_eval_per_trajectory(
 
     metrics = {
         "loss": loss_per_trajectory,
-        "spearman": spearman_per_trajectory,
+        "pearson": pearson_per_trajectory,
     }
 
     # Add success_auprc to metrics if computed
@@ -934,7 +934,6 @@ def run_policy_ranking_eval(
         "min_succ_fail_diff": np.min(all_succ_fail_diffs).item() if all_succ_fail_diffs else None,
         "max_succ_fail_diff": np.max(all_succ_fail_diffs).item() if all_succ_fail_diffs else None,
         "ranking_acc": ranking_acc,
-        "ranking_total_pairs": total_pairs,
     }
 
     return policy_ranking_metrics, task_groups, task_details

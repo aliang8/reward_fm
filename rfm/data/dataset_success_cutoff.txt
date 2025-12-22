@@ -37,3 +37,4 @@ h2r_rfm_robot,0.93
 humanoid_everyday_rfm,0.80
 motif_rfm_human,0.90
 motif_rfm_robot,1.0
+roboarena_eval_debug_nowrist,0.90

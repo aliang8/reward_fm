@@ -64,7 +64,7 @@ def compute_success_labels(
     target_progress: list[float],
     data_source: str | None,
     dataset_success_percent: dict[str, float] | None = None,
-    max_success: float = 0.95,
+    max_success: float = 1.0,
 ) -> list[float]:
     """
     Compute success labels from target_progress.
@@ -91,6 +91,7 @@ def compute_success_labels(
 
     # Generate success labels: 1.0 for success (progress > threshold), 0.0 for failure
     success_labels = [1.0 if prog > threshold else 0.0 for prog in target_progress]
+
     return success_labels
 
 

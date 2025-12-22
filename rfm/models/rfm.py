@@ -10,7 +10,8 @@ heads or there will be some problems with FSDP sharding.
 import torch
 import torch.nn as nn
 from transformers import PreTrainedModel, Qwen2_5_VLModel, Qwen3VLModel
-#from transformers import AutoModelForImageTextToText as Molmo2VLModel  # Molmo2 uses AutoModelForImageTextToText
+
+# from transformers import AutoModelForImageTextToText as Molmo2VLModel  # Molmo2 uses AutoModelForImageTextToText
 from transformers import SmolVLMModel
 import torch.distributed as dist
 
@@ -51,7 +52,7 @@ class RFM(PreTrainedModel):
             # Molmo2 is based on Qwen3 architecture
             hidden_size = config.text_config.hidden_size
             self.model_cls = Qwen3VLModel
-            #self.model_cls = Molmo2VLModel
+            # self.model_cls = Molmo2VLModel
         else:
             raise ValueError(f"Unsupported base model: {base_model_id}")
 
@@ -71,7 +72,9 @@ class RFM(PreTrainedModel):
         else:
             self.use_discrete_progress = False
 
-        logger.info(f"RFM. __init__: use_discrete_progress: {self.use_discrete_progress}, progress_output_size: {progress_output_size}")
+        logger.info(
+            f"RFM. __init__: use_discrete_progress: {self.use_discrete_progress}, progress_output_size: {progress_output_size}"
+        )
 
         # Create progress head: for discrete mode, output logits (no sigmoid); for continuous, output with sigmoid
         if self.use_discrete_progress:
@@ -210,7 +213,7 @@ class RFM(PreTrainedModel):
             # Molmo2 mode: <low_res_im_start> followed by <im_patch> tokens
             patch_token_id = tokenizer.convert_tokens_to_ids(patch_token)
             im_patch_positions = (input_ids == patch_token_id).nonzero(as_tuple=True)[0]
-            
+
             token_pairs = []
             for start_idx, start_pos in enumerate(start_positions):
                 start_pos_val = start_pos.item()
@@ -453,7 +456,9 @@ class RFM(PreTrainedModel):
                         trajectory_B_frames = frame_embeddings[mid_point:]
 
                     # Apply heads to trajectory A frames
-                    progress_A_output = self.progress_head(trajectory_A_frames)  # [T_A, 1] or [T_A, num_bins] for discrete
+                    progress_A_output = self.progress_head(
+                        trajectory_A_frames
+                    )  # [T_A, 1] or [T_A, num_bins] for discrete
                     if self.use_discrete_progress:
                         progress_A = progress_A_output  # [T_A, num_bins] - keep logits
                     else:
@@ -464,7 +469,9 @@ class RFM(PreTrainedModel):
 
                     # Apply heads to trajectory B frames (if available)
                     if trajectory_B_frames is not None:
-                        progress_B_output = self.progress_head(trajectory_B_frames)  # [T_B, 1] or [T_B, num_bins] for discrete
+                        progress_B_output = self.progress_head(
+                            trajectory_B_frames
+                        )  # [T_B, 1] or [T_B, num_bins] for discrete
                         if self.use_discrete_progress:
                             progress_B = progress_B_output  # [T_B, num_bins] - keep logits
                         else:
@@ -544,7 +551,7 @@ class RFM(PreTrainedModel):
         # Qwen uses <|vision_start|> and <|vision_end|>
         # Molmo2 uses <low_res_im_start> and <im_patch> tokens instead
         is_molmo = "Molmo" in self.base_model_id
-        
+
         if is_molmo:
             # Molmo2 uses different tokens for images
             vision_start_token_id = self.processor.tokenizer.convert_tokens_to_ids("<low_res_im_start>")
@@ -563,7 +570,9 @@ class RFM(PreTrainedModel):
 
         # temporal patch size (only needed for video mode)
         # Check both that video_processor exists AND has the required attributes (Molmo2 doesn't have these)
-        has_tps = hasattr(self.processor, "video_processor") and hasattr(self.processor.video_processor, "temporal_patch_size")
+        has_tps = hasattr(self.processor, "video_processor") and hasattr(
+            self.processor.video_processor, "temporal_patch_size"
+        )
         has_merge = hasattr(self.processor, "video_processor") and hasattr(self.processor.video_processor, "merge_size")
         tps = self.processor.video_processor.temporal_patch_size if has_tps else 2
         merge_size = self.processor.video_processor.merge_size if has_merge else 14
@@ -577,10 +586,10 @@ class RFM(PreTrainedModel):
                 # Compute per-frame embeddings and predictions
                 for i, seq_ids in enumerate(input_ids):
                     logger.trace(f"RFM._forward_qwen: Processing sample {i}/{len(input_ids) - 1}")
-                    
+
                     # Find all vision token positions
                     vision_start_positions = (seq_ids == vision_start_token_id).nonzero(as_tuple=True)[0]
-                    
+
                     # For Molmo2, vision_end_token_id is None, so we need to find image regions differently
                     if is_molmo and im_patch_token_id is not None:
                         # For Molmo2: find where <im_patch> tokens are
@@ -606,7 +615,7 @@ class RFM(PreTrainedModel):
                         vision_end_positions = (seq_ids == vision_end_token_id).nonzero(as_tuple=True)[0]
                     else:
                         vision_end_positions = torch.tensor([], device=seq_ids.device)
-                    
+
                     logger.trace(
                         f"RFM._forward_qwen: Sample {i} - found {len(vision_start_positions)} vision_start tokens, {len(vision_end_positions)} vision_end tokens"
                     )
@@ -646,7 +655,9 @@ class RFM(PreTrainedModel):
                             trajectory_B_frames = frame_embeddings[traj_a_pairs:]
 
                         # Apply heads to trajectory A frames
-                        progress_A_output = self.progress_head(trajectory_A_frames)  # [T_A, 1] or [T_A, num_bins] for discrete
+                        progress_A_output = self.progress_head(
+                            trajectory_A_frames
+                        )  # [T_A, 1] or [T_A, num_bins] for discrete
                         if self.use_discrete_progress:
                             progress_A = progress_A_output  # [T_A, num_bins] - keep logits
                         else:
@@ -657,7 +668,9 @@ class RFM(PreTrainedModel):
 
                         # Apply heads to trajectory B frames (if available)
                         if trajectory_B_frames is not None:
-                            progress_B_output = self.progress_head(trajectory_B_frames)  # [T_B, 1] or [T_B, num_bins] for discrete
+                            progress_B_output = self.progress_head(
+                                trajectory_B_frames
+                            )  # [T_B, 1] or [T_B, num_bins] for discrete
                             if self.use_discrete_progress:
                                 progress_B = progress_B_output  # [T_B, num_bins] - keep logits
                             else:
@@ -888,7 +901,9 @@ class RFM(PreTrainedModel):
 
                 # Apply heads to get predictions
                 logger.trace("RFM.forward: Applying progress and success heads")
-                progress_pred_output = self.progress_head(prog_token_A_hidden_states)  # [B, 1] or [B, num_bins] for discrete
+                progress_pred_output = self.progress_head(
+                    prog_token_A_hidden_states
+                )  # [B, 1] or [B, num_bins] for discrete
                 if self.use_discrete_progress:
                     progress_pred = progress_pred_output  # [B, num_bins] - keep logits
                 else:
@@ -939,8 +954,12 @@ class RFM(PreTrainedModel):
 
                 # Apply heads to get progress and success values for both trajectories
                 logger.trace("RFM.forward: Applying progress and success heads for A and B")
-                progress_pred_A_output = self.progress_head(prog_token_A_hidden_states)  # [B, 1] or [B, num_bins] for discrete
-                progress_pred_B_output = self.progress_head(prog_token_B_hidden_states)  # [B, 1] or [B, num_bins] for discrete
+                progress_pred_A_output = self.progress_head(
+                    prog_token_A_hidden_states
+                )  # [B, 1] or [B, num_bins] for discrete
+                progress_pred_B_output = self.progress_head(
+                    prog_token_B_hidden_states
+                )  # [B, 1] or [B, num_bins] for discrete
                 if self.use_discrete_progress:
                     progress_pred_A = progress_pred_A_output  # [B, num_bins] - keep logits
                     progress_pred_B = progress_pred_B_output  # [B, num_bins] - keep logits

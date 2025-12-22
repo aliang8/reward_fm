@@ -262,7 +262,7 @@ class DataConfig:
             "help": "Minimum difference in partial_success required between chosen and rejected trajectories for RoboArena preference sampling"
         },
     )
-    
+
     # Progress loss configuration
     progress_loss_type: str = field(
         default="l2",

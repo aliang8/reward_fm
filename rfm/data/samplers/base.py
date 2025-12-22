@@ -579,7 +579,9 @@ class RFMBaseSampler:
                 else:
                     start_idx, end_idx = uniform_indices
 
-            logger.trace(f"[BASE SAMPLER] _get_traj_from_data: Subsampling trajectory with strategy: {subsample_strategy}, start_idx: {start_idx}, end_idx: {end_idx}")
+            logger.trace(
+                f"[BASE SAMPLER] _get_traj_from_data: Subsampling trajectory with strategy: {subsample_strategy}, start_idx: {start_idx}, end_idx: {end_idx}"
+            )
             perc_end = success_cutoff if subsample_strategy == "successful" else 2.0 / 3.0
             subsampled, start_idx, end_idx, indices = subsample_segment_frames(
                 data, self.config.max_frames, method="linspace", perc_end=perc_end, start_idx=start_idx, end_idx=end_idx

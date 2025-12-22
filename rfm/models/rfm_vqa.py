@@ -6,9 +6,11 @@ Contains the RFM class by using the standard Qwen2.5-VL model, training it with 
 
 from transformers import PreTrainedModel, Qwen2_5_VLForConditionalGeneration, SmolVLMForConditionalGeneration
 from transformers import AutoModelForImageTextToText as Molmo2VLForConditionalGeneration
+
 # Try to import Qwen3 if available
 try:
     from transformers import Qwen3VLForConditionalGeneration
+
     HAS_QWEN3 = True
 except ImportError:
     HAS_QWEN3 = False

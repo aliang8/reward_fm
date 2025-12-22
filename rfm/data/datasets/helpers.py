@@ -47,11 +47,11 @@ def load_dataset_success_percent(cutoff_file_path):
 
 def convert_continuous_to_discrete_bins(progress_values: list[float] | np.ndarray, num_bins: int) -> list[int]:
     """Convert continuous progress values in [0, 1] to discrete bins [0, num_bins-1].
-    
+
     Args:
         progress_values: List or array of continuous progress values in [0, 1]
         num_bins: Number of discrete bins to use
-        
+
     Returns:
         List of discrete bin indices in [0, num_bins-1]
     """

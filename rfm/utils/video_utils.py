@@ -526,7 +526,11 @@ def create_frame_pair_with_progress(
 
 
 def create_policy_ranking_grid(
-    eval_results: list[dict], grid_size: tuple[int, int] = (2, 2), max_samples: int = 4, border_width: int = 4, is_discrete_mode: bool = False
+    eval_results: list[dict],
+    grid_size: tuple[int, int] = (2, 2),
+    max_samples: int = 4,
+    border_width: int = 4,
+    is_discrete_mode: bool = False,
 ) -> Optional[np.ndarray]:
     """
     Create a vertical stack of trajectory rows, each showing all frames horizontally.

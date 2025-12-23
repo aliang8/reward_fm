@@ -1,3 +1,5 @@
+from typing import Dict, Any
+
 import numpy as np
 
 from rfm.data.dataset_types import PreferenceSample, Trajectory
@@ -19,7 +21,7 @@ class BaseQualityPreferenceSampler(RFMBaseSampler):
     method that loads and processes the trajectories.
     """
 
-    def _generate_sample_from_indices(self, sample_idx_info: dict) -> PreferenceSample:
+    def _generate_sample_from_indices(self, sample_idx_info: Dict[str, Any]) -> PreferenceSample:
         """Generate a single sample from stored indices."""
         chosen_idx = sample_idx_info["chosen_traj_idx"]
         rejected_idx = sample_idx_info["rejected_traj_idx"]

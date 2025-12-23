@@ -7,6 +7,8 @@ For each trajectory, it creates multiple subsequences (0:2, 0:4, 0:6, etc.) and 
 as PreferenceSample objects that can be evaluated by the model.
 """
 
+from typing import Dict, List, Any
+
 import random
 import torch
 from tqdm import tqdm
@@ -47,7 +49,7 @@ class RewardAlignmentSampler(RFMBaseSampler):
             verbose=self.verbose,
         )
 
-    def _generate_all_sample_indices(self) -> list[dict]:
+    def _generate_all_sample_indices(self) -> List[Dict[str, Any]]:
         """Generate all possible subsequence sample indices (not the actual samples)."""
         sample_indices = []
 

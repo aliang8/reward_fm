@@ -1,3 +1,5 @@
+from typing import Dict, List, Any, Optional
+
 import numpy as np
 import torch
 import random
@@ -17,7 +19,7 @@ class ProgressDefaultSampler(RFMBaseSampler):
 
     def __init__(
         self,
-        max_trajectories: int | None = None,
+        max_trajectories: Optional[int] = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -31,7 +33,7 @@ class ProgressDefaultSampler(RFMBaseSampler):
 
         rank_0_print(f"Generated {len(self.sample_indices)} sample indices", verbose=self.verbose)
 
-    def _generate_all_sample_indices(self) -> list[dict]:
+    def _generate_all_sample_indices(self) -> List[Dict[str, Any]]:
         """Generate all possible sample indices."""
         trajectories_to_process = self.robot_trajectories
         if self.max_trajectories is not None and self.max_trajectories < len(self.robot_trajectories):

@@ -1,3 +1,5 @@
+from typing import Dict, List, Any
+
 import random
 from itertools import combinations
 from tqdm import tqdm
@@ -24,7 +26,7 @@ class QualityPreferenceSampler(BaseQualityPreferenceSampler):
         self.sample_indices = self._generate_all_sample_indices()
         rank_0_print(f"Generated {len(self.sample_indices)} quality preference sample indices", verbose=self.verbose)
 
-    def _generate_all_sample_indices(self) -> list[dict]:
+    def _generate_all_sample_indices(self) -> List[Dict[str, Any]]:
         """Generate all possible quality preference sample indices (not the actual samples)."""
         sample_indices = []
 

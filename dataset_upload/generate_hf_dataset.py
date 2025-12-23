@@ -826,9 +826,7 @@ def main(cfg: GenerateConfig):
         elif "top" in cfg.dataset.dataset_name.lower():
             view = "top"
         else:
-            raise ValueError(
-                f"Dataset name must specify view (wrist or top): {cfg.dataset.dataset_name}"
-            )
+            raise ValueError(f"Dataset name must specify view (wrist or top): {cfg.dataset.dataset_name}")
 
         print(f"Converting UTD SO101 Clean Policy Ranking ({view} view) to HF from: {cfg.dataset.dataset_path}")
         dataset = convert_utd_so101_clean_policy_ranking_to_hf(

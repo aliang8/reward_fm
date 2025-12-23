@@ -4,7 +4,7 @@ Dataclasses for RFM model dataset trajectory structures.
 Defines the standard format for HuggingFace dataset trajectories.
 """
 
-from typing import Any, Union
+from typing import Any, Union, List, Dict, Tuple, Optional
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict
@@ -15,27 +15,27 @@ class Trajectory(BaseModel):
     """Trajectory structure containing frames, metadata, and progress information."""
 
     # Core trajectory fields
-    frames: list[str] | np.ndarray | None = None
-    frames_shape: tuple | None = None
+    frames: Union[List[str], np.ndarray, None] = None
+    frames_shape: Optional[Tuple] = None
 
     # If embeddings are precomputed
-    embeddings_path: str | None = None
-    video_embeddings: torch.Tensor | np.ndarray | None = None
-    text_embedding: torch.Tensor | np.ndarray | None = None
+    embeddings_path: Optional[str] = None
+    video_embeddings: Union[torch.Tensor, np.ndarray, None] = None
+    text_embedding: Union[torch.Tensor, np.ndarray, None] = None
 
-    id: str | None = None
-    task: str | None = None
-    lang_vector: np.ndarray | list[float] | None = None
-    data_source: str | None = None
-    quality_label: str | None = None
-    is_robot: bool | None = None
+    id: Optional[str] = None
+    task: Optional[str] = None
+    lang_vector: Union[np.ndarray, List[float], None] = None
+    data_source: Optional[str] = None
+    quality_label: Optional[str] = None
+    is_robot: Optional[bool] = None
 
     # Progress and metadata
-    target_progress: list[float] | None = None
-    partial_success: float | None = None
-    success_label: list[float] | None = None  # Success labels for each frame (1.0 for success, 0.0 for failure)
-    metadata: dict[str, Any] | None = None
-    data_gen_strategy: str | None = None
+    target_progress: Optional[List[float]] = None
+    partial_success: Optional[float] = None
+    success_label: Optional[List[float]] = None  # Success labels for each frame (1.0 for success, 0.0 for failure)
+    metadata: Optional[Dict[str, Any]] = None
+    data_gen_strategy: Optional[str] = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -45,7 +45,7 @@ class ProgressSample(BaseModel):
 
     trajectory: Trajectory
     sample_type: str = "progress"
-    data_gen_strategy: str | None = None
+    data_gen_strategy: Optional[str] = None
     resample_attempts: int = 1
 
 
@@ -57,7 +57,7 @@ class PreferenceSample(BaseModel):
     rejected_trajectory: Trajectory
 
     sample_type: str = "preference"
-    data_gen_strategy: str | None = None
+    data_gen_strategy: Optional[str] = None
     resample_attempts: int = 1
 
 
@@ -70,7 +70,7 @@ class SimilaritySample(BaseModel):
     diff_trajectory: Trajectory  # Different trajectory
 
     sample_type: str = "similarity"
-    data_gen_strategy: str | None = None
+    data_gen_strategy: Optional[str] = None
     resample_attempts: int = 1
 
 

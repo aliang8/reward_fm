@@ -7,7 +7,7 @@ import argparse
 import json
 from itertools import combinations, product
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Tuple, Optional, Union
 import yaml
 from collections import defaultdict
 
@@ -25,11 +25,11 @@ from rfm.evals.eval_metrics_utils import compute_pearson, compute_preference_acc
 
 def compute_eval_metrics(
     eval_type: str,
-    results: list[dict[str, Any]],
+    results: List[Dict[str, Any]],
     progress_pred_type: str,
     is_discrete_mode: bool = False,
     num_bins: int = 10,
-    data_source: str | None = None,
+    data_source: Optional[str] = None,
 ):
     if eval_type == "quality_preference" or eval_type == "quality_preference_roboarena":
         return run_quality_preference_eval(results, progress_pred_type)
@@ -45,7 +45,7 @@ def compute_eval_metrics(
         return run_similarity_score_eval(results, progress_pred_type)
 
 
-def run_quality_preference_eval(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:
+def run_quality_preference_eval(results: List[Dict[str, Any]], progress_pred_type: str) -> Dict[str, Any]:
     """Run quality_preference evaluation analysis.
 
     Groups results by task and quality labels (or partial_success for RoboArena),
@@ -176,15 +176,15 @@ def run_quality_preference_eval(results: list[dict[str, Any]], progress_pred_typ
 
 
 def run_reward_alignment_eval_per_trajectory(
-    results: list[dict[str, Any]],
+    results: List[Dict[str, Any]],
     progress_pred_type: str,
     is_discrete_mode: bool,
     num_bins: int,
-    data_source: str | None,
+    data_source: Optional[str],
     can_compute_policy_ranking: bool = False,
     use_partial_success_for_ranking: bool = False,
     last_frame_only: bool = False,
-) -> tuple[dict[str, Any], list, list, list]:
+) -> Tuple[Dict[str, Any], List, List, List]:
     """Run reward_alignment evaluation analysis and create plots for each trajectory.
 
     For failure datasets, we visualize predictions but skip metric computation.
@@ -550,8 +550,8 @@ def _extract_trajectory_rewards(
 def _compute_policy_ranking_metrics_roboarena(
     all_rewards: np.ndarray,
     all_partial_successes: np.ndarray,
-    all_tasks: list[str],
-) -> tuple[dict[str, Any], dict[str, Any]]:
+    all_tasks: List[str],
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Compute policy ranking metrics for RoboArena datasets using partial_success.
 
     Args:
@@ -804,10 +804,10 @@ def _compute_policy_ranking_metrics_quality_label(
 def _compute_policy_ranking_metrics_from_rewards(
     all_rewards: np.ndarray,
     use_partial_success: bool,
-    all_partial_successes: np.ndarray | None,
-    all_quality_labels: list[str] | None,
-    all_tasks: list[str],
-) -> tuple[dict[str, Any], dict[str, Any]]:
+    all_partial_successes: Optional[np.ndarray],
+    all_quality_labels: Optional[List[str]],
+    all_tasks: List[str],
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Compute policy ranking metrics from pre-computed trajectory rewards.
 
     Args:
@@ -827,8 +827,8 @@ def _compute_policy_ranking_metrics_from_rewards(
 
 
 def run_confusion_matrix_eval(
-    results: list[dict[str, Any]], progress_pred_type: str, is_discrete_mode: bool, num_bins: int
-) -> dict[str, Any]:
+    results: List[Dict[str, Any]], progress_pred_type: str, is_discrete_mode: bool, num_bins: int
+) -> Dict[str, Any]:
     """Run confusion_matrix evaluation analysis."""
     # First, gather all progress predictions, lang_tasks, and video_tasks
     all_progress_preds = []
@@ -926,12 +926,12 @@ def run_confusion_matrix_eval(
 
 
 def run_policy_ranking_eval(
-    results: list[dict[str, Any]],
+    results: List[Dict[str, Any]],
     progress_pred_type: str,
     is_discrete_mode: bool,
     num_bins: int,
-    data_source: str | None = None,
-) -> dict[str, Any]:
+    data_source: Optional[str] = None,
+) -> Dict[str, Any]:
     """Run policy_ranking evaluation analysis.
 
     Groups results by trajectory_id (like reward_alignment) and computes policy ranking metrics
@@ -1294,3 +1294,4 @@ def run_similarity_score_eval(results: list[dict[str, Any]], progress_pred_type:
     }
 
     return metrics, task_groups, task_details
+ls

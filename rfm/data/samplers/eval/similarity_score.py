@@ -8,6 +8,8 @@ This generator creates similarity samples for evaluation:
 - Creates similarity samples: ref=human, traj_sim=robot (same task), traj_diff=negative (different task)
 """
 
+from typing import Dict, List, Any
+
 import random
 import torch
 from tqdm import tqdm
@@ -47,7 +49,7 @@ class SimilarityScoreSampler(RFMBaseSampler):
             verbose=self.verbose,
         )
 
-    def _generate_all_sample_indices(self) -> list[dict]:
+    def _generate_all_sample_indices(self) -> List[Dict[str, Any]]:
         """Generate all possible similarity score sample indices."""
         sample_indices = []
 

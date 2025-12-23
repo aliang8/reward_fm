@@ -56,6 +56,7 @@ eval_datasets:
   - "aliangdw/utd_so101_human"
   #- "jesbu1/roboarena_eval_debug_nowrist"
   - "jesbu1/hand_paired_rfm"
+  - "jesbu1/mit_franka_p-rank_rfm"
 
 eval_subsets:
   - ["libero256_10"]
@@ -71,6 +72,7 @@ eval_subsets:
   - ["utd_so101_human"]
   #- ["roboarena_eval_debug_nowrist"]
   - ["hand_paired"]
+  - ["mit_franka_p-rank"]
 
 max_frames_for_preprocessing: 32
 video_frame_sampling: "uniform"

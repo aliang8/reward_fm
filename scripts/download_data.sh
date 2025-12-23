@@ -131,6 +131,7 @@ repos=(
   #aliangdw/usc_franka_policy_ranking
   aliangdw/utd_so101_policy_ranking
   aliangdw/utd_so101_human
+  jesbu1/mit_franka_p-rank_rfm
 )
 
 # ------------------------------

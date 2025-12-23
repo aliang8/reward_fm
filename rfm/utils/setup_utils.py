@@ -112,7 +112,7 @@ def setup_model_and_processor(
         extra_kwargs = {"attn_implementation": "sdpa"}
 
     # Load processor and tokenizer
-    if "SmolVLM" in cfg.base_model_id or "Qwen" in cfg.base_model_id:
+    if "SmolVLM" in cfg.base_model_id or "Qwen" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
         if "SmolVLM" in cfg.base_model_id:
             processor = AutoProcessor.from_pretrained(
                 cfg.base_model_id,
@@ -134,7 +134,7 @@ def setup_model_and_processor(
 
             model_cls = RFM if cfg.model_type == "default" else RFMVQA
 
-        elif "Qwen" in cfg.base_model_id:
+        elif "Qwen" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
             # Check if unsloth should be used
             if use_unsloth:
                 logger.info("Using Unsloth for faster training with Qwen model")
@@ -147,7 +147,7 @@ def setup_model_and_processor(
                     dtype=torch_dtype,  # Set the dtype from config,
                     full_finetuning=True,
                     device_map=None,
-                    attn_implementation="sdpa",
+                    attn_implementation=extra_kwargs["attn_implementation"],
                 )
                 if cfg.model_type == "default":
                     base_model = base_model.model
@@ -166,25 +166,44 @@ def setup_model_and_processor(
                         bias=peft_config.bias,
                     )
             else:
-                # Check if it's Qwen3 or Qwen2/2.5
+                # Check if it's Molmo, Qwen3 or Qwen2/2.5
+                is_molmo = "Molmo" in cfg.base_model_id
                 is_qwen3 = ("Qwen3" in cfg.base_model_id or "qwen3" in cfg.base_model_id.lower()) and HAS_QWEN3
 
                 # Select appropriate model classes based on version and model type
-                if is_qwen3:
+                if is_molmo:
+                    # Molmo2 uses AutoModelForImageTextToText with trust_remote_code
+                    base_model = AutoModelForImageTextToText.from_pretrained(
+                        cfg.base_model_id,
+                        torch_dtype=torch_dtype,
+                        trust_remote_code=cfg.trust_remote_code,
+                        **extra_kwargs,
+                        quantization_config=bnb,
+                    )
+                    if cfg.model_type == "default":
+                        # For RFM (non-VQA), extract the base model
+                        base_model = base_model.model
+                    logger.info("Using Molmo2 models")
+                elif is_qwen3:
                     qwen_model_cls = Qwen3VLModel if cfg.model_type == "default" else Qwen3VLForConditionalGeneration
+                    base_model = qwen_model_cls.from_pretrained(
+                        cfg.base_model_id,
+                        torch_dtype=torch_dtype,
+                        **extra_kwargs,
+                        quantization_config=bnb,
+                    )
                     logger.info("Using Qwen3 models")
                 else:
                     qwen_model_cls = (
                         Qwen2_5_VLModel if cfg.model_type == "default" else Qwen2_5_VLForConditionalGeneration
                     )
+                    base_model = qwen_model_cls.from_pretrained(
+                        cfg.base_model_id,
+                        torch_dtype=torch_dtype,
+                        **extra_kwargs,
+                        quantization_config=bnb,
+                    )
                     logger.info("Using Qwen2/2.5 models")
-
-                base_model = qwen_model_cls.from_pretrained(
-                    cfg.base_model_id,
-                    torch_dtype=torch_dtype,
-                    **extra_kwargs,
-                    quantization_config=bnb,
-                )
 
             model_cls = RFM if cfg.model_type == "default" else RFMVQA
 
@@ -230,14 +249,90 @@ def setup_model_and_processor(
             # Resize token embeddings if new tokens were added
             vocab_size = (
                 base_model.config.text_config.vocab_size
-                if "Qwen3" in cfg.base_model_id
+                if ("Qwen3" in cfg.base_model_id or "Molmo" in cfg.base_model_id)
                 else base_model.config.vocab_size
             )
 
             if len(processor.tokenizer) != vocab_size:
                 logger.info(f"Resizing token embeddings from {vocab_size} to {len(processor.tokenizer)}")
-                base_model.resize_token_embeddings(len(processor.tokenizer))
-                logger.info(f"Resized token embeddings to {len(processor.tokenizer)}")
+
+                is_molmo = "Molmo" in cfg.base_model_id
+                if is_molmo:
+                    # Custom resize for Molmo2 - its Molmo2Embedding stores embedding as a Parameter directly
+                    new_vocab_size = len(processor.tokenizer)
+                    _embed_layer = base_model.get_input_embeddings()
+
+                    # Check if embedding is a Parameter (tensor) directly, or an nn.Embedding
+                    if hasattr(_embed_layer, "embedding"):
+                        old_embed_attr = _embed_layer.embedding
+
+                        # Case 1: embedding is a Parameter (raw tensor)
+                        if isinstance(old_embed_attr, torch.nn.Parameter):
+                            old_num_tokens, embedding_dim = old_embed_attr.shape
+
+                            # Create new parameter with expanded vocab
+                            new_embed_data = torch.zeros(
+                                new_vocab_size, embedding_dim, device=old_embed_attr.device, dtype=old_embed_attr.dtype
+                            )
+
+                            # Copy existing weights
+                            new_embed_data[:old_num_tokens] = old_embed_attr.data
+
+                            # Initialize new token embeddings using mean of existing embeddings
+                            mean_embedding = old_embed_attr.data.mean(dim=0)
+                            new_embed_data[old_num_tokens:] = mean_embedding.unsqueeze(0).expand(
+                                new_vocab_size - old_num_tokens, -1
+                            )
+
+                            # Replace the embedding Parameter
+                            _embed_layer.embedding = torch.nn.Parameter(new_embed_data)
+
+                            # Also update config to reflect new vocab size
+                            base_model.config.text_config.vocab_size = new_vocab_size
+
+                            logger.info(
+                                f"Custom resized Molmo2 embeddings (Parameter) from {old_num_tokens} to {new_vocab_size}"
+                            )
+
+                        # Case 2: embedding is an nn.Embedding with .weight
+                        elif hasattr(old_embed_attr, "weight"):
+                            old_num_tokens, embedding_dim = old_embed_attr.weight.shape
+
+                            # Create new embedding layer with expanded vocab
+                            new_embedding = torch.nn.Embedding(
+                                new_vocab_size,
+                                embedding_dim,
+                                device=old_embed_attr.weight.device,
+                                dtype=old_embed_attr.weight.dtype,
+                            )
+
+                            # Copy existing weights
+                            new_embedding.weight.data[:old_num_tokens] = old_embed_attr.weight.data
+
+                            # Initialize new token embeddings using mean of existing embeddings
+                            mean_embedding = old_embed_attr.weight.data.mean(dim=0)
+                            new_embedding.weight.data[old_num_tokens:] = mean_embedding.unsqueeze(0).expand(
+                                new_vocab_size - old_num_tokens, -1
+                            )
+
+                            # Replace the nested embedding
+                            _embed_layer.embedding = new_embedding
+
+                            # Also update config to reflect new vocab size
+                            base_model.config.text_config.vocab_size = new_vocab_size
+
+                            logger.info(
+                                f"Custom resized Molmo2 embeddings (Embedding) from {old_num_tokens} to {new_vocab_size}"
+                            )
+                        else:
+                            logger.warning(
+                                f"Cannot resize Molmo2 embeddings - unknown embedding type: {type(old_embed_attr)}"
+                            )
+                    else:
+                        logger.warning(f"Cannot resize Molmo2 embeddings - no embedding attribute found")
+                else:
+                    base_model.resize_token_embeddings(len(processor.tokenizer))
+                    logger.info(f"Resized token embeddings to {len(processor.tokenizer)}")
 
         # Initialize RFM model wrapper with the pre-loaded base model
         logger.info("Initializing RFM model...")
@@ -261,7 +356,7 @@ def setup_model_and_processor(
                     before_progress_head = model.progress_head[0].weight
                     before_lm_embed_tokens = model.model.language_model.embed_tokens.weight
                     before_lm_layer = model.model.language_model.layers[0].mlp.up_proj.weight
-                elif "Qwen3" in cfg.base_model_id:
+                elif "Qwen3" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
                     before_visual = model.model.visual.blocks[0].mlp.linear_fc1.weight
                     before_progress_head = model.progress_head[0].weight
                     before_lm_embed_tokens = model.model.language_model.embed_tokens.weight
@@ -283,7 +378,7 @@ def setup_model_and_processor(
                     after_progress_head = model.progress_head[0].weight
                     after_lm_embed_tokens = model.model.language_model.embed_tokens.weight
                     after_lm_layer_mlp_up_proj = model.model.language_model.layers[0].mlp.up_proj.weight
-                elif "Qwen3" in cfg.base_model_id:
+                elif "Qwen3" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
                     after_visual = model.model.visual.blocks[0].mlp.linear_fc1.weight
                     after_progress_head = model.progress_head[0].weight
                     after_lm_embed_tokens = model.model.language_model.embed_tokens.weight
@@ -554,7 +649,14 @@ def setup_batch_collator(
         "shuffle_progress_frames": cfg.data.shuffle_progress_frames,
         "inference": is_eval,
     }
-    if "Qwen" in cfg.model.base_model_id or "SmolVLM" in cfg.model.base_model_id:
+    # Check for unsupported Molmo2 video mode
+    if "Molmo" in cfg.model.base_model_id and not cfg.data.use_multi_image:
+        raise ValueError(
+            "Molmo2 implementation does not yet support video mode as it requires extra imports (use_multi_image=False). "
+            "Please set data.use_multi_image=True to use Molmo2 with multi-image input."
+        )
+
+    if "Qwen" in cfg.model.base_model_id or "SmolVLM" in cfg.model.base_model_id or "Molmo" in cfg.model.base_model_id:
         if cfg.model.model_type == "default":
             batch_collator = RFMBatchCollator(**collator_kwargs)
         elif cfg.model.model_type == "vqa":

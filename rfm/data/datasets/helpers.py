@@ -45,11 +45,26 @@ def load_dataset_success_percent(cutoff_file_path):
     return success_percent_dict
 
 
+def convert_continuous_to_discrete_bins(progress_values: list[float] | np.ndarray, num_bins: int) -> list[int]:
+    """Convert continuous progress values in [0, 1] to discrete bins [0, num_bins-1].
+
+    Args:
+        progress_values: List or array of continuous progress values in [0, 1]
+        num_bins: Number of discrete bins to use
+
+    Returns:
+        List of discrete bin indices in [0, num_bins-1]
+    """
+    if isinstance(progress_values, np.ndarray):
+        progress_values = progress_values.tolist()
+    return [int(min(max(p, 0.0), 1.0) * (num_bins - 1)) for p in progress_values]
+
+
 def compute_success_labels(
     target_progress: list[float],
     data_source: str | None,
     dataset_success_percent: dict[str, float] | None = None,
-    max_success: float = 0.95,
+    max_success: float = 1.0,
 ) -> list[float]:
     """
     Compute success labels from target_progress.
@@ -76,6 +91,7 @@ def compute_success_labels(
 
     # Generate success labels: 1.0 for success (progress > threshold), 0.0 for failure
     success_labels = [1.0 if prog > threshold else 0.0 for prog in target_progress]
+
     return success_labels
 
 

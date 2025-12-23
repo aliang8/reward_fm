@@ -9,6 +9,8 @@ This module defines categories for datasets to control sampling behavior:
 - paired: Datasets containing paired human/robot trajectories
 """
 
+from typing import List
+
 ALL_DATASOURCES = [
     "auto_eval_rfm",
     "failsafe",
@@ -77,11 +79,11 @@ DATASET_MAP = {
         "train": [
             "jesbu1_molmoact_rfm_molmoact_dataset_household",
             "jesbu1_molmoact_rfm_molmoact_dataset_tabletop",
-             "jesbu1_egodex_rfm_egodex_part1",
-             "jesbu1_egodex_rfm_egodex_part2",
-             "jesbu1_egodex_rfm_egodex_part3",
-             "jesbu1_egodex_rfm_egodex_part4",
-             "jesbu1_egodex_rfm_egodex_part5",
+            "jesbu1_egodex_rfm_egodex_part1",
+            "jesbu1_egodex_rfm_egodex_part2",
+            "jesbu1_egodex_rfm_egodex_part3",
+            "jesbu1_egodex_rfm_egodex_part4",
+            "jesbu1_egodex_rfm_egodex_part5",
             "abraranwar_agibotworld_alpha_rfm_agibotworld",
         ],
         "eval": [
@@ -200,8 +202,7 @@ DATASET_MAP = {
                 "aliangdw_utd_so101_human_utd_so101_human",
                 "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
             ],
-            ["jesbu1_hand_paired_rfm_hand_paired_robot", 
-            "jesbu1_hand_paired_rfm_hand_paired_human"],
+            ["jesbu1_hand_paired_rfm_hand_paired_robot", "jesbu1_hand_paired_rfm_hand_paired_human"],
         ]
     },
 }
@@ -246,22 +247,22 @@ DATA_SOURCE_CATEGORY = {
 # DATASET helper functions
 
 
-def get_preference_only_datasets() -> list[str]:
+def get_preference_only_datasets() -> List[str]:
     """Get list of datasets that should only generate preference samples."""
     return DATASET_CATEGORY.get("preference_only", [])
 
 
-def get_paired_datasets() -> list[str]:
+def get_paired_datasets() -> List[str]:
     """Get list of datasets containing paired human/robot trajectories."""
     return DATASET_CATEGORY.get("paired", [])
 
 
-def get_failure_datasets() -> list[str]:
+def get_failure_datasets() -> List[str]:
     """Get list of datasets containing failure trajectories."""
     return DATASET_CATEGORY.get("failure", [])
 
 
-def get_success_datasets() -> list[str]:
+def get_success_datasets() -> List[str]:
     """Get list of datasets containing successful trajectories."""
     return DATASET_CATEGORY.get("success", [])
 
@@ -289,22 +290,22 @@ def is_success(dataset_name: str) -> bool:
 # DATA_SOURCE helper functions
 
 
-def get_preference_only_ds() -> list[str]:
+def get_preference_only_ds() -> List[str]:
     """Get list of data sources that should only generate preference samples."""
     return DATA_SOURCE_CATEGORY.get("preference_only", [])
 
 
-def get_paired_ds() -> list[str]:
+def get_paired_ds() -> List[str]:
     """Get list of data sources containing paired human/robot trajectories."""
     return DATA_SOURCE_CATEGORY.get("paired", [])
 
 
-def get_failure_ds() -> list[str]:
+def get_failure_ds() -> List[str]:
     """Get list of data sources containing failure trajectories."""
     return DATA_SOURCE_CATEGORY.get("failure", [])
 
 
-def get_success_ds() -> list[str]:
+def get_success_ds() -> List[str]:
     """Get list of data sources containing successful trajectories."""
     return DATA_SOURCE_CATEGORY.get("success", [])
 

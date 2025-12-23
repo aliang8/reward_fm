@@ -1,3 +1,5 @@
+from typing import Dict, List, Any
+
 import random
 from tqdm import tqdm
 
@@ -14,16 +16,10 @@ class RoboArenaQualityPreferenceSampler(BaseQualityPreferenceSampler):
 
     def __init__(
         self,
-        config,
-        dataset,
-        combined_indices,
-        dataset_success_cutoff_map=None,
-        is_evaluation=False,
-        verbose=True,
         comparisons_per_task=None,
         **kwargs,
     ):
-        super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
+        super().__init__(**kwargs)
 
         # Set data_gen_strategy for this sampler
         self.data_gen_strategy = "quality_preference_roboarena"
@@ -39,7 +35,7 @@ class RoboArenaQualityPreferenceSampler(BaseQualityPreferenceSampler):
             f"Generated {len(self.sample_indices)} RoboArena quality preference sample indices", verbose=self.verbose
         )
 
-    def _generate_all_sample_indices(self) -> list[dict]:
+    def _generate_all_sample_indices(self) -> List[Dict[str, Any]]:
         """Generate all possible quality preference sample indices based on partial_reward (partial_success)."""
         sample_indices = []
 

@@ -1,3 +1,5 @@
+from typing import Dict, Any
+
 import random
 import torch
 
@@ -28,10 +30,10 @@ class ProgressSampler(RFMBaseSampler):
     ):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
 
-    def _generate_sample(self, item: dict):
+    def _generate_sample(self, item: Dict[str, Any]):
         return self._create_progress_sample(item)
 
-    def _create_progress_sample(self, traj: dict):
+    def _create_progress_sample(self, traj: Dict[str, Any]):
         """Create a progress sample using normalized and rebalanced strategy selection.
 
         Implements six strategies:

@@ -3,7 +3,7 @@ import copy
 import json
 import os
 import random
-from typing import Dict
+from typing import Dict, List, Tuple, Optional, Any
 
 import cv2
 import matplotlib.animation as animation
@@ -45,7 +45,7 @@ def seed_worker(worker_id):
     random.seed(worker_seed)
 
 
-def reduce_metrics_with_accelerate(metrics: dict, accelerator, aggregate_method="sum"):
+def reduce_metrics_with_accelerate(metrics: Dict[str, Any], accelerator, aggregate_method="sum"):
     """
     Reduce multiple scalar metrics using Accelerate's built-in methods.
     Handles cases where different processes have different metric keys.
@@ -318,7 +318,7 @@ class RFMHeadsTrainer(Trainer):
             flattened.extend(proc_list)
         return flattened
 
-    def _gather_metadata_fields(self, sample_inputs: dict, fields: list[str]) -> dict:
+    def _gather_metadata_fields(self, sample_inputs: Dict[str, Any], fields: List[str]) -> Dict[str, Any]:
         """Gather heterogeneous metadata fields (lists, tensors) across processes."""
         gathered = {}
         for field in fields:
@@ -572,12 +572,12 @@ class RFMHeadsTrainer(Trainer):
 
         return optim_stats
 
-    def _update_resample_attempt_metrics(self, inputs: dict) -> None:
+    def _update_resample_attempt_metrics(self, inputs: Dict[str, Any]) -> None:
         """Aggregate resample attempt statistics across processes."""
         if not hasattr(self, "accelerator"):
             return
 
-        local_pairs: list[tuple[str, float]] = []
+        local_pairs: List[Tuple[str, float]] = []
 
         for key in ("preference_inputs", "progress_inputs", "similarity_inputs"):
             sample_inputs = inputs.get(key) or {}
@@ -615,7 +615,7 @@ class RFMHeadsTrainer(Trainer):
 
         if dist.is_initialized():
             world_size = dist.get_world_size()
-            gathered_lists: list[list[tuple[str, float]]] = [None] * world_size
+            gathered_lists: List[List[Tuple[str, float]]] = [None] * world_size
             dist.all_gather_object(gathered_lists, local_pairs)
             flat_pairs = [pair for proc_pairs in gathered_lists for pair in proc_pairs]
         else:
@@ -629,7 +629,7 @@ class RFMHeadsTrainer(Trainer):
         self.log_metadata["data/resample_max"] = float(max(all_attempts))
         self.log_metadata["data/resample_mean"] = float(sum(all_attempts) / len(all_attempts))
 
-        strategy_values: dict[str, list[float]] = collections.defaultdict(list)
+        strategy_values: Dict[str, List[float]] = collections.defaultdict(list)
         for label, attempt in flat_pairs:
             strategy_values[label].append(attempt)
 
@@ -734,19 +734,24 @@ class RFMHeadsTrainer(Trainer):
             eval_cfg.eval_datasets = [eval_dataset]
 
         # Create custom eval dataset with the appropriate sampler
-        # set max_trajectories to 10 for reward_alignment per eval dataset
-        kwargs = {}
+        sampler_kwargs = {}
+
         if eval_type == "reward_alignment":
-            kwargs["max_trajectories"] = 10
-            kwargs["frame_step"] = (
+            sampler_kwargs["max_trajectories"] = self.config.custom_eval.reward_alignment_max_trajectories
+            sampler_kwargs["frame_step"] = (
                 2 if (self.config.trainer_cls == "rfm_heads" and not self.config.data.use_multi_image) else 1
             )
-        if eval_type == "quality_preference":
-            kwargs["comparisons_per_task"] = self.config.custom_eval.comparisons_per_task
-        if eval_type == "policy_ranking":
-            kwargs["num_examples_per_quality_pr"] = self.config.custom_eval.num_examples_per_quality_pr
+        elif eval_type == "policy_ranking":
+            sampler_kwargs["num_examples_per_quality_pr"] = self.config.custom_eval.num_examples_per_quality_pr
+            sampler_kwargs["frame_step"] = (
+                2 if (self.config.trainer_cls == "rfm_heads" and not self.config.data.use_multi_image) else 1
+            )
+        elif eval_type == "quality_preference":
+            sampler_kwargs["comparisons_per_task"] = self.config.custom_eval.comparisons_per_task
 
-        dataset = setup_custom_eval_dataset(eval_cfg, sampler_type=eval_type, is_eval=True, verbose=False, **kwargs)
+        dataset = setup_custom_eval_dataset(
+            eval_cfg, sampler_type=eval_type, is_eval=True, verbose=False, sampler_kwargs=sampler_kwargs
+        )
         # Explicitly delete eval_cfg after dataset creation to free memory
         del eval_cfg
 
@@ -1325,8 +1330,8 @@ class RFMHeadsTrainer(Trainer):
 
                         quality1 = traj1.get("quality_label")
                         quality2 = traj2.get("quality_label")
-                        pred1 = traj1.get("final_reward")
-                        pred2 = traj2.get("final_reward")
+                        pred1 = traj1.get("final_predicted_reward_last")
+                        pred2 = traj2.get("final_predicted_reward_last")
 
                         if quality1 is None or quality2 is None or pred1 is None or pred2 is None:
                             continue
@@ -1645,7 +1650,7 @@ class RFMHeadsTrainer(Trainer):
         elif eval_type == "policy_ranking":
             # create task groups from eval_results
             eval_metrics, task_groups, task_details = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins
+                eval_type, eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins, data_source
             )
             # log_memory_usage(f"After compute_eval_metrics (policy_ranking)")
 
@@ -1664,27 +1669,57 @@ class RFMHeadsTrainer(Trainer):
 
             data = []
             if is_roboarena:
-                # RoboArena visualization: show partial vs predicted rewards
+                # RoboArena visualization: show partial vs predicted rewards for each aggregation type
                 for task, group in task_groups.items():
                     partial_successes = np.array([t["partial_success"] for t in group]).round(2)
-                    predicted_rewards = np.array([t["final_predicted_reward"] for t in group]).round(2)
+                    predicted_rewards_last = np.array([t["final_predicted_reward_last"] for t in group]).round(2)
+                    predicted_rewards_avg = np.array([t["final_predicted_reward_avg"] for t in group]).round(2)
+                    predicted_rewards_sum = np.array([t["final_predicted_reward_sum"] for t in group]).round(2)
                     partial_successes = partial_successes.tolist()
-                    predicted_rewards = predicted_rewards.tolist()
-                    data.append([task, f"partial:{partial_successes}", f"predicted:{predicted_rewards}"])
-                columns = ["task", "partial_successes", "predicted_rewards"]
+                    predicted_rewards_last = predicted_rewards_last.tolist()
+                    predicted_rewards_avg = predicted_rewards_avg.tolist()
+                    predicted_rewards_sum = predicted_rewards_sum.tolist()
+                    data.append([
+                        task,
+                        f"partial:{partial_successes}",
+                        f"predicted_last:{predicted_rewards_last}",
+                        f"predicted_avg:{predicted_rewards_avg}",
+                        f"predicted_sum:{predicted_rewards_sum}",
+                    ])
+                columns = [
+                    "task",
+                    "partial_successes",
+                    "predicted_rewards_last",
+                    "predicted_rewards_avg",
+                    "predicted_rewards_sum",
+                ]
             else:
-                # Standard policy ranking visualization: show quality labels and rewards
+                # Standard policy ranking visualization: show quality labels and rewards for each aggregation type
                 for task, group in task_groups.items():
-                    quality_to_rews = collections.defaultdict(list)
+                    quality_to_rews_last = collections.defaultdict(list)
+                    quality_to_rews_avg = collections.defaultdict(list)
+                    quality_to_rews_sum = collections.defaultdict(list)
                     for t in group:
-                        rew = t["final_reward"]
-                        quality_to_rews[t["quality_label"]].append(rew)
+                        rew_last = t["final_predicted_reward_last"]
+                        rew_avg = t["final_predicted_reward_avg"]
+                        rew_sum = t["final_predicted_reward_sum"]
+                        quality_label = t["quality_label"]
+                        quality_to_rews_last[quality_label].append(rew_last)
+                        quality_to_rews_avg[quality_label].append(rew_avg)
+                        quality_to_rews_sum[quality_label].append(rew_sum)
 
-                    for q, r in quality_to_rews.items():
-                        quality_to_rews[q] = np.array(r).round(2).tolist()
-                    quality_to_rews = ",".join([f"{q}:{r}" for q, r in quality_to_rews.items()])
+                    for q, r in quality_to_rews_last.items():
+                        quality_to_rews_last[q] = np.array(r).round(2).tolist()
+                    for q, r in quality_to_rews_avg.items():
+                        quality_to_rews_avg[q] = np.array(r).round(2).tolist()
+                    for q, r in quality_to_rews_sum.items():
+                        quality_to_rews_sum[q] = np.array(r).round(2).tolist()
 
-                    # Get task details for differences
+                    quality_to_rews_last_str = ",".join([f"{q}:{r}" for q, r in quality_to_rews_last.items()])
+                    quality_to_rews_avg_str = ",".join([f"{q}:{r}" for q, r in quality_to_rews_avg.items()])
+                    quality_to_rews_sum_str = ",".join([f"{q}:{r}" for q, r in quality_to_rews_sum.items()])
+
+                    # Get task details for differences (using last aggregation for differences)
                     task_detail = task_details.get(task, {})
                     succ_subopt = task_detail.get("succ_subopt_diff")
                     subopt_fail = task_detail.get("subopt_fail_diff")
@@ -1700,8 +1735,20 @@ class RFMHeadsTrainer(Trainer):
                         diff_str.append(f"succ-fail:{succ_fail:.2f}")
                     diff_str = ",".join(diff_str) if diff_str else "N/A"
 
-                    data.append([task, quality_to_rews, diff_str])
-                columns = ["task", "quality_and_rews", "avg_differences"]
+                    data.append([
+                        task,
+                        quality_to_rews_last_str,
+                        quality_to_rews_avg_str,
+                        quality_to_rews_sum_str,
+                        diff_str,
+                    ])
+                columns = [
+                    "task",
+                    "quality_and_rews_last",
+                    "quality_and_rews_avg",
+                    "quality_and_rews_sum",
+                    "avg_differences",
+                ]
 
             table_name = f"policy_ranking_samples/{ds_name}"
 
@@ -1949,7 +1996,6 @@ class RFMHeadsTrainer(Trainer):
         logger.info(f"  Processing dataset: {eval_dataset}")
         # log_memory_usage(f"Before dataset {eval_dataset}")
 
-        # Get dataset name for mapping
         dataset_for_mapping = eval_dataset[0] if isinstance(eval_dataset, list) else eval_dataset
         ds_name = DS_SHORT_NAME_MAPPING.get(dataset_for_mapping, dataset_for_mapping)
         timing_key = f"time/eval_dataset/{eval_type}/{ds_name}"
@@ -2172,7 +2218,7 @@ class RFMHeadsTrainer(Trainer):
 
         return callback_metrics
 
-    def evaluate(self, eval_dataset=None, ignore_keys=None) -> dict[str, float]:
+    def evaluate(self, eval_dataset=None, ignore_keys=None) -> Dict[str, float]:
         """
         Override evaluate method to implement custom RFM evaluation metrics.
         """
@@ -2351,7 +2397,7 @@ class RFMHeadsTrainer(Trainer):
 
     def _compute_success_loss_helper(
         self, success_logits, target_progress, success_labels, progress_loss_mask=None
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Helper function to compute success prediction loss.
 
@@ -2403,6 +2449,7 @@ class RFMHeadsTrainer(Trainer):
             reduction="none",
             pos_weight=pos_weight_tensor,
         )
+        # [Bx1]
         masked_loss = loss * combined_mask
 
         # Compute accuracy per sample
@@ -2416,10 +2463,8 @@ class RFMHeadsTrainer(Trainer):
         success_probs_flat = success_probs[combined_mask > 0]
         success_labels_flat = success_labels[combined_mask > 0]
 
-        success_loss = masked_loss.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
-        success_acc = masked_correct.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
-        success_loss = success_loss.mean()
-        success_acc = success_acc.mean()
+        success_loss = masked_loss.sum() / (combined_mask.sum() + 1e-8)
+        success_acc = masked_correct.sum() / (combined_mask.sum() + 1e-8)
 
         # Compute AUPRC across all valid frames
         if success_probs_flat.numel() > 0 and len(torch.unique(success_labels_flat)) > 1:
@@ -2443,7 +2488,7 @@ class RFMHeadsTrainer(Trainer):
         progress_pred: torch.Tensor,
         target_progress: torch.Tensor,
         mask: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, Dict[str, torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Helper function to compute progress loss.
 
@@ -2583,10 +2628,10 @@ class RFMHeadsTrainer(Trainer):
 
     def _add_stratified_metrics(
         self,
-        outputs_dict: Dict,
+        outputs_dict: Dict[str, Any],
         prefix: str,
-        strategy_values: list | None,
-        data_source_values: list,
+        strategy_values: Optional[List[str]],
+        data_source_values: List[str],
         metrics: Dict[str, torch.Tensor],
     ) -> None:
         """

@@ -296,6 +296,12 @@ class CustomEvaluationConfig:
             "help": "Number of trajectories to sample per quality label for policy ranking evaluation. Only tasks with multiple quality labels are used."
         },
     )
+    reward_alignment_max_trajectories: Optional[int] = field(
+        default=10,
+        metadata={
+            "help": "Maximum number of trajectories to use for reward alignment evaluation. None = use all trajectories."
+        },
+    )
 
 
 @dataclass

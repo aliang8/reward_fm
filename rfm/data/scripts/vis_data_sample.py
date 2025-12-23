@@ -6,14 +6,19 @@ Loads a dataset, creates a BaseSampler, processes trajectories using _get_traj_f
 and generates videos with overlayed metadata (task, progress, etc.).
 
 Example commands:
+    # List available datasets
+    uv run python rfm/data/scripts/vis_data_sample.py --list_datasets
+
     # Visualize multiple preference samples
     uv run python rfm/data/scripts/vis_data_sample.py \
-        --dataset jesbu1/oxe_rfm_oxe_bc_z \
+        --dataset jesbu1/soar_rfm/soar_rfm \
         --viz_type preference \
-        --preference_strategy rewound \
+        --preference_strategy different_task \
+        --max_frames 2 \
         --num_videos 10 \
         --progress_pred_type absolute_wrt_total_frames \
-        --output data_strategy_visualization
+        --output data_sample_vis \
+        --use_uniform_sampling
 
     uv run python rfm/data/scripts/vis_data_sample.py \
         --dataset jesbu1/oxe_rfm_oxe_bc_z \
@@ -22,9 +27,6 @@ Example commands:
         --num_videos 10 \
         --progress_pred_type absolute_wrt_total_frames \
         --output data_strategy_visualization
-
-    # List available datasets
-    uv run python rfm/data/scripts/vis_data_sample.py --list_datasets
 """
 
 import argparse
@@ -419,7 +421,8 @@ def create_preference_video(
         rejected_progress.append(rejected_progress[-1] if rejected_progress else 0.0)
 
     # Get metadata
-    task = chosen_traj.task or "Unknown"
+    chosen_task = chosen_traj.task or "Unknown"
+    rejected_task = rejected_traj.task or "Unknown"
     strategy = preference_sample.data_gen_strategy or "Unknown"
     chosen_id = chosen_traj.id or "Unknown"
     rejected_id = rejected_traj.id or "Unknown"
@@ -437,7 +440,8 @@ def create_preference_video(
     # Header will contain: strategy, task, chosen/rejected info, and frame-specific info
     header_lines = [
         f"Strategy: {strategy}",
-        f"Task: {task}",
+        f"Chosen Task: {chosen_task}",
+        f"Rejected Task: {rejected_task}",
         f"Chosen ID: {chosen_id} | Quality: {chosen_quality_label}",
         f"Rejected ID: {rejected_id} | Quality: {rejected_quality_label}",
     ]
@@ -602,6 +606,12 @@ def main():
         help="Frames per second for output video (default: 1)",
     )
     parser.add_argument(
+        "--max_frames",
+        type=int,
+        default=16,
+        help="Maximum number of frames (default: 16)",
+    )
+    parser.add_argument(
         "--progress_pred_type",
         type=str,
         default="absolute_first_frame",
@@ -668,6 +678,19 @@ def main():
         default=0.0,
         help="Ratio for using dataset preferences (default: 0.0)",
     )
+    parser.add_argument(
+        "--progress_loss_type",
+        type=str,
+        default="l2",
+        choices=["l1", "l2", "discrete"],
+        help="Progress loss type: 'l1', 'l2', or 'discrete' (default: l2)",
+    )
+    parser.add_argument(
+        "--progress_discrete_bins",
+        type=int,
+        default=10,
+        help="Number of discrete bins for progress when using discrete loss (default: 10)",
+    )
 
     args = parser.parse_args()
 
@@ -684,7 +707,7 @@ def main():
     data_config = DataConfig(
         train_datasets=[args.dataset],  # Use the specified dataset for both train and eval
         eval_datasets=[args.dataset],
-        max_frames=16,  # Default value
+        max_frames=args.max_frames,
         progress_pred_type=args.progress_pred_type,
         pairwise_progress=args.pairwise_progress,
         use_uniform_sampling=args.use_uniform_sampling,
@@ -696,6 +719,8 @@ def main():
         dataset_success_cutoff_file=args.dataset_success_cutoff_file,
         min_frames_per_trajectory=10,
         sample_type_ratio=[1, 0, 0] if args.viz_type == "preference" else [0, 1, 0],  # Preference or progress
+        progress_loss_type=args.progress_loss_type,
+        progress_discrete_bins=args.progress_discrete_bins,
     )
 
     # Load dataset using BaseDataset (reuses all the loading logic)
@@ -825,7 +850,8 @@ def main():
                 continue
 
             print(f"Preference sample generated successfully!")
-            print(f"  Task: {preference_sample.chosen_trajectory.task}")
+            print(f"  Chosen Task: {preference_sample.chosen_trajectory.task}")
+            print(f"  Rejected Task: {preference_sample.rejected_trajectory.task}")
             print(f"  Strategy: {preference_sample.data_gen_strategy}")
             print(f"  Chosen ID: {preference_sample.chosen_trajectory.id}")
             print(f"  Rejected ID: {preference_sample.rejected_trajectory.id}")

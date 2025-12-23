@@ -107,6 +107,13 @@ class RFMBatchCollator(BaseCollator):
         self.use_multi_image = use_multi_image
         self.prog_pref = prog_pref
         self.prog_sim = prog_sim
+
+        # Molmo2 only supports multi-image mode, not video
+        if "Molmo" in self.base_model_id and not self.use_multi_image:
+            raise ValueError(
+                "Molmo2 does not support video mode (use_multi_image=False). "
+                "Please set data.use_multi_image=True to use Molmo2 with multi-image input."
+            )
         self.use_progress_token = use_progress_token
         self.shuffle_progress_frames = shuffle_progress_frames
         self.inference = inference
@@ -130,8 +137,8 @@ class RFMBatchCollator(BaseCollator):
                 "resized_height": self.resized_height,
                 "resized_width": self.resized_width,
             }
-        elif "Qwen" in self.base_model_id:
-            # Qwen accepts list of PIL Images directly
+        elif "Qwen" in self.base_model_id or "Molmo" in self.base_model_id:
+            # Qwen and Molmo accept list of PIL Images directly
             return frames, {
                 "resized_height": self.resized_height,
                 "resized_width": self.resized_width,
@@ -185,7 +192,7 @@ class RFMBatchCollator(BaseCollator):
         Returns:
             Batch of inputs
         """
-        if "Qwen" in self.base_model_id:
+        if "Qwen" in self.base_model_id or "Molmo" in self.base_model_id:
             # Process all messages in one batch
             texts = [
                 self.processor.apply_chat_template(
@@ -199,7 +206,7 @@ class RFMBatchCollator(BaseCollator):
                 for msg in conversations
             ]
 
-            is_qwen3 = "Qwen3" in self.base_model_id
+            is_qwen3 = "Qwen3" in self.base_model_id or "Molmo2" in self.base_model_id
 
             # For Qwen3, pass image_patch_size to process_vision_info
             process_kwargs = {

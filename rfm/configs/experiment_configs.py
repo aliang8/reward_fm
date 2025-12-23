@@ -76,6 +76,14 @@ class ModelConfig(PretrainedConfig):
         default=False,
         metadata={"help": "Whether to use casual masking in ReWINDTransformer"},
     )
+    progress_loss_type: str = field(
+        default="l2",
+        metadata={"help": "Type of progress loss: 'l1', 'l2', or 'discrete'"},
+    )
+    progress_discrete_bins: Optional[int] = field(
+        default=None,
+        metadata={"help": "Number of discrete bins for progress when using discrete loss (None for continuous)"},
+    )
     # rewind sub-config
     rewind: Optional[Dict[str, Any]] = field(default=None)
 
@@ -122,19 +130,6 @@ class DataConfig:
     dataset_type: str = field(
         default="default",
         metadata={"help": "Dataset type: 'default', 'rewound', 'success_failure'"},
-    )
-
-    # Rewound dataset specific parameters
-    # Example rewound config:
-    # dataset_type: "rewound"
-    # rewind_lengths: [1, 2, 4, 8]  # Generate rewinds of 1, 2, 4, and 8 frames
-    # samples_per_trajectory: 2  # Generate 2 preference samples per trajectory
-    # Note: Original trajectories are preferred over rewound versions
-    rewind_lengths: Optional[List[int]] = field(
-        default=None, metadata={"help": "List of rewind lengths for rewound dataset (default: 1 to max_frames)"}
-    )
-    samples_per_trajectory: int = field(
-        default=1, metadata={"help": "Number of preference samples to generate per trajectory for rewound dataset"}
     )
 
     max_frames_after_preprocessing: int = field(
@@ -268,6 +263,16 @@ class DataConfig:
         },
     )
 
+    # Progress loss configuration
+    progress_loss_type: str = field(
+        default="l2",
+        metadata={"help": "Type of progress loss: 'l1', 'l2', or 'discrete' (synced from loss config)"},
+    )
+    progress_discrete_bins: int = field(
+        default=10,
+        metadata={"help": "Number of discrete bins for progress when using discrete loss (synced from loss config)"},
+    )
+
 
 @dataclass
 class CustomEvaluationConfig:
@@ -390,6 +395,14 @@ class LossConfig:
         default=False,
         metadata={"help": "If True, only compute progress loss for the last frame in the sequence"},
     )
+    progress_loss_type: str = field(
+        default="l2",
+        metadata={"help": "Type of progress loss: 'l1', 'l2', or 'discrete'"},
+    )
+    progress_discrete_bins: int = field(
+        default=10,
+        metadata={"help": "Number of discrete bins for progress when using discrete loss (default: 10)"},
+    )
 
 
 @dataclass
@@ -485,6 +498,9 @@ class ExperimentConfig:
     custom_eval: CustomEvaluationConfig = field(default_factory=CustomEvaluationConfig)
 
     def __post_init__(self):
+        if isinstance(self.loss, dict):
+            self.loss = LossConfig(**self.loss)
+
         if isinstance(self.model, dict):
             self.model = ModelConfig(**self.model)
 
@@ -496,9 +512,6 @@ class ExperimentConfig:
 
         if isinstance(self.training, dict):
             self.training = TrainingConfig(**self.training)
-
-        if isinstance(self.loss, dict):
-            self.loss = LossConfig(**self.loss)
 
         if isinstance(self.logging, dict):
             self.logging = LoggingConfig(**self.logging)

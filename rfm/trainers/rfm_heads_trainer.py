@@ -1556,9 +1556,16 @@ class RFMHeadsTrainer(Trainer):
         confusion_plot = None
         confusion_matrix = None
 
+        is_discrete_mode = self.config.loss.progress_loss_type.lower() == "discrete"
+        num_bins = self.config.loss.progress_discrete_bins if is_discrete_mode else None
+
+        data_source = None
+        if eval_results and len(eval_results) > 0:
+            data_source = eval_results[0]["data_source"]
+
         if eval_type == "reward_alignment":
             eval_metrics, plots, video_frames_list, trajectory_progress_data = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type
+                eval_type, eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins, data_source
             )
             # log_memory_usage(f"After compute_eval_metrics (reward_alignment)")
 
@@ -1597,6 +1604,7 @@ class RFMHeadsTrainer(Trainer):
                     max_videos=9,
                     progress_key_pred="progress_pred",
                     progress_key_target="target_progress",
+                    is_discrete_mode=is_discrete_mode,
                 )
                 if grid_video is not None:
                     self.logger.log_video(
@@ -1633,7 +1641,7 @@ class RFMHeadsTrainer(Trainer):
         elif eval_type == "policy_ranking":
             # create task groups from eval_results
             eval_metrics, task_groups, task_details = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type
+                eval_type, eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins
             )
             # log_memory_usage(f"After compute_eval_metrics (policy_ranking)")
 
@@ -1702,7 +1710,9 @@ class RFMHeadsTrainer(Trainer):
 
             # Create and log grid of frame pairs with progress annotations
             if self.logger.enabled("wandb"):
-                grid_image = create_policy_ranking_grid(eval_results, grid_size=(2, 2), max_samples=4)
+                grid_image = create_policy_ranking_grid(
+                    eval_results, grid_size=(2, 2), max_samples=4, is_discrete_mode=is_discrete_mode
+                )
                 if grid_image is not None:
                     self.logger.log_image(
                         f"policy_ranking_grid/{ds_name}",
@@ -1722,7 +1732,7 @@ class RFMHeadsTrainer(Trainer):
             # log_memory_usage(f"After deleting policy_ranking data")
         elif eval_type == "confusion_matrix":
             confusion_plot, confusion_matrix = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type
+                eval_type, eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins
             )
             eval_metrics = {}  # no eval metrics
             # log_memory_usage(f"After compute_eval_metrics (confusion_matrix)")
@@ -2360,10 +2370,12 @@ class RFMHeadsTrainer(Trainer):
         # Get base thresholds from config
         min_success = self.config.data.min_success
 
-        # Handle Qwen downsampling: take every 2nd frame if using Qwen and NOT using multi_image
+        # Handle Qwen/Molmo downsampling: take every 2nd frame if using Qwen/Molmo and NOT using multi_image
         # In multi_image mode, we already get one embedding per frame, so no downsampling needed
         # Ensure success_logits matches target_progress length after downsampling
-        if "Qwen" in self.config.model.base_model_id and not self.config.data.use_multi_image:
+        if (
+            "Qwen" in self.config.model.base_model_id or "Molmo" in self.config.model.base_model_id
+        ) and not self.config.data.use_multi_image:
             success_logits = success_logits[:, ::2]
             target_progress = target_progress[:, ::2]
             success_labels = success_labels[:, ::2]
@@ -2432,16 +2444,19 @@ class RFMHeadsTrainer(Trainer):
         Helper function to compute progress loss.
 
         Args:
-            progress_pred: Progress prediction tensors (can be tensor or list of tensors) of shape (batch_size, seq_len)
-            target_progress: Target progress tensors (can be tensor or list of tensors) of shape (batch_size, seq_len)
-            mask: Per-sample mask tensor of shape (batch_size,) with 1.0 for samples where we should compute loss
+            progress_pred: Progress prediction tensors of shape (batch_size, seq_len) for L1/L2 loss,
+                          or (batch_size, seq_len, num_bins) for discrete loss (logits)
+            target_progress: Target progress tensors of shape (batch_size, seq_len) with values in [0, 1]
+            mask: Per-sample mask tensor of shape (batch_size, seq_len) with 1.0 for samples where we should compute loss
 
         Returns:
             tuple: (masked_loss, spearman_correlations, metrics)
         """
         # Handle Qwen downsampling: take every 2nd frame if using Qwen and NOT using multi_image
         # In multi_image mode, we already get one embedding per frame, so no downsampling needed
-        if "Qwen" in self.config.model.base_model_id and not self.config.data.use_multi_image:
+        if (
+            "Qwen" in self.config.model.base_model_id or "Molmo" in self.config.model.base_model_id
+        ) and not self.config.data.use_multi_image:
             target_progress = target_progress[:, ::2]
             mask = mask[:, ::2]
 
@@ -2453,16 +2468,98 @@ class RFMHeadsTrainer(Trainer):
             last_frame_mask[:, -1] = 1.0  # Set last frame to 1.0 for all sequences
             mask = mask * last_frame_mask
 
-        # Compute MSE loss per frame
-        loss_per_frame = F.mse_loss(progress_pred.float(), target_progress.float(), reduction="none")
-        masked_loss = loss_per_frame * mask
+        # Determine loss type from config
+        loss_type = self.config.loss.progress_loss_type.lower()
+
+        masked_correct = None
+
+        # Set loss function based on loss type
+        if loss_type == "discrete":
+            # Discrete loss: target progress is already binned in data sampling
+            num_bins = self.config.loss.progress_discrete_bins
+
+            # Target progress is already discrete bins [0, num_bins-1] from data sampling
+            # Convert to long tensor
+            target_bins = target_progress.long()  # [batch_size, seq_len]
+            # Ensure bins are in valid range [0, num_bins-1]
+            target_bins = torch.clamp(target_bins, 0, num_bins - 1)
+
+            # progress_pred should be [batch_size, seq_len, num_bins] logits
+            # Reshape for cross-entropy: [batch_size * seq_len, num_bins] and [batch_size * seq_len]
+            batch_size, seq_len = target_bins.shape
+
+            # Check if progress_pred has the correct shape for discrete mode
+            if len(progress_pred.shape) == 2:
+                # Model is outputting [batch_size, seq_len] instead of [batch_size, seq_len, num_bins]
+                # This means the model wasn't configured for discrete mode
+                raise ValueError(
+                    f"Discrete loss requires progress_pred shape [batch_size, seq_len, num_bins], "
+                    f"but got shape {progress_pred.shape}. "
+                    f"The model's progress head may not be configured for discrete mode. "
+                    f"Check that loss.progress_loss_type='discrete' is set before model initialization."
+                )
+
+            if progress_pred.shape[:2] != (batch_size, seq_len) or progress_pred.shape[2] != num_bins:
+                raise ValueError(
+                    f"Shape mismatch: progress_pred has shape {progress_pred.shape}, "
+                    f"but expected [batch_size={batch_size}, seq_len={seq_len}, num_bins={num_bins}]"
+                )
+
+            progress_pred_flat = progress_pred.view(batch_size * seq_len, num_bins)  # [B*T, num_bins]
+            target_bins_flat = target_bins.view(batch_size * seq_len)  # [B*T]
+            # Mask shape may be [B, 1] or [B, seq_len] depending on downsampling/last_frame_mask
+            # Ensure it matches target_bins shape [B, seq_len] before flattening
+            if mask.shape[1] != seq_len:
+                # Mask is [B, 1], expand to [B, seq_len]
+                mask_expanded = mask.expand(batch_size, seq_len)  # [B, seq_len]
+            else:
+                # Mask is already [B, seq_len]
+                mask_expanded = mask
+            mask_flat = mask_expanded.flatten()  # [B*T]
+
+            # Compute cross-entropy loss per sample
+            loss_per_sample_flat = F.cross_entropy(progress_pred_flat, target_bins_flat, reduction="none")  # [B*T]
+
+            # Compute accuracy: compare predicted bins (argmax) with target bins
+            pred_bins_flat = torch.argmax(progress_pred_flat, dim=-1)  # [B*T]
+            correct_flat = (pred_bins_flat == target_bins_flat).float()  # [B*T]
+
+            # Apply mask and reshape back
+            masked_loss_flat = loss_per_sample_flat * mask_flat  # [B*T]
+            masked_correct_flat = correct_flat * mask_flat  # [B*T]
+            loss_per_sample = loss_per_sample_flat.view(batch_size, seq_len)  # [B, T]
+            masked_loss = masked_loss_flat.view(batch_size, seq_len)  # [B, T]
+            masked_correct = masked_correct_flat.view(batch_size, seq_len)  # [B, T]
+        elif loss_type == "l1":
+            loss_fn = F.l1_loss
+        else:
+            loss_fn = F.mse_loss
+
+        # Compute loss_per_sample and masked_loss for L1/L2
+        if loss_type != "discrete":
+            loss_per_sample = loss_fn(progress_pred.float(), target_progress.float(), reduction="none")
+            masked_loss = loss_per_sample * mask
+
+        # For discrete mode, convert predictions back to continuous for spearman correlation
+        # For L1/L2, use predictions as-is
+        if loss_type == "discrete":
+            # Convert logits to probabilities, then to expected value (weighted sum)
+            progress_pred_continuous = torch.softmax(progress_pred, dim=-1)  # [B, T, num_bins]
+            # Create bin centers: [0, 1/(num_bins-1), 2/(num_bins-1), ..., 1]
+            bin_centers = torch.linspace(0.0, 1.0, num_bins, device=progress_pred.device, dtype=progress_pred.dtype)
+            # Compute expected value: sum(prob * bin_center) for each timestep
+            progress_pred_for_corr = (progress_pred_continuous * bin_centers.unsqueeze(0).unsqueeze(0)).sum(
+                dim=-1
+            )  # [B, T]
+        else:
+            progress_pred_for_corr = progress_pred
 
         if mask.shape[1] != target_progress.shape[1]:
             repeated_mask = mask.repeat(1, target_progress.shape[1])
         else:
             repeated_mask = mask
         masked_spearman_corr = compute_spearman_correlation(
-            progress_pred, target_progress, aggregate=False, mask=repeated_mask
+            progress_pred_for_corr, target_progress, aggregate=False, mask=repeated_mask
         )
         masked_spearman_corr = masked_spearman_corr.detach()
 
@@ -2473,6 +2570,10 @@ class RFMHeadsTrainer(Trainer):
 
         # Keep track of the per-sample metrics
         metrics = {"masked_loss": masked_loss, "masked_spearman_corr": masked_spearman_corr}
+
+        # Add progress accuracy for discrete mode
+        if loss_type == "discrete" and masked_correct is not None:
+            metrics["masked_progress_accuracy"] = masked_correct
 
         return progress_loss, spearman_corr, metrics
 
@@ -2539,21 +2640,32 @@ class RFMHeadsTrainer(Trainer):
                     timing_raw=self.timing_raw,
                 )
             else:
-                logger.trace("forward_model: Using Qwen/RFM model path, calling model forward")
+                logger.trace("forward_model: Using Qwen/Molmo/RFM model path, calling model forward")
                 logger.trace(
                     f"forward_model: input_ids shape: {inputs['input_ids'].shape if 'input_ids' in inputs else 'N/A'}"
                 )
-                model_output, model_timing_raw = model(
-                    input_ids=inputs["input_ids"],
-                    attention_mask=inputs["attention_mask"],
-                    pixel_values=inputs.get("pixel_values", None),
-                    pixel_values_videos=inputs.get("pixel_values_videos", None),
-                    image_grid_thw=inputs.get("image_grid_thw", None),
-                    video_grid_thw=inputs.get("video_grid_thw", None),
-                    second_per_grid_ts=inputs.get("second_per_grid_ts", None),
-                    sample_type=sample_type,
-                    timing_raw=self.timing_raw,
-                )
+
+                # Build model kwargs - include both Qwen and Molmo2 specific parameters
+                model_kwargs = {
+                    "input_ids": inputs["input_ids"],
+                    "attention_mask": inputs["attention_mask"],
+                    "pixel_values": inputs.get("pixel_values", None),
+                    "pixel_values_videos": inputs.get("pixel_values_videos", None),
+                    # Qwen-specific parameters
+                    "image_grid_thw": inputs.get("image_grid_thw", None),
+                    "video_grid_thw": inputs.get("video_grid_thw", None),
+                    "second_per_grid_ts": inputs.get("second_per_grid_ts", None),
+                    # Molmo2-specific parameters
+                    "image_grids": inputs.get("image_grids", None),
+                    "image_token_pooling": inputs.get("image_token_pooling", None),
+                    "image_num_crops": inputs.get("image_num_crops", None),
+                    "video_grids": inputs.get("video_grids", None),
+                    "video_token_pooling": inputs.get("video_token_pooling", None),
+                    # Common parameters
+                    "sample_type": sample_type,
+                    "timing_raw": self.timing_raw,
+                }
+                model_output, model_timing_raw = model(**model_kwargs)
                 logger.trace("forward_model: Model forward pass completed")
 
             logger.trace("forward_model: Updating timing and returning")
@@ -2627,6 +2739,13 @@ class RFMHeadsTrainer(Trainer):
                 f"{prefix}/prog_loss": progress_loss.item(),
                 f"{prefix}/spearman_corr": spearman_corr.item(),
             })
+
+            # Add progress accuracy for discrete mode
+            if "masked_progress_accuracy" in progress_metrics:
+                progress_accuracy = progress_metrics["masked_progress_accuracy"].sum() / (
+                    progress_target_mask.sum() + 1e-8
+                )
+                outputs_dict[f"{prefix}/prog_accuracy"] = progress_accuracy.item()
 
             if self.config.model.train_success_head:
                 outputs_dict.update({
@@ -2707,6 +2826,13 @@ class RFMHeadsTrainer(Trainer):
                     f"{prefix}/pref_prog_loss": progress_loss_A.item(),
                     f"{prefix}/pref_prog_spearman_corr": spearman_corr_A.item(),
                 })
+
+                # Add progress accuracy for discrete mode
+                if "masked_progress_accuracy" in progress_metrics_A:
+                    progress_accuracy_A = progress_metrics_A["masked_progress_accuracy"].sum() / (
+                        target_progress_A_mask.sum() + 1e-8
+                    )
+                    outputs_dict[f"{prefix}/pref_prog_accuracy"] = progress_accuracy_A.item()
 
                 stratified_progress_metrics = {
                     "spearman_corr": progress_metrics_A["masked_spearman_corr"],
@@ -3059,6 +3185,22 @@ class RFMHeadsTrainer(Trainer):
                     f"{prefix}/sim_prog_loss_ref_diff": progress_loss_ref_diff.item(),
                     f"{prefix}/sim_prog_spearman_corr": (spearman_corr_ref_sim + spearman_corr_ref_diff).item() / 2.0,
                 })
+
+                # Add progress accuracy for discrete mode
+                if (
+                    "masked_progress_accuracy" in progress_metrics_ref_sim
+                    and "masked_progress_accuracy" in progress_metrics_ref_diff
+                ):
+                    progress_accuracy_ref_sim = progress_metrics_ref_sim["masked_progress_accuracy"].sum() / (
+                        target_progress_ref_sim_mask.sum() + 1e-8
+                    )
+                    progress_accuracy_ref_diff = progress_metrics_ref_diff["masked_progress_accuracy"].sum() / (
+                        target_progress_ref_diff_mask.sum() + 1e-8
+                    )
+                    avg_progress_accuracy = (progress_accuracy_ref_sim + progress_accuracy_ref_diff) / 2.0
+                    outputs_dict[f"{prefix}/sim_prog_accuracy"] = avg_progress_accuracy.item()
+                    outputs_dict[f"{prefix}/sim_prog_accuracy_ref_sim"] = progress_accuracy_ref_sim.item()
+                    outputs_dict[f"{prefix}/sim_prog_accuracy_ref_diff"] = progress_accuracy_ref_diff.item()
 
                 # Combine metrics from both ref_sim and ref_diff for stratification
                 # Average the metrics across both comparisons

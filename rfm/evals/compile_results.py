@@ -15,21 +15,33 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import cv2
+import torch
+import torch.nn.functional as F
 from sklearn.metrics import average_precision_score
-from rfm.data.datasets.helpers import load_frames_from_npz
+from rfm.data.datasets.helpers import load_frames_from_npz, convert_continuous_to_discrete_bins
 from rfm.data.dataset_category import is_failure
 from rfm.evals.eval_metrics_utils import compute_pearson, compute_preference_accuracy, compute_spearman
 
 
-def compute_eval_metrics(eval_type: str, results: list[dict[str, Any]], progress_pred_type: str):
+def compute_eval_metrics(
+    eval_type: str,
+    results: list[dict[str, Any]],
+    progress_pred_type: str,
+    is_discrete_mode: bool = False,
+    num_bins: int = 10,
+    data_source: str | None = None,
+):
+    # Route to appropriate evaluation function
     if eval_type == "quality_preference" or eval_type == "quality_preference_roboarena":
         return run_quality_preference_eval(results, progress_pred_type)
     elif eval_type == "reward_alignment":
-        return run_reward_alignment_eval_per_trajectory(results, progress_pred_type)
+        return run_reward_alignment_eval_per_trajectory(
+            results, progress_pred_type, is_discrete_mode, num_bins, data_source
+        )
     elif eval_type == "confusion_matrix":
-        return run_confusion_matrix_eval(results, progress_pred_type)
+        return run_confusion_matrix_eval(results, progress_pred_type, is_discrete_mode, num_bins)
     elif eval_type == "policy_ranking":
-        return run_policy_ranking_eval(results, progress_pred_type)
+        return run_policy_ranking_eval(results, progress_pred_type, is_discrete_mode, num_bins)
     elif eval_type == "similarity_score":
         return run_similarity_score_eval(results, progress_pred_type)
 
@@ -165,7 +177,12 @@ def run_quality_preference_eval(results: list[dict[str, Any]], progress_pred_typ
 
 
 def run_reward_alignment_eval_per_trajectory(
-    results: list[dict[str, Any]], progress_pred_type: str, last_frame_only: bool = False
+    results: list[dict[str, Any]],
+    progress_pred_type: str,
+    is_discrete_mode: bool,
+    num_bins: int,
+    data_source: str | None,
+    last_frame_only: bool = False,
 ) -> tuple[dict[str, Any], list, list, list]:
     """Run reward_alignment evaluation analysis and create plots for each trajectory.
 
@@ -176,16 +193,15 @@ def run_reward_alignment_eval_per_trajectory(
         where trajectory_progress_data is a list of dicts with progress_pred and target_progress
         for each trajectory (one per video in video_frames_list)
     """
-    # Determine if this is a failure dataset by checking the data_source of the first result
+    # Determine if this is a failure dataset
     is_failure_dataset = False
-    if results and len(results) > 0:
-        first_data_source = results[0].get("data_source", "")
-        is_failure_dataset = is_failure(first_data_source)
+    if data_source:
+        is_failure_dataset = is_failure(data_source)
 
     unique_trajectory_ids = set()
-    mse_per_trajectory = np.zeros(1)
+    loss_per_trajectory = np.zeros(1)
+    loss_trajectories = []
     pearson_trajectories = []
-    spearman_trajectories = []
     plots = []
     video_frames_list = []
     trajectory_progress_data = []
@@ -236,6 +252,8 @@ def run_reward_alignment_eval_per_trajectory(
         # First, gather all predictions and targets for this trajectory
         all_preds = []
         all_targets = []
+        all_pred_logits = []  # For discrete mode: collect full logits
+        all_target_bins = []  # For discrete mode: collect bin indices
         all_success_preds = []
         all_success_labels_list = []
 
@@ -244,25 +262,60 @@ def run_reward_alignment_eval_per_trajectory(
             tgt = r.get("target_progress")
 
             if pred is not None:
-                # here we use the last frame prediction
-                # even if we do right padding during training
-                if last_frame_only:
-                    all_preds.append(float(pred[-1]))
-                else:
-                    # here we use the prediction at the current timestep
-                    # unless we are past the max frame length
-                    if timestep >= len(pred) - 1:
-                        indx = -1
+                pred_array = np.array(pred)
+                if is_discrete_mode:
+                    # Discrete mode: pred is logits [seq_len, num_bins]
+                    if last_frame_only:
+                        # Use last frame's logits
+                        all_pred_logits.append(pred_array[-1])
+                        if tgt is not None and len(tgt) > 0:
+                            all_target_bins.append(int(tgt[-1]))
                     else:
-                        indx = timestep
-                    all_preds.append(float(pred[indx]))
+                        # Use prediction at current timestep
+                        if timestep >= len(pred_array) - 1:
+                            indx = -1
+                        else:
+                            indx = timestep
+                        all_pred_logits.append(pred_array[indx])
+                        if tgt is not None and len(tgt) > 0:
+                            # Target is already a discrete bin index
+                            if timestep >= len(tgt) - 1:
+                                all_target_bins.append(int(tgt[-1]))
+                            else:
+                                all_target_bins.append(int(tgt[indx]))
+                    # For visualization: use argmax to get predicted bin (raw integer)
+                    if last_frame_only:
+                        pred_bin = np.argmax(pred_array[-1])
+                    else:
+                        if timestep >= len(pred_array) - 1:
+                            pred_bin = np.argmax(pred_array[-1])
+                        else:
+                            pred_bin = np.argmax(pred_array[timestep])
+                    all_preds.append(int(pred_bin))
+                else:
+                    # Continuous mode: original logic
+                    if last_frame_only:
+                        all_preds.append(float(pred[-1]))
+                    else:
+                        if timestep >= len(pred) - 1:
+                            indx = -1
+                        else:
+                            indx = timestep
+                        all_preds.append(float(pred[indx]))
             else:
                 all_preds.append(0.0)
 
             if tgt is not None and len(tgt) > 0:
-                all_targets.append(float(tgt[-1]))
+                if is_discrete_mode:
+                    # Target is already a discrete bin index (raw integer)
+                    tgt_bin = int(
+                        tgt[-1] if last_frame_only else (tgt[-1] if timestep >= len(tgt) - 1 else tgt[timestep])
+                    )
+                    all_targets.append(tgt_bin)
+                else:
+                    all_targets.append(float(tgt[-1]))
             else:
-                all_targets.append(0.0)
+                all_targets.append(0 if is_discrete_mode else 0.0)
 
             # Optional success prediction (binary) from trainer outputs
             succ = r.get("success_pred", None)
@@ -278,7 +331,6 @@ def run_reward_alignment_eval_per_trajectory(
             print("No valid predictions or targets found for trajectory: ", trajectory_id)
             continue
 
-        # Convert to numpy arrays for vectorized operations
         last_preds = np.array(all_preds)
         last_targets = np.array(all_targets)
         last_success = np.array(all_success_preds) if all_success_preds else None
@@ -314,35 +366,49 @@ def run_reward_alignment_eval_per_trajectory(
 
         # Calculate metrics for this trajectory using vectorized operations (skip for failure datasets)
         if is_failure_dataset:
-            traj_mse = 0.0
+            traj_loss = 0.0
             traj_pearson = 0.0
-            traj_spearman = 0.0
         else:
-            traj_mse = float(np.mean((last_targets - last_preds) ** 2))
-            traj_pearson = compute_pearson(last_targets.tolist(), last_preds.tolist())
-            traj_spearman = compute_spearman(last_targets.tolist(), last_preds.tolist())
+            # Compute loss based on mode
+            if is_discrete_mode and all_pred_logits and all_target_bins:
+                # Discrete mode: compute cross-entropy loss between logits and target bins
+                pred_logits_tensor = torch.tensor(np.array(all_pred_logits), dtype=torch.float32)  # [seq_len, num_bins]
+                target_bins_tensor = torch.tensor(all_target_bins, dtype=torch.long)  # [seq_len]
+                target_bins_tensor = torch.clamp(target_bins_tensor, 0, num_bins - 1)
+                loss_per_timestep = F.cross_entropy(pred_logits_tensor, target_bins_tensor, reduction="none")
+                traj_loss = float(loss_per_timestep.mean().item())
+            else:
+                # Continuous mode: compute MSE loss
+                traj_loss = float(np.mean((last_targets - last_preds) ** 2))
 
+            # Compute Pearson correlation (shared for both modes)
+            traj_pearson = compute_pearson(last_targets.tolist(), last_preds.tolist())
             # Handle NaN values
             traj_pearson = float(traj_pearson) if not np.isnan(traj_pearson) else 0.0
-            traj_spearman = float(traj_spearman) if not np.isnan(traj_spearman) else 0.0
 
         # Create a wandb plot for progress predictions and, if available, success predictions
         if have_success and last_success is not None and len(last_success) == len(last_preds):
             fig, axs = plt.subplots(1, 2, figsize=(10, 3.5))
             # Progress subplot
             ax = axs[0]
-            ax.plot(last_preds, linewidth=2)
-            ax.set_ylabel("Progress")
-            ax.set_title(
-                f"Progress - {task} - {quality_label}\nMSE: {traj_mse:.2f}, r: {traj_pearson:.2f}, sp: {traj_spearman:.2f}"
-            )
-            ax.set_ylim(0, 1)
-            ax.spines["right"].set_visible(False)
-            ax.spines["top"].set_visible(False)
-            ax.set_yticks([])
-
             # Success subplot (binary)
             ax2 = axs[1]
+        else:
+            fig, ax = plt.subplots(figsize=(6, 3.5))
+            ax2 = None
+
+        # Setup progress plot (shared code for both cases)
+        ax.plot(last_preds, linewidth=2)
+        ax.set_ylabel("Progress")
+        title = f"Progress - {task} - {quality_label}\nLoss: {traj_loss:.3f}, pearson: {traj_pearson:.2f}"
+        ax.set_ylim(0, num_bins - 1 if is_discrete_mode else 1)
+        ax.spines["right"].set_visible(False)
+        ax.spines["top"].set_visible(False)
+        ax.set_yticks([])
+        ax.set_title(title)
+
+        # Setup success subplot if available
+        if ax2 is not None:
             ax2.step(range(len(last_success)), last_success, where="post", linewidth=2, label="Predicted", color="blue")
             # Add ground truth success labels as green line if available
             if (
@@ -366,38 +432,21 @@ def run_reward_alignment_eval_per_trajectory(
             ax2.set_yticks([0, 1])
             if have_success_labels and len(last_success_labels) == len(last_success):
                 ax2.legend(loc="upper right", fontsize=8)
-        else:
-            fig, ax = plt.subplots(figsize=(6, 3.5))
-            ax.plot(last_preds, linewidth=2)
-            ax.set_ylabel("Progress")
-            ax.set_title(
-                f"Progress Pred - {task} - {quality_label}\nMSE: {traj_mse:.2f}, Pearson: {traj_pearson:.2f}, Spearman: {traj_spearman:.2f}"
-            )
-            ax.set_ylim(0, 1)
-            # remove right and top spines
-            ax.spines["right"].set_visible(False)
-            ax.spines["top"].set_visible(False)
-            # remove y ticks
-            ax.set_yticks([])
 
         plots.append(fig)
 
         # Only accumulate metrics for non-failure datasets (using already computed values)
         if not is_failure_dataset:
-            mse_per_trajectory += traj_mse
+            loss_trajectories.append(traj_loss)
             if not np.isnan(traj_pearson):
                 pearson_trajectories.append(traj_pearson)
-            if not np.isnan(traj_spearman):
-                spearman_trajectories.append(traj_spearman)
 
     if len(unique_trajectory_ids) == 0:
-        mse_per_trajectory = np.nan
+        loss_per_trajectory = np.nan
         pearson_per_trajectory = np.nan
-        # spearman_per_trajectory = np.nan
     else:
-        mse_per_trajectory = (mse_per_trajectory / len(unique_trajectory_ids)).item()
-        pearson_per_trajectory = np.mean(pearson_trajectories).item()
-        # spearman_per_trajectory = np.mean(spearman_trajectories).item()
+        loss_per_trajectory = np.mean(loss_trajectories).item() if loss_trajectories else np.nan
+        pearson_per_trajectory = np.mean(pearson_trajectories).item() if pearson_trajectories else np.nan
 
     # Compute success_auprc across all collected success predictions and labels
     success_auprc = None
@@ -413,7 +462,7 @@ def run_reward_alignment_eval_per_trajectory(
             success_auprc = 0.0
 
     metrics = {
-        "mse": mse_per_trajectory,
+        "loss": loss_per_trajectory,
         "pearson": pearson_per_trajectory,
     }
 
@@ -424,7 +473,9 @@ def run_reward_alignment_eval_per_trajectory(
     return metrics, plots, video_frames_list, trajectory_progress_data
 
 
-def run_confusion_matrix_eval(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:
+def run_confusion_matrix_eval(
+    results: list[dict[str, Any]], progress_pred_type: str, is_discrete_mode: bool, num_bins: int
+) -> dict[str, Any]:
     """Run confusion_matrix evaluation analysis."""
     # First, gather all progress predictions, lang_tasks, and video_tasks
     all_progress_preds = []
@@ -455,9 +506,21 @@ def run_confusion_matrix_eval(results: list[dict[str, Any]], progress_pred_type:
     # Extract final rewards vectorized
     all_final_rewards = []
     for progress_pred in all_progress_preds:
-        if progress_pred_type == "relative":
-            progress_pred = np.cumsum(progress_pred)
-        all_final_rewards.append(float(progress_pred[-1]))
+        pred_array = np.array(progress_pred)
+
+        if is_discrete_mode:
+            # Discrete mode: progress_pred is logits [seq_len, num_bins]
+            # Use argmax on the last frame to get predicted bin index
+            last_frame_logits = pred_array[-1] if pred_array.ndim > 1 else pred_array
+            pred_bin = np.argmax(last_frame_logits)
+            final_reward = int(pred_bin)  # Use raw bin index as reward
+        else:
+            # Continuous mode: use last frame value
+            if progress_pred_type == "relative":
+                pred_array = np.cumsum(pred_array)
+            final_reward = float(pred_array[-1] if pred_array.ndim > 0 else pred_array)
+
+        all_final_rewards.append(final_reward)
 
     all_final_rewards = np.array(all_final_rewards)
     all_lang_indices = np.array([task_to_idx[task] for task in all_lang_tasks])
@@ -509,7 +572,9 @@ def run_confusion_matrix_eval(results: list[dict[str, Any]], progress_pred_type:
     return fig, confusion_matrix
 
 
-def run_policy_ranking_eval(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:
+def run_policy_ranking_eval(
+    results: list[dict[str, Any]], progress_pred_type: str, is_discrete_mode: bool, num_bins: int
+) -> dict[str, Any]:
     """Run policy_ranking evaluation analysis.
 
     For non-RoboArena: Uses quality_label and quality_order for ranking.
@@ -562,13 +627,31 @@ def run_policy_ranking_eval(results: list[dict[str, Any]], progress_pred_type: s
     # Extract final rewards vectorized
     all_final_rewards = []
     for progress_pred in all_progress_preds:
-        if progress_pred_type == "relative":
-            progress_pred = np.cumsum(progress_pred)
-        all_final_rewards.append(float(progress_pred[-1]))
+        pred_array = np.array(progress_pred)
+
+        if is_discrete_mode:
+            # Discrete mode: progress_pred is logits [seq_len, num_bins]
+            # Use argmax on the last frame to get predicted bin index
+            last_frame_logits = pred_array[-1] if pred_array.ndim > 1 else pred_array
+            pred_bin = np.argmax(last_frame_logits)
+            final_reward = int(pred_bin)  # Use raw bin index as reward
+        else:
+            # Continuous mode: use last frame value
+            if progress_pred_type == "relative":
+                pred_array = np.cumsum(pred_array)
+            final_reward = float(pred_array[-1] if pred_array.ndim > 0 else pred_array)
+
+        all_final_rewards.append(final_reward)
 
     all_final_rewards = np.array(all_final_rewards)
     if use_partial_success:
         all_partial_successes = np.array(all_partial_successes)
+
+        # Convert partial_success values to discrete labels if in discrete mode
+        if is_discrete_mode and num_bins is not None:
+            all_partial_successes = np.array(
+                convert_continuous_to_discrete_bins(all_partial_successes.tolist(), num_bins), dtype=int
+            )
 
     # Group by task
     task_groups = {}
@@ -851,7 +934,6 @@ def run_policy_ranking_eval(results: list[dict[str, Any]], progress_pred_type: s
         "min_succ_fail_diff": np.min(all_succ_fail_diffs).item() if all_succ_fail_diffs else None,
         "max_succ_fail_diff": np.max(all_succ_fail_diffs).item() if all_succ_fail_diffs else None,
         "ranking_acc": ranking_acc,
-        "ranking_total_pairs": total_pairs,
     }
 
     return policy_ranking_metrics, task_groups, task_details

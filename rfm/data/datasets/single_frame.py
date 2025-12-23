@@ -1,6 +1,10 @@
+from typing import Any, Dict, Optional
+
 import random
 import torch
+from datasets import Dataset
 
+from rfm.configs.experiment_configs import DataConfig
 from rfm.data.datasets.base import BaseDataset
 from rfm.data.dataset_types import ProgressSample, PreferenceSample, Trajectory
 from rfm.data.samplers.base import RFMBaseSampler
@@ -20,12 +24,12 @@ class SingleFrameProgressSampler(RFMBaseSampler):
 
     def __init__(
         self,
-        config,
-        dataset,
-        combined_indices,
-        dataset_success_cutoff_map=None,
-        is_evaluation=False,
-        verbose=True,
+        config: DataConfig,
+        dataset: Dataset,
+        combined_indices: Dict[str, Any],
+        dataset_success_cutoff_map: Optional[Dict[str, float]] = None,
+        is_evaluation: bool = False,
+        verbose: bool = True,
         **kwargs,
     ):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
@@ -234,12 +238,12 @@ class SingleFramePreferenceSampler(RFMBaseSampler):
 
     def __init__(
         self,
-        config,
-        dataset,
-        combined_indices,
-        dataset_success_cutoff_map=None,
-        is_evaluation=False,
-        verbose=True,
+        config: DataConfig,
+        dataset: Dataset,
+        combined_indices: Dict[str, Any],
+        dataset_success_cutoff_map: Optional[Dict[str, float]] = None,
+        is_evaluation: bool = False,
+        verbose: bool = True,
         **kwargs,
     ):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)

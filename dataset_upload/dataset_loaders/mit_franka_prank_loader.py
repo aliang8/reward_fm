@@ -20,10 +20,10 @@ def _load_video_frames(video_path: str) -> list[np.ndarray]:
     """Load frames from an MP4 video file."""
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"Video file not found: {video_path}")
-    
+
     frames = []
     cap = cv2.VideoCapture(video_path)
-    
+
     try:
         while True:
             ret, frame = cap.read()
@@ -34,7 +34,7 @@ def _load_video_frames(video_path: str) -> list[np.ndarray]:
             frames.append(frame_rgb)
     finally:
         cap.release()
-    
+
     return frames
 
 
@@ -53,7 +53,7 @@ def _build_video_paths(output_dir: str, dataset_label: str, episode_idx: int, ta
 def _process_episode(args):
     """Process a single episode."""
     episode_meta, video_dir, lang_vec, output_dir, dataset_label, max_frames, fps = args
-    
+
     # Load video frames
     video_path = os.path.join(video_dir, episode_meta["filename"])
     try:
@@ -61,10 +61,10 @@ def _process_episode(args):
     except Exception as e:
         print(f"Error loading video {video_path}: {e}")
         return None
-    
+
     if not frames:
         return None
-    
+
     # Normalize quality label
     quality_label = episode_meta["success"]
     if quality_label == "success":
@@ -72,12 +72,12 @@ def _process_episode(args):
     elif quality_label == "fail":
         quality_label = "failure"
     # "suboptimal" stays as is
-    
+
     # Build output video path
     full_path, rel_path = _build_video_paths(
         output_dir, dataset_label, episode_meta["episode_idx"], episode_meta["task_name"]
     )
-    
+
     traj_dict = {
         "id": generate_unique_id(),
         "frames": frames,
@@ -87,7 +87,7 @@ def _process_episode(args):
         "preference_group_id": None,
         "preference_rank": None,
     }
-    
+
     entry = create_hf_trajectory(
         traj_dict=traj_dict,
         video_path=full_path,
@@ -97,7 +97,7 @@ def _process_episode(args):
         use_video=True,
         fps=fps,
     )
-    
+
     if entry:
         entry["frames"] = rel_path
         return entry
@@ -114,7 +114,7 @@ def convert_mit_franka_prank_dataset_to_hf(
     num_workers: int = -1,
 ) -> Dataset:
     """Convert MIT-Franka-Prank dataset to HF format.
-    
+
     Args:
         dataset_path: Path to the dataset directory containing metadata files and videos
         dataset_name: Name for the dataset
@@ -123,88 +123,82 @@ def convert_mit_franka_prank_dataset_to_hf(
         max_frames: Maximum frames per trajectory
         fps: Frames per second for output videos
         num_workers: Number of worker processes (-1 for auto, 0 for sequential)
-    
+
     Returns:
         HuggingFace Dataset
     """
     root = Path(os.path.expanduser(dataset_path))
     if not root.exists():
         raise FileNotFoundError(f"Dataset directory not found: {dataset_path}")
-    
+
     # Find the subdirectory with videos (20251210)
     video_dir = None
     for subdir in root.iterdir():
         if subdir.is_dir() and (subdir / "foldtowel_metadata.json").exists():
             video_dir = subdir
             break
-    
+
     if video_dir is None:
         raise FileNotFoundError(f"Could not find video directory with metadata in: {dataset_path}")
-    
+
     if num_workers == -1:
         num_workers = min(cpu_count(), 8)
     elif num_workers == 0:
         num_workers = 1
-    
+
     # Load sentence transformer model
     lang_model = load_sentence_transformer_model()
     lang_cache: dict[str, Any] = {}
-    
+
     # Load all metadata files
     all_episodes = []
     metadata_files = list(video_dir.glob("*_metadata.json"))
-    
+
     for metadata_file in metadata_files:
         with open(metadata_file, "r") as f:
             episodes = json.load(f)
             all_episodes.extend(episodes)
-    
+
     print(f"Found {len(all_episodes)} episodes across {len(metadata_files)} metadata files")
-    
+
     # Limit trajectories if specified
     if max_trajectories is not None and max_trajectories > 0:
         all_episodes = all_episodes[:max_trajectories]
-    
+
     # Pre-compute language embeddings
     print("Computing language embeddings...")
     for episode in tqdm(all_episodes, desc="Computing embeddings"):
         instruction = episode["instruction"]
         if instruction not in lang_cache:
             lang_cache[instruction] = lang_model.encode(instruction)
-    
+
     # Process episodes
     entries = []
     if num_workers == 1:
         # Sequential processing
         for episode in tqdm(all_episodes, desc="Processing episodes"):
             lang_vec = lang_cache[episode["instruction"]]
-            result = _process_episode((
-                episode, str(video_dir), lang_vec, output_dir, dataset_name, max_frames, fps
-            ))
+            result = _process_episode((episode, str(video_dir), lang_vec, output_dir, dataset_name, max_frames, fps))
             if result:
                 entries.append(result)
     else:
         # Parallel processing
         from multiprocessing import Pool
-        
+
         args_list = [
             (episode, str(video_dir), lang_cache[episode["instruction"]], output_dir, dataset_name, max_frames, fps)
             for episode in all_episodes
         ]
-        
+
         with Pool(processes=num_workers) as pool:
             results = list(
-                tqdm(
-                    pool.imap_unordered(_process_episode, args_list),
-                    total=len(args_list),
-                    desc="Processing episodes"
-                )
+                tqdm(pool.imap_unordered(_process_episode, args_list), total=len(args_list), desc="Processing episodes")
             )
-        
+
         entries = [r for r in results if r is not None]
-    
+
     print(f"Successfully processed {len(entries)} episodes")
-    
+
     # Create HuggingFace dataset
     if not entries:
         return Dataset.from_dict({
@@ -218,6 +212,5 @@ def convert_mit_franka_prank_dataset_to_hf(
             "preference_group_id": [],
             "preference_rank": [],
         })
-    
-    return Dataset.from_list(entries)
 
+    return Dataset.from_list(entries)

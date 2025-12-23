@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-
+from typing import Dict, List, Tuple, Optional, Union, Any
 
 import random
 import torch
@@ -27,7 +27,7 @@ class SimSampler(RFMBaseSampler):
         **kwargs,
     ):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
-        self.similarity_strategy_ratio: list[float] = config.similarity_strategy_ratio
+        self.similarity_strategy_ratio: List[float] = config.similarity_strategy_ratio
         self._has_paired_human_robot = (
             any(
                 len(entry.get("robot", [])) > 0 and len(entry.get("human", [])) > 0
@@ -46,7 +46,7 @@ class SimSampler(RFMBaseSampler):
     def _generate_sample(self, item: dict):
         return self._create_similarity_sample(ref_traj=item)
 
-    def _create_similarity_sample(self, ref_traj: dict | None = None) -> SimilaritySample:
+    def _create_similarity_sample(self, ref_traj: Optional[Dict[str, Any]] = None) -> SimilaritySample:
         """Create a similarity scoring sample: o^1 and o^2 ranked against o^ref.
 
         Two modes:
@@ -250,7 +250,9 @@ class SimSampler(RFMBaseSampler):
 
         return None
 
-    def _get_traj_dicts_for_paired_human_robot(self, ref_traj: dict) -> tuple[dict, dict | Trajectory] | None:
+    def _get_traj_dicts_for_paired_human_robot(
+        self, ref_traj: Dict[str, Any]
+    ) -> Optional[Tuple[Dict[str, Any], Union[Dict[str, Any], Trajectory]]]:
         """Get traj_sim and traj_diff for paired human/robot strategy.
 
         Args:
@@ -282,7 +284,9 @@ class SimSampler(RFMBaseSampler):
 
         return None
 
-    def _get_traj_dicts_for_suboptimal(self, ref_traj: dict) -> tuple[dict, dict | Trajectory] | None:
+    def _get_traj_dicts_for_suboptimal(
+        self, ref_traj: Dict[str, Any]
+    ) -> Optional[Tuple[Dict[str, Any], Union[Dict[str, Any], Trajectory]]]:
         """Get traj_sim and traj_diff for suboptimal strategy.
 
         Args:

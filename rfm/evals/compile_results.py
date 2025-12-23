@@ -7,7 +7,7 @@ import argparse
 import json
 from itertools import combinations, product
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Tuple, Optional, Union
 import yaml
 from collections import defaultdict
 
@@ -18,20 +18,19 @@ import cv2
 import torch
 import torch.nn.functional as F
 from sklearn.metrics import average_precision_score
-from rfm.data.datasets.helpers import load_frames_from_npz, convert_continuous_to_discrete_bins
+from rfm.data.datasets.helpers import load_frames_from_npz
 from rfm.data.dataset_category import is_failure
 from rfm.evals.eval_metrics_utils import compute_pearson, compute_preference_accuracy, compute_spearman
 
 
 def compute_eval_metrics(
     eval_type: str,
-    results: list[dict[str, Any]],
+    results: List[Dict[str, Any]],
     progress_pred_type: str,
     is_discrete_mode: bool = False,
     num_bins: int = 10,
-    data_source: str | None = None,
+    data_source: Optional[str] = None,
 ):
-    # Route to appropriate evaluation function
     if eval_type == "quality_preference" or eval_type == "quality_preference_roboarena":
         return run_quality_preference_eval(results, progress_pred_type)
     elif eval_type == "reward_alignment":
@@ -41,12 +40,12 @@ def compute_eval_metrics(
     elif eval_type == "confusion_matrix":
         return run_confusion_matrix_eval(results, progress_pred_type, is_discrete_mode, num_bins)
     elif eval_type == "policy_ranking":
-        return run_policy_ranking_eval(results, progress_pred_type, is_discrete_mode, num_bins)
+        return run_policy_ranking_eval(results, progress_pred_type, is_discrete_mode, num_bins, data_source)
     elif eval_type == "similarity_score":
         return run_similarity_score_eval(results, progress_pred_type)
 
 
-def run_quality_preference_eval(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:
+def run_quality_preference_eval(results: List[Dict[str, Any]], progress_pred_type: str) -> Dict[str, Any]:
     """Run quality_preference evaluation analysis.
 
     Groups results by task and quality labels (or partial_success for RoboArena),
@@ -177,13 +176,15 @@ def run_quality_preference_eval(results: list[dict[str, Any]], progress_pred_typ
 
 
 def run_reward_alignment_eval_per_trajectory(
-    results: list[dict[str, Any]],
+    results: List[Dict[str, Any]],
     progress_pred_type: str,
     is_discrete_mode: bool,
     num_bins: int,
-    data_source: str | None,
+    data_source: Optional[str],
+    can_compute_policy_ranking: bool = False,
+    use_partial_success_for_ranking: bool = False,
     last_frame_only: bool = False,
-) -> tuple[dict[str, Any], list, list, list]:
+) -> Tuple[Dict[str, Any], List, List, List]:
     """Run reward_alignment evaluation analysis and create plots for each trajectory.
 
     For failure datasets, we visualize predictions but skip metric computation.
@@ -198,6 +199,17 @@ def run_reward_alignment_eval_per_trajectory(
     if data_source:
         is_failure_dataset = is_failure(data_source)
 
+    # Check if this is RoboArena (uses partial_success instead of quality_label)
+    use_partial_success = data_source and "roboarena" in str(data_source).lower()
+
+    # Determine success availability once at the beginning
+    have_success = False
+    have_success_labels = False
+    if results and len(results) > 0:
+        first_result = results[0]
+        have_success = first_result.get("success_pred", None) is not None
+        have_success_labels = first_result.get("success_labels", None) is not None
+
     unique_trajectory_ids = set()
     loss_per_trajectory = np.zeros(1)
     loss_trajectories = []
@@ -205,6 +217,10 @@ def run_reward_alignment_eval_per_trajectory(
     plots = []
     video_frames_list = []
     trajectory_progress_data = []
+
+    # Store progress predictions per trajectory for policy ranking
+    trajectory_progress_preds_for_ranking = {}  # trajectory_id -> list of progress_pred arrays
+    trajectory_metadata_for_ranking = {}  # trajectory_id -> {task, quality_label/partial_success}
 
     # Collect all success_probs and success_labels for AUPRC computation
     all_success_probs = []
@@ -235,19 +251,9 @@ def run_reward_alignment_eval_per_trajectory(
         results_for_trajectory.sort(key=lambda r: r["metadata"]["subsequence_end"])
 
         # Get task and quality label from first result
-        task = results_for_trajectory[0].get("task", "unknown")
-        quality_label = results_for_trajectory[0].get("quality_label", "unknown")
-
-        # For failure datasets, visualize all trajectories; otherwise only successful ones
-        if not is_failure_dataset and quality_label != "successful":
-            continue
-
-        # Try to get video_path from results, if not available, we'll return None for frames
-        video_path = results_for_trajectory[0].get("video_path", None)
-
-        # Determine success availability from the first result only
-        have_success = results_for_trajectory[0].get("success_pred", None) is not None
-        have_success_labels = results_for_trajectory[0].get("success_labels", None) is not None
+        task = results_for_trajectory[0]["task"]
+        quality_label = results_for_trajectory[0]["quality_label"]
+        video_path = results_for_trajectory[0]["video_path"]
 
         # First, gather all predictions and targets for this trajectory
         all_preds = []
@@ -336,6 +342,25 @@ def run_reward_alignment_eval_per_trajectory(
         last_success = np.array(all_success_preds) if all_success_preds else None
         last_success_labels = np.array(all_success_labels_list) if all_success_labels_list else None
 
+        # Store progress predictions for policy ranking (reuse what we already collected)
+        # For discrete mode, convert logits to bin indices (via argmax) before storing
+        if is_discrete_mode and all_pred_logits:
+            trajectory_progress_preds_for_ranking[trajectory_id] = [
+                int(np.argmax(np.array(logits))) for logits in all_pred_logits
+            ]
+        else:
+            trajectory_progress_preds_for_ranking[trajectory_id] = [float(p) for p in all_preds]
+
+        # Store metadata for policy ranking
+        metadata = {"task": task}
+        if use_partial_success:
+            partial_success = results_for_trajectory[0].get("partial_success")
+            if partial_success is not None:
+                metadata["partial_success"] = float(partial_success)
+        else:
+            metadata["quality_label"] = quality_label
+        trajectory_metadata_for_ranking[trajectory_id] = metadata
+
         # Load video frames if video path exists
         frames = None
         if video_path:
@@ -364,11 +389,8 @@ def run_reward_alignment_eval_per_trajectory(
             "target_progress": last_targets.tolist() if isinstance(last_targets, np.ndarray) else last_targets,
         })
 
-        # Calculate metrics for this trajectory using vectorized operations (skip for failure datasets)
-        if is_failure_dataset:
-            traj_loss = 0.0
-            traj_pearson = 0.0
-        else:
+        # Only compute metrics for successful trajectories
+        if quality_label == "successful":
             # Compute loss based on mode
             if is_discrete_mode and all_pred_logits and all_target_bins:
                 # Discrete mode: compute cross-entropy loss between logits and target bins
@@ -381,10 +403,13 @@ def run_reward_alignment_eval_per_trajectory(
                 # Continuous mode: compute MSE loss
                 traj_loss = float(np.mean((last_targets - last_preds) ** 2))
 
-            # Compute Pearson correlation (shared for both modes)
+            # Compute Pearson correlation
             traj_pearson = compute_pearson(last_targets.tolist(), last_preds.tolist())
             # Handle NaN values
             traj_pearson = float(traj_pearson) if not np.isnan(traj_pearson) else 0.0
+        else:
+            traj_loss = 0.0
+            traj_pearson = 0.0
 
         # Create a wandb plot for progress predictions and, if available, success predictions
         if have_success and last_success is not None and len(last_success) == len(last_preds):
@@ -397,7 +422,6 @@ def run_reward_alignment_eval_per_trajectory(
             fig, ax = plt.subplots(figsize=(6, 3.5))
             ax2 = None
 
-        # Setup progress plot (shared code for both cases)
         ax.plot(last_preds, linewidth=2)
         ax.set_ylabel("Progress")
         title = f"Progress - {task} - {quality_label}\nLoss: {traj_loss:.3f}, pearson: {traj_pearson:.2f}"
@@ -435,8 +459,8 @@ def run_reward_alignment_eval_per_trajectory(
 
         plots.append(fig)
 
-        # Only accumulate metrics for non-failure datasets (using already computed values)
-        if not is_failure_dataset:
+        # Accumulate metrics only for successful trajectories
+        if quality_label == "successful":
             loss_trajectories.append(traj_loss)
             if not np.isnan(traj_pearson):
                 pearson_trajectories.append(traj_pearson)
@@ -466,16 +490,345 @@ def run_reward_alignment_eval_per_trajectory(
         "pearson": pearson_per_trajectory,
     }
 
-    # Add success_auprc to metrics if computed
     if success_auprc is not None:
         metrics["success_auprc"] = success_auprc
 
     return metrics, plots, video_frames_list, trajectory_progress_data
 
 
+def _extract_trajectory_rewards(
+    progress_preds: list[np.ndarray | list],
+    progress_pred_type: str,
+    is_discrete_mode: bool,
+    aggregation: str = "last",
+) -> np.ndarray:
+    """Extract trajectory rewards using different aggregation methods.
+
+    Args:
+        progress_preds: List of progress predictions for a trajectory.
+                       For continuous: list of scalars or [seq_len] array
+                       For discrete: list of bin indices (integers)
+        progress_pred_type: "relative" or "absolute"
+        is_discrete_mode: Whether predictions are discrete bin indices
+        aggregation: "last", "sum", or "average"
+
+    Returns:
+        Array of aggregated rewards (one per trajectory)
+    """
+    all_rewards = []
+
+    for progress_pred in progress_preds:
+        # For discrete mode, progress_pred is already a list of bin indices (integers)
+        # For continuous mode, progress_pred is a list/array of scalar values
+        pred_array = np.array(progress_pred)
+
+        # Apply cumsum if relative (for both discrete and continuous modes)
+        if progress_pred_type == "relative":
+            pred_array = np.cumsum(pred_array)
+
+        # Apply aggregation (same logic for both modes)
+        if aggregation == "last":
+            reward = (
+                pred_array[-1]
+                if pred_array.ndim > 0 and len(pred_array) > 0
+                else (pred_array if pred_array.ndim == 0 else 0)
+            )
+        elif aggregation == "sum":
+            reward = np.sum(pred_array)
+        elif aggregation == "average":
+            reward = np.mean(pred_array)
+        else:
+            raise ValueError(f"Unknown aggregation method: {aggregation}")
+
+        # Convert to appropriate type: int for discrete mode, float for continuous
+        reward = int(reward) if is_discrete_mode else float(reward)
+        all_rewards.append(reward)
+
+    return np.array(all_rewards)
+
+
+def _compute_policy_ranking_metrics_roboarena(
+    all_rewards: np.ndarray,
+    all_partial_successes: np.ndarray,
+    all_tasks: List[str],
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Compute policy ranking metrics for RoboArena datasets using partial_success.
+
+    Args:
+        all_rewards: Array of aggregated rewards
+        all_partial_successes: Array of partial_success values (already converted to discrete bins if needed)
+        all_tasks: List of task names
+
+    Returns:
+        Tuple of (metrics dictionary, task_details dictionary)
+    """
+    all_partial_successes = np.array(all_partial_successes)
+
+    # Group by task
+    task_indices = defaultdict(list)
+    for i, task in enumerate(all_tasks):
+        task_indices[task].append(i)
+
+    if not task_indices:
+        return {}, {}
+
+    task_details = {}
+    all_correct_pairs = []
+    all_total_pairs = []
+    all_spearman_rewind = []
+
+    # RoboArena: compute ranking accuracy for pairs based on partial_success vs predicted rewards
+    for task, task_idx in task_indices.items():
+        if len(task_idx) < 2:
+            continue
+
+        partial_successes = all_partial_successes[task_idx]
+        predicted_rewards = all_rewards[task_idx]
+
+        n = len(partial_successes)
+        if n < 2:
+            continue
+
+        correct_pairs = 0
+        total_pairs = 0
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                if partial_successes[i] == partial_successes[j]:
+                    continue
+
+                total_pairs += 1
+                # True ranking: partial_success[i] should be ranked higher if it's greater
+                true_label = partial_successes[i] > partial_successes[j]
+                # Predicted ranking: predicted_rewards[i] should be higher if it's greater
+                pred_label = predicted_rewards[i] > predicted_rewards[j]
+
+                if true_label == pred_label:
+                    correct_pairs += 1
+
+        # Compute spearman_rewind (binning between 0 and 1)
+        bin_edges = np.linspace(0, 1, 4)  # Creates bins [0, 1/3), [1/3, 2/3), [2/3, 1]
+        bin_assignments = np.clip(np.digitize(partial_successes, bin_edges[1:], right=False), 0, 2)
+
+        avg_rewards_per_bin = {}
+        bin_ranks = []
+        avg_reward_values = []
+
+        for bin_idx in range(3):
+            mask = bin_assignments == bin_idx
+            if np.any(mask):
+                bin_rewards = predicted_rewards[mask]
+                avg_reward = float(np.mean(bin_rewards))
+                avg_rewards_per_bin[bin_idx] = avg_reward
+                bin_ranks.append(bin_idx)
+                avg_reward_values.append(avg_reward)
+
+        spearman_rewind = None
+        if len(bin_ranks) >= 2:
+            spearman_rewind = compute_spearman(bin_ranks, avg_reward_values)
+            if not np.isnan(spearman_rewind):
+                all_spearman_rewind.append(spearman_rewind)
+
+        if total_pairs > 0:
+            all_correct_pairs.append(correct_pairs)
+            all_total_pairs.append(total_pairs)
+            task_ranking_acc = correct_pairs / total_pairs
+            task_details[task] = {
+                "ranking_acc": float(task_ranking_acc),
+                "spearman_rewind": float(spearman_rewind) if spearman_rewind is not None else None,
+            }
+
+    if not all_total_pairs:
+        return {}, {}
+
+    ranking_acc = None
+    if all_total_pairs:
+        total_correct = sum(all_correct_pairs)
+        total_pairs = sum(all_total_pairs)
+        ranking_acc = total_correct / total_pairs if total_pairs > 0 else 0.0
+
+    metrics = {
+        "ranking_acc_rba": ranking_acc,
+        "spearman_rewind_rba": np.mean(all_spearman_rewind).item() if all_spearman_rewind else None,
+    }
+
+    return metrics, task_details
+
+
+def _compute_policy_ranking_metrics_quality_label(
+    all_rewards: np.ndarray,
+    all_quality_labels: list[str],
+    all_tasks: list[str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Compute policy ranking metrics for datasets using quality_label.
+
+    Args:
+        all_rewards: Array of aggregated rewards
+        all_quality_labels: List of quality labels
+        all_tasks: List of task names
+
+    Returns:
+        Tuple of (metrics dictionary, task_details dictionary)
+    """
+    # Group by task
+    task_indices = defaultdict(list)
+    for i, task in enumerate(all_tasks):
+        task_indices[task].append(i)
+
+    if not task_indices:
+        return {}, {}
+
+    task_details = {}
+    all_spearman = []
+    all_spearman_rewind = []
+    all_succ_subopt_diffs = []
+    all_subopt_fail_diffs = []
+    all_succ_fail_diffs = []
+    all_correct_pairs = []
+    all_total_pairs = []
+
+    # Non-RoboArena: Use quality_label
+    quality_order = {"failure": 1, "suboptimal": 2, "successful": 3}
+    all_labels = ["failure", "suboptimal", "successful"]
+
+    for task, task_idx in task_indices.items():
+        task_rewards = all_rewards[task_idx]
+        task_quality_labels = [all_quality_labels[i] for i in task_idx]
+
+        quality_to_rewards = {q: [] for q in all_labels}
+        for quality, reward in zip(task_quality_labels, task_rewards):
+            quality_to_rewards[quality].append(float(reward))
+
+        present_labels = [q for q in all_labels if quality_to_rewards[q]]
+
+        if len(present_labels) < 2:
+            continue
+
+        k = len(present_labels)
+        spearman = []
+
+        for labels_combo in combinations(present_labels, k):
+            gold_ranks = [quality_order[q] for q in labels_combo]
+            for rewards_tuple in product(*(quality_to_rewards[q] for q in labels_combo)):
+                spearman_corr = compute_spearman(gold_ranks, list(rewards_tuple))
+                if not np.isnan(spearman_corr):
+                    spearman.append(spearman_corr)
+
+        avg_spearman_corr = float(np.mean(spearman)) if spearman else 0.0
+
+        avg_rewards_per_quality = {}
+        quality_ranks = []
+        avg_reward_values = []
+        for q in present_labels:
+            rewards = np.array(quality_to_rewards[q])
+            if len(rewards) > 0:
+                avg_reward = float(np.mean(rewards))
+                avg_rewards_per_quality[q] = avg_reward
+                quality_ranks.append(quality_order[q])
+                avg_reward_values.append(avg_reward)
+
+        correct_pairs = 0
+        total_pairs = 0
+        for i, quality1 in enumerate(present_labels):
+            for quality2 in present_labels[i + 1 :]:
+                avg_reward1 = avg_rewards_per_quality[quality1]
+                avg_reward2 = avg_rewards_per_quality[quality2]
+                expected_order = quality_order[quality1] > quality_order[quality2]
+                actual_order = avg_reward1 > avg_reward2
+                total_pairs += 1
+                if expected_order == actual_order:
+                    correct_pairs += 1
+
+        if total_pairs > 0:
+            all_correct_pairs.append(correct_pairs)
+            all_total_pairs.append(total_pairs)
+
+        spearman_rewind = None
+        if len(quality_ranks) >= 2:
+            spearman_rewind = compute_spearman(quality_ranks, avg_reward_values)
+            if not np.isnan(spearman_rewind):
+                all_spearman_rewind.append(spearman_rewind)
+
+        succ_subopt_diff = None
+        subopt_fail_diff = None
+        succ_fail_diff = None
+
+        if "successful" in avg_rewards_per_quality and "suboptimal" in avg_rewards_per_quality:
+            succ_subopt_diff = avg_rewards_per_quality["successful"] - avg_rewards_per_quality["suboptimal"]
+            all_succ_subopt_diffs.append(succ_subopt_diff)
+
+        if "suboptimal" in avg_rewards_per_quality and "failure" in avg_rewards_per_quality:
+            subopt_fail_diff = avg_rewards_per_quality["suboptimal"] - avg_rewards_per_quality["failure"]
+            all_subopt_fail_diffs.append(subopt_fail_diff)
+
+        if "successful" in avg_rewards_per_quality and "failure" in avg_rewards_per_quality:
+            succ_fail_diff = avg_rewards_per_quality["successful"] - avg_rewards_per_quality["failure"]
+            all_succ_fail_diffs.append(succ_fail_diff)
+
+        task_details[task] = {
+            "spearman": avg_spearman_corr,
+            "spearman_rewind": spearman_rewind,
+            "succ_subopt_diff": succ_subopt_diff,
+            "subopt_fail_diff": subopt_fail_diff,
+            "succ_fail_diff": succ_fail_diff,
+        }
+        all_spearman.append(avg_spearman_corr)
+
+    if len(all_spearman) == 0:
+        return {}, {}
+
+    ranking_acc = None
+    if all_total_pairs:
+        total_correct = sum(all_correct_pairs)
+        total_pairs = sum(all_total_pairs)
+        ranking_acc = total_correct / total_pairs if total_pairs > 0 else 0.0
+
+    metrics = {
+        "spearman": np.mean(all_spearman).item(),
+        "spearman_rewind": np.mean(all_spearman_rewind).item() if all_spearman_rewind else None,
+        "avg_succ_subopt_diff": np.mean(all_succ_subopt_diffs).item() if all_succ_subopt_diffs else None,
+        "min_succ_subopt_diff": np.min(all_succ_subopt_diffs).item() if all_succ_subopt_diffs else None,
+        "max_succ_subopt_diff": np.max(all_succ_subopt_diffs).item() if all_succ_subopt_diffs else None,
+        "avg_subopt_fail_diff": np.mean(all_subopt_fail_diffs).item() if all_subopt_fail_diffs else None,
+        "min_subopt_fail_diff": np.min(all_subopt_fail_diffs).item() if all_subopt_fail_diffs else None,
+        "max_subopt_fail_diff": np.max(all_subopt_fail_diffs).item() if all_subopt_fail_diffs else None,
+        "avg_succ_fail_diff": np.mean(all_succ_fail_diffs).item() if all_succ_fail_diffs else None,
+        "min_succ_fail_diff": np.min(all_succ_fail_diffs).item() if all_succ_fail_diffs else None,
+        "max_succ_fail_diff": np.max(all_succ_fail_diffs).item() if all_succ_fail_diffs else None,
+        "ranking_acc": ranking_acc,
+    }
+
+    return metrics, task_details
+
+
+def _compute_policy_ranking_metrics_from_rewards(
+    all_rewards: np.ndarray,
+    use_partial_success: bool,
+    all_partial_successes: Optional[np.ndarray],
+    all_quality_labels: Optional[List[str]],
+    all_tasks: List[str],
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Compute policy ranking metrics from pre-computed trajectory rewards.
+
+    Args:
+        all_rewards: Array of aggregated rewards
+        use_partial_success: Whether this is RoboArena (uses partial_success)
+        all_partial_successes: Array of partial_success values (already converted to discrete bins if needed)
+        all_quality_labels: List of quality labels (if not use_partial_success)
+        all_tasks: List of task names
+
+    Returns:
+        Tuple of (metrics dictionary, task_details dictionary)
+    """
+    if use_partial_success and all_partial_successes is not None:
+        return _compute_policy_ranking_metrics_roboarena(all_rewards, all_partial_successes, all_tasks)
+    else:
+        return _compute_policy_ranking_metrics_quality_label(all_rewards, all_quality_labels, all_tasks)
+
+
 def run_confusion_matrix_eval(
-    results: list[dict[str, Any]], progress_pred_type: str, is_discrete_mode: bool, num_bins: int
-) -> dict[str, Any]:
+    results: List[Dict[str, Any]], progress_pred_type: str, is_discrete_mode: bool, num_bins: int
+) -> Dict[str, Any]:
     """Run confusion_matrix evaluation analysis."""
     # First, gather all progress predictions, lang_tasks, and video_tasks
     all_progress_preds = []
@@ -573,370 +926,236 @@ def run_confusion_matrix_eval(
 
 
 def run_policy_ranking_eval(
-    results: list[dict[str, Any]], progress_pred_type: str, is_discrete_mode: bool, num_bins: int
-) -> dict[str, Any]:
+    results: List[Dict[str, Any]],
+    progress_pred_type: str,
+    is_discrete_mode: bool,
+    num_bins: int,
+    data_source: Optional[str] = None,
+) -> Dict[str, Any]:
     """Run policy_ranking evaluation analysis.
+
+    Groups results by trajectory_id (like reward_alignment) and computes policy ranking metrics
+    using "last", "average", and "sum" aggregation methods.
 
     For non-RoboArena: Uses quality_label and quality_order for ranking.
     For RoboArena: Uses partial_success for ranking (no quality_order computation).
     """
     # Check if this is RoboArena (uses partial_success instead of quality_label)
     use_partial_success = False
-    if results and len(results) > 0:
-        first_r = results[0]
-        if first_r.get("partial_success") is not None:
-            use_partial_success = True
+    if data_source and "roboarena" in str(data_source).lower():
+        use_partial_success = True
 
-    # First, gather all progress predictions, tasks, quality_labels/partial_success
-    all_progress_preds = []
+    # Group results by trajectory_id
+    unique_trajectory_ids = set()
+    for r in results:
+        trajectory_id = r.get("id")
+        if trajectory_id:
+            unique_trajectory_ids.add(trajectory_id)
+
+    if not unique_trajectory_ids:
+        return {"error": "No valid policy ranking data found"}, {}, {}
+
+    # Collect progress predictions per trajectory
+    trajectory_progress_preds = {}  # trajectory_id -> list of progress_pred arrays
+    trajectory_metadata = {}  # trajectory_id -> {task, quality_label/partial_success, video_path}
+
+    for trajectory_id in unique_trajectory_ids:
+        results_for_trajectory = [r for r in results if r.get("id") == trajectory_id]
+
+        # Sort by subsequence_end if available (for frame_steps mode)
+        if results_for_trajectory and results_for_trajectory[0].get("metadata", {}).get("subsequence_end") is not None:
+            results_for_trajectory.sort(key=lambda r: r["metadata"].get("subsequence_end", 0))
+
+        # Collect all progress predictions for this trajectory
+        traj_progress_preds = []
+        for r in results_for_trajectory:
+            progress_pred = r.get("progress_pred")
+            if progress_pred is not None and len(progress_pred) > 0:
+                traj_progress_preds.append(progress_pred)
+
+        if traj_progress_preds:
+            trajectory_progress_preds[trajectory_id] = traj_progress_preds
+
+            # Store metadata from first result
+            first_r = results_for_trajectory[0]
+            task = first_r.get("task")
+            if task is None:
+                continue
+
+            metadata = {"task": task, "video_path": first_r.get("video_path")}
+            if use_partial_success:
+                partial_success = first_r.get("partial_success")
+                if partial_success is not None:
+                    metadata["partial_success"] = float(partial_success)
+                else:
+                    continue
+            else:
+                quality_label = first_r.get("quality_label")
+                if quality_label is not None:
+                    metadata["quality_label"] = quality_label
+                else:
+                    continue
+
+            trajectory_metadata[trajectory_id] = metadata
+
+    if not trajectory_progress_preds:
+        return {"error": "No valid policy ranking data found"}, {}, {}
+
+    # Compute rewards for each trajectory using different aggregation methods
+    all_rewards_last = []
+    all_rewards_avg = []
+    all_rewards_sum = []
     all_tasks = []
     all_quality_labels = []
     all_partial_successes = []
     all_video_paths = []
     all_ids = []
-    valid_indices = []
 
-    for idx, r in enumerate(results):
-        progress_pred = r.get("progress_pred")
-        if progress_pred is not None and len(progress_pred) > 0:
-            task = r.get("task")
-            if task is None:
-                continue
+    for trajectory_id, progress_preds_list in trajectory_progress_preds.items():
+        metadata = trajectory_metadata[trajectory_id]
 
-            if use_partial_success:
-                partial_success = r.get("partial_success")
-                if partial_success is not None:
-                    all_progress_preds.append(progress_pred)
-                    all_tasks.append(task)
-                    all_partial_successes.append(float(partial_success))
-                    all_video_paths.append(r.get("video_path"))
-                    all_ids.append(r.get("id"))
-                    valid_indices.append(idx)
+        # Process progress predictions: convert logits to bin indices if needed
+        processed_progress_preds = []
+        for progress_pred in progress_preds_list:
+            pred_array = np.array(progress_pred)
+
+            if is_discrete_mode:
+                # Discrete mode: pred_array might be logits [seq_len, num_bins] or already bin indices
+                if pred_array.ndim > 1:
+                    # It's logits, convert to bin indices using argmax
+                    bin_indices = np.argmax(pred_array, axis=-1)
+                    processed_progress_preds.append(bin_indices.tolist())
+                elif pred_array.ndim == 1:
+                    # Already bin indices
+                    processed_progress_preds.append(pred_array.tolist())
+                else:
+                    # Scalar, convert to int
+                    processed_progress_preds.append([int(pred_array)])
             else:
-                quality_label = r.get("quality_label")
-                if quality_label is not None:
-                    all_progress_preds.append(progress_pred)
-                    all_tasks.append(task)
-                    all_quality_labels.append(quality_label)
-                    all_video_paths.append(r.get("video_path"))
-                    valid_indices.append(idx)
+                # Continuous mode: pred_array is scalar values
+                if pred_array.ndim > 0:
+                    processed_progress_preds.append(pred_array.tolist())
+                else:
+                    processed_progress_preds.append([float(pred_array)])
 
-    if not all_progress_preds:
-        return {"error": "No valid policy ranking data found"}, {}, {}
+        if not processed_progress_preds:
+            continue
 
-    # Extract final rewards vectorized
-    all_final_rewards = []
-    for progress_pred in all_progress_preds:
-        pred_array = np.array(progress_pred)
+        # Flatten all progress predictions from all subsequences into a single list
+        # Then use _extract_trajectory_rewards to compute rewards with different aggregation methods
+        flattened_progress = []
+        for pred_list in processed_progress_preds:
+            flattened_progress.extend(pred_list)
 
-        if is_discrete_mode:
-            # Discrete mode: progress_pred is logits [seq_len, num_bins]
-            # Use argmax on the last frame to get predicted bin index
-            last_frame_logits = pred_array[-1] if pred_array.ndim > 1 else pred_array
-            pred_bin = np.argmax(last_frame_logits)
-            final_reward = int(pred_bin)  # Use raw bin index as reward
+        if not flattened_progress:
+            continue
+
+        # Use _extract_trajectory_rewards with the flattened list (treating it as one trajectory)
+        # We pass it as a list with one element (the flattened progress)
+        rewards_last = _extract_trajectory_rewards(
+            [flattened_progress],
+            progress_pred_type,
+            is_discrete_mode,
+            aggregation="last",
+        )
+        rewards_avg = _extract_trajectory_rewards(
+            [flattened_progress],
+            progress_pred_type,
+            is_discrete_mode,
+            aggregation="average",
+        )
+        rewards_sum = _extract_trajectory_rewards(
+            [flattened_progress],
+            progress_pred_type,
+            is_discrete_mode,
+            aggregation="sum",
+        )
+
+        # Extract the single reward value from the returned array
+        reward_last = float(rewards_last[0]) if len(rewards_last) > 0 else (0.0 if not is_discrete_mode else 0)
+        reward_avg = float(rewards_avg[0]) if len(rewards_avg) > 0 else (0.0 if not is_discrete_mode else 0)
+        reward_sum = float(rewards_sum[0]) if len(rewards_sum) > 0 else (0.0 if not is_discrete_mode else 0)
+
+        all_rewards_last.append(reward_last)
+        all_rewards_avg.append(reward_avg)
+        all_rewards_sum.append(reward_sum)
+
+        all_tasks.append(metadata["task"])
+        all_video_paths.append(metadata.get("video_path"))
+        all_ids.append(trajectory_id)
+
+        if use_partial_success:
+            all_partial_successes.append(metadata["partial_success"])
         else:
-            # Continuous mode: use last frame value
-            if progress_pred_type == "relative":
-                pred_array = np.cumsum(pred_array)
-            final_reward = float(pred_array[-1] if pred_array.ndim > 0 else pred_array)
+            all_quality_labels.append(metadata["quality_label"])
 
-        all_final_rewards.append(final_reward)
+    all_rewards_last = np.array(all_rewards_last)
+    all_rewards_avg = np.array(all_rewards_avg)
+    all_rewards_sum = np.array(all_rewards_sum)
 
-    all_final_rewards = np.array(all_final_rewards)
-    if use_partial_success:
-        all_partial_successes = np.array(all_partial_successes)
-
-        # Convert partial_success values to discrete labels if in discrete mode
-        if is_discrete_mode and num_bins is not None:
-            all_partial_successes = np.array(
-                convert_continuous_to_discrete_bins(all_partial_successes.tolist(), num_bins), dtype=int
-            )
-
-    # Group by task
+    # Group by task for building task_groups (for return value)
     task_groups = {}
     task_indices = defaultdict(list)
-    for i, (idx, task) in enumerate(zip(valid_indices, all_tasks)):
+    for i, task in enumerate(all_tasks):
         if task not in task_groups:
             task_groups[task] = []
+
+        task_entry = {
+            "final_predicted_reward_last": all_rewards_last[i],
+            "final_predicted_reward_avg": all_rewards_avg[i],
+            "final_predicted_reward_sum": all_rewards_sum[i],
+            "video_path": all_video_paths[i],
+        }
+
+        # Add id if available
+        if all_ids:
+            task_entry["id"] = all_ids[i]
+
+        # Add specific key based on dataset type
         if use_partial_success:
-            task_groups[task].append({
-                "partial_success": all_partial_successes[i],
-                "final_predicted_reward": all_final_rewards[i],
-                "video_path": all_video_paths[i],
-                "id": all_ids[i],
-            })
+            task_entry["partial_success"] = all_partial_successes[i]
         else:
-            task_groups[task].append({
-                "quality_label": all_quality_labels[i],
-                "final_reward": all_final_rewards[i],
-                "video_path": all_video_paths[i],
-            })
+            task_entry["quality_label"] = all_quality_labels[i]
+
+        task_groups[task].append(task_entry)
         task_indices[task].append(i)
 
     if not task_groups:
         return {"error": "No valid policy ranking data found"}, {}, {}
 
-    task_details = {}
-    all_spearman = []
-    all_spearman_rewind = []
-    all_succ_subopt_diffs = []
-    all_subopt_fail_diffs = []
-    all_succ_fail_diffs = []
+    # Compute policy ranking metrics for each aggregation method
+    all_metrics = {}
+    all_task_details = {}
 
-    # Track ranking accuracy: count of correct pairs and total pairs
-    all_correct_pairs = []
-    all_total_pairs = []
+    for agg_method, rewards in [("last", all_rewards_last), ("avg", all_rewards_avg), ("sum", all_rewards_sum)]:
+        metrics, task_details = _compute_policy_ranking_metrics_from_rewards(
+            rewards,
+            use_partial_success,
+            np.array(all_partial_successes) if use_partial_success and all_partial_successes else None,
+            all_quality_labels if not use_partial_success else None,
+            all_tasks,
+        )
 
-    if use_partial_success:
-        # RoboArena: Sample pairs of trajectories, rank based on partial_success vs predicted rewards
-        for task, trajectories in task_groups.items():
-            if len(trajectories) < 2:
-                continue
+        if metrics:
+            # Prefix metrics with aggregation method
+            prefixed_metrics = {f"{k}_{agg_method}" if k != "error" else k: v for k, v in metrics.items()}
+            all_metrics.update(prefixed_metrics)
 
-            # Extract ground truth and predicted rewards using vectorized operations
-            task_idx = task_indices[task]
-            partial_successes = all_partial_successes[task_idx]
-            predicted_rewards = all_final_rewards[task_idx]
-
-            # Generate all pairs of trajectories
-            n = len(partial_successes)
-            if n < 2:
-                continue
-
-            # Create pairs: for each pair (i, j) where i < j
-            gold_ranks = []
-            pred_ranks = []
-            correct_pairs = 0
-            total_pairs = 0
-
-            for i in range(n):
-                for j in range(i + 1, n):
-                    # Skip if partial_success values are the same
-                    if partial_successes[i] == partial_successes[j]:
-                        continue
-
-                    total_pairs += 1
-
-                    # Gold rank: 1 if i has higher partial_success, 0 otherwise
-                    gold_rank = 1.0 if partial_successes[i] > partial_successes[j] else 0.0
-                    gold_ranks.append(gold_rank)
-
-                    # Predicted rank: 1 if i has higher predicted reward, 0 otherwise
-                    if predicted_rewards[i] > predicted_rewards[j]:
-                        pred_rank = 1.0
-                    elif predicted_rewards[i] < predicted_rewards[j]:
-                        pred_rank = 0.0
-                    else:
-                        # For ties, use 0.5 (middle ground) - count as incorrect
-                        pred_rank = 0.5
-                    pred_ranks.append(pred_rank)
-
-                    # Check if ranking is correct (gold_rank matches pred_rank)
-                    if gold_rank == pred_rank:
-                        correct_pairs += 1
-
-            if len(gold_ranks) == 0:
-                continue
-
-            # Store ranking accuracy for this task
-            if total_pairs > 0:
-                task_ranking_acc = correct_pairs / total_pairs
-                all_correct_pairs.append(correct_pairs)
-                all_total_pairs.append(total_pairs)
-
-            # Compute Spearman correlation between gold and predicted rankings
-            spearman_corr = compute_spearman(gold_ranks, pred_ranks)
-
-            # Compute old metric: bin partial_success into 3 bins, then average predicted rewards per bin
-            # Create 3 bins based on partial_success values
-            min_ps = float(np.min(partial_successes))
-            max_ps = float(np.max(partial_successes))
-
-            # Create 3 equal-width bins
-            if min_ps == max_ps:
-                # All values are the same, put everything in bin 0
-                bin_assignments = np.zeros(len(partial_successes), dtype=int)
+            # Merge task details (keep first one, or combine if needed)
+            if not all_task_details:
+                all_task_details = task_details
             else:
-                bin_edges = np.linspace(min_ps, max_ps, 4)  # 4 edges = 3 bins
-                # Use np.digitize: returns 0 for values < edges[0], 1 for values in [edges[0], edges[1]), etc.
-                # We want: bin 0 for [min, bin_edges[1]), bin 1 for [bin_edges[1], bin_edges[2]), bin 2 for [bin_edges[2], max]
-                bin_assignments = np.digitize(partial_successes, bin_edges[1:], right=False)
-                # But digitize returns 0 for values < first edge, so we need to adjust
-                # Actually, digitize with right=False:
-                # - values < edges[0] -> 0
-                # - edges[0] <= values < edges[1] -> 1
-                # - edges[1] <= values < edges[2] -> 2
-                # - values >= edges[2] -> 3
-                # But we only pass edges[1:] so:
-                # - values < edges[1] -> 0
-                # - edges[1] <= values < edges[2] -> 1
-                # - values >= edges[2] -> 2
-                # This gives us bins 0, 1, 2, but we need to handle edge case where value equals max
-                bin_assignments = np.clip(bin_assignments, 0, 2)
+                # Merge task details by adding aggregation suffix to keys
+                for task, details in task_details.items():
+                    if task not in all_task_details:
+                        all_task_details[task] = {}
+                    for k, v in details.items():
+                        all_task_details[task][f"{k}_{agg_method}"] = v
 
-            avg_rewards_per_bin = {}
-            bin_ranks = []
-            avg_reward_values = []
-
-            for bin_idx in range(3):
-                mask = bin_assignments == bin_idx
-                if np.any(mask):
-                    bin_rewards = predicted_rewards[mask]
-                    avg_reward = float(np.mean(bin_rewards))
-                    avg_rewards_per_bin[bin_idx] = avg_reward
-                    bin_ranks.append(bin_idx)
-                    avg_reward_values.append(avg_reward)
-
-            spearman_rewind = None
-            if len(bin_ranks) >= 2:
-                spearman_rewind = compute_spearman(bin_ranks, avg_reward_values)
-                if not np.isnan(spearman_rewind):
-                    all_spearman_rewind.append(spearman_rewind)
-                else:
-                    spearman_rewind = None
-
-            if not np.isnan(spearman_corr):
-                all_spearman.append(spearman_corr)
-                task_details[task] = {
-                    "spearman": float(spearman_corr),
-                    "spearman_rewind": float(spearman_rewind) if spearman_rewind is not None else None,
-                }
-    else:
-        # Non-RoboArena: Use quality_label and quality_order for ranking
-        quality_order = {"failure": 1, "suboptimal": 2, "successful": 3}
-        all_labels = ["failure", "suboptimal", "successful"]
-
-        for task, trajectories in task_groups.items():
-            # Collect rewards per quality using vectorized operations
-            task_idx = task_indices[task]
-            task_rewards = all_final_rewards[task_idx]
-            task_quality_labels = [all_quality_labels[i] for i in task_idx]
-
-            quality_to_rewards = {q: [] for q in all_labels}
-            for quality, reward in zip(task_quality_labels, task_rewards):
-                quality_to_rewards[quality].append(float(reward))
-
-            present_labels = [q for q in all_labels if quality_to_rewards[q]]
-
-            if len(present_labels) < 2:
-                continue
-
-            # Use triplets if all three present, else pairs
-            k = len(present_labels)
-
-            spearman = []
-
-            for labels_combo in combinations(present_labels, k):
-                gold_ranks = [quality_order[q] for q in labels_combo]
-
-                # All ways to pick one reward per selected quality
-                for rewards_tuple in product(*(quality_to_rewards[q] for q in labels_combo)):
-                    spearman_corr = compute_spearman(gold_ranks, list(rewards_tuple))
-                    if not np.isnan(spearman_corr):
-                        spearman.append(spearman_corr)
-
-            avg_spearman_corr = float(np.mean(spearman)) if spearman else 0.0
-
-            # Compute old metric: average rewards per quality group using vectorized operations
-            avg_rewards_per_quality = {}
-            quality_ranks = []
-            avg_reward_values = []
-            for q in present_labels:
-                rewards = np.array(quality_to_rewards[q])
-                if len(rewards) > 0:
-                    avg_reward = float(np.mean(rewards))
-                    avg_rewards_per_quality[q] = avg_reward
-                    quality_ranks.append(quality_order[q])
-                    avg_reward_values.append(avg_reward)
-
-            # Compute ranking accuracy: check pairs where quality ordering matches predicted reward ordering
-            correct_pairs = 0
-            total_pairs = 0
-
-            # Check all pairs of quality labels
-            for i, quality1 in enumerate(present_labels):
-                for quality2 in present_labels[i + 1 :]:
-                    # Get average rewards for each quality
-                    avg_reward1 = avg_rewards_per_quality[quality1]
-                    avg_reward2 = avg_rewards_per_quality[quality2]
-
-                    # Expected ordering: higher quality should have higher reward
-                    expected_order = quality_order[quality1] > quality_order[quality2]
-                    actual_order = avg_reward1 > avg_reward2
-
-                    total_pairs += 1
-                    if expected_order == actual_order:
-                        correct_pairs += 1
-
-            # Store ranking accuracy for this task
-            if total_pairs > 0:
-                task_ranking_acc = correct_pairs / total_pairs
-                all_correct_pairs.append(correct_pairs)
-                all_total_pairs.append(total_pairs)
-
-            spearman_rewind = None
-            if len(quality_ranks) >= 2:
-                spearman_rewind = compute_spearman(quality_ranks, avg_reward_values)
-                if not np.isnan(spearman_rewind):
-                    all_spearman_rewind.append(spearman_rewind)
-                else:
-                    spearman_rewind = None
-
-            # Compute average differences between quality labels
-            succ_subopt_diff = None
-            subopt_fail_diff = None
-            succ_fail_diff = None
-
-            if "successful" in avg_rewards_per_quality and "suboptimal" in avg_rewards_per_quality:
-                succ_subopt_diff = avg_rewards_per_quality["successful"] - avg_rewards_per_quality["suboptimal"]
-                all_succ_subopt_diffs.append(succ_subopt_diff)
-
-            if "suboptimal" in avg_rewards_per_quality and "failure" in avg_rewards_per_quality:
-                subopt_fail_diff = avg_rewards_per_quality["suboptimal"] - avg_rewards_per_quality["failure"]
-                all_subopt_fail_diffs.append(subopt_fail_diff)
-
-            if "successful" in avg_rewards_per_quality and "failure" in avg_rewards_per_quality:
-                succ_fail_diff = avg_rewards_per_quality["successful"] - avg_rewards_per_quality["failure"]
-                all_succ_fail_diffs.append(succ_fail_diff)
-
-            task_details[task] = {
-                "spearman": avg_spearman_corr,
-                "spearman_rewind": spearman_rewind,
-                "succ_subopt_diff": succ_subopt_diff,
-                "subopt_fail_diff": subopt_fail_diff,
-                "succ_fail_diff": succ_fail_diff,
-            }
-            all_spearman.append(avg_spearman_corr)
-
-    if len(all_spearman) == 0:
+    if not all_metrics:
         return {"error": "No valid correlations computed"}, {}, {}
 
-    # Compute overall ranking accuracy
-    ranking_acc = None
-    total_pairs = 0
-    if all_total_pairs:
-        total_correct = sum(all_correct_pairs)
-        total_pairs = sum(all_total_pairs)
-        ranking_acc = total_correct / total_pairs if total_pairs > 0 else 0.0
-
-    # Average metrics across all tasks
-    policy_ranking_metrics = {
-        "spearman": np.mean(all_spearman).item(),
-        "spearman_rewind": np.mean(all_spearman_rewind).item() if all_spearman_rewind else None,
-        "avg_succ_subopt_diff": np.mean(all_succ_subopt_diffs).item() if all_succ_subopt_diffs else None,
-        "min_succ_subopt_diff": np.min(all_succ_subopt_diffs).item() if all_succ_subopt_diffs else None,
-        "max_succ_subopt_diff": np.max(all_succ_subopt_diffs).item() if all_succ_subopt_diffs else None,
-        "avg_subopt_fail_diff": np.mean(all_subopt_fail_diffs).item() if all_subopt_fail_diffs else None,
-        "min_subopt_fail_diff": np.min(all_subopt_fail_diffs).item() if all_subopt_fail_diffs else None,
-        "max_subopt_fail_diff": np.max(all_subopt_fail_diffs).item() if all_subopt_fail_diffs else None,
-        "avg_succ_fail_diff": np.mean(all_succ_fail_diffs).item() if all_succ_fail_diffs else None,
-        "min_succ_fail_diff": np.min(all_succ_fail_diffs).item() if all_succ_fail_diffs else None,
-        "max_succ_fail_diff": np.max(all_succ_fail_diffs).item() if all_succ_fail_diffs else None,
-        "ranking_acc": ranking_acc,
-    }
-
-    return policy_ranking_metrics, task_groups, task_details
+    return all_metrics, task_groups, all_task_details
 
 
 def run_similarity_score_eval(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:
@@ -1075,3 +1294,4 @@ def run_similarity_score_eval(results: list[dict[str, Any]], progress_pred_type:
     }
 
     return metrics, task_groups, task_details
+ls

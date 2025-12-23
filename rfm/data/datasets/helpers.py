@@ -1,18 +1,14 @@
 from math import e
+from typing import List, Dict, Tuple, Optional, Union, Any
 import os
 import random
 from enum import Enum
 
 import numpy as np
 import json
-
+import torch
 from rfm.utils.distributed import rank_0_print
 from rfm.data.dataset_types import Trajectory
-
-try:
-    import torch
-except ImportError:
-    torch = None
 
 
 class DataGenStrat(Enum):
@@ -45,7 +41,20 @@ def load_dataset_success_percent(cutoff_file_path):
     return success_percent_dict
 
 
-def convert_continuous_to_discrete_bins(progress_values: list[float] | np.ndarray, num_bins: int) -> list[int]:
+def convert_continuous_to_discrete_bin(value: float, num_bins: int) -> int:
+    """Convert a single continuous progress value in [0, 1] to a discrete bin [0, num_bins-1].
+
+    Args:
+        value: Single continuous progress value in [0, 1]
+        num_bins: Number of discrete bins to use
+
+    Returns:
+        Discrete bin index in [0, num_bins-1]
+    """
+    return int(min(max(value, 0.0), 1.0) * (num_bins - 1))
+
+
+def convert_continuous_to_discrete_bins(progress_values: Union[List[float], np.ndarray], num_bins: int) -> List[int]:
     """Convert continuous progress values in [0, 1] to discrete bins [0, num_bins-1].
 
     Args:
@@ -57,15 +66,15 @@ def convert_continuous_to_discrete_bins(progress_values: list[float] | np.ndarra
     """
     if isinstance(progress_values, np.ndarray):
         progress_values = progress_values.tolist()
-    return [int(min(max(p, 0.0), 1.0) * (num_bins - 1)) for p in progress_values]
+    return [convert_continuous_to_discrete_bin(p, num_bins) for p in progress_values]
 
 
 def compute_success_labels(
-    target_progress: list[float],
-    data_source: str | None,
-    dataset_success_percent: dict[str, float] | None = None,
+    target_progress: List[float],
+    data_source: Optional[str],
+    dataset_success_percent: Optional[Dict[str, float]] = None,
     max_success: float = 1.0,
-) -> list[float]:
+) -> List[float]:
     """
     Compute success labels from target_progress.
 
@@ -157,8 +166,8 @@ def load_embeddings_from_path(embeddings_path: str) -> torch.Tensor:
 
 
 def pad_trajectory_to_max_frames_np(
-    frames: np.ndarray, progress: list[float], max_frames: int, pad_from: str = "right"
-) -> tuple[np.ndarray, list[float]]:
+    frames: np.ndarray, progress: List[float], max_frames: int, pad_from: str = "right"
+) -> Tuple[np.ndarray, List[float]]:
     """Pad trajectory frames and progress to max_frames by repeating the first frame/progress if needed.
 
     Args:
@@ -197,8 +206,8 @@ def pad_trajectory_to_max_frames_np(
 
 
 def pad_trajectory_to_max_frames_torch(
-    frames, progress: list[float], max_frames: int, pad_from: str = "right"
-) -> tuple:
+    frames, progress: List[float], max_frames: int, pad_from: str = "right"
+) -> Tuple[torch.Tensor, List[float]]:
     """Pad trajectory frames and progress to max_frames by repeating the first frame/progress if needed.
 
     Args:
@@ -240,8 +249,8 @@ def pad_trajectory_to_max_frames_torch(
 
 
 def linspace_subsample_frames(
-    frames: np.ndarray, num_frames: int = 8, end_idx: int | None = None
-) -> tuple[np.ndarray, list[int]]:
+    frames: np.ndarray, num_frames: int = 8, end_idx: Optional[int] = None
+) -> Tuple[np.ndarray, List[int]]:
     """Uniformly subsample frames from a trajectory and return the indices.
 
     This method takes the full trajectory (e.g., 64 frames) and uniformly subsamples
@@ -305,8 +314,8 @@ def linspace_subsample_frames(
 
 
 def randomly_subsample_frames(
-    frames: np.ndarray, num_frames: int = 8, seed: int | None = None
-) -> tuple[np.ndarray, list[int]]:
+    frames: np.ndarray, num_frames: int = 8, seed: Optional[int] = None
+) -> Tuple[np.ndarray, List[int]]:
     """Randomly subsample frames from a trajectory and return the indices.
 
     This method takes the full trajectory and randomly selects num_frames from it.
@@ -417,7 +426,7 @@ def subsample_segment_frames(
     return subsampled_frames, start_idx, end_idx, indices
 
 
-def convert_absolute_to_relative_progress(absolute_progress: list[float]) -> list[float]:
+def convert_absolute_to_relative_progress(absolute_progress: List[float]) -> List[float]:
     """Convert absolute progress values to relative deltas.
 
     Args:
@@ -441,10 +450,10 @@ def compute_progress_from_segment(
     num_frames_total: int,
     start_idx: int,
     end_idx: int,
-    frame_indices: list[int],
+    frame_indices: List[int],
     progress_pred_type: str = "absolute_first_frame",
-    success_cutoff: float | None = None,
-) -> list[float]:
+    success_cutoff: Optional[float] = None,
+) -> List[float]:
     """Compute progress values given total frames, segment, and subsampled indices.
 
     Args:
@@ -587,13 +596,13 @@ def subsample_pairs_and_progress(frames, max_frames: int, progress_pred_type: st
 
 
 def create_rewind_trajectory(
-    original_traj: dict,
-    rewind_length: int | None = None,
+    original_traj: Dict[str, Any],
+    rewind_length: Optional[int] = None,
     max_frames: int = 8,
     use_embeddings: bool = False,
     progress_pred_type: str = "absolute_first_frame",
-    success_cutoff: float | None = None,
-    dataset_success_percent: dict[str, float] | None = None,
+    success_cutoff: Optional[float] = None,
+    dataset_success_percent: Optional[Dict[str, float]] = None,
     max_success: float = 0.95,
 ) -> Trajectory:
     """Create a suboptimal trajectory by rewinding the original trajectory.
@@ -792,21 +801,48 @@ def create_rewind_trajectory(
         max_success=max_success,
     )
 
-    return Trajectory(
-        frames=subsampled_frames if not use_embeddings else None,
-        frames_shape=subsampled_frames_shape,
-        video_embeddings=subsampled_frames if use_embeddings else None,
-        text_embedding=text_embedding,
-        task=original_traj["task"],
-        lang_vector=original_traj["lang_vector"],
-        data_source=original_traj["data_source"],
-        quality_label="rewound",
-        is_robot=original_traj["is_robot"],
-        target_progress=subsampled_progress,
-        partial_success=original_traj.get("partial_success"),
-        success_label=success_label,
-        metadata=metadata,
+    return create_trajectory_from_dict(
+        original_traj,
+        overrides={
+            "frames": subsampled_frames if not use_embeddings else None,
+            "frames_shape": subsampled_frames_shape,
+            "video_embeddings": subsampled_frames if use_embeddings else None,
+            "text_embedding": text_embedding,
+            "quality_label": "rewound",
+            "target_progress": subsampled_progress,
+            "success_label": success_label,
+            "metadata": metadata,
+        },
     )
+
+
+def create_trajectory_from_dict(traj_dict: Dict[str, Any], overrides: Optional[Dict[str, Any]] = None) -> Trajectory:
+    """Create a Trajectory from a dictionary with optional field overrides.
+
+    This helper function simplifies Trajectory creation by extracting common fields
+    from a trajectory dictionary and allowing specific fields to be overridden.
+
+    Args:
+        traj_dict: Dictionary containing trajectory data (e.g., from dataset)
+        overrides: Dictionary of field values to override (e.g., frames, target_progress)
+
+    Returns:
+        A new Trajectory instance
+    """
+    traj_data = {
+        "id": traj_dict.get("id"),
+        "task": traj_dict.get("task"),
+        "lang_vector": traj_dict.get("lang_vector"),
+        "data_source": traj_dict.get("data_source"),
+        "quality_label": traj_dict.get("quality_label"),
+        "is_robot": traj_dict.get("is_robot"),
+        "partial_success": traj_dict.get("partial_success"),
+    }
+
+    if overrides:
+        traj_data.update(overrides)
+
+    return Trajectory.model_validate(traj_data)
 
 
 def show_available_datasets():

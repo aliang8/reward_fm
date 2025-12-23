@@ -3,12 +3,20 @@ import torch
 
 from rfm.data.datasets.base import BaseDataset
 from rfm.data.samplers import *
+from rfm.configs.experiment_configs import DataConfig
 
 
 class CustomEvalDataset(BaseDataset):
     """Dataset that wraps a sampler for custom evaluation purposes."""
 
-    def __init__(self, sampler_type, config, is_evaluation=False, verbose=True, **kwargs):
+    def __init__(
+        self,
+        sampler_type: str,
+        config: DataConfig,
+        is_evaluation: bool = False,
+        verbose: bool = True,
+        sampler_kwargs: dict = None,
+    ):
         """Initialize custom eval dataset with a sampler type.
 
         Args:
@@ -16,9 +24,9 @@ class CustomEvalDataset(BaseDataset):
             config: Configuration object
             is_evaluation: Whether this is for evaluation
             verbose: Verbose flag
-            **kwargs: Additional keyword arguments for the sampler
+            sampler_kwargs: Additional keyword arguments for the sampler
         """
-        super().__init__(config, is_evaluation, **kwargs)
+        super().__init__(config=config, is_evaluation=is_evaluation)
 
         sampler_cls = {
             "confusion_matrix": ConfusionMatrixSampler,
@@ -35,13 +43,12 @@ class CustomEvalDataset(BaseDataset):
             raise ValueError(f"Unknown sampler type: {sampler_type}. Available: {list(sampler_cls.keys())}")
 
         self.sampler = sampler_cls[sampler_type](
-            config,
-            self.dataset,
-            self._combined_indices,
-            self.dataset_success_cutoff_map,
-            is_evaluation=is_evaluation,
+            config=config,
+            dataset=self.dataset,
+            combined_indices=self._combined_indices,
+            dataset_success_cutoff_map=self.dataset_success_cutoff_map,
             verbose=verbose,
-            **kwargs,
+            **sampler_kwargs,
         )
 
     def __len__(self):

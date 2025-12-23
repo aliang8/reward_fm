@@ -1,15 +1,15 @@
+from typing import Dict, Any
+
 import numpy as np
 
 from rfm.data.dataset_types import PreferenceSample, Trajectory
 from rfm.data.samplers.base import RFMBaseSampler
 from rfm.data.datasets.helpers import (
     linspace_subsample_frames,
-    pad_trajectory_to_max_frames_np,
-    pad_trajectory_to_max_frames_torch,
     load_frames_from_npz,
     load_embeddings_from_path,
     convert_absolute_to_relative_progress,
-    compute_success_labels,
+    create_trajectory_from_dict,
 )
 
 
@@ -21,7 +21,7 @@ class BaseQualityPreferenceSampler(RFMBaseSampler):
     method that loads and processes the trajectories.
     """
 
-    def _generate_sample_from_indices(self, sample_idx_info: dict) -> PreferenceSample:
+    def _generate_sample_from_indices(self, sample_idx_info: Dict[str, Any]) -> PreferenceSample:
         """Generate a single sample from stored indices."""
         chosen_idx = sample_idx_info["chosen_traj_idx"]
         rejected_idx = sample_idx_info["rejected_traj_idx"]
@@ -71,11 +71,6 @@ class BaseQualityPreferenceSampler(RFMBaseSampler):
             # For relative, we still compute absolute first, then convert
             progress_abs = [idx / (total_frames - 1) for idx in frame_indices]
 
-        if use_embeddings:
-            chosen_video_embeddings, progress_abs = pad_trajectory_to_max_frames_torch(data, progress_abs, max_frames)
-        else:
-            chosen_frames, progress_abs = pad_trajectory_to_max_frames_np(data, progress_abs, max_frames)
-
         if self.config.progress_pred_type == "relative_first_frame":
             chosen_progress = convert_absolute_to_relative_progress(progress_abs)
         else:
@@ -91,6 +86,20 @@ class BaseQualityPreferenceSampler(RFMBaseSampler):
         # Add partial_success if available
         if chosen_traj.get("partial_success") is not None:
             chosen_metadata["partial_success"] = chosen_traj.get("partial_success")
+
+        chosen_trajectory = create_trajectory_from_dict(
+            chosen_traj,
+            overrides={
+                "frames": data if not use_embeddings else None,
+                "frames_shape": chosen_frames_shape_orig,
+                "video_embeddings": data if use_embeddings else None,
+                "text_embedding": chosen_text_embedding,
+                "lang_vector": np.array(chosen_traj["lang_vector"]),
+                "target_progress": chosen_progress,
+                "metadata": chosen_metadata,
+            },
+        )
+        chosen_trajectory = self._post_process_trajectory(chosen_trajectory)
 
         # Load and process rejected trajectory
         if self.config.load_embeddings and rejected_traj.get("embeddings_path"):
@@ -123,11 +132,6 @@ class BaseQualityPreferenceSampler(RFMBaseSampler):
             # For relative, we still compute absolute first, then convert
             progress_abs = [idx / (total_frames - 1) for idx in frame_indices]
 
-        if use_embeddings:
-            rejected_video_embeddings, progress_abs = pad_trajectory_to_max_frames_torch(data, progress_abs, max_frames)
-        else:
-            rejected_frames, progress_abs = pad_trajectory_to_max_frames_np(data, progress_abs, max_frames)
-
         if self.config.progress_pred_type == "relative_first_frame":
             rejected_progress = convert_absolute_to_relative_progress(progress_abs)
         else:
@@ -144,56 +148,20 @@ class BaseQualityPreferenceSampler(RFMBaseSampler):
         if rejected_traj.get("partial_success") is not None:
             rejected_metadata["partial_success"] = rejected_traj.get("partial_success")
 
-        # Compute success labels
-        chosen_success_label = compute_success_labels(
-            target_progress=chosen_progress,
-            data_source=chosen_traj["data_source"],
-            dataset_success_percent=self.dataset_success_cutoff_map,
-            max_success=self.config.max_success,
+        rejected_trajectory = create_trajectory_from_dict(
+            rejected_traj,
+            overrides={
+                "frames": data if not use_embeddings else None,
+                "frames_shape": rejected_frames_shape_orig,
+                "video_embeddings": data if use_embeddings else None,
+                "text_embedding": rejected_text_embedding,
+                "lang_vector": np.array(rejected_traj["lang_vector"]),
+                "target_progress": rejected_progress,
+                "metadata": rejected_metadata,
+            },
         )
-        rejected_success_label = compute_success_labels(
-            target_progress=rejected_progress,
-            data_source=rejected_traj["data_source"],
-            dataset_success_percent=self.dataset_success_cutoff_map,
-            max_success=self.config.max_success,
-        )
+        rejected_trajectory = self._post_process_trajectory(rejected_trajectory)
 
-        # Create trajectory objects
-        chosen_trajectory = Trajectory(
-            frames=chosen_frames,
-            frames_shape=chosen_frames_shape_orig,
-            video_embeddings=chosen_video_embeddings,
-            text_embedding=chosen_text_embedding,
-            id=chosen_traj["id"],
-            task=chosen_traj["task"],
-            lang_vector=np.array(chosen_traj["lang_vector"]),
-            data_source=chosen_traj["data_source"],
-            quality_label=chosen_traj["quality_label"],
-            is_robot=chosen_traj["is_robot"],
-            target_progress=chosen_progress,
-            partial_success=chosen_traj.get("partial_success"),
-            success_label=chosen_success_label,
-            metadata=chosen_metadata,
-        )
-
-        rejected_trajectory = Trajectory(
-            frames=rejected_frames,
-            frames_shape=rejected_frames_shape_orig,
-            video_embeddings=rejected_video_embeddings,
-            text_embedding=rejected_text_embedding,
-            id=rejected_traj["id"],
-            task=rejected_traj["task"],
-            lang_vector=np.array(rejected_traj["lang_vector"]),
-            data_source=rejected_traj["data_source"],
-            quality_label=rejected_traj["quality_label"],
-            is_robot=rejected_traj["is_robot"],
-            target_progress=rejected_progress,
-            partial_success=rejected_traj.get("partial_success"),
-            success_label=rejected_success_label,
-            metadata=rejected_metadata,
-        )
-
-        # Get data_gen_strategy from subclass or use default
         data_gen_strategy = getattr(self, "data_gen_strategy", "quality_preference")
 
         # Create preference sample

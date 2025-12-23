@@ -77,11 +77,11 @@ DATASET_MAP = {
         "train": [
             "jesbu1_molmoact_rfm_molmoact_dataset_household",
             "jesbu1_molmoact_rfm_molmoact_dataset_tabletop",
-            # "jesbu1_egodex_rfm_egodex_part1",
-            # "jesbu1_egodex_rfm_egodex_part2",
-            # "jesbu1_egodex_rfm_egodex_part3",
-            # "jesbu1_egodex_rfm_egodex_part4",
-            # "jesbu1_egodex_rfm_egodex_part5",
+             "jesbu1_egodex_rfm_egodex_part1",
+             "jesbu1_egodex_rfm_egodex_part2",
+             "jesbu1_egodex_rfm_egodex_part3",
+             "jesbu1_egodex_rfm_egodex_part4",
+             "jesbu1_egodex_rfm_egodex_part5",
             "abraranwar_agibotworld_alpha_rfm_agibotworld",
         ],
         "eval": [
@@ -157,9 +157,9 @@ DATASET_MAP = {
             "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
             "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
             "jesbu1_soar_rfm_soar_rfm",
-            "jesbu1_utd_so101_clean_policy_ranking_top",
-            "jesbu1_utd_so101_clean_policy_ranking_wrist",
-            "jesbu1_mit_franka_p-rank_rfm",
+            "jesbu1_mit_franka_p-rank_rfm_mit_franka_p-rank_rfm",
+            "jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top",
+            "jesbu1_utd_so101_clean_policy_ranking_wrist_utd_so101_clean_policy_ranking_wrist",
         ]
     },
     "paired": {
@@ -200,6 +200,8 @@ DATASET_MAP = {
                 "aliangdw_utd_so101_human_utd_so101_human",
                 "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
             ],
+            ["jesbu1_hand_paired_rfm_hand_paired_robot", 
+            "jesbu1_hand_paired_rfm_hand_paired_human"],
         ]
     },
 }

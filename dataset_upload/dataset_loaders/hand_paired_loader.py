@@ -89,7 +89,7 @@ def _make_traj(image_paths: list[str], task_text: str, is_robot: bool) -> dict[s
     return traj
 
 
-def load_hand_paired_dataset(dataset_path: str) -> dict[str, list[dict]]:
+def load_hand_paired_dataset(dataset_path: str, dataset_name: str) -> dict[str, list[dict]]:
     """Load HAND_paired_data dataset from local folders.
 
     Args:
@@ -129,6 +129,12 @@ def load_hand_paired_dataset(dataset_path: str) -> dict[str, list[dict]]:
         print(f"Processing task: {task_dir.name}")
         task_name = _parse_task_name(task_dir.name)
         is_robot = not _is_human_task(task_dir.name)
+        if dataset_name == "robot":
+            if not is_robot:
+                continue
+        elif dataset_name == "human":
+            if is_robot:
+                continue
 
         # Get all trajectory directories (traj0, traj1, traj2, etc.)
         traj_dirs = [p for p in task_dir.iterdir() if p.is_dir() and p.name.startswith("traj")]
@@ -151,7 +157,7 @@ def load_hand_paired_dataset(dataset_path: str) -> dict[str, list[dict]]:
                 traj = _make_traj(image_paths, task_name, is_robot)
                 task_data.setdefault(task_name, []).append(traj)
 
-    print(f"Loaded {len(task_data)} unique tasks from HAND_paired dataset")
+    print(f"Loaded {len(task_data)} unique tasks from HAND paired {dataset_name} dataset")
     for task, trajs in task_data.items():
         robot_count = sum(1 for t in trajs if t["is_robot"])
         human_count = sum(1 for t in trajs if not t["is_robot"])

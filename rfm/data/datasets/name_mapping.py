@@ -75,6 +75,9 @@ DS_SHORT_NAME_MAPPING = {
     # Policy Ranking
     "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking": "usc_xarm",
     "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking": "usc_franka",
+    "jesbu1_mit_franka_p-rank_rfm_mit_franka_p-rank_rfm": "mit_franka",
+    "jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top": "utd_so101_clean_top",
+    "jesbu1_utd_so101_clean_policy_ranking_wrist_utd_so101_clean_policy_ranking_wrist": "utd_so101_clean_wrist",
     # Reward Alignment
     "abraranwar_usc_koch_rewind_rfm_usc_koch_rewind": "usc_koch_rewind",
 }

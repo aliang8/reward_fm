@@ -157,6 +157,9 @@ DATASET_MAP = {
             "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
             "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
             "jesbu1_soar_rfm_soar_rfm",
+            "jesbu1_utd_so101_clean_policy_ranking_top",
+            "jesbu1_utd_so101_clean_policy_ranking_wrist",
+            "jesbu1_mit_franka_p-rank_rfm",
         ]
     },
     "paired": {

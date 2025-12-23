@@ -5,14 +5,9 @@ from enum import Enum
 
 import numpy as np
 import json
-
+import torch
 from rfm.utils.distributed import rank_0_print
 from rfm.data.dataset_types import Trajectory
-
-try:
-    import torch
-except ImportError:
-    torch = None
 
 
 class DataGenStrat(Enum):
@@ -45,6 +40,19 @@ def load_dataset_success_percent(cutoff_file_path):
     return success_percent_dict
 
 
+def convert_continuous_to_discrete_bin(value: float, num_bins: int) -> int:
+    """Convert a single continuous progress value in [0, 1] to a discrete bin [0, num_bins-1].
+
+    Args:
+        value: Single continuous progress value in [0, 1]
+        num_bins: Number of discrete bins to use
+
+    Returns:
+        Discrete bin index in [0, num_bins-1]
+    """
+    return int(min(max(value, 0.0), 1.0) * (num_bins - 1))
+
+
 def convert_continuous_to_discrete_bins(progress_values: list[float] | np.ndarray, num_bins: int) -> list[int]:
     """Convert continuous progress values in [0, 1] to discrete bins [0, num_bins-1].
 
@@ -57,7 +65,7 @@ def convert_continuous_to_discrete_bins(progress_values: list[float] | np.ndarra
     """
     if isinstance(progress_values, np.ndarray):
         progress_values = progress_values.tolist()
-    return [int(min(max(p, 0.0), 1.0) * (num_bins - 1)) for p in progress_values]
+    return [convert_continuous_to_discrete_bin(p, num_bins) for p in progress_values]
 
 
 def compute_success_labels(
@@ -792,21 +800,48 @@ def create_rewind_trajectory(
         max_success=max_success,
     )
 
-    return Trajectory(
-        frames=subsampled_frames if not use_embeddings else None,
-        frames_shape=subsampled_frames_shape,
-        video_embeddings=subsampled_frames if use_embeddings else None,
-        text_embedding=text_embedding,
-        task=original_traj["task"],
-        lang_vector=original_traj["lang_vector"],
-        data_source=original_traj["data_source"],
-        quality_label="rewound",
-        is_robot=original_traj["is_robot"],
-        target_progress=subsampled_progress,
-        partial_success=original_traj.get("partial_success"),
-        success_label=success_label,
-        metadata=metadata,
+    return create_trajectory_from_dict(
+        original_traj,
+        overrides={
+            "frames": subsampled_frames if not use_embeddings else None,
+            "frames_shape": subsampled_frames_shape,
+            "video_embeddings": subsampled_frames if use_embeddings else None,
+            "text_embedding": text_embedding,
+            "quality_label": "rewound",
+            "target_progress": subsampled_progress,
+            "success_label": success_label,
+            "metadata": metadata,
+        },
     )
+
+
+def create_trajectory_from_dict(traj_dict: dict, overrides: dict | None = None) -> Trajectory:
+    """Create a Trajectory from a dictionary with optional field overrides.
+
+    This helper function simplifies Trajectory creation by extracting common fields
+    from a trajectory dictionary and allowing specific fields to be overridden.
+
+    Args:
+        traj_dict: Dictionary containing trajectory data (e.g., from dataset)
+        overrides: Dictionary of field values to override (e.g., frames, target_progress)
+
+    Returns:
+        A new Trajectory instance
+    """
+    traj_data = {
+        "id": traj_dict.get("id"),
+        "task": traj_dict.get("task"),
+        "lang_vector": traj_dict.get("lang_vector"),
+        "data_source": traj_dict.get("data_source"),
+        "quality_label": traj_dict.get("quality_label"),
+        "is_robot": traj_dict.get("is_robot"),
+        "partial_success": traj_dict.get("partial_success"),
+    }
+
+    if overrides:
+        traj_data.update(overrides)
+
+    return Trajectory.model_validate(traj_data)
 
 
 def show_available_datasets():

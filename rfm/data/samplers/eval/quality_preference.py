@@ -11,16 +11,10 @@ class QualityPreferenceSampler(BaseQualityPreferenceSampler):
 
     def __init__(
         self,
-        config,
-        dataset,
-        combined_indices,
-        dataset_success_cutoff_map=None,
-        is_evaluation=False,
-        verbose=True,
         comparisons_per_task=None,
         **kwargs,
     ):
-        super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
+        super().__init__(**kwargs)
 
         # Set data_gen_strategy for this sampler
         self.data_gen_strategy = "quality_preference"

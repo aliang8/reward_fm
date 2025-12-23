@@ -734,19 +734,24 @@ class RFMHeadsTrainer(Trainer):
             eval_cfg.eval_datasets = [eval_dataset]
 
         # Create custom eval dataset with the appropriate sampler
-        # set max_trajectories to 10 for reward_alignment per eval dataset
-        kwargs = {}
+        sampler_kwargs = {}
+
         if eval_type == "reward_alignment":
-            kwargs["max_trajectories"] = 10
-            kwargs["frame_step"] = (
+            sampler_kwargs["max_trajectories"] = self.config.custom_eval.reward_alignment_max_trajectories
+            sampler_kwargs["frame_step"] = (
                 2 if (self.config.trainer_cls == "rfm_heads" and not self.config.data.use_multi_image) else 1
             )
-        if eval_type == "quality_preference":
-            kwargs["comparisons_per_task"] = self.config.custom_eval.comparisons_per_task
-        if eval_type == "policy_ranking":
-            kwargs["num_examples_per_quality_pr"] = self.config.custom_eval.num_examples_per_quality_pr
+        elif eval_type == "policy_ranking":
+            sampler_kwargs["num_examples_per_quality_pr"] = self.config.custom_eval.num_examples_per_quality_pr
+            sampler_kwargs["frame_step"] = (
+                2 if (self.config.trainer_cls == "rfm_heads" and not self.config.data.use_multi_image) else 1
+            )
+        elif eval_type == "quality_preference":
+            sampler_kwargs["comparisons_per_task"] = self.config.custom_eval.comparisons_per_task
 
-        dataset = setup_custom_eval_dataset(eval_cfg, sampler_type=eval_type, is_eval=True, verbose=False, **kwargs)
+        dataset = setup_custom_eval_dataset(
+            eval_cfg, sampler_type=eval_type, is_eval=True, verbose=False, sampler_kwargs=sampler_kwargs
+        )
         # Explicitly delete eval_cfg after dataset creation to free memory
         del eval_cfg
 
@@ -1641,7 +1646,7 @@ class RFMHeadsTrainer(Trainer):
         elif eval_type == "policy_ranking":
             # create task groups from eval_results
             eval_metrics, task_groups, task_details = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins
+                eval_type, eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins, data_source
             )
             # log_memory_usage(f"After compute_eval_metrics (policy_ranking)")
 
@@ -1945,7 +1950,6 @@ class RFMHeadsTrainer(Trainer):
         logger.info(f"  Processing dataset: {eval_dataset}")
         # log_memory_usage(f"Before dataset {eval_dataset}")
 
-        # Get dataset name for mapping
         dataset_for_mapping = eval_dataset[0] if isinstance(eval_dataset, list) else eval_dataset
         ds_name = DS_SHORT_NAME_MAPPING.get(dataset_for_mapping, dataset_for_mapping)
         timing_key = f"time/eval_dataset/{eval_type}/{ds_name}"
@@ -2399,6 +2403,7 @@ class RFMHeadsTrainer(Trainer):
             reduction="none",
             pos_weight=pos_weight_tensor,
         )
+        # [Bx1]
         masked_loss = loss * combined_mask
 
         # Compute accuracy per sample
@@ -2412,10 +2417,8 @@ class RFMHeadsTrainer(Trainer):
         success_probs_flat = success_probs[combined_mask > 0]
         success_labels_flat = success_labels[combined_mask > 0]
 
-        success_loss = masked_loss.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
-        success_acc = masked_correct.sum(dim=1) / (combined_mask.sum(dim=1) + 1e-8)
-        success_loss = success_loss.mean()
-        success_acc = success_acc.mean()
+        success_loss = masked_loss.sum() / (combined_mask.sum() + 1e-8)
+        success_acc = masked_correct.sum() / (combined_mask.sum() + 1e-8)
 
         # Compute AUPRC across all valid frames
         if success_probs_flat.numel() > 0 and len(torch.unique(success_labels_flat)) > 1:

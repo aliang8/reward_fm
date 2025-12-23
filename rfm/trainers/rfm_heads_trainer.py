@@ -813,9 +813,9 @@ class RFMHeadsTrainer(Trainer):
             success_pred = outputs.success_logits["A"]
             success_probs = torch.sigmoid(success_pred)
             success_binary = (success_probs > 0.5).float()
+            success_labels = progress_samples.get("success_labels")
             success_pred_gathered = self.accelerator.gather_for_metrics(success_binary)
             success_probs_gathered = self.accelerator.gather_for_metrics(success_probs)
-            success_labels = progress_samples.get("success_labels")
             success_labels_gathered = self.accelerator.gather_for_metrics(success_labels)
 
             # Clean up intermediate tensors (but keep gathered tensors for eval_results)
@@ -888,11 +888,6 @@ class RFMHeadsTrainer(Trainer):
         )
         num_pref_samples = pref_logits.shape[0] if pref_logits is not None else 0
         gathered_pref_metadata = self._truncate_metadata_lists(gathered_pref_metadata, num_pref_samples)
-        gathered_task = gathered_pref_metadata["task"]
-        gathered_data_source = gathered_pref_metadata["data_source"]
-        gathered_chosen_data_gen_strategy = gathered_pref_metadata["chosen_data_gen_strategy"]
-        gathered_rejected_data_gen_strategy = gathered_pref_metadata["rejected_data_gen_strategy"]
-        gathered_metadata = gathered_pref_metadata["metadata"]
 
         # Build eval_results on all processes for compute_eval_metrics
         batch_results = []
@@ -900,20 +895,18 @@ class RFMHeadsTrainer(Trainer):
             if pref_logits[i] is None:
                 continue
             sample_result = {
-                "task": gathered_task[i],
+                "task": gathered_pref_metadata["task"][i],
                 "preference_pred": t2n(pref_logits[i]),
                 "preference_labels": t2n(preference_labels[i]),
-                "data_source": gathered_data_source[i],
-                "chosen_data_gen_strategy": gathered_chosen_data_gen_strategy[i],
-                "rejected_data_gen_strategy": gathered_rejected_data_gen_strategy[i],
-                "metadata": gathered_metadata[i],
+                "data_source": gathered_pref_metadata["data_source"][i],
+                "chosen_data_gen_strategy": gathered_pref_metadata["chosen_data_gen_strategy"][i],
+                "rejected_data_gen_strategy": gathered_pref_metadata["rejected_data_gen_strategy"][i],
+                "metadata": gathered_pref_metadata["metadata"][i],
             }
             batch_results.append(sample_result)
 
         # Clean up gathered tensors and metadata after building results
-        del pref_logits, preference_labels
-        del gathered_task, gathered_data_source, gathered_chosen_data_gen_strategy
-        del gathered_rejected_data_gen_strategy, gathered_metadata
+        del pref_logits, preference_labels, gathered_pref_metadata
 
         return batch_results, outputs
 
@@ -954,10 +947,6 @@ class RFMHeadsTrainer(Trainer):
         logger.trace(f"    Metadata gathered, building eval_results")
         num_sim_samples = len(sim_logits) // 2 if sim_logits is not None else 0
         gathered_sim_metadata = self._truncate_metadata_lists(gathered_sim_metadata, num_sim_samples)
-        gathered_task = gathered_sim_metadata["task"]
-        gathered_data_source = gathered_sim_metadata["data_source"]
-        gathered_data_gen_strategy = gathered_sim_metadata["data_gen_strategy"]
-        gathered_metadata = gathered_sim_metadata["metadata"]
 
         # Build eval_results on all processes for compute_eval_metrics
         # The sim_logits are batched as [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
@@ -974,18 +963,23 @@ class RFMHeadsTrainer(Trainer):
 
             # Metadata is indexed by sample index (i), not batched index
             sample_result = {
-                "task": gathered_task[i] if i < len(gathered_task) else None,
+                "task": gathered_sim_metadata["task"][i] if i < len(gathered_sim_metadata["task"]) else None,
                 "sim_score_ref_sim": t2n(sim_logits[ref_sim_idx]),
                 "sim_score_ref_diff": t2n(sim_logits[ref_diff_idx]),
-                "data_source": gathered_data_source[i] if i < len(gathered_data_source) else None,
-                "data_gen_strategy": gathered_data_gen_strategy[i] if i < len(gathered_data_gen_strategy) else None,
-                "metadata": gathered_metadata[i] if i < len(gathered_metadata) else None,
+                "data_source": gathered_sim_metadata["data_source"][i]
+                if i < len(gathered_sim_metadata["data_source"])
+                else None,
+                "data_gen_strategy": gathered_sim_metadata["data_gen_strategy"][i]
+                if i < len(gathered_sim_metadata["data_gen_strategy"])
+                else None,
+                "metadata": gathered_sim_metadata["metadata"][i]
+                if i < len(gathered_sim_metadata["metadata"])
+                else None,
             }
             batch_results.append(sample_result)
 
         # Clean up gathered tensors and metadata after building results
-        del sim_logits
-        del gathered_task, gathered_data_source, gathered_data_gen_strategy, gathered_metadata
+        del sim_logits, gathered_sim_metadata
 
         return batch_results, outputs
 

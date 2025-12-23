@@ -92,9 +92,6 @@ class ModelConfig(PretrainedConfig):
         from rfm.models.rewind_transformer_scale import ReWINDScaleTransformerConfig
 
         if self.rewind is not None and isinstance(self.rewind, dict):
-            import pdb
-
-            pdb.set_trace()
             if self.rewind_scale_model:
                 self.rewind = ReWINDScaleTransformerConfig(**self.rewind)
             else:

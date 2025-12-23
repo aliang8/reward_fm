@@ -16,13 +16,14 @@ from transformers import SmolVLMModel
 import torch.distributed as dist
 
 from rfm.models.utils import ModelOutput
+from rfm.models.heads import PredictionHeadsMixin
 from rfm.utils.timer import _timer
 from rfm.utils.logger import get_logger
 
 logger = get_logger()
 
 
-class RFM(PreTrainedModel):
+class RFM(PredictionHeadsMixin, PreTrainedModel):
     """Reward Foundation Model with three prediction heads for different objectives.
 
     Supports multiple base model architectures:
@@ -37,8 +38,6 @@ class RFM(PreTrainedModel):
     _supports_flash_attn_2 = True
 
     def __init__(self, config, processor, tokenizer, base_model=None, base_model_id=None, model_config=None):
-        super().__init__(config)
-
         if "SmolVLM" in base_model_id:
             hidden_size = config.text_config.hidden_size
             self.model_cls = SmolVLMModel
@@ -56,6 +55,13 @@ class RFM(PreTrainedModel):
         else:
             raise ValueError(f"Unsupported base model: {base_model_id}")
 
+        super().__init__(
+            config,
+            hidden_dim=hidden_size,
+            model_config=model_config,
+            dropout=0.1,
+        )
+
         if base_model is not None:
             self.model = base_model
         else:
@@ -63,53 +69,6 @@ class RFM(PreTrainedModel):
 
         self.config_class = self.model_cls.config_class
         self.base_model_id = base_model_id
-
-        # Determine progress head output size based on model_config
-        progress_output_size = 1  # Default: continuous output
-        if model_config.progress_loss_type.lower() == "discrete":
-            progress_output_size = model_config.progress_discrete_bins
-            self.use_discrete_progress = True
-        else:
-            self.use_discrete_progress = False
-
-        logger.info(
-            f"RFM. __init__: use_discrete_progress: {self.use_discrete_progress}, progress_output_size: {progress_output_size}"
-        )
-
-        # Create progress head: for discrete mode, output logits (no sigmoid); for continuous, output with sigmoid
-        if self.use_discrete_progress:
-            self.progress_head = nn.Sequential(
-                nn.Linear(hidden_size, hidden_size // 2),
-                nn.LayerNorm(hidden_size // 2),
-                nn.GELU(),
-                nn.Dropout(0.1),
-                nn.Linear(hidden_size // 2, progress_output_size),
-            )
-        else:
-            self.progress_head = nn.Sequential(
-                nn.Linear(hidden_size, hidden_size // 2),
-                nn.LayerNorm(hidden_size // 2),
-                nn.GELU(),
-                nn.Dropout(0.1),
-                nn.Linear(hidden_size // 2, 1),
-                nn.Sigmoid(),
-            )
-        self.preference_head = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.LayerNorm(hidden_size // 2),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Linear(hidden_size // 2, 1),
-        )
-        self.similarity_head = nn.Linear(hidden_size, 1)
-
-        self.success_head = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.LayerNorm(hidden_size // 2),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Linear(hidden_size // 2, 1),
-        )
 
         self.model_dtype = self.model.dtype
         self.progress_head = self.progress_head.to(dtype=self.model_dtype)

@@ -1294,4 +1294,3 @@ def run_similarity_score_eval(results: list[dict[str, Any]], progress_pred_type:
     }
 
     return metrics, task_groups, task_details
-ls

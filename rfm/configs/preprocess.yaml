@@ -56,6 +56,9 @@ eval_datasets:
   - "aliangdw/utd_so101_human"
   #- "jesbu1/roboarena_eval_debug_nowrist"
   - "jesbu1/hand_paired_rfm"
+  - "jesbu1/mit_franka_p-rank_rfm"
+  - "jesbu1/utd_so101_clean_policy_ranking_top"
+  - "jesbu1/utd_so101_clean_policy_ranking_wrist"
 
 eval_subsets:
   - ["libero256_10"]
@@ -70,7 +73,10 @@ eval_subsets:
   - ["utd_so101_policy_ranking"]
   - ["utd_so101_human"]
   #- ["roboarena_eval_debug_nowrist"]
-  - ["hand_paired"]
+  - ["hand_paired_robot", "hand_paired_human"]
+  - ["mit_franka_p-rank_rfm"]
+  - ["utd_so101_clean_policy_ranking_top"]
+  - ["utd_so101_clean_policy_ranking_wrist"]
 
 max_frames_for_preprocessing: 32
 video_frame_sampling: "uniform"

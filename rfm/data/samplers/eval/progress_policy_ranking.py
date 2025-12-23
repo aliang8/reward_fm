@@ -1,3 +1,5 @@
+from typing import Dict, List, Any
+
 import numpy as np
 import torch
 import random
@@ -37,7 +39,7 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
 
         logger.info(f"Generated {len(self.sample_indices)} sample indices")
 
-    def _generate_all_sample_indices(self) -> list[dict]:
+    def _generate_all_sample_indices(self) -> List[Dict[str, Any]]:
         """Generate sample indices by selecting tasks with multiple quality labels/partial_success values and sampling N trajectories per group.
 
         For non-RoboArena: Groups by task and quality_label.
@@ -89,11 +91,11 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
                     if traj_indices:
                         # Sample one trajectory per partial_success value
                         sampled_traj_indices.append(random.choice(traj_indices))
-                
+
                 # If we have more than N unique partial_success values, randomly sample N of them
                 if len(sampled_traj_indices) > self.num_examples_per_quality_pr:
                     sampled_traj_indices = random.sample(sampled_traj_indices, self.num_examples_per_quality_pr)
-                
+
                 for traj_idx in sampled_traj_indices:
                     traj = self.dataset[traj_idx]
                     sample_indices.extend(self._generate_indices_for_trajectory(traj_idx, traj))
@@ -112,7 +114,7 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
 
         return sample_indices
 
-    def _generate_indices_for_trajectory(self, traj_idx: int, traj: dict) -> list[dict]:
+    def _generate_indices_for_trajectory(self, traj_idx: int, traj: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Generate sample indices for a single trajectory.
 
         Args:

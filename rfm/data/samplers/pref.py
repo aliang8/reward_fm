@@ -3,6 +3,8 @@
 PrefSampler class for producing batches of preference data.
 """
 
+from typing import Dict, List, Optional, Any
+
 import random
 
 from rfm.data.dataset_types import PreferenceSample, Trajectory
@@ -32,7 +34,7 @@ class PrefSampler(RFMBaseSampler):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
 
         self.dataset_preference_ratio = config.dataset_preference_ratio
-        self.preference_strategy_ratio: list[float] = config.preference_strategy_ratio
+        self.preference_strategy_ratio: List[float] = config.preference_strategy_ratio
         self._has_suboptimal = (
             any(len(indices) > 0 for indices in self.suboptimal_by_task.values()) if self.suboptimal_by_task else False
         )
@@ -128,7 +130,7 @@ class PrefSampler(RFMBaseSampler):
             else:
                 return self._create_pref_sample()
 
-    def _create_pref_sample(self, chosen_traj: dict | None = None) -> PreferenceSample:
+    def _create_pref_sample(self, chosen_traj: Optional[Dict[str, Any]] = None) -> PreferenceSample:
         """Create a preference prediction sample using various rejected trajectory generation strategies.
 
         Rewind Same Task

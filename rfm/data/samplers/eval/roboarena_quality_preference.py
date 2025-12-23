@@ -1,3 +1,5 @@
+from typing import Dict, List, Any
+
 import random
 from tqdm import tqdm
 
@@ -33,7 +35,7 @@ class RoboArenaQualityPreferenceSampler(BaseQualityPreferenceSampler):
             f"Generated {len(self.sample_indices)} RoboArena quality preference sample indices", verbose=self.verbose
         )
 
-    def _generate_all_sample_indices(self) -> list[dict]:
+    def _generate_all_sample_indices(self) -> List[Dict[str, Any]]:
         """Generate all possible quality preference sample indices based on partial_reward (partial_success)."""
         sample_indices = []
 

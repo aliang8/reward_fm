@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
+from typing import Optional, Dict, Any, List, Set, Tuple
+
 import numpy as np
 import random
 import torch
+from datasets import Dataset
 
+from rfm.configs.experiment_configs import DataConfig
 from rfm.data.datasets.helpers import (
     load_frames_from_npz,
     subsample_segment_frames,
@@ -26,7 +30,14 @@ logger = get_logger()
 class RFMBaseSampler:
     """Base sampler class that provides trajectory retrieval functions for generating samples."""
 
-    def __init__(self, config, dataset, combined_indices, dataset_success_cutoff_map=None, verbose=True):
+    def __init__(
+        self,
+        config: DataConfig,
+        dataset: Dataset,
+        combined_indices: Dict[str, Any],
+        dataset_success_cutoff_map: Optional[Dict[str, float]] = None,
+        verbose: bool = True,
+    ):
         """Initialize sampler with dataset and indices.
 
         Args:
@@ -70,12 +81,12 @@ class RFMBaseSampler:
 
     def _build_tasks_by_data_source(self):
         """Cache mapping from data_source to available task instructions."""
-        self.tasks_by_data_source: dict[str, list[str]] = {}
+        self.tasks_by_data_source: Dict[str, List[str]] = {}
 
         all_tasks = self.dataset["task"]
         all_sources = self.dataset["data_source"]
 
-        source_to_tasks: dict[str, set[str]] = {}
+        source_to_tasks: Dict[str, Set[str]] = {}
         for task, source in zip(all_tasks, all_sources):
             if task is None or source is None:
                 continue
@@ -487,7 +498,7 @@ class RFMBaseSampler:
         logger.trace(f"[BASE SAMPLER] _get_rewound_traj: Successfully created rewound trajectory for ID: {traj_id}")
         return result
 
-    def _get_uniform_sample_indices(self, data, direction: str = "bidirectional") -> tuple[int, int] | None:
+    def _get_uniform_sample_indices(self, data, direction: str = "bidirectional") -> Optional[Tuple[int, int]]:
         """Get start and end indices for uniform_sample strategy.
 
         Samples two random frames from the trajectory based on the specified direction.

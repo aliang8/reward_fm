@@ -15,11 +15,9 @@ from rfm.data.dataset_types import ProgressSample, Trajectory
 from rfm.data.samplers.base import RFMBaseSampler
 from rfm.data.datasets.helpers import (
     linspace_subsample_frames,
-    pad_trajectory_to_max_frames_np,
-    pad_trajectory_to_max_frames_torch,
     load_embeddings_from_path,
     load_frames_from_npz,
-    compute_success_labels,
+    create_trajectory_from_dict,
 )
 from rfm.utils.distributed import rank_0_print
 
@@ -34,17 +32,11 @@ class RewardAlignmentSampler(RFMBaseSampler):
 
     def __init__(
         self,
-        config,
-        dataset,
-        combined_indices,
-        dataset_success_cutoff_map=None,
-        is_evaluation=False,
-        verbose=True,
         max_trajectories: int | None = None,
         frame_step: int = 1,
         **kwargs,
     ):
-        super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
+        super().__init__(**kwargs)
 
         self.max_trajectories = max_trajectories
         self.frame_step = frame_step
@@ -138,14 +130,6 @@ class RewardAlignmentSampler(RFMBaseSampler):
         else:
             progress_values = [gt_progress]
 
-        # Pad trajectory and progress
-        if self.config.load_embeddings and original_traj.get("embeddings_path"):
-            video_embeddings, padded_progress = pad_trajectory_to_max_frames_torch(
-                subsequence_video_embeddings, progress_values, self.config.max_frames
-            )
-        else:
-            frames, padded_progress = pad_trajectory_to_max_frames_np(subsequence_frames, progress_values, max_frames)
-
         # Create metadata for the subsequence
         metadata = {
             "subsequence_end": end_idx,
@@ -154,33 +138,20 @@ class RewardAlignmentSampler(RFMBaseSampler):
             "id": original_traj["id"],
             "video_path": sample_idx_info["video_path"],
         }
-
-        # Compute success labels
-        success_label = compute_success_labels(
-            target_progress=padded_progress,
-            data_source=original_traj["data_source"],
-            dataset_success_percent=self.dataset_success_cutoff_map,
-            max_success=self.config.max_success,
+        subsequence_trajectory = create_trajectory_from_dict(
+            original_traj,
+            overrides={
+                "frames": subsequence_frames if not self.config.load_embeddings else None,
+                "frames_shape": frames_shape_orig,
+                "video_embeddings": subsequence_video_embeddings if self.config.load_embeddings else None,
+                "text_embedding": text_embedding,
+                "data_gen_strategy": "reward_alignment",
+                "target_progress": progress_values,
+                "metadata": metadata,
+            },
         )
-
-        # Create trajectory for the subsequence
-        subsequence_trajectory = Trajectory(
-            id=original_traj["id"],
-            task=original_traj["task"],
-            frames=frames,
-            frames_shape=frames_shape_orig,
-            video_embeddings=video_embeddings,
-            text_embedding=text_embedding,
-            data_source=original_traj["data_source"],
-            lang_vector=original_traj["lang_vector"],
-            is_robot=original_traj["is_robot"],
-            quality_label=original_traj["quality_label"],
-            data_gen_strategy="reward_alignment",
-            target_progress=padded_progress,
-            partial_success=original_traj.get("partial_success"),
-            success_label=success_label,
-            metadata=metadata,
-        )
+        # Post-process trajectory (padding, success labels, partial_success conversion)
+        subsequence_trajectory = self._post_process_trajectory(subsequence_trajectory)
 
         sample = ProgressSample(trajectory=subsequence_trajectory, sample_type="progress")
 

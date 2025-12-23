@@ -64,7 +64,7 @@ def resolve_dataset_keys(dataset_keys: list[str] | list[list[str]], split: str) 
 
 
 class BaseDataset(torch.utils.data.Dataset):
-    def __init__(self, config, is_evaluation=False, **kwargs):
+    def __init__(self, config, is_evaluation=False):
         self.config = config
         self.is_evaluation = is_evaluation
 

@@ -7,7 +7,7 @@ Defines the standard format for HuggingFace dataset trajectories.
 from typing import Any, Union
 
 import numpy as np
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 import torch
 
 
@@ -35,9 +35,9 @@ class Trajectory(BaseModel):
     partial_success: float | None = None
     success_label: list[float] | None = None  # Success labels for each frame (1.0 for success, 0.0 for failure)
     metadata: dict[str, Any] | None = None
+    data_gen_strategy: str | None = None
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class ProgressSample(BaseModel):

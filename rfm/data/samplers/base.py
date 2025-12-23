@@ -12,10 +12,12 @@ from rfm.data.datasets.helpers import (
     subsample_pairs_and_progress,
     compute_success_labels,
     convert_continuous_to_discrete_bins,
+    convert_continuous_to_discrete_bin,
+    create_trajectory_from_dict,
+    load_embeddings_from_path,
+    create_rewind_trajectory,
 )
 from rfm.data.dataset_types import Trajectory
-from rfm.data.datasets.helpers import create_rewind_trajectory, load_embeddings_from_path
-from rfm.utils.distributed import rank_0_print
 from rfm.utils.logger import get_logger
 
 logger = get_logger()
@@ -82,6 +84,55 @@ class RFMBaseSampler:
             source_to_tasks[source].add(task)
 
         self.tasks_by_data_source = {source: list(tasks) for source, tasks in source_to_tasks.items()}
+
+    def _post_process_trajectory(self, trajectory: Trajectory, skip_padding: bool = False) -> Trajectory:
+        """Post-process a trajectory: pad frames/embeddings and progress, compute success labels, convert partial_success.
+
+        Args:
+            trajectory: The trajectory to post-process
+            skip_padding: Whether to skip padding (e.g., for pairwise progress)
+
+        Returns:
+            A new Trajectory instance with post-processed fields
+        """
+        frames = trajectory.frames
+        video_embeddings = trajectory.video_embeddings
+        target_progress = trajectory.target_progress or []
+
+        # Pad trajectory and progress if not skipped
+        if not skip_padding and target_progress:
+            if self.config.load_embeddings and video_embeddings is not None:
+                video_embeddings, target_progress = pad_trajectory_to_max_frames_torch(
+                    video_embeddings, target_progress, self.config.max_frames
+                )
+            elif frames is not None:
+                frames, target_progress = pad_trajectory_to_max_frames_np(
+                    frames, target_progress, self.config.max_frames
+                )
+
+        # Compute success labels
+        success_label = compute_success_labels(
+            target_progress=target_progress,
+            data_source=trajectory.data_source,
+            dataset_success_percent=self.dataset_success_cutoff_map,
+            max_success=self.config.max_success,
+        )
+
+        # Convert partial_success to discrete bins if in discrete mode
+        partial_success = trajectory.partial_success
+        if partial_success is not None and self.config.progress_loss_type.lower() == "discrete":
+            num_bins = self.config.progress_discrete_bins
+            partial_success = convert_continuous_to_discrete_bin(partial_success, num_bins)
+
+        # Create new Trajectory with updated fields using model_copy (cleaner than manual construction)
+        update_dict = {
+            "frames": frames,
+            "video_embeddings": video_embeddings,
+            "target_progress": target_progress,
+            "success_label": success_label,
+            "partial_success": partial_success,
+        }
+        return trajectory.model_copy(update=update_dict)
 
     def _generate_sample(self, item):
         """Generate a sample from an item.
@@ -587,7 +638,6 @@ class RFMBaseSampler:
                 data, self.config.max_frames, method="linspace", perc_end=perc_end, start_idx=start_idx, end_idx=end_idx
             )
             frames_shape = subsampled.shape
-            # For successful, progress previously ignored success_cutoff in computation
             progress = compute_progress_from_segment(
                 num_frames_total=num_frames_total,
                 start_idx=start_idx,
@@ -608,23 +658,6 @@ class RFMBaseSampler:
             else:
                 frames = subsampled
 
-        # Only pad if not using pairwise progress (pairwise progress doesn't need padding)
-        if not use_pairwise:
-            if self.config.load_embeddings:
-                video_embeddings, progress = pad_trajectory_to_max_frames_torch(
-                    video_embeddings, progress, self.config.max_frames
-                )
-            else:
-                frames, progress = pad_trajectory_to_max_frames_np(frames, progress, self.config.max_frames)
-
-        # Compute success labels
-        success_label = compute_success_labels(
-            target_progress=progress,
-            data_source=traj["data_source"],
-            dataset_success_percent=self.dataset_success_cutoff_map,
-            max_success=self.config.max_success,
-        )
-
         if subsample_strategy and "reverse" in subsample_strategy:
             # Reverse frames/embeddings along time dimension
             if frames is not None:
@@ -637,28 +670,31 @@ class RFMBaseSampler:
                     video_embeddings = np.flip(video_embeddings, axis=0)
                 elif isinstance(video_embeddings, torch.Tensor):
                     video_embeddings = torch.flip(video_embeddings, dims=[0])
-            # Reverse progress and success labels
+            # Reverse progress
             progress = list(reversed(progress))
-            success_label = list(reversed(success_label)) if success_label is not None else None
 
         if self.config.progress_loss_type.lower() == "discrete":
             num_bins = self.config.progress_discrete_bins
             # Convert continuous progress [0, 1] to discrete bins [0, num_bins-1]
             progress = convert_continuous_to_discrete_bins(progress, num_bins)
 
-        return Trajectory(
-            frames=frames,
-            frames_shape=frames_shape,
-            video_embeddings=video_embeddings,
-            text_embedding=text_embedding,
-            id=traj["id"],
-            task=traj["task"],
-            lang_vector=traj["lang_vector"],
-            data_source=traj["data_source"],
-            quality_label=traj.get("quality_label"),
-            is_robot=traj["is_robot"],
-            target_progress=progress,
-            partial_success=traj.get("partial_success"),
-            success_label=success_label,
-            metadata=metadata,
+        skip_padding = use_pairwise
+        trajectory = create_trajectory_from_dict(
+            traj,
+            overrides={
+                "frames": frames,
+                "frames_shape": frames_shape,
+                "video_embeddings": video_embeddings,
+                "text_embedding": text_embedding,
+                "target_progress": progress,
+                "metadata": metadata,
+            },
         )
+        trajectory = self._post_process_trajectory(trajectory, skip_padding=skip_padding)
+
+        # Reverse success labels if we reversed progress (use model_copy for cleaner update)
+        if subsample_strategy and "reverse" in subsample_strategy and trajectory.success_label is not None:
+            reversed_success_label = list(reversed(trajectory.success_label))
+            trajectory = trajectory.model_copy(update={"success_label": reversed_success_label})
+
+        return trajectory

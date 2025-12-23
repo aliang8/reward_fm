@@ -74,7 +74,7 @@ eval_subsets:
   - ["utd_so101_human"]
   #- ["roboarena_eval_debug_nowrist"]
   - ["hand_paired"]
-  - ["mit_franka_p-rank"]
+  - ["mit_franka_p-rank_rfm"]
   - ["utd_so101_clean_policy_ranking_top"]
   - ["utd_so101_clean_policy_ranking_wrist"]
 

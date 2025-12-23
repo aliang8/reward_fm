@@ -1556,6 +1556,10 @@ class RFMHeadsTrainer(Trainer):
         confusion_plot = None
         confusion_matrix = None
 
+        # if dataset name is too long, truncate it
+        if len(ds_name) > 90:
+            ds_name = ds_name[:90] + "..."
+
         is_discrete_mode = self.config.loss.progress_loss_type.lower() == "discrete"
         num_bins = self.config.loss.progress_discrete_bins if is_discrete_mode else None
 

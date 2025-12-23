@@ -125,6 +125,8 @@ def load_hand_paired_dataset(dataset_path: str, dataset_name: str) -> dict[str, 
 
     task_data: dict[str, list[dict]] = {}
 
+    dataset_name = dataset_name.replace("hand_paired_", "")
+
     for task_dir in task_dirs:
         print(f"Processing task: {task_dir.name}")
         task_name = _parse_task_name(task_dir.name)

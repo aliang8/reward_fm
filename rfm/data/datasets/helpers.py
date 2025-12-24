@@ -74,6 +74,7 @@ def compute_success_labels(
     data_source: Optional[str],
     dataset_success_percent: Optional[Dict[str, float]] = None,
     max_success: float = 1.0,
+    quality_label: Optional[str] = None,
 ) -> List[float]:
     """
     Compute success labels from target_progress.
@@ -83,12 +84,17 @@ def compute_success_labels(
         data_source: Data source name (used to look up dataset-specific threshold)
         dataset_success_percent: Dictionary mapping data source names to max_success thresholds
         max_success: Default max_success threshold if data_source not in dataset_success_percent
+        quality_label: Quality label of the trajectory ("failure", "suboptimal", "successful", etc.)
 
     Returns:
         List of success labels (1.0 for success, 0.0 for failure) for each frame
     """
     if target_progress is None or len(target_progress) == 0:
         return []
+
+    # If trajectory is failure or suboptimal, return all 0s
+    if quality_label is not None and quality_label.lower() in ("failure", "suboptimal", "failed"):
+        return [0.0] * len(target_progress)
 
     # Get the threshold for this data source
     if data_source is not None and dataset_success_percent is not None:
@@ -793,14 +799,6 @@ def create_rewind_trajectory(
         "subsampled_indices": subsampled_indices,
     }
 
-    # Compute success labels
-    success_label = compute_success_labels(
-        target_progress=subsampled_progress,
-        data_source=original_traj["data_source"],
-        dataset_success_percent=dataset_success_percent,
-        max_success=max_success,
-    )
-
     return create_trajectory_from_dict(
         original_traj,
         overrides={
@@ -810,7 +808,6 @@ def create_rewind_trajectory(
             "text_embedding": text_embedding,
             "quality_label": "rewound",
             "target_progress": subsampled_progress,
-            "success_label": success_label,
             "metadata": metadata,
         },
     )

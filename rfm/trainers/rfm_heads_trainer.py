@@ -1630,6 +1630,7 @@ class RFMHeadsTrainer(Trainer):
                         )
                 for idx, plot in enumerate(plots):
                     self.logger.log_figure(f"{ds_name}/reward_alignment_plot/{idx}", plot, step=eval_step)
+            
             # Close all plots to avoid accumulating open figures
             for plot in plots:
                 plt.close(plot)
@@ -1642,7 +1643,6 @@ class RFMHeadsTrainer(Trainer):
             trajectory_progress_data = None
             # log_memory_usage(f"After deleting plots/videos")
         elif eval_type == "policy_ranking":
-            # create task groups from eval_results
             eval_metrics, task_groups, task_details = compute_eval_metrics(
                 eval_type, eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins, data_source
             )
@@ -1654,12 +1654,7 @@ class RFMHeadsTrainer(Trainer):
                 inner_padding=1,
             )
 
-            # Check if this is roboarena by checking if task_groups have partial_reward field
-            is_roboarena = False
-            if task_groups:
-                first_group = next(iter(task_groups.values()))
-                if first_group and "partial_success" in first_group[0]:
-                    is_roboarena = True
+            is_roboarena = "roboarena" in str(ds_name).lower()
 
             data = []
             if is_roboarena:
@@ -1736,6 +1731,7 @@ class RFMHeadsTrainer(Trainer):
                         quality_to_rews_sum_str,
                         diff_str,
                     ])
+
                 columns = [
                     "task",
                     "quality_and_rews_last",
@@ -1796,7 +1792,6 @@ class RFMHeadsTrainer(Trainer):
             confusion_matrix = None
             # log_memory_usage(f"After deleting confusion_matrix data")
         elif "quality_preference" in eval_type:
-            # quality_preference returns metrics, task_groups, and task_details
             eval_metrics, task_groups, task_details = compute_eval_metrics(
                 eval_type, eval_results, self.config.data.progress_pred_type
             )
@@ -1839,7 +1834,6 @@ class RFMHeadsTrainer(Trainer):
             task_details = None
             # log_memory_usage(f"After deleting quality_preference data")
         elif eval_type == "similarity_score":
-            # similarity_score returns metrics, task_groups, and task_details
             eval_metrics, task_groups, task_details = compute_eval_metrics(
                 eval_type, eval_results, self.config.data.progress_pred_type
             )

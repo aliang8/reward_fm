@@ -181,8 +181,6 @@ def run_reward_alignment_eval_per_trajectory(
     is_discrete_mode: bool,
     num_bins: int,
     data_source: Optional[str],
-    can_compute_policy_ranking: bool = False,
-    use_partial_success_for_ranking: bool = False,
     last_frame_only: bool = False,
 ) -> Tuple[Dict[str, Any], List, List, List]:
     """Run reward_alignment evaluation analysis and create plots for each trajectory.
@@ -428,7 +426,16 @@ def run_reward_alignment_eval_per_trajectory(
         ax.set_ylim(0, num_bins - 1 if is_discrete_mode else 1)
         ax.spines["right"].set_visible(False)
         ax.spines["top"].set_visible(False)
-        ax.set_yticks([])
+        # Set y-ticks: [0, 0.2, 0.4, 0.6, 0.8, 1.0] for continuous mode
+        # For discrete mode: [0, 2, 4, ...] if num_bins > 5, else [0, 1, 2, ...]
+        if is_discrete_mode:
+            if num_bins > 5:
+                y_ticks = list(range(0, num_bins, 2))
+            else:
+                y_ticks = list(range(0, num_bins))
+        else:
+            y_ticks = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
+        ax.set_yticks(y_ticks)
         ax.set_title(title)
 
         # Setup success subplot if available
@@ -449,13 +456,10 @@ def run_reward_alignment_eval_per_trajectory(
                     color="green",
                 )
             ax2.set_ylabel("Success")
-            ax2.set_title("Success (final per slice)")
             ax2.set_ylim(-0.05, 1.05)
             ax2.spines["right"].set_visible(False)
             ax2.spines["top"].set_visible(False)
             ax2.set_yticks([0, 1])
-            if have_success_labels and len(last_success_labels) == len(last_success):
-                ax2.legend(loc="upper right", fontsize=8)
 
         plots.append(fig)
 

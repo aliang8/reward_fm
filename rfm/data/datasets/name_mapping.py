@@ -1,0 +1,15 @@
+DS_SHORT_NAME_MAPPING = {
+    "aliangdw_metaworld_metaworld_train": "mw_train",
+    "aliangdw_metaworld_metaworld_eval": "mw_eval",
+    "abraranwar_libero_rfm_libero256_10": "libero_10",
+    "abraranwar_libero_rfm_libero256_90": "libero_90",
+    "abraranwar_libero_rfm_libero256_object": "libero_object",
+    "abraranwar_libero_rfm_libero256_spatial": "libero_spatial",
+    "abraranwar_libero_rfm_libero256_goal": "libero_goal",
+    "ykorkmaz_libero_failure_rfm_libero_10_failure": "libero_10_failure",
+    "ykorkmaz_libero_failure_rfm_libero_90_failure": "libero_90_failure",
+    "ykorkmaz_libero_failure_rfm_libero_object_failure": "libero_object_failure",
+    "ykorkmaz_libero_failure_rfm_libero_spatial_failure": "libero_spatial_failure",
+    "ykorkmaz_libero_failure_rfm_libero_goal_failure": "libero_goal_failure",
+    "jesbu1_oxe_rfm_eval_oxe_jaco_play_eval": "oxe_jaco",
+}

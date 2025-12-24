@@ -7,19 +7,18 @@ based on the data_source key in the JSON file, fetches trajectories by ID,
 and plots the progress values taken from the last item of each progress_pred_A list.
 """
 
-import json
-import matplotlib.pyplot as plt
-import numpy as np
-from collections import defaultdict
-from typing import Dict, List, Tuple, Optional
 import argparse
-from pathlib import Path
+import json
 import os
+from collections import defaultdict
+from pathlib import Path
+
+import matplotlib.pyplot as plt
 
 from datasets import load_dataset
 
 
-def load_progress_data_and_dataset(json_file_path: str) -> Tuple[List[Dict], Dict]:
+def load_progress_data_and_dataset(json_file_path: str) -> tuple[list[dict], dict]:
     """
     Load progress data from JSON file and the corresponding HuggingFace dataset.
 
@@ -29,7 +28,7 @@ def load_progress_data_and_dataset(json_file_path: str) -> Tuple[List[Dict], Dic
     Returns:
         Tuple of (progress_data, dataset_dict) where dataset_dict maps data_source to loaded dataset
     """
-    with open(json_file_path, "r") as f:
+    with open(json_file_path) as f:
         progress_data = json.load(f)
 
     # Extract unique data sources
@@ -40,7 +39,6 @@ def load_progress_data_and_dataset(json_file_path: str) -> Tuple[List[Dict], Dic
     print(f"Found data sources: {list(data_sources)}")
 
     # Load actual datasets for each data source
-    dataset_dict = {}
     for data_source in data_sources:
         print(f"Loading dataset for data source: {data_source}")
 
@@ -53,9 +51,9 @@ def load_progress_data_and_dataset(json_file_path: str) -> Tuple[List[Dict], Dic
                 rfm_dataset_path = os.environ.get("RFM_DATASET_PATH")
                 if "/" in dataset_path and not os.path.exists(dataset_path):
                     if not rfm_dataset_path:
-                        print(f"Warning: RFM_DATASET_PATH environment variable not set.")
+                        print("Warning: RFM_DATASET_PATH environment variable not set.")
                         print(f"This may be needed for loading dataset: {dataset_path}")
-                        print(f"Example: export RFM_DATASET_PATH=/path/to/your/datasets")
+                        print("Example: export RFM_DATASET_PATH=/path/to/your/datasets")
 
                 dataset = load_dataset(dataset_path, data_source)
 
@@ -75,14 +73,14 @@ def load_progress_data_and_dataset(json_file_path: str) -> Tuple[List[Dict], Dic
 
             except Exception as e:
                 print(f"Warning: Failed to load dataset for {data_source}: {e}")
-                print(f"Will proceed with progress data only for this data source.")
+                print("Will proceed with progress data only for this data source.")
         else:
             print(f"Warning: Could not map data_source '{data_source}' to a HuggingFace dataset path")
 
     return progress_data, dataset
 
 
-def map_data_source_to_dataset_path(data_source: str) -> Optional[str]:
+def map_data_source_to_dataset_path(data_source: str) -> str | None:
     """
     Map data_source key to actual HuggingFace dataset path.
 
@@ -119,7 +117,7 @@ def map_data_source_to_dataset_path(data_source: str) -> Optional[str]:
     return None
 
 
-def group_trajectories_by_id(data: List[Dict]) -> Dict[str, List[Dict]]:
+def group_trajectories_by_id(data: list[dict]) -> dict[str, list[dict]]:
     """
     Group trajectory data by ID.
 
@@ -138,7 +136,7 @@ def group_trajectories_by_id(data: List[Dict]) -> Dict[str, List[Dict]]:
     return dict(trajectories)
 
 
-def fetch_trajectory_data_from_dataset(progress_data: List[Dict], dataset: Dict) -> Dict[str, Dict]:
+def fetch_trajectory_data_from_dataset(progress_data: list[dict], dataset: dict) -> dict[str, dict]:
     """
     Fetch actual trajectory data from the loaded datasets using trajectory IDs.
 
@@ -174,7 +172,7 @@ def fetch_trajectory_data_from_dataset(progress_data: List[Dict], dataset: Dict)
     return trajectory_data
 
 
-def calculate_progress_sequences(trajectories: Dict[str, List[Dict]]) -> Dict[str, List[Tuple[int, float]]]:
+def calculate_progress_sequences(trajectories: dict[str, list[dict]]) -> dict[str, list[tuple[int, float]]]:
     """
     Calculate progress sequences for each trajectory ID.
 
@@ -207,9 +205,9 @@ def calculate_progress_sequences(trajectories: Dict[str, List[Dict]]) -> Dict[st
 
 
 def plot_progress_sequences(
-    progress_sequences: Dict[str, List[Tuple[int, float]]],
-    trajectory_data: Dict[str, Dict] = None,
-    output_path: str = None,
+    progress_sequences: dict[str, list[tuple[int, float]]],
+    trajectory_data: dict[str, dict] | None = None,
+    output_path: str | None = None,
     show_plot: bool = True,
 ):
     """
@@ -226,8 +224,8 @@ def plot_progress_sequences(
     # Plot each trajectory
     for trajectory_id, progress_seq in progress_sequences.items():
         # Add (0, 0) as the initial value
-        progress_seq = [(0, 0)] + progress_seq
-        subsequence_indices, progress_values = zip(*progress_seq)
+        progress_seq = [(0, 0), *progress_seq]
+        subsequence_indices, progress_values = zip(*progress_seq, strict=False)
         plt.plot(
             subsequence_indices,
             progress_values,
@@ -263,9 +261,9 @@ def plot_progress_sequences(
 
 
 def plot_individual_trajectories(
-    progress_sequences: Dict[str, List[Tuple[int, float]]],
-    trajectory_data: Dict[str, Dict] = None,
-    output_dir: str = None,
+    progress_sequences: dict[str, list[tuple[int, float]]],
+    trajectory_data: dict[str, dict] | None = None,
+    output_dir: str | None = None,
 ):
     """
     Generate individual plots for each trajectory and output frame locations.
@@ -282,8 +280,8 @@ def plot_individual_trajectories(
         plt.figure(figsize=(10, 6))
 
         # Add (0, 0) as the initial value
-        progress_seq = [(0, 0)] + progress_seq
-        subsequence_indices, progress_values = zip(*progress_seq)
+        progress_seq = [(0, 0), *progress_seq]
+        subsequence_indices, progress_values = zip(*progress_seq, strict=False)
         plt.plot(subsequence_indices, progress_values, marker="o", linewidth=2, markersize=8, color="blue")
 
         # Output frame locations if available
@@ -307,7 +305,7 @@ def plot_individual_trajectories(
 
 
 def print_summary_statistics(
-    progress_sequences: Dict[str, List[Tuple[int, float]]], trajectory_data: Dict[str, Dict] = None
+    progress_sequences: dict[str, list[tuple[int, float]]], trajectory_data: dict[str, dict] | None = None
 ):
     """
     Print summary statistics of the progress sequences and output frame locations.
@@ -327,7 +325,7 @@ def print_summary_statistics(
         print(f"Trajectories with dataset info: {len(trajectory_data)}")
 
     for trajectory_id, progress_seq in progress_sequences.items():
-        indices, progress_values = zip(*progress_seq)
+        _indices, progress_values = zip(*progress_seq, strict=False)
         print(f"\nTrajectory {trajectory_id}:")
         print(f"  Number of subsequences: {len(progress_values)}")
         print(f"  Progress range: {min(progress_values):.3f} - {max(progress_values):.3f}")
@@ -337,16 +335,16 @@ def print_summary_statistics(
         # Add trajectory info if available
         if trajectory_data and trajectory_id in trajectory_data:
             traj_info = trajectory_data[trajectory_id]
-            print(f"  Dataset info available: ✓")
+            print("  Dataset info available: ✓")
             if "task" in traj_info:
                 print(f"  Task: {traj_info['task']}")
             if "frames_video" in traj_info:
-                print(f"  Has frames: ✓")
+                print("  Has frames: ✓")
                 print(f"  Video location: {traj_info['frames_video']}")
             if "actions" in traj_info:
-                print(f"  Has actions: ✓")
+                print("  Has actions: ✓")
         else:
-            print(f"  Dataset info available: ✗")
+            print("  Dataset info available: ✗")
 
 
 def main():
@@ -354,10 +352,10 @@ def main():
     parser = argparse.ArgumentParser(description="Plot predicted progress values from reward alignment results")
     parser.add_argument(
         "--json_file",
-        default="/home/ykorkmaz/reward_fm/eval_logs/base_model_vqa/abraranwar_libero_rfm_libero256_10/reward_alignment_progress.json",
+        default="eval_logs/aliangdw_rfm_prefprog_v4/ykorkmaz_libero_failure_rfm_libero_10_failure/reward_alignment_progress.json",
         help="Path to the JSON file containing reward alignment results",
     )
-    parser.add_argument("--output_dir", help="Directory for saving trajectory plots")
+    parser.add_argument("--output_dir", required=True, help="Directory for saving trajectory plots")
 
     args = parser.parse_args()
 

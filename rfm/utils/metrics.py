@@ -3,100 +3,80 @@
 Utility functions for computing evaluation metrics.
 """
 
+import numpy as np
 import torch
 import torch.nn.functional as F
-import numpy as np
-from typing import List, Optional
 
 
-def compute_spearman_correlation(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+def compute_spearman_correlation(
+    pred: torch.Tensor, target: torch.Tensor, aggregate: bool = True, mask: torch.Tensor = None
+) -> torch.Tensor:
     """
     Compute Spearman correlation between prediction and target tensors.
 
     Args:
         pred: Prediction tensor
         target: Target tensor
+        aggregate: If True and tensors are 2D, returns mean correlation. If False and 2D, returns per-sample correlations.
+        mask: Optional mask tensor of shape (N, T) with 1.0 for valid frames, 0.0 for masked frames. Only used for 2D tensors.
 
     Returns:
-        Spearman correlation coefficient
+        Spearman correlation coefficient (scalar for 1D or aggregate=True, tensor for 2D with aggregate=False)
     """
-    # Convert to numpy for scipy.stats.spearmanr
-    try:
-        from scipy.stats import spearmanr
+    from scipy.stats import spearmanr
 
-        pred_np = pred.detach().cpu().numpy()
-        target_np = target.detach().cpu().numpy()
+    # NumPy doesn't support bf16/half; cast to float32 before moving to CPU
+    pred_f32 = pred.detach().to(dtype=torch.float32)
+    target_f32 = target.detach().to(dtype=torch.float32)
 
-        # Handle 1D arrays
-        if pred_np.ndim == 1 and target_np.ndim == 1:
-            correlation, _ = spearmanr(pred_np, target_np)
-            return torch.tensor(correlation, device=pred.device, dtype=pred.dtype)
+    pred_np = pred_f32.cpu().numpy()
+    target_np = target_f32.cpu().numpy()
 
-        # Handle 2D arrays (batch, sequence)
-        elif pred_np.ndim == 2 and target_np.ndim == 2:
-            correlations = []
-            for p, t in zip(pred_np, target_np):
-                if len(p) > 1 and len(t) > 1:  # Need at least 2 points for correlation
-                    corr, _ = spearmanr(p, t)
-                    if not np.isnan(corr):
-                        correlations.append(corr)
+    # Handle 1D arrays
+    if pred_np.ndim == 1 and target_np.ndim == 1:
+        correlation, _ = spearmanr(pred_np, target_np)
+        if np.isnan(correlation):
+            correlation = 0.0
+        return torch.tensor(correlation, device=pred.device, dtype=torch.float32)
 
-            if correlations:
-                return torch.tensor(np.mean(correlations), device=pred.device, dtype=pred.dtype)
-            else:
-                return torch.tensor(0.0, device=pred.device, dtype=pred.dtype)
+    # Handle 2D arrays (batch, sequence)
+    elif pred_np.ndim == 2 and target_np.ndim == 2:
+        if mask is not None:
+            # Convert mask to numpy
+            mask_np = mask.detach().to(dtype=torch.float32).cpu().numpy()
+            # Ensure mask matches shape
+            if mask_np.shape != pred_np.shape:
+                raise ValueError(f"Mask shape {mask_np.shape} must match pred shape {pred_np.shape}")
 
-        else:
-            raise ValueError(f"Unsupported tensor dimensions: pred={pred_np.ndim}, target={target_np.ndim}")
-
-    except ImportError:
-        # Fallback to manual implementation if scipy is not available
-        return manual_spearman_correlation(pred, target)
-
-
-def manual_spearman_correlation(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    """
-    Manual implementation of Spearman correlation as fallback.
-
-    Args:
-        pred: Prediction tensor
-        target: Target tensor
-
-    Returns:
-        Spearman correlation coefficient
-    """
-    # Handle 1D tensors
-    if pred.ndim == 1 and target.ndim == 1:
-        if len(pred) < 2:
-            return torch.tensor(0.0, device=pred.device, dtype=pred.dtype)
-
-        # Convert to ranks
-        pred_ranks = torch.argsort(torch.argsort(pred))
-        target_ranks = torch.argsort(torch.argsort(target))
-
-        # Compute correlation using rank formula
-        n = len(pred)
-        sum_d2 = torch.sum((pred_ranks - target_ranks) ** 2)
-        spearman = 1 - (6 * sum_d2) / (n * (n**2 - 1))
-
-        return spearman
-
-    # Handle 2D tensors (batch, sequence)
-    elif pred.ndim == 2 and target.ndim == 2:
         correlations = []
-        for p, t in zip(pred, target):
-            if len(p) > 1 and len(t) > 1:
-                corr = manual_spearman_correlation(p, t)
-                if not torch.isnan(corr):
+        for i, (p, t) in enumerate(zip(pred_np, target_np, strict=False)):
+            # Apply mask if provided
+            if mask is not None:
+                valid_mask = mask_np[i] > 0.0
+                p = p[valid_mask]
+                t = t[valid_mask]
+
+            if len(p) > 1 and len(t) > 1:  # Need at least 2 points for correlation
+                corr, _ = spearmanr(p, t)
+                if not np.isnan(corr):
                     correlations.append(corr)
+                else:
+                    correlations.append(0.0)
+            else:
+                correlations.append(0.0)
 
         if correlations:
-            return torch.stack(correlations).mean()
+            correlations_tensor = torch.tensor(correlations, device=pred.device, dtype=torch.float32)
+            if aggregate:
+                return correlations_tensor.mean()
+            else:
+                return correlations_tensor
         else:
-            return torch.tensor(0.0, device=pred.device, dtype=pred.dtype)
+            result = torch.tensor(0.0, device=pred.device, dtype=torch.float32)
+            return result if aggregate else result.unsqueeze(0).expand(pred.shape[0])
 
     else:
-        raise ValueError(f"Unsupported tensor dimensions: pred={pred.ndim}, target={target.ndim}")
+        raise ValueError(f"Unsupported tensor dimensions: pred={pred_np.ndim}, target={target_np.ndim}")
 
 
 def compute_auc(scores: torch.Tensor, labels: torch.Tensor) -> float:

@@ -117,16 +117,44 @@ This project uses `uv` for fast and reliable dependency management. We recommend
     ```
 ### Next: Dataset Setup
 We now download the dataset to the local `./rfm_dataset` directory (by default).
+
+First, login with huggingface:
+```bash
+hf auth # you'll need to paste your auth token 
+```
+
+We recommend directly download the processed datasets from HuggingFace:
+### Download processed datasets
+
+First add the processed datasets path to your environment variables or `~/.bashrc`:
+```bash
+export RFM_PROCESSED_DATASETS_PATH=/path/to/save/processed_datasets
+```
+
+Then, download the processed datasets:
+```bash
+./scripts/download_processed_datasets.sh
+```
+
+Then, untar the processed datasets:
+```bash
+./scripts/untar_processed_datasets.sh
+```
+
+Alternatively, you can download the raw datasets and preprocess them manually below.
+
+### Download raw datasets (optional but not recommended if you just need to train)
+
 For space reasons, you should symlink `~/.cache/huggingface/datasets` to some other location with ample space first, as that's where the dataset is downloaded to by default before being symlinked to `./rfm_dataset`.
 
 ```bash
 # Download the dataset
-./setup.sh
+./scripts/download_data.sh
 ```
 
 If you're running into issues with HuggingFace's API while downloading the dataset, you can use 
 ```bash
-RFM_DOWNLOAD_METHOD=git ./setup.sh
+RFM_DOWNLOAD_METHOD=git ./scripts/download_data.sh
 ```
 to download via git-lfs instead. Make sure `git-lfs` is first installed.
 
@@ -135,6 +163,16 @@ Add to your `.bashrc` the following export:
 ```bash
 export RFM_DATASET_PATH=/path/to/your/rfm_dataset
 ```
+
+Now, preprocess the dataset:
+```bash
+# Preprocess the dataset
+# first check preprocess.yaml for dataset paths and subsets
+uv run python -m rfm.data.scripts.preprocess_datasets --cache_dir /path/to/save/processed_datasets (./processed_datasets by default) --config rfm/configs/preprocess.yaml
+export RFM_PROCESSED_DATASETS_PATH=/path/to/save/processed_datasets
+```
+
+When adding new datasets, to filter specific trajectories out that you don't want to be used for reward training, you can make a filter function at the top of the `preprocess_datasets.py` file. See the filter in the file for an example.
 
 
 
@@ -175,10 +213,6 @@ uv run python rfm/data/generate_hf_dataset.py \
 
 ## Training and Evaluation
 ```bash
-
-# Preprocess the dataset
-uv run scripts/preprocess_dataset.py
-
 # Training
 uv run accelerate launch --config_file rfm/configs/fsdp.yaml train.py --config_path=rfm/configs/config.yaml
 
@@ -191,7 +225,7 @@ You can run evaluations through a lightweight HTTP server that hosts the model a
 
 Start the server (optionally override YAML fields with --set):
 ```bash
-uv run evals/qwen_server.py \
+uv run evals/eval_server.py \
   --config_path=rfm/configs/config.yaml \
   --host=0.0.0.0 --port=8000 \
   --set 'evaluation.model_path="aliangdw/rfm_v1"'

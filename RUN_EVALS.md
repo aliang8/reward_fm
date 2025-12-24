@@ -3,7 +3,7 @@
 
 # Step 1: Start Qwen server in separate terminal 
 
-uv run python3 evals/qwen_server.py --num_gpus=2
+uv run python3 evals/eval_server.py --num_gpus=2
 
 
 # Step 2: Run all evals [reward_alignment, success_failure, confusion_matrix]

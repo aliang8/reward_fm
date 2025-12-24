@@ -1,9 +1,10 @@
+import base64
+import io
 import os
+from typing import Any
+
 import cv2
 import numpy as np
-from typing import Any, List, Optional, Tuple
-import io
-import base64
 from PIL import Image
 
 
@@ -26,7 +27,7 @@ def extract_frames_from_video(video_path: str, fps: int = 1) -> np.ndarray:
         raise ValueError(f"Could not open video file: {video_path}")
 
     # Get video properties
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     video_fps = cap.get(cv2.CAP_PROP_FPS)
 
     # Calculate frame interval for target FPS
@@ -55,7 +56,7 @@ def extract_frames_from_video(video_path: str, fps: int = 1) -> np.ndarray:
     return np.array(frames)
 
 
-def _ensure_numpy_frames(frames: Any, frames_shape: Optional[Tuple[int, int, int, int]] = None) -> np.ndarray:
+def _ensure_numpy_frames(frames: Any, frames_shape: tuple[int, int, int, int] | None = None) -> np.ndarray:
     """Ensure frames are a numpy array of shape (T, H, W, C).
 
     Accepts bytes (with shape), numpy array, list of numpy frames, or single frame.
@@ -88,8 +89,8 @@ def _ensure_numpy_frames(frames: Any, frames_shape: Optional[Tuple[int, int, int
     return np.empty((0,))
 
 
-def decode_frames_b64(frames_b64: List[str]) -> List[Image.Image]:
-    images: List[Image.Image] = []
+def decode_frames_b64(frames_b64: list[str]) -> list[Image.Image]:
+    images: list[Image.Image] = []
     for s in frames_b64:
         buf = io.BytesIO(base64.b64decode(s))
         img = Image.open(buf).convert("RGB")
@@ -97,7 +98,7 @@ def decode_frames_b64(frames_b64: List[str]) -> List[Image.Image]:
     return images
 
 
-def frames_to_base64_images(frames: Any, frames_shape: Optional[Tuple[int, int, int, int]] = None) -> List[str]:
+def frames_to_base64_images(frames: Any, frames_shape: tuple[int, int, int, int] | None = None) -> list[str]:
     """Convert frames to a list of base64-encoded JPEG strings.
 
     Frames can be ndarray (T,H,W,C), bytes + shape, list of ndarray, or a single frame.
@@ -113,7 +114,7 @@ def frames_to_base64_images(frames: Any, frames_shape: Optional[Tuple[int, int, 
         # Unknown shape: cannot encode reliably
         return []
 
-    encoded: List[str] = []
+    encoded: list[str] = []
     for i in range(arr.shape[0]):
         frame = arr[i]
         if frame.dtype != np.uint8:

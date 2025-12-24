@@ -34,90 +34,30 @@ except ImportError:
     Qwen3VLForConditionalGeneration = None
     Qwen3VLModel = None
 
-from rfm.configs.experiment_configs import DataConfig, ExperimentConfig, ModelConfig, PEFTConfig
+from rfm.configs.experiment_configs import (
+    DataConfig,
+    ExperimentConfig,
+    ModelConfig,
+    PEFTConfig,
+    TrainingConfig,
+)
 from rfm.data.collators import BaseCollator, ReWiNDBatchCollator, RFMBatchCollator, VQABatchCollator
 from rfm.data.datasets import (
     BalancedRFMDataset,
     RFMDataset,
+    StrategyBalancedDataset,
     BaseDataset,
     InfiniteDataset,
+    SingleFrameDataset,
 )
 from rfm.data.datasets.custom_eval import CustomEvalDataset
 from rfm.models import RFM, RFMVQA, ReWiNDTransformer
 from rfm.models.rewind_transformer import ReWINDTransformerConfig
 from rfm.models.rewind_transformer_scale import ReWINDScaleTransformerConfig, ReWiNDScaleTransformer
-from rfm.utils.distributed import rank_0_print
+from rfm.utils.logger import get_logger
 
-
-def find_best_model_tag(hf_model_id: str, hub_token: Optional[str] = None) -> Tuple[Optional[str], Optional[float]]:
-    """
-    Find the best model tag from HuggingFace Hub by parsing tag names and extracting scores.
-
-    Expected tag format: "best-{metric_short}-{score:.4f}-step-{step}"
-    Example: "best-p-rank-spearman-mw-0.8500-step-123" or "best-avg-3metrics-0.7234-step-456"
-
-    Args:
-        hf_model_id: HuggingFace model ID (e.g., "aliangdw/rewind-debug")
-        hub_token: Optional HuggingFace token for private repos
-
-    Returns:
-        tuple: (best_tag_name, best_score) or (None, None) if no valid tags found
-    """
-    try:
-        api = HfApi(token=hub_token)
-
-        # Check if repository exists
-        if not api.repo_exists(repo_id=hf_model_id, repo_type="model"):
-            rank_0_print(f"Repository {hf_model_id} does not exist")
-            return None, None
-
-        # Get all tags for the repository
-        tags = api.list_repo_refs(repo_id=hf_model_id, repo_type="model").tags
-
-        if not tags:
-            rank_0_print(f"No tags found in repository {hf_model_id}")
-            return None, None
-
-        rank_0_print(f"Found {len(tags)} tags in {hf_model_id}: {[tag.name for tag in tags]}")
-
-        best_tag = None
-        best_score = float("-inf")
-
-        # Parse each tag to extract score
-        for tag in tags:
-            tag_name = tag.name
-
-            # Match our tag pattern: "best-{metric_short}-{score}-step-{step}"
-            # Examples: "best-p-rank-spearman-mw-0.8500-step-123" or "best-avg-3metrics-0.7234-step-456"
-            # Score can be positive or negative (e.g., 0.8500 or -1.2300)
-            pattern = r"best-.*?-(-?\d+\.\d+)-step-\d+"
-            match = re.search(pattern, tag_name)
-
-            if match:
-                try:
-                    score = float(match.group(1))
-                    rank_0_print(f"Parsed tag '{tag_name}': score = {score}")
-
-                    if score > best_score:
-                        best_score = score
-                        best_tag = tag_name
-
-                except ValueError:
-                    rank_0_print(f"Could not parse score from tag '{tag_name}'")
-                    continue
-            else:
-                rank_0_print(f"Tag '{tag_name}' does not match expected pattern")
-
-        if best_tag:
-            rank_0_print(f"Best tag found: '{best_tag}' with score {best_score}")
-        else:
-            rank_0_print("No valid tags found matching the expected pattern")
-
-        return best_tag, best_score
-
-    except Exception as e:
-        rank_0_print(f"Error finding best tag for {hf_model_id}: {e}")
-        return None, None
+logger = get_logger()
+from rfm.utils.save import parse_hf_model_id_and_revision
 
 
 def setup_model_and_processor(
@@ -140,13 +80,13 @@ def setup_model_and_processor(
 
     # Convert string dtype to torch dtype (used across all model loading paths)
     torch_dtype = getattr(torch, cfg.torch_dtype, torch.bfloat16)
-    rank_0_print(f"Using torch dtype: {torch_dtype}")
+    logger.info(f"Using torch dtype: {torch_dtype}")
 
     # Check if unsloth should be used
     use_unsloth = cfg.use_unsloth and "Qwen" in cfg.base_model_id
 
     if use_unsloth:
-        rank_0_print("Unsloth mode enabled for faster training")
+        logger.info("Unsloth mode enabled for faster training")
 
     # If quantization is enabled, use bitsandbytes (unless using unsloth)
     if cfg.quantization and not use_unsloth:
@@ -160,10 +100,10 @@ def setup_model_and_processor(
     try:
         import flash_attn
 
-        rank_0_print("Flash Attention 2 CUDA is available")
+        logger.info("Flash Attention 2 CUDA is available")
         has_flash_attn = True
     except:
-        rank_0_print("Flash Attention 2 CUDA is not available")
+        logger.info("Flash Attention 2 CUDA is not available")
         has_flash_attn = False
 
     if has_flash_attn:
@@ -172,7 +112,7 @@ def setup_model_and_processor(
         extra_kwargs = {"attn_implementation": "sdpa"}
 
     # Load processor and tokenizer
-    if "SmolVLM" in cfg.base_model_id or "Qwen" in cfg.base_model_id:
+    if "SmolVLM" in cfg.base_model_id or "Qwen" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
         if "SmolVLM" in cfg.base_model_id:
             processor = AutoProcessor.from_pretrained(
                 cfg.base_model_id,
@@ -183,7 +123,7 @@ def setup_model_and_processor(
                 use_fast=True,
             )
 
-            rank_0_print(f"SmolVLM Processor: {processor}")
+            logger.info(f"SmolVLM Processor: {processor}")
 
             base_model = AutoModelForImageTextToText.from_pretrained(
                 cfg.base_model_id,
@@ -194,20 +134,20 @@ def setup_model_and_processor(
 
             model_cls = RFM if cfg.model_type == "default" else RFMVQA
 
-        elif "Qwen" in cfg.base_model_id:
+        elif "Qwen" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
             # Check if unsloth should be used
             if use_unsloth:
-                rank_0_print("Using Unsloth for faster training with Qwen model")
+                logger.info("Using Unsloth for faster training with Qwen model")
 
                 # Load model with unsloth
                 base_model, tokenizer = FastVisionModel.from_pretrained(
                     cfg.base_model_id,
                     load_in_4bit=cfg.quantization,  # Use 4bit if quantization is enabled
-                    # use_gradient_checkpointing="unsloth",  # Use unsloth's optimized checkpointing
+                    use_gradient_checkpointing="unsloth",  # Use unsloth's optimized checkpointing
                     dtype=torch_dtype,  # Set the dtype from config,
                     full_finetuning=True,
                     device_map=None,
-                    attn_implementation="sdpa",
+                    attn_implementation=extra_kwargs["attn_implementation"],
                 )
                 if cfg.model_type == "default":
                     base_model = base_model.model
@@ -226,25 +166,44 @@ def setup_model_and_processor(
                         bias=peft_config.bias,
                     )
             else:
-                # Check if it's Qwen3 or Qwen2/2.5
+                # Check if it's Molmo, Qwen3 or Qwen2/2.5
+                is_molmo = "Molmo" in cfg.base_model_id
                 is_qwen3 = ("Qwen3" in cfg.base_model_id or "qwen3" in cfg.base_model_id.lower()) and HAS_QWEN3
 
                 # Select appropriate model classes based on version and model type
-                if is_qwen3:
+                if is_molmo:
+                    # Molmo2 uses AutoModelForImageTextToText with trust_remote_code
+                    base_model = AutoModelForImageTextToText.from_pretrained(
+                        cfg.base_model_id,
+                        torch_dtype=torch_dtype,
+                        trust_remote_code=cfg.trust_remote_code,
+                        **extra_kwargs,
+                        quantization_config=bnb,
+                    )
+                    if cfg.model_type == "default":
+                        # For RFM (non-VQA), extract the base model
+                        base_model = base_model.model
+                    logger.info("Using Molmo2 models")
+                elif is_qwen3:
                     qwen_model_cls = Qwen3VLModel if cfg.model_type == "default" else Qwen3VLForConditionalGeneration
-                    rank_0_print("Using Qwen3 models")
+                    base_model = qwen_model_cls.from_pretrained(
+                        cfg.base_model_id,
+                        torch_dtype=torch_dtype,
+                        **extra_kwargs,
+                        quantization_config=bnb,
+                    )
+                    logger.info("Using Qwen3 models")
                 else:
                     qwen_model_cls = (
                         Qwen2_5_VLModel if cfg.model_type == "default" else Qwen2_5_VLForConditionalGeneration
                     )
-                    rank_0_print("Using Qwen2/2.5 models")
-
-                base_model = qwen_model_cls.from_pretrained(
-                    cfg.base_model_id,
-                    torch_dtype=torch_dtype,
-                    **extra_kwargs,
-                    quantization_config=bnb,
-                )
+                    base_model = qwen_model_cls.from_pretrained(
+                        cfg.base_model_id,
+                        torch_dtype=torch_dtype,
+                        **extra_kwargs,
+                        quantization_config=bnb,
+                    )
+                    logger.info("Using Qwen2/2.5 models")
 
             model_cls = RFM if cfg.model_type == "default" else RFMVQA
 
@@ -258,7 +217,7 @@ def setup_model_and_processor(
                 # max_frames=cfg.data.max_frames,
                 padding_side="left",
             )
-            rank_0_print(f"Qwen Processor: {processor}")
+            logger.info(f"Qwen Processor: {processor}")
         else:
             raise ValueError(f"Invalid base model id: {cfg.base_model_id}")
 
@@ -285,22 +244,98 @@ def setup_model_and_processor(
             for token in special_tokens:
                 if token not in processor.tokenizer.get_vocab():
                     processor.tokenizer.add_special_tokens({"additional_special_tokens": [token]})
-                    rank_0_print(f"Added special token: {token}")
+                    logger.info(f"Added special token: {token}")
 
             # Resize token embeddings if new tokens were added
             vocab_size = (
                 base_model.config.text_config.vocab_size
-                if "Qwen3" in cfg.base_model_id
+                if ("Qwen3" in cfg.base_model_id or "Molmo" in cfg.base_model_id)
                 else base_model.config.vocab_size
             )
 
             if len(processor.tokenizer) != vocab_size:
-                rank_0_print(f"Resizing token embeddings from {vocab_size} to {len(processor.tokenizer)}")
-                base_model.resize_token_embeddings(len(processor.tokenizer))
-                rank_0_print(f"Resized token embeddings to {len(processor.tokenizer)}")
+                logger.info(f"Resizing token embeddings from {vocab_size} to {len(processor.tokenizer)}")
+
+                is_molmo = "Molmo" in cfg.base_model_id
+                if is_molmo:
+                    # Custom resize for Molmo2 - its Molmo2Embedding stores embedding as a Parameter directly
+                    new_vocab_size = len(processor.tokenizer)
+                    _embed_layer = base_model.get_input_embeddings()
+
+                    # Check if embedding is a Parameter (tensor) directly, or an nn.Embedding
+                    if hasattr(_embed_layer, "embedding"):
+                        old_embed_attr = _embed_layer.embedding
+
+                        # Case 1: embedding is a Parameter (raw tensor)
+                        if isinstance(old_embed_attr, torch.nn.Parameter):
+                            old_num_tokens, embedding_dim = old_embed_attr.shape
+
+                            # Create new parameter with expanded vocab
+                            new_embed_data = torch.zeros(
+                                new_vocab_size, embedding_dim, device=old_embed_attr.device, dtype=old_embed_attr.dtype
+                            )
+
+                            # Copy existing weights
+                            new_embed_data[:old_num_tokens] = old_embed_attr.data
+
+                            # Initialize new token embeddings using mean of existing embeddings
+                            mean_embedding = old_embed_attr.data.mean(dim=0)
+                            new_embed_data[old_num_tokens:] = mean_embedding.unsqueeze(0).expand(
+                                new_vocab_size - old_num_tokens, -1
+                            )
+
+                            # Replace the embedding Parameter
+                            _embed_layer.embedding = torch.nn.Parameter(new_embed_data)
+
+                            # Also update config to reflect new vocab size
+                            base_model.config.text_config.vocab_size = new_vocab_size
+
+                            logger.info(
+                                f"Custom resized Molmo2 embeddings (Parameter) from {old_num_tokens} to {new_vocab_size}"
+                            )
+
+                        # Case 2: embedding is an nn.Embedding with .weight
+                        elif hasattr(old_embed_attr, "weight"):
+                            old_num_tokens, embedding_dim = old_embed_attr.weight.shape
+
+                            # Create new embedding layer with expanded vocab
+                            new_embedding = torch.nn.Embedding(
+                                new_vocab_size,
+                                embedding_dim,
+                                device=old_embed_attr.weight.device,
+                                dtype=old_embed_attr.weight.dtype,
+                            )
+
+                            # Copy existing weights
+                            new_embedding.weight.data[:old_num_tokens] = old_embed_attr.weight.data
+
+                            # Initialize new token embeddings using mean of existing embeddings
+                            mean_embedding = old_embed_attr.weight.data.mean(dim=0)
+                            new_embedding.weight.data[old_num_tokens:] = mean_embedding.unsqueeze(0).expand(
+                                new_vocab_size - old_num_tokens, -1
+                            )
+
+                            # Replace the nested embedding
+                            _embed_layer.embedding = new_embedding
+
+                            # Also update config to reflect new vocab size
+                            base_model.config.text_config.vocab_size = new_vocab_size
+
+                            logger.info(
+                                f"Custom resized Molmo2 embeddings (Embedding) from {old_num_tokens} to {new_vocab_size}"
+                            )
+                        else:
+                            logger.warning(
+                                f"Cannot resize Molmo2 embeddings - unknown embedding type: {type(old_embed_attr)}"
+                            )
+                    else:
+                        logger.warning(f"Cannot resize Molmo2 embeddings - no embedding attribute found")
+                else:
+                    base_model.resize_token_embeddings(len(processor.tokenizer))
+                    logger.info(f"Resized token embeddings to {len(processor.tokenizer)}")
 
         # Initialize RFM model wrapper with the pre-loaded base model
-        rank_0_print("Initializing RFM model...")
+        logger.info("Initializing RFM model...")
         tokenizer = processor.tokenizer
 
         model = model_cls(
@@ -313,41 +348,23 @@ def setup_model_and_processor(
         )
 
         if hf_model_id:
-            # Allow users to specify explicit revisions via repo@revision
-            if "@" in hf_model_id:
-                repo_id, explicit_revision = hf_model_id.split("@", 1)
-            else:
-                repo_id, explicit_revision = hf_model_id, None
-
-            revision_to_load = explicit_revision
-
-            # Check if this is a HuggingFace repo (not a local path) and find best tag
-            if "/" in repo_id and not repo_id.startswith("/"):
-                if revision_to_load:
-                    rank_0_print(f"Loading model {repo_id} at explicit revision '{revision_to_load}'")
-                else:
-                    best_tag, best_score = find_best_model_tag(repo_id)
-                    if best_tag:
-                        revision_to_load = best_tag
-                        rank_0_print(f"Loading model from best tag: {repo_id}@{revision_to_load} (score: {best_score})")
-                    else:
-                        rank_0_print(f"No best tag found, loading latest revision of {repo_id}")
-                hf_repo_with_rev = repo_id
-            else:
-                hf_repo_with_rev = repo_id
-                rank_0_print(f"Loading local/explicit model from {hf_repo_with_rev}")
+            repo_id, revision_to_load = parse_hf_model_id_and_revision(hf_model_id, model_name="model")
 
             if cfg.model_type != "vqa":
                 if "Qwen2.5" in cfg.base_model_id:
-                    before = model.model.visual.blocks[0].mlp.down_proj.weight
+                    before_visual = model.model.visual.blocks[0].mlp.down_proj.weight
                     before_progress_head = model.progress_head[0].weight
-                elif "Qwen3" in cfg.base_model_id:
-                    before = model.model.visual.blocks[0].mlp.linear_fc1.weight
+                    before_lm_embed_tokens = model.model.language_model.embed_tokens.weight
+                    before_lm_layer = model.model.language_model.layers[0].mlp.up_proj.weight
+                elif "Qwen3" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
+                    before_visual = model.model.visual.blocks[0].mlp.linear_fc1.weight
                     before_progress_head = model.progress_head[0].weight
+                    before_lm_embed_tokens = model.model.language_model.embed_tokens.weight
+                    before_lm_layer = model.model.language_model.layers[0].mlp.up_proj.weight
 
             # load the model from the evaluation path
             model = model_cls.from_pretrained(
-                hf_repo_with_rev,
+                repo_id,
                 processor=processor,
                 tokenizer=tokenizer,
                 base_model=base_model,
@@ -357,22 +374,40 @@ def setup_model_and_processor(
             )
             if cfg.model_type != "vqa":
                 if "Qwen2.5" in cfg.base_model_id:
-                    after = model.model.visual.blocks[0].mlp.down_proj.weight
+                    after_visual = model.model.visual.blocks[0].mlp.down_proj.weight
                     after_progress_head = model.progress_head[0].weight
-                elif "Qwen3" in cfg.base_model_id:
-                    after = model.model.visual.blocks[0].mlp.linear_fc1.weight
+                    after_lm_embed_tokens = model.model.language_model.embed_tokens.weight
+                    after_lm_layer_mlp_up_proj = model.model.language_model.layers[0].mlp.up_proj.weight
+                elif "Qwen3" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
+                    after_visual = model.model.visual.blocks[0].mlp.linear_fc1.weight
                     after_progress_head = model.progress_head[0].weight
+                    after_lm_embed_tokens = model.model.language_model.embed_tokens.weight
+                    after_lm_layer_mlp_up_proj = model.model.language_model.layers[0].mlp.up_proj.weight
 
-                rank_0_print(f"Before: {before.shape}, {before.sum()} | After: {after.shape}, {after.sum()}")
-                rank_0_print(
+                logger.info(
+                    f"Before visual: {before_visual.shape}, {before_visual.sum()} | After visual: {after_visual.shape}, {after_visual.sum()}"
+                )
+                logger.info(
                     f"Before progress head: {before_progress_head.shape}, {before_progress_head.sum()} | After progress head: {after_progress_head.shape}, {after_progress_head.sum()}"
                 )
+                logger.info(
+                    f"Before LM embed tokens: {before_lm_embed_tokens.shape}, {before_lm_embed_tokens.sum()} | After LM embed tokens: {after_lm_embed_tokens.shape}, {after_lm_embed_tokens.sum()}"
+                )
+                logger.info(
+                    f"Before LM layer: {before_lm_layer.shape}, {before_lm_layer.sum()} | After LM layer: {after_lm_layer_mlp_up_proj.shape}, {after_lm_layer_mlp_up_proj.sum()}"
+                )
                 # check that before and after are different
-                if torch.allclose(before, after):
-                    rank_0_print("Before and after are the same! Check if you loaded the pretrained model correctly")
+                if torch.allclose(before_visual, after_visual):
+                    logger.warning(
+                        "Before and after visual are the same! Check if you loaded the pretrained model correctly"
+                    )
                 if torch.allclose(before_progress_head, after_progress_head):
-                    rank_0_print(
+                    logger.warning(
                         "Before and after progress head are the same! Check if you loaded the pretrained model correctly"
+                    )
+                if torch.allclose(before_lm_embed_tokens, after_lm_embed_tokens):
+                    logger.warning(
+                        "Before and after LM embed tokens are the same! Check if you loaded the pretrained model correctly"
                     )
 
     # elif "rewind_transformer" in cfg.base_model_id or "rewind_scale_transformer" in cfg.base_model_id:
@@ -385,21 +420,15 @@ def setup_model_and_processor(
         tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L12-v2")
 
         if hf_model_id:
-            # Check if this is a HuggingFace repo (not a local path) and find best tag
-            if "/" in hf_model_id and not hf_model_id.startswith("/") and not "@" in hf_model_id:
-                best_tag, best_score = find_best_model_tag(hf_model_id)
-                if best_tag:
-                    rank_0_print(f"Loading ReWiND model from best tag: {hf_model_id} (score: {best_score})")
-            else:
-                rank_0_print(f"Loading ReWiND model from {hf_model_id}")
+            repo_id, revision_to_load = parse_hf_model_id_and_revision(hf_model_id, model_name="ReWiND model")
 
             model = ReWiNDTransformer.from_pretrained(
-                hf_model_id,
+                repo_id,
                 processor=processor,
                 image_encoder=image_encoder,
                 text_encoder=text_encoder,
                 tokenizer=tokenizer,
-                revision=best_tag,
+                revision=revision_to_load,
             )
         else:
             train_img = cfg.train_vision_encoder
@@ -411,11 +440,11 @@ def setup_model_and_processor(
             for p in text_encoder.parameters():
                 p.requires_grad = train_text
 
-            rank_0_print("Initializing ReWiND model...")
+            logger.info("Initializing ReWiND model...")
 
             rewind_config = cfg.rewind if cfg.rewind is not None else ReWINDTransformerConfig()
             if cfg.rewind_scale_model:
-                rewind_config = ReWINDScaleTransformerConfig()
+                rewind_config = ReWINDScaleTransformerConfig(causal_mask=cfg.causal_mask)
                 model = ReWiNDScaleTransformer(
                     config=rewind_config,
                     processor=processor,
@@ -432,8 +461,8 @@ def setup_model_and_processor(
                     text_encoder=text_encoder,
                 )
 
-    rank_0_print("Model architecture initialized")
-    rank_0_print(f"Model architecture: {model}")
+    logger.info("Model architecture initialized")
+    logger.info(f"Model architecture: {model}")
 
     # Configure which parts of the model to train based on config
     for name, param in model.named_parameters():
@@ -474,21 +503,21 @@ def setup_model_and_processor(
             if "lm_head" in name:
                 param.requires_grad = False
 
-    rank_0_print("Training configuration:")
-    rank_0_print(f"  - Vision encoder: {cfg.train_vision_encoder}")
-    rank_0_print(f"  - Language model: {cfg.train_language_model}")
-    rank_0_print(f"  - Progress head: {cfg.train_progress_head}")
-    rank_0_print(f"  - Success head: {getattr(cfg, 'train_success_head', False)}")
-    rank_0_print(f"  - Preference head: {cfg.train_preference_head}")
-    rank_0_print(f"  - Similarity head: {cfg.train_similarity_head}")
+    logger.info("Training configuration:")
+    logger.info(f"  - Vision encoder: {cfg.train_vision_encoder}")
+    logger.info(f"  - Language model: {cfg.train_language_model}")
+    logger.info(f"  - Progress head: {cfg.train_progress_head}")
+    logger.info(f"  - Success head: {getattr(cfg, 'train_success_head', False)}")
+    logger.info(f"  - Preference head: {cfg.train_preference_head}")
+    logger.info(f"  - Similarity head: {cfg.train_similarity_head}")
 
     for name, param in model.named_parameters():
         if param.requires_grad:
-            rank_0_print(f"{name:60} | {param.shape} | RG: {param.requires_grad}")
+            logger.info(f"{name:60} | {param.shape} | RG: {param.requires_grad}")
 
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     all_params = sum(p.numel() for p in model.parameters())
-    rank_0_print(
+    logger.info(
         f"trainable params: {trainable_params:,} || all params: {all_params:,} || trainable%: {100 * trainable_params / all_params:.4f}"
     )
     return tokenizer, processor, model
@@ -497,7 +526,7 @@ def setup_model_and_processor(
 def setup_peft_model(rfm_model: RFM, cfg: PEFTConfig) -> RFM:
     """Shared function to apply PEFT configuration to the model"""
 
-    rank_0_print("Using PEFT/LoRA training...")
+    logger.info("Using PEFT/LoRA training...")
     lora_config = LoraConfig(
         r=cfg.r,
         lora_alpha=cfg.lora_alpha,
@@ -507,49 +536,50 @@ def setup_peft_model(rfm_model: RFM, cfg: PEFTConfig) -> RFM:
     )
     if cfg.peft_vision_encoder:
         # vision backbone is frozen, but we can still train the LoRA parameters
-        rank_0_print("Attaching LoRA to only the vision encoder...")
+        logger.info("Attaching LoRA to only the vision encoder...")
         rfm_model.base_model.model.visual = get_peft_model(rfm_model.base_model.model.visual, lora_config)
 
     # Count trainable parameters manually - defer printing until after FSDP setup
     trainable_params = sum(p.numel() for p in rfm_model.parameters() if p.requires_grad)
     all_params = sum(p.numel() for p in rfm_model.parameters())
-    rank_0_print(
+    logger.info(
         f"AFTER PEFT: trainable params: {trainable_params:,} || all params: {all_params:,} || trainable%: {100 * trainable_params / all_params:.4f}"
     )
     return rfm_model
 
 
-def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: bool = False) -> TrainingArguments:
+def create_training_arguments(cfg: TrainingConfig, output_dir: str, is_eval: bool = False) -> TrainingArguments:
     """Shared function to create TrainingArguments for both training and evaluation"""
 
     # Base arguments that are the same for both training and evaluation
     base_args = {
         "output_dir": output_dir,
-        "per_device_train_batch_size": cfg.training.per_device_train_batch_size,
-        "gradient_accumulation_steps": cfg.training.gradient_accumulation_steps,
-        "ddp_find_unused_parameters": cfg.training.ddp_find_unused_parameters,
-        "learning_rate": cfg.training.learning_rate,
-        "save_strategy": cfg.training.save_strategy,
-        "logging_steps": cfg.training.logging_steps,
-        "save_steps": cfg.training.save_steps,
-        "bf16": cfg.training.bf16,
-        "fp16": cfg.training.fp16,
-        "remove_unused_columns": cfg.training.remove_unused_columns,
-        "gradient_checkpointing": cfg.training.gradient_checkpointing,
-        "dataloader_pin_memory": cfg.data.dataloader_pin_memory,
-        "dataloader_num_workers": cfg.data.dataloader_num_workers,
+        "per_device_train_batch_size": cfg.per_device_train_batch_size,
+        "gradient_accumulation_steps": cfg.gradient_accumulation_steps,
+        "ddp_find_unused_parameters": cfg.ddp_find_unused_parameters,
+        "learning_rate": cfg.learning_rate,
+        "save_strategy": cfg.save_strategy,
+        "logging_steps": cfg.logging_steps,
+        "save_steps": cfg.save_steps,
+        "bf16": cfg.bf16,
+        "fp16": cfg.fp16,
+        "remove_unused_columns": cfg.remove_unused_columns,
+        "gradient_checkpointing": cfg.gradient_checkpointing,
+        "dataloader_pin_memory": cfg.dataloader_pin_memory,
+        "dataloader_num_workers": cfg.dataloader_num_workers,
+        "dataloader_persistent_workers": cfg.dataloader_persistent_workers,
         "save_safetensors": True,
         "save_total_limit": 2,
         # Evaluation settings
-        "eval_strategy": cfg.training.evaluation_strategy,
-        "per_device_eval_batch_size": cfg.training.per_device_eval_batch_size,
-        "do_eval": cfg.training.do_eval,
-        "prediction_loss_only": cfg.training.prediction_loss_only,
-        "lr_scheduler_type": cfg.training.lr_scheduler_type,
-        "warmup_steps": cfg.training.warmup_steps,
-        "warmup_ratio": cfg.training.warmup_ratio,
-        "max_grad_norm": cfg.training.max_grad_norm,
-        "weight_decay": cfg.training.weight_decay,
+        "eval_strategy": cfg.evaluation_strategy,
+        "per_device_eval_batch_size": cfg.per_device_eval_batch_size,
+        "do_eval": cfg.do_eval,
+        "prediction_loss_only": cfg.prediction_loss_only,
+        "lr_scheduler_type": cfg.lr_scheduler_type,
+        "warmup_steps": cfg.warmup_steps,
+        "warmup_ratio": cfg.warmup_ratio,
+        "max_grad_norm": cfg.max_grad_norm,
+        "weight_decay": cfg.weight_decay,
         "disable_tqdm": False,
         # # Compile settings
         # "torch_compile": True,
@@ -558,8 +588,8 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
     }
 
     # Add eval_steps if evaluation_strategy is "steps"
-    if cfg.training.evaluation_strategy == "steps" and cfg.training.eval_steps is not None:
-        base_args["eval_steps"] = cfg.training.eval_steps
+    if cfg.evaluation_strategy == "steps" and cfg.eval_steps is not None:
+        base_args["eval_steps"] = cfg.eval_steps
 
     if is_eval:
         # Evaluation-specific arguments
@@ -572,8 +602,8 @@ def create_training_arguments(cfg: ExperimentConfig, output_dir: str, is_eval: b
     else:
         # Training-specific arguments
         base_args.update({
-            "num_train_epochs": cfg.training.num_train_epochs if cfg.training.num_train_epochs is not None else 1,
-            "max_steps": cfg.training.max_steps if cfg.training.max_steps is not None else -1,
+            "num_train_epochs": cfg.num_train_epochs if cfg.num_train_epochs is not None else 1,
+            "max_steps": cfg.max_steps if cfg.max_steps is not None else -1,
             # Disable HuggingFace's automatic logging - we use custom Logger class instead
             "report_to": "none",
         })
@@ -586,15 +616,23 @@ def setup_dataset(cfg: DataConfig, is_eval: bool = False, **kwargs) -> BaseDatas
     dataset_cls = {
         "rfm": RFMDataset,
         "data_source_balance": BalancedRFMDataset,
+        "strategy_balance": StrategyBalancedDataset,
+        "single_frame": SingleFrameDataset,
     }
     dataset = dataset_cls[cfg.dataset_type](config=cfg, is_evaluation=is_eval, **kwargs)
-    dataset = InfiniteDataset(dataset)
+
+    if not is_eval:
+        dataset = InfiniteDataset(dataset)
     return dataset
 
 
-def setup_custom_eval_dataset(cfg: DataConfig, sampler_type: str, is_eval: bool = False, **kwargs):
+def setup_custom_eval_dataset(
+    cfg: DataConfig, sampler_type: str, is_eval: bool = False, verbose=True, sampler_kwargs=None
+):
     """Setup a custom evaluation dataset with a specific sampler."""
-    custom_eval_dataset = CustomEvalDataset(sampler_type, cfg, is_evaluation=is_eval, **kwargs)
+    custom_eval_dataset = CustomEvalDataset(
+        sampler_type, cfg, is_evaluation=is_eval, verbose=verbose, sampler_kwargs=sampler_kwargs
+    )
 
     return custom_eval_dataset
 
@@ -605,16 +643,24 @@ def setup_batch_collator(
     """Shared function to create BatchCollator"""
     collator_kwargs = {
         "processor": processor,
-        "max_length": cfg.training.max_seq_length,
         "resized_height": cfg.data.resized_height,
         "resized_width": cfg.data.resized_width,
         "base_model_id": cfg.model.base_model_id,
         "use_multi_image": cfg.data.use_multi_image,
+        "prog_pref": cfg.training.predict_pref_progress,
+        "prog_sim": cfg.training.predict_sim_progress,
         "use_progress_token": cfg.model.use_progress_token,
         "shuffle_progress_frames": cfg.data.shuffle_progress_frames,
         "inference": is_eval,
     }
-    if "Qwen" in cfg.model.base_model_id or "SmolVLM" in cfg.model.base_model_id:
+    # Check for unsupported Molmo2 video mode
+    if "Molmo" in cfg.model.base_model_id and not cfg.data.use_multi_image:
+        raise ValueError(
+            "Molmo2 implementation does not yet support video mode as it requires extra imports (use_multi_image=False). "
+            "Please set data.use_multi_image=True to use Molmo2 with multi-image input."
+        )
+
+    if "Qwen" in cfg.model.base_model_id or "SmolVLM" in cfg.model.base_model_id or "Molmo" in cfg.model.base_model_id:
         if cfg.model.model_type == "default":
             batch_collator = RFMBatchCollator(**collator_kwargs)
         elif cfg.model.model_type == "vqa":

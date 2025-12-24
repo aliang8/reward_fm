@@ -159,60 +159,60 @@ class ReWiNDBatchCollator(RFMBatchCollator):
         return batch_inputs
 
     def _process_similarity_batch(self, similarity_samples: list[SimilaritySample]) -> dict[str, torch.Tensor]:
-        """Process a batch of similarity samples."""
+        """Process a batch of similarity samples.
+
+        Batches ref_sim and ref_diff inputs together as [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
+        to reduce memory usage by doing a single forward pass instead of two.
+        """
         if self.load_embeddings:
             # Use embeddings directly from trajectories (already loaded by dataset)
             all_ref_video_embeddings = []
             all_ref_text_embeddings = []
             all_sim_video_embeddings = []
-            all_sim_text_embeddings = []
             all_diff_video_embeddings = []
-            all_diff_text_embeddings = []
 
             for sample in similarity_samples:
                 # Get embeddings directly from trajectories
                 ref_video_emb = sample.ref_trajectory.video_embeddings
                 ref_text_emb = sample.ref_trajectory.text_embedding
                 sim_video_emb = sample.sim_trajectory.video_embeddings
-                sim_text_emb = sample.sim_trajectory.text_embedding
                 diff_video_emb = sample.diff_trajectory.video_embeddings
-                diff_text_emb = sample.diff_trajectory.text_embedding
 
-                if any(
-                    emb is None
-                    for emb in [ref_video_emb, ref_text_emb, sim_video_emb, sim_text_emb, diff_video_emb, diff_text_emb]
-                ):
+                if any(emb is None for emb in [ref_video_emb, ref_text_emb, sim_video_emb, diff_video_emb]):
                     raise ValueError("Sample trajectories are missing embeddings")
 
                 all_ref_video_embeddings.append(ref_video_emb)
                 all_ref_text_embeddings.append(ref_text_emb)
                 all_sim_video_embeddings.append(sim_video_emb)
-                all_sim_text_embeddings.append(sim_text_emb)
                 all_diff_video_embeddings.append(diff_video_emb)
-                all_diff_text_embeddings.append(diff_text_emb)
 
             # Stack embeddings into batches
             ref_video_embeddings = torch.stack(all_ref_video_embeddings)  # [B, T, D]
             ref_text_embeddings = torch.stack(all_ref_text_embeddings)  # [B, D]
             sim_video_embeddings = torch.stack(all_sim_video_embeddings)  # [B, T, D]
-            sim_text_embeddings = torch.stack(all_sim_text_embeddings)  # [B, D]
             diff_video_embeddings = torch.stack(all_diff_video_embeddings)  # [B, T, D]
-            diff_text_embeddings = torch.stack(all_diff_text_embeddings)  # [B, D]
 
-            # Create ref_sim inputs (reference vs sim)
+            # Create ref_sim inputs (reference vs sim) and ref_diff inputs (reference vs diff)
             frame_len = ref_video_embeddings.shape[1]
-
             ref_sim_video_embeddings = torch.cat([ref_video_embeddings, sim_video_embeddings], dim=1)  # [B, T*2, D]
-
-            # Create ref_diff inputs (reference vs diff)
             ref_diff_video_embeddings = torch.cat([ref_video_embeddings, diff_video_embeddings], dim=1)  # [B, T*2, D]
 
-            # Both use the same text embeddings (from reference trajectory)
+            # Interleave ref_sim and ref_diff to create batched inputs: [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
+            batch_size = len(similarity_samples)
+            video_embeddings = torch.empty(batch_size * 2, frame_len * 2, ref_video_embeddings.shape[2])
+            text_embeddings = torch.empty(batch_size * 2, ref_text_embeddings.shape[1])
+
+            for i in range(batch_size):
+                # Even indices: ref_sim
+                video_embeddings[i * 2] = ref_sim_video_embeddings[i]
+                text_embeddings[i * 2] = ref_text_embeddings[i]
+                # Odd indices: ref_diff
+                video_embeddings[i * 2 + 1] = ref_diff_video_embeddings[i]
+                text_embeddings[i * 2 + 1] = ref_text_embeddings[i]
+
             batch_inputs = {
-                "video_embeddings_ref_sim": ref_sim_video_embeddings,  # [B, T*2, D]
-                "text_embeddings_ref_sim": ref_text_embeddings,  # [B, D]
-                "video_embeddings_ref_diff": ref_diff_video_embeddings,  # [B, T*2, D]
-                "text_embeddings_ref_diff": ref_text_embeddings,  # [B, D]
+                "video_embeddings": video_embeddings,  # [B*2, T*2, D]
+                "text_embeddings": text_embeddings,  # [B*2, D]
             }
         else:
             # Process frames
@@ -251,25 +251,36 @@ class ReWiNDBatchCollator(RFMBatchCollator):
             diff_video_inputs = self.processor(images=all_diff_frames, return_tensors="pt")["pixel_values"]
             diff_video_inputs = diff_video_inputs.view(len(similarity_samples), frame_len, C, H, W)
 
-            # Concatenate for two forward passes
+            # Concatenate for ref_sim and ref_diff
             ref_sim_video_inputs = torch.cat([ref_video_inputs, sim_video_inputs], dim=1)  # [B, T*2, C, H, W]
             ref_diff_video_inputs = torch.cat([ref_video_inputs, diff_video_inputs], dim=1)  # [B, T*2, C, H, W]
 
-            # Process text
+            # Interleave ref_sim and ref_diff to create batched inputs: [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
+            batch_size = len(similarity_samples)
+            video_inputs = torch.empty(batch_size * 2, frame_len * 2, C, H, W)
+
+            for i in range(batch_size):
+                # Even indices: ref_sim
+                video_inputs[i * 2] = ref_sim_video_inputs[i]
+                # Odd indices: ref_diff
+                video_inputs[i * 2 + 1] = ref_diff_video_inputs[i]
+
+            # Process text - duplicate tasks for interleaved batch
+            all_tasks_interleaved = []
+            for task in all_tasks:
+                all_tasks_interleaved.extend([task, task])  # One for ref_sim, one for ref_diff
+
             encodings = self.tokenizer(
-                all_tasks,
+                all_tasks_interleaved,
                 padding=True,
                 truncation=True,
                 return_tensors="pt",
             )
 
             batch_inputs = {
-                "input_ids_ref_sim": encodings["input_ids"],
-                "attention_mask_ref_sim": encodings["attention_mask"],
-                "pixel_values_videos_ref_sim": ref_sim_video_inputs,
-                "input_ids_ref_diff": encodings["input_ids"],
-                "attention_mask_ref_diff": encodings["attention_mask"],
-                "pixel_values_videos_ref_diff": ref_diff_video_inputs,
+                "input_ids": encodings["input_ids"],
+                "attention_mask": encodings["attention_mask"],
+                "pixel_values_videos": video_inputs,
             }
 
         batch_inputs = self._add_similarity_meta(batch_inputs, similarity_samples)

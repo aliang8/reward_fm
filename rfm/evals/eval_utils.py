@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import re
 import torch
 import io
 import json
-import re
 from typing import Any
 
 import aiohttp
@@ -15,16 +15,10 @@ from rfm.data.dataset_types import PreferenceSample, SimilaritySample, ProgressS
 
 
 def extract_answer_from_text(text):
+    """Extract answer from text using <ans> tags."""
     m = re.search(r"<ans>(.*?)</ans>", text, re.DOTALL)
     ans = m.group(1).strip() if m else ""
     return ans
-
-
-def post_batch(url: str, payload: dict[str, Any], timeout_s: float = 120.0) -> dict[str, Any]:
-    """POST a batch payload to the evaluation server and return parsed JSON."""
-    resp = requests.post(url.rstrip("/") + "/evaluate_batch", json=payload, timeout=timeout_s)
-    resp.raise_for_status()
-    return resp.json()
 
 
 def build_payload(
@@ -82,6 +76,13 @@ def build_payload(
         sample_data.append(processed_sample)
 
     return files, sample_data
+
+
+def post_batch(url: str, payload: dict[str, Any], timeout_s: float = 120.0) -> dict[str, Any]:
+    """POST a batch payload to the evaluation server and return parsed JSON."""
+    resp = requests.post(url.rstrip("/") + "/evaluate_batch", json=payload, timeout=timeout_s)
+    resp.raise_for_status()
+    return resp.json()
 
 
 def post_batch_npy(

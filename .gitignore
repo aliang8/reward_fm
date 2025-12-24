@@ -35,3 +35,17 @@ processed_datasets/*
 processed_datasets_old/*
 test.py
 *.ipynb
+.local/*
+.ipython/*
+.keras/*
+*.mp4
+eval_output/*
+outputs/*
+slurm_logs/*
+unsloth_compiled_cache/*
+.triton/*
+.pdbhistory
+.python_history
+.bash_history
+.netrc
+*.h5

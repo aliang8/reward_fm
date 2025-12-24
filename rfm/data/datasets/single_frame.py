@@ -12,6 +12,7 @@ from rfm.data.datasets.helpers import (
     load_frames_from_npz,
     load_embeddings_from_path,
     compute_success_labels,
+    create_trajectory_from_dict,
     DataGenStrat,
 )
 from rfm.utils.logger import get_logger, rank_0_info
@@ -83,29 +84,18 @@ class SingleFrameProgressSampler(RFMBaseSampler):
                 if frame_idx < len(video_embeddings):
                     video_embeddings = video_embeddings[frame_idx : frame_idx + 1]  # Keep time dimension
 
-        # Compute success labels for the single frame
-        success_label = compute_success_labels(
-            target_progress=[progress_value],
-            data_source=traj.get("data_source"),
-            dataset_success_percent=self.dataset_success_cutoff_map,
-            max_success=self.config.max_success,
+        progress_traj = create_trajectory_from_dict(
+            traj,
+            overrides={
+                "frames": single_frame,
+                "frames_shape": frames_shape,
+                "target_progress": [progress_value],  # Single progress value
+                "metadata": traj.get("metadata", {}),
+                "video_embeddings": video_embeddings,
+                "text_embedding": text_embedding,
+            },
         )
-
-        # Create trajectory object with single frame
-        progress_traj = Trajectory(
-            id=traj["id"],
-            task=traj["task"],
-            frames=single_frame,
-            frames_shape=frames_shape,
-            target_progress=[progress_value],  # Single progress value
-            metadata=traj.get("metadata", {}),
-            video_embeddings=video_embeddings,
-            text_embedding=text_embedding,
-            lang_vector=traj.get("lang_vector"),
-            data_source=traj.get("data_source"),
-            quality_label=traj.get("quality_label"),
-            success_label=success_label,
-        )
+        progress_traj = self._post_process_trajectory(progress_traj, skip_padding=True)
 
         # Create progress sample
         sample = ProgressSample(
@@ -292,28 +282,19 @@ class SingleFramePreferenceSampler(RFMBaseSampler):
                 if frame_idx < len(video_embeddings):
                     video_embeddings = video_embeddings[frame_idx : frame_idx + 1]
 
-        # Compute success labels
-        success_label = compute_success_labels(
-            target_progress=[progress_value],
-            data_source=traj.get("data_source"),
-            dataset_success_percent=self.dataset_success_cutoff_map,
-            max_success=self.config.max_success,
+        trajectory = create_trajectory_from_dict(
+            traj,
+            overrides={
+                "frames": single_frame,
+                "frames_shape": frames_shape,
+                "target_progress": [progress_value],
+                "metadata": traj.get("metadata", {}),
+                "video_embeddings": video_embeddings,
+                "text_embedding": text_embedding,
+            },
         )
-
-        return Trajectory(
-            id=traj["id"],
-            task=traj["task"],
-            frames=single_frame,
-            frames_shape=frames_shape,
-            target_progress=[progress_value],
-            metadata=traj.get("metadata", {}),
-            video_embeddings=video_embeddings,
-            text_embedding=text_embedding,
-            lang_vector=traj.get("lang_vector"),
-            data_source=traj.get("data_source"),
-            quality_label=traj.get("quality_label"),
-            success_label=success_label,
-        )
+        trajectory = self._post_process_trajectory(trajectory, skip_padding=True)
+        return trajectory
 
     def _create_single_frame_preference_sample(self, traj: dict):
         """Create a preference sample with single frames using two strategies:

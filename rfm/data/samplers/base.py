@@ -495,6 +495,7 @@ class RFMBaseSampler:
             dataset_success_percent=self.dataset_success_cutoff_map,
             max_success=self.config.max_success,
         )
+        result = self._post_process_trajectory(result, skip_padding=True)
         logger.trace(f"[BASE SAMPLER] _get_rewound_traj: Successfully created rewound trajectory for ID: {traj_id}")
         return result
 

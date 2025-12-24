@@ -76,7 +76,6 @@ class PrefSampler(RFMBaseSampler):
             chosen_idx = random.choice(same_task_optimal_indices)
             chosen_traj_dict = self.dataset[chosen_idx]
 
-            # Create trajectories using the base sampler's method
             chosen_trajectory = self._get_traj_from_data(chosen_traj_dict)
             rejected_trajectory = self._get_traj_from_data(item)
 

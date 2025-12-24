@@ -1057,12 +1057,11 @@ class RFMHeadsTrainer(Trainer):
             progress_pred = None
             target_progress = None
             if trajectory_progress_data and idx < len(trajectory_progress_data):
-                traj_data = trajectory_progress_data[idx]
-                progress_pred = traj_data.get("progress_pred")
-                target_progress = traj_data.get("target_progress")
+                progress_pred = trajectory_progress_data[idx]
 
-            # If we don't have progress data from trajectory_progress_data, extract from results_for_trajectory
-            if progress_pred is None or target_progress is None:
+            # Extract target_progress from results_for_trajectory (always needed)
+            # If we don't have progress_pred from trajectory_progress_data, extract from results_for_trajectory
+            if progress_pred is None:
                 progress_pred = []
                 target_progress = []
                 for r in results_for_trajectory:
@@ -1602,11 +1601,9 @@ class RFMHeadsTrainer(Trainer):
             if video_frames_list and self.logger.enabled("wandb"):
                 grid_video = create_video_grid_with_progress(
                     video_frames_list,
-                    trajectory_progress_data=trajectory_progress_data,
+                    trajectory_progress_data,
                     grid_size=(3, 3),
                     max_videos=9,
-                    progress_key_pred="progress_pred",
-                    progress_key_target="target_progress",
                     is_discrete_mode=is_discrete_mode,
                 )
                 if grid_video is not None:

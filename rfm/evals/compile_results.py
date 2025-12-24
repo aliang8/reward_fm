@@ -19,7 +19,6 @@ import torch
 import torch.nn.functional as F
 from sklearn.metrics import average_precision_score
 from rfm.data.datasets.helpers import load_frames_from_npz
-from rfm.data.dataset_category import is_failure
 from rfm.evals.eval_metrics_utils import compute_pearson, compute_preference_accuracy, compute_spearman
 
 
@@ -189,14 +188,9 @@ def run_reward_alignment_eval_per_trajectory(
 
     Returns:
         Tuple of (metrics, plots, video_frames_list, trajectory_progress_data)
-        where trajectory_progress_data is a list of dicts with progress_pred and target_progress
+        where trajectory_progress_data is a list of progress_pred values
         for each trajectory (one per video in video_frames_list)
     """
-    # Determine if this is a failure dataset
-    is_failure_dataset = False
-    if data_source:
-        is_failure_dataset = is_failure(data_source)
-
     # Check if this is RoboArena (uses partial_success instead of quality_label)
     use_partial_success = data_source and "roboarena" in str(data_source).lower()
 
@@ -215,10 +209,6 @@ def run_reward_alignment_eval_per_trajectory(
     plots = []
     video_frames_list = []
     trajectory_progress_data = []
-
-    # Store progress predictions per trajectory for policy ranking
-    trajectory_progress_preds_for_ranking = {}  # trajectory_id -> list of progress_pred arrays
-    trajectory_metadata_for_ranking = {}  # trajectory_id -> {task, quality_label/partial_success}
 
     # Collect all success_probs and success_labels for AUPRC computation
     all_success_probs = []
@@ -340,25 +330,6 @@ def run_reward_alignment_eval_per_trajectory(
         last_success = np.array(all_success_preds) if all_success_preds else None
         last_success_labels = np.array(all_success_labels_list) if all_success_labels_list else None
 
-        # Store progress predictions for policy ranking (reuse what we already collected)
-        # For discrete mode, convert logits to bin indices (via argmax) before storing
-        if is_discrete_mode and all_pred_logits:
-            trajectory_progress_preds_for_ranking[trajectory_id] = [
-                int(np.argmax(np.array(logits))) for logits in all_pred_logits
-            ]
-        else:
-            trajectory_progress_preds_for_ranking[trajectory_id] = [float(p) for p in all_preds]
-
-        # Store metadata for policy ranking
-        metadata = {"task": task}
-        if use_partial_success:
-            partial_success = results_for_trajectory[0].get("partial_success")
-            if partial_success is not None:
-                metadata["partial_success"] = float(partial_success)
-        else:
-            metadata["quality_label"] = quality_label
-        trajectory_metadata_for_ranking[trajectory_id] = metadata
-
         # Load video frames if video path exists
         frames = None
         if video_path:
@@ -382,10 +353,9 @@ def run_reward_alignment_eval_per_trajectory(
             last_preds = np.cumsum(last_preds)
             last_targets = np.cumsum(last_targets)
 
-        trajectory_progress_data.append({
-            "progress_pred": last_preds.tolist() if isinstance(last_preds, np.ndarray) else last_preds,
-            "target_progress": last_targets.tolist() if isinstance(last_targets, np.ndarray) else last_targets,
-        })
+        trajectory_progress_data.append(
+            last_preds.tolist() if isinstance(last_preds, np.ndarray) else last_preds
+        )
 
         # Only compute metrics for successful trajectories
         if quality_label == "successful":

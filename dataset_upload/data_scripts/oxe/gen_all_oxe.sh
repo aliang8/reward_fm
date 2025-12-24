@@ -39,6 +39,7 @@ for dataset_name in ${OXE_VALID_DATASETS[@]}; do
         --config_path=dataset_upload/configs/data_gen_configs/oxe.yaml \
         --output.output_dir ./rfm_dataset/oxe_rfm \
         --dataset.dataset_path ~/tensorflow_datasets/openx_datasets/ \
+        --hub.push_to_hub=false \
         --dataset.dataset_name oxe_$dataset_name \
 
     echo "Done generating dataset: $dataset_name"

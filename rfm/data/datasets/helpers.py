@@ -1,18 +1,14 @@
 from math import e
+from typing import List, Dict, Tuple, Optional, Union, Any
 import os
 import random
 from enum import Enum
 
 import numpy as np
 import json
-
+import torch
 from rfm.utils.distributed import rank_0_print
 from rfm.data.dataset_types import Trajectory
-
-try:
-    import torch
-except ImportError:
-    torch = None
 
 
 class DataGenStrat(Enum):
@@ -21,11 +17,13 @@ class DataGenStrat(Enum):
     SUCCESSFUL = "successful"
     SUBSEQUENCE = "subsequence"
     REVERSE_PROGRESS = "reverse_progress"
+    UNIFORM_SAMPLE = "uniform_sample"
     SUBOPTIMAL = "suboptimal"
     REWOUND = "rewound"
     DIFFERENT_TASK = "different_task"
     DIFFERENT_TASK_INSTRUCTION = "different_task_instruction"
     PAIRED_HUMAN_ROBOT = "paired_human_robot"
+    ROBOARENA_PARTIAL_SUCCESS = "roboarena_partial_success"
 
 
 def load_dataset_success_percent(cutoff_file_path):
@@ -41,6 +39,75 @@ def load_dataset_success_percent(cutoff_file_path):
     except FileNotFoundError:
         print(f"Warning: Success cutoff file {cutoff_file_path} not found. Using default thresholds.")
     return success_percent_dict
+
+
+def convert_continuous_to_discrete_bin(value: float, num_bins: int) -> int:
+    """Convert a single continuous progress value in [0, 1] to a discrete bin [0, num_bins-1].
+
+    Args:
+        value: Single continuous progress value in [0, 1]
+        num_bins: Number of discrete bins to use
+
+    Returns:
+        Discrete bin index in [0, num_bins-1]
+    """
+    return int(min(max(value, 0.0), 1.0) * (num_bins - 1))
+
+
+def convert_continuous_to_discrete_bins(progress_values: Union[List[float], np.ndarray], num_bins: int) -> List[int]:
+    """Convert continuous progress values in [0, 1] to discrete bins [0, num_bins-1].
+
+    Args:
+        progress_values: List or array of continuous progress values in [0, 1]
+        num_bins: Number of discrete bins to use
+
+    Returns:
+        List of discrete bin indices in [0, num_bins-1]
+    """
+    if isinstance(progress_values, np.ndarray):
+        progress_values = progress_values.tolist()
+    return [convert_continuous_to_discrete_bin(p, num_bins) for p in progress_values]
+
+
+def compute_success_labels(
+    target_progress: List[float],
+    data_source: Optional[str],
+    dataset_success_percent: Optional[Dict[str, float]] = None,
+    max_success: float = 1.0,
+    quality_label: Optional[str] = None,
+) -> List[float]:
+    """
+    Compute success labels from target_progress.
+
+    Args:
+        target_progress: List of progress values (floats between 0 and 1)
+        data_source: Data source name (used to look up dataset-specific threshold)
+        dataset_success_percent: Dictionary mapping data source names to max_success thresholds
+        max_success: Default max_success threshold if data_source not in dataset_success_percent
+        quality_label: Quality label of the trajectory ("failure", "suboptimal", "successful", etc.)
+
+    Returns:
+        List of success labels (1.0 for success, 0.0 for failure) for each frame
+    """
+    if target_progress is None or len(target_progress) == 0:
+        return []
+
+    # If trajectory is failure or suboptimal, return all 0s
+    if quality_label is not None and quality_label.lower() in ("failure", "suboptimal", "failed"):
+        return [0.0] * len(target_progress)
+
+    # Get the threshold for this data source
+    if data_source is not None and dataset_success_percent is not None:
+        threshold = dataset_success_percent.get(
+            data_source if isinstance(data_source, str) else str(data_source), max_success
+        )
+    else:
+        threshold = max_success
+
+    # Generate success labels: 1.0 for success (progress > threshold), 0.0 for failure
+    success_labels = [1.0 if prog > threshold else 0.0 for prog in target_progress]
+
+    return success_labels
 
 
 def load_frames_from_npz(npz_filepath: str) -> np.ndarray:
@@ -105,8 +172,8 @@ def load_embeddings_from_path(embeddings_path: str) -> torch.Tensor:
 
 
 def pad_trajectory_to_max_frames_np(
-    frames: np.ndarray, progress: list[float], max_frames: int, pad_from: str = "right"
-) -> tuple[np.ndarray, list[float]]:
+    frames: np.ndarray, progress: List[float], max_frames: int, pad_from: str = "right"
+) -> Tuple[np.ndarray, List[float]]:
     """Pad trajectory frames and progress to max_frames by repeating the first frame/progress if needed.
 
     Args:
@@ -145,8 +212,8 @@ def pad_trajectory_to_max_frames_np(
 
 
 def pad_trajectory_to_max_frames_torch(
-    frames, progress: list[float], max_frames: int, pad_from: str = "right"
-) -> tuple:
+    frames, progress: List[float], max_frames: int, pad_from: str = "right"
+) -> Tuple[torch.Tensor, List[float]]:
     """Pad trajectory frames and progress to max_frames by repeating the first frame/progress if needed.
 
     Args:
@@ -188,8 +255,8 @@ def pad_trajectory_to_max_frames_torch(
 
 
 def linspace_subsample_frames(
-    frames: np.ndarray, num_frames: int = 8, end_idx: int | None = None
-) -> tuple[np.ndarray, list[int]]:
+    frames: np.ndarray, num_frames: int = 8, end_idx: Optional[int] = None
+) -> Tuple[np.ndarray, List[int]]:
     """Uniformly subsample frames from a trajectory and return the indices.
 
     This method takes the full trajectory (e.g., 64 frames) and uniformly subsamples
@@ -225,6 +292,12 @@ def linspace_subsample_frames(
         indices = list(range(effective_total))
         return frames_to_subsample, indices
 
+    # Special case: if num_frames == 1, always take the last frame
+    if num_frames == 1:
+        indices = [effective_total - 1]
+        subsampled_frames = frames_to_subsample[indices]
+        return subsampled_frames, indices
+
     # Evenly spaced indices from 0 to effective_total-1, inclusive
     indices_np = np.linspace(0, effective_total - 1, num_frames)
     indices = np.rint(indices_np).astype(int).tolist()
@@ -247,8 +320,8 @@ def linspace_subsample_frames(
 
 
 def randomly_subsample_frames(
-    frames: np.ndarray, num_frames: int = 8, seed: int | None = None
-) -> tuple[np.ndarray, list[int]]:
+    frames: np.ndarray, num_frames: int = 8, seed: Optional[int] = None
+) -> Tuple[np.ndarray, List[int]]:
     """Randomly subsample frames from a trajectory and return the indices.
 
     This method takes the full trajectory and randomly selects num_frames from it.
@@ -293,10 +366,21 @@ def subsample_segment_frames(
     method: str = "linspace",
     perc_start: float = 0.5,
     perc_end: float = 2.0 / 3.0,
+    start_idx: int | None = None,
+    end_idx: int | None = None,
 ) -> tuple[np.ndarray, int, int, list[int]]:
     """Choose a random segment [start_idx, end_idx) and subsample frames.
 
     Returns subsampled frames along with (start_idx, end_idx, subsampled_indices).
+
+    Args:
+        frames: Input frames array
+        max_frames: Maximum number of frames to subsample
+        method: Subsampling method ("linspace" or "random")
+        perc_start: Percentage for start bound (used if start_idx is None)
+        perc_end: Percentage for end bound (used if end_idx is None)
+        start_idx: Optional start index (if provided, overrides perc_start)
+        end_idx: Optional end index (if provided, overrides perc_end)
     """
     num_frames_total = len(frames)
 
@@ -304,31 +388,37 @@ def subsample_segment_frames(
     if num_frames_total < max_frames:
         return frames, 0, num_frames_total, list(range(num_frames_total))
 
-    # Clamp percentages to valid ranges
-    perc_start = max(0.0, min(1.0, perc_start))
-    perc_end = max(0.0, min(1.0, perc_end))
+    # If start_idx and end_idx are provided, use them directly
+    if start_idx is not None and end_idx is not None:
+        # Ensure indices are valid
+        start_idx = max(0, min(start_idx, num_frames_total - 1))
+        end_idx = max(start_idx + 1, min(end_idx, num_frames_total))
+    else:
+        # Clamp percentages to valid ranges
+        perc_start = max(0.0, min(1.0, perc_start))
+        perc_end = max(0.0, min(1.0, perc_end))
 
-    # Select start and end indices for the chosen trajectory segment
-    start_bound = int(perc_start * num_frames_total)
-    end_bound = int(perc_end * num_frames_total)
+        # Select start and end indices for the chosen trajectory segment
+        start_bound = int(perc_start * num_frames_total)
+        end_bound = int(perc_end * num_frames_total)
 
-    # Ensure end_bound is at least start_bound + 1
-    end_bound = max(end_bound, start_bound + 1)
+        # Ensure end_bound is at least start_bound + 1
+        end_bound = max(end_bound, start_bound + 1)
 
-    start_idx = random.randint(0, max(0, start_bound))
-    end_idx = random.randint(end_bound, num_frames_total)
-
-    # Ensure we have enough frames between start and end
-    attempts = 0
-    max_attempts = 10
-    while end_idx - start_idx < 5 and attempts < max_attempts:
         start_idx = random.randint(0, max(0, start_bound))
         end_idx = random.randint(end_bound, num_frames_total)
-        attempts += 1
 
-    if end_idx - start_idx < 5:
-        start_idx = 0
-        end_idx = num_frames_total
+        # Ensure we have enough frames between start and end
+        attempts = 0
+        max_attempts = 10
+        while end_idx - start_idx < 5 and attempts < max_attempts:
+            start_idx = random.randint(0, max(0, start_bound))
+            end_idx = random.randint(end_bound, num_frames_total)
+            attempts += 1
+
+        if end_idx - start_idx < 5:
+            start_idx = 0
+            end_idx = num_frames_total
 
     # Extract the chosen segment
     segment_frames = frames[start_idx:end_idx]
@@ -342,7 +432,7 @@ def subsample_segment_frames(
     return subsampled_frames, start_idx, end_idx, indices
 
 
-def convert_absolute_to_relative_progress(absolute_progress: list[float]) -> list[float]:
+def convert_absolute_to_relative_progress(absolute_progress: List[float]) -> List[float]:
     """Convert absolute progress values to relative deltas.
 
     Args:
@@ -366,10 +456,10 @@ def compute_progress_from_segment(
     num_frames_total: int,
     start_idx: int,
     end_idx: int,
-    frame_indices: list[int],
-    progress_pred_type: str = "absolute",
-    success_cutoff: float | None = None,
-) -> list[float]:
+    frame_indices: List[int],
+    progress_pred_type: str = "absolute_first_frame",
+    success_cutoff: Optional[float] = None,
+) -> List[float]:
     """Compute progress values given total frames, segment, and subsampled indices.
 
     Args:
@@ -377,12 +467,35 @@ def compute_progress_from_segment(
         start_idx: Start index (inclusive) of the selected segment within the original trajectory.
         end_idx: End index (exclusive) of the selected segment within the original trajectory.
         frame_indices: Indices into the segment array returned by subsampling (0-based in-segment indices).
-        progress_pred_type: "absolute" for cumulative segment progress, "relative" for inter-frame deltas.
+        progress_pred_type: Type of progress calculation:
+            - "absolute_first_frame": progress[i] = i / (num_frames_total - start_idx - 1), evaluated at each selected in-segment index.
+            - "relative_first_frame": progress[0] = 0.0; progress[i] = (frame_indices[i] - frame_indices[i-1]) / (num_frames_total - start_idx).
+            - "absolute_wrt_total_frames": progress[i] = (start_idx + frame_indices[i] + 1) / num_frames_total.
 
     Behavior:
-        - absolute: progress[i] = i / (num_frames_total - start_idx - 1), evaluated at each selected in-segment index.
-        - relative: progress[0] = 0.0; progress[i] = (frame_indices[i] - frame_indices[i-1]) / (num_frames_total - start_idx).
+        - absolute_first_frame: progress[i] = i / (num_frames_total - start_idx - 1), evaluated at each selected in-segment index.
+        - relative_first_frame: progress[0] = 0.0; progress[i] = (frame_indices[i] - frame_indices[i-1]) / (num_frames_total - start_idx).
+        - absolute_wrt_total_frames: progress[i] = (start_idx + frame_indices[i] + 1) / num_frames_total.
     """
+    # Handle absolute_wrt_total_frames first (simplest case)
+    if progress_pred_type == "absolute_wrt_total_frames":
+        segment_progress = []
+        cutoff_index = None
+        if success_cutoff is not None and success_cutoff > 0:
+            # Index of the first frame where progress exceeds the cutoff
+            cutoff_index = int(success_cutoff * num_frames_total)
+
+        for idx in frame_indices:
+            # Calculate absolute index in original trajectory
+            abs_idx = start_idx + idx
+            if cutoff_index is not None and abs_idx >= cutoff_index:
+                # All frames after cutoff get 1.0 progress
+                progress = 1.0
+            else:
+                progress = (abs_idx + 1) / num_frames_total
+            segment_progress.append(progress)
+        return segment_progress
+
     # Calculate progress for the full segment first
     segment_len = end_idx - start_idx
     assert segment_len > 0, "Segment length must be greater than 0"
@@ -393,7 +506,7 @@ def compute_progress_from_segment(
         cutoff_index = int(success_cutoff * num_frames_total)
 
     # Calculate progress at each frame in the segment
-    # This is absolute progress
+    # This is absolute_first_frame progress
     segment_progress = []
     for i in range(segment_len):
         if cutoff_index is not None:
@@ -410,14 +523,15 @@ def compute_progress_from_segment(
     # Determine progress at subsampled indices
     segment_progress = [segment_progress[idx] for idx in frame_indices]
 
-    if progress_pred_type == "relative":
+    if progress_pred_type == "relative_first_frame":
         # Convert absolute progress to relative deltas
         return convert_absolute_to_relative_progress(segment_progress)
 
+    # Default: absolute_first_frame
     return segment_progress
 
 
-def subsample_pairs_and_progress(frames, max_frames: int, progress_pred_type: str = "absolute"):
+def subsample_pairs_and_progress(frames, max_frames: int, progress_pred_type: str = "absolute_first_frame"):
     """Create pairwise frames for progress prediction.
 
     Constructs pairs (o_i, o_i+1), (o_i+1, o_i), (o_i, o_i+T), (o_i+T, o_i)
@@ -427,7 +541,9 @@ def subsample_pairs_and_progress(frames, max_frames: int, progress_pred_type: st
     Args:
         frames: Full trajectory frames (can be numpy array or torch tensor)
         max_frames: Maximum number of frame pairs to generate (will be paired to 2*max_frames total)
-        progress_pred_type: "absolute" or "relative" progress prediction
+        progress_pred_type: Type of progress prediction:
+            - "absolute_first_frame" or "relative_first_frame": delta between frames / num_frames_total
+            - "absolute_wrt_total_frames": absolute indices / num_frames_total for each frame in pair
 
     Returns:
         Tuple of (subsampled_frames, progress_list, metadata)
@@ -464,10 +580,16 @@ def subsample_pairs_and_progress(frames, max_frames: int, progress_pred_type: st
     else:
         pair_frames = np.stack(pair_frames)
 
-    # Calculate progress as a single number: delta between the two frames
-    # For pairwise, we predict the delta/change between the frame pair
-    delta_indices = pair_indices[1] - pair_indices[0]
-    progress = [delta_indices / num_frames_total]  # make sure it is a list
+    # Calculate progress based on type
+    if progress_pred_type == "absolute_wrt_total_frames":
+        # For each frame in the pair, calculate progress as (idx + 1) / num_frames_total
+        progress = [(idx + 1) / num_frames_total for idx in pair_indices]
+    else:
+        # For absolute_first_frame and relative_first_frame, use delta between frames
+        # Calculate progress as a single number: delta between the two frames
+        # For pairwise, we predict the delta/change between the frame pair
+        delta_indices = pair_indices[1] - pair_indices[0]
+        progress = [delta_indices / num_frames_total]  # make sure it is a list
 
     metadata = {
         "pair_indices": pair_indices,
@@ -480,12 +602,14 @@ def subsample_pairs_and_progress(frames, max_frames: int, progress_pred_type: st
 
 
 def create_rewind_trajectory(
-    original_traj: dict,
-    rewind_length: int | None = None,
+    original_traj: Dict[str, Any],
+    rewind_length: Optional[int] = None,
     max_frames: int = 8,
     use_embeddings: bool = False,
-    progress_pred_type: str = "absolute",
-    success_cutoff: float | None = None,
+    progress_pred_type: str = "absolute_first_frame",
+    success_cutoff: Optional[float] = None,
+    dataset_success_percent: Optional[Dict[str, float]] = None,
+    max_success: float = 0.95,
 ) -> Trajectory:
     """Create a suboptimal trajectory by rewinding the original trajectory.
 
@@ -601,25 +725,52 @@ def create_rewind_trajectory(
         # Index of the first frame where progress exceeds the cutoff
         cutoff_index = int(success_cutoff * num_frames)
 
-    # Step 6: Calculate absolute progress for each frame position in the combined trajectory
-    forward_progress_abs = []
-    denom_norm = max(1, (num_frames - start_idx - 1))
-    denom_cut = None
-    if cutoff_index is not None and cutoff_index > start_idx:
-        denom_cut = max(1, (cutoff_index - start_idx - 1))
+    # Calculate progress based on type
+    if progress_pred_type == "absolute_wrt_total_frames":
+        # For absolute_wrt_total_frames, calculate progress as (absolute_idx + 1) / num_frames
+        # cutoff_index is already calculated above
 
-    for i in range(len(forward_indices)):  # 0 to len(forward_indices)-1
-        current_abs_idx = start_idx + i
-        if denom_cut is not None:
-            if current_abs_idx < cutoff_index:
-                forward_progress_abs.append(i / denom_norm)
+        # Forward segment: indices from start_idx to end_idx-1
+        forward_progress_abs = []
+        for i in range(len(forward_indices)):
+            abs_idx = start_idx + i
+            if cutoff_index is not None and abs_idx >= cutoff_index:
+                progress = 1.0
             else:
-                forward_progress_abs.append(min(1.0, i / denom_cut))
-        else:
-            forward_progress_abs.append(i / denom_norm)
+                progress = (abs_idx + 1) / num_frames
+            forward_progress_abs.append(progress)
 
-    # Rewind progress is the reverse of forward progress
-    rewind_progress_abs = forward_progress_abs[::-1][1 : rewind_length + 1]
+        # Rewind segment: reverse the forward progress (but we need to map to actual indices)
+        # The rewind segment goes from end_idx-2 down to rewind_point
+        rewind_actual_indices = list(range(end_idx - 2, rewind_point - 1, -1))  # Reverse order
+        rewind_progress_abs = []
+        for idx in rewind_actual_indices:
+            if cutoff_index is not None and idx >= cutoff_index:
+                progress = 1.0
+            else:
+                progress = (idx + 1) / num_frames
+            rewind_progress_abs.append(progress)
+    else:
+        # For absolute_first_frame and relative_first_frame, use the original logic
+        # Step 6: Calculate absolute progress for each frame position in the combined trajectory
+        forward_progress_abs = []
+        denom_norm = max(1, (num_frames - start_idx - 1))
+        denom_cut = None
+        if cutoff_index is not None and cutoff_index > start_idx:
+            denom_cut = max(1, (cutoff_index - start_idx - 1))
+
+        for i in range(len(forward_indices)):  # 0 to len(forward_indices)-1
+            current_abs_idx = start_idx + i
+            if denom_cut is not None:
+                if current_abs_idx < cutoff_index:
+                    forward_progress_abs.append(i / denom_norm)
+                else:
+                    forward_progress_abs.append(min(1.0, i / denom_cut))
+            else:
+                forward_progress_abs.append(i / denom_norm)
+
+        # Rewind progress is the reverse of forward progress
+        rewind_progress_abs = forward_progress_abs[::-1][1 : rewind_length + 1]
 
     # Combine absolute progress values
     combined_progress_abs = forward_progress_abs + rewind_progress_abs
@@ -628,7 +779,7 @@ def create_rewind_trajectory(
     subsampled_progress = [combined_progress_abs[idx] for idx in subsampled_indices]
     subsampled_frames_shape = subsampled_frames.shape
 
-    if progress_pred_type == "relative":
+    if progress_pred_type == "relative_first_frame":
         subsampled_progress = convert_absolute_to_relative_progress(subsampled_progress)
 
     if use_embeddings:
@@ -648,20 +799,47 @@ def create_rewind_trajectory(
         "subsampled_indices": subsampled_indices,
     }
 
-    return Trajectory(
-        frames=subsampled_frames if not use_embeddings else None,
-        frames_shape=subsampled_frames_shape,
-        video_embeddings=subsampled_frames if use_embeddings else None,
-        text_embedding=text_embedding,
-        task=original_traj["task"],
-        lang_vector=original_traj["lang_vector"],
-        data_source=original_traj["data_source"],
-        quality_label="rewound",
-        is_robot=original_traj["is_robot"],
-        target_progress=subsampled_progress,
-        partial_success=original_traj.get("partial_success"),
-        metadata=metadata,
+    return create_trajectory_from_dict(
+        original_traj,
+        overrides={
+            "frames": subsampled_frames if not use_embeddings else None,
+            "frames_shape": subsampled_frames_shape,
+            "video_embeddings": subsampled_frames if use_embeddings else None,
+            "text_embedding": text_embedding,
+            "quality_label": "rewound",
+            "target_progress": subsampled_progress,
+            "metadata": metadata,
+        },
     )
+
+
+def create_trajectory_from_dict(traj_dict: Dict[str, Any], overrides: Optional[Dict[str, Any]] = None) -> Trajectory:
+    """Create a Trajectory from a dictionary with optional field overrides.
+
+    This helper function simplifies Trajectory creation by extracting common fields
+    from a trajectory dictionary and allowing specific fields to be overridden.
+
+    Args:
+        traj_dict: Dictionary containing trajectory data (e.g., from dataset)
+        overrides: Dictionary of field values to override (e.g., frames, target_progress)
+
+    Returns:
+        A new Trajectory instance
+    """
+    traj_data = {
+        "id": traj_dict.get("id"),
+        "task": traj_dict.get("task"),
+        "lang_vector": traj_dict.get("lang_vector"),
+        "data_source": traj_dict.get("data_source"),
+        "quality_label": traj_dict.get("quality_label"),
+        "is_robot": traj_dict.get("is_robot"),
+        "partial_success": traj_dict.get("partial_success"),
+    }
+
+    if overrides:
+        traj_data.update(overrides)
+
+    return Trajectory.model_validate(traj_data)
 
 
 def show_available_datasets():

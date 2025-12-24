@@ -1,3 +1,5 @@
+from typing import Dict, List, Any, Optional
+
 import numpy as np
 import torch
 import random
@@ -5,8 +7,6 @@ from rfm.data.dataset_types import ProgressSample, Trajectory
 from rfm.data.samplers.base import RFMBaseSampler
 from rfm.data.datasets.helpers import (
     linspace_subsample_frames,
-    pad_trajectory_to_max_frames_np,
-    pad_trajectory_to_max_frames_torch,
     load_embeddings_from_path,
     load_frames_from_npz,
     convert_absolute_to_relative_progress,
@@ -19,16 +19,10 @@ class ProgressDefaultSampler(RFMBaseSampler):
 
     def __init__(
         self,
-        config,
-        dataset,
-        combined_indices,
-        dataset_success_cutoff_map=None,
-        is_evaluation=False,
-        verbose=True,
-        max_trajectories: int | None = None,
+        max_trajectories: Optional[int] = None,
         **kwargs,
     ):
-        super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
+        super().__init__(**kwargs)
 
         self.max_trajectories = max_trajectories
         rank_0_print(
@@ -39,7 +33,7 @@ class ProgressDefaultSampler(RFMBaseSampler):
 
         rank_0_print(f"Generated {len(self.sample_indices)} sample indices", verbose=self.verbose)
 
-    def _generate_all_sample_indices(self) -> list[dict]:
+    def _generate_all_sample_indices(self) -> List[Dict[str, Any]]:
         """Generate all possible sample indices."""
         trajectories_to_process = self.robot_trajectories
         if self.max_trajectories is not None and self.max_trajectories < len(self.robot_trajectories):
@@ -85,14 +79,18 @@ class ProgressDefaultSampler(RFMBaseSampler):
 
         data, frame_indices = linspace_subsample_frames(data, max_frames)
         frames_shape_orig = data.shape
-        progress_abs = [idx / (total_frames - 1) for idx in frame_indices]
 
-        if use_embeddings:
-            video_embeddings, progress_abs = pad_trajectory_to_max_frames_torch(data, progress_abs, max_frames)
-        else:
-            frames, progress_abs = pad_trajectory_to_max_frames_np(data, progress_abs, max_frames)
+        # Compute progress based on type
+        if self.config.progress_pred_type == "absolute_wrt_total_frames":
+            progress_abs = [(idx + 1) / total_frames for idx in frame_indices]
+        elif self.config.progress_pred_type.startswith("absolute"):
+            # absolute_first_frame: use linspace logic
+            progress_abs = [idx / (total_frames - 1) for idx in frame_indices]
+        else:  # relative_first_frame
+            # For relative, we still compute absolute first, then convert
+            progress_abs = [idx / (total_frames - 1) for idx in frame_indices]
 
-        if self.config.progress_pred_type == "relative":
+        if self.config.progress_pred_type == "relative_first_frame":
             progress = convert_absolute_to_relative_progress(progress_abs)
         else:
             progress = progress_abs
@@ -105,22 +103,19 @@ class ProgressDefaultSampler(RFMBaseSampler):
             "video_path": video_path,
         }
 
-        # Create trajectory for the progress sample
-        trajectory = Trajectory(
-            frames=frames,
-            frames_shape=frames_shape_orig,
-            video_embeddings=video_embeddings,
-            text_embedding=text_embedding,
-            id=traj["id"],
-            task=traj["task"],
-            lang_vector=np.array(traj["lang_vector"]),
-            data_source=traj["data_source"],
-            quality_label=traj["quality_label"],
-            is_robot=traj["is_robot"],
-            target_progress=progress,
-            partial_success=traj.get("partial_success"),
-            metadata=metadata,
+        trajectory = create_trajectory_from_dict(
+            traj,
+            overrides={
+                "frames": data if not use_embeddings else None,
+                "frames_shape": frames_shape_orig,
+                "video_embeddings": data if use_embeddings else None,
+                "text_embedding": text_embedding,
+                "lang_vector": np.array(traj["lang_vector"]),
+                "target_progress": progress,
+                "metadata": metadata,
+            },
         )
+        trajectory = self._post_process_trajectory(trajectory)
 
         # Create progress sample
         sample = ProgressSample(trajectory=trajectory)

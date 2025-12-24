@@ -50,6 +50,14 @@ class ModelConfig(PretrainedConfig):
         },
     )
 
+    use_multi_image: bool = field(
+        default=False,
+        metadata={
+            "help": "If True, feed frames as a list of images instead of converting to video (avoids encoding overhead). "
+            "If False, detect automatically based on number of vision_start tokens in the sequence."
+        },
+    )
+
     use_peft: bool = field(default=False, metadata={"help": "Whether to use PEFT/LoRA or train full model"})
     peft_vision_encoder: bool = field(default=False, metadata={"help": "Whether to attach LoRA to the vision encoder"})
 
@@ -63,6 +71,18 @@ class ModelConfig(PretrainedConfig):
     rewind_scale_model: bool = field(
         default=False,
         metadata={"help": "Use ReWINDScaleTransformer instead of standard ReWINDTransformer"},
+    )
+    causal_mask: bool = field(
+        default=False,
+        metadata={"help": "Whether to use casual masking in ReWINDTransformer"},
+    )
+    progress_loss_type: str = field(
+        default="l2",
+        metadata={"help": "Type of progress loss: 'l1', 'l2', or 'discrete'"},
+    )
+    progress_discrete_bins: Optional[int] = field(
+        default=None,
+        metadata={"help": "Number of discrete bins for progress when using discrete loss (None for continuous)"},
     )
     # rewind sub-config
     rewind: Optional[Dict[str, Any]] = field(default=None)
@@ -109,25 +129,12 @@ class DataConfig:
         metadata={"help": "Dataset type: 'default', 'rewound', 'success_failure'"},
     )
 
-    # Rewound dataset specific parameters
-    # Example rewound config:
-    # dataset_type: "rewound"
-    # rewind_lengths: [1, 2, 4, 8]  # Generate rewinds of 1, 2, 4, and 8 frames
-    # samples_per_trajectory: 2  # Generate 2 preference samples per trajectory
-    # Note: Original trajectories are preferred over rewound versions
-    rewind_lengths: Optional[List[int]] = field(
-        default=None, metadata={"help": "List of rewind lengths for rewound dataset (default: 1 to max_frames)"}
-    )
-    samples_per_trajectory: int = field(
-        default=1, metadata={"help": "Number of preference samples to generate per trajectory for rewound dataset"}
-    )
-
     max_frames_after_preprocessing: int = field(
         default=64, metadata={"help": "Maximum number of frames to extract from videos after preprocessing"}
     )
     max_frames: int = field(default=8, metadata={"help": "Maximum number of frames to extract from videos"})
     min_frames_per_trajectory: int = field(
-        default=10,
+        default=5,
         metadata={
             "help": "Minimum number of frames required per trajectory (trajectories with fewer frames will be filtered out)"
         },
@@ -165,11 +172,17 @@ class DataConfig:
     dataset_preference_ratio: float = field(
         default=0.8, metadata={"help": "Ratio of dataset preference samples to generated preference samples"}
     )
-    # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task]
-    preference_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1])
-    # Tunable strategy ratios for progress generation: [successful, rewind, different_task, subsequence, reverse_progress]
+    # [rewind, suboptimal_same_task, different_task, reverse_progress]
+    preference_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 0])
+    # [successful, rewind, different_task, subsequence, reverse_progress]
     progress_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 1, 0])
     similarity_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1])
+    use_uniform_sampling: bool = field(
+        default=False,
+        metadata={
+            "help": "If True, use uniform sampling when selecting rejected trajectories for SUBOPTIMAL and DIFFERENT_TASK strategies in preference sampling"
+        },
+    )
 
     data_source_weights: Optional[Dict[str, float]] = field(
         default=None,
@@ -183,11 +196,17 @@ class DataConfig:
     seed: int = field(default=42, metadata={"help": "Random seed for reproducibility"})
 
     # Evaluation parameters
-    eval_subset_size: Optional[int] = field(default=100, metadata={"help": "Number of samples to use for evaluation"})
+    eval_subset_size: Optional[int] = field(default=None, metadata={"help": "Number of samples to use for evaluation"})
 
     # Dataloader parameters
     dataloader_pin_memory: bool = field(default=True, metadata={"help": "Whether to pin memory in dataloader"})
     dataloader_num_workers: int = field(default=0, metadata={"help": "Number of worker processes for dataloader"})
+    dataloader_persistent_workers: bool = field(
+        default=False,
+        metadata={
+            "help": "If True, the data loader will not shut down the worker processes after a dataset has been consumed once. This allows to maintain the workers dataset instances alive."
+        },
+    )
 
     # Video binned dataset specific parameters
     num_bins: int = field(default=10, metadata={"help": "Number of bins to use for video binned dataset"})
@@ -233,6 +252,24 @@ class DataConfig:
         metadata={"help": "Whether to use pairwise progress sampling strategy for progress prediction"},
     )
 
+    # RoboArena partial success threshold
+    roboarena_partial_success_threshold: float = field(
+        default=0.2,
+        metadata={
+            "help": "Minimum difference in partial_success required between chosen and rejected trajectories for RoboArena preference sampling"
+        },
+    )
+
+    # Progress loss configuration
+    progress_loss_type: str = field(
+        default="l2",
+        metadata={"help": "Type of progress loss: 'l1', 'l2', or 'discrete' (synced from loss config)"},
+    )
+    progress_discrete_bins: int = field(
+        default=10,
+        metadata={"help": "Number of discrete bins for progress when using discrete loss (synced from loss config)"},
+    )
+
 
 @dataclass
 class CustomEvaluationConfig:
@@ -243,6 +280,25 @@ class CustomEvaluationConfig:
     confusion_matrix: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
     reward_alignment: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
     quality_preference: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
+    similarity_score: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
+    comparisons_per_task: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Limit number of quality preference comparisons per task. None = use all comparisons. Uniformly samples if limit is set."
+        },
+    )
+    num_examples_per_quality_pr: int = field(
+        default=5,
+        metadata={
+            "help": "Number of trajectories to sample per quality label for policy ranking evaluation. Only tasks with multiple quality labels are used."
+        },
+    )
+    reward_alignment_max_trajectories: Optional[int] = field(
+        default=10,
+        metadata={
+            "help": "Maximum number of trajectories to use for reward alignment evaluation. None = use all trajectories."
+        },
+    )
 
 
 @dataclass
@@ -280,6 +336,9 @@ class TrainingConfig:
     ddp_bucket_cap_mb: int = field(default=25)
     max_steps: Optional[int] = field(default=-1)  # -1 means no limit, use num_train_epochs instead
     save_steps: int = field(default=100)
+    dataloader_pin_memory: bool = field(default=True)
+    dataloader_num_workers: int = field(default=0)
+    dataloader_persistent_workers: bool = field(default=False)
 
     # Evaluation settings
     evaluation_strategy: str = field(default="no", metadata={"help": "Evaluation strategy: 'no', 'steps', 'epoch'"})
@@ -304,6 +363,20 @@ class TrainingConfig:
     max_grad_norm: float = field(default=1.0)
     weight_decay: float = field(default=0.01, metadata={"help": "Weight decay for optimizer"})
 
+    # Vision encoder fine-tuning settings
+    vision_encoder_lr: Optional[float] = field(
+        default=None,
+        metadata={
+            "help": "Learning rate for last N vision encoder layers. If None, uses the same LR as other parameters."
+        },
+    )
+    vision_encoder_num_layers: int = field(
+        default=2,
+        metadata={
+            "help": "Number of last vision encoder layers to fine-tune with vision_encoder_lr. Only used if vision_encoder_lr is set."
+        },
+    )
+
     # RFM specific settings
     predict_pref_progress: bool = field(
         default=False, metadata={"help": "Whether to predict progress for preference samples"}
@@ -325,6 +398,14 @@ class LossConfig:
         default=False,
         metadata={"help": "If True, only compute progress loss for the last frame in the sequence"},
     )
+    progress_loss_type: str = field(
+        default="l2",
+        metadata={"help": "Type of progress loss: 'l1', 'l2', or 'discrete'"},
+    )
+    progress_discrete_bins: int = field(
+        default=10,
+        metadata={"help": "Number of discrete bins for progress when using discrete loss (default: 10)"},
+    )
 
 
 @dataclass
@@ -341,10 +422,19 @@ class SaveBestConfig:
         metadata={"help": "Whether higher values are better for each metric (must match length of metric_names)"},
     )
     keep_top_k: int = field(default=1, metadata={"help": "Number of best checkpoints/uploads to keep"})
+    save_every: Optional[int] = field(
+        default=None,
+        metadata={"help": "Save 'latest' checkpoint every N steps (should be multiple of eval_steps). None disables."},
+    )
 
     # Hub upload configuration
     upload_to_hub: bool = field(default=False, metadata={"help": "Whether to upload best models to HuggingFace Hub"})
-    hub_model_id: Optional[str] = field(default=None, metadata={"help": "HuggingFace model ID (username/model-name)"})
+    hub_save_every: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Frequency (in steps) to upload to Hub. None = upload every checkpoint. Local saves always happen regardless."
+        },
+    )
     hub_token: Optional[str] = field(default=None, metadata={"help": "HuggingFace token (or set HF_TOKEN env var)"})
     hub_private: bool = field(default=False, metadata={"help": "Whether to make the Hub model private"})
 
@@ -370,6 +460,23 @@ class LoggingConfig:
     # Wandb configuration
     wandb_project: str = field(default="rfm-model", metadata={"help": "Wandb project name"})
     wandb_entity: Optional[str] = field(default=None, metadata={"help": "Wandb entity/username"})
+    wandb_notes: Optional[str] = field(
+        default=None, metadata={"help": "Optional notes/comment to add to the wandb run"}
+    )
+    wandb_mode: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Wandb mode: 'online' (default), 'offline' (local files only, no network I/O), or 'disabled'. "
+            "Offline mode prevents network I/O blocking that can cause deadlocks in distributed training."
+        },
+    )
+    # Log level: "TRACE", "DEBUG2", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
+    log_level: str = field(
+        default="INFO",
+        metadata={
+            "help": "Logging level for console output. Options: TRACE (most verbose), DEBUG2, DEBUG, INFO, WARNING, ERROR, CRITICAL"
+        },
+    )
 
     # SaveBest configuration
     save_best: Optional[SaveBestConfig] = field(default=None, metadata={"help": "SaveBestCallback configuration"})
@@ -394,6 +501,9 @@ class ExperimentConfig:
     custom_eval: CustomEvaluationConfig = field(default_factory=CustomEvaluationConfig)
 
     def __post_init__(self):
+        if isinstance(self.loss, dict):
+            self.loss = LossConfig(**self.loss)
+
         if isinstance(self.model, dict):
             self.model = ModelConfig(**self.model)
 
@@ -405,9 +515,6 @@ class ExperimentConfig:
 
         if isinstance(self.training, dict):
             self.training = TrainingConfig(**self.training)
-
-        if isinstance(self.loss, dict):
-            self.loss = LossConfig(**self.loss)
 
         if isinstance(self.logging, dict):
             self.logging = LoggingConfig(**self.logging)

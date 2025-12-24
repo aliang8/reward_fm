@@ -29,11 +29,11 @@ uv run accelerate launch \
     --num_processes=1 \
     train.py \
     --config-name=rewind_transformer \
-    data.sample_type_ratio=[1,0,0] \
+    data.sample_type_ratio=[1,0,0] \l
     model.train_preference_head=true \
     model.train_progress_head=true \
     model.train_success_head=false \
-    data.train_datasets=[oxe,mw,others] \
+    data.train_datasets=[mw,others] \
     data.eval_datasets=[mw] \
     data.dataset_type=rfm \
     training.max_steps=20000 \

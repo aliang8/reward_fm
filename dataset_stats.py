@@ -56,6 +56,7 @@ def compute_dataset_statistics(cache_dir: str, dataset_path: str, subset: str) -
         "num_trajectories": 0,
         "total_frames": 0,
         "frames_per_trajectory": {},
+        "quality_labels_available": [],
         "exists": False,
         "error": None,
     }
@@ -88,6 +89,17 @@ def compute_dataset_statistics(cache_dir: str, dataset_path: str, subset: str) -
         with open(info_file, "r") as f:
             info = json.load(f)
             result["dataset_info"] = info
+
+        # Load index mappings to get quality labels
+        mappings_file = os.path.join(cache_dir, "index_mappings.json")
+        if os.path.exists(mappings_file):
+            with open(mappings_file, "r") as f:
+                indices = json.load(f)
+                quality_indices = indices.get("quality_indices", {})
+                # Get list of quality labels that have trajectories
+                result["quality_labels_available"] = sorted([
+                    label for label, traj_indices in quality_indices.items() if len(traj_indices) > 0
+                ])
 
         # Compute frame statistics
         # Get frames_shape column directly (much faster than iterating)
@@ -205,6 +217,7 @@ def main():
     train_table.add_column("Total Frames", justify="right", style="yellow")
     train_table.add_column("Frames/Traj\n(mean±std)", justify="right", style="blue")
     train_table.add_column("Min/Max", justify="right", style="white")
+    train_table.add_column("Quality Labels", style="magenta", width=30)
     train_table.add_column("Status", style="white")
 
     train_total_trajectories = 0
@@ -229,11 +242,13 @@ def main():
             train_total_trajectories += result["num_trajectories"]
             train_total_frames += result["total_frames"]
             train_found += 1
+            quality_labels_str = ", ".join(result.get("quality_labels_available", [])) or "None"
         else:
             traj_str = "N/A"
             frames_str = "N/A"
             mean_std_str = "N/A"
             min_max_str = "N/A"
+            quality_labels_str = "N/A"
             status = f"✗ {result['error']}"
             status_style = "red"
 
@@ -244,6 +259,7 @@ def main():
             frames_str,
             mean_std_str,
             min_max_str,
+            quality_labels_str,
             f"[{status_style}]{status}[/{status_style}]",
         )
 
@@ -262,6 +278,7 @@ def main():
     eval_table.add_column("Total Frames", justify="right", style="yellow")
     eval_table.add_column("Frames/Traj\n(mean±std)", justify="right", style="blue")
     eval_table.add_column("Min/Max", justify="right", style="white")
+    eval_table.add_column("Quality Labels", style="magenta", width=30)
     eval_table.add_column("Status", style="white")
 
     eval_total_trajectories = 0
@@ -286,11 +303,13 @@ def main():
             eval_total_trajectories += result["num_trajectories"]
             eval_total_frames += result["total_frames"]
             eval_found += 1
+            quality_labels_str = ", ".join(result.get("quality_labels_available", [])) or "None"
         else:
             traj_str = "N/A"
             frames_str = "N/A"
             mean_std_str = "N/A"
             min_max_str = "N/A"
+            quality_labels_str = "N/A"
             status = f"✗ {result['error']}"
             status_style = "red"
 
@@ -301,6 +320,7 @@ def main():
             frames_str,
             mean_std_str,
             min_max_str,
+            quality_labels_str,
             f"[{status_style}]{status}[/{status_style}]",
         )
 

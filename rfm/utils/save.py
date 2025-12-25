@@ -12,6 +12,7 @@ from transformers import TrainerCallback, TrainerState, TrainerControl, Training
 from transformers.trainer_utils import get_last_checkpoint
 from accelerate.state import AcceleratorState
 from huggingface_hub import HfApi, snapshot_download
+from huggingface_hub.utils import HfHubHTTPError
 from .upload_to_hub import upload_model_to_hub
 from rfm.utils.distributed import is_rank_0
 from rfm.utils.logger import loguru_logger as logger
@@ -363,8 +364,14 @@ class SaveBestCallback(TrainerCallback):
         if missing_metrics:
             logger.warning(f"⚠️ Metrics {missing_metrics} not found in evaluation metrics")
             logger.warning(f"Available metrics: {metrics.keys()}")
+            # If all metrics are missing, use a dummy score for filename but still save
             if score == float("-inf"):  # All metrics missing
-                return
+                score_for_filename = 0.0  # Dummy value for filename
+                logger.warning("⚠️ All metrics missing, using dummy score 0.0 in checkpoint filename")
+            else:
+                score_for_filename = score
+        else:
+            score_for_filename = score
 
         improved = (self._best_val is None) or (score > self._best_val)
 
@@ -379,19 +386,19 @@ class SaveBestCallback(TrainerCallback):
             should_save = score > worst_score  # Always use > since we normalized scores
 
         if should_save and self._trainer:
-            # Update overall best for reference
-            if improved:
+            # Update overall best for reference (only if we have a valid score)
+            if improved and score != float("-inf"):
                 self._best_val = score
 
             # Make a descriptive dir name
             step = state.global_step
             metric_short = self._build_metric_short_name()
-            tag = f"{metric_short}={score:.4f}_step={step}"
+            tag = f"{metric_short}={score_for_filename:.4f}_step={step}"
             ckpt_dir = os.path.join(args.output_dir, f"ckpt-{tag}")
 
             metrics_str = self._build_metrics_detail_string(metrics)
             logger.info(
-                f"💾 Saving ckpt: {ckpt_dir} | avg_score: {score:.6f} | {metrics_str} (rank {len(self._saved) + 1}/{self.keep_top_k})"
+                f"💾 Saving ckpt: {ckpt_dir} | avg_score: {score_for_filename:.6f} | {metrics_str} (rank {len(self._saved) + 1}/{self.keep_top_k})"
             )
 
             # Save model, trainer state, and metrics
@@ -429,9 +436,9 @@ class SaveBestCallback(TrainerCallback):
 
             if should_upload_to_hub:
                 hub_model_id = self._get_hub_model_id(args)
-                tag_name = self._clean_tag_name(f"best-{metric_short}-{score:.4f}-step-{step}")
+                tag_name = self._clean_tag_name(f"best-{metric_short}-{score_for_filename:.4f}-step-{step}")
                 individual_scores_str = self._build_individual_scores_string(metrics)
-                commit_message = f"Checkpoint: avg_score={score:.4f} at step {step} | {individual_scores_str}"
+                commit_message = f"Checkpoint: avg_score={score_for_filename:.4f} at step {step} | {individual_scores_str}"
 
                 logger.info(f"🚀 Uploading to Hub: {hub_model_id}")
 

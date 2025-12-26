@@ -234,7 +234,7 @@ logging:
     save_every: 1000  # Save 'latest' checkpoint every N steps (should be multiple of custom_eval_steps). Set to null to disable.
     
     # Hub upload configuration (optional)
-    upload_to_hub: true   # Whether to upload best models to HuggingFace Hub
+    upload_to_hub: false   # Whether to upload best models to HuggingFace Hub
     hub_save_every: 1000  # Frequency (in steps) to upload to Hub. null = upload every checkpoint. Local saves always happen regardless.
     hub_token: null       # Set to your HF token or use HF_TOKEN environment variable
     hub_private: false    # Whether to make the uploaded model private

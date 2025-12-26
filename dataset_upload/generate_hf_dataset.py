@@ -856,6 +856,63 @@ def main(cfg: GenerateConfig):
             print(f"Dataset saved locally to: {dataset_path_local}")
         print("Dataset conversion complete!")
         return
+    elif "usc_koch_human_robot_paired" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.usc_koch_human_robot_paired_loader import (
+            convert_usc_koch_human_robot_paired_to_hf,
+        )
+
+        # Determine trajectory type from dataset name
+        if "usc_koch_human_robot_paired_human" in cfg.dataset.dataset_name.lower():
+            trajectory_type = "human"
+        elif "usc_koch_human_robot_paired_robot" in cfg.dataset.dataset_name.lower():
+            trajectory_type = "robot"
+        else:
+            raise ValueError(
+                f"Dataset name must specify either 'usc_koch_human_robot_paired_human' or 'usc_koch_human_robot_paired_robot': {cfg.dataset.dataset_name}. "
+            )
+
+        # Override output_dir and hub_repo_id based on dataset_name
+        output_dir_override = os.path.join(
+            os.path.dirname(cfg.output.output_dir), cfg.dataset.dataset_name.lower()
+        )
+
+        print(
+            f"Converting USC Koch Human-Robot Paired ({trajectory_type}) to HF from: {cfg.dataset.dataset_path}"
+        )
+        dataset = convert_usc_koch_human_robot_paired_to_hf(
+            dataset_path=cfg.dataset.dataset_path,
+            dataset_name=cfg.dataset.dataset_name,
+            output_dir=output_dir_override,
+            trajectory_type=trajectory_type,
+            max_trajectories=cfg.output.max_trajectories,
+            max_frames=cfg.output.max_frames,
+            fps=cfg.output.fps,
+            num_workers=cfg.output.num_workers,
+        )
+
+        # Handle pushing/saving consistently
+        if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
+            # Use the dataset_name for hub_repo_id if it's the generic one
+            hub_repo_id = cfg.hub.hub_repo_id
+            if hub_repo_id.endswith("usc_koch_human_robot_paired"):
+                hub_repo_id = hub_repo_id.replace(
+                    "usc_koch_human_robot_paired", cfg.dataset.dataset_name.lower()
+                )
+
+            print(f"\nPushing dataset to HuggingFace Hub: {hub_repo_id}")
+            try:
+                push_hf_dataset_and_video_files_to_hub(
+                    dataset, hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, output_dir_override
+                )
+            except Exception as e:
+                print(f"❌ Error pushing to hub: {e}")
+                print("Dataset was created locally but failed to push metadata to hub")
+        else:
+            dataset_path_local = os.path.join(output_dir_override, (cfg.dataset.dataset_name).lower())
+            dataset.save_to_disk(dataset_path_local)
+            print(f"Dataset saved locally to: {dataset_path_local}")
+        print("Dataset conversion complete!")
+        return
     elif "egocot" in cfg.dataset.dataset_name.lower():
         from dataset_upload.dataset_loaders.egocot_loader import load_egocot_dataset
 

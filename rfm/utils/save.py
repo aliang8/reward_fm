@@ -628,14 +628,17 @@ def load_model_from_hf(
     else:
         repo_id, revision = model_path, None
 
-    if os.path.exists(resolved_path):
+    resolved_path = Path(resolved_path)
+
+    if resolved_path.exists():
         # Local checkpoint: look for config.yaml
+
         candidate_paths = [
-            os.path.join(resolved_path, "config.yaml"),
-            os.path.join(os.path.dirname(resolved_path), "config.yaml"),
+            resolved_path / "config.yaml",
+            resolved_path.parent / "config.yaml",
         ]
         for candidate in candidate_paths:
-            if os.path.isfile(candidate):
+            if candidate.is_file():
                 config_path = candidate
                 break
     else:
@@ -667,7 +670,7 @@ def load_model_from_hf(
     # Import here to avoid circular dependency with setup_utils
     from rfm.utils.setup_utils import setup_model_and_processor
 
-    tokenizer, processor, reward_model = setup_model_and_processor(exp_config.model, resolved_path)
+    tokenizer, processor, reward_model = setup_model_and_processor(exp_config.model, str(resolved_path))
     reward_model = reward_model.to(device)
     reward_model.eval()
 

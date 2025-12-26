@@ -205,6 +205,19 @@ DATASET_MAP = {
             ["jesbu1_hand_paired_rfm_hand_paired_robot", "jesbu1_hand_paired_rfm_hand_paired_human"],
         ]
     },
+    "franka": {
+        "train": [
+            "jesbu1_oxe_rfm_oxe_droid",
+            "jesbu1_roboarena_0825_rfm_roboarena",
+        ],
+        "eval": [
+            "jesbu1_mit_franka_p-rank_rfm_mit_franka_p-rank_rfm",
+            "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
+            "jesbu1_roboarena_0825_rfm_roboarena",
+            "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",
+            "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
+        ],
+    }
 }
 
 

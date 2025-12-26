@@ -55,7 +55,7 @@ from rfm.models.utils import ModelOutput
 from rfm.utils.config_utils import display_config, convert_hydra_to_dataclass
 from rfm.utils.logger import get_logger, setup_loguru_logging
 
-LOG_LEVEL = os.environ.get("RFM_LOG_LEVEL", "INFO").upper()
+LOG_LEVEL = "DEBUG"
 setup_loguru_logging(log_level=LOG_LEVEL)
 logger = get_logger()
 logger.info(f"rfm.eval_server logger initialized at level {LOG_LEVEL}")

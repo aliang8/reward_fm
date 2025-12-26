@@ -632,22 +632,45 @@ def load_model_from_hf(
 
     if resolved_path.exists():
         # Local checkpoint: look for config.yaml
-
         candidate_paths = [
             resolved_path / "config.yaml",
             resolved_path.parent / "config.yaml",
         ]
+        config_path = None
         for candidate in candidate_paths:
             if candidate.is_file():
                 config_path = candidate
                 break
+        
+        # If config.yaml not found locally, try to download it from Hub
+        if config_path is None:
+            try:
+                from huggingface_hub import hf_hub_download
+            except ImportError:
+                raise ImportError("huggingface_hub not available. Install with: pip install huggingface_hub")
+            
+            # Check if this is a HuggingFace repo (not a local path)
+            if "/" in repo_id and not repo_id.startswith("/"):
+                logger.info(f"config.yaml not found locally, downloading from HuggingFace Hub: {repo_id}@{revision or 'latest'}")
+                try:
+                    config_path = hf_hub_download(
+                        repo_id=repo_id, filename="config.yaml", revision=revision, token=hub_token
+                    )
+                    logger.info(f"Downloaded config.yaml to: {config_path}")
+                except Exception as e:
+                    logger.warning(f"Could not download config.yaml from Hub: {e}")
+                    raise ValueError(f"config.yaml not found locally and could not be downloaded from Hub: {e}")
+            else:
+                raise ValueError(f"config.yaml not found in checkpoint directory or parent directory: {resolved_path}")
     else:
         try:
             from huggingface_hub import hf_hub_download
         except ImportError:
             raise ImportError("huggingface_hub not available. Install with: pip install huggingface_hub")
         # Download config with revision if specified
+        logger.info(f"Downloading config.yaml from HuggingFace Hub: {repo_id}@{revision or 'latest'}")
         config_path = hf_hub_download(repo_id=repo_id, filename="config.yaml", revision=revision, token=hub_token)
+        logger.info(f"Downloaded config.yaml to: {config_path}")
 
     with open(config_path) as f:
         yaml_text = f.read()

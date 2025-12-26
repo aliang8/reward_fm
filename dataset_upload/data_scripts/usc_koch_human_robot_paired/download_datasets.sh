@@ -1,17 +1,17 @@
-#!/usr/bin/env bash
+#!/bin/bash
 source ./venv/bin/activate
 
-datasets = (
-    "usc_koch_throw_the_orange_cup_away_red_trash_can",
-    "usc_koch_throw_the_black_marker_away_blue_trash_can",
-    "usc_koch_open_the_red_trash_bin_red_trash_bin",
-    "usc_koch_open_the_green_trash_bin_green_trash_bin",
-    "usc_koch_open_the_blue_trash_bin_blue_trash_bin",
-    "usc_koch_separate_the_red_and_orange_and_orange_cups",
-    "usc_koch_separate_the_purple_and_orange_and_orange_cups",
-    "usc_koch_separate_the_purple_and_red_and_red_cups",
-    "usc_koch_move_the_orange_cup_from_right_to_left",
-    "usc_koch_move_the_orange_cup_from_left_to_right",
+datasets=(
+    "usc_koch_throw_the_orange_cup_away_red_trash_can"
+    "usc_koch_throw_the_black_marker_away_blue_trash_can"
+    "usc_koch_open_the_red_trash_bin_red_trash_bin"
+    "usc_koch_open_the_green_trash_bin_green_trash_bin"
+    "usc_koch_open_the_blue_trash_bin_blue_trash_bin"
+    "usc_koch_separate_the_red_and_orange_and_orange_cups"
+    "usc_koch_separate_the_purple_and_orange_and_orange_cups"
+    "usc_koch_separate_the_purple_and_red_and_red_cups"
+    "usc_koch_move_the_orange_cup_from_right_to_left"
+    "usc_koch_move_the_orange_cup_from_left_to_right"
 )
 
 for dataset in ${datasets[@]}; do

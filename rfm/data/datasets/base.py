@@ -48,7 +48,13 @@ def resolve_dataset_keys(
                 else:
                     # Not a key, assume it's already a dataset name
                     resolved_group.append(key)
-            resolved_datasets.append(resolved_group)
+            seen = set()
+            deduplicated_group = []
+            for item in resolved_group:
+                if item not in seen:
+                    seen.add(item)
+                    deduplicated_group.append(item)
+            resolved_datasets.append(deduplicated_group)
         return resolved_datasets
 
     # Handle flat list (original behavior)
@@ -63,7 +69,13 @@ def resolve_dataset_keys(
         else:
             # Not a key, assume it's already a dataset name
             resolved_datasets.append(key)
-    return resolved_datasets
+    seen = set()
+    deduplicated_datasets = []
+    for item in resolved_datasets:
+        if item not in seen:
+            seen.add(item)
+            deduplicated_datasets.append(item)
+    return deduplicated_datasets
 
 
 class BaseDataset(torch.utils.data.Dataset):

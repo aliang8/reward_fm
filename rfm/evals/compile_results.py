@@ -197,10 +197,12 @@ def run_reward_alignment_eval_per_trajectory(
     # Determine success availability once at the beginning
     have_success = False
     have_success_labels = False
+    have_success_probs = False
     if results and len(results) > 0:
         first_result = results[0]
         have_success = first_result.get("success_pred", None) is not None
         have_success_labels = first_result.get("success_labels", None) is not None
+        have_success_probs = first_result.get("success_probs", None) is not None
 
     unique_trajectory_ids = set()
     loss_per_trajectory = np.zeros(1)
@@ -250,6 +252,7 @@ def run_reward_alignment_eval_per_trajectory(
         all_target_bins = []  # For discrete mode: collect bin indices
         all_success_preds = []
         all_success_labels_list = []
+        all_success_probs_list = []
 
         for timestep, r in enumerate(results_for_trajectory):
             pred = r.get("progress_pred")
@@ -321,6 +324,11 @@ def run_reward_alignment_eval_per_trajectory(
             if succ_labels is not None and len(succ_labels) > 0:
                 all_success_labels_list.append(float(succ_labels[-1]))
 
+            # Optional success probabilities from trainer outputs
+            succ_probs = r.get("success_probs", None)
+            if succ_probs is not None and len(succ_probs) > 0:
+                all_success_probs_list.append(float(succ_probs[-1]))
+
         if len(all_preds) == 0 or len(all_targets) == 0:
             print("No valid predictions or targets found for trajectory: ", trajectory_id)
             continue
@@ -329,6 +337,7 @@ def run_reward_alignment_eval_per_trajectory(
         last_targets = np.array(all_targets)
         last_success = np.array(all_success_preds) if all_success_preds else None
         last_success_labels = np.array(all_success_labels_list) if all_success_labels_list else None
+        last_success_probs = np.array(all_success_probs_list) if all_success_probs_list else None
 
         # Load video frames if video path exists
         frames = None
@@ -380,15 +389,19 @@ def run_reward_alignment_eval_per_trajectory(
             traj_pearson = 0.0
 
         # Create a wandb plot for progress predictions and, if available, success predictions
-        if have_success and last_success is not None and len(last_success) == len(last_preds):
-            fig, axs = plt.subplots(1, 2, figsize=(10, 3.5))
-            # Progress subplot
-            ax = axs[0]
-            # Success subplot (binary)
-            ax2 = axs[1]
+        has_success_binary = have_success and last_success is not None and len(last_success) == len(last_preds)
+        
+        if has_success_binary:
+            # Three subplots: progress, success (binary), success_probs
+            fig, axs = plt.subplots(1, 3, figsize=(15, 3.5))
+            ax = axs[0]  # Progress subplot
+            ax2 = axs[1]  # Success subplot (binary)
+            ax3 = axs[2]  # Success probs subplot
         else:
+            # Single subplot: progress only
             fig, ax = plt.subplots(figsize=(6, 3.5))
             ax2 = None
+            ax3 = None
 
         ax.plot(last_preds, linewidth=2)
         ax.set_ylabel("Progress")
@@ -408,7 +421,7 @@ def run_reward_alignment_eval_per_trajectory(
         ax.set_yticks(y_ticks)
         ax.set_title(title)
 
-        # Setup success subplot if available
+        # Setup success subplot
         if ax2 is not None:
             ax2.step(range(len(last_success)), last_success, where="post", linewidth=2, label="Predicted", color="blue")
             # Add ground truth success labels as green line if available
@@ -425,11 +438,37 @@ def run_reward_alignment_eval_per_trajectory(
                     label="Ground Truth",
                     color="green",
                 )
-            ax2.set_ylabel("Success")
+            ax2.set_ylabel("Success (Binary)")
             ax2.set_ylim(-0.05, 1.05)
             ax2.spines["right"].set_visible(False)
             ax2.spines["top"].set_visible(False)
             ax2.set_yticks([0, 1])
+            ax2.legend()
+
+        # Setup success probs subplot if available
+        if ax3 is not None:
+            ax3.plot(range(len(last_success_probs)), last_success_probs, linewidth=2, label="Success Prob", color="purple")
+            # Add ground truth success labels as green line if available
+            if (
+                have_success_labels
+                and last_success_labels is not None
+                and len(last_success_labels) == len(last_success_probs)
+            ):
+                ax3.step(
+                    range(len(last_success_labels)),
+                    last_success_labels,
+                    where="post",
+                    linewidth=2,
+                    label="Ground Truth",
+                    color="green",
+                    linestyle="--",
+                )
+            ax3.set_ylabel("Success Probability")
+            ax3.set_ylim(-0.05, 1.05)
+            ax3.spines["right"].set_visible(False)
+            ax3.spines["top"].set_visible(False)
+            ax3.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
+            ax3.legend()
 
         plots.append(fig)
 

@@ -127,6 +127,7 @@ class RFMBaseSampler:
             data_source=trajectory.data_source,
             dataset_success_percent=self.dataset_success_cutoff_map,
             max_success=self.config.max_success,
+            quality_label=trajectory.quality_label,
         )
 
         # Convert partial_success to discrete bins if in discrete mode

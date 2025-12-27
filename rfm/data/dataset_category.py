@@ -257,6 +257,12 @@ DATA_SOURCE_CATEGORY = {
         "racer_train",
         "racer_val",
     ],
+    "franka": [
+        "oxe_droid",
+        "roboarena",
+        "molmoact_dataset_household",
+        "molmoact_dataset_tabletop",
+    ],
 }
 
 # DATASET helper functions

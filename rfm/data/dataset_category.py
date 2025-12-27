@@ -209,6 +209,8 @@ DATASET_MAP = {
         "train": [
             "jesbu1_oxe_rfm_oxe_droid",
             "jesbu1_roboarena_0825_rfm_roboarena",
+            "jesbu1_molmoact_rfm_molmoact_dataset_household",
+            "jesbu1_molmoact_rfm_molmoact_dataset_tabletop",
         ],
         "eval": [
             "jesbu1_mit_franka_p-rank_rfm_mit_franka_p-rank_rfm",

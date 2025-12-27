@@ -72,6 +72,7 @@ DS_SHORT_NAME_MAPPING = {
     "jesbu1_racer_rfm_racer_train": "racer_train",
     "jesbu1_racer_rfm_racer_val": "racer_val",
     "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist": "roboarena_eval",
+    "jesbu1_roboarena_0825_rfm_roboarena": "roboarena_w_wrist",
     # Policy Ranking
     "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking": "usc_xarm",
     "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking": "usc_franka",

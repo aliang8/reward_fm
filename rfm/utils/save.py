@@ -438,7 +438,9 @@ class SaveBestCallback(TrainerCallback):
                 hub_model_id = self._get_hub_model_id(args)
                 tag_name = self._clean_tag_name(f"best-{metric_short}-{score_for_filename:.4f}-step-{step}")
                 individual_scores_str = self._build_individual_scores_string(metrics)
-                commit_message = f"Checkpoint: avg_score={score_for_filename:.4f} at step {step} | {individual_scores_str}"
+                commit_message = (
+                    f"Checkpoint: avg_score={score_for_filename:.4f} at step {step} | {individual_scores_str}"
+                )
 
                 logger.info(f"🚀 Uploading to Hub: {hub_model_id}")
 
@@ -641,17 +643,19 @@ def load_model_from_hf(
             if candidate.is_file():
                 config_path = candidate
                 break
-        
+
         # If config.yaml not found locally, try to download it from Hub
         if config_path is None:
             try:
                 from huggingface_hub import hf_hub_download
             except ImportError:
                 raise ImportError("huggingface_hub not available. Install with: pip install huggingface_hub")
-            
+
             # Check if this is a HuggingFace repo (not a local path)
             if "/" in repo_id and not repo_id.startswith("/"):
-                logger.info(f"config.yaml not found locally, downloading from HuggingFace Hub: {repo_id}@{revision or 'latest'}")
+                logger.info(
+                    f"config.yaml not found locally, downloading from HuggingFace Hub: {repo_id}@{revision or 'latest'}"
+                )
                 try:
                     config_path = hf_hub_download(
                         repo_id=repo_id, filename="config.yaml", revision=revision, token=hub_token

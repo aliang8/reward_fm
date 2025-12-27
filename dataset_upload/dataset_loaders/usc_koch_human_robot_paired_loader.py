@@ -138,7 +138,9 @@ def _process_robot_episode_from_lerobot(args):
 
     try:
         # Load the video for this episode (using top view by default)
-        video_path_pattern = dataset_path / "videos" / "observation.images.top" / "chunk-000" / f"file-{episode_idx:03d}.mp4"
+        video_path_pattern = (
+            dataset_path / "videos" / "observation.images.top" / "chunk-000" / f"file-{episode_idx:03d}.mp4"
+        )
 
         if not video_path_pattern.exists():
             print(f"Video not found: {video_path_pattern}")
@@ -270,18 +272,16 @@ def convert_usc_koch_human_robot_paired_to_hf(
                 if not instruction:
                     continue
 
-                result = _process_human_episode(
-                    (
-                        str(video_path),
-                        str(json_path),
-                        global_episode_idx,
-                        lang_cache[instruction],
-                        output_dir,
-                        dataset_name,
-                        max_frames,
-                        fps,
-                    )
-                )
+                result = _process_human_episode((
+                    str(video_path),
+                    str(json_path),
+                    global_episode_idx,
+                    lang_cache[instruction],
+                    output_dir,
+                    dataset_name,
+                    max_frames,
+                    fps,
+                ))
                 if result:
                     human_entries.append(result)
                     global_episode_idx += 1
@@ -300,18 +300,16 @@ def convert_usc_koch_human_robot_paired_to_hf(
                 if not instruction:
                     continue
 
-                args_list.append(
-                    (
-                        str(video_path),
-                        str(json_path),
-                        global_episode_idx,
-                        lang_cache[instruction],
-                        output_dir,
-                        dataset_name,
-                        max_frames,
-                        fps,
-                    )
-                )
+                args_list.append((
+                    str(video_path),
+                    str(json_path),
+                    global_episode_idx,
+                    lang_cache[instruction],
+                    output_dir,
+                    dataset_name,
+                    max_frames,
+                    fps,
+                ))
                 global_episode_idx += 1
 
             with Pool(processes=num_workers) as pool:
@@ -369,19 +367,17 @@ def convert_usc_koch_human_robot_paired_to_hf(
 
             # Process each episode
             for ep_idx in range(total_episodes):
-                result = _process_robot_episode_from_lerobot(
-                    (
-                        robot_dataset_path,
-                        ep_idx,
-                        task_name,
-                        lang_cache[task_name],
-                        output_dir,
-                        dataset_name,
-                        max_frames,
-                        fps,
-                        global_episode_idx,
-                    )
-                )
+                result = _process_robot_episode_from_lerobot((
+                    robot_dataset_path,
+                    ep_idx,
+                    task_name,
+                    lang_cache[task_name],
+                    output_dir,
+                    dataset_name,
+                    max_frames,
+                    fps,
+                    global_episode_idx,
+                ))
                 if result:
                     robot_entries.append(result)
                     global_episode_idx += 1
@@ -407,4 +403,3 @@ def convert_usc_koch_human_robot_paired_to_hf(
         })
 
     return Dataset.from_list(all_entries)
-

@@ -217,7 +217,7 @@ DATASET_MAP = {
             "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",
             "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
         ],
-    }
+    },
 }
 
 

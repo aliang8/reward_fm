@@ -1627,7 +1627,7 @@ class RFMHeadsTrainer(Trainer):
                         )
                 for idx, plot in enumerate(plots):
                     self.logger.log_figure(f"{ds_name}/reward_alignment_plot/{idx}", plot, step=eval_step)
-            
+
             # Close all plots to avoid accumulating open figures
             for plot in plots:
                 plt.close(plot)

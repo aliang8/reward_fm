@@ -96,6 +96,9 @@ data:
   data_source_weights:
     metaworld_train: 1
     roboarena: 1
+    oxe_droid: 1
+    molmoact_dataset_household: 1
+    molmoact_dataset_tabletop: 1
 
   # Data loading settings
   dataloader_pin_memory: True

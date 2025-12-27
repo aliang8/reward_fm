@@ -1597,23 +1597,23 @@ class RFMHeadsTrainer(Trainer):
                     step=eval_step,
                 )
 
-            # Create and log 3x3 grid of videos with progress overlays
-            if video_frames_list and self.logger.enabled("wandb"):
-                grid_video = create_video_grid_with_progress(
-                    video_frames_list,
-                    trajectory_progress_data,
-                    grid_size=(3, 3),
-                    max_videos=9,
-                    is_discrete_mode=is_discrete_mode,
-                )
-                if grid_video is not None:
-                    self.logger.log_video(
-                        f"reward_alignment_grid/{ds_name}",
-                        grid_video,
-                        fps=2,
-                        step=eval_step,
-                    )
-                    del grid_video
+            # # Create and log 3x3 grid of videos with progress overlays
+            # if video_frames_list and self.logger.enabled("wandb"):
+            #     grid_video = create_video_grid_with_progress(
+            #         video_frames_list,
+            #         trajectory_progress_data,
+            #         grid_size=(3, 3),
+            #         max_videos=9,
+            #         is_discrete_mode=is_discrete_mode,
+            #     )
+            #     if grid_video is not None:
+            #         self.logger.log_video(
+            #             f"reward_alignment_grid/{ds_name}",
+            #             grid_video,
+            #             fps=2,
+            #             step=eval_step,
+            #         )
+            #         del grid_video
 
             # For tensorboard (no table support), log each video and its figure separately
             if self.logger.enabled("tensorboard"):

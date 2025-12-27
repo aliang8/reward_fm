@@ -46,7 +46,6 @@ from rfm.configs.experiment_configs import (
 )
 from rfm.data.collators import BaseCollator, ReWiNDBatchCollator, RFMBatchCollator, VQABatchCollator
 from rfm.data.datasets import (
-    BalancedRFMDataset,
     RFMDataset,
     StrategyBalancedDataset,
     BaseDataset,
@@ -54,6 +53,7 @@ from rfm.data.datasets import (
     SingleFrameDataset,
 )
 from rfm.data.datasets.custom_eval import CustomEvalDataset
+from rfm.data.datasets.data_source_balance import DataSourceBalancedWrapper
 from rfm.models import RFM, RFMVQA, ReWiNDTransformer
 from rfm.models.rewind_transformer import ReWINDTransformerConfig
 from rfm.models.rewind_transformer_scale import ReWINDScaleTransformerConfig, ReWiNDScaleTransformer
@@ -794,11 +794,27 @@ def setup_dataset(cfg: DataConfig, is_eval: bool = False, **kwargs) -> BaseDatas
     """Shared function to create Dataset for training or evaluation"""
     dataset_cls = {
         "rfm": RFMDataset,
-        "data_source_balance": BalancedRFMDataset,
         "strategy_balance": StrategyBalancedDataset,
         "single_frame": SingleFrameDataset,
     }
+    
+    # Validate dataset_type
+    if cfg.dataset_type not in dataset_cls:
+        raise ValueError(
+            f"Unknown dataset_type: {cfg.dataset_type}. "
+            f"Must be one of: {list(dataset_cls.keys())}"
+        )
+    
+    # Create the base dataset
     dataset = dataset_cls[cfg.dataset_type](config=cfg, is_evaluation=is_eval, **kwargs)
+    
+    # Apply data source balancing wrapper if requested
+    if cfg.use_data_source_balance:
+        if not cfg.data_source_weights:
+            raise ValueError(
+                "use_data_source_balance=True requires data_source_weights to be set in config"
+            )
+        dataset = DataSourceBalancedWrapper(dataset, config=cfg, is_evaluation=is_eval, **kwargs)
 
     if not is_eval:
         dataset = InfiniteDataset(dataset)

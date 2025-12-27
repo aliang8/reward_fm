@@ -390,9 +390,9 @@ def run_reward_alignment_eval_per_trajectory(
         # Create a wandb plot for progress predictions and, if available, success predictions
         # Use the shared helper function from eval_viz_utils
         has_success_binary = have_success and last_success is not None and len(last_success) == len(last_preds)
-        
+
         title = f"Progress - {task} - {quality_label}\nLoss: {traj_loss:.3f}, pearson: {traj_pearson:.2f}"
-        
+
         fig = create_combined_progress_success_plot(
             progress_pred=last_preds,
             num_frames=len(last_preds),
@@ -405,7 +405,7 @@ def run_reward_alignment_eval_per_trajectory(
             loss=traj_loss,
             pearson=traj_pearson,
         )
-        
+
         plots.append(fig)
 
         # Accumulate metrics only for successful trajectories

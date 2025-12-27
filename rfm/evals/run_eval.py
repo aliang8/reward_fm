@@ -29,7 +29,7 @@ Usage Examples:
   # Single video via local model
   uv run python rfm/evals/run_eval.py --mode model \
       --model-path rewardfm/pref_prog_2frames_all \
-      --video video.mp4 --task "Pick up the red block" --fps 1.0 \
+      --video video.mp4 --task "Pick up the red block" --fps 1.0 
 
   # Dual video preference via Gradio
   uv run python rfm/evals/run_eval.py --mode gradio \
@@ -71,15 +71,7 @@ from rfm.evals.eval_utils import build_payload, post_batch_npy
 # Need to add parent directory to path to import from rewardeval_ui
 import sys
 from pathlib import Path
-
-# Get the project root (two levels up from rfm/evals/)
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
-from rewardeval_ui.app import (
-    extract_frames,
-    create_comparison_plot,
-)
-from rfm.evals.eval_viz_utils import create_combined_progress_success_plot
+from rfm.evals.eval_viz_utils import create_combined_progress_success_plot, extract_frames
 
 # Optional imports for different modes
 try:
@@ -107,24 +99,24 @@ except ImportError:
 
 def find_video_files(directory: str) -> list[str]:
     """Find all video files in a directory.
-    
+
     Args:
         directory: Path to directory containing video files
-        
+
     Returns:
         List of paths to video files
     """
-    video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv', '.wmv', '.m4v'}
+    video_extensions = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv", ".m4v"}
     video_files = []
-    
+
     directory_path = Path(directory)
     if not directory_path.is_dir():
         return []
-    
+
     for file_path in directory_path.iterdir():
         if file_path.is_file() and file_path.suffix.lower() in video_extensions:
             video_files.append(str(file_path))
-    
+
     # Sort for consistent ordering
     video_files.sort()
     return video_files
@@ -132,44 +124,44 @@ def find_video_files(directory: str) -> list[str]:
 
 def infer_task_from_video_name(video_path: str) -> str:
     """Infer task name from video filename.
-    
+
     Task is everything before the comma (if comma exists), or everything before success/fail/failure.
-    
+
     Args:
         video_path: Path to video file
-        
+
     Returns:
         Inferred task name
     """
     video_name = Path(video_path).stem  # Get filename without extension
-    
+
     # If there's a comma, task is everything before the comma
-    if ',' in video_name:
-        task_part = video_name.split(',')[0]
+    if "," in video_name:
+        task_part = video_name.split(",")[0]
     else:
         # Otherwise, split by underscore and remove success/fail/failure suffixes
-        parts = video_name.split('_')
+        parts = video_name.split("_")
         filtered_parts = []
         for part in parts:
             part_lower = part.lower()
-            if part_lower not in ['success', 'fail', 'failure']:
+            if part_lower not in ["success", "fail", "failure"]:
                 filtered_parts.append(part)
-        
+
         if not filtered_parts:
             return "Complete the task"
-        
-        task_part = '_'.join(filtered_parts)
-    
+
+        task_part = "_".join(filtered_parts)
+
     # Split by underscore and join with spaces
-    task_words = task_part.split('_')
-    task = ' '.join(task_words)
-    
+    task_words = task_part.split("_")
+    task = " ".join(task_words)
+
     if task:
         # Capitalize first letter of first word, keep rest as is
         task = task[0].upper() + task[1:] if len(task) > 1 else task.upper()
     else:
         task = "Complete the task"
-    
+
     return task
 
 
@@ -356,21 +348,21 @@ def get_model_info(server_url: str) -> None:
         health_response = requests.get(health_url, timeout=5.0)
         health_response.raise_for_status()
         health_data = health_response.json()
-        
+
         available_gpus = health_data.get("available_gpus", 0)
         total_gpus = health_data.get("total_gpus", 0)
         print(f"  ✓ Server health check passed: {available_gpus}/{total_gpus} GPUs available")
-        
+
         # Get model info
         model_info_url = server_url.rstrip("/") + "/model_info"
         model_info_response = requests.get(model_info_url, timeout=5.0)
         if model_info_response.status_code == 200:
             model_info = model_info_response.json()
-            
+
             print(f"  Model Information:")
             print(f"    - Model Path: {model_info.get('model_path', 'Unknown')}")
             print(f"    - Number of GPUs: {model_info.get('num_gpus', 'Unknown')}")
-            
+
             model_arch = model_info.get("model_architecture", {})
             if model_arch and "error" not in model_arch:
                 model_class = model_arch.get("model_class", "Unknown")
@@ -378,13 +370,13 @@ def get_model_info(server_url: str) -> None:
                 if total_params is not None:
                     print(f"    - Model Class: {model_class}")
                     print(f"    - Total Parameters: {total_params:,}")
-                    
+
                     trainable_params = model_arch.get("trainable_parameters")
                     if trainable_params is not None:
                         print(f"    - Trainable Parameters: {trainable_params:,}")
         else:
             print(f"  ⚠ Could not fetch model info (status: {model_info_response.status_code})")
-            
+
     except requests.exceptions.RequestException as e:
         print(f"  ⚠ Could not ping server: {e}")
 
@@ -701,7 +693,7 @@ def run_dual_video_server(
 
 def load_model_for_inference(model_path: str, output_dir: str, device: str = "cuda") -> Dict[str, Any]:
     """Load model and setup batch collator for inference.
-    
+
     Returns:
         Dictionary with keys: exp_cfg, tokenizer, processor, model, batch_collator
     """
@@ -734,7 +726,7 @@ def run_single_video_model(
     model_components: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Run single video inference using pre-loaded local model.
-    
+
     Args:
         video_path: Path to video file
         task_text: Task description
@@ -777,7 +769,7 @@ def run_single_video_model(
 
     # Prepare batch inputs
     batch_inputs = batch_collator([progress_sample])
-    
+
     # Move inputs to device
     progress_inputs = batch_inputs["progress_inputs"]
     for key, value in progress_inputs.items():
@@ -790,7 +782,7 @@ def run_single_video_model(
     # Extract progress predictions (similar to compute_batch_outputs in eval_server.py)
     progress_array = np.array([])
     success_array = None
-    
+
     progress_logits = model_output.progress_logits
     if progress_logits is not None and isinstance(progress_logits, dict):
         seq_A = progress_logits.get("A")
@@ -800,9 +792,9 @@ def run_single_video_model(
                 # Convert to float32 to handle BFloat16 tensors
                 progress_pred = seq_A[0].detach().cpu().float().flatten().tolist()
                 progress_array = np.array(progress_pred)
-    
+
     # Extract success predictions if the model has a success head
-    success_logits = getattr(model_output, 'success_logits', None)
+    success_logits = getattr(model_output, "success_logits", None)
     if success_logits is not None and isinstance(success_logits, dict):
         seq_A_success = success_logits.get("A")
         if seq_A_success is not None:
@@ -983,22 +975,22 @@ Examples:
             if not video_files:
                 print(f"Warning: No video files found in directory: {args.video}")
                 sys.exit(1)
-            
+
             print(f"Found {len(video_files)} video file(s) in directory: {args.video}")
             print("=" * 60)
-            
+
             results = []
             predictions = []
             for i, video_file in enumerate(video_files, 1):
                 video_name = Path(video_file).name
                 print(f"\n[{i}/{len(video_files)}] Processing: {video_name}")
                 print("-" * 60)
-                
+
                 # Infer task from video name if not specified
                 task_text = args.task if args.task else infer_task_from_video_name(video_file)
                 if not args.task:
                     print(f"  Inferred task: {task_text}")
-                
+
                 try:
                     if args.mode == "gradio":
                         result = run_single_video_gradio(
@@ -1007,41 +999,39 @@ Examples:
                     elif args.mode == "server":
                         result = run_single_video_server(args.server_url, video_file, task_text, args.fps, output_dir)
                     else:  # model
-                        result = run_single_video_model(
-                            video_file, task_text, args.fps, output_dir, model_components
-                        )
+                        result = run_single_video_model(video_file, task_text, args.fps, output_dir, model_components)
                     results.append((video_file, result))
-                    
+
                     # Extract predictions for summary
                     if result:
                         # Try to extract from info text first
                         info_text = result.get("info", "")
                         final_progress = None
                         final_success = None
-                        
+
                         # Parse final progress and success probability from info text
-                        for line in info_text.split('\n'):
-                            if 'Final progress' in line or '**Final progress**' in line:
+                        for line in info_text.split("\n"):
+                            if "Final progress" in line or "**Final progress**" in line:
                                 try:
                                     # Handle both "**Final progress:** 0.123" and "Final progress: 0.123"
-                                    value_str = line.split(':')[-1].strip().replace('*', '').strip()
+                                    value_str = line.split(":")[-1].strip().replace("*", "").strip()
                                     final_progress = float(value_str)
                                 except:
                                     pass
-                            if 'Final success probability' in line or '**Final success probability**' in line:
+                            if "Final success probability" in line or "**Final success probability**" in line:
                                 try:
-                                    value_str = line.split(':')[-1].strip().replace('*', '').strip()
+                                    value_str = line.split(":")[-1].strip().replace("*", "").strip()
                                     final_success = float(value_str)
                                 except:
                                     pass
-                        
+
                         predictions.append({
                             "video": video_name,
                             "task": task_text,
                             "final_progress": final_progress,
                             "final_success_prob": final_success,
                         })
-                    
+
                     print(f"✓ Completed: {video_name}")
                 except Exception as e:
                     print(f"✗ Error processing {video_name}: {e}")
@@ -1053,14 +1043,14 @@ Examples:
                         "final_success_prob": None,
                         "error": str(e),
                     })
-            
+
             print("\n" + "=" * 60)
             print("Batch evaluation completed!")
             print("=" * 60)
             successful = sum(1 for _, r in results if r is not None)
             print(f"Successfully processed: {successful}/{len(video_files)} videos")
             print(f"Outputs saved to: {output_dir}")
-            
+
             # Print predictions summary
             if predictions:
                 print("\n" + "=" * 60)
@@ -1069,12 +1059,12 @@ Examples:
                 for pred in predictions:
                     print(f"\nVideo: {pred['video']}")
                     print(f"  Task: {pred['task']}")
-                    if pred.get('error'):
+                    if pred.get("error"):
                         print(f"  Error: {pred['error']}")
                     else:
-                        if pred['final_progress'] is not None:
+                        if pred["final_progress"] is not None:
                             print(f"  Final Progress: {pred['final_progress']:.3f}")
-                        if pred['final_success_prob'] is not None:
+                        if pred["final_success_prob"] is not None:
                             print(f"  Final Success Probability: {pred['final_success_prob']:.3f}")
                 print("\n" + "=" * 60)
         else:
@@ -1083,7 +1073,7 @@ Examples:
             task_text = args.task if args.task else infer_task_from_video_name(args.video)
             if not args.task:
                 print(f"Inferred task from video name: {task_text}")
-            
+
             if args.mode == "gradio":
                 result = run_single_video_gradio(
                     args.gradio_url, args.video, task_text, args.server_url, args.fps, output_dir
@@ -1091,15 +1081,13 @@ Examples:
             elif args.mode == "server":
                 result = run_single_video_server(args.server_url, args.video, task_text, args.fps, output_dir)
             else:  # model
-                result = run_single_video_model(
-                    args.video, task_text, args.fps, output_dir, model_components
-                )
-            
+                result = run_single_video_model(args.video, task_text, args.fps, output_dir, model_components)
+
             print("\n" + "=" * 60)
             print("Evaluation completed successfully!")
             print("=" * 60)
             print(f"Outputs saved to: {output_dir}")
-            
+
             # Print predictions
             if result:
                 print("\n" + "=" * 60)
@@ -1114,7 +1102,7 @@ Examples:
         task_text = args.task if args.task else infer_task_from_video_name(args.video_a)
         if not args.task:
             print(f"Inferred task from video name: {task_text}")
-        
+
         if args.mode == "gradio":
             result = run_dual_video_gradio(
                 args.gradio_url,
@@ -1132,7 +1120,7 @@ Examples:
             )
         else:  # model
             raise NotImplementedError("Dual video inference with local model not yet implemented")
-        
+
         print("\n" + "=" * 60)
         print("Evaluation completed successfully!")
         print("=" * 60)

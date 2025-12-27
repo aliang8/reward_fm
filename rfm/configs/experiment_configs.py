@@ -224,10 +224,10 @@ class DataConfig:
     )
 
     # Data source weighting parameters
-    data_source_weights: Optional[Dict[str, float]] = field(
-        default=None,
+    use_data_source_balance: bool = field(
+        default=False,
         metadata={
-            "help": "Dictionary mapping data source names to sampling weights (e.g., {'metaworld': 0.2, 'libero': 0.8})"
+            "help": "If True, apply data source balancing to the dataset. Requires data_source_weights to be set."
         },
     )
 

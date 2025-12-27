@@ -49,7 +49,7 @@ from rfm.data.datasets import (
     RFMDataset,
     StrategyBalancedDataset,
     BaseDataset,
-    InfiniteDataset,
+    RepeatedDataset,
     SingleFrameDataset,
 )
 from rfm.data.datasets.custom_eval import CustomEvalDataset
@@ -817,7 +817,7 @@ def setup_dataset(cfg: DataConfig, is_eval: bool = False, **kwargs) -> BaseDatas
         dataset = DataSourceBalancedWrapper(dataset, config=cfg, is_evaluation=is_eval, **kwargs)
 
     if not is_eval:
-        dataset = InfiniteDataset(dataset)
+        dataset = RepeatedDataset(dataset)
     return dataset
 
 

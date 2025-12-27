@@ -872,13 +872,9 @@ def main(cfg: GenerateConfig):
             )
 
         # Override output_dir and hub_repo_id based on dataset_name
-        output_dir_override = os.path.join(
-            os.path.dirname(cfg.output.output_dir), cfg.dataset.dataset_name.lower()
-        )
+        output_dir_override = os.path.join(os.path.dirname(cfg.output.output_dir), cfg.dataset.dataset_name.lower())
 
-        print(
-            f"Converting USC Koch Human-Robot Paired ({trajectory_type}) to HF from: {cfg.dataset.dataset_path}"
-        )
+        print(f"Converting USC Koch Human-Robot Paired ({trajectory_type}) to HF from: {cfg.dataset.dataset_path}")
         dataset = convert_usc_koch_human_robot_paired_to_hf(
             dataset_path=cfg.dataset.dataset_path,
             dataset_name=cfg.dataset.dataset_name,
@@ -895,9 +891,7 @@ def main(cfg: GenerateConfig):
             # Use the dataset_name for hub_repo_id if it's the generic one
             hub_repo_id = cfg.hub.hub_repo_id
             if hub_repo_id.endswith("usc_koch_human_robot_paired"):
-                hub_repo_id = hub_repo_id.replace(
-                    "usc_koch_human_robot_paired", cfg.dataset.dataset_name.lower()
-                )
+                hub_repo_id = hub_repo_id.replace("usc_koch_human_robot_paired", cfg.dataset.dataset_name.lower())
 
             print(f"\nPushing dataset to HuggingFace Hub: {hub_repo_id}")
             try:

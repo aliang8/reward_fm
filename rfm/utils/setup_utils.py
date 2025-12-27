@@ -66,10 +66,10 @@ from rfm.utils.save import parse_hf_model_id_and_revision, resolve_checkpoint_pa
 def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str) -> None:
     """
     Load checkpoint weights from safetensors files in a checkpoint directory.
-    
+
     This is needed when using Unsloth, as we can't use from_pretrained on checkpoints.
     Instead, we load the base model with Unsloth first, then manually load the checkpoint weights.
-    
+
     Args:
         model: The model to load weights into
         checkpoint_path: Path to checkpoint directory containing safetensors files
@@ -77,35 +77,41 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str) -> No
     checkpoint_path = Path(checkpoint_path)
     if not checkpoint_path.exists():
         raise ValueError(f"Checkpoint path does not exist: {checkpoint_path}")
-    
+
     if not checkpoint_path.is_dir():
         raise ValueError(f"Checkpoint path is not a directory: {checkpoint_path}")
-    
+
     # Collect all safetensors files
     safetensors_files = list(checkpoint_path.glob("*.safetensors"))
     if not safetensors_files:
         raise ValueError(f"No safetensors files found in checkpoint directory: {checkpoint_path}")
-    
+
     logger.info(f"Loading checkpoint weights from {len(safetensors_files)} safetensors file(s) in {checkpoint_path}")
-    
+
     # Load all safetensors files and merge into a single state dict
     state_dict = {}
     for safetensors_file in safetensors_files:
         logger.debug(f"Loading weights from {safetensors_file.name}")
         file_state_dict = load_file(str(safetensors_file))
         state_dict.update(file_state_dict)
-    
+
     # Load state dict into model with strict=False to handle missing keys
     missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
-    
+
     if missing_keys:
         logger.warning(f"Missing keys when loading checkpoint: {len(missing_keys)} keys")
-        logger.debug(f"Missing keys: {missing_keys[:10]}..." if len(missing_keys) > 10 else f"Missing keys: {missing_keys}")
-    
+        logger.debug(
+            f"Missing keys: {missing_keys[:10]}..." if len(missing_keys) > 10 else f"Missing keys: {missing_keys}"
+        )
+
     if unexpected_keys:
         logger.warning(f"Unexpected keys when loading checkpoint: {len(unexpected_keys)} keys")
-        logger.debug(f"Unexpected keys: {unexpected_keys[:10]}..." if len(unexpected_keys) > 10 else f"Unexpected keys: {unexpected_keys}")
-    
+        logger.debug(
+            f"Unexpected keys: {unexpected_keys[:10]}..."
+            if len(unexpected_keys) > 10
+            else f"Unexpected keys: {unexpected_keys}"
+        )
+
     logger.info(f"Successfully loaded checkpoint weights from {checkpoint_path}")
 
 
@@ -118,14 +124,14 @@ def _load_base_model_with_unsloth(
 ) -> Tuple[Any, Any]:
     """
     Load base model using Unsloth's FastVisionModel.
-    
+
     Args:
         cfg: Model configuration
         torch_dtype: Torch dtype to use
         extra_kwargs: Extra kwargs for model loading (e.g., attn_implementation)
         peft_config: Optional PEFT configuration
         loading_from_checkpoint: If True, skip PEFT application (checkpoint already has weights)
-        
+
     Returns:
         Tuple of (base_model, tokenizer)
     """
@@ -144,7 +150,7 @@ def _load_base_model_with_unsloth(
     )
     if cfg.model_type == "default":
         base_model = base_model.model
-    
+
     # Apply PEFT if enabled (only if not loading from checkpoint)
     # When loading from checkpoint, the checkpoint already contains the trained weights
     if cfg.use_peft and peft_config and not loading_from_checkpoint:
@@ -162,7 +168,7 @@ def _load_base_model_with_unsloth(
         )
     elif loading_from_checkpoint:
         logger.info("Skipping PEFT application - loading from checkpoint which already contains trained weights")
-    
+
     return base_model, tokenizer
 
 
@@ -174,20 +180,20 @@ def _load_base_model_standard(
 ) -> Any:
     """
     Load base model using standard transformers loading.
-    
+
     Args:
         cfg: Model configuration
         torch_dtype: Torch dtype to use
         extra_kwargs: Extra kwargs for model loading (e.g., attn_implementation)
         bnb: Optional BitsAndBytesConfig for quantization
-        
+
     Returns:
         Base model
     """
     # Check if it's Molmo, Qwen3 or Qwen2/2.5
     is_molmo = "Molmo" in cfg.base_model_id
     is_qwen3 = ("Qwen3" in cfg.base_model_id or "qwen3" in cfg.base_model_id.lower()) and HAS_QWEN3
-    
+
     # Select appropriate model classes based on version and model type
     if is_molmo:
         # Molmo2 uses AutoModelForImageTextToText with trust_remote_code
@@ -212,9 +218,7 @@ def _load_base_model_standard(
         )
         logger.info("Using Qwen3 models")
     else:
-        qwen_model_cls = (
-            Qwen2_5_VLModel if cfg.model_type == "default" else Qwen2_5_VLForConditionalGeneration
-        )
+        qwen_model_cls = Qwen2_5_VLModel if cfg.model_type == "default" else Qwen2_5_VLForConditionalGeneration
         base_model = qwen_model_cls.from_pretrained(
             cfg.base_model_id,
             torch_dtype=torch_dtype,
@@ -222,17 +226,17 @@ def _load_base_model_standard(
             quantization_config=bnb,
         )
         logger.info("Using Qwen2/2.5 models")
-    
+
     return base_model
 
 
 def _setup_processor_and_tokenizer(cfg: ModelConfig) -> AutoProcessor:
     """
     Setup processor and tokenizer for the model.
-    
+
     Args:
         cfg: Model configuration
-        
+
     Returns:
         Processor
     """
@@ -256,17 +260,17 @@ def _setup_processor_and_tokenizer(cfg: ModelConfig) -> AutoProcessor:
         logger.info(f"Qwen Processor: {processor}")
     else:
         raise ValueError(f"Invalid base model id: {cfg.base_model_id}")
-    
+
     if processor.tokenizer.pad_token is None:
         processor.tokenizer.pad_token = processor.tokenizer.eos_token
-    
+
     return processor
 
 
 def _add_special_tokens_and_resize(cfg: ModelConfig, processor: AutoProcessor, base_model: Any) -> None:
     """
     Add RFM special tokens and resize token embeddings if needed.
-    
+
     Args:
         cfg: Model configuration
         processor: Processor with tokenizer
@@ -286,66 +290,66 @@ def _add_special_tokens_and_resize(cfg: ModelConfig, processor: AutoProcessor, b
         ]
     else:
         special_tokens = []
-    
+
     # Add special tokens to the tokenizer
     if cfg.model_type != "vqa":
         for token in special_tokens:
             if token not in processor.tokenizer.get_vocab():
                 processor.tokenizer.add_special_tokens({"additional_special_tokens": [token]})
                 logger.info(f"Added special token: {token}")
-    
+
     # Resize token embeddings if new tokens were added
     vocab_size = (
         base_model.config.text_config.vocab_size
         if ("Qwen3" in cfg.base_model_id or "Molmo" in cfg.base_model_id)
         else base_model.config.vocab_size
     )
-    
+
     if len(processor.tokenizer) != vocab_size:
         logger.info(f"Resizing token embeddings from {vocab_size} to {len(processor.tokenizer)}")
-        
+
         is_molmo = "Molmo" in cfg.base_model_id
         if is_molmo:
             # Custom resize for Molmo2 - its Molmo2Embedding stores embedding as a Parameter directly
             new_vocab_size = len(processor.tokenizer)
             _embed_layer = base_model.get_input_embeddings()
-            
+
             # Check if embedding is a Parameter (tensor) directly, or an nn.Embedding
             if hasattr(_embed_layer, "embedding"):
                 old_embed_attr = _embed_layer.embedding
-                
+
                 # Case 1: embedding is a Parameter (raw tensor)
                 if isinstance(old_embed_attr, torch.nn.Parameter):
                     old_num_tokens, embedding_dim = old_embed_attr.shape
-                    
+
                     # Create new parameter with expanded vocab
                     new_embed_data = torch.zeros(
                         new_vocab_size, embedding_dim, device=old_embed_attr.device, dtype=old_embed_attr.dtype
                     )
-                    
+
                     # Copy existing weights
                     new_embed_data[:old_num_tokens] = old_embed_attr.data
-                    
+
                     # Initialize new token embeddings using mean of existing embeddings
                     mean_embedding = old_embed_attr.data.mean(dim=0)
                     new_embed_data[old_num_tokens:] = mean_embedding.unsqueeze(0).expand(
                         new_vocab_size - old_num_tokens, -1
                     )
-                    
+
                     # Replace the embedding Parameter
                     _embed_layer.embedding = torch.nn.Parameter(new_embed_data)
-                    
+
                     # Also update config to reflect new vocab size
                     base_model.config.text_config.vocab_size = new_vocab_size
-                    
+
                     logger.info(
                         f"Custom resized Molmo2 embeddings (Parameter) from {old_num_tokens} to {new_vocab_size}"
                     )
-                
+
                 # Case 2: embedding is an nn.Embedding with .weight
                 elif hasattr(old_embed_attr, "weight"):
                     old_num_tokens, embedding_dim = old_embed_attr.weight.shape
-                    
+
                     # Create new embedding layer with expanded vocab
                     new_embedding = torch.nn.Embedding(
                         new_vocab_size,
@@ -353,29 +357,27 @@ def _add_special_tokens_and_resize(cfg: ModelConfig, processor: AutoProcessor, b
                         device=old_embed_attr.weight.device,
                         dtype=old_embed_attr.weight.dtype,
                     )
-                    
+
                     # Copy existing weights
                     new_embedding.weight.data[:old_num_tokens] = old_embed_attr.weight.data
-                    
+
                     # Initialize new token embeddings using mean of existing embeddings
                     mean_embedding = old_embed_attr.weight.data.mean(dim=0)
                     new_embedding.weight.data[old_num_tokens:] = mean_embedding.unsqueeze(0).expand(
                         new_vocab_size - old_num_tokens, -1
                     )
-                    
+
                     # Replace the nested embedding
                     _embed_layer.embedding = new_embedding
-                    
+
                     # Also update config to reflect new vocab size
                     base_model.config.text_config.vocab_size = new_vocab_size
-                    
+
                     logger.info(
                         f"Custom resized Molmo2 embeddings (Embedding) from {old_num_tokens} to {new_vocab_size}"
                     )
                 else:
-                    logger.warning(
-                        f"Cannot resize Molmo2 embeddings - unknown embedding type: {type(old_embed_attr)}"
-                    )
+                    logger.warning(f"Cannot resize Molmo2 embeddings - unknown embedding type: {type(old_embed_attr)}")
             else:
                 logger.warning(f"Cannot resize Molmo2 embeddings - no embedding attribute found")
         else:
@@ -386,7 +388,7 @@ def _add_special_tokens_and_resize(cfg: ModelConfig, processor: AutoProcessor, b
 def _verify_checkpoint_loading(cfg: ModelConfig, model: Any, before_weights: dict) -> None:
     """
     Verify that checkpoint weights were loaded correctly by comparing before/after weights.
-    
+
     Args:
         cfg: Model configuration
         model: The model after loading checkpoint
@@ -394,7 +396,7 @@ def _verify_checkpoint_loading(cfg: ModelConfig, model: Any, before_weights: dic
     """
     if cfg.model_type == "vqa":
         return
-    
+
     if "Qwen2.5" in cfg.base_model_id:
         after_visual = model.model.visual.blocks[0].mlp.down_proj.weight
         after_progress_head = model.progress_head[0].weight
@@ -407,12 +409,12 @@ def _verify_checkpoint_loading(cfg: ModelConfig, model: Any, before_weights: dic
         after_lm_layer = model.model.language_model.layers[0].mlp.up_proj.weight
     else:
         return
-    
+
     before_visual = before_weights["visual"]
     before_progress_head = before_weights["progress_head"]
     before_lm_embed_tokens = before_weights["lm_embed_tokens"]
     before_lm_layer = before_weights["lm_layer"]
-    
+
     logger.info(
         f"Before visual: {before_visual.shape}, {before_visual.sum()} | After visual: {after_visual.shape}, {after_visual.sum()}"
     )
@@ -425,14 +427,18 @@ def _verify_checkpoint_loading(cfg: ModelConfig, model: Any, before_weights: dic
     logger.info(
         f"Before LM layer: {before_lm_layer.shape}, {before_lm_layer.sum()} | After LM layer: {after_lm_layer.shape}, {after_lm_layer.sum()}"
     )
-    
+
     # check that before and after are different
     if torch.allclose(before_visual, after_visual):
         logger.warning("Before and after visual are the same! Check if you loaded the pretrained model correctly")
     if torch.allclose(before_progress_head, after_progress_head):
-        logger.warning("Before and after progress head are the same! Check if you loaded the pretrained model correctly")
+        logger.warning(
+            "Before and after progress head are the same! Check if you loaded the pretrained model correctly"
+        )
     if torch.allclose(before_lm_embed_tokens, after_lm_embed_tokens):
-        logger.warning("Before and after LM embed tokens are the same! Check if you loaded the pretrained model correctly")
+        logger.warning(
+            "Before and after LM embed tokens are the same! Check if you loaded the pretrained model correctly"
+        )
 
 
 def setup_model_and_processor(
@@ -488,7 +494,7 @@ def setup_model_and_processor(
 
     # Determine if we're loading from a checkpoint
     loading_from_checkpoint = bool(hf_model_id)
-    
+
     # Load processor and tokenizer
     if "SmolVLM" in cfg.base_model_id or "Qwen" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
         if "SmolVLM" in cfg.base_model_id:
@@ -549,7 +555,7 @@ def setup_model_and_processor(
         # Load checkpoint if provided
         if hf_model_id:
             repo_id, revision_to_load = parse_hf_model_id_and_revision(hf_model_id, model_name="model")
-            
+
             # Capture before weights for verification
             before_weights = {}
             if cfg.model_type != "vqa":
@@ -578,7 +584,7 @@ def setup_model_and_processor(
                 model_config=cfg,
                 revision=revision_to_load,
             )
-            
+
             # Verify weights were loaded
             if before_weights:
                 _verify_checkpoint_loading(cfg, model, before_weights)

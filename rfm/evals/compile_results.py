@@ -20,6 +20,7 @@ import torch.nn.functional as F
 from sklearn.metrics import average_precision_score
 from rfm.data.datasets.helpers import load_frames_from_npz
 from rfm.evals.eval_metrics_utils import compute_pearson, compute_preference_accuracy, compute_spearman
+from rfm.evals.eval_viz_utils import create_combined_progress_success_plot
 
 
 def compute_eval_metrics(
@@ -362,9 +363,7 @@ def run_reward_alignment_eval_per_trajectory(
             last_preds = np.cumsum(last_preds)
             last_targets = np.cumsum(last_targets)
 
-        trajectory_progress_data.append(
-            last_preds.tolist() if isinstance(last_preds, np.ndarray) else last_preds
-        )
+        trajectory_progress_data.append(last_preds.tolist() if isinstance(last_preds, np.ndarray) else last_preds)
 
         # Only compute metrics for successful trajectories
         if quality_label == "successful":
@@ -389,87 +388,24 @@ def run_reward_alignment_eval_per_trajectory(
             traj_pearson = 0.0
 
         # Create a wandb plot for progress predictions and, if available, success predictions
+        # Use the shared helper function from eval_viz_utils
         has_success_binary = have_success and last_success is not None and len(last_success) == len(last_preds)
         
-        if has_success_binary:
-            # Three subplots: progress, success (binary), success_probs
-            fig, axs = plt.subplots(1, 3, figsize=(15, 3.5))
-            ax = axs[0]  # Progress subplot
-            ax2 = axs[1]  # Success subplot (binary)
-            ax3 = axs[2]  # Success probs subplot
-        else:
-            # Single subplot: progress only
-            fig, ax = plt.subplots(figsize=(6, 3.5))
-            ax2 = None
-            ax3 = None
-
-        ax.plot(last_preds, linewidth=2)
-        ax.set_ylabel("Progress")
         title = f"Progress - {task} - {quality_label}\nLoss: {traj_loss:.3f}, pearson: {traj_pearson:.2f}"
-        ax.set_ylim(0, num_bins - 1 if is_discrete_mode else 1)
-        ax.spines["right"].set_visible(False)
-        ax.spines["top"].set_visible(False)
-        # Set y-ticks: [0, 0.2, 0.4, 0.6, 0.8, 1.0] for continuous mode
-        # For discrete mode: [0, 2, 4, ...] if num_bins > 5, else [0, 1, 2, ...]
-        if is_discrete_mode:
-            if num_bins > 5:
-                y_ticks = list(range(0, num_bins, 2))
-            else:
-                y_ticks = list(range(0, num_bins))
-        else:
-            y_ticks = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
-        ax.set_yticks(y_ticks)
-        ax.set_title(title)
-
-        # Setup success subplot
-        if ax2 is not None:
-            ax2.step(range(len(last_success)), last_success, where="post", linewidth=2, label="Predicted", color="blue")
-            # Add ground truth success labels as green line if available
-            if (
-                have_success_labels
-                and last_success_labels is not None
-                and len(last_success_labels) == len(last_success)
-            ):
-                ax2.step(
-                    range(len(last_success_labels)),
-                    last_success_labels,
-                    where="post",
-                    linewidth=2,
-                    label="Ground Truth",
-                    color="green",
-                )
-            ax2.set_ylabel("Success (Binary)")
-            ax2.set_ylim(-0.05, 1.05)
-            ax2.spines["right"].set_visible(False)
-            ax2.spines["top"].set_visible(False)
-            ax2.set_yticks([0, 1])
-            ax2.legend()
-
-        # Setup success probs subplot if available
-        if ax3 is not None:
-            ax3.plot(range(len(last_success_probs)), last_success_probs, linewidth=2, label="Success Prob", color="purple")
-            # Add ground truth success labels as green line if available
-            if (
-                have_success_labels
-                and last_success_labels is not None
-                and len(last_success_labels) == len(last_success_probs)
-            ):
-                ax3.step(
-                    range(len(last_success_labels)),
-                    last_success_labels,
-                    where="post",
-                    linewidth=2,
-                    label="Ground Truth",
-                    color="green",
-                    linestyle="--",
-                )
-            ax3.set_ylabel("Success Probability")
-            ax3.set_ylim(-0.05, 1.05)
-            ax3.spines["right"].set_visible(False)
-            ax3.spines["top"].set_visible(False)
-            ax3.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
-            ax3.legend()
-
+        
+        fig = create_combined_progress_success_plot(
+            progress_pred=last_preds,
+            num_frames=len(last_preds),
+            success_binary=last_success if has_success_binary else None,
+            success_probs=last_success_probs if have_success_probs and last_success_probs is not None else None,
+            success_labels=last_success_labels if have_success_labels and last_success_labels is not None else None,
+            is_discrete_mode=is_discrete_mode,
+            num_bins=num_bins,
+            title=title,
+            loss=traj_loss,
+            pearson=traj_pearson,
+        )
+        
         plots.append(fig)
 
         # Accumulate metrics only for successful trajectories

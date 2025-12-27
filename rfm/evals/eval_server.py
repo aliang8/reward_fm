@@ -352,7 +352,6 @@ class MultiGPUEvalServer:
                 f"processing_time={processing_time:.3f}s"
             )
 
-
     def get_pool_status(self) -> Dict[str, Any]:
         """Get status of the GPU pool."""
         return {

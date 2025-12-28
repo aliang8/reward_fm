@@ -3,7 +3,7 @@ import os
 from difflib import SequenceMatcher
 from multiprocessing import cpu_count
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import cv2
 import numpy as np
@@ -16,6 +16,8 @@ from dataset_upload.helpers import (
     generate_unique_id,
     load_sentence_transformer_model,
 )
+
+MAX_EPISODES = 10 # at most 10 episodes per task, some have more but it's a mistake
 
 
 def _load_video_frames(video_path: str) -> list[np.ndarray]:
@@ -57,6 +59,57 @@ def _find_best_match(query: str, options: list[str], threshold: float = 0.6) -> 
             best_match = option
 
     return best_match
+
+
+def _require_lerobot_dataset_class():
+    """
+    Import LeRobotDataset lazily so this module can be imported without lerobot installed.
+
+    Upstream: https://github.com/huggingface/lerobot
+    """
+
+    try:
+        from lerobot.datasets.lerobot_dataset import LeRobotDataset  # type: ignore
+    except Exception as e:  # pragma: no cover - depends on local environment
+        raise ImportError(
+            "Robot demos require Hugging Face LeRobot. Install it in your env, e.g.\n"
+            "  pip install lerobot\n"
+            "Then re-run dataset conversion."
+        ) from e
+    return LeRobotDataset
+
+
+def _load_lerobot_dataset(local_dataset_dir: Path):
+    """Load a local LeRobot dataset directory (downloaded to disk)."""
+
+    LeRobotDataset = _require_lerobot_dataset_class()
+
+    # LeRobot's API has evolved; try a few common constructor styles.
+    constructors: list[Callable[[], Any]] = [
+        lambda: LeRobotDataset(str(local_dataset_dir)),
+        lambda: LeRobotDataset(repo_id=str(local_dataset_dir)),
+        lambda: LeRobotDataset(path=str(local_dataset_dir)),
+        lambda: LeRobotDataset(dataset_path=str(local_dataset_dir)),
+    ]
+
+    last_err: Exception | None = None
+    for ctor in constructors:
+        try:
+            ds = ctor()
+            _ = len(ds)  # force __len__
+            return ds
+        except TypeError as e:
+            last_err = e
+            continue
+        except Exception as e:
+            last_err = e
+            break
+
+    raise RuntimeError(
+        f"Failed to construct LeRobotDataset from local path: {local_dataset_dir}\n"
+        f"Last error: {last_err}"
+    )
+
 
 
 def _build_video_paths(output_dir: str, dataset_label: str, episode_idx: int, view: str) -> tuple[str, str]:
@@ -122,43 +175,34 @@ def _process_human_episode(args):
     return None
 
 
-def _process_robot_episode_from_lerobot(args):
-    """Process a single robot episode from LeRobot dataset."""
-    (
-        dataset_path,
-        episode_idx,
-        task_instruction,
-        lang_vec,
-        output_dir,
-        dataset_label,
-        max_frames,
-        fps,
-        global_episode_idx,
-    ) = args
-
+def _process_robot_episode_from_lerobot(
+    lerobot_dataset: Any,
+    episode_idx: int,
+    task_instruction: str,
+    lang_vec: Any,
+    output_dir: str,
+    dataset_label: str,
+    max_frames: int,
+    fps: int,
+    global_episode_idx: int,
+    preferred_camera: str = "observation.images.top",
+):
+    """Process a single robot episode from a loaded LeRobotDataset."""
     try:
-        # Load the video for this episode (using top view by default)
-        video_path_pattern = (
-            dataset_path / "videos" / "observation.images.top" / "chunk-000" / f"file-{episode_idx:03d}.mp4"
-        )
+        episode_meta = lerobot_dataset.meta.episodes[episode_idx]
+        ep_start_idx = episode_meta["dataset_from_index"]
+        ep_end_idx = episode_meta["dataset_to_index"]
+        frames = []
+        for frame_idx in range(ep_start_idx, ep_end_idx):
+            frames.append((lerobot_dataset[frame_idx][preferred_camera].numpy()*255).astype(np.uint8).transpose(1, 2, 0))
 
-        if not video_path_pattern.exists():
-            print(f"Video not found: {video_path_pattern}")
-            return None
-
-        frames = _load_video_frames(str(video_path_pattern))
-        if not frames:
-            return None
-
-        # Build output video path
         full_path, rel_path = _build_video_paths(output_dir, dataset_label, global_episode_idx, "robot")
-
         traj_dict = {
             "id": generate_unique_id(),
             "frames": frames,
             "task": task_instruction,
             "is_robot": True,
-            "quality_label": "successful",  # All robot demos are successful
+            "quality_label": "successful",
             "preference_group_id": None,
             "preference_rank": None,
         }
@@ -179,7 +223,7 @@ def _process_robot_episode_from_lerobot(args):
         return None
 
     except Exception as e:
-        print(f"Error processing robot episode {episode_idx} from {dataset_path}: {e}")
+        print(f"Error processing robot episode {episode_idx}: {e}")
         return None
 
 
@@ -187,7 +231,7 @@ def convert_usc_koch_human_robot_paired_to_hf(
     dataset_path: str,
     dataset_name: str,
     output_dir: str,
-    trajectory_type: str = "both",  # "human", "robot", or "both"
+    trajectory_type: str = "human",  # "human", "robot"
     max_trajectories: int | None = None,
     max_frames: int = 64,
     fps: int = 10,
@@ -199,7 +243,7 @@ def convert_usc_koch_human_robot_paired_to_hf(
         dataset_path: Path to the dataset directory containing human/ and robot/ folders
         dataset_name: Name for the dataset
         output_dir: Output directory for processed videos
-        trajectory_type: Type of trajectories to include ("human", "robot", or "both")
+        trajectory_type: Type of trajectories to include ("human", "robot") 
         max_trajectories: Maximum number of trajectories to process per type (None for all)
         max_frames: Maximum frames per trajectory
         fps: Frames per second for output videos
@@ -234,7 +278,7 @@ def convert_usc_koch_human_robot_paired_to_hf(
     global_episode_idx = 0
 
     # Process human demonstrations
-    if trajectory_type == "human":
+    if trajectory_type in ["human"]:
         print("Processing human demonstrations...")
         human_videos = sorted(human_dir.glob("*.mp4"))
 
@@ -327,11 +371,11 @@ def convert_usc_koch_human_robot_paired_to_hf(
         print(f"Successfully processed {len(human_entries)} human demonstrations")
 
     # Process robot demonstrations
-    if trajectory_type in ["robot", "both"]:
-        print("Processing robot demonstrations (top view)...")
+    if trajectory_type in ["robot"]:
+        print("Processing robot demonstrations via LeRobotDataset (top view)...")
 
-        # Find all robot dataset directories
-        robot_datasets = [d for d in robot_dir.iterdir() if d.is_dir() and (d / "meta" / "info.json").exists()]
+        # Find all robot dataset directories that do not hae "suboptimal" or "failure" in the name
+        robot_datasets = [d for d in robot_dir.iterdir() if d.is_dir() and (d / "meta" / "info.json").exists() and "suboptimal" not in d.name and "failure" not in d.name]
 
         print(f"Found {len(robot_datasets)} robot datasets")
 
@@ -344,7 +388,17 @@ def convert_usc_koch_human_robot_paired_to_hf(
                 continue
 
             tasks_df = pd.read_parquet(tasks_path)
-            task_name = tasks_df.index[0] if len(tasks_df) > 0 else None
+            # tasks.parquet sometimes stores the task as index, sometimes as a column
+            task_name = None
+            if len(tasks_df) > 0:
+                if tasks_df.index is not None and len(tasks_df.index) > 0 and isinstance(tasks_df.index[0], str):
+                    task_name = tasks_df.index[0]
+                else:
+                    first_row = tasks_df.iloc[0].to_dict()
+                    for v in first_row.values():
+                        if isinstance(v, str) and v.strip():
+                            task_name = v
+                            break
 
             if not task_name:
                 print(f"Warning: No task found in {robot_dataset_path}, skipping")
@@ -354,30 +408,26 @@ def convert_usc_koch_human_robot_paired_to_hf(
             if task_name not in lang_cache:
                 lang_cache[task_name] = lang_model.encode(task_name)
 
-            # Get episode count from info.json
-            info_path = robot_dataset_path / "meta" / "info.json"
-            with open(info_path, "r") as f:
-                info = json.load(f)
-            total_episodes = info.get("total_episodes", 0)
-
-            if max_trajectories is not None and max_trajectories > 0:
-                total_episodes = min(total_episodes, max_trajectories)
+            # Load LeRobot dataset from disk once per task dataset.
+            lerobot_ds = _load_lerobot_dataset(robot_dataset_path)
+            total_episodes = min(MAX_EPISODES, len(lerobot_ds.meta.episodes))
 
             print(f"  Processing {total_episodes} episodes from: {robot_dataset_path.name}")
 
             # Process each episode
             for ep_idx in range(total_episodes):
-                result = _process_robot_episode_from_lerobot((
-                    robot_dataset_path,
-                    ep_idx,
-                    task_name,
-                    lang_cache[task_name],
-                    output_dir,
-                    dataset_name,
-                    max_frames,
-                    fps,
-                    global_episode_idx,
-                ))
+                result = _process_robot_episode_from_lerobot(
+                    lerobot_dataset=lerobot_ds,
+                    episode_idx=ep_idx,
+                    task_instruction=task_name,
+                    lang_vec=lang_cache[task_name],
+                    output_dir=output_dir,
+                    dataset_label=dataset_name,
+                    max_frames=max_frames,
+                    fps=fps,
+                    global_episode_idx=global_episode_idx,
+                    preferred_camera="observation.images.top",
+                )
                 if result:
                     robot_entries.append(result)
                     global_episode_idx += 1

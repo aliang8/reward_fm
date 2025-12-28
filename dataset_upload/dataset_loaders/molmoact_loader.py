@@ -84,7 +84,7 @@ def convert_molmoact_dataset_to_hf(
 
     Assumes dataset_path contains one or more subdirectories, each with parquet files and an
     associated episodes.jsonl. We iterate per subdirectory to avoid episode_index collisions,
-    grouping rows by `episode_index` and writing videos for `first_view` and `second_view`.
+    grouping rows by `episode_index` and writing videos for `first_view`, `second_view`, and `wrist_image`.
     """
 
     root = Path(os.path.expanduser(dataset_path)) / dataset_name
@@ -206,15 +206,15 @@ def convert_molmoact_dataset_to_hf(
 
         if current_ep is None:
             current_ep = ep_idx
-            frames_by_view = {"first_view": [], "second_view": []}
+            frames_by_view = {"first_view": [], "second_view": [], "wrist_image": []}
         elif ep_idx != current_ep:
             task_text = ep_text_map.get(current_ep)
             print(f"{task_text} episode loaded")
             flush_episode(current_ep, task_text, label, frames_by_view)
             current_ep = ep_idx
-            frames_by_view = {"first_view": [], "second_view": []}
+            frames_by_view = {"first_view": [], "second_view": [], "wrist_image": []}
 
-        for view_key in ("first_view", "second_view"):
+        for view_key in ("first_view", "second_view", "wrist_image"):
             cell = row.get(view_key)
             img = _to_rgb_numpy(cell)
             if img is not None:

@@ -196,6 +196,8 @@ def _process_robot_episode_from_lerobot(
         for frame_idx in range(ep_start_idx, ep_end_idx):
             frames.append((lerobot_dataset[frame_idx][preferred_camera].numpy()*255).astype(np.uint8).transpose(1, 2, 0))
 
+        assert len(frames) > 0, f"No frames found for episode {episode_idx} with preferred camera {preferred_camera} and instruction {task_instruction}"
+
         full_path, rel_path = _build_video_paths(output_dir, dataset_label, global_episode_idx, "robot")
         traj_dict = {
             "id": generate_unique_id(),

@@ -59,6 +59,7 @@ eval_datasets:
   - "jesbu1/mit_franka_p-rank_rfm"
   - "jesbu1/utd_so101_clean_policy_ranking_top"
   - "jesbu1/utd_so101_clean_policy_ranking_wrist"
+  - "jesbu1/usc_koch_human_robot_paired"
 
 eval_subsets:
   - ["libero256_10"]
@@ -77,6 +78,8 @@ eval_subsets:
   - ["mit_franka_p-rank_rfm"]
   - ["utd_so101_clean_policy_ranking_top"]
   - ["utd_so101_clean_policy_ranking_wrist"]
+  - ["human", "robot"]
+
 
 max_frames_for_preprocessing: 32
 video_frame_sampling: "uniform"

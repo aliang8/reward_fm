@@ -18,7 +18,7 @@ output:
   num_workers: 4
 
 hub:
-  push_to_hub: false
+  push_to_hub: true
   hub_repo_id: usc_koch_p_ranking_rfm  # recommended: keep constant; converter strips suffixes when pushing
 
 

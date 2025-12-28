@@ -498,7 +498,7 @@ class RFMBaseSampler:
         logger.trace(f"[BASE SAMPLER] _get_rewound_traj: Successfully created rewound trajectory for ID: {traj_id}")
         return result
 
-    def _get_subsample_indices(self, data, direction: str = "bidirectional") -> Optional[Tuple[int, int, int]]:
+    def _get_subsample_indices(self, data, direction: str = "bidirectional", max_frames: int = None) -> Optional[Tuple[int, int, int]]:
         """Get start, middle, and end indices for subsample strategy.
 
         Samples three random frames from the trajectory. The relationship between indices
@@ -513,11 +513,35 @@ class RFMBaseSampler:
                       "reverse" (end < middle < start),
                       "rewind" (start < end < middle),
                       or "bidirectional" (any of the 3 orderings)
+            max_frames: Maximum number of frames to subsample. If 1, returns only start. If 2, returns start and end.
 
         Returns:
             Tuple of (start_idx, middle_idx, end_idx), or None if insufficient frames
+            For max_frames == 1: returns (start_idx, None, None)
+            For max_frames == 2: returns (start_idx, None, end_idx)
         """
         num_frames_total = len(data) if hasattr(data, "__len__") else data.shape[0]
+
+        # Handle edge cases for max_frames == 1 or 2
+        if max_frames == 1:
+            # Randomly sample 1 frame
+            random_idx = random.randint(0, num_frames_total - 1)
+            logger.trace(f"[BASE SAMPLER] _get_subsample_indices: max_frames=1, randomly sampled idx={random_idx}")
+            return (random_idx, None, None)
+        
+        if max_frames == 2:
+            # Sample 2 frames: either forward (start < end) or reverse (end < start)
+            # No rewind possible with only 2 frames
+            if direction == "reverse":
+                # Reverse: sample end first, then start (end < start)
+                end_idx = random.randint(0, num_frames_total - 2)
+                start_idx = random.randint(end_idx + 1, num_frames_total - 1)
+            else:
+                # Forward: sample start first, then end (start < end)
+                start_idx = random.randint(0, num_frames_total - 2)
+                end_idx = random.randint(start_idx + 1, num_frames_total - 1)
+            logger.trace(f"[BASE SAMPLER] _get_subsample_indices: max_frames=2, start_idx={start_idx}, end_idx={end_idx}, direction={direction}")
+            return (start_idx, None, end_idx)
 
         if num_frames_total < 3:
             logger.trace(f"[BASE SAMPLER] _get_subsample_indices: Not enough frames ({num_frames_total})")
@@ -612,14 +636,15 @@ class RFMBaseSampler:
         end_idx = None
         middle_idx = None
 
+        # Get subsample indices (handles edge cases for max_frames == 1 or 2)
         if subsample_strategy == "subsample_forward":
-            indices = self._get_subsample_indices(data, direction="forward")
+            indices = self._get_subsample_indices(data, direction="forward", max_frames=self.config.max_frames)
         elif subsample_strategy == "subsample_reverse":
-            indices = self._get_subsample_indices(data, direction="reverse")
+            indices = self._get_subsample_indices(data, direction="reverse", max_frames=self.config.max_frames)
         elif subsample_strategy == "subsample_rewind":
-            indices = self._get_subsample_indices(data, direction="rewind")
+            indices = self._get_subsample_indices(data, direction="rewind", max_frames=self.config.max_frames)
         else:
-            indices = self._get_subsample_indices(data, direction="bidirectional")
+            indices = self._get_subsample_indices(data, direction="bidirectional", max_frames=self.config.max_frames)
 
         if indices is None:
             logger.trace("[BASE SAMPLER] _get_traj_from_data: Failed to get uniform sample indices")
@@ -643,6 +668,7 @@ class RFMBaseSampler:
             method="linspace",
         )
         frames_shape = subsampled.shape
+        
         progress = compute_progress_from_segment(
             num_frames_total=num_frames_total,
             frame_indices=indices,

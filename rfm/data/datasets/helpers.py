@@ -19,7 +19,6 @@ class DataGenStrat(Enum):
     FORWARD_PROGRESS = "forward_progress"
     REWIND = "rewind"
     SUBOPTIMAL = "suboptimal"
-    REWOUND = "rewound"
     DIFFERENT_TASK = "different_task"
     DIFFERENT_TASK_INSTRUCTION = "different_task_instruction"
     PAIRED_HUMAN_ROBOT = "paired_human_robot"

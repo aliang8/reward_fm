@@ -17,7 +17,7 @@ from dataset_upload.helpers import (
     load_sentence_transformer_model,
 )
 
-MAX_EPISODES = 10 # at most 10 episodes per task, some have more but it's a mistake
+MAX_EPISODES = 10  # at most 10 episodes per task, some have more but it's a mistake
 
 
 def _load_video_frames(video_path: str) -> list[np.ndarray]:
@@ -106,10 +106,8 @@ def _load_lerobot_dataset(local_dataset_dir: Path):
             break
 
     raise RuntimeError(
-        f"Failed to construct LeRobotDataset from local path: {local_dataset_dir}\n"
-        f"Last error: {last_err}"
+        f"Failed to construct LeRobotDataset from local path: {local_dataset_dir}\nLast error: {last_err}"
     )
-
 
 
 def _build_video_paths(output_dir: str, dataset_label: str, episode_idx: int, view: str) -> tuple[str, str]:
@@ -194,9 +192,13 @@ def _process_robot_episode_from_lerobot(
         ep_end_idx = episode_meta["dataset_to_index"]
         frames = []
         for frame_idx in range(ep_start_idx, ep_end_idx):
-            frames.append((lerobot_dataset[frame_idx][preferred_camera].numpy()*255).astype(np.uint8).transpose(1, 2, 0))
+            frames.append(
+                (lerobot_dataset[frame_idx][preferred_camera].numpy() * 255).astype(np.uint8).transpose(1, 2, 0)
+            )
 
-        assert len(frames) > 0, f"No frames found for episode {episode_idx} with preferred camera {preferred_camera} and instruction {task_instruction}"
+        assert len(frames) > 0, (
+            f"No frames found for episode {episode_idx} with preferred camera {preferred_camera} and instruction {task_instruction}"
+        )
 
         full_path, rel_path = _build_video_paths(output_dir, dataset_label, global_episode_idx, "robot")
         traj_dict = {
@@ -245,7 +247,7 @@ def convert_usc_koch_human_robot_paired_to_hf(
         dataset_path: Path to the dataset directory containing human/ and robot/ folders
         dataset_name: Name for the dataset
         output_dir: Output directory for processed videos
-        trajectory_type: Type of trajectories to include ("human", "robot") 
+        trajectory_type: Type of trajectories to include ("human", "robot")
         max_trajectories: Maximum number of trajectories to process per type (None for all)
         max_frames: Maximum frames per trajectory
         fps: Frames per second for output videos
@@ -377,7 +379,14 @@ def convert_usc_koch_human_robot_paired_to_hf(
         print("Processing robot demonstrations via LeRobotDataset (top view)...")
 
         # Find all robot dataset directories that do not hae "suboptimal" or "failure" in the name
-        robot_datasets = [d for d in robot_dir.iterdir() if d.is_dir() and (d / "meta" / "info.json").exists() and "suboptimal" not in d.name and "failure" not in d.name]
+        robot_datasets = [
+            d
+            for d in robot_dir.iterdir()
+            if d.is_dir()
+            and (d / "meta" / "info.json").exists()
+            and "suboptimal" not in d.name
+            and "failure" not in d.name
+        ]
 
         print(f"Found {len(robot_datasets)} robot datasets")
 

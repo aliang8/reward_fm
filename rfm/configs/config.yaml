@@ -82,8 +82,8 @@ data:
   # Data generation settings
   sample_type_ratio: [1, 0, 0]  # Ratio of preference, progress (no longer used, it's absorbed in preference if predict_pref_progress is true), and similarity samples
   dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
-  # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task]
-  preference_strategy_ratio: [6, 1, 1]
+  # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, reverse_progress]
+  preference_strategy_ratio: [1, 1, 1, 1]
   # Tunable strategy ratios for progress generation: [different_task, forward_progress, reverse_progress, rewind]
   progress_strategy_ratio: [1, 1, 1, 1]  # [different_task, forward_progress, reverse_progress, rewind]
   similarity_strategy_ratio: [1, 1, 1] # rewind, suboptimal_same_task, paired_human_robot

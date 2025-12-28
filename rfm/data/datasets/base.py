@@ -124,9 +124,13 @@ class BaseDataset(torch.utils.data.Dataset):
             filter_successful_only=filter_successful_only,
         )
         if filter_successful_only:
-            logger.info(f"{dataset_type.capitalize()} dataset filtered with {len(self.dataset)} total trajectories (filtered for successful trajectories only)")
+            logger.info(
+                f"{dataset_type.capitalize()} dataset filtered with {len(self.dataset)} total trajectories (filtered for successful trajectories only)"
+            )
         else:
-            logger.info(f"{dataset_type.capitalize()} dataset filtered with {len(self.dataset)} total trajectories (excluded keywords and min_frames only, not filtering for successful trajectories)")
+            logger.info(
+                f"{dataset_type.capitalize()} dataset filtered with {len(self.dataset)} total trajectories (excluded keywords and min_frames only, not filtering for successful trajectories)"
+            )
 
         # Filter out trajectories based on multiple criteria (build indices first, then filter once)
         self.dataset, self._combined_indices = self._filter_task_based_criteria(
@@ -369,12 +373,18 @@ class BaseDataset(torch.utils.data.Dataset):
         logger.debug(f"[{dataset_type.upper()}] Human trajectories: {len(combined_indices['human_trajectories'])}")
         logger.debug(f"[{dataset_type.upper()}] Number of different tasks: {len(combined_indices['task_indices'])}")
         logger.debug(f"[{dataset_type.upper()}] Data sources: {len(combined_indices['source_indices'])}")
-        logger.debug(f"[{dataset_type.upper()}] Tasks available: {list(combined_indices['task_indices'].keys())[:10]} ...")
+        logger.debug(
+            f"[{dataset_type.upper()}] Tasks available: {list(combined_indices['task_indices'].keys())[:10]} ..."
+        )
         logger.debug(f"[{dataset_type.upper()}] Number of quality labels: {len(combined_indices['quality_indices'])}")
         for quality_label in combined_indices["quality_indices"]:
-            logger.debug(f"[{dataset_type.upper()}]   {quality_label}: {len(combined_indices['quality_indices'][quality_label])}")
+            logger.debug(
+                f"[{dataset_type.upper()}]   {quality_label}: {len(combined_indices['quality_indices'][quality_label])}"
+            )
         logger.debug(f"[{dataset_type.upper()}] Data sources available: {combined_indices['source_indices'].keys()}")
-        logger.debug(f"[{dataset_type.upper()}] Number of paired tasks: {len(combined_indices['paired_human_robot_by_task'])}")
+        logger.debug(
+            f"[{dataset_type.upper()}] Number of paired tasks: {len(combined_indices['paired_human_robot_by_task'])}"
+        )
         logger.debug(
             f"[{dataset_type.upper()}] Number of tasks with both multiple quality labels: {len(combined_indices['tasks_with_multiple_quality_labels'])}"
         )
@@ -566,6 +576,8 @@ class BaseDataset(torch.utils.data.Dataset):
         """Filter out suboptimal/failed trajectories that don't have optimal counterparts with the same task name.
         Also filter out tasks that only have failed/suboptimal trajectories.
 
+        This filtering is skipped for RoboArena datasets.
+
         Args:
             dataset: The dataset to filter
             combined_indices: Dictionary of combined indices to update after filtering
@@ -581,16 +593,22 @@ class BaseDataset(torch.utils.data.Dataset):
         # Get all tasks in the dataset
         all_tasks = dataset["task"]
         quality_labels = dataset["quality_label"]
+        data_sources = dataset["data_source"]
 
         # Identify trajectories to remove:
         # All trajectories from tasks that have no optimal trajectories
         indices_to_remove = set()
         tasks_removed = set()
 
-        for idx, (task, quality_label) in enumerate(zip(all_tasks, quality_labels)):
+        for idx, (task, quality_label, data_source) in enumerate(zip(all_tasks, quality_labels, data_sources)):
             if task is None:
                 # Skip trajectories with None task
                 continue
+
+            # Skip filtering for RoboArena data sources
+            if data_source and "roboarena" in str(data_source).lower():
+                continue
+
             if task not in tasks_with_optimal:
                 # This task has no optimal trajectories
                 # Remove all trajectories from this task (they're all suboptimal/failed with no optimal counterparts)

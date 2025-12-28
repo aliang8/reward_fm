@@ -498,7 +498,9 @@ class RFMBaseSampler:
         logger.trace(f"[BASE SAMPLER] _get_rewound_traj: Successfully created rewound trajectory for ID: {traj_id}")
         return result
 
-    def _get_subsample_indices(self, data, direction: str = "bidirectional", max_frames: int = None) -> Optional[Tuple[int, int, int]]:
+    def _get_subsample_indices(
+        self, data, direction: str = "bidirectional", max_frames: int = None
+    ) -> Optional[Tuple[int, int, int]]:
         """Get start, middle, and end indices for subsample strategy.
 
         Samples three random frames from the trajectory. The relationship between indices
@@ -528,7 +530,7 @@ class RFMBaseSampler:
             random_idx = random.randint(0, num_frames_total - 1)
             logger.trace(f"[BASE SAMPLER] _get_subsample_indices: max_frames=1, randomly sampled idx={random_idx}")
             return (random_idx, None, None)
-        
+
         if max_frames == 2:
             # Sample 2 frames: either forward (start < end) or reverse (end < start)
             # No rewind possible with only 2 frames
@@ -540,7 +542,9 @@ class RFMBaseSampler:
                 # Forward: sample start first, then end (start < end)
                 start_idx = random.randint(0, num_frames_total - 2)
                 end_idx = random.randint(start_idx + 1, num_frames_total - 1)
-            logger.trace(f"[BASE SAMPLER] _get_subsample_indices: max_frames=2, start_idx={start_idx}, end_idx={end_idx}, direction={direction}")
+            logger.trace(
+                f"[BASE SAMPLER] _get_subsample_indices: max_frames=2, start_idx={start_idx}, end_idx={end_idx}, direction={direction}"
+            )
             return (start_idx, None, end_idx)
 
         if num_frames_total < 3:
@@ -668,7 +672,7 @@ class RFMBaseSampler:
             method="linspace",
         )
         frames_shape = subsampled.shape
-        
+
         progress = compute_progress_from_segment(
             num_frames_total=num_frames_total,
             frame_indices=indices,

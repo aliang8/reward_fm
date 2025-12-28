@@ -3,12 +3,10 @@
 Script to compile evaluation results from JSON files.
 """
 
-import argparse
 import json
 from itertools import combinations, product
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional, Union
-import yaml
 from collections import defaultdict
 
 import numpy as np
@@ -19,7 +17,7 @@ import torch
 import torch.nn.functional as F
 from sklearn.metrics import average_precision_score
 from rfm.data.datasets.helpers import load_frames_from_npz
-from rfm.evals.eval_metrics_utils import compute_pearson, compute_preference_accuracy, compute_spearman
+from rfm.evals.eval_metrics_utils import compute_pearson, compute_spearman
 from rfm.evals.eval_viz_utils import create_combined_progress_success_plot
 
 
@@ -32,7 +30,7 @@ def compute_eval_metrics(
     data_source: Optional[str] = None,
 ):
     if eval_type == "quality_preference" or eval_type == "quality_preference_roboarena":
-        return run_quality_preference_eval(results, progress_pred_type)
+        return run_quality_preference_eval(results)
     elif eval_type == "reward_alignment":
         return run_reward_alignment_eval_per_trajectory(
             results, progress_pred_type, is_discrete_mode, num_bins, data_source
@@ -42,10 +40,10 @@ def compute_eval_metrics(
     elif eval_type == "policy_ranking":
         return run_policy_ranking_eval(results, progress_pred_type, is_discrete_mode, num_bins, data_source)
     elif eval_type == "similarity_score":
-        return run_similarity_score_eval(results, progress_pred_type)
+        return run_similarity_score_eval(results)
 
 
-def run_quality_preference_eval(results: List[Dict[str, Any]], progress_pred_type: str) -> Dict[str, Any]:
+def run_quality_preference_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Run quality_preference evaluation analysis.
 
     Groups results by task and quality labels (or partial_success for RoboArena),
@@ -446,15 +444,15 @@ def run_reward_alignment_eval_per_trajectory(
 
 
 def _extract_trajectory_rewards(
-    progress_preds: list[np.ndarray | list],
+    progress_pred: list | np.ndarray,
     progress_pred_type: str,
     is_discrete_mode: bool,
     aggregation: str = "last",
-) -> np.ndarray:
-    """Extract trajectory rewards using different aggregation methods.
+) -> float | int:
+    """Extract trajectory reward using different aggregation methods.
 
     Args:
-        progress_preds: List of progress predictions for a trajectory.
+        progress_pred: Progress predictions for a single trajectory.
                        For continuous: list of scalars or [seq_len] array
                        For discrete: list of bin indices (integers)
         progress_pred_type: "relative" or "absolute"
@@ -462,38 +460,33 @@ def _extract_trajectory_rewards(
         aggregation: "last", "sum", or "average"
 
     Returns:
-        Array of aggregated rewards (one per trajectory)
+        Aggregated reward (float for continuous, int for discrete)
     """
-    all_rewards = []
+    # For discrete mode, progress_pred is already a list of bin indices (integers)
+    # For continuous mode, progress_pred is a list/array of scalar values
+    pred_array = np.array(progress_pred)
 
-    for progress_pred in progress_preds:
-        # For discrete mode, progress_pred is already a list of bin indices (integers)
-        # For continuous mode, progress_pred is a list/array of scalar values
-        pred_array = np.array(progress_pred)
+    # Apply cumsum if relative (for both discrete and continuous modes)
+    if progress_pred_type == "relative":
+        pred_array = np.cumsum(pred_array)
 
-        # Apply cumsum if relative (for both discrete and continuous modes)
-        if progress_pred_type == "relative":
-            pred_array = np.cumsum(pred_array)
+    # Apply aggregation (same logic for both modes)
+    if aggregation == "last":
+        reward = (
+            pred_array[-1]
+            if pred_array.ndim > 0 and len(pred_array) > 0
+            else (pred_array if pred_array.ndim == 0 else 0)
+        )
+    elif aggregation == "sum":
+        reward = np.sum(pred_array)
+    elif aggregation == "average":
+        reward = np.mean(pred_array)
+    else:
+        raise ValueError(f"Unknown aggregation method: {aggregation}")
 
-        # Apply aggregation (same logic for both modes)
-        if aggregation == "last":
-            reward = (
-                pred_array[-1]
-                if pred_array.ndim > 0 and len(pred_array) > 0
-                else (pred_array if pred_array.ndim == 0 else 0)
-            )
-        elif aggregation == "sum":
-            reward = np.sum(pred_array)
-        elif aggregation == "average":
-            reward = np.mean(pred_array)
-        else:
-            raise ValueError(f"Unknown aggregation method: {aggregation}")
-
-        # Convert to appropriate type: int for discrete mode, float for continuous
-        reward = int(reward) if is_discrete_mode else float(reward)
-        all_rewards.append(reward)
-
-    return np.array(all_rewards)
+    # Convert to appropriate type: int for discrete mode, float for continuous
+    reward = int(reward) if is_discrete_mode else float(reward)
+    return reward
 
 
 def _compute_policy_ranking_metrics_roboarena(
@@ -890,9 +883,7 @@ def run_policy_ranking_eval(
     For RoboArena: Uses partial_success for ranking (no quality_order computation).
     """
     # Check if this is RoboArena (uses partial_success instead of quality_label)
-    use_partial_success = False
-    if data_source and "roboarena" in str(data_source).lower():
-        use_partial_success = True
+    use_partial_success = data_source and "roboarena" in str(data_source).lower()
 
     # Group results by trajectory_id
     unique_trajectory_ids = set()
@@ -916,36 +907,18 @@ def run_policy_ranking_eval(
             results_for_trajectory.sort(key=lambda r: r["metadata"].get("subsequence_end", 0))
 
         # Collect all progress predictions for this trajectory
-        traj_progress_preds = []
-        for r in results_for_trajectory:
-            progress_pred = r.get("progress_pred")
-            if progress_pred is not None and len(progress_pred) > 0:
-                traj_progress_preds.append(progress_pred)
+        traj_progress_preds = [
+            r.get("progress_pred") for r in results_for_trajectory if r.get("progress_pred") is not None
+        ]
+        trajectory_progress_preds[trajectory_id] = traj_progress_preds
 
-        if traj_progress_preds:
-            trajectory_progress_preds[trajectory_id] = traj_progress_preds
-
-            # Store metadata from first result
-            first_r = results_for_trajectory[0]
-            task = first_r.get("task")
-            if task is None:
-                continue
-
-            metadata = {"task": task, "video_path": first_r.get("video_path")}
-            if use_partial_success:
-                partial_success = first_r.get("partial_success")
-                if partial_success is not None:
-                    metadata["partial_success"] = float(partial_success)
-                else:
-                    continue
-            else:
-                quality_label = first_r.get("quality_label")
-                if quality_label is not None:
-                    metadata["quality_label"] = quality_label
-                else:
-                    continue
-
-            trajectory_metadata[trajectory_id] = metadata
+        metadata = {
+            "task": results_for_trajectory[0].get("task"),
+            "video_path": results_for_trajectory[0].get("video_path"),
+            "partial_success": results_for_trajectory[0].get("partial_success"),
+            "quality_label": results_for_trajectory[0].get("quality_label"),
+        }
+        trajectory_metadata[trajectory_id] = metadata
 
     if not trajectory_progress_preds:
         return {"error": "No valid policy ranking data found"}, {}, {}
@@ -990,40 +963,34 @@ def run_policy_ranking_eval(
         if not processed_progress_preds:
             continue
 
-        # Flatten all progress predictions from all subsequences into a single list
+        # Take the last prediction from each subsequence (e.g., if max_frames=4, take the 4th prediction)
         # Then use _extract_trajectory_rewards to compute rewards with different aggregation methods
-        flattened_progress = []
+        last_predictions = []
         for pred_list in processed_progress_preds:
-            flattened_progress.extend(pred_list)
+            last_predictions.append(pred_list[-1])
 
-        if not flattened_progress:
+        if not last_predictions:
             continue
 
-        # Use _extract_trajectory_rewards with the flattened list (treating it as one trajectory)
-        # We pass it as a list with one element (the flattened progress)
-        rewards_last = _extract_trajectory_rewards(
-            [flattened_progress],
+        # Use _extract_trajectory_rewards with the list of last predictions from each subsequence
+        reward_last = _extract_trajectory_rewards(
+            last_predictions,
             progress_pred_type,
             is_discrete_mode,
             aggregation="last",
         )
-        rewards_avg = _extract_trajectory_rewards(
-            [flattened_progress],
+        reward_avg = _extract_trajectory_rewards(
+            last_predictions,
             progress_pred_type,
             is_discrete_mode,
             aggregation="average",
         )
-        rewards_sum = _extract_trajectory_rewards(
-            [flattened_progress],
+        reward_sum = _extract_trajectory_rewards(
+            last_predictions,
             progress_pred_type,
             is_discrete_mode,
             aggregation="sum",
         )
-
-        # Extract the single reward value from the returned array
-        reward_last = float(rewards_last[0]) if len(rewards_last) > 0 else (0.0 if not is_discrete_mode else 0)
-        reward_avg = float(rewards_avg[0]) if len(rewards_avg) > 0 else (0.0 if not is_discrete_mode else 0)
-        reward_sum = float(rewards_sum[0]) if len(rewards_sum) > 0 else (0.0 if not is_discrete_mode else 0)
 
         all_rewards_last.append(reward_last)
         all_rewards_avg.append(reward_avg)
@@ -1107,7 +1074,7 @@ def run_policy_ranking_eval(
     return all_metrics, task_groups, all_task_details
 
 
-def run_similarity_score_eval(results: list[dict[str, Any]], progress_pred_type: str) -> dict[str, Any]:
+def run_similarity_score_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Run similarity_score evaluation analysis.
 
     Groups results by task and computes:
@@ -1122,7 +1089,6 @@ def run_similarity_score_eval(results: list[dict[str, Any]], progress_pred_type:
             - sim_score_ref_sim: Similarity score for ref->sim (human->robot, same task)
             - sim_score_ref_diff: Similarity score for ref->diff (human->negative, different task)
             - metadata: Contains task, negative_task, human_id, robot_id, negative_id
-        progress_pred_type: Not used for similarity_score, but kept for consistency
 
     Returns:
         Tuple of (metrics_dict, task_groups, task_details)

@@ -1,10 +1,9 @@
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
 import numpy as np
-import torch
 import random
 from collections import defaultdict
-from rfm.data.dataset_types import ProgressSample, Trajectory
+from rfm.data.dataset_types import ProgressSample
 from rfm.data.samplers.base import RFMBaseSampler
 from rfm.data.datasets.helpers import (
     linspace_subsample_frames,
@@ -26,6 +25,7 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
         num_examples_per_quality_pr: int = 5,
         frame_step: int = 1,
         use_frame_steps: bool = True,
+        max_tasks: Optional[int] = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -33,6 +33,7 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
         self.num_examples_per_quality_pr = num_examples_per_quality_pr
         self.frame_step = frame_step
         self.use_frame_steps = True
+        self.max_tasks = max_tasks
         logger.info(f"ProgressPolicyRankingSampler initialized with {len(self.robot_trajectories)} trajectories")
 
         self.sample_indices = self._generate_all_sample_indices()
@@ -79,6 +80,14 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
 
         dataset_type_str = "partial_success values" if is_roboarena else "quality labels"
         logger.info(f"Found {len(tasks_with_multiple_values)} tasks with multiple {dataset_type_str}")
+
+        # Limit number of tasks if max_tasks is specified
+        if self.max_tasks is not None and self.max_tasks > 0:
+            # Convert to list, shuffle, and take first max_tasks
+            tasks_list = list(tasks_with_multiple_values.items())
+            random.shuffle(tasks_list)
+            tasks_with_multiple_values = dict(tasks_list[: self.max_tasks])
+            logger.info(f"Limited to {len(tasks_with_multiple_values)} tasks (max_tasks={self.max_tasks})")
 
         # Sample trajectories for each task
         sample_indices = []

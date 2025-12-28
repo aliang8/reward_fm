@@ -397,7 +397,7 @@ def subsample_segment_frames_with_middle(
     if max_frames == 1:
         # Just return the single frame at start_idx
         indices = [start_idx]
-        subsampled_frames = frames[start_idx:start_idx+1]
+        subsampled_frames = frames[start_idx : start_idx + 1]
         return subsampled_frames, start_idx, None, None, indices
 
     end_idx = max(0, min(end_idx, num_frames_total - 1))
@@ -604,6 +604,7 @@ def compute_progress_from_segment(
         return _compute_relative_first_frame_progress(num_frames_total, frame_indices, success_cutoff)
     else:  # default: "absolute_first_frame"
         return _compute_absolute_first_frame_progress(num_frames_total, frame_indices, success_cutoff)
+
 
 def create_rewind_trajectory(
     original_traj: Dict[str, Any],

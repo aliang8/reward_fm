@@ -1,20 +1,14 @@
-import unsloth
 import json
 import os
-import warnings
 from dataclasses import asdict
 import shutil
-from datetime import datetime
 
 import torch
 import torch.distributed as dist
 import yaml
 from rich import print as rprint
-from rich.console import Console
 from rich.panel import Panel
-from omegaconf import OmegaConf, DictConfig
-from hydra import compose, initialize
-from hydra.core.global_hydra import GlobalHydra
+from omegaconf import DictConfig
 from hydra.core.config_store import ConfigStore
 from hydra import main as hydra_main
 
@@ -84,6 +78,9 @@ def train(cfg: ExperimentConfig):
         cfg.logging.save_best.save_every = 5
         cfg.data.dataloader_num_workers = 0
         cfg.data.dataloader_persistent_workers = False
+
+        cfg.custom_eval.num_examples_per_quality_pr = 1
+        cfg.custom_eval.policy_ranking_max_tasks = 5
 
     # Set memory management
     torch.backends.cudnn.benchmark = True
@@ -197,8 +194,8 @@ def train(cfg: ExperimentConfig):
         train_dataset = setup_dataset(cfg.data)
         num_train_samples = len(train_dataset)
         rank_0_info(f"Training dataset created with {num_train_samples} samples")
-        rank_0_info(f"="*100)
-        
+        rank_0_info(f"=" * 100)
+
     # Set up evaluation dataset if evaluation is enabled
     eval_dataset = None
     if cfg.training.do_eval:

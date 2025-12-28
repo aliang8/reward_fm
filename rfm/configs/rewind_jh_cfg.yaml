@@ -67,7 +67,6 @@ model:
   train_similarity_head: false   # Whether to train the similarity scoring head
   train_success_head: false   # Whether to train the success prediction head
   average_temporal_patches: false
-  pairwise_progress: false
   use_progress_token: false
   base_model_id: rewind_scale_transformer
   rewind_scale_model: true

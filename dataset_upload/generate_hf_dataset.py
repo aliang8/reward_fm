@@ -905,7 +905,6 @@ def main(cfg: GenerateConfig):
             convert_usc_koch_p_ranking_to_hf,
         )
 
-
         output_dir_override = os.path.join(os.path.dirname(cfg.output.output_dir), cfg.dataset.dataset_name.lower())
 
         print(f"Converting USC Koch P-Ranking to HF from: {cfg.dataset.dataset_path}")

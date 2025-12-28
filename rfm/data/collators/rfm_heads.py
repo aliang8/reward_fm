@@ -37,10 +37,10 @@ def should_compute_progress(quality_label: str, data_gen_strategy: str, data_sou
     if data_source is not None and is_preference_only(data_source):
         return 0.0
 
-    if quality_label in ["suboptimal", "failure"]:
+    if quality_label in ["suboptimal", "failure", "failed"]:
         return 0.0
 
-    if quality_label == "successful" or quality_label == "rewound":
+    if quality_label == "successful" or data_gen_strategy == DataGenStrat.REWIND.value:
         return 1.0
 
     return 0.0
@@ -315,7 +315,7 @@ class RFMBatchCollator(BaseCollator):
             content_list = [{"type": "text", "text": prompt}]
             self._add_vision_content_to_list(content_list, video_field, content_extras)
 
-            # Add progress and success tokens if use_progress_token is enabled (only works with pairwise_progress)
+            # Add progress and success tokens if use_progress_token is enabled
             # For progress samples, we only use prog_token_A and succ_token_A (single trajectory)
             if self.use_progress_token:
                 content_list.append({"type": "text", "text": "<|prog_token_A|>"})
@@ -534,7 +534,7 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["padding_mask_A"] = create_padding_mask(batch_inputs["frames_shape_A"], max_length_A)
         batch_inputs["padding_mask_B"] = create_padding_mask(batch_inputs["frames_shape_B"], max_length_B)
 
-        batch_inputs["chosen_data_gen_strategy"] = [DataGenStrat.SUBSEQUENCE.value] * len(preference_samples)
+        batch_inputs["chosen_data_gen_strategy"] = [DataGenStrat.FORWARD_PROGRESS.value] * len(preference_samples)
         batch_inputs["rejected_data_gen_strategy"] = [sample.data_gen_strategy for sample in preference_samples]
         batch_inputs["chosen_quality_label"] = [sample.chosen_trajectory.quality_label for sample in preference_samples]
 
@@ -543,7 +543,7 @@ class RFMBatchCollator(BaseCollator):
         target_progress_chosen_mask = [
             should_compute_progress(
                 sample.chosen_trajectory.quality_label,
-                DataGenStrat.SUBSEQUENCE.value,
+                DataGenStrat.FORWARD_PROGRESS.value,
                 data_source=sample.chosen_trajectory.data_source,
             )
             for sample in preference_samples

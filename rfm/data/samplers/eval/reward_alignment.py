@@ -132,7 +132,6 @@ class RewardAlignmentSampler(RFMBaseSampler):
         else:
             progress_values = [gt_progress]
 
-        # Create metadata for the subsequence
         metadata = {
             "subsequence_end": end_idx,
             "ground_truth_progress": gt_progress,
@@ -152,7 +151,6 @@ class RewardAlignmentSampler(RFMBaseSampler):
                 "metadata": metadata,
             },
         )
-        # Post-process trajectory (padding, success labels, partial_success conversion)
         subsequence_trajectory = self._post_process_trajectory(subsequence_trajectory)
 
         sample = ProgressSample(trajectory=subsequence_trajectory, sample_type="progress")

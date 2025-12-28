@@ -5,14 +5,12 @@ import os
 import random
 from typing import Dict, List, Tuple, Optional, Any
 
-import cv2
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
-import wandb
 from sklearn.metrics import average_precision_score
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -27,11 +25,10 @@ from rfm.models.utils import ModelOutput
 from rfm.utils.distributed import banner, get_rank, is_rank_0, log_fsdp_diagnostics
 from rfm.utils.logger import Logger, get_logger, log_memory_usage
 from rfm.utils.metrics import compute_spearman_correlation
-from rfm.utils.setup_utils import setup_batch_collator, setup_custom_eval_dataset, setup_dataset
+from rfm.utils.setup_utils import setup_batch_collator, setup_custom_eval_dataset
 from rfm.utils.tensor_utils import t2n
 from rfm.utils.timer import _timer
-from rfm.utils.video_utils import create_policy_ranking_grid, create_video_grid_with_progress
-from PIL import Image, ImageDraw, ImageFont
+from rfm.utils.video_utils import create_policy_ranking_grid
 
 logger = get_logger()
 
@@ -1746,18 +1743,18 @@ class RFMHeadsTrainer(Trainer):
                 step=eval_step,
             )
 
-            # Create and log grid of frame pairs with progress annotations
-            if self.logger.enabled("wandb"):
-                grid_image = create_policy_ranking_grid(
-                    eval_results, grid_size=(2, 2), max_samples=4, is_discrete_mode=is_discrete_mode
-                )
-                if grid_image is not None:
-                    self.logger.log_image(
-                        f"policy_ranking_grid/{ds_name}",
-                        grid_image,
-                        step=eval_step,
-                    )
-                    del grid_image
+            # # Create and log grid of frame pairs with progress annotations
+            # if self.logger.enabled("wandb"):
+            #     grid_image = create_policy_ranking_grid(
+            #         eval_results, grid_size=(2, 2), max_samples=4, is_discrete_mode=is_discrete_mode
+            #     )
+            #     if grid_image is not None:
+            #         self.logger.log_image(
+            #             f"policy_ranking_grid/{ds_name}",
+            #             grid_image,
+            #             step=eval_step,
+            #         )
+            #         del grid_image
 
             # Save incorrectly ranked pairs to disk if output_dir is provided
             if output_dir is not None:

@@ -206,15 +206,15 @@ def convert_molmoact_dataset_to_hf(
 
         if current_ep is None:
             current_ep = ep_idx
-            frames_by_view = {"first_view": [], "second_view": [], "wrist_image": []}
+            frames_by_view = {"first_view": [], "second_view": []}
         elif ep_idx != current_ep:
             task_text = ep_text_map.get(current_ep)
             print(f"{task_text} episode loaded")
             flush_episode(current_ep, task_text, label, frames_by_view)
             current_ep = ep_idx
-            frames_by_view = {"first_view": [], "second_view": [], "wrist_image": []}
+            frames_by_view = {"first_view": [], "second_view": []}
 
-        for view_key in ("first_view", "second_view", "wrist_image"):
+        for view_key in ("first_view", "second_view"):
             cell = row.get(view_key)
             img = _to_rgb_numpy(cell)
             if img is not None:

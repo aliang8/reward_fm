@@ -114,7 +114,8 @@ class BaseDataset(torch.utils.data.Dataset):
                 "Progress-only mode detected (sample_type_ratio=[0, 1, 0]), filtering to only successful trajectories"
             )
 
-        logger.info(f"Filtering dataset with {len(self.dataset)} total trajectories")
+        dataset_type = "evaluation" if is_evaluation else "training"
+        logger.info(f"Filtering {dataset_type} dataset with {len(self.dataset)} total trajectories")
         self.dataset, self._combined_indices = self._filter_dataset(
             excluded_keywords=excluded_keywords,
             min_frames=min_frames,
@@ -122,7 +123,10 @@ class BaseDataset(torch.utils.data.Dataset):
             combined_indices=self._combined_indices,
             filter_successful_only=filter_successful_only,
         )
-        logger.info(f"Dataset filtered with {len(self.dataset)} total trajectories")
+        if filter_successful_only:
+            logger.info(f"{dataset_type.capitalize()} dataset filtered with {len(self.dataset)} total trajectories (filtered for successful trajectories only)")
+        else:
+            logger.info(f"{dataset_type.capitalize()} dataset filtered with {len(self.dataset)} total trajectories (excluded keywords and min_frames only, not filtering for successful trajectories)")
 
         # Filter out trajectories based on multiple criteria (build indices first, then filter once)
         self.dataset, self._combined_indices = self._filter_task_based_criteria(
@@ -360,19 +364,19 @@ class BaseDataset(torch.utils.data.Dataset):
         logger.info(f"✅ Loaded {len(dataset)} total trajectories from preprocessed {dataset_type} datasets")
         logger.debug(f"Available datasets: {len(available_datasets)}/{len(missing_datasets) + len(available_datasets)}")
         logger.debug(f"Missing datasets: {len(missing_datasets)}")
-        banner("Dataset statistics")
-        logger.debug(f"Robot trajectories: {len(combined_indices['robot_trajectories'])}")
-        logger.debug(f"Human trajectories: {len(combined_indices['human_trajectories'])}")
-        logger.debug(f"Number of different tasks: {len(combined_indices['task_indices'])}")
-        logger.debug(f"Data sources: {len(combined_indices['source_indices'])}")
-        logger.debug(f"Tasks available: {list(combined_indices['task_indices'].keys())[:10]} ...")
-        logger.debug(f"Number of quality labels: {len(combined_indices['quality_indices'])}")
+        banner(f"{dataset_type.capitalize()} dataset statistics")
+        logger.debug(f"[{dataset_type.upper()}] Robot trajectories: {len(combined_indices['robot_trajectories'])}")
+        logger.debug(f"[{dataset_type.upper()}] Human trajectories: {len(combined_indices['human_trajectories'])}")
+        logger.debug(f"[{dataset_type.upper()}] Number of different tasks: {len(combined_indices['task_indices'])}")
+        logger.debug(f"[{dataset_type.upper()}] Data sources: {len(combined_indices['source_indices'])}")
+        logger.debug(f"[{dataset_type.upper()}] Tasks available: {list(combined_indices['task_indices'].keys())[:10]} ...")
+        logger.debug(f"[{dataset_type.upper()}] Number of quality labels: {len(combined_indices['quality_indices'])}")
         for quality_label in combined_indices["quality_indices"]:
-            logger.debug(f"  {quality_label}: {len(combined_indices['quality_indices'][quality_label])}")
-        logger.debug(f"Data sources available: {combined_indices['source_indices'].keys()}")
-        logger.debug(f"Number of paired tasks: {len(combined_indices['paired_human_robot_by_task'])}")
+            logger.debug(f"[{dataset_type.upper()}]   {quality_label}: {len(combined_indices['quality_indices'][quality_label])}")
+        logger.debug(f"[{dataset_type.upper()}] Data sources available: {combined_indices['source_indices'].keys()}")
+        logger.debug(f"[{dataset_type.upper()}] Number of paired tasks: {len(combined_indices['paired_human_robot_by_task'])}")
         logger.debug(
-            f"Number of tasks with both multiple quality labels: {len(combined_indices['tasks_with_multiple_quality_labels'])}"
+            f"[{dataset_type.upper()}] Number of tasks with both multiple quality labels: {len(combined_indices['tasks_with_multiple_quality_labels'])}"
         )
 
         return dataset, combined_indices

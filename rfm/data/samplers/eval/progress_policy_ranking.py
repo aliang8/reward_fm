@@ -93,21 +93,16 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
         sample_indices = []
         for task, key_to_trajs in tasks_with_multiple_values.items():
             if is_roboarena:
-                # RoboArena: Sample N trajectories total with different partial_success values
-                # Collect one trajectory per unique partial_success value
-                sampled_traj_indices = []
+                # RoboArena: Sample N trajectories per partial_success value (grouping_key)
                 for grouping_key, traj_indices in key_to_trajs.items():
                     if traj_indices:
-                        # Sample one trajectory per partial_success value
-                        sampled_traj_indices.append(random.choice(traj_indices))
+                        # Sample up to num_examples_per_quality_pr trajectories for this partial_success value
+                        num_to_sample = min(self.num_examples_per_quality_pr, len(traj_indices))
+                        sampled_traj_indices = random.sample(traj_indices, num_to_sample)
 
-                # If we have more than N unique partial_success values, randomly sample N of them
-                if len(sampled_traj_indices) > self.num_examples_per_quality_pr:
-                    sampled_traj_indices = random.sample(sampled_traj_indices, self.num_examples_per_quality_pr)
-
-                for traj_idx in sampled_traj_indices:
-                    traj = self.dataset[traj_idx]
-                    sample_indices.extend(self._generate_indices_for_trajectory(traj_idx, traj))
+                        for traj_idx in sampled_traj_indices:
+                            traj = self.dataset[traj_idx]
+                            sample_indices.extend(self._generate_indices_for_trajectory(traj_idx, traj))
             else:
                 # Non-RoboArena: Sample N trajectories per quality label
                 for grouping_key, traj_indices in key_to_trajs.items():

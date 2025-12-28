@@ -11,7 +11,8 @@ from tqdm import tqdm
 
 from dataset_upload.helpers import create_hf_trajectory, load_sentence_transformer_model
 
-MAX_EPISODES_PER_DATASET = 5 # 5 episodes per dataset; any extra is a mistake
+MAX_EPISODES_PER_DATASET = 5  # 5 episodes per dataset; any extra is a mistake
+
 
 def _require_lerobot_dataset_class():
     """
@@ -56,8 +57,7 @@ def _load_lerobot_dataset(local_dataset_dir: Path):
             break
 
     raise RuntimeError(
-        f"Failed to construct LeRobotDataset from local path: {local_dataset_dir}\n"
-        f"Last error: {last_err}"
+        f"Failed to construct LeRobotDataset from local path: {local_dataset_dir}\nLast error: {last_err}"
     )
 
 
@@ -259,20 +259,16 @@ def convert_usc_koch_p_ranking_to_hf(
     print(f"Unique instructions: {len(lang_cache)}")
 
     if not all_entries:
-        return Dataset.from_dict(
-            {
-                "id": [],
-                "task": [],
-                "lang_vector": [],
-                "data_source": [],
-                "frames": [],
-                "is_robot": [],
-                "quality_label": [],
-                "preference_group_id": [],
-                "preference_rank": [],
-            }
-        )
+        return Dataset.from_dict({
+            "id": [],
+            "task": [],
+            "lang_vector": [],
+            "data_source": [],
+            "frames": [],
+            "is_robot": [],
+            "quality_label": [],
+            "preference_group_id": [],
+            "preference_rank": [],
+        })
 
     return Dataset.from_list(all_entries)
-
-

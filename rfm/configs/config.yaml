@@ -33,7 +33,6 @@ model:
   train_similarity_head: false  # Whether to train the similarity scoring head
   train_success_head: false     # Whether to train the success prediction head
   average_temporal_patches: false
-  pairwise_progress: false
   use_progress_token: false
   use_multi_image: ${data.use_multi_image}  # Reference from data config - If True, feed frames as a list of images instead of converting to video (avoids encoding overhead)
 
@@ -83,10 +82,10 @@ data:
   # Data generation settings
   sample_type_ratio: [1, 0, 0]  # Ratio of preference, progress (no longer used, it's absorbed in preference if predict_pref_progress is true), and similarity samples
   dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
-  # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task]
-  preference_strategy_ratio: [6, 1, 1]
-  # Tunable strategy ratios for progress generation: [successful, rewind, different_task, subsequence, reverse_progress]
-  progress_strategy_ratio: [1, 6, 1, 1, 0]  # [successful, rewind, different_task, subsequence, reverse_progress]
+  # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, reverse_progress]
+  preference_strategy_ratio: [1, 1, 1, 1]
+  # Tunable strategy ratios for progress generation: [different_task, forward_progress, reverse_progress, rewind]
+  progress_strategy_ratio: [1, 1, 1, 1]  # [different_task, forward_progress, reverse_progress, rewind]
   similarity_strategy_ratio: [1, 1, 1] # rewind, suboptimal_same_task, paired_human_robot
   shuffle: true
   seed: 42
@@ -106,7 +105,6 @@ data:
   dataloader_persistent_workers: True
 
   progress_pred_type: "absolute_first_frame" # "absolute_first_frame", "relative_first_frame", or "absolute_wrt_total_frames"
-  pairwise_progress: false
 
   # RoboArena partial success threshold
   roboarena_partial_success_threshold: 0.2  # Minimum difference in partial_success between chosen and rejected trajectories for RoboArena

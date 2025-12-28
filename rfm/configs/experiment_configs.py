@@ -38,14 +38,10 @@ class ModelConfig(PretrainedConfig):
         },
     )
 
-    pairwise_progress: bool = field(
-        default=False,
-        metadata={"help": "Whether to use pairwise progress sampling strategy for progress prediction"},
-    )
     use_progress_token: bool = field(
         default=False,
         metadata={
-            "help": "If True and pairwise_progress is True, use <|prog_token|> to predict progress from hidden state at that token. "
+            "help": "If True, use <|prog_token|> to predict progress from hidden state at that token. "
             "Otherwise, use average pooling of frame embeddings."
         },
     )
@@ -173,16 +169,10 @@ class DataConfig:
         default=0.8, metadata={"help": "Ratio of dataset preference samples to generated preference samples"}
     )
     # [rewind, suboptimal_same_task, different_task, reverse_progress]
-    preference_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 0])
-    # [successful, rewind, different_task, subsequence, reverse_progress]
-    progress_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 1, 0])
+    preference_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 1])
+    # [different_task, forward_progress, reverse_progress, rewind]
+    progress_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 1])
     similarity_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1])
-    use_uniform_sampling: bool = field(
-        default=False,
-        metadata={
-            "help": "If True, use uniform sampling when selecting rejected trajectories for SUBOPTIMAL and DIFFERENT_TASK strategies in preference sampling"
-        },
-    )
 
     data_source_weights: Optional[Dict[str, float]] = field(
         default=None,
@@ -245,11 +235,6 @@ class DataConfig:
     dataset_success_cutoff_file: Optional[str] = field(
         default=None,
         metadata={"help": "Path to dataset-specific success cutoff file (CSV format: dataset_name,success_percentage)"},
-    )
-
-    pairwise_progress: bool = field(
-        default=False,
-        metadata={"help": "Whether to use pairwise progress sampling strategy for progress prediction"},
     )
 
     # RoboArena partial success threshold

@@ -402,11 +402,7 @@ def subsample_segment_frames_with_middle(
         return subsampled_frames, start_idx, None, end_idx, indices
     
     if max_frames == 2:
-        # Return the two frames in order (start -> end or end -> start)
-        if start_idx < end_idx:
-            indices = [start_idx, end_idx]
-        else:
-            indices = [end_idx, start_idx]
+        indices = [start_idx, end_idx]
         subsampled_frames = frames[indices]
         return subsampled_frames, start_idx, None, end_idx, indices
 

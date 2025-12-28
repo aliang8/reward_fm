@@ -184,6 +184,7 @@ class PrefSampler(RFMBaseSampler):
         # Initialize variables for strategy selection
         rejected_traj = None
         strategy_used = None
+        rejected_subsample_strategy = None
 
         # Check if this is a RoboArena trajectory (has partial_success and data_source contains "roboarena")
         is_roboarena = False
@@ -204,7 +205,7 @@ class PrefSampler(RFMBaseSampler):
 
         # Add other strategies if not RoboArena
         if self.preference_strategy_ratio[0] > 0:
-            strategies.append((DataGenStrat.REWOUND, self.preference_strategy_ratio[0]))
+            strategies.append((DataGenStrat.REWIND, self.preference_strategy_ratio[0]))
         if self._has_suboptimal and self.preference_strategy_ratio[1] > 0:
             strategies.append((DataGenStrat.SUBOPTIMAL, self.preference_strategy_ratio[1]))
         if self.preference_strategy_ratio[2] > 0:
@@ -258,6 +259,8 @@ class PrefSampler(RFMBaseSampler):
             # Execute selected strategy with retry logic
             max_retries = 3  # Number of retry attempts for sampling
 
+            rejected_subsample_strategy = None
+
             if selected_strategy == DataGenStrat.ROBOARENA_PARTIAL_SUCCESS:
                 rejected_traj = None
                 for _ in range(max_retries):
@@ -282,28 +285,30 @@ class PrefSampler(RFMBaseSampler):
                         else:
                             rejected_traj = different_traj
                         break
-            elif selected_strategy == DataGenStrat.REWOUND:
-                rejected_traj = None
-                for _ in range(max_retries):
-                    rejected_traj = self._get_rewound_traj(chosen_traj)
-                    if rejected_traj is not None:
-                        break
+                rejected_subsample_strategy = "subsample_forward"
+            elif selected_strategy == DataGenStrat.REWIND:
+                # REWIND: use the same trajectory but with rewind subsampling
+                rejected_traj = chosen_traj
+                rejected_subsample_strategy = "subsample_rewind"
             elif selected_strategy == DataGenStrat.SUBOPTIMAL:
                 rejected_traj = None
                 for _ in range(max_retries):
                     rejected_traj = self._get_same_task_suboptimal(chosen_traj)
                     if rejected_traj is not None:
                         break
+                rejected_subsample_strategy = "subsample_forward"
             elif selected_strategy == DataGenStrat.DIFFERENT_TASK:
                 rejected_traj = None
                 for _ in range(max_retries):
                     rejected_traj = self._get_different_video_traj(chosen_traj)
                     if rejected_traj is not None:
                         break
+                rejected_subsample_strategy = "subsample_forward"
             elif selected_strategy == DataGenStrat.REVERSE_PROGRESS:
                 # REVERSE_PROGRESS: use the same trajectory but with reverse uniform sampling
                 # The rejected trajectory will be the same trajectory sampled with reverse direction
                 rejected_traj = chosen_traj
+                rejected_subsample_strategy = "subsample_reverse"
             else:
                 return None
 
@@ -337,19 +342,6 @@ class PrefSampler(RFMBaseSampler):
 
         chosen_subsample_strategy = "subsample_forward"
         chosen_trajectory = self._get_traj_from_data(chosen_traj, subsample_strategy=chosen_subsample_strategy)
-
-        rejected_subsample_strategy = None
-        if strategy_used == DataGenStrat.REVERSE_PROGRESS:
-            # REVERSE_PROGRESS: use reverse uniform sampling on the same trajectory
-            rejected_subsample_strategy = "subsample_reverse"
-        elif strategy_used == DataGenStrat.REWOUND:
-            # REWOUND: use rewind sampling for the rewound trajectory
-            rejected_subsample_strategy = "subsample_rewind"
-        elif strategy_used in [
-            DataGenStrat.SUBOPTIMAL,
-            DataGenStrat.DIFFERENT_TASK,
-        ]:
-            rejected_subsample_strategy = "subsample_forward"
 
         rejected_trajectory = self._get_traj_from_data(rejected_traj, subsample_strategy=rejected_subsample_strategy)
 

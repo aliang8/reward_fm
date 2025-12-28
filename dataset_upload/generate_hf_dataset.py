@@ -871,14 +871,11 @@ def main(cfg: GenerateConfig):
                 f"Dataset name must specify either 'usc_koch_human_robot_paired_human' or 'usc_koch_human_robot_paired_robot': {cfg.dataset.dataset_name}. "
             )
 
-        # Override output_dir and hub_repo_id based on dataset_name
-        output_dir_override = os.path.join(os.path.dirname(cfg.output.output_dir), cfg.dataset.dataset_name.lower())
-
         print(f"Converting USC Koch Human-Robot Paired ({trajectory_type}) to HF from: {cfg.dataset.dataset_path}")
         dataset = convert_usc_koch_human_robot_paired_to_hf(
             dataset_path=cfg.dataset.dataset_path,
             dataset_name=cfg.dataset.dataset_name,
-            output_dir=output_dir_override,
+            output_dir=cfg.output.output_dir,
             trajectory_type=trajectory_type,
             max_trajectories=cfg.output.max_trajectories,
             max_frames=cfg.output.max_frames,
@@ -892,7 +889,7 @@ def main(cfg: GenerateConfig):
             print(f"\nPushing dataset to HuggingFace Hub: {updated_repo_id}")
             try:
                 push_hf_dataset_and_video_files_to_hub(
-                    dataset, updated_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, output_dir_override
+                    dataset, updated_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir
                 )
             except Exception as e:
                 print(f"❌ Error pushing to hub: {e}")

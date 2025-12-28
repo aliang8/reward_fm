@@ -80,7 +80,7 @@ def train(cfg: ExperimentConfig):
         cfg.data.dataloader_persistent_workers = False
 
         cfg.custom_eval.num_examples_per_quality_pr = 1
-        cfg.custom_eval.policy_ranking_max_tasks = 5
+        cfg.custom_eval.policy_ranking_max_tasks = 10
 
     # Set memory management
     torch.backends.cudnn.benchmark = True

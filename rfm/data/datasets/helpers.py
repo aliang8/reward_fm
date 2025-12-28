@@ -394,6 +394,22 @@ def subsample_segment_frames_with_middle(
     start_idx = max(0, min(start_idx, num_frames_total - 1))
     end_idx = max(0, min(end_idx, num_frames_total - 1))
 
+    # Handle edge cases for max_frames == 1 or 2
+    if max_frames == 1:
+        # Just return the single frame at start_idx
+        indices = [start_idx]
+        subsampled_frames = frames[start_idx:start_idx+1]
+        return subsampled_frames, start_idx, None, end_idx, indices
+    
+    if max_frames == 2:
+        # Return the two frames in order (start -> end or end -> start)
+        if start_idx < end_idx:
+            indices = [start_idx, end_idx]
+        else:
+            indices = [end_idx, start_idx]
+        subsampled_frames = frames[indices]
+        return subsampled_frames, start_idx, None, end_idx, indices
+
     # If middle_idx is not provided, set it to end_idx (simple start -> end path)
     if middle_idx is None:
         middle_idx = end_idx

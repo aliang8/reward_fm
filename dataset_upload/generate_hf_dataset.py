@@ -904,33 +904,18 @@ def main(cfg: GenerateConfig):
         print("Dataset conversion complete!")
         return
     elif "usc_koch_p_ranking" in cfg.dataset.dataset_name.lower():
-        from dataset_upload.dataset_loaders.usc_koch_p_ranking_loader import (
+        from dataset_upload.dataset_loaders.usc_koch_p_ranking_loader import (  # type: ignore
             convert_usc_koch_p_ranking_to_hf,
         )
 
-        name_l = cfg.dataset.dataset_name.lower()
-        if name_l.endswith("_success"):
-            quality_filter = "success"
-        elif name_l.endswith("_suboptimal"):
-            quality_filter = "suboptimal"
-        elif name_l.endswith("_failure"):
-            quality_filter = "failure"
-        elif name_l.endswith("_all") or name_l == "usc_koch_p_ranking":
-            quality_filter = None
-        else:
-            raise ValueError(
-                "Dataset name must be one of: "
-                "usc_koch_p_ranking_success | usc_koch_p_ranking_suboptimal | usc_koch_p_ranking_failure | usc_koch_p_ranking_all"
-            )
 
         output_dir_override = os.path.join(os.path.dirname(cfg.output.output_dir), cfg.dataset.dataset_name.lower())
 
-        print(f"Converting USC Koch P-Ranking to HF from: {cfg.dataset.dataset_path} | quality={quality_filter}")
+        print(f"Converting USC Koch P-Ranking to HF from: {cfg.dataset.dataset_path}")
         dataset = convert_usc_koch_p_ranking_to_hf(
             dataset_path=cfg.dataset.dataset_path,
             dataset_name=cfg.dataset.dataset_name,
             output_dir=output_dir_override,
-            quality_filter=quality_filter,
             max_trajectories=cfg.output.max_trajectories,
             max_frames=cfg.output.max_frames,
             fps=cfg.output.fps,
@@ -939,7 +924,7 @@ def main(cfg: GenerateConfig):
 
         # Handle pushing/saving consistently
         if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
-            updated_repo_id = cfg.hub.hub_repo_id.replace("usc_koch_p_ranking_", "")
+            updated_repo_id = cfg.hub.hub_repo_id.replace("usc_koch_p_ranking_rfm", "")
             print(f"\nPushing dataset to HuggingFace Hub: {updated_repo_id}")
             try:
                 push_hf_dataset_and_video_files_to_hub(

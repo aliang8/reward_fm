@@ -79,7 +79,7 @@ eval_subsets:
   - ["mit_franka_p-rank_rfm"]
   - ["utd_so101_clean_policy_ranking_top"]
   - ["utd_so101_clean_policy_ranking_wrist"]
-  - ["human", "robot"]
+  - ["usc_koch_human_robot_paired_human", "usc_koch_human_robot_paired_robot"]
   - ["usc_koch_p_ranking_rfm"]
 
 

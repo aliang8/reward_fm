@@ -335,21 +335,21 @@ class PrefSampler(RFMBaseSampler):
             )
             return None
 
-        chosen_subsample_strategy = None
-        if self.config.use_uniform_sampling:
-            chosen_subsample_strategy = "uniform_sample_forward"
-
+        chosen_subsample_strategy = "subsample_forward"
         chosen_trajectory = self._get_traj_from_data(chosen_traj, subsample_strategy=chosen_subsample_strategy)
 
         rejected_subsample_strategy = None
         if strategy_used == DataGenStrat.REVERSE_PROGRESS:
             # REVERSE_PROGRESS: use reverse uniform sampling on the same trajectory
-            rejected_subsample_strategy = "uniform_sample_reverse"
-        elif self.config.use_uniform_sampling and strategy_used in [
+            rejected_subsample_strategy = "subsample_reverse"
+        elif strategy_used == DataGenStrat.REWOUND:
+            # REWOUND: use rewind sampling for the rewound trajectory
+            rejected_subsample_strategy = "subsample_rewind"
+        elif strategy_used in [
             DataGenStrat.SUBOPTIMAL,
             DataGenStrat.DIFFERENT_TASK,
         ]:
-            rejected_subsample_strategy = "uniform_sample_forward"
+            rejected_subsample_strategy = "subsample_forward"
 
         rejected_trajectory = self._get_traj_from_data(rejected_traj, subsample_strategy=rejected_subsample_strategy)
 

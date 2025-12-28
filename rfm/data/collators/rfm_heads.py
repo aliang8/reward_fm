@@ -315,7 +315,7 @@ class RFMBatchCollator(BaseCollator):
             content_list = [{"type": "text", "text": prompt}]
             self._add_vision_content_to_list(content_list, video_field, content_extras)
 
-            # Add progress and success tokens if use_progress_token is enabled (only works with pairwise_progress)
+            # Add progress and success tokens if use_progress_token is enabled
             # For progress samples, we only use prog_token_A and succ_token_A (single trajectory)
             if self.use_progress_token:
                 content_list.append({"type": "text", "text": "<|prog_token_A|>"})

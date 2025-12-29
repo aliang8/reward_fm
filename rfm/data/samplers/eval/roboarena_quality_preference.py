@@ -1,6 +1,5 @@
 from typing import Dict, List, Any
 
-import random
 from tqdm import tqdm
 
 from rfm.data.samplers.eval.base_pref import BaseQualityPreferenceSampler
@@ -115,7 +114,7 @@ class RoboArenaQualityPreferenceSampler(BaseQualityPreferenceSampler):
             # Apply comparisons_per_task limit if set (sample uniformly across all pairs for this task)
             if self.comparisons_per_task is not None and len(task_pairs) > self.comparisons_per_task:
                 # Uniformly sample comparisons for this task
-                task_pairs = random.sample(task_pairs, self.comparisons_per_task)
+                task_pairs = self._local_random.sample(task_pairs, self.comparisons_per_task)
 
             sample_indices.extend(task_pairs)
 

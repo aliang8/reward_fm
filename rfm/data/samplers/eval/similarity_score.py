@@ -10,7 +10,6 @@ This generator creates similarity samples for evaluation:
 
 from typing import Dict, List, Any
 
-import random
 import torch
 from tqdm import tqdm
 
@@ -69,12 +68,12 @@ class SimilarityScoreSampler(RFMBaseSampler):
 
             # Limit number of human/robot trajectories considered per task to reduce combinatorics
             if len(human_indices) > 2:
-                selected_humans = random.sample(human_indices, 2)
+                selected_humans = self._local_random.sample(human_indices, 2)
             else:
                 selected_humans = human_indices
 
             if len(robot_indices) > 2:
-                selected_robots = random.sample(robot_indices, 2)
+                selected_robots = self._local_random.sample(robot_indices, 2)
             else:
                 selected_robots = robot_indices
 
@@ -82,7 +81,7 @@ class SimilarityScoreSampler(RFMBaseSampler):
             for human_idx in selected_humans:
                 for robot_idx in selected_robots:
                     # Sample N negative tasks (with replacement if needed)
-                    negative_tasks = random.choices(other_tasks, k=self.num_negatives)
+                    negative_tasks = self._local_random.choices(other_tasks, k=self.num_negatives)
 
                     # Create one sample index entry per negative
                     for negative_task in negative_tasks:
@@ -117,7 +116,7 @@ class SimilarityScoreSampler(RFMBaseSampler):
         if not negative_task_indices:
             return None
 
-        negative_idx = random.choice(negative_task_indices)
+        negative_idx = self._local_random.choice(negative_task_indices)
         negative_traj = self.dataset[negative_idx]
 
         # Create trajectories for the similarity sample

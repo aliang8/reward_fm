@@ -92,6 +92,7 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
 
         # Sample trajectories for each task
         sample_indices = []
+        sampled_traj_indices = []
         # Sort tasks to ensure deterministic processing order
         for task, key_to_trajs in sorted(tasks_with_multiple_values.items()):
             if is_roboarena:
@@ -105,6 +106,7 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
                         # Sample up to num_examples_per_quality_pr trajectories for this partial_success value
                         num_to_sample = min(self.num_examples_per_quality_pr, len(traj_indices))
                         sampled_traj_indices = self._local_random.sample(traj_indices, num_to_sample)
+                        sampled_traj_indices.extend(sampled_traj_indices)
                         for traj_idx in sampled_traj_indices:
                             traj = self.dataset[traj_idx]
                             sample_indices.extend(self._generate_indices_for_trajectory(traj_idx, traj))
@@ -118,12 +120,13 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
                     # Sample up to num_examples_per_quality_pr trajectories for this quality label
                     num_to_sample = min(self.num_examples_per_quality_pr, len(traj_indices))
                     sampled_traj_indices = self._local_random.sample(traj_indices, num_to_sample)
+                    sampled_traj_indices.extend(sampled_traj_indices)
                     for traj_idx in sampled_traj_indices:
                         traj = self.dataset[traj_idx]
                         sample_indices.extend(self._generate_indices_for_trajectory(traj_idx, traj))
 
         logger.info(f"Sampled {len(sample_indices)} samples across {len(tasks_with_multiple_values)} tasks")
-        logger.info(f"Sample indices: {sample_indices}")
+        logger.info(f"Sampled trajectory indices: {sampled_traj_indices}")
 
         return sample_indices
 

@@ -27,7 +27,7 @@ Usage Examples:
       --video video.mp4 --task "Pick up the red block" --fps 1.0
 
   # Progress evaluation via local model
-  uv run python rfm/evals/run_eval.py --mode model --eval-type progress \
+  uv run python rfm/evals/run_eval.py --mode local --eval-type progress \
       --model-path rewardfm/pref_prog_2frames_all \
       --video video.mp4 --task "Pick up the red block" --fps 1.0 
 
@@ -836,9 +836,9 @@ def main():
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["gradio", "server", "model"],
+        choices=["gradio", "server", "local"],
         required=True,
-        help="Execution mode: gradio (via Gradio app), server (direct Azure server), or model (local model)",
+        help="Execution mode: gradio (via Gradio app), server (direct Azure server), or local (local model)",
     )
     parser.add_argument(
         "--eval-type",
@@ -860,7 +860,7 @@ def main():
     parser.add_argument(
         "--model-path",
         type=str,
-        help="Path to model checkpoint (required for model mode)",
+        help="Path to model checkpoint (required for local mode)",
     )
     parser.add_argument(
         "--video",
@@ -899,7 +899,7 @@ def main():
         "--device",
         type=str,
         default="cuda",
-        help="Device for model inference (default: cuda, only for model mode)",
+        help="Device for model inference (default: cuda, only for local mode)",
     )
 
     args = parser.parse_args()
@@ -909,8 +909,8 @@ def main():
         parser.error("--gradio-url is required for gradio mode")
     if args.mode in ["gradio", "server"] and not args.server_url:
         parser.error("--server-url is required for gradio and server modes")
-    if args.mode == "model" and not args.model_path:
-        parser.error("--model-path is required for model mode")
+    if args.mode == "local" and not args.model_path:
+        parser.error("--model-path is required for local mode")
 
     # Validate eval-type specific arguments
     if args.eval_type == "progress":
@@ -929,9 +929,9 @@ def main():
     output_dir = setup_output_directory(args.output_dir, video_path_for_dir)
     print(f"Output directory: {output_dir}")
 
-    # Load model once if using model mode
+    # Load model once if using local mode
     model_components = None
-    if args.mode == "model":
+    if args.mode == "local":
         model_components = load_model_for_inference(args.model_path, output_dir, args.device)
 
     if args.eval_type == "progress":
@@ -966,7 +966,7 @@ def main():
                         )
                     elif args.mode == "server":
                         result = run_progress_server(args.server_url, video_file, task_text, args.fps, output_dir)
-                    else:  # model
+                    else:  # local
                         result = run_progress_model(video_file, task_text, args.fps, output_dir, model_components)
                     results.append((video_file, result))
 
@@ -1048,7 +1048,7 @@ def main():
                 )
             elif args.mode == "server":
                 result = run_progress_server(args.server_url, args.video, task_text, args.fps, output_dir)
-            else:  # model
+            else:  # local
                 result = run_progress_model(args.video, task_text, args.fps, output_dir, model_components)
 
             print("\n" + "=" * 60)
@@ -1082,7 +1082,7 @@ def main():
             )
         elif args.mode == "server":
             result = run_preference_server(args.server_url, args.video_a, args.video_b, task_text, args.fps, output_dir)
-        else:  # model
+        else:  # local
             result = run_preference_model(args.video_a, args.video_b, task_text, args.fps, output_dir, model_components)
 
         print("\n" + "=" * 60)

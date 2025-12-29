@@ -9,7 +9,6 @@ as PreferenceSample objects that can be evaluated by the model.
 
 from typing import Dict, List, Any
 
-import random
 import torch
 from tqdm import tqdm
 
@@ -56,7 +55,7 @@ class RewardAlignmentSampler(RFMBaseSampler):
         # Limit number of trajectories if specified
         trajectories_to_process = self.robot_trajectories
         if self.max_trajectories is not None and self.max_trajectories < len(self.robot_trajectories):
-            trajectories_to_process = random.sample(self.robot_trajectories, self.max_trajectories)
+            trajectories_to_process = self._local_random.sample(self.robot_trajectories, self.max_trajectories)
 
         rank_0_print(
             f"Generating subsequence samples for {len(trajectories_to_process)} trajectories", verbose=self.verbose

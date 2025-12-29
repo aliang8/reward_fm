@@ -732,6 +732,7 @@ class RFMHeadsTrainer(Trainer):
 
         # Create custom eval dataset with the appropriate sampler
         sampler_kwargs = {}
+        sampler_kwargs["random_seed"] = self.config.custom_eval.custom_eval_random_seed
 
         if eval_type == "reward_alignment":
             sampler_kwargs["max_trajectories"] = self.config.custom_eval.reward_alignment_max_trajectories

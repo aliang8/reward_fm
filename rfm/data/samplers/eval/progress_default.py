@@ -2,7 +2,6 @@ from typing import Dict, List, Any, Optional
 
 import numpy as np
 import torch
-import random
 from rfm.data.dataset_types import ProgressSample, Trajectory
 from rfm.data.samplers.base import RFMBaseSampler
 from rfm.data.datasets.helpers import (
@@ -10,6 +9,7 @@ from rfm.data.datasets.helpers import (
     load_embeddings_from_path,
     load_frames_from_npz,
     convert_absolute_to_relative_progress,
+    create_trajectory_from_dict,
 )
 from rfm.utils.distributed import rank_0_print
 
@@ -37,7 +37,7 @@ class ProgressDefaultSampler(RFMBaseSampler):
         """Generate all possible sample indices."""
         trajectories_to_process = self.robot_trajectories
         if self.max_trajectories is not None and self.max_trajectories < len(self.robot_trajectories):
-            trajectories_to_process = random.sample(self.robot_trajectories, self.max_trajectories)
+            trajectories_to_process = self._local_random.sample(self.robot_trajectories, self.max_trajectories)
 
         rank_0_print(
             f"Generating progress default samples for {len(trajectories_to_process)} trajectories", verbose=self.verbose

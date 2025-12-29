@@ -536,6 +536,9 @@ def _compute_policy_ranking_metrics_roboarena(
 
         for i in range(n):
             for j in range(i + 1, n):
+                # Skip pairs with None values
+                if partial_successes[i] is None or partial_successes[j] is None:
+                    continue
                 if partial_successes[i] == partial_successes[j]:
                     continue
 
@@ -549,8 +552,16 @@ def _compute_policy_ranking_metrics_roboarena(
                     correct_pairs += 1
 
         # Compute spearman_rewind (binning between 0 and 1)
-        bin_edges = np.linspace(0, 1, 4)  # Creates bins [0, 1/3), [1/3, 2/3), [2/3, 1]
-        bin_assignments = np.clip(np.digitize(partial_successes, bin_edges[1:], right=False), 0, 2)
+        # Filter out None values for binning
+        valid_mask = np.array([ps is not None for ps in partial_successes])
+        if np.any(valid_mask):
+            valid_partial_successes = np.array([ps for ps in partial_successes if ps is not None])
+            valid_predicted_rewards = predicted_rewards[valid_mask]
+            bin_edges = np.linspace(0, 1, 4)  # Creates bins [0, 1/3), [1/3, 2/3), [2/3, 1]
+            bin_assignments = np.clip(np.digitize(valid_partial_successes, bin_edges[1:], right=False), 0, 2)
+        else:
+            bin_assignments = np.array([])
+            valid_predicted_rewards = np.array([])
 
         avg_rewards_per_bin = {}
         bin_ranks = []
@@ -559,7 +570,7 @@ def _compute_policy_ranking_metrics_roboarena(
         for bin_idx in range(3):
             mask = bin_assignments == bin_idx
             if np.any(mask):
-                bin_rewards = predicted_rewards[mask]
+                bin_rewards = valid_predicted_rewards[mask]
                 avg_reward = float(np.mean(bin_rewards))
                 avg_rewards_per_bin[bin_idx] = avg_reward
                 bin_ranks.append(bin_idx)
@@ -992,6 +1003,14 @@ def run_policy_ranking_eval(
             aggregation="sum",
         )
 
+        # Skip trajectories with None partial_success for RoboArena
+        if use_partial_success:
+            if metadata["partial_success"] is None:
+                continue
+            all_partial_successes.append(metadata["partial_success"])
+        else:
+            all_quality_labels.append(metadata["quality_label"])
+
         all_rewards_last.append(reward_last)
         all_rewards_avg.append(reward_avg)
         all_rewards_sum.append(reward_sum)
@@ -999,11 +1018,6 @@ def run_policy_ranking_eval(
         all_tasks.append(metadata["task"])
         all_video_paths.append(metadata.get("video_path"))
         all_ids.append(trajectory_id)
-
-        if use_partial_success:
-            all_partial_successes.append(metadata["partial_success"])
-        else:
-            all_quality_labels.append(metadata["quality_label"])
 
     all_rewards_last = np.array(all_rewards_last)
     all_rewards_avg = np.array(all_rewards_avg)

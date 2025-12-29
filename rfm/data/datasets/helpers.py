@@ -14,12 +14,11 @@ from rfm.data.dataset_types import Trajectory
 class DataGenStrat(Enum):
     """Enum for different data generation strategies used in preference generation."""
 
-    SUCCESSFUL = "successful"
-    SUBSEQUENCE = "subsequence"
     REVERSE_PROGRESS = "reverse_progress"
     UNIFORM_SAMPLE = "uniform_sample"
+    FORWARD_PROGRESS = "forward_progress"
+    REWIND = "rewind"
     SUBOPTIMAL = "suboptimal"
-    REWOUND = "rewound"
     DIFFERENT_TASK = "different_task"
     DIFFERENT_TASK_INSTRUCTION = "different_task_instruction"
     PAIRED_HUMAN_ROBOT = "paired_human_robot"
@@ -360,76 +359,103 @@ def randomly_subsample_frames(
     return subsampled_frames, indices
 
 
-def subsample_segment_frames(
+def subsample_segment_frames_with_middle(
     frames: np.ndarray,
     max_frames: int,
+    start_idx: int,
+    end_idx: int,
+    middle_idx: Optional[int] = None,
     method: str = "linspace",
-    perc_start: float = 0.5,
-    perc_end: float = 2.0 / 3.0,
-    start_idx: int | None = None,
-    end_idx: int | None = None,
-) -> tuple[np.ndarray, int, int, list[int]]:
-    """Choose a random segment [start_idx, end_idx) and subsample frames.
+) -> tuple[np.ndarray, int, int, int, list[int]]:
+    """Subsample frames following the path: start -> middle -> end.
 
-    Returns subsampled frames along with (start_idx, end_idx, subsampled_indices).
+    Logic:
+    1. If middle_idx is None, set it to end_idx (simple start -> end path)
+    2. Enumerate all frames from start -> middle
+    3. Enumerate all frames from middle -> end
+    4. Join the two segments together
+    5. Apply random or linspace subsampling to the combined segment
 
     Args:
         frames: Input frames array
         max_frames: Maximum number of frames to subsample
+        start_idx: Start index
+        end_idx: End index
+        middle_idx: Optional middle index. If None, set to end_idx (simple start -> end path)
         method: Subsampling method ("linspace" or "random")
-        perc_start: Percentage for start bound (used if start_idx is None)
-        perc_end: Percentage for end bound (used if end_idx is None)
-        start_idx: Optional start index (if provided, overrides perc_start)
-        end_idx: Optional end index (if provided, overrides perc_end)
+
+    Returns:
+        Tuple of (subsampled_frames, start_idx, middle_idx, end_idx, subsampled_indices)
+        where subsampled_indices are indices into the original frames array, ordered as start -> middle -> end
     """
     num_frames_total = len(frames)
 
-    # If we have fewer frames than max_frames, just return all frames
-    if num_frames_total < max_frames:
-        return frames, 0, num_frames_total, list(range(num_frames_total))
+    # Ensure indices are valid (allow end_idx < start_idx for reverse progress)
+    start_idx = max(0, min(start_idx, num_frames_total - 1))
 
-    # If start_idx and end_idx are provided, use them directly
-    if start_idx is not None and end_idx is not None:
-        # Ensure indices are valid
-        start_idx = max(0, min(start_idx, num_frames_total - 1))
-        end_idx = max(start_idx + 1, min(end_idx, num_frames_total))
+    # Handle edge cases for max_frames == 1 or 2
+    if max_frames == 1:
+        # Just return the single frame at start_idx
+        indices = [start_idx]
+        subsampled_frames = frames[start_idx : start_idx + 1]
+        return subsampled_frames, start_idx, None, None, indices
+
+    end_idx = max(0, min(end_idx, num_frames_total - 1))
+
+    if max_frames == 2:
+        indices = [start_idx, end_idx]
+        subsampled_frames = frames[indices]
+        return subsampled_frames, start_idx, None, end_idx, indices
+
+    # If middle_idx is not provided, set it to end_idx (simple start -> end path)
+    if middle_idx is None:
+        middle_idx = end_idx
     else:
-        # Clamp percentages to valid ranges
-        perc_start = max(0.0, min(1.0, perc_start))
-        perc_end = max(0.0, min(1.0, perc_end))
+        middle_idx = max(0, min(middle_idx, num_frames_total - 1))
 
-        # Select start and end indices for the chosen trajectory segment
-        start_bound = int(perc_start * num_frames_total)
-        end_bound = int(perc_end * num_frames_total)
+    # Enumerate frames from start -> middle
+    if start_idx <= middle_idx:
+        # Forward: start -> middle
+        segment1_indices = list(range(start_idx, middle_idx + 1))
+    else:
+        # Backward: start -> middle (going backwards)
+        segment1_indices = list(range(middle_idx, start_idx + 1))
+        segment1_indices.reverse()  # Descending order: [start_idx, start_idx-1, ..., middle_idx]
 
-        # Ensure end_bound is at least start_bound + 1
-        end_bound = max(end_bound, start_bound + 1)
+    # Enumerate frames from middle -> end
+    if middle_idx <= end_idx:
+        # Forward: middle -> end
+        segment2_indices = list(range(middle_idx, end_idx + 1))
+    else:
+        # Backward: middle -> end (going backwards)
+        segment2_indices = list(range(end_idx, middle_idx + 1))
+        segment2_indices.reverse()  # Descending order: [middle_idx, middle_idx-1, ..., end_idx]
 
-        start_idx = random.randint(0, max(0, start_bound))
-        end_idx = random.randint(end_bound, num_frames_total)
+    # Join the two segments, removing duplicate middle
+    if segment1_indices and segment2_indices:
+        # Remove middle from segment2 since it's already in segment1
+        segment2_indices = [idx for idx in segment2_indices if idx != middle_idx]
+        combined_indices = segment1_indices + segment2_indices
+    elif segment1_indices:
+        combined_indices = segment1_indices
+    elif segment2_indices:
+        combined_indices = segment2_indices
+    else:
+        # All indices are the same
+        combined_indices = [start_idx]
 
-        # Ensure we have enough frames between start and end
-        attempts = 0
-        max_attempts = 10
-        while end_idx - start_idx < 5 and attempts < max_attempts:
-            start_idx = random.randint(0, max(0, start_bound))
-            end_idx = random.randint(end_bound, num_frames_total)
-            attempts += 1
+    # Extract the frames corresponding to combined_indices
+    combined_frames = frames[combined_indices]
 
-        if end_idx - start_idx < 5:
-            start_idx = 0
-            end_idx = num_frames_total
-
-    # Extract the chosen segment
-    segment_frames = frames[start_idx:end_idx]
-
-    # Subsample the chosen trajectory segment to max_frames
     if method == "random":
-        subsampled_frames, indices = randomly_subsample_frames(segment_frames, max_frames)
+        subsampled_frames, relative_indices = randomly_subsample_frames(combined_frames, num_frames=max_frames)
     else:
-        subsampled_frames, indices = linspace_subsample_frames(segment_frames, max_frames)
+        subsampled_frames, relative_indices = linspace_subsample_frames(combined_frames, num_frames=max_frames)
 
-    return subsampled_frames, start_idx, end_idx, indices
+    # Map relative indices back to original frame indices
+    actual_indices = [combined_indices[i] for i in relative_indices]
+
+    return subsampled_frames, start_idx, middle_idx, end_idx, actual_indices
 
 
 def convert_absolute_to_relative_progress(absolute_progress: List[float]) -> List[float]:
@@ -452,153 +478,132 @@ def convert_absolute_to_relative_progress(absolute_progress: List[float]) -> Lis
     return relative_progress
 
 
-def compute_progress_from_segment(
+def _compute_absolute_wrt_total_frames_progress(
     num_frames_total: int,
-    start_idx: int,
-    end_idx: int,
-    frame_indices: List[int],
-    progress_pred_type: str = "absolute_first_frame",
+    subsampled_indices: List[int],
     success_cutoff: Optional[float] = None,
 ) -> List[float]:
-    """Compute progress values given total frames, segment, and subsampled indices.
+    """Compute progress using absolute_wrt_total_frames method.
 
     Args:
-        num_frames_total: Total number of frames in the original trajectory (before segmenting).
-        start_idx: Start index (inclusive) of the selected segment within the original trajectory.
-        end_idx: End index (exclusive) of the selected segment within the original trajectory.
-        frame_indices: Indices into the segment array returned by subsampling (0-based in-segment indices).
-        progress_pred_type: Type of progress calculation:
-            - "absolute_first_frame": progress[i] = i / (num_frames_total - start_idx - 1), evaluated at each selected in-segment index.
-            - "relative_first_frame": progress[0] = 0.0; progress[i] = (frame_indices[i] - frame_indices[i-1]) / (num_frames_total - start_idx).
-            - "absolute_wrt_total_frames": progress[i] = (start_idx + frame_indices[i] + 1) / num_frames_total.
+        num_frames_total: Total number of frames in the original trajectory.
+        subsampled_indices: Absolute indices into the original trajectory.
+        success_cutoff: Optional success cutoff threshold.
 
-    Behavior:
-        - absolute_first_frame: progress[i] = i / (num_frames_total - start_idx - 1), evaluated at each selected in-segment index.
-        - relative_first_frame: progress[0] = 0.0; progress[i] = (frame_indices[i] - frame_indices[i-1]) / (num_frames_total - start_idx).
-        - absolute_wrt_total_frames: progress[i] = (start_idx + frame_indices[i] + 1) / num_frames_total.
+    Returns:
+        List of progress values: progress[i] = (subsampled_indices[i] + 1) / num_frames_total.
     """
-    # Handle absolute_wrt_total_frames first (simplest case)
-    if progress_pred_type == "absolute_wrt_total_frames":
-        segment_progress = []
-        cutoff_index = None
-        if success_cutoff is not None and success_cutoff > 0:
-            # Index of the first frame where progress exceeds the cutoff
-            cutoff_index = int(success_cutoff * num_frames_total)
-
-        for idx in frame_indices:
-            # Calculate absolute index in original trajectory
-            abs_idx = start_idx + idx
-            if cutoff_index is not None and abs_idx >= cutoff_index:
-                # All frames after cutoff get 1.0 progress
-                progress = 1.0
-            else:
-                progress = (abs_idx + 1) / num_frames_total
-            segment_progress.append(progress)
-        return segment_progress
-
-    # Calculate progress for the full segment first
-    segment_len = end_idx - start_idx
-    assert segment_len > 0, "Segment length must be greater than 0"
-
-    cutoff_index = None
+    segment_progress: List[float] = []
+    cutoff_index: Optional[int] = None
     if success_cutoff is not None and success_cutoff > 0:
         # Index of the first frame where progress exceeds the cutoff
         cutoff_index = int(success_cutoff * num_frames_total)
 
-    # Calculate progress at each frame in the segment
-    # This is absolute_first_frame progress
-    segment_progress = []
-    for i in range(segment_len):
+    for abs_idx in subsampled_indices:
+        if cutoff_index is not None and abs_idx >= cutoff_index:
+            # All frames after cutoff get 1.0 progress
+            progress = 1.0
+        else:
+            progress = (abs_idx + 1) / num_frames_total
+        segment_progress.append(progress)
+    return segment_progress
+
+
+def _compute_absolute_first_frame_progress(
+    num_frames_total: int,
+    subsampled_indices: List[int],
+    success_cutoff: Optional[float] = None,
+) -> List[float]:
+    """Compute progress using absolute_first_frame method.
+
+    Args:
+        num_frames_total: Total number of frames in the original trajectory.
+        subsampled_indices: Absolute indices into the original trajectory.
+        success_cutoff: Optional success cutoff threshold.
+
+    Returns:
+        List of progress values: progress[i] = (subsampled_indices[i] - start_idx) / (num_frames_total - start_idx - 1),
+        where start_idx is the first index in subsampled_indices.
+    """
+    if not subsampled_indices:
+        return []
+
+    # Get the start index (first index in the subsampled indices)
+    start_idx = min(subsampled_indices)
+
+    cutoff_index: Optional[int] = None
+    if success_cutoff is not None and success_cutoff > 0:
+        # Index of the first frame where progress exceeds the cutoff
+        cutoff_index = int(success_cutoff * num_frames_total)
+
+    segment_progress: List[float] = []
+    for abs_idx in subsampled_indices:
+        # Calculate relative position from start
+        relative_pos = abs_idx - start_idx
+
         if cutoff_index is not None:
             # ensure denominator is at least 1 to avoid division by zero
             denominator = max(1, cutoff_index - start_idx - 1)
             # if it goes pass the cutoff, the progress will be set to 1
-            segment_progress.append(min(1.0, i / denominator))
+            segment_progress.append(min(1.0, relative_pos / denominator))
         else:
             # ensure denominator is at least 1 to avoid division by zero
             denominator = max(1, num_frames_total - start_idx - 1)
             # Normal progress calculation
-            segment_progress.append(i / denominator)
+            segment_progress.append(relative_pos / denominator)
 
-    # Determine progress at subsampled indices
-    segment_progress = [segment_progress[idx] for idx in frame_indices]
-
-    if progress_pred_type == "relative_first_frame":
-        # Convert absolute progress to relative deltas
-        return convert_absolute_to_relative_progress(segment_progress)
-
-    # Default: absolute_first_frame
     return segment_progress
 
 
-def subsample_pairs_and_progress(frames, max_frames: int, progress_pred_type: str = "absolute_first_frame"):
-    """Create pairwise frames for progress prediction.
-
-    Constructs pairs (o_i, o_i+1), (o_i+1, o_i), (o_i, o_i+T), (o_i+T, o_i)
-    where i is a random index and T is a random delta in number of frames.
-    Randomly selects one of these 4 pairs.
+def _compute_relative_first_frame_progress(
+    num_frames_total: int,
+    subsampled_indices: List[int],
+    success_cutoff: Optional[float] = None,
+) -> List[float]:
+    """Compute progress using relative_first_frame method.
 
     Args:
-        frames: Full trajectory frames (can be numpy array or torch tensor)
-        max_frames: Maximum number of frame pairs to generate (will be paired to 2*max_frames total)
-        progress_pred_type: Type of progress prediction:
-            - "absolute_first_frame" or "relative_first_frame": delta between frames / num_frames_total
-            - "absolute_wrt_total_frames": absolute indices / num_frames_total for each frame in pair
+        num_frames_total: Total number of frames in the original trajectory.
+        subsampled_indices: Absolute indices into the original trajectory.
+        success_cutoff: Optional success cutoff threshold.
 
     Returns:
-        Tuple of (subsampled_frames, progress_list, metadata)
+        List of relative progress deltas: progress[0] = 0.0;
+        progress[i] = (subsampled_indices[i] - subsampled_indices[i-1]) / (num_frames_total - start_idx).
     """
-    # Check if frames is a torch tensor
-    is_torch = isinstance(frames, torch.Tensor)
+    # First compute absolute_first_frame progress
+    absolute_progress = _compute_absolute_first_frame_progress(num_frames_total, subsampled_indices, success_cutoff)
+    # Convert to relative deltas
+    return convert_absolute_to_relative_progress(absolute_progress)
 
-    num_frames_total = len(frames)
 
-    # Generate a single random index i
-    i = random.randint(0, num_frames_total - 2)  # Ensure i+1 is valid
+def compute_progress_from_segment(
+    num_frames_total: int,
+    frame_indices: List[int],
+    progress_pred_type: str = "absolute_first_frame",
+    success_cutoff: Optional[float] = None,
+) -> List[float]:
+    """Compute progress values given total frames and subsampled indices.
 
-    # Generate a random delta T (between 1 and remaining frames)
-    T = random.randint(1, num_frames_total - i - 1)
+    Args:
+        num_frames_total: Total number of frames in the original trajectory (before segmenting).
+        frame_indices: Absolute indices into the original trajectory.
+        progress_pred_type: Type of progress calculation:
+            - "absolute_first_frame": progress[i] = (frame_indices[i] - start_idx) / (num_frames_total - start_idx - 1),
+              where start_idx is the minimum index in frame_indices.
+            - "relative_first_frame": progress[0] = 0.0; progress[i] = (frame_indices[i] - frame_indices[i-1]) / (num_frames_total - start_idx).
+            - "absolute_wrt_total_frames": progress[i] = (frame_indices[i] + 1) / num_frames_total.
+        success_cutoff: Optional success cutoff threshold.
 
-    # Define the 4 possible pairs
-    possible_pairs = [
-        ([i, i + 1], "forward_single"),  # (o_i, o_i+1)
-        ([i + 1, i], "backward_single"),  # (o_i+1, o_i)
-        ([i, i + T], "forward_delta"),  # (o_i, o_i+T)
-        ([i + T, i], "backward_delta"),  # (o_i+T, o_i)
-    ]
-
-    # Randomly select one of the 4 pairs
-    selected_indices, pair_type = random.choice(possible_pairs)
-
-    # Extract the selected pair
-    pair_frames = [frames[idx] for idx in selected_indices]
-    pair_indices = selected_indices
-
-    # Convert back to torch tensor if input was a torch tensor
-    if is_torch:
-        pair_frames = torch.stack(pair_frames)
-    else:
-        pair_frames = np.stack(pair_frames)
-
-    # Calculate progress based on type
+    Returns:
+        List of progress values based on the specified progress_pred_type.
+    """
     if progress_pred_type == "absolute_wrt_total_frames":
-        # For each frame in the pair, calculate progress as (idx + 1) / num_frames_total
-        progress = [(idx + 1) / num_frames_total for idx in pair_indices]
-    else:
-        # For absolute_first_frame and relative_first_frame, use delta between frames
-        # Calculate progress as a single number: delta between the two frames
-        # For pairwise, we predict the delta/change between the frame pair
-        delta_indices = pair_indices[1] - pair_indices[0]
-        progress = [delta_indices / num_frames_total]  # make sure it is a list
-
-    metadata = {
-        "pair_indices": pair_indices,
-        "sampling_strategy": "pairwise",
-        "pair_type": pair_type,
-        "i": i,
-        "T": T,
-    }
-    return pair_frames, progress, metadata
+        return _compute_absolute_wrt_total_frames_progress(num_frames_total, frame_indices, success_cutoff)
+    elif progress_pred_type == "relative_first_frame":
+        return _compute_relative_first_frame_progress(num_frames_total, frame_indices, success_cutoff)
+    else:  # default: "absolute_first_frame"
+        return _compute_absolute_first_frame_progress(num_frames_total, frame_indices, success_cutoff)
 
 
 def create_rewind_trajectory(

@@ -84,7 +84,7 @@ def convert_molmoact_dataset_to_hf(
 
     Assumes dataset_path contains one or more subdirectories, each with parquet files and an
     associated episodes.jsonl. We iterate per subdirectory to avoid episode_index collisions,
-    grouping rows by `episode_index` and writing videos for `first_view` and `second_view`.
+    grouping rows by `episode_index` and writing videos for `first_view`, `second_view`, and `wrist_image`.
     """
 
     root = Path(os.path.expanduser(dataset_path)) / dataset_name

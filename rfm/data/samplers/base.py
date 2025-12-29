@@ -9,11 +9,10 @@ from datasets import Dataset
 from rfm.configs.experiment_configs import DataConfig
 from rfm.data.datasets.helpers import (
     load_frames_from_npz,
-    subsample_segment_frames,
+    subsample_segment_frames_with_middle,
     compute_progress_from_segment,
     pad_trajectory_to_max_frames_torch,
     pad_trajectory_to_max_frames_np,
-    subsample_pairs_and_progress,
     compute_success_labels,
     convert_continuous_to_discrete_bins,
     convert_continuous_to_discrete_bin,
@@ -96,12 +95,11 @@ class RFMBaseSampler:
 
         self.tasks_by_data_source = {source: list(tasks) for source, tasks in source_to_tasks.items()}
 
-    def _post_process_trajectory(self, trajectory: Trajectory, skip_padding: bool = False) -> Trajectory:
+    def _post_process_trajectory(self, trajectory: Trajectory) -> Trajectory:
         """Post-process a trajectory: pad frames/embeddings and progress, compute success labels, convert partial_success.
 
         Args:
             trajectory: The trajectory to post-process
-            skip_padding: Whether to skip padding (e.g., for pairwise progress)
 
         Returns:
             A new Trajectory instance with post-processed fields
@@ -110,8 +108,8 @@ class RFMBaseSampler:
         video_embeddings = trajectory.video_embeddings
         target_progress = trajectory.target_progress or []
 
-        # Pad trajectory and progress if not skipped
-        if not skip_padding and target_progress:
+        # Pad trajectory and progress
+        if target_progress:
             if self.config.load_embeddings and video_embeddings is not None:
                 video_embeddings, target_progress = pad_trajectory_to_max_frames_torch(
                     video_embeddings, target_progress, self.config.max_frames
@@ -127,6 +125,7 @@ class RFMBaseSampler:
             data_source=trajectory.data_source,
             dataset_success_percent=self.dataset_success_cutoff_map,
             max_success=self.config.max_success,
+            quality_label=trajectory.quality_label,
         )
 
         # Convert partial_success to discrete bins if in discrete mode
@@ -495,83 +494,119 @@ class RFMBaseSampler:
             dataset_success_percent=self.dataset_success_cutoff_map,
             max_success=self.config.max_success,
         )
-        result = self._post_process_trajectory(result, skip_padding=True)
+        result = self._post_process_trajectory(result)
         logger.trace(f"[BASE SAMPLER] _get_rewound_traj: Successfully created rewound trajectory for ID: {traj_id}")
         return result
 
-    def _get_uniform_sample_indices(self, data, direction: str = "bidirectional") -> Optional[Tuple[int, int]]:
-        """Get start and end indices for uniform_sample strategy.
+    def _get_subsample_indices(
+        self, data, direction: str = "bidirectional", max_frames: int = None
+    ) -> Optional[Tuple[int, int, int]]:
+        """Get start, middle, and end indices for subsample strategy.
 
-        Samples two random frames from the trajectory based on the specified direction.
+        Samples three random frames from the trajectory. The relationship between indices
+        follows three main scenarios:
+        1. start < middle < end: forward progress - normal forward progression through trajectory
+        2. start < end < middle: rewind progress - forward from start to end, then continues to middle (simulating rewind/backtrack)
+        3. end < middle < start: reverse progress - backward from start through middle to end (full backward traversal)
 
         Args:
             data: Trajectory data (frames or embeddings) to sample from
-            direction: Sampling direction - "forward" (second frame after first),
-                      "reverse" (second frame before first), or "bidirectional" (either direction)
+            direction: Sampling direction - "forward" (start < middle < end),
+                      "reverse" (end < middle < start),
+                      "rewind" (start < end < middle),
+                      or "bidirectional" (any of the 3 orderings)
+            max_frames: Maximum number of frames to subsample. If 1, returns only start. If 2, returns start and end.
 
         Returns:
-            Tuple of (start_idx, end_idx) for the segment, or None if insufficient frames
+            Tuple of (start_idx, middle_idx, end_idx), or None if insufficient frames
+            For max_frames == 1: returns (start_idx, None, None)
+            For max_frames == 2: returns (start_idx, None, end_idx)
         """
         num_frames_total = len(data) if hasattr(data, "__len__") else data.shape[0]
 
-        if num_frames_total < 2:
-            logger.trace(f"[BASE SAMPLER] _get_uniform_sample_indices: Not enough frames ({num_frames_total})")
+        # Handle edge cases for max_frames == 1 or 2
+        if max_frames == 1:
+            # Randomly sample 1 frame
+            random_idx = random.randint(0, num_frames_total - 1)
+            logger.trace(f"[BASE SAMPLER] _get_subsample_indices: max_frames=1, randomly sampled idx={random_idx}")
+            return (random_idx, None, None)
+
+        if max_frames == 2:
+            # Sample 2 frames: either forward (start < end) or reverse (end < start)
+            # No rewind possible with only 2 frames
+            if direction == "reverse":
+                # Reverse: sample end first, then start (end < start)
+                end_idx = random.randint(0, num_frames_total - 2)
+                start_idx = random.randint(end_idx + 1, num_frames_total - 1)
+            else:
+                # Forward: sample start first, then end (start < end)
+                start_idx = random.randint(0, num_frames_total - 2)
+                end_idx = random.randint(start_idx + 1, num_frames_total - 1)
+            logger.trace(
+                f"[BASE SAMPLER] _get_subsample_indices: max_frames=2, start_idx={start_idx}, end_idx={end_idx}, direction={direction}"
+            )
+            return (start_idx, None, end_idx)
+
+        if num_frames_total < 3:
+            logger.trace(f"[BASE SAMPLER] _get_subsample_indices: Not enough frames ({num_frames_total})")
             return None
 
-        # Sample first random frame
-        frame1_idx = random.randint(0, num_frames_total - 1)
+        # Sample three random distinct frames
+        frame_indices = sorted(random.sample(range(num_frames_total), 3))
+        frame1_idx, frame2_idx, frame3_idx = frame_indices
 
-        # Sample second frame based on direction
+        # Determine start, middle, and end based on direction
+        # We only care about 3 cases:
+        # 1. start < middle < end: forward progress
+        # 2. start < end < middle: rewind progress
+        # 3. end < middle < start: reverse progress
+
         if direction == "forward":
-            # Second frame must be after the first
-            if frame1_idx == num_frames_total - 1:
-                # Can't sample forward from last frame, need to adjust
-                frame1_idx = random.randint(0, num_frames_total - 2)
-            frame2_idx = random.randint(frame1_idx + 1, num_frames_total - 1)
+            # Case 1: start < middle < end
+            start_idx = frame1_idx
+            middle_idx = frame2_idx
+            end_idx = frame3_idx
         elif direction == "reverse":
-            # Second frame must be before the first
-            if frame1_idx == 0:
-                # Can't sample reverse from first frame, need to adjust
-                frame1_idx = random.randint(1, num_frames_total - 1)
-            frame2_idx = random.randint(0, frame1_idx - 1)
+            # Case 3: end < middle < start
+            end_idx = frame1_idx
+            middle_idx = frame2_idx
+            start_idx = frame3_idx
+        elif direction == "rewind":
+            # Case 2: start < end < middle
+            start_idx = frame1_idx
+            end_idx = frame2_idx
+            middle_idx = frame3_idx
         else:  # bidirectional (default)
-            # Randomly choose to sample from before or after
-            if frame1_idx == 0:
-                # Can only sample after
-                frame2_idx = random.randint(1, num_frames_total - 1)
-            elif frame1_idx == num_frames_total - 1:
-                # Can only sample before
-                frame2_idx = random.randint(0, frame1_idx - 1)
-            else:
-                # Can sample from either side
-                if random.random() < 0.5:
-                    # Sample from before
-                    frame2_idx = random.randint(0, frame1_idx - 1)
-                else:
-                    # Sample from after
-                    frame2_idx = random.randint(frame1_idx + 1, num_frames_total - 1)
-
-        # Ensure start_idx < end_idx (end_idx is exclusive)
-        start_idx = min(frame1_idx, frame2_idx)
-        end_idx = max(frame1_idx, frame2_idx) + 1
+            # Randomly choose from the 3 cases
+            pattern = random.choice([1, 2, 3])
+            if pattern == 1:  # start < middle < end: forward progress
+                start_idx = frame1_idx
+                middle_idx = frame2_idx
+                end_idx = frame3_idx
+            elif pattern == 2:  # start < end < middle: rewind progress
+                start_idx = frame1_idx
+                end_idx = frame2_idx
+                middle_idx = frame3_idx
+            else:  # pattern == 3: end < middle < start: reverse progress
+                end_idx = frame1_idx
+                middle_idx = frame2_idx
+                start_idx = frame3_idx
 
         logger.trace(
-            f"[BASE SAMPLER] _get_uniform_sample_indices: Selected segment [{start_idx}, {end_idx}) "
+            f"[BASE SAMPLER] _get_subsample_indices: Selected indices start={start_idx}, middle={middle_idx}, end={end_idx} "
             f"from {num_frames_total} total frames (direction: {direction})"
         )
-        return start_idx, end_idx
+        return start_idx, middle_idx, end_idx
 
     def _get_traj_from_data(self, traj: dict | Trajectory, subsample_strategy: str | None = None) -> Trajectory:
         """Load, subsample, and optionally pad trajectory data and create a Trajectory object.
 
-        When pairwise_progress is enabled, padding is skipped as it's not needed.
-
         Args:
             traj: Trajectory dict or Trajectory object
-            subsample_strategy: Optional strategy for subsampling ("successful", "subsequence", or None for default)
+            subsample_strategy: Optional strategy for subsampling ("subsample_forward", "subsample_reverse", "subsample_rewind", or None for default/bidirectional)
 
         Returns:
-            Trajectory object with loaded and subsampled data (padded only if not using pairwise_progress)
+            Trajectory object with loaded and subsampled data (padded)
         """
         if isinstance(traj, Trajectory):
             return traj
@@ -579,9 +614,6 @@ class RFMBaseSampler:
         frames = None
         video_embeddings = None
         text_embedding = None
-
-        # Use pairwise subsampling if pairwise_progress is enabled
-        use_pairwise = self.config.pairwise_progress
 
         if self.config.load_embeddings and traj.get("embeddings_path"):
             embeddings = load_embeddings_from_path(traj["embeddings_path"])
@@ -601,96 +633,70 @@ class RFMBaseSampler:
         else:
             num_frames_total = len(data)
 
-        if use_pairwise:
-            # Use pairwise subsampling for pairwise progress
-            subsampled, progress, metadata = subsample_pairs_and_progress(
-                data,
-                self.config.max_frames,
-                progress_pred_type=self.config.progress_pred_type,
-            )
-            frames_shape = subsampled.shape
-            if self.config.load_embeddings:
-                video_embeddings = subsampled
-            else:
-                frames = subsampled
+        ds_key = traj["data_source"]
+        success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+
+        start_idx = None
+        end_idx = None
+        middle_idx = None
+
+        # Get subsample indices (handles edge cases for max_frames == 1 or 2)
+        if subsample_strategy == "subsample_forward":
+            indices = self._get_subsample_indices(data, direction="forward", max_frames=self.config.max_frames)
+        elif subsample_strategy == "subsample_reverse":
+            indices = self._get_subsample_indices(data, direction="reverse", max_frames=self.config.max_frames)
+        elif subsample_strategy == "subsample_rewind":
+            indices = self._get_subsample_indices(data, direction="rewind", max_frames=self.config.max_frames)
         else:
-            ds_key = traj["data_source"]
-            success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
+            indices = self._get_subsample_indices(data, direction="bidirectional", max_frames=self.config.max_frames)
 
-            # Handle uniform_sample strategy: pick two random frames as segment bounds
-            start_idx = None
-            end_idx = None
-            if subsample_strategy == "uniform_sample":
-                uniform_indices = self._get_uniform_sample_indices(data, direction="bidirectional")
-                if uniform_indices is None:
-                    # Not enough frames for uniform_sample, fall back to subsequence
-                    subsample_strategy = "subsequence"
-                else:
-                    start_idx, end_idx = uniform_indices
-            elif subsample_strategy == "uniform_sample_forward":
-                uniform_indices = self._get_uniform_sample_indices(data, direction="forward")
-                if uniform_indices is None:
-                    # Not enough frames for uniform_sample, fall back to subsequence
-                    subsample_strategy = "subsequence"
-                else:
-                    start_idx, end_idx = uniform_indices
-            elif subsample_strategy == "uniform_sample_reverse":
-                uniform_indices = self._get_uniform_sample_indices(data, direction="reverse")
-                if uniform_indices is None:
-                    # Not enough frames for uniform_sample, fall back to subsequence
-                    subsample_strategy = "subsequence"
-                else:
-                    start_idx, end_idx = uniform_indices
+        if indices is None:
+            logger.trace("[BASE SAMPLER] _get_traj_from_data: Failed to get uniform sample indices")
+            return None
 
-            logger.trace(
-                f"[BASE SAMPLER] _get_traj_from_data: Subsampling trajectory with strategy: {subsample_strategy}, start_idx: {start_idx}, end_idx: {end_idx}"
-            )
-            perc_end = success_cutoff if subsample_strategy == "successful" else 2.0 / 3.0
-            subsampled, start_idx, end_idx, indices = subsample_segment_frames(
-                data, self.config.max_frames, method="linspace", perc_end=perc_end, start_idx=start_idx, end_idx=end_idx
-            )
-            frames_shape = subsampled.shape
-            progress = compute_progress_from_segment(
-                num_frames_total=num_frames_total,
-                start_idx=start_idx,
-                end_idx=end_idx,
-                frame_indices=indices,
-                progress_pred_type=self.config.progress_pred_type,
-                success_cutoff=success_cutoff,
-            )
+        start_idx, middle_idx, end_idx = indices
 
-            metadata = {
-                "start_idx": start_idx,
-                "end_idx": end_idx,
-                "subsampled_indices": indices,
-                "strategy": subsample_strategy or "subsequence",
-            }
-            if self.config.load_embeddings:
-                video_embeddings = subsampled
-            else:
-                frames = subsampled
+        logger.trace(
+            f"[BASE SAMPLER] _get_traj_from_data: Subsampling trajectory with strategy: {subsample_strategy}, start_idx: {start_idx}, middle_idx: {middle_idx}, end_idx: {end_idx}"
+        )
 
-        if subsample_strategy and "reverse" in subsample_strategy:
-            # Reverse frames/embeddings along time dimension
-            if frames is not None:
-                if isinstance(frames, np.ndarray):
-                    frames = np.flip(frames, axis=0)
-                elif isinstance(frames, torch.Tensor):
-                    frames = torch.flip(frames, dims=[0])
-            if video_embeddings is not None:
-                if isinstance(video_embeddings, np.ndarray):
-                    video_embeddings = np.flip(video_embeddings, axis=0)
-                elif isinstance(video_embeddings, torch.Tensor):
-                    video_embeddings = torch.flip(video_embeddings, dims=[0])
-            # Reverse progress
-            progress = list(reversed(progress))
+        # Use middle_idx only for rewind strategy (requires at least 3 frames)
+        use_middle = subsample_strategy == "subsample_rewind" and middle_idx is not None and num_frames_total >= 3
+
+        subsampled, _, _, _, indices = subsample_segment_frames_with_middle(
+            data,
+            self.config.max_frames,
+            start_idx=start_idx,
+            end_idx=end_idx,
+            middle_idx=middle_idx if use_middle else None,
+            method="linspace",
+        )
+        frames_shape = subsampled.shape
+
+        progress = compute_progress_from_segment(
+            num_frames_total=num_frames_total,
+            frame_indices=indices,
+            progress_pred_type=self.config.progress_pred_type,
+            success_cutoff=success_cutoff,
+        )
+
+        metadata = {
+            "start_idx": start_idx,
+            "middle_idx": middle_idx,
+            "end_idx": end_idx,
+            "subsampled_indices": indices,
+            "strategy": subsample_strategy,
+        }
+        if self.config.load_embeddings:
+            video_embeddings = subsampled
+        else:
+            frames = subsampled
 
         if self.config.progress_loss_type.lower() == "discrete":
             num_bins = self.config.progress_discrete_bins
             # Convert continuous progress [0, 1] to discrete bins [0, num_bins-1]
             progress = convert_continuous_to_discrete_bins(progress, num_bins)
 
-        skip_padding = use_pairwise
         trajectory = create_trajectory_from_dict(
             traj,
             overrides={
@@ -702,11 +708,5 @@ class RFMBaseSampler:
                 "metadata": metadata,
             },
         )
-        trajectory = self._post_process_trajectory(trajectory, skip_padding=skip_padding)
-
-        # Reverse success labels if we reversed progress (use model_copy for cleaner update)
-        if subsample_strategy and "reverse" in subsample_strategy and trajectory.success_label is not None:
-            reversed_success_label = list(reversed(trajectory.success_label))
-            trajectory = trajectory.model_copy(update={"success_label": reversed_success_label})
-
+        trajectory = self._post_process_trajectory(trajectory)
         return trajectory

@@ -101,9 +101,9 @@ class SimSampler(RFMBaseSampler):
         # Strategy selection with data_source-based filtering and boosting
         strategies = []
 
-        # Always include REWOUND if ratio > 0
+        # Always include REWIND if ratio > 0
         if self.similarity_strategy_ratio[0] > 0:
-            strategies.append((DataGenStrat.REWOUND, self.similarity_strategy_ratio[0]))
+            strategies.append((DataGenStrat.REWIND, self.similarity_strategy_ratio[0]))
 
         # SUBOPTIMAL: only include if data_source is in failure category
         if (
@@ -171,7 +171,7 @@ class SimSampler(RFMBaseSampler):
             )
 
             # Execute selected strategy
-            if selected_strategy == DataGenStrat.REWOUND:
+            if selected_strategy == DataGenStrat.REWIND:
                 result = self._get_traj_dicts_for_rewind(ref_traj)
             elif selected_strategy == DataGenStrat.SUBOPTIMAL:
                 result = self._get_traj_dicts_for_suboptimal(ref_traj)

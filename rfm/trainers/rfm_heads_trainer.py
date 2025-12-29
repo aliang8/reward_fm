@@ -5,20 +5,17 @@ import os
 import random
 from typing import Dict, List, Tuple, Optional, Any
 
-import cv2
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
-import wandb
 from sklearn.metrics import average_precision_score
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import Trainer
 
-from rfm.data.datasets.base import resolve_dataset_keys
 from rfm.data.datasets.helpers import load_frames_from_npz
 from rfm.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
 from rfm.evals.compile_results import compute_eval_metrics
@@ -27,11 +24,10 @@ from rfm.models.utils import ModelOutput
 from rfm.utils.distributed import banner, get_rank, is_rank_0, log_fsdp_diagnostics
 from rfm.utils.logger import Logger, get_logger, log_memory_usage
 from rfm.utils.metrics import compute_spearman_correlation
-from rfm.utils.setup_utils import setup_batch_collator, setup_custom_eval_dataset, setup_dataset
+from rfm.utils.setup_utils import setup_batch_collator, setup_custom_eval_dataset
 from rfm.utils.tensor_utils import t2n
 from rfm.utils.timer import _timer
-from rfm.utils.video_utils import create_policy_ranking_grid, create_video_grid_with_progress
-from PIL import Image, ImageDraw, ImageFont
+from rfm.utils.video_utils import create_policy_ranking_grid
 
 logger = get_logger()
 
@@ -725,10 +721,11 @@ class RFMHeadsTrainer(Trainer):
     def _setup_eval_dataset(self, eval_type, eval_dataset):
         """Setup dataset and dataloader for evaluation."""
         eval_cfg = copy.deepcopy(self.config.data)
+
+        # explicitly set dataset type to rfm for custom eval datasets
         eval_cfg.dataset_type = "rfm"
-        # For similarity_score, eval_dataset is a list of datasets that should be loaded together
-        # For other eval types, eval_dataset is a single dataset name
-        if eval_type == "similarity_score" and isinstance(eval_dataset, list):
+
+        if isinstance(eval_dataset, list):
             eval_cfg.eval_datasets = eval_dataset
         else:
             eval_cfg.eval_datasets = [eval_dataset]
@@ -743,6 +740,7 @@ class RFMHeadsTrainer(Trainer):
             )
         elif eval_type == "policy_ranking":
             sampler_kwargs["num_examples_per_quality_pr"] = self.config.custom_eval.num_examples_per_quality_pr
+            sampler_kwargs["max_tasks"] = self.config.custom_eval.policy_ranking_max_tasks
             sampler_kwargs["frame_step"] = (
                 2 if (self.config.trainer_cls == "rfm_heads" and not self.config.data.use_multi_image) else 1
             )
@@ -1597,23 +1595,23 @@ class RFMHeadsTrainer(Trainer):
                     step=eval_step,
                 )
 
-            # Create and log 3x3 grid of videos with progress overlays
-            if video_frames_list and self.logger.enabled("wandb"):
-                grid_video = create_video_grid_with_progress(
-                    video_frames_list,
-                    trajectory_progress_data,
-                    grid_size=(3, 3),
-                    max_videos=9,
-                    is_discrete_mode=is_discrete_mode,
-                )
-                if grid_video is not None:
-                    self.logger.log_video(
-                        f"reward_alignment_grid/{ds_name}",
-                        grid_video,
-                        fps=2,
-                        step=eval_step,
-                    )
-                    del grid_video
+            # # Create and log 3x3 grid of videos with progress overlays
+            # if video_frames_list and self.logger.enabled("wandb"):
+            #     grid_video = create_video_grid_with_progress(
+            #         video_frames_list,
+            #         trajectory_progress_data,
+            #         grid_size=(3, 3),
+            #         max_videos=9,
+            #         is_discrete_mode=is_discrete_mode,
+            #     )
+            #     if grid_video is not None:
+            #         self.logger.log_video(
+            #             f"reward_alignment_grid/{ds_name}",
+            #             grid_video,
+            #             fps=2,
+            #             step=eval_step,
+            #         )
+            #         del grid_video
 
             # For tensorboard (no table support), log each video and its figure separately
             if self.logger.enabled("tensorboard"):
@@ -1627,7 +1625,7 @@ class RFMHeadsTrainer(Trainer):
                         )
                 for idx, plot in enumerate(plots):
                     self.logger.log_figure(f"{ds_name}/reward_alignment_plot/{idx}", plot, step=eval_step)
-            
+
             # Close all plots to avoid accumulating open figures
             for plot in plots:
                 plt.close(plot)
@@ -1746,18 +1744,18 @@ class RFMHeadsTrainer(Trainer):
                 step=eval_step,
             )
 
-            # Create and log grid of frame pairs with progress annotations
-            if self.logger.enabled("wandb"):
-                grid_image = create_policy_ranking_grid(
-                    eval_results, grid_size=(2, 2), max_samples=4, is_discrete_mode=is_discrete_mode
-                )
-                if grid_image is not None:
-                    self.logger.log_image(
-                        f"policy_ranking_grid/{ds_name}",
-                        grid_image,
-                        step=eval_step,
-                    )
-                    del grid_image
+            # # Create and log grid of frame pairs with progress annotations
+            # if self.logger.enabled("wandb"):
+            #     grid_image = create_policy_ranking_grid(
+            #         eval_results, grid_size=(2, 2), max_samples=4, is_discrete_mode=is_discrete_mode
+            #     )
+            #     if grid_image is not None:
+            #         self.logger.log_image(
+            #             f"policy_ranking_grid/{ds_name}",
+            #             grid_image,
+            #             step=eval_step,
+            #         )
+            #         del grid_image
 
             # Save incorrectly ranked pairs to disk if output_dir is provided
             if output_dir is not None:
@@ -2105,8 +2103,7 @@ class RFMHeadsTrainer(Trainer):
             # log_memory_usage(f"Before {eval_type}")
             logger.info("=" * 80)
 
-            datasets = getattr(self.config.custom_eval, eval_type)
-            eval_datasets_name = resolve_dataset_keys(datasets, split="eval")
+            eval_datasets_name = getattr(self.config.custom_eval, eval_type)
 
             with _timer(f"time/eval_type/{eval_type}", timing_raw=self.timing_raw):
                 for eval_dataset in eval_datasets_name:

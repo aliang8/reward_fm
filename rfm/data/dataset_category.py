@@ -86,6 +86,8 @@ DATASET_MAP = {
             "jesbu1_egodex_rfm_egodex_part4",
             "jesbu1_egodex_rfm_egodex_part5",
             "abraranwar_agibotworld_alpha_rfm_agibotworld",
+            "jesbu1_humanoid_everyday_rfm_humanoid_everyday_rfm",
+            "jesbu1_epic_rfm_epic"
         ],
         "eval": [
             "jesbu1_egodex_rfm_egodex_test",
@@ -107,6 +109,7 @@ DATASET_MAP = {
             "jesbu1_oxe_rfm_oxe_furniture_bench_dataset_converted_externally_to_rlds",
             "jesbu1_oxe_rfm_oxe_iamlab_cmu_pickup_insert_converted_externally_to_rlds",
             "jesbu1_oxe_rfm_oxe_imperialcollege_sawyer_wrist_cam",
+            "jesbu1_oxe_rfm_oxe_jaco_play",
             "jesbu1_oxe_rfm_oxe_language_table",
             "jesbu1_oxe_rfm_oxe_nyu_rot_dataset_converted_externally_to_rlds",
             "jesbu1_oxe_rfm_oxe_robo_set",
@@ -163,6 +166,7 @@ DATASET_MAP = {
             "jesbu1_mit_franka_p-rank_rfm_mit_franka_p-rank_rfm",
             "jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top",
             "jesbu1_utd_so101_clean_policy_ranking_wrist_utd_so101_clean_policy_ranking_wrist",
+            # ["abraranwar_libero_rfm_libero256_10", "ykorkmaz_libero_failure_rfm_libero_10_failure"],
         ]
     },
     "paired": {
@@ -221,6 +225,20 @@ DATASET_MAP = {
             "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
         ],
     },
+    "libero": {
+        "train": [
+            "abraranwar_libero_rfm_libero256_90",
+            "ykorkmaz_libero_failure_rfm_libero_90_failure",
+        ],
+        "eval": [
+            "abraranwar_libero_rfm_libero256_10",
+            "abraranwar_libero_rfm_libero256_object",
+            "abraranwar_libero_rfm_libero256_spatial",
+            "abraranwar_libero_rfm_libero256_goal",
+            # "ykorkmaz_libero_failure_rfm_libero_90_failure",
+            # "ykorkmaz_libero_failure_rfm_libero_10_failure",
+        ],
+    },
 }
 
 
@@ -241,6 +259,7 @@ DATA_SOURCE_CATEGORY = {
         "oxe_dlr_edan_shared_control_converted_externally_to_rlds",
         "roboarena",
         "auto_eval_rfm",
+        "humanoid_everyday_rfm",
     ],
     "paired": [
         "h2r",

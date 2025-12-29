@@ -80,11 +80,11 @@ DATASET_MAP = {
         "train": [
             "jesbu1_molmoact_rfm_molmoact_dataset_household",
             "jesbu1_molmoact_rfm_molmoact_dataset_tabletop",
-            "jesbu1_egodex_rfm_egodex_part1",
-            "jesbu1_egodex_rfm_egodex_part2",
-            "jesbu1_egodex_rfm_egodex_part3",
-            "jesbu1_egodex_rfm_egodex_part4",
-            "jesbu1_egodex_rfm_egodex_part5",
+            #"jesbu1_egodex_rfm_egodex_part1",
+            #"jesbu1_egodex_rfm_egodex_part2",
+            #"jesbu1_egodex_rfm_egodex_part3",
+            #"jesbu1_egodex_rfm_egodex_part4",
+            #"jesbu1_egodex_rfm_egodex_part5",
             "abraranwar_agibotworld_alpha_rfm_agibotworld",
             "jesbu1_humanoid_everyday_rfm_humanoid_everyday_rfm",
             "jesbu1_epic_rfm_epic",
@@ -94,9 +94,9 @@ DATASET_MAP = {
             "jesbu1_galaxea_rfm_galaxea_part4_r1_lite",
             "jesbu1_galaxea_rfm_galaxea_part5_r1_lite",
         ],
-        "eval": [
-            "jesbu1_egodex_rfm_egodex_test",
-        ],
+        #"eval": [
+        #    #"jesbu1_egodex_rfm_egodex_test",
+        #],
     },
     "oxe": {
         "train": [

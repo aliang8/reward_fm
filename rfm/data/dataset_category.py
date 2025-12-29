@@ -34,6 +34,7 @@ ALL_DATASOURCES = [
     "oxe_furniture_bench_dataset_converted_externally_to_rlds",
     "oxe_iamlab_cmu_pickup_insert_converted_externally_to_rlds",
     "oxe_imperialcollege_sawyer_wrist_cam",
+    "oxe_jaco_play",
     "oxe_language_table",
     "oxe_nyu_rot_dataset_converted_externally_to_rlds",
     "oxe_robo_set",

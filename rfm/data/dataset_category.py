@@ -34,6 +34,7 @@ ALL_DATASOURCES = [
     "oxe_furniture_bench_dataset_converted_externally_to_rlds",
     "oxe_iamlab_cmu_pickup_insert_converted_externally_to_rlds",
     "oxe_imperialcollege_sawyer_wrist_cam",
+    "oxe_jaco_play",
     "oxe_language_table",
     "oxe_nyu_rot_dataset_converted_externally_to_rlds",
     "oxe_robo_set",
@@ -64,6 +65,7 @@ DATASET_CATEGORY = {
         "jesbu1_oxe_rfm_oxe_dlr_edan_shared_control_converted_externally_to_rlds",
         # "roboarena",
         "auto_eval_rfm",
+        "jesbu1_epic_rfm_epic"
     ],
     "paired": [
         "jesbu1_h2r_rfm_h2r",
@@ -85,6 +87,13 @@ DATASET_MAP = {
             "jesbu1_egodex_rfm_egodex_part4",
             "jesbu1_egodex_rfm_egodex_part5",
             "abraranwar_agibotworld_alpha_rfm_agibotworld",
+            "jesbu1_humanoid_everyday_rfm_humanoid_everyday_rfm",
+            "jesbu1_epic_rfm_epic",
+            "jesbu1_galaxea_rfm_galaxea_part1_r1_lite",
+            "jesbu1_galaxea_rfm_galaxea_part2_r1_lite",
+            "jesbu1_galaxea_rfm_galaxea_part3_r1_lite",
+            "jesbu1_galaxea_rfm_galaxea_part4_r1_lite",
+            "jesbu1_galaxea_rfm_galaxea_part5_r1_lite",
         ],
         "eval": [
             "jesbu1_egodex_rfm_egodex_test",
@@ -106,6 +115,7 @@ DATASET_MAP = {
             "jesbu1_oxe_rfm_oxe_furniture_bench_dataset_converted_externally_to_rlds",
             "jesbu1_oxe_rfm_oxe_iamlab_cmu_pickup_insert_converted_externally_to_rlds",
             "jesbu1_oxe_rfm_oxe_imperialcollege_sawyer_wrist_cam",
+            "jesbu1_oxe_rfm_oxe_jaco_play",
             "jesbu1_oxe_rfm_oxe_language_table",
             "jesbu1_oxe_rfm_oxe_nyu_rot_dataset_converted_externally_to_rlds",
             "jesbu1_oxe_rfm_oxe_robo_set",
@@ -153,15 +163,16 @@ DATASET_MAP = {
     },
     "policy_ranking": {
         "eval": [
-            "aliangdw_metaworld_metaworld_eval",
-            "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
-            "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",
-            "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
-            "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
-            "jesbu1_soar_rfm_soar_rfm",
-            "jesbu1_mit_franka_p-rank_rfm_mit_franka_p-rank_rfm",
-            "jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top",
-            "jesbu1_utd_so101_clean_policy_ranking_wrist_utd_so101_clean_policy_ranking_wrist",
+            # "aliangdw_metaworld_metaworld_eval",
+            # "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
+            # "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",
+            # "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
+            # "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
+            # "jesbu1_soar_rfm_soar_rfm",
+            # "jesbu1_mit_franka_p-rank_rfm_mit_franka_p-rank_rfm",
+            # "jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top",
+            # "jesbu1_utd_so101_clean_policy_ranking_wrist_utd_so101_clean_policy_ranking_wrist",
+            ["abraranwar_libero_rfm_libero256_10", "ykorkmaz_libero_failure_rfm_libero_10_failure"],
         ]
     },
     "paired": {
@@ -205,6 +216,35 @@ DATASET_MAP = {
             ["jesbu1_hand_paired_rfm_hand_paired_robot", "jesbu1_hand_paired_rfm_hand_paired_human"],
         ]
     },
+    "franka": {
+        "train": [
+            "jesbu1_oxe_rfm_oxe_droid",
+            "jesbu1_roboarena_0825_rfm_roboarena",
+            "jesbu1_molmoact_rfm_molmoact_dataset_household",
+            "jesbu1_molmoact_rfm_molmoact_dataset_tabletop",
+        ],
+        "eval": [
+            "jesbu1_mit_franka_p-rank_rfm_mit_franka_p-rank_rfm",
+            "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
+            "jesbu1_roboarena_0825_rfm_roboarena",
+            "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",
+            "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
+        ],
+    },
+    "libero": {
+        "train": [
+            "abraranwar_libero_rfm_libero256_90",
+            "ykorkmaz_libero_failure_rfm_libero_90_failure",
+        ],
+        "eval": [
+            "abraranwar_libero_rfm_libero256_10",
+            "abraranwar_libero_rfm_libero256_object",
+            "abraranwar_libero_rfm_libero256_spatial",
+            "abraranwar_libero_rfm_libero256_goal",
+            # "ykorkmaz_libero_failure_rfm_libero_90_failure",
+            # "ykorkmaz_libero_failure_rfm_libero_10_failure",
+        ],
+    },
 }
 
 
@@ -225,6 +265,13 @@ DATA_SOURCE_CATEGORY = {
         "oxe_dlr_edan_shared_control_converted_externally_to_rlds",
         "roboarena",
         "auto_eval_rfm",
+        "humanoid_everyday_rfm",
+        "galaxea_part1_r1_lite",
+        "galaxea_part2_r1_lite",
+        "galaxea_part3_r1_lite",
+        "galaxea_part4_r1_lite",
+        "galaxea_part5_r1_lite",
+        "galaxea"
     ],
     "paired": [
         "h2r",
@@ -241,6 +288,12 @@ DATA_SOURCE_CATEGORY = {
         "auto_eval_rfm",
         "racer_train",
         "racer_val",
+    ],
+    "franka": [
+        "oxe_droid",
+        "roboarena",
+        "molmoact_dataset_household",
+        "molmoact_dataset_tabletop",
     ],
 }
 

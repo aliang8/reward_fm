@@ -33,7 +33,6 @@ model:
   train_similarity_head: false  # Whether to train the similarity scoring head
   train_success_head: false     # Whether to train the success prediction head
   average_temporal_patches: false
-  pairwise_progress: false
   use_progress_token: false
   use_multi_image: ${data.use_multi_image}  # Reference from data config - If True, feed frames as a list of images instead of converting to video (avoids encoding overhead)
 
@@ -83,19 +82,22 @@ data:
   # Data generation settings
   sample_type_ratio: [1, 0, 0]  # Ratio of preference, progress (no longer used, it's absorbed in preference if predict_pref_progress is true), and similarity samples
   dataset_preference_ratio: 0.7  # Ratio of preferences from dataset vs generated
-  # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task]
-  preference_strategy_ratio: [6, 1, 1]
-  # Tunable strategy ratios for progress generation: [successful, rewind, different_task, subsequence, reverse_progress]
-  progress_strategy_ratio: [1, 6, 1, 1, 0]  # [successful, rewind, different_task, subsequence, reverse_progress]
+  # Tunable strategy ratios for preference negative generation: [rewind, suboptimal_same_task, different_task, reverse_progress]
+  preference_strategy_ratio: [1, 1, 1, 1]
+  # Tunable strategy ratios for progress generation: [different_task, forward_progress, reverse_progress, rewind]
+  progress_strategy_ratio: [1, 1, 1, 1]  # [different_task, forward_progress, reverse_progress, rewind]
   similarity_strategy_ratio: [1, 1, 1] # rewind, suboptimal_same_task, paired_human_robot
   shuffle: true
   seed: 42
 
   dataset_type: rfm
-  
+  use_data_source_balance: false  # Enable data source balancing wrapper
   data_source_weights:
     metaworld_train: 1
     roboarena: 1
+    oxe_droid: 1
+    molmoact_dataset_household: 1
+    molmoact_dataset_tabletop: 1
 
   # Data loading settings
   dataloader_pin_memory: True
@@ -103,7 +105,6 @@ data:
   dataloader_persistent_workers: True
 
   progress_pred_type: "absolute_first_frame" # "absolute_first_frame", "relative_first_frame", or "absolute_wrt_total_frames"
-  pairwise_progress: false
 
   # RoboArena partial success threshold
   roboarena_partial_success_threshold: 0.2  # Minimum difference in partial_success between chosen and rejected trajectories for RoboArena
@@ -234,7 +235,7 @@ logging:
     save_every: 1000  # Save 'latest' checkpoint every N steps (should be multiple of custom_eval_steps). Set to null to disable.
     
     # Hub upload configuration (optional)
-    upload_to_hub: true   # Whether to upload best models to HuggingFace Hub
+    upload_to_hub: false   # Whether to upload best models to HuggingFace Hub
     hub_save_every: 1000  # Frequency (in steps) to upload to Hub. null = upload every checkpoint. Local saves always happen regardless.
     hub_token: null       # Set to your HF token or use HF_TOKEN environment variable
     hub_private: false    # Whether to make the uploaded model private

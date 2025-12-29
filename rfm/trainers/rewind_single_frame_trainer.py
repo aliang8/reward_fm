@@ -104,7 +104,6 @@ class ReWiNDSingleFrameTrainer(ReWiNDTrainer):
                 total_loss += progress_loss
                 log_metadata.update(loss_dict)
 
-
         # Check for NaN in total loss
         if torch.isnan(total_loss).any():
             logger.warning(f"NaN detected in total_loss, replacing with 0.0")

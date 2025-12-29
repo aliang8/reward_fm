@@ -1933,16 +1933,18 @@ class RFMHeadsTrainer(Trainer):
 
     def _cleanup_eval_dataset(self, dataset, dataloader, eval_results):
         """Clean up dataset, dataloader, and eval_results after evaluation."""
-        logger.info(f"  Cleaning up dataset and eval_results")
+        logger.info(f"  [Rank {get_rank()}] Cleaning up dataset and eval_results")
         # log_memory_usage(f"Before cleanup")
 
         # Aggressive cleanup to prevent memory leaks
         # First, delete eval_results which can be large
+        logger.debug(f"  [Rank {get_rank()}] Deleting eval_results")
         del eval_results
 
         # For the dataloader, we need to ensure worker processes are shut down
         # The accelerator.prepare() wraps the dataloader, so we need to clean both
         # Access the underlying dataloader if it exists and has workers
+        logger.debug(f"  [Rank {get_rank()}] Shutting down dataloader workers")
         try:
             if hasattr(dataloader, "_loader"):
                 # Accelerator-wrapped dataloader
@@ -1952,18 +1954,22 @@ class RFMHeadsTrainer(Trainer):
 
             # Shutdown workers if they exist
             if hasattr(underlying_dl, "_iterator") and underlying_dl._iterator is not None:
+                logger.debug(f"  [Rank {get_rank()}] Calling _shutdown_workers()")
                 underlying_dl._iterator._shutdown_workers()
                 underlying_dl._iterator = None
+                logger.debug(f"  [Rank {get_rank()}] Workers shut down successfully")
         except (AttributeError, RuntimeError) as e:
-            logger.debug(f"Could not explicitly shutdown workers: {e}")
+            logger.debug(f"  [Rank {get_rank()}] Could not explicitly shutdown workers: {e}")
 
         # Delete dataloader and dataset
+        logger.debug(f"  [Rank {get_rank()}] Deleting dataloader and dataset")
         del dataloader, dataset
         # log_memory_usage(f"After deleting dataloader and dataset")
 
         # Force garbage collection
         import gc
 
+        logger.debug(f"  [Rank {get_rank()}] Running garbage collection")
         gc.collect()
         # log_memory_usage(f"After first gc.collect()")
         gc.collect()  # Call twice for cyclic references
@@ -1971,8 +1977,10 @@ class RFMHeadsTrainer(Trainer):
 
         # Clear GPU cache
         if torch.cuda.is_available():
+            logger.debug(f"  [Rank {get_rank()}] Clearing CUDA cache")
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
+        logger.debug(f"  [Rank {get_rank()}] Cleanup complete")
 
     def _run_single_eval_dataset(self, eval_type, eval_dataset, eval_step, output_dir=None):
         """Run evaluation for a single dataset."""
@@ -2035,12 +2043,13 @@ class RFMHeadsTrainer(Trainer):
             dataloader_iter.close()
             del dataloader_iter
 
-            logger.info(f"  Finished processing {len(eval_results)} eval results")
+            logger.info(f"  [Rank {get_rank()}] Finished processing {len(eval_results)} eval results")
             # log_memory_usage(f"After eval loop, before compute_eval_metrics")
 
             # Compute metrics and create visualizations (only on main process)
             eval_metrics = {}
             if self.accelerator.is_main_process:
+                logger.info(f"  [Rank {get_rank()}] Starting metric computation")
                 # Use output_dir parameter if provided, otherwise fall back to config
                 actual_output_dir = output_dir if output_dir is not None else getattr(self.config, "output_dir", None)
                 eval_metrics = self._compute_and_log_eval_metrics(
@@ -2050,15 +2059,20 @@ class RFMHeadsTrainer(Trainer):
                 # Save eval_results as JSON if output_dir is available
                 if actual_output_dir is not None:
                     self._save_eval_results_json(eval_results, eval_type, ds_name, actual_output_dir)
+                logger.info(f"  [Rank {get_rank()}] Finished metric computation")
+            else:
+                logger.info(f"  [Rank {get_rank()}] Skipping metric computation (not main process)")
 
             # Cleanup
+            logger.info(f"  [Rank {get_rank()}] Starting dataset cleanup")
             self._cleanup_eval_dataset(dataset, dataloader, eval_results)
+            logger.info(f"  [Rank {get_rank()}] Finished dataset cleanup")
 
             # log_memory_usage(f"After cleanup for {eval_dataset}")
 
             # Store timing for this eval_dataset
             eval_dataset_time = self.timing_raw.get(timing_key, 0.0)
-            logger.info(f"  Finished {eval_type} for {eval_dataset} (took {eval_dataset_time:.2f} seconds)")
+            logger.info(f"  [Rank {get_rank()}] Finished {eval_type} for {eval_dataset} (took {eval_dataset_time:.2f} seconds)")
             logger.info("-" * 80)
 
             return eval_metrics, ds_name
@@ -2195,7 +2209,9 @@ class RFMHeadsTrainer(Trainer):
 
         # Final synchronization barrier to ensure all processes finish together
         if dist.is_initialized():
+            logger.info(f"  [Rank {get_rank()}] Waiting at barrier in _run_custom_evaluations")
             dist.barrier()
+            logger.info(f"  [Rank {get_rank()}] Passed barrier in _run_custom_evaluations")
 
         return callback_metrics
 

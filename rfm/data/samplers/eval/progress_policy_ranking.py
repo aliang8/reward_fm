@@ -123,6 +123,7 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
                         sample_indices.extend(self._generate_indices_for_trajectory(traj_idx, traj))
 
         logger.info(f"Sampled {len(sample_indices)} samples across {len(tasks_with_multiple_values)} tasks")
+        logger.info(f"Sample indices: {sample_indices}")
 
         return sample_indices
 

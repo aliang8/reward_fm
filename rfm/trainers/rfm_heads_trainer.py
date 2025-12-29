@@ -2121,11 +2121,10 @@ class RFMHeadsTrainer(Trainer):
 
                 # log_memory_usage(f"After completing all datasets for {eval_type}")
 
-                # Store timing for this eval_type
-                eval_type_time = self.timing_raw.get(f"time/eval_type/{eval_type}", 0.0)
-                eval_type_timings[f"time/eval_type/{eval_type}"] = eval_type_time
-                logger.info(f"Finished eval_type: {eval_type} (took {eval_type_time:.2f} seconds)")
-                logger.info("=" * 80)
+            eval_type_time = self.timing_raw.get(f"time/eval_type/{eval_type}", 0.0)
+            eval_type_timings[f"time/eval_type/{eval_type}"] = eval_type_time
+            logger.info(f"Finished eval_type: {eval_type} (took {eval_type_time:.2f} seconds)")
+            logger.info("=" * 80)
 
         flat_metrics = {}
         for ds_name, eval_type_metric in metrics.items():

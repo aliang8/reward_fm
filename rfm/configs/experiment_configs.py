@@ -284,6 +284,12 @@ class CustomEvaluationConfig:
             "help": "Maximum number of tasks to use for policy ranking evaluation. None = use all tasks with multiple quality labels."
         },
     )
+    custom_eval_random_seed: int = field(
+        default=42,
+        metadata={
+            "help": "Random seed for sampling trajectories in custom evaluation samplers. Ensures all ranks sample the same trajectories to prevent hangs when dataloaders have different lengths."
+        },
+    )
     reward_alignment_max_trajectories: Optional[int] = field(
         default=10,
         metadata={

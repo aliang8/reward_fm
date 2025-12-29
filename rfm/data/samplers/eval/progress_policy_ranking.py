@@ -48,7 +48,7 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
         If use_frame_steps=True, generates subsequence samples like reward_alignment (0:frame_step, 0:2*frame_step, etc.).
         If use_frame_steps=False, generates one sample per trajectory (whole trajectory).
         """
-        
+
         # Check if this is RoboArena (has partial_success)
         is_roboarena = False
         if self.robot_trajectories:

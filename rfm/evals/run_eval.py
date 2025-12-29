@@ -63,38 +63,17 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import decord
 
-# Import helper functions
 from rfm.data.dataset_types import Trajectory, ProgressSample, PreferenceSample
 from rfm.evals.eval_utils import build_payload, post_batch_npy
-
-# Import helper functions from rewardeval_ui/app.py
-# Need to add parent directory to path to import from rewardeval_ui
 import sys
 from pathlib import Path
-from rfm.evals.eval_viz_utils import create_combined_progress_success_plot, extract_frames
+from rfm.evals.eval_viz_utils import create_combined_progress_success_plot, extract_frames, create_comparison_plot
 
-# Optional imports for different modes
-try:
-    from gradio_client import Client, file as gradio_file
-
-    GRADIO_AVAILABLE = True
-except ImportError:
-    GRADIO_AVAILABLE = False
-
-try:
-    import torch
-
-    TORCH_AVAILABLE = True
-    # Imports for local model inference
-    from rfm.utils.save import load_model_from_hf
-    from rfm.utils.setup_utils import setup_batch_collator
-    from rfm.evals.eval_server import forward_model
-except ImportError:
-    TORCH_AVAILABLE = False
-    # Set to None so we can check if they're available
-    load_model_from_hf = None
-    setup_batch_collator = None
-    forward_model = None
+from gradio_client import Client, file as gradio_file
+import torch
+from rfm.utils.save import load_model_from_hf
+from rfm.utils.setup_utils import setup_batch_collator
+from rfm.evals.eval_server import forward_model
 
 
 def find_video_files(directory: str) -> list[str]:
@@ -117,7 +96,6 @@ def find_video_files(directory: str) -> list[str]:
         if file_path.is_file() and file_path.suffix.lower() in video_extensions:
             video_files.append(str(file_path))
 
-    # Sort for consistent ordering
     video_files.sort()
     return video_files
 
@@ -227,9 +205,6 @@ def run_single_video_gradio(
     output_dir: str,
 ) -> Dict[str, Any]:
     """Run single video inference via Gradio API."""
-    if not GRADIO_AVAILABLE:
-        raise ImportError("gradio_client not installed. Install with: pip install gradio_client")
-
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"Video file not found: {video_path}")
 
@@ -281,9 +256,6 @@ def run_dual_video_gradio(
     output_dir: str,
 ) -> Dict[str, Any]:
     """Run dual video inference via Gradio API."""
-    if not GRADIO_AVAILABLE:
-        raise ImportError("gradio_client not installed. Install with: pip install gradio_client")
-
     if not os.path.exists(video_a_path):
         raise FileNotFoundError(f"Video A file not found: {video_a_path}")
     if not os.path.exists(video_b_path):
@@ -697,9 +669,6 @@ def load_model_for_inference(model_path: str, output_dir: str, device: str = "cu
     Returns:
         Dictionary with keys: exp_cfg, tokenizer, processor, model, batch_collator
     """
-    if not TORCH_AVAILABLE:
-        raise ImportError("PyTorch not available. Install with: pip install torch")
-
     print(f"Loading model from: {model_path}...")
     device_obj = torch.device(device if torch.cuda.is_available() else "cpu")
     exp_cfg, tokenizer, processor, model = load_model_from_hf(model_path=model_path, device=device_obj)

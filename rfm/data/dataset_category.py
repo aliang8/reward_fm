@@ -86,7 +86,12 @@ DATASET_MAP = {
             "jesbu1_egodex_rfm_egodex_part5",
             "abraranwar_agibotworld_alpha_rfm_agibotworld",
             "jesbu1_humanoid_everyday_rfm_humanoid_everyday_rfm",
-            "jesbu1_epic_rfm_epic"
+            "jesbu1_epic_rfm_epic",
+            "jesbu1_galaxea_rfm_galaxea_part1_r1_lite",
+            "jesbu1_galaxea_rfm_galaxea_part2_r1_lite",
+            "jesbu1_galaxea_rfm_galaxea_part3_r1_lite",
+            "jesbu1_galaxea_rfm_galaxea_part4_r1_lite",
+            "jesbu1_galaxea_rfm_galaxea_part5_r1_lite",
         ],
         "eval": [
             "jesbu1_egodex_rfm_egodex_test",
@@ -156,16 +161,16 @@ DATASET_MAP = {
     },
     "policy_ranking": {
         "eval": [
-            "aliangdw_metaworld_metaworld_eval",
-            "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
-            "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",
-            "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
-            "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
-            "jesbu1_soar_rfm_soar_rfm",
-            "jesbu1_mit_franka_p-rank_rfm_mit_franka_p-rank_rfm",
-            "jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top",
-            "jesbu1_utd_so101_clean_policy_ranking_wrist_utd_so101_clean_policy_ranking_wrist",
-            # ["abraranwar_libero_rfm_libero256_10", "ykorkmaz_libero_failure_rfm_libero_10_failure"],
+            # "aliangdw_metaworld_metaworld_eval",
+            # "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
+            # "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",
+            # "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
+            # "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
+            # "jesbu1_soar_rfm_soar_rfm",
+            # "jesbu1_mit_franka_p-rank_rfm_mit_franka_p-rank_rfm",
+            # "jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top",
+            # "jesbu1_utd_so101_clean_policy_ranking_wrist_utd_so101_clean_policy_ranking_wrist",
+            ["abraranwar_libero_rfm_libero256_10", "ykorkmaz_libero_failure_rfm_libero_10_failure"],
         ]
     },
     "paired": {
@@ -259,6 +264,12 @@ DATA_SOURCE_CATEGORY = {
         "roboarena",
         "auto_eval_rfm",
         "humanoid_everyday_rfm",
+        "galaxea_part1_r1_lite",
+        "galaxea_part2_r1_lite",
+        "galaxea_part3_r1_lite",
+        "galaxea_part4_r1_lite",
+        "galaxea_part5_r1_lite",
+        "galaxea"
     ],
     "paired": [
         "h2r",

@@ -17,51 +17,10 @@ logger = get_logger()
 
 def resolve_dataset_keys(
     dataset_keys: Union[List[str], List[List[str]]], split: str
-) -> Union[List[str], List[List[str]]]:
-    """
-    Resolve dataset keys through DATASET_MAP.
-
-    Args:
-        dataset_keys: List of dataset keys (e.g., ["mw", "oxe"]) or actual dataset names.
-                     Can also be a list of lists for cases like similarity_score where multiple
-                     datasets need to be grouped together (e.g., [["human_ds", "robot_ds"], ["other_ds"]]).
-        split: Either "train" or "eval"
-
-    Returns:
-        List of resolved dataset names, combining all datasets from the keys.
-        If input is a list of lists, returns a list of lists (each inner list resolved separately).
-        If input is a flat list, returns a flat list.
-    """
-    # Check if this is a list of lists (nested structure)
-    if dataset_keys and isinstance(dataset_keys[0], list):
-        # Handle nested lists: resolve each inner list separately
-        resolved_datasets = []
-        for key_group in dataset_keys:
-            resolved_group = []
-            for key in key_group:
-                if key in DATASET_MAP:
-                    # Key found in DATASET_MAP, resolve it
-                    if split in DATASET_MAP[key]:
-                        resolved_group.extend(DATASET_MAP[key][split])
-                    else:
-                        logger.warning(f"Key '{key}' found in DATASET_MAP but no '{split}' split defined. Skipping.")
-                else:
-                    # Not a key, assume it's already a dataset name
-                    resolved_group.append(key)
-            seen = set()
-            deduplicated_group = []
-            for item in resolved_group:
-                if item not in seen:
-                    seen.add(item)
-                    deduplicated_group.append(item)
-            resolved_datasets.append(deduplicated_group)
-        return resolved_datasets
-
-    # Handle flat list (original behavior)
+) -> Union[List[str], List[List[str]]]: 
     resolved_datasets = []
     for key in dataset_keys:
         if key in DATASET_MAP:
-            # Key found in DATASET_MAP, resolve it
             if split in DATASET_MAP[key]:
                 resolved_datasets.extend(DATASET_MAP[key][split])
             else:
@@ -69,12 +28,24 @@ def resolve_dataset_keys(
         else:
             # Not a key, assume it's already a dataset name
             resolved_datasets.append(key)
+    
+    # Deduplicate: handle both strings and lists
     seen = set()
+    seen_lists = []
     deduplicated_datasets = []
     for item in resolved_datasets:
-        if item not in seen:
-            seen.add(item)
-            deduplicated_datasets.append(item)
+        if isinstance(item, list):
+            # For lists, convert to tuple for hashing, but store the original list
+            item_tuple = tuple(item)
+            if item_tuple not in seen:
+                seen.add(item_tuple)
+                seen_lists.append(item)
+                deduplicated_datasets.append(item)
+        else:
+            # For strings, use normal set membership
+            if item not in seen:
+                seen.add(item)
+                deduplicated_datasets.append(item)
     return deduplicated_datasets
 
 
@@ -83,15 +54,10 @@ class BaseDataset(torch.utils.data.Dataset):
         self.config = config
         self.is_evaluation = is_evaluation
 
-        # Choose datasets based on whether this is for evaluation or training
         if is_evaluation and config.eval_datasets:
-            dataset_keys = config.eval_datasets
-            split = "eval"
+            self.datasets = config.eval_datasets
         else:
-            dataset_keys = config.train_datasets
-            split = "train"
-
-        self.datasets = resolve_dataset_keys(dataset_keys, split)
+            self.datasets = config.train_datasets
 
         # Load dataset-specific success cutoff map if available
         self.dataset_success_cutoff_map = {}

@@ -16,7 +16,6 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import Trainer
 
-from rfm.data.datasets.base import resolve_dataset_keys
 from rfm.data.datasets.helpers import load_frames_from_npz
 from rfm.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
 from rfm.evals.compile_results import compute_eval_metrics
@@ -722,10 +721,11 @@ class RFMHeadsTrainer(Trainer):
     def _setup_eval_dataset(self, eval_type, eval_dataset):
         """Setup dataset and dataloader for evaluation."""
         eval_cfg = copy.deepcopy(self.config.data)
+
+        # explicitly set dataset type to rfm for custom eval datasets
         eval_cfg.dataset_type = "rfm"
-        # For similarity_score, eval_dataset is a list of datasets that should be loaded together
-        # For other eval types, eval_dataset is a single dataset name
-        if eval_type == "similarity_score" and isinstance(eval_dataset, list):
+
+        if isinstance(eval_dataset, list):
             eval_cfg.eval_datasets = eval_dataset
         else:
             eval_cfg.eval_datasets = [eval_dataset]
@@ -2103,8 +2103,7 @@ class RFMHeadsTrainer(Trainer):
             # log_memory_usage(f"Before {eval_type}")
             logger.info("=" * 80)
 
-            datasets = getattr(self.config.custom_eval, eval_type)
-            eval_datasets_name = resolve_dataset_keys(datasets, split="eval")
+            eval_datasets_name = getattr(self.config.custom_eval, eval_type)
 
             with _timer(f"time/eval_type/{eval_type}", timing_raw=self.timing_raw):
                 for eval_dataset in eval_datasets_name:

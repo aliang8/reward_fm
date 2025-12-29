@@ -17,7 +17,7 @@ logger = get_logger()
 
 def resolve_dataset_keys(
     dataset_keys: Union[List[str], List[List[str]]], split: str
-) -> Union[List[str], List[List[str]]]: 
+) -> Union[List[str], List[List[str]]]:
     resolved_datasets = []
     for key in dataset_keys:
         if key in DATASET_MAP:
@@ -28,7 +28,7 @@ def resolve_dataset_keys(
         else:
             # Not a key, assume it's already a dataset name
             resolved_datasets.append(key)
-    
+
     # Deduplicate: handle both strings and lists
     seen = set()
     seen_lists = []

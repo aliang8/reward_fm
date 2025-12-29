@@ -65,7 +65,7 @@ DATASET_CATEGORY = {
         "jesbu1_oxe_rfm_oxe_dlr_edan_shared_control_converted_externally_to_rlds",
         # "roboarena",
         "auto_eval_rfm",
-        "jesbu1_epic_rfm_epic"
+        "jesbu1_epic_rfm_epic",
     ],
     "paired": [
         "jesbu1_h2r_rfm_h2r",
@@ -271,7 +271,7 @@ DATA_SOURCE_CATEGORY = {
         "galaxea_part3_r1_lite",
         "galaxea_part4_r1_lite",
         "galaxea_part5_r1_lite",
-        "galaxea"
+        "galaxea",
     ],
     "paired": [
         "h2r",

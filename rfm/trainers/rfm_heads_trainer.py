@@ -2073,7 +2073,9 @@ class RFMHeadsTrainer(Trainer):
 
             # Store timing for this eval_dataset
             eval_dataset_time = self.timing_raw.get(timing_key, 0.0)
-            logger.info(f"  [Rank {get_rank()}] Finished {eval_type} for {eval_dataset} (took {eval_dataset_time:.2f} seconds)")
+            logger.info(
+                f"  [Rank {get_rank()}] Finished {eval_type} for {eval_dataset} (took {eval_dataset_time:.2f} seconds)"
+            )
             logger.info("-" * 80)
 
             return eval_metrics, ds_name

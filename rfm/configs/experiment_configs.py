@@ -279,7 +279,7 @@ class CustomEvaluationConfig:
         },
     )
     policy_ranking_max_tasks: Optional[int] = field(
-        default=None,
+        default=100,
         metadata={
             "help": "Maximum number of tasks to use for policy ranking evaluation. None = use all tasks with multiple quality labels."
         },

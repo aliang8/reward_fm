@@ -37,6 +37,7 @@ from rfm.utils.setup_utils import (
     setup_model_and_processor,
     setup_peft_model,
 )
+from rfm.data.datasets.base import resolve_dataset_keys
 from rfm.utils.logger import Logger
 from rfm.utils.distributed import banner
 from rfm.utils.config_utils import display_config, convert_hydra_to_dataclass
@@ -187,6 +188,24 @@ def train(cfg: ExperimentConfig):
 
     if is_rank_0():
         show_available_datasets()
+
+    banner("Resolving dataset keys")
+    cfg.data.train_datasets = resolve_dataset_keys(cfg.data.train_datasets, split="train")
+    rank_0_info(f"Resolved train datasets: {cfg.data.train_datasets}")
+    
+    if cfg.data.eval_datasets:
+        cfg.data.eval_datasets = resolve_dataset_keys(cfg.data.eval_datasets, split="eval")
+        rank_0_info(f"Resolved eval datasets: {cfg.data.eval_datasets}")
+    
+    # Resolve custom evaluation dataset keys once (replace in place)
+    for eval_type in cfg.custom_eval.eval_types:
+        datasets = getattr(cfg.custom_eval, eval_type, None)
+        if datasets:
+            resolved = resolve_dataset_keys(datasets, split="eval")
+            setattr(cfg.custom_eval, eval_type, resolved)
+            rank_0_info(f"Resolved {eval_type} datasets: {resolved}")
+    
+    rank_0_info("Dataset keys resolved")
 
     banner("Setting up training and evaluation datasets and collator")
     with _timer("time/setup_data", timing_raw=timing_raw):

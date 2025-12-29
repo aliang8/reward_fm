@@ -65,7 +65,6 @@ DATASET_CATEGORY = {
         "jesbu1_oxe_rfm_oxe_dlr_edan_shared_control_converted_externally_to_rlds",
         # "roboarena",
         "auto_eval_rfm",
-        "jesbu1_epic_rfm_epic"
     ],
     "paired": [
         "jesbu1_h2r_rfm_h2r",
@@ -265,13 +264,14 @@ DATA_SOURCE_CATEGORY = {
         "oxe_dlr_edan_shared_control_converted_externally_to_rlds",
         "roboarena",
         "auto_eval_rfm",
-        "humanoid_everyday_rfm",
-        "galaxea_part1_r1_lite",
-        "galaxea_part2_r1_lite",
-        "galaxea_part3_r1_lite",
-        "galaxea_part4_r1_lite",
-        "galaxea_part5_r1_lite",
-        "galaxea"
+        #"humanoid_everyday_rfm",
+        "galaxea_part1",
+        "galaxea_part2",
+        "galaxea_part3",
+        "galaxea_part4",
+        "galaxea_part5",
+        "galaxea",
+        "epic_kitchens",
     ],
     "paired": [
         "h2r",

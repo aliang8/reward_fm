@@ -541,10 +541,10 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
 
         with _timer("time/progress_logits", timing_raw=timing_raw):
             if not skip_frame_extraction:
-                logger.trace(f"RFM._forward_qwen: Processing {len(input_ids)} samples in frame extraction mode")
+                # logger.trace(f"RFM._forward_qwen: Processing {len(input_ids)} samples in frame extraction mode")
                 # Compute per-frame embeddings and predictions
                 for i, seq_ids in enumerate(input_ids):
-                    logger.trace(f"RFM._forward_qwen: Processing sample {i}/{len(input_ids) - 1}")
+                    # logger.trace(f"RFM._forward_qwen: Processing sample {i}/{len(input_ids) - 1}")
 
                     # Find all vision token positions
                     vision_start_positions = (seq_ids == vision_start_token_id).nonzero(as_tuple=True)[0]
@@ -575,18 +575,18 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
                     else:
                         vision_end_positions = torch.tensor([], device=seq_ids.device)
 
-                    logger.trace(
-                        f"RFM._forward_qwen: Sample {i} - found {len(vision_start_positions)} vision_start tokens, {len(vision_end_positions)} vision_end tokens"
-                    )
+                    # logger.trace(
+                    #     f"RFM._forward_qwen: Sample {i} - found {len(vision_start_positions)} vision_start tokens, {len(vision_end_positions)} vision_end tokens"
+                    # )
 
                     if len(vision_start_positions) == 0:
                         raise ValueError(f"vision_start_token (id={vision_start_token_id}) not found in sequence {i}")
 
                     is_multi_image = self.use_multi_image
-                    logger.trace(f"RFM._forward_qwen: Sample {i} - is_multi_image={is_multi_image} (from model config)")
+                    # logger.trace(f"RFM._forward_qwen: Sample {i} - is_multi_image={is_multi_image} (from model config)")
 
                     if is_multi_image:
-                        logger.trace(f"RFM._forward_qwen: Sample {i} - Using multi-image mode")
+                        # logger.trace(f"RFM._forward_qwen: Sample {i} - Using multi-image mode")
                         # Multi-image mode: extract embeddings from each vision_start/end pair
                         frame_embeddings = self._extract_hidden_states_from_token_pairs(
                             hidden_state[i],  # [seq_len, hidden_dim]
@@ -641,7 +641,7 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
                             progress_logits_B.append(None)
                             success_logits_B.append(None)
                     else:
-                        logger.trace(f"RFM._forward_qwen: Sample {i} - Using video mode")
+                        # logger.trace(f"RFM._forward_qwen: Sample {i} - Using video mode")
                         # Video mode: use existing temporal patch logic
                         if video_grid_thw is None or i >= len(video_grid_thw):
                             raise ValueError(
@@ -686,9 +686,9 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
                             progress_logits_B.append(None)
                             success_logits_B.append(None)
 
-        logger.trace(
-            f"RFM._forward_qwen: Stacking progress/success logits, len_A={len(progress_logits_A)}, len_B={len(progress_logits_B)}"
-        )
+        # logger.trace(
+        #     f"RFM._forward_qwen: Stacking progress/success logits, len_A={len(progress_logits_A)}, len_B={len(progress_logits_B)}"
+        # )
         progress_logits = {
             "A": torch.stack(progress_logits_A) if progress_logits_A else None,
             "B": torch.stack(progress_logits_B) if progress_logits_B[0] is not None else None,
@@ -697,7 +697,7 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
             "A": torch.stack(success_logits_A) if success_logits_A else None,
             "B": torch.stack(success_logits_B) if success_logits_B[0] is not None else None,
         }
-        logger.trace("RFM._forward_qwen: Completed, returning outputs")
+        # logger.trace("RFM._forward_qwen: Completed, returning outputs")
 
         return outputs, progress_logits, success_logits
 

@@ -4,6 +4,7 @@ from typing import Optional, Dict, Any, List, Set, Tuple
 import numpy as np
 import random
 import torch
+from random import Random
 from datasets import Dataset
 
 from rfm.configs.experiment_configs import DataConfig
@@ -36,6 +37,7 @@ class RFMBaseSampler:
         combined_indices: Dict[str, Any],
         dataset_success_cutoff_map: Optional[Dict[str, float]] = None,
         verbose: bool = True,
+        random_seed: int = 42,
     ):
         """Initialize sampler with dataset and indices.
 
@@ -45,11 +47,13 @@ class RFMBaseSampler:
             combined_indices: Dictionary of combined indices from dataset loading
             dataset_success_cutoff_map: Dictionary mapping dataset names to success cutoff percentages
             verbose: Verbose flag
+            random_seed: Random seed for deterministic sampling. Creates a local Random instance to avoid affecting global random state.
         """
         self.config = config
         self.dataset = dataset
         self.verbose = verbose
         self.dataset_success_cutoff_map = dataset_success_cutoff_map or {}
+        self._local_random = Random(random_seed)
 
         self._cached_ids = self.dataset["id"]
         self._cached_is_robot = self.dataset["is_robot"]

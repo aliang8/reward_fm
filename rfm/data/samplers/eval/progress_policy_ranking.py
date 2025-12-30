@@ -4,13 +4,6 @@ import numpy as np
 from collections import defaultdict
 from rfm.data.dataset_types import ProgressSample
 from rfm.data.samplers.base import RFMBaseSampler
-from rfm.data.datasets.helpers import (
-    linspace_subsample_frames,
-    load_embeddings_from_path,
-    load_frames_from_npz,
-    convert_absolute_to_relative_progress,
-    create_trajectory_from_dict,
-)
 from rfm.utils.logger import get_logger
 
 logger = get_logger()
@@ -146,9 +139,10 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
         if self.use_frame_steps:
             # Generate subsequence indices like reward_alignment: 0:frame_step, 0:2*frame_step, etc.
             for end_idx in range(self.frame_step, num_frames + 1, self.frame_step):
+                frame_indices = list(range(end_idx))
                 indices.append({
                     "traj_idx": traj_idx,
-                    "end_idx": end_idx,
+                    "frame_indices": frame_indices,
                     "num_frames": num_frames,
                     "video_path": traj["frames"],
                     "id": traj["id"],
@@ -172,96 +166,27 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
 
         traj = self.dataset[traj_idx]
 
-        # Initialize variables
-        frames = None
-        video_embeddings = None
-        text_embedding = None
-
-        # Load data (embeddings or frames)
-        if self.config.load_embeddings and traj.get("embeddings_path"):
-            embeddings = load_embeddings_from_path(traj["embeddings_path"])
-            video_embeddings = embeddings["video_embeddings"]
-            text_embedding = embeddings["text_embedding"]
-            data = video_embeddings
-            total_frames = video_embeddings.shape[0] if hasattr(video_embeddings, "shape") else len(video_embeddings)
-            use_embeddings = True
-        else:
-            frames = load_frames_from_npz(traj["frames"])
-            data = frames
-            total_frames = len(frames)
-            use_embeddings = False
-
         if use_frame_steps:
             # Frame steps mode: create subsequence like reward_alignment
-            end_idx = sample_idx_info["end_idx"]
+            frame_indices = sample_idx_info["frame_indices"]
             num_frames = sample_idx_info["num_frames"]
 
-            # Create subsequence
-            if use_embeddings:
-                subsequence_data = data[:end_idx]
-                subsequence_data, frame_indices = linspace_subsample_frames(subsequence_data, self.config.max_frames)
-                frames_shape_orig = subsequence_data.shape
-            else:
-                subsequence_frames = data[:end_idx]
-                subsequence_frames, frame_indices = linspace_subsample_frames(
-                    subsequence_frames, self.config.max_frames
-                )
-                frames_shape_orig = subsequence_frames.shape
-
-            # Ground truth progress: linear from 0 to 1
-            if self.config.progress_pred_type.startswith("absolute"):
-                gt_progress = (end_idx - 1) / (num_frames - 1)
-            else:  # relative_first_frame
-                gt_progress = 1 / num_frames
-
-            # Create progress values for each subsampled frame
-            num_subsampled = len(frame_indices)
-            if num_subsampled > 1:
-                progress_values = [gt_progress * (idx / (num_subsampled - 1)) for idx in range(num_subsampled)]
-            else:
-                progress_values = [gt_progress]
-
             metadata = {
-                "subsequence_end": end_idx,
-                "ground_truth_progress": gt_progress,
                 "quality_label": traj["quality_label"],
                 "data_source": traj["data_source"],
                 "task": traj["task"],
                 "id": traj["id"],
                 "video_path": sample_idx_info["video_path"],
+                "frame_step": frame_indices[-1] if frame_indices else 0,
             }
 
-            trajectory = create_trajectory_from_dict(
-                traj,
-                overrides={
-                    "frames": subsequence_frames if not use_embeddings else None,
-                    "frames_shape": frames_shape_orig,
-                    "video_embeddings": subsequence_data if use_embeddings else None,
-                    "text_embedding": text_embedding,
-                    "data_gen_strategy": "policy_ranking",
-                    "target_progress": progress_values,
-                    "metadata": metadata,
-                },
+            trajectory = self._get_traj_from_data(
+                traj=traj,
+                frame_indices=frame_indices,
+                metadata=metadata,
             )
         else:
-            # Whole trajectory mode: use linspace sampling
-            max_frames = self.config.max_frames
-            data, frame_indices = linspace_subsample_frames(data, max_frames)
-            frames_shape_orig = data.shape
-
-            # Compute progress based on type
-            if self.config.progress_pred_type == "absolute_wrt_total_frames":
-                progress_abs = [(idx + 1) / total_frames for idx in frame_indices]
-            elif self.config.progress_pred_type.startswith("absolute"):
-                progress_abs = [idx / (total_frames - 1) for idx in frame_indices]
-            else:  # relative_first_frame
-                progress_abs = [idx / (total_frames - 1) for idx in frame_indices]
-
-            if self.config.progress_pred_type == "relative_first_frame":
-                progress = convert_absolute_to_relative_progress(progress_abs)
-            else:
-                progress = progress_abs
-
+            # Whole trajectory mode
             metadata = {
                 "quality_label": traj["quality_label"],
                 "data_source": traj["data_source"],
@@ -270,20 +195,11 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
                 "video_path": sample_idx_info["video_path"],
             }
 
-            trajectory = create_trajectory_from_dict(
-                traj,
-                overrides={
-                    "frames": data if not use_embeddings else None,
-                    "frames_shape": frames_shape_orig,
-                    "video_embeddings": data if use_embeddings else None,
-                    "text_embedding": text_embedding,
-                    "lang_vector": np.array(traj["lang_vector"]),
-                    "target_progress": progress,
-                    "metadata": metadata,
-                },
+            trajectory = self._get_traj_from_data(
+                traj=traj,
+                metadata=metadata,
             )
 
-        trajectory = self._post_process_trajectory(trajectory)
         sample = ProgressSample(trajectory=trajectory)
         return sample
 

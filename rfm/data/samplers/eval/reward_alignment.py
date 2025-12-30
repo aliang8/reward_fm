@@ -85,7 +85,7 @@ class RewardAlignmentSampler(RFMBaseSampler):
             "video_path": sample_idx_info["video_path"],
             "frame_step": frame_indices[-1] if frame_indices else 0,
         }
-        
+
         subsequence_trajectory = self._get_traj_from_data(
             traj=original_traj,
             frame_indices=frame_indices,

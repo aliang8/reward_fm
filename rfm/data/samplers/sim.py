@@ -227,7 +227,7 @@ class SimSampler(RFMBaseSampler):
         # Try to get rewound trajectory for sim
         traj_sim = None
         for _ in range(max_retries):
-            traj_sim = self._get_rewound_traj(ref_traj)
+            traj_sim = self._get_traj_from_data(ref_traj, subsample_strategy="subsample_rewind")
             if traj_sim is not None:
                 break
 

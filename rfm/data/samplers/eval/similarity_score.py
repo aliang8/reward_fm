@@ -139,7 +139,7 @@ class SimilarityScoreSampler(RFMBaseSampler):
         metadata = {
             "data_gen_strategy": "similarity_score_eval",
         }
-        
+
         trajectory = self._get_traj_from_data(
             traj=traj_data,
             metadata=metadata,

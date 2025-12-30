@@ -580,12 +580,12 @@ class RFMBaseSampler:
         if isinstance(traj, Trajectory):
             # If already a Trajectory, just return it
             return traj
-        
+
         # Load from dict
         # Check if text_embedding is already provided in the dict (for samplers that need to override it)
         if "text_embedding" in traj and traj["text_embedding"] is not None:
             text_embedding = traj["text_embedding"]
-        
+
         if self.config.load_embeddings and traj.get("embeddings_path"):
             embeddings = load_embeddings_from_path(traj["embeddings_path"])
             video_embeddings = embeddings["video_embeddings"]
@@ -617,13 +617,21 @@ class RFMBaseSampler:
             # Use subsampling strategy
             # Get subsample indices (handles edge cases for max_frames == 1 or 2)
             if subsample_strategy == "subsample_forward":
-                strategy_indices = self._get_subsample_indices(data, direction="forward", max_frames=self.config.max_frames)
+                strategy_indices = self._get_subsample_indices(
+                    data, direction="forward", max_frames=self.config.max_frames
+                )
             elif subsample_strategy == "subsample_reverse":
-                strategy_indices = self._get_subsample_indices(data, direction="reverse", max_frames=self.config.max_frames)
+                strategy_indices = self._get_subsample_indices(
+                    data, direction="reverse", max_frames=self.config.max_frames
+                )
             elif subsample_strategy == "subsample_rewind":
-                strategy_indices = self._get_subsample_indices(data, direction="rewind", max_frames=self.config.max_frames)
+                strategy_indices = self._get_subsample_indices(
+                    data, direction="rewind", max_frames=self.config.max_frames
+                )
             else:
-                strategy_indices = self._get_subsample_indices(data, direction="bidirectional", max_frames=self.config.max_frames)
+                strategy_indices = self._get_subsample_indices(
+                    data, direction="bidirectional", max_frames=self.config.max_frames
+                )
 
             if strategy_indices is None:
                 logger.trace("[BASE SAMPLER] _get_traj_from_data: Failed to get uniform sample indices")

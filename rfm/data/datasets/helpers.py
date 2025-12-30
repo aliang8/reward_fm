@@ -121,6 +121,7 @@ def load_frames_from_npz(npz_filepath: str) -> np.ndarray:
 def load_embeddings_from_path(embeddings_path: str) -> torch.Tensor:
     """Load video embeddings from .pt file and return just the video embeddings."""
     if not embeddings_path:
+        print("Embeddings path is None or empty:", embeddings_path)
         import ipdb
 
         ipdb.set_trace()

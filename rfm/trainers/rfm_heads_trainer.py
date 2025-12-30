@@ -1008,7 +1008,9 @@ class RFMHeadsTrainer(Trainer):
             trajectory_id = processed_trajectory_ids[idx]
             # Get all results for this trajectory
             results_for_trajectory = [r for r in eval_results if r.get("id") == trajectory_id]
-            results_for_trajectory.sort(key=lambda r: r.get("metadata", {}).get("subsequence_end", 0))
+            # Sort by frame_step if available (for frame_steps mode)
+            # This orders subsequences from shortest to longest (e.g., [0], [0,1], [0,1,2], ...)
+            results_for_trajectory.sort(key=lambda r: r.get("metadata", {}).get("frame_step", 0))
 
             if not results_for_trajectory:
                 continue
@@ -2995,7 +2997,7 @@ class RFMHeadsTrainer(Trainer):
             # Split along batch dimension: even indices are ref_sim, odd indices are ref_diff
             progress_A_ref_sim = progress_A[::2]  # A (ref) for ref_sim comparisons
             progress_A_ref_diff = progress_A[1::2]  # A (ref) for ref_diff comparisons
-            
+
             # Only use A (reference trajectory) for progress prediction
             progress_logits_ref_sim = {"A": progress_A_ref_sim, "B": None}
             progress_logits_ref_diff = {"A": progress_A_ref_diff, "B": None}
@@ -3008,7 +3010,7 @@ class RFMHeadsTrainer(Trainer):
             # Split along batch dimension: even indices are ref_sim, odd indices are ref_diff
             success_A_ref_sim = success_A[::2]  # A (ref) for ref_sim comparisons
             success_A_ref_diff = success_A[1::2]  # A (ref) for ref_diff comparisons
-            
+
             # Only use A (reference trajectory) for success prediction
             success_logits_ref_sim = {"A": success_A_ref_sim, "B": None}
             success_logits_ref_diff = {"A": success_A_ref_diff, "B": None}

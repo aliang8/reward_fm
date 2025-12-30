@@ -177,14 +177,15 @@ DATASET_MAP = {
     },
     "paired": {
         "train": [
-            "jesbu1_h2r_rfm_h2r",
-            "jesbu1_motif_rfm_motif_rfm",
+            # "jesbu1_h2r_rfm_h2r",
+            # "jesbu1_motif_rfm_motif_rfm",
             "anqil_rh20t_subset_rfm_rh20t_human",
             "anqil_rh20t_subset_rfm_rh20t_robot",
-            "jesbu1_ph2d_rfm_ph2d",
+            # "jesbu1_ph2d_rfm_ph2d",
         ],
         "eval": [
             # "jesbu1_egodex_rfm_egodex_test",
+            # ["anqil_rh20t_subset_rfm_rh20t_human", "anqil_rh20t_subset_rfm_rh20t_robot"],
             "aliangdw_utd_so101_human_utd_so101_human",
             "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
         ],
@@ -209,11 +210,11 @@ DATASET_MAP = {
                 "anqil_rh20t_subset_rfm_rh20t_human",
                 "anqil_rh20t_subset_rfm_rh20t_robot",
             ],
-            [
-                "aliangdw_utd_so101_human_utd_so101_human",
-                "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
-            ],
-            ["jesbu1_hand_paired_rfm_hand_paired_robot", "jesbu1_hand_paired_rfm_hand_paired_human"],
+            # [
+            #     "aliangdw_utd_so101_human_utd_so101_human",
+            #     "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
+            # ],
+            # ["jesbu1_hand_paired_rfm_hand_paired_robot", "jesbu1_hand_paired_rfm_hand_paired_human"],
         ]
     },
     "franka": {

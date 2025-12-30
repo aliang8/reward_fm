@@ -11,7 +11,7 @@ logger = get_logger()
 class DataSourceBalancedWrapper(BaseDataset):
     """Wrapper that applies data source balancing to any dataset.
 
-    This wrapper can wrap RFMDataset, SingleFrameDataset, or any other dataset
+    This wrapper can wrap RFMDataset or any other dataset
     that inherits from BaseDataset. It overrides __getitem__ to sample based on
     data source weights while delegating all other functionality to the wrapped dataset.
     """
@@ -20,7 +20,7 @@ class DataSourceBalancedWrapper(BaseDataset):
         """Initialize the wrapper.
 
         Args:
-            wrapped_dataset: The dataset to wrap (e.g., RFMDataset or SingleFrameDataset)
+            wrapped_dataset: The dataset to wrap (e.g., RFMDataset)
             config: DataConfig with data_source_weights
             is_evaluation: Whether this is for evaluation
             **kwargs: Additional arguments (passed to BaseDataset.__init__)

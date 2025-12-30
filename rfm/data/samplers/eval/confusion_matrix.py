@@ -12,12 +12,6 @@ from collections import Counter
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, Trajectory
 from rfm.data.samplers.base import RFMBaseSampler
 from rfm.data.datasets.helpers import DataGenStrat
-from rfm.data.datasets.helpers import (
-    linspace_subsample_frames,
-    load_embeddings_from_path,
-    load_frames_from_npz,
-    create_trajectory_from_dict,
-)
 from rfm.utils.distributed import rank_0_print
 from sentence_transformers import SentenceTransformer
 
@@ -105,28 +99,6 @@ class ConfusionMatrixSampler(RFMBaseSampler):
 
         video_traj = self.dataset[traj_idx]
 
-        frames = None
-        video_embeddings = None
-        text_embedding = None
-        max_frames = self.config.max_frames
-
-        if self.config.load_embeddings and video_traj.get("embeddings_path"):
-            embeddings = load_embeddings_from_path(video_traj["embeddings_path"])
-            video_embeddings = embeddings["video_embeddings"]
-            video_embeddings, frame_indices = linspace_subsample_frames(video_embeddings, max_frames)
-            frames_shape_orig = video_embeddings.shape
-        else:
-            frames = load_frames_from_npz(video_traj["frames"])
-            if frames is None or len(frames) == 0:
-                return None
-
-            frames, frame_indices = linspace_subsample_frames(frames, max_frames)
-            frames_shape_orig = frames.shape
-
-        # Create progress values for each subsampled frame (all 1.0 since trajectory is complete)
-        num_subsampled = len(frame_indices)
-        progress_values = [1.0] * num_subsampled
-
         # Look up precomputed embedding instead of encoding
         text_embedding = self.task_embeddings[lang_task]
 
@@ -137,20 +109,15 @@ class ConfusionMatrixSampler(RFMBaseSampler):
             "video_path": video_path,
         }
 
-        sample_trajectory = create_trajectory_from_dict(
-            video_traj,
-            overrides={
-                "task": lang_task,  # Use the confusion matrix task, not the original trajectory task
-                "frames": frames if not self.config.load_embeddings else None,
-                "frames_shape": frames_shape_orig,
-                "video_embeddings": video_embeddings if self.config.load_embeddings else None,
-                "text_embedding": text_embedding,
-                "data_gen_strategy": DataGenStrat.SUCCESSFUL.value,
-                "target_progress": progress_values,
-                "metadata": metadata,
-            },
+        # Override task and text_embedding in the trajectory dict
+        video_traj_with_task = video_traj.copy()
+        video_traj_with_task["task"] = lang_task
+        video_traj_with_task["text_embedding"] = text_embedding
+
+        sample_trajectory = self._get_traj_from_data(
+            traj=video_traj_with_task,
+            metadata=metadata,
         )
-        sample_trajectory = self._post_process_trajectory(sample_trajectory)
 
         sample = ProgressSample(trajectory=sample_trajectory)
         return sample

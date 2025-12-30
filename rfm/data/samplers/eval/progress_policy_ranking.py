@@ -1,18 +1,9 @@
+from typing import Dict, List, Any, Optional
+
 import numpy as np
-import torch
-import random
 from collections import defaultdict
-from rfm.data.dataset_types import ProgressSample, Trajectory
+from rfm.data.dataset_types import ProgressSample
 from rfm.data.samplers.base import RFMBaseSampler
-from rfm.data.datasets.helpers import (
-    linspace_subsample_frames,
-    pad_trajectory_to_max_frames_np,
-    pad_trajectory_to_max_frames_torch,
-    load_embeddings_from_path,
-    load_frames_from_npz,
-    convert_absolute_to_relative_progress,
-    compute_success_labels,
-)
 from rfm.utils.logger import get_logger
 
 logger = get_logger()
@@ -23,158 +14,193 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
 
     def __init__(
         self,
-        config,
-        dataset,
-        combined_indices,
-        dataset_success_cutoff_map=None,
-        is_evaluation=False,
-        verbose=True,
         num_examples_per_quality_pr: int = 5,
+        frame_step: int = 1,
+        use_frame_steps: bool = True,
+        max_tasks: Optional[int] = None,
         **kwargs,
     ):
-        super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
+        super().__init__(**kwargs)
 
         self.num_examples_per_quality_pr = num_examples_per_quality_pr
-        logger.info(
-            f"ProgressPolicyRankingSampler initialized with {len(self.robot_trajectories)} trajectories"
-        )
+        self.frame_step = frame_step
+        self.use_frame_steps = True
+        self.max_tasks = max_tasks
+        logger.info(f"ProgressPolicyRankingSampler initialized with {len(self.robot_trajectories)} trajectories")
 
         self.sample_indices = self._generate_all_sample_indices()
 
         logger.info(f"Generated {len(self.sample_indices)} sample indices")
 
-    def _generate_all_sample_indices(self) -> list[dict]:
-        """Generate sample indices by selecting tasks with multiple quality labels and sampling N trajectories per quality label."""
-        # Group trajectories by task and quality label
-        task_to_quality_to_trajs = defaultdict(lambda: defaultdict(list))
-        
+    def _generate_all_sample_indices(self) -> List[Dict[str, Any]]:
+        """Generate sample indices by selecting tasks with multiple quality labels/partial_success values and sampling N trajectories per group.
+
+        For non-RoboArena: Groups by task and quality_label.
+        For RoboArena: Groups by task and partial_success values.
+
+        If use_frame_steps=True, generates subsequence samples like reward_alignment (0:frame_step, 0:2*frame_step, etc.).
+        If use_frame_steps=False, generates one sample per trajectory (whole trajectory).
+        """
+
+        # Check if this is RoboArena (has partial_success)
+        is_roboarena = False
+        if self.robot_trajectories:
+            first_traj = self.dataset[self.robot_trajectories[0]]
+            is_roboarena = first_traj.get("partial_success") is not None
+
+        # Group trajectories by task and grouping key (quality_label or partial_success)
+        task_to_key_to_trajs = defaultdict(lambda: defaultdict(list))
+
         for traj_idx in self.robot_trajectories:
             traj = self.dataset[traj_idx]
             task = traj["task"]
-            quality_label = traj["quality_label"]
-            task_to_quality_to_trajs[task][quality_label].append(traj_idx)
 
-        # Filter to tasks that have multiple quality labels
-        tasks_with_multiple_qualities = {
-            task: quality_to_trajs
-            for task, quality_to_trajs in task_to_quality_to_trajs.items()
-            if len(quality_to_trajs) > 1
+            if is_roboarena:
+                # RoboArena: Use rounded partial_success as key to group similar values
+                partial_success_val = traj.get("partial_success")
+                if partial_success_val is not None:
+                    partial_success = round(float(partial_success_val), 2)
+                    task_to_key_to_trajs[task][partial_success].append(traj_idx)
+            else:
+                # Non-RoboArena: Use quality_label
+                quality = traj["quality_label"]
+                task_to_key_to_trajs[task][quality].append(traj_idx)
+
+        # Filter to tasks that have multiple grouping values
+        tasks_with_multiple_values = {
+            task: key_to_trajs for task, key_to_trajs in task_to_key_to_trajs.items() if len(key_to_trajs) > 1
         }
 
-        logger.info(
-            f"Found {len(tasks_with_multiple_qualities)} tasks with multiple quality labels"
-        )
+        dataset_type_str = "partial_success values" if is_roboarena else "quality labels"
+        logger.info(f"Found {len(tasks_with_multiple_values)} tasks with multiple {dataset_type_str}")
 
-        # Sample N trajectories per quality label for each task
+        # Limit number of tasks if max_tasks is specified
+        if self.max_tasks is not None and self.max_tasks > 0:
+            # Convert to list, shuffle, and take first max_tasks
+            # Sort tasks first to ensure deterministic ordering before shuffling
+            tasks_list = sorted(tasks_with_multiple_values.items())
+            self._local_random.shuffle(tasks_list)
+            tasks_with_multiple_values = dict(tasks_list[: self.max_tasks])
+            logger.info(f"Limited to {len(tasks_with_multiple_values)} tasks (max_tasks={self.max_tasks})")
+
+        # Sample trajectories for each task
         sample_indices = []
-        for task, quality_to_trajs in tasks_with_multiple_qualities.items():
-            for quality_label, traj_indices in quality_to_trajs.items():
-                # Sample up to num_examples_per_quality_pr trajectories for this quality label
-                num_to_sample = min(self.num_examples_per_quality_pr, len(traj_indices))
-                sampled_traj_indices = random.sample(traj_indices, num_to_sample)
-                
-                for traj_idx in sampled_traj_indices:
-                    sample_indices.append({
-                        "traj_idx": traj_idx,
-                        "video_path": self.dataset[traj_idx]["frames"],
-                        "id": self.dataset[traj_idx]["id"]
-                    })
+        all_sampled_traj_indices = []
+        # Sort tasks to ensure deterministic processing order
+        for task, key_to_trajs in sorted(tasks_with_multiple_values.items()):
+            if is_roboarena:
+                # RoboArena: Sample N trajectories per partial_success value
+                # Sort partial_success values to ensure deterministic order
+                for partial_success in sorted(key_to_trajs.keys()):
+                    traj_indices = key_to_trajs[partial_success]
+                    if traj_indices:
+                        # Sort trajectory indices to ensure deterministic sampling
+                        traj_indices = sorted(traj_indices)
+                        # Sample up to num_examples_per_quality_pr trajectories for this partial_success value
+                        num_to_sample = min(self.num_examples_per_quality_pr, len(traj_indices))
+                        sampled_traj_indices = self._local_random.sample(traj_indices, num_to_sample)
+                        for traj_idx in sampled_traj_indices:
+                            traj = self.dataset[traj_idx]
+                            sample_indices.extend(self._generate_indices_for_trajectory(traj_idx, traj))
+                            all_sampled_traj_indices.append(traj_idx)
+            else:
+                # Non-RoboArena: Sample N trajectories per quality label
+                # Sort quality labels to ensure deterministic order
+                for quality in sorted(key_to_trajs.keys()):
+                    traj_indices = key_to_trajs[quality]
+                    # Sort trajectory indices to ensure deterministic sampling
+                    traj_indices = sorted(traj_indices)
+                    # Sample up to num_examples_per_quality_pr trajectories for this quality label
+                    num_to_sample = min(self.num_examples_per_quality_pr, len(traj_indices))
+                    sampled_traj_indices = self._local_random.sample(traj_indices, num_to_sample)
+                    for traj_idx in sampled_traj_indices:
+                        traj = self.dataset[traj_idx]
+                        sample_indices.extend(self._generate_indices_for_trajectory(traj_idx, traj))
+                        all_sampled_traj_indices.append(traj_idx)
 
-        logger.info(
-            f"Sampled {len(sample_indices)} trajectories across {len(tasks_with_multiple_qualities)} tasks"
-        )
+        logger.info(f"Sampled {len(sample_indices)} samples across {len(tasks_with_multiple_values)} tasks")
+        logger.info(f"Sampled trajectory indices: {all_sampled_traj_indices}")
 
         return sample_indices
+
+    def _generate_indices_for_trajectory(self, traj_idx: int, traj: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Generate sample indices for a single trajectory.
+
+        Args:
+            traj_idx: Index of the trajectory in the dataset
+            traj: Trajectory dictionary
+
+        Returns:
+            List of sample index dictionaries
+        """
+        num_frames = traj["num_frames"]
+        indices = []
+
+        if self.use_frame_steps:
+            # Generate subsequence indices like reward_alignment: 0:frame_step, 0:2*frame_step, etc.
+            for end_idx in range(self.frame_step, num_frames + 1, self.frame_step):
+                frame_indices = list(range(end_idx))
+                indices.append({
+                    "traj_idx": traj_idx,
+                    "frame_indices": frame_indices,
+                    "num_frames": num_frames,
+                    "video_path": traj["frames"],
+                    "id": traj["id"],
+                    "use_frame_steps": True,
+                })
+        else:
+            # Generate one sample per trajectory (whole trajectory)
+            indices.append({
+                "traj_idx": traj_idx,
+                "video_path": traj["frames"],
+                "id": traj["id"],
+                "use_frame_steps": False,
+            })
+
+        return indices
 
     def _generate_sample_from_indices(self, sample_idx_info: dict) -> ProgressSample:
         """Generate a single progress sample from trajectory index."""
         traj_idx = sample_idx_info["traj_idx"]
-        video_path = sample_idx_info["video_path"]
+        use_frame_steps = sample_idx_info.get("use_frame_steps", True)
 
         traj = self.dataset[traj_idx]
 
-        # Initialize variables
-        frames = None
-        video_embeddings = None
-        text_embedding = None
+        if use_frame_steps:
+            # Frame steps mode: create subsequence like reward_alignment
+            frame_indices = sample_idx_info["frame_indices"]
+            num_frames = sample_idx_info["num_frames"]
 
-        # Use linspace sampling to get max_frames
-        max_frames = self.config.max_frames
+            metadata = {
+                "quality_label": traj["quality_label"],
+                "data_source": traj["data_source"],
+                "task": traj["task"],
+                "id": traj["id"],
+                "video_path": sample_idx_info["video_path"],
+                "frame_step": frame_indices[-1] if frame_indices else 0,
+            }
 
-        # Load data (embeddings or frames)
-        if self.config.load_embeddings and traj.get("embeddings_path"):
-            embeddings = load_embeddings_from_path(traj["embeddings_path"])
-            video_embeddings = embeddings["video_embeddings"]
-            text_embedding = embeddings["text_embedding"]
-            data = video_embeddings
-            total_frames = video_embeddings.shape[0] if hasattr(video_embeddings, "shape") else len(video_embeddings)
-            use_embeddings = True
+            trajectory = self._get_traj_from_data(
+                traj=traj,
+                frame_indices=frame_indices,
+                metadata=metadata,
+            )
         else:
-            frames = load_frames_from_npz(traj["frames"])
-            data = frames
-            total_frames = len(frames)
-            use_embeddings = False
+            # Whole trajectory mode
+            metadata = {
+                "quality_label": traj["quality_label"],
+                "data_source": traj["data_source"],
+                "task": traj["task"],
+                "id": traj["id"],
+                "video_path": sample_idx_info["video_path"],
+            }
 
-        data, frame_indices = linspace_subsample_frames(data, max_frames)
-        frames_shape_orig = data.shape
+            trajectory = self._get_traj_from_data(
+                traj=traj,
+                metadata=metadata,
+            )
 
-        # Compute progress based on type
-        if self.config.progress_pred_type == "absolute_wrt_total_frames":
-            progress_abs = [(idx + 1) / total_frames for idx in frame_indices]
-        elif self.config.progress_pred_type.startswith("absolute"):
-            # absolute_first_frame: use linspace logic
-            progress_abs = [idx / (total_frames - 1) for idx in frame_indices]
-        else:  # relative_first_frame
-            # For relative, we still compute absolute first, then convert
-            progress_abs = [idx / (total_frames - 1) for idx in frame_indices]
-
-        if use_embeddings:
-            video_embeddings, progress_abs = pad_trajectory_to_max_frames_torch(data, progress_abs, max_frames)
-        else:
-            frames, progress_abs = pad_trajectory_to_max_frames_np(data, progress_abs, max_frames)
-
-        if self.config.progress_pred_type == "relative_first_frame":
-            progress = convert_absolute_to_relative_progress(progress_abs)
-        else:
-            progress = progress_abs
-
-        metadata = {
-            "quality_label": traj["quality_label"],
-            "data_source": traj["data_source"],
-            "task": traj["task"],
-            "id": traj["id"],
-            "video_path": video_path,
-        }
-
-        # Compute success labels
-        success_label = compute_success_labels(
-            target_progress=progress,
-            data_source=traj["data_source"],
-            dataset_success_percent=self.dataset_success_cutoff_map,
-            max_success=self.config.max_success,
-        )
-
-        # Create trajectory for the progress sample
-        trajectory = Trajectory(
-            frames=frames,
-            frames_shape=frames_shape_orig,
-            video_embeddings=video_embeddings,
-            text_embedding=text_embedding,
-            id=traj["id"],
-            task=traj["task"],
-            lang_vector=np.array(traj["lang_vector"]),
-            data_source=traj["data_source"],
-            quality_label=traj["quality_label"],
-            is_robot=traj["is_robot"],
-            target_progress=progress,
-            partial_success=traj.get("partial_success"),
-            success_label=success_label,
-            metadata=metadata,
-        )
-
-        # Create progress sample
         sample = ProgressSample(trajectory=trajectory)
-
         return sample
 
     def __len__(self):
@@ -182,4 +208,3 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
 
     def __getitem__(self, idx):
         return self._generate_sample_from_indices(self.sample_indices[idx])
-

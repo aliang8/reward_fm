@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
+from typing import Dict, List, Tuple, Optional, Union, Any
 
-
-import random
 import torch
 
 from rfm.data.dataset_types import SimilaritySample, Trajectory
@@ -18,16 +17,11 @@ class SimSampler(RFMBaseSampler):
 
     def __init__(
         self,
-        config,
-        dataset,
-        combined_indices,
-        dataset_success_cutoff_map=None,
         is_evaluation=False,
-        verbose=True,
         **kwargs,
     ):
-        super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
-        self.similarity_strategy_ratio: list[float] = config.similarity_strategy_ratio
+        super().__init__(**kwargs)
+        self.similarity_strategy_ratio: List[float] = self.config.similarity_strategy_ratio
         self._has_paired_human_robot = (
             any(
                 len(entry.get("robot", [])) > 0 and len(entry.get("human", [])) > 0
@@ -46,7 +40,7 @@ class SimSampler(RFMBaseSampler):
     def _generate_sample(self, item: dict):
         return self._create_similarity_sample(ref_traj=item)
 
-    def _create_similarity_sample(self, ref_traj: dict | None = None) -> SimilaritySample:
+    def _create_similarity_sample(self, ref_traj: Optional[Dict[str, Any]] = None) -> SimilaritySample:
         """Create a similarity scoring sample: o^1 and o^2 ranked against o^ref.
 
         Two modes:
@@ -80,14 +74,14 @@ class SimSampler(RFMBaseSampler):
                 return None
 
             # Get a random task and optimal trajectory from it
-            task_name = random.choice(list(valid_tasks.keys()))
+            task_name = self._local_random.choice(list(valid_tasks.keys()))
             optimal_indices = valid_tasks[task_name]
 
             # Double-check that we have valid indices (should always be true now)
             if not optimal_indices:
                 return None
 
-            optimal_idx = random.choice(optimal_indices)
+            optimal_idx = self._local_random.choice(optimal_indices)
             ref_traj = self.dataset[optimal_idx]
 
         traj_sim, traj_diff = None, None
@@ -101,9 +95,9 @@ class SimSampler(RFMBaseSampler):
         # Strategy selection with data_source-based filtering and boosting
         strategies = []
 
-        # Always include REWOUND if ratio > 0
+        # Always include REWIND if ratio > 0
         if self.similarity_strategy_ratio[0] > 0:
-            strategies.append((DataGenStrat.REWOUND, self.similarity_strategy_ratio[0]))
+            strategies.append((DataGenStrat.REWIND, self.similarity_strategy_ratio[0]))
 
         # SUBOPTIMAL: only include if data_source is in failure category
         if (
@@ -154,7 +148,7 @@ class SimSampler(RFMBaseSampler):
             normalized_strategies = [(strat, prob / total_prob) for strat, prob in strategies]
 
             # Select strategy based on rebalanced probabilities
-            prob = random.random()
+            prob = self._local_random.random()
             cumulative_prob = 0.0
             selected_strategy = None
 
@@ -171,7 +165,7 @@ class SimSampler(RFMBaseSampler):
             )
 
             # Execute selected strategy
-            if selected_strategy == DataGenStrat.REWOUND:
+            if selected_strategy == DataGenStrat.REWIND:
                 result = self._get_traj_dicts_for_rewind(ref_traj)
             elif selected_strategy == DataGenStrat.SUBOPTIMAL:
                 result = self._get_traj_dicts_for_suboptimal(ref_traj)
@@ -233,7 +227,7 @@ class SimSampler(RFMBaseSampler):
         # Try to get rewound trajectory for sim
         traj_sim = None
         for _ in range(max_retries):
-            traj_sim = self._get_rewound_traj(ref_traj)
+            traj_sim = self._get_traj_from_data(ref_traj, subsample_strategy="subsample_rewind")
             if traj_sim is not None:
                 break
 
@@ -250,7 +244,9 @@ class SimSampler(RFMBaseSampler):
 
         return None
 
-    def _get_traj_dicts_for_paired_human_robot(self, ref_traj: dict) -> tuple[dict, dict | Trajectory] | None:
+    def _get_traj_dicts_for_paired_human_robot(
+        self, ref_traj: Dict[str, Any]
+    ) -> Optional[Tuple[Dict[str, Any], Union[Dict[str, Any], Trajectory]]]:
         """Get traj_sim and traj_diff for paired human/robot strategy.
 
         Args:
@@ -282,7 +278,9 @@ class SimSampler(RFMBaseSampler):
 
         return None
 
-    def _get_traj_dicts_for_suboptimal(self, ref_traj: dict) -> tuple[dict, dict | Trajectory] | None:
+    def _get_traj_dicts_for_suboptimal(
+        self, ref_traj: Dict[str, Any]
+    ) -> Optional[Tuple[Dict[str, Any], Union[Dict[str, Any], Trajectory]]]:
         """Get traj_sim and traj_diff for suboptimal strategy.
 
         Args:

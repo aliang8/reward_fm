@@ -1,3 +1,5 @@
+from typing import Dict, Any
+
 import random
 import torch
 
@@ -18,29 +20,22 @@ class ProgressSampler(RFMBaseSampler):
 
     def __init__(
         self,
-        config,
-        dataset,
-        combined_indices,
-        dataset_success_cutoff_map=None,
         is_evaluation=False,
-        verbose=True,
         **kwargs,
     ):
-        super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
+        super().__init__(**kwargs)
 
-    def _generate_sample(self, item: dict):
+    def _generate_sample(self, item: Dict[str, Any]):
         return self._create_progress_sample(item)
 
-    def _create_progress_sample(self, traj: dict):
+    def _create_progress_sample(self, traj: Dict[str, Any]):
         """Create a progress sample using normalized and rebalanced strategy selection.
 
-        Implements six strategies:
-        1. Successful: Linspace subsample with end_idx between cutoff and total
-        2. Rewind: Create rewound trajectory from same task
-        3. Different Task: Use trajectory from different task (progress set to 0.0)
-        4. Subsequence: Segment subsampling (same as previous default)
-        5. Reverse Progress: Same as subsequence but reverses frames and progress targets
-        6. Uniform Sample: Sample two random frames, use them as segment bounds, then linspace subsample
+        Implements four strategies:
+        1. Different Task: Use trajectory from different task (progress set to 0.0)
+        2. Forward Progress: Sample with forward direction (start < middle < end)
+        3. Reverse Progress: Sample with reverse direction (end < middle < start)
+        4. Rewind: Sample with rewind direction (start < end < middle)
         """
         # Initialize variables for strategy selection
         processed_traj = None
@@ -48,34 +43,25 @@ class ProgressSampler(RFMBaseSampler):
         subsample_strategy = None
 
         # Strategy setup with rebalancing on failure
-        # [successful, rewind, different_task_instruction, subsequence, reverse_progress, uniform_sample]
+        # [different_task_instruction, forward_progress, reverse_progress, rewind]
         strategies = [
-            (DataGenStrat.SUCCESSFUL, self.config.progress_strategy_ratio[0]),
-            (DataGenStrat.REWOUND, self.config.progress_strategy_ratio[1]),
             (
                 DataGenStrat.DIFFERENT_TASK_INSTRUCTION,
-                self.config.progress_strategy_ratio[2] if len(self.config.progress_strategy_ratio) > 2 else 0.0,
+                self.config.progress_strategy_ratio[0] if len(self.config.progress_strategy_ratio) > 0 else 0.0,
             ),
             (
-                DataGenStrat.SUBSEQUENCE,
-                self.config.progress_strategy_ratio[3] if len(self.config.progress_strategy_ratio) > 3 else 0.0,
+                DataGenStrat.FORWARD_PROGRESS,
+                self.config.progress_strategy_ratio[1] if len(self.config.progress_strategy_ratio) > 1 else 0.0,
             ),
             (
                 DataGenStrat.REVERSE_PROGRESS,
-                self.config.progress_strategy_ratio[4] if len(self.config.progress_strategy_ratio) > 4 else 0.0,
+                self.config.progress_strategy_ratio[2] if len(self.config.progress_strategy_ratio) > 2 else 0.0,
             ),
             (
-                DataGenStrat.UNIFORM_SAMPLE,
-                self.config.progress_strategy_ratio[5] if len(self.config.progress_strategy_ratio) > 5 else 0.0,
+                DataGenStrat.REWIND,
+                self.config.progress_strategy_ratio[3] if len(self.config.progress_strategy_ratio) > 3 else 0.0,
             ),
         ]
-
-        if self.config.pairwise_progress:
-            # remove rewind same task strategy for pairwise progress
-            strategies[1] = (
-                DataGenStrat.REWOUND,
-                0.0,
-            )
 
         # Remove strategies with zero probability
         strategies = [(strat, prob) for strat, prob in strategies if prob > 0]
@@ -110,24 +96,18 @@ class ProgressSampler(RFMBaseSampler):
                     break
 
             # Execute selected strategy
-            if selected_strategy == DataGenStrat.SUCCESSFUL:
+            if selected_strategy == DataGenStrat.FORWARD_PROGRESS:
                 processed_traj = traj
-                subsample_strategy = "successful"
-            elif selected_strategy == DataGenStrat.SUBSEQUENCE:
-                processed_traj = traj
-                subsample_strategy = "subsequence"
+                subsample_strategy = "subsample_forward"
             elif selected_strategy == DataGenStrat.REVERSE_PROGRESS:
                 processed_traj = traj
-                subsample_strategy = "reverse_progress"
-            elif selected_strategy == DataGenStrat.UNIFORM_SAMPLE:
+                subsample_strategy = "subsample_reverse"
+            elif selected_strategy == DataGenStrat.REWIND:
                 processed_traj = traj
-                subsample_strategy = "uniform_sample"
-            elif selected_strategy == DataGenStrat.REWOUND:
-                processed_traj = self._get_rewound_traj(traj)
-                subsample_strategy = None  # Rewound trajectories are already processed
+                subsample_strategy = "subsample_rewind"
             elif selected_strategy == DataGenStrat.DIFFERENT_TASK_INSTRUCTION:
                 processed_traj = self._get_different_task_instruction(traj)
-                subsample_strategy = None  # Different task instruction uses same trajectory with different task
+                subsample_strategy = "subsample_forward"
             else:
                 return None
 

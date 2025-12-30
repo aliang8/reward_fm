@@ -12,11 +12,15 @@ from transformers import TrainerCallback, TrainerState, TrainerControl, Training
 from transformers.trainer_utils import get_last_checkpoint
 from accelerate.state import AcceleratorState
 from huggingface_hub import HfApi, snapshot_download
+from huggingface_hub.utils import HfHubHTTPError
 from .upload_to_hub import upload_model_to_hub
 from rfm.utils.distributed import is_rank_0
 from rfm.utils.logger import loguru_logger as logger
 from rfm.configs.experiment_configs import ExperimentConfig
+<<<<<<< HEAD
 # from rfm.utils.setup_utils import setup_model_and_processor
+=======
+>>>>>>> refs/remotes/origin/anthony
 from pathlib import Path
 from dataclasses import fields
 from typing import Any, Optional, Tuple
@@ -364,8 +368,14 @@ class SaveBestCallback(TrainerCallback):
         if missing_metrics:
             logger.warning(f"⚠️ Metrics {missing_metrics} not found in evaluation metrics")
             logger.warning(f"Available metrics: {metrics.keys()}")
+            # If all metrics are missing, use a dummy score for filename but still save
             if score == float("-inf"):  # All metrics missing
-                return
+                score_for_filename = 0.0  # Dummy value for filename
+                logger.warning("⚠️ All metrics missing, using dummy score 0.0 in checkpoint filename")
+            else:
+                score_for_filename = score
+        else:
+            score_for_filename = score
 
         improved = (self._best_val is None) or (score > self._best_val)
 
@@ -380,19 +390,19 @@ class SaveBestCallback(TrainerCallback):
             should_save = score > worst_score  # Always use > since we normalized scores
 
         if should_save and self._trainer:
-            # Update overall best for reference
-            if improved:
+            # Update overall best for reference (only if we have a valid score)
+            if improved and score != float("-inf"):
                 self._best_val = score
 
             # Make a descriptive dir name
             step = state.global_step
             metric_short = self._build_metric_short_name()
-            tag = f"{metric_short}={score:.4f}_step={step}"
+            tag = f"{metric_short}={score_for_filename:.4f}_step={step}"
             ckpt_dir = os.path.join(args.output_dir, f"ckpt-{tag}")
 
             metrics_str = self._build_metrics_detail_string(metrics)
             logger.info(
-                f"💾 Saving ckpt: {ckpt_dir} | avg_score: {score:.6f} | {metrics_str} (rank {len(self._saved) + 1}/{self.keep_top_k})"
+                f"💾 Saving ckpt: {ckpt_dir} | avg_score: {score_for_filename:.6f} | {metrics_str} (rank {len(self._saved) + 1}/{self.keep_top_k})"
             )
 
             # Save model, trainer state, and metrics
@@ -430,9 +440,11 @@ class SaveBestCallback(TrainerCallback):
 
             if should_upload_to_hub:
                 hub_model_id = self._get_hub_model_id(args)
-                tag_name = self._clean_tag_name(f"best-{metric_short}-{score:.4f}-step-{step}")
+                tag_name = self._clean_tag_name(f"best-{metric_short}-{score_for_filename:.4f}-step-{step}")
                 individual_scores_str = self._build_individual_scores_string(metrics)
-                commit_message = f"Checkpoint: avg_score={score:.4f} at step {step} | {individual_scores_str}"
+                commit_message = (
+                    f"Checkpoint: avg_score={score_for_filename:.4f} at step {step} | {individual_scores_str}"
+                )
 
                 logger.info(f"🚀 Uploading to Hub: {hub_model_id}")
 
@@ -622,20 +634,51 @@ def load_model_from_hf(
     else:
         repo_id, revision = model_path, None
 
-    if os.path.exists(resolved_path):
+    resolved_path = Path(resolved_path)
+
+    if resolved_path.exists():
         # Local checkpoint: look for config.yaml
-        candidate_paths = [os.path.join(resolved_path, "config.yaml"), os.path.join(os.path.dirname(resolved_path), "config.yaml")]
+        candidate_paths = [
+            resolved_path / "config.yaml",
+            resolved_path.parent / "config.yaml",
+        ]
+        config_path = None
         for candidate in candidate_paths:
-            if os.path.isfile(candidate):
+            if candidate.is_file():
                 config_path = candidate
-                break        
+                break
+
+        # If config.yaml not found locally, try to download it from Hub
+        if config_path is None:
+            try:
+                from huggingface_hub import hf_hub_download
+            except ImportError:
+                raise ImportError("huggingface_hub not available. Install with: pip install huggingface_hub")
+
+            # Check if this is a HuggingFace repo (not a local path)
+            if "/" in repo_id and not repo_id.startswith("/"):
+                logger.info(
+                    f"config.yaml not found locally, downloading from HuggingFace Hub: {repo_id}@{revision or 'latest'}"
+                )
+                try:
+                    config_path = hf_hub_download(
+                        repo_id=repo_id, filename="config.yaml", revision=revision, token=hub_token
+                    )
+                    logger.info(f"Downloaded config.yaml to: {config_path}")
+                except Exception as e:
+                    logger.warning(f"Could not download config.yaml from Hub: {e}")
+                    raise ValueError(f"config.yaml not found locally and could not be downloaded from Hub: {e}")
+            else:
+                raise ValueError(f"config.yaml not found in checkpoint directory or parent directory: {resolved_path}")
     else:
         try:
             from huggingface_hub import hf_hub_download
         except ImportError:
             raise ImportError("huggingface_hub not available. Install with: pip install huggingface_hub")
         # Download config with revision if specified
+        logger.info(f"Downloading config.yaml from HuggingFace Hub: {repo_id}@{revision or 'latest'}")
         config_path = hf_hub_download(repo_id=repo_id, filename="config.yaml", revision=revision, token=hub_token)
+        logger.info(f"Downloaded config.yaml to: {config_path}")
 
     with open(config_path) as f:
         yaml_text = f.read()
@@ -655,7 +698,10 @@ def load_model_from_hf(
 
     exp_config = ExperimentConfig(**filtered_config)
     # Use resolved_path for loading the actual model
-    tokenizer, processor, reward_model = setup_model_and_processor(exp_config.model, resolved_path)
+    # Import here to avoid circular dependency with setup_utils
+    from rfm.utils.setup_utils import setup_model_and_processor
+
+    tokenizer, processor, reward_model = setup_model_and_processor(exp_config.model, str(resolved_path))
     reward_model = reward_model.to(device)
     reward_model.eval()
 

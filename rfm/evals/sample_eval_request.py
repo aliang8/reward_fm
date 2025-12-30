@@ -13,6 +13,12 @@ uv run python rfm/evals/sample_eval_request.py \
     --num-frames 4 \
     --use-frames \
     --use-npy
+
+uv run python rfm/evals/sample_eval_request.py \
+    --base-url http://0.0.0.0:8000 \
+    --num-samples 1 \
+    --sample-type progress \
+    --use-npy
 """
 
 from __future__ import annotations
@@ -51,7 +57,7 @@ def build_preference_sample(seed: int, embedding_dim: int = 8, use_frames: bool 
         target_progress = np.linspace(0.0, 1.0, num=num_frames)
         # Create success labels: 1.0 if progress > 0.5 (task completed), 0.0 otherwise
         success_label = [1.0 if prog > 0.5 else 0.0 for prog in target_progress]
-        
+
         if use_frames:
             # Create dummy video frames for frame-based models
             frames = create_dummy_frames(num_frames=num_frames, height=224, width=224, seed=seed + hash(tag))
@@ -66,8 +72,9 @@ def build_preference_sample(seed: int, embedding_dim: int = 8, use_frames: bool 
             )
         else:
             # Use embeddings for embedding-based models
-            video_embeddings = rng.normal(size=(num_frames, 768))
-            text_embedding = rng.normal(size=(384,))
+            # Use float32 to match PyTorch model dtype (avoid Double/Float mismatch)
+            video_embeddings = rng.normal(size=(num_frames, 768)).astype(np.float32)
+            text_embedding = rng.normal(size=(384,)).astype(np.float32)
             return Trajectory(
                 task=f"demo_task_{tag}",
                 video_embeddings=video_embeddings,
@@ -92,7 +99,7 @@ def build_progress_sample(seed: int, num_frames: int = 4, use_frames: bool = Fal
     target_progress = np.linspace(0.0, 1.0, num=num_frames)
     # Create success labels: 1.0 if progress > 0.5 (task completed), 0.0 otherwise
     success_label = [1.0 if prog > 0.5 else 0.0 for prog in target_progress]
-    
+
     if use_frames:
         print(f"Creating progress sample with {num_frames} frames")
         # Create dummy video frames for frame-based models
@@ -109,8 +116,9 @@ def build_progress_sample(seed: int, num_frames: int = 4, use_frames: bool = Fal
         )
     else:
         # Use embeddings for embedding-based models
-        video_embeddings = rng.normal(size=(num_frames, 768))
-        text_embedding = rng.normal(size=(384,))
+        # Use float32 to match PyTorch model dtype (avoid Double/Float mismatch)
+        video_embeddings = rng.normal(size=(num_frames, 768)).astype(np.float32)
+        text_embedding = rng.normal(size=(384,)).astype(np.float32)
         trajectory = Trajectory(
             task="demo_progress_task",
             video_embeddings=video_embeddings,

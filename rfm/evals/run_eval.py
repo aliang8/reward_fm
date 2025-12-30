@@ -799,7 +799,9 @@ def run_preference_model(
     result_text = f"**Preference Prediction:**\n"
     if prediction_prob is not None:
         result_text += f"- Probability (A preferred): {prediction_prob:.3f}\n"
-        result_text += f"- Interpretation: {'Video A is preferred' if prediction_prob > 0.5 else 'Video B is preferred'}\n"
+        result_text += (
+            f"- Interpretation: {'Video A is preferred' if prediction_prob > 0.5 else 'Video B is preferred'}\n"
+        )
     else:
         result_text += "Could not extract preference prediction from model output.\n"
 

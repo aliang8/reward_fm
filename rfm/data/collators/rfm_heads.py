@@ -13,7 +13,7 @@ from qwen_vl_utils import process_vision_info
 from .base import BaseCollator
 from .utils import convert_frames_to_pil_images, pad_list_to_max, write_mp4
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample
-from rfm.data.dataset_category import is_preference_only
+from rfm.data.dataset_category import is_preference_only_ds
 from rfm.data.datasets.helpers import DataGenStrat
 from typing import List, Dict, Union
 
@@ -34,7 +34,7 @@ def should_compute_progress(quality_label: str, data_gen_strategy: str, data_sou
         1.0 if progress should be computed, 0.0 otherwise
     """
     # Mask out progress if data_source is in preference_only category
-    if data_source is not None and is_preference_only(data_source):
+    if data_source is not None and is_preference_only_ds(data_source):
         return 0.0
 
     if quality_label in ["suboptimal", "failure", "failed"]:

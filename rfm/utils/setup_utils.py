@@ -790,17 +790,26 @@ def create_training_arguments(cfg: TrainingConfig, output_dir: str, is_eval: boo
     return TrainingArguments(**base_args)
 
 
-def setup_dataset(cfg: DataConfig, is_eval: bool = False, **kwargs) -> BaseDataset:
-    """Shared function to create Dataset for training or evaluation"""
+def setup_dataset(cfg: DataConfig, is_eval: bool = False, sampler_kwargs=None, **kwargs) -> BaseDataset:
+    """Shared function to create Dataset for training or evaluation
+
+    Args:
+        cfg: Data configuration
+        is_eval: Whether this is for evaluation
+        sampler_kwargs: Optional dictionary of keyword arguments to pass to samplers
+        **kwargs: Additional keyword arguments to pass to dataset
+    """
     dataset_cls = {
         "rfm": RFMDataset,
         "strategy_balance": StrategyBalancedDataset,
         "single_frame": SingleFrameDataset,
     }
 
-    # Validate dataset_type
     if cfg.dataset_type not in dataset_cls:
         raise ValueError(f"Unknown dataset_type: {cfg.dataset_type}. Must be one of: {list(dataset_cls.keys())}")
+
+    if sampler_kwargs is not None:
+        kwargs["sampler_kwargs"] = sampler_kwargs
 
     # Create the base dataset
     dataset = dataset_cls[cfg.dataset_type](config=cfg, is_evaluation=is_eval, **kwargs)

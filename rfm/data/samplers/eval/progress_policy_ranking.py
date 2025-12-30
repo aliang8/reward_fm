@@ -48,7 +48,7 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
         If use_frame_steps=True, generates subsequence samples like reward_alignment (0:frame_step, 0:2*frame_step, etc.).
         If use_frame_steps=False, generates one sample per trajectory (whole trajectory).
         """
-        
+
         # Check if this is RoboArena (has partial_success)
         is_roboarena = False
         if self.robot_trajectories:
@@ -64,14 +64,14 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
 
             if is_roboarena:
                 # RoboArena: Use rounded partial_success as key to group similar values
-                partial_success = traj.get("partial_success")
-                if partial_success is not None:
-                    grouping_key = round(float(partial_success), 2)
-                    task_to_key_to_trajs[task][grouping_key].append(traj_idx)
+                partial_success_val = traj.get("partial_success")
+                if partial_success_val is not None:
+                    partial_success = round(float(partial_success_val), 2)
+                    task_to_key_to_trajs[task][partial_success].append(traj_idx)
             else:
                 # Non-RoboArena: Use quality_label
-                quality_label = traj["quality_label"]
-                task_to_key_to_trajs[task][quality_label].append(traj_idx)
+                quality = traj["quality_label"]
+                task_to_key_to_trajs[task][quality].append(traj_idx)
 
         # Filter to tasks that have multiple grouping values
         tasks_with_multiple_values = {
@@ -92,13 +92,14 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
 
         # Sample trajectories for each task
         sample_indices = []
+        all_sampled_traj_indices = []
         # Sort tasks to ensure deterministic processing order
         for task, key_to_trajs in sorted(tasks_with_multiple_values.items()):
             if is_roboarena:
-                # RoboArena: Sample N trajectories per partial_success value (grouping_key)
-                # Sort grouping keys to ensure deterministic order
-                for grouping_key in sorted(key_to_trajs.keys()):
-                    traj_indices = key_to_trajs[grouping_key]
+                # RoboArena: Sample N trajectories per partial_success value
+                # Sort partial_success values to ensure deterministic order
+                for partial_success in sorted(key_to_trajs.keys()):
+                    traj_indices = key_to_trajs[partial_success]
                     if traj_indices:
                         # Sort trajectory indices to ensure deterministic sampling
                         traj_indices = sorted(traj_indices)
@@ -108,11 +109,12 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
                         for traj_idx in sampled_traj_indices:
                             traj = self.dataset[traj_idx]
                             sample_indices.extend(self._generate_indices_for_trajectory(traj_idx, traj))
+                            all_sampled_traj_indices.append(traj_idx)
             else:
                 # Non-RoboArena: Sample N trajectories per quality label
-                # Sort grouping keys to ensure deterministic order
-                for grouping_key in sorted(key_to_trajs.keys()):
-                    traj_indices = key_to_trajs[grouping_key]
+                # Sort quality labels to ensure deterministic order
+                for quality in sorted(key_to_trajs.keys()):
+                    traj_indices = key_to_trajs[quality]
                     # Sort trajectory indices to ensure deterministic sampling
                     traj_indices = sorted(traj_indices)
                     # Sample up to num_examples_per_quality_pr trajectories for this quality label
@@ -121,9 +123,10 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
                     for traj_idx in sampled_traj_indices:
                         traj = self.dataset[traj_idx]
                         sample_indices.extend(self._generate_indices_for_trajectory(traj_idx, traj))
+                        all_sampled_traj_indices.append(traj_idx)
 
         logger.info(f"Sampled {len(sample_indices)} samples across {len(tasks_with_multiple_values)} tasks")
-        logger.info(f"Sample indices: {sample_indices}")
+        logger.info(f"Sampled trajectory indices: {all_sampled_traj_indices}")
 
         return sample_indices
 

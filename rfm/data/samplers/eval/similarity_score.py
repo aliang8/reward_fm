@@ -10,17 +10,8 @@ This generator creates similarity samples for evaluation:
 
 from typing import Dict, List, Any
 
-import torch
-from tqdm import tqdm
-
 from rfm.data.dataset_types import SimilaritySample, Trajectory
 from rfm.data.samplers.base import RFMBaseSampler
-from rfm.data.datasets.helpers import (
-    linspace_subsample_frames,
-    load_embeddings_from_path,
-    load_frames_from_npz,
-    create_trajectory_from_dict,
-)
 from rfm.utils.distributed import rank_0_print
 
 
@@ -33,11 +24,7 @@ class SimilarityScoreSampler(RFMBaseSampler):
     - Samples N negative trajectories from other tasks for each pairing
     """
 
-    def __init__(
-        self,
-        num_negatives: int = 2,
-        **kwargs,
-    ):
+    def __init__(self, num_negatives: int = 2, **kwargs):
         super().__init__(**kwargs)
 
         self.num_negatives = num_negatives
@@ -131,7 +118,6 @@ class SimilarityScoreSampler(RFMBaseSampler):
             "human_id": human_traj["id"],
             "robot_id": robot_traj["id"],
             "negative_id": negative_traj["id"],
-            "data_gen_strategy": "similarity_score_eval",
         }
 
         # Add metadata to trajectories
@@ -150,45 +136,14 @@ class SimilarityScoreSampler(RFMBaseSampler):
 
     def _create_trajectory_from_data(self, traj_data: dict) -> Trajectory:
         """Create a Trajectory object from dataset entry."""
-        # Get frames or embeddings
-        frames = None
-        video_embeddings = None
-        text_embedding = None
-
-        if self.config.load_embeddings and traj_data.get("embeddings_path"):
-            embeddings = load_embeddings_from_path(traj_data["embeddings_path"])
-            video_embeddings = embeddings["video_embeddings"]
-            text_embedding = embeddings["text_embedding"]
-
-            # Subsample frames
-            subsequence_video_embeddings, frame_indices = linspace_subsample_frames(
-                video_embeddings, self.config.max_frames
-            )
-            frames_shape_orig = subsequence_video_embeddings.shape
-            progress_values = [1.0] * len(frame_indices)
-        else:
-            frames = load_frames_from_npz(traj_data["frames"])
-            if frames is None or len(frames) == 0:
-                return None
-
-            # Subsample frames
-            subsequence_frames, frame_indices = linspace_subsample_frames(frames, self.config.max_frames)
-            frames_shape_orig = subsequence_frames.shape
-            progress_values = [1.0] * len(frame_indices)
-
-        trajectory = create_trajectory_from_dict(
-            traj_data,
-            overrides={
-                "frames": subsequence_frames if not self.config.load_embeddings else None,
-                "frames_shape": frames_shape_orig,
-                "video_embeddings": subsequence_video_embeddings if self.config.load_embeddings else None,
-                "text_embedding": text_embedding,
-                "data_gen_strategy": "similarity_score_eval",
-                "target_progress": progress_values,
-                "metadata": {},
-            },
+        metadata = {
+            "data_gen_strategy": "similarity_score_eval",
+        }
+        
+        trajectory = self._get_traj_from_data(
+            traj=traj_data,
+            metadata=metadata,
         )
-        trajectory = self._post_process_trajectory(trajectory)
 
         return trajectory
 

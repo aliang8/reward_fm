@@ -24,7 +24,7 @@ from rfm.configs.experiment_configs import (
     SaveBestConfig,
     CustomEvaluationConfig,
 )
-from rfm.trainers import ReWiNDTrainer, RFMHeadsTrainer, RFMVQATrainer, SingleFrameTrainer, ReWiNDSingleFrameTrainer
+from rfm.trainers import ReWiNDTrainer, RFMHeadsTrainer, RFMVQATrainer
 from rfm.data.datasets.helpers import show_available_datasets
 from rfm.utils.distributed import is_rank_0
 from rfm.utils.logger import rank_0_info
@@ -233,8 +233,6 @@ def train(cfg: ExperimentConfig):
         "rewind_transformer": ReWiNDTrainer,
         "rfm_vqa": RFMVQATrainer,
         "rewind_scale_transformer": ReWiNDTrainer,
-        "single_frame": SingleFrameTrainer,
-        "rewind_single_frame": ReWiNDSingleFrameTrainer,
     }[cfg.trainer_cls]
 
     # Add SaveBestCallback to automatically save and upload best models

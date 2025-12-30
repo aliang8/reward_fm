@@ -50,7 +50,6 @@ from rfm.data.datasets import (
     StrategyBalancedDataset,
     BaseDataset,
     RepeatedDataset,
-    SingleFrameDataset,
 )
 from rfm.data.datasets.custom_eval import CustomEvalDataset
 from rfm.data.datasets.data_source_balance import DataSourceBalancedWrapper
@@ -802,7 +801,6 @@ def setup_dataset(cfg: DataConfig, is_eval: bool = False, sampler_kwargs=None, *
     dataset_cls = {
         "rfm": RFMDataset,
         "strategy_balance": StrategyBalancedDataset,
-        "single_frame": SingleFrameDataset,
     }
 
     if cfg.dataset_type not in dataset_cls:

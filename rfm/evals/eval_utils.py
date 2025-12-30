@@ -5,7 +5,10 @@ import re
 import torch
 import io
 import json
-from typing import Any, Dict, List, Union
+import os
+from pathlib import Path
+from typing import Any, Dict, List, Union, Optional
+from datetime import datetime
 
 import aiohttp
 import numpy as np
@@ -204,3 +207,82 @@ async def post_batch_npy_async(
     ) as resp:
         resp.raise_for_status()
         return await resp.json()
+
+
+def find_video_files(directory: str) -> list[str]:
+    """Find all video files in a directory.
+
+    Args:
+        directory: Path to directory containing video files
+
+    Returns:
+        List of paths to video files
+    """
+    video_extensions = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv", ".m4v"}
+    video_files = []
+
+    directory_path = Path(directory)
+    if not directory_path.is_dir():
+        return []
+
+    for file_path in directory_path.iterdir():
+        if file_path.is_file() and file_path.suffix.lower() in video_extensions:
+            video_files.append(str(file_path))
+
+    video_files.sort()
+    return video_files
+
+
+def infer_task_from_video_name(video_path: str) -> str:
+    """Infer task name from video filename.
+
+    Task is everything before the comma (if comma exists), or everything before success/fail/failure.
+
+    Args:
+        video_path: Path to video file
+
+    Returns:
+        Inferred task name
+    """
+    video_name = Path(video_path).stem  # Get filename without extension
+
+    # If there's a comma, task is everything before the comma
+    if "," in video_name:
+        task_part = video_name.split(",")[0]
+    else:
+        # Otherwise, split by underscore and remove success/fail/failure suffixes
+        parts = video_name.split("_")
+        filtered_parts = []
+        for part in parts:
+            part_lower = part.lower()
+            if part_lower not in ["success", "fail", "failure"]:
+                filtered_parts.append(part)
+
+        if not filtered_parts:
+            return "Complete the task"
+
+        task_part = "_".join(filtered_parts)
+
+    # Split by underscore and join with spaces
+    task_words = task_part.split("_")
+    task = " ".join(task_words)
+
+    if task:
+        # Capitalize first letter of first word, keep rest as is
+        task = task[0].upper() + task[1:] if len(task) > 1 else task.upper()
+    else:
+        task = "Complete the task"
+
+    return task
+
+
+def setup_output_directory(output_dir: Optional[str], video_path: Optional[str] = None) -> str:
+    """Create output directory and return path."""
+    if output_dir:
+        save_dir = output_dir
+    else:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        save_dir = os.path.join(".", f"eval_outputs/{timestamp}")
+
+    os.makedirs(save_dir, exist_ok=True)
+    return save_dir

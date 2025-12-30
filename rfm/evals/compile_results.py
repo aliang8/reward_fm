@@ -237,7 +237,9 @@ def run_reward_alignment_eval_per_trajectory(
 
     for trajectory_id in unique_trajectory_ids:
         results_for_trajectory = [r for r in results if r.get("id") == trajectory_id]
-        results_for_trajectory.sort(key=lambda r: r["metadata"]["subsequence_end"])
+        # Sort by frame_step if available (for frame_steps mode)
+        # This orders subsequences from shortest to longest (e.g., [0], [0,1], [0,1,2], ...)
+        results_for_trajectory.sort(key=lambda r: r.get("metadata", {}).get("frame_step", 0))
 
         # Get task and quality label from first result
         task = results_for_trajectory[0]["task"]
@@ -913,9 +915,11 @@ def run_policy_ranking_eval(
     for trajectory_id in unique_trajectory_ids:
         results_for_trajectory = [r for r in results if r.get("id") == trajectory_id]
 
-        # Sort by subsequence_end if available (for frame_steps mode)
-        if results_for_trajectory and results_for_trajectory[0].get("metadata", {}).get("subsequence_end") is not None:
-            results_for_trajectory.sort(key=lambda r: r["metadata"].get("subsequence_end", 0))
+        # Sort by frame_step if available (for frame_steps mode)
+        # This orders subsequences from shortest to longest (e.g., [0], [0,1], [0,1,2], ...)
+        # Only sort if there are multiple results (indicating frame_steps mode)
+        if len(results_for_trajectory) > 1:
+            results_for_trajectory.sort(key=lambda r: r.get("metadata", {}).get("frame_step", 0))
 
         # Collect all progress predictions for this trajectory
         traj_progress_preds = [

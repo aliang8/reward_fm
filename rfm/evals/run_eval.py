@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Script to run RFM evaluation on videos/images.
-Supports three modes: Gradio, Azure server (direct), or local model.
-Supports single video (progress/success) and dual video (preference/similarity/progress) inference.
+Supports three execution modes: Gradio, Azure server (direct), or local model.
+Supports two evaluation types: progress (single video) and preference (two videos).
 
 Features:
   - Task inference: If --task is not specified, the task name is automatically inferred from the video filename.
@@ -13,36 +13,34 @@ Features:
 
 Usage Examples:
 
-  # Single video via Gradio
-  uv run python rfm/evals/run_eval.py --mode gradio \
+  # Progress evaluation via Gradio
+  uv run python rfm/evals/run_eval.py --mode gradio --eval-type progress \
       --gradio-url https://rewardfm-rewardeval-ui.hf.space \
       --output-dir ./my_results \
       --video video.mp4 --task "Pick up the red block" \
       --server-url http://40.119.56.66:8000 --fps 1.0
 
-  # Single video via Azure server (direct)
-  uv run python rfm/evals/run_eval.py --mode server \
+  # Progress evaluation via Azure server (direct)
+  uv run python rfm/evals/run_eval.py --mode server --eval-type progress \
       --server-url http://40.119.56.66:8000 \
       --output-dir ./my_results \
       --video video.mp4 --task "Pick up the red block" --fps 1.0
 
-  # Single video via local model
-  uv run python rfm/evals/run_eval.py --mode model \
+  # Progress evaluation via local model
+  uv run python rfm/evals/run_eval.py --mode local --eval-type progress \
       --model-path rewardfm/pref_prog_2frames_all \
       --video video.mp4 --task "Pick up the red block" --fps 1.0 
 
-  # Dual video preference via Gradio
-  uv run python rfm/evals/run_eval.py --mode gradio \
+  # Preference evaluation via Gradio
+  uv run python rfm/evals/run_eval.py --mode gradio --eval-type preference \
       --gradio-url https://rewardfm-rewardeval-ui.hf.space \
-      --video-a video1.mp4 --video-b video2.mp4 \
-      --prediction-type preference --task "Pick up the red block" \
+      --video-a video1.mp4 --video-b video2.mp4 --task "Pick up the red block" \
       --server-url http://40.119.56.66:8000
 
-  # Dual video preference via server
-  uv run python rfm/evals/run_eval.py --mode server \
+  # Preference evaluation via server
+  uv run python rfm/evals/run_eval.py --mode server --eval-type preference \
       --server-url http://40.119.56.66:8000 \
-      --video-a video1.mp4 --video-b video2.mp4 \
-      --prediction-type preference --task "Pick up the red block"
+      --video-a video1.mp4 --video-b video2.mp4 --task "Pick up the red block"
 """
 
 import argparse
@@ -63,118 +61,21 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import decord
 
-# Import helper functions
 from rfm.data.dataset_types import Trajectory, ProgressSample, PreferenceSample
-from rfm.evals.eval_utils import build_payload, post_batch_npy
+from rfm.evals.eval_utils import (
+    build_payload,
+    post_batch_npy,
+    find_video_files,
+    infer_task_from_video_name,
+    setup_output_directory,
+)
+from rfm.evals.eval_viz_utils import create_combined_progress_success_plot, extract_frames, create_comparison_plot
 
-# Import helper functions from rewardeval_ui/app.py
-# Need to add parent directory to path to import from rewardeval_ui
-import sys
-from pathlib import Path
-from rfm.evals.eval_viz_utils import create_combined_progress_success_plot, extract_frames
-
-# Optional imports for different modes
-try:
-    from gradio_client import Client, file as gradio_file
-
-    GRADIO_AVAILABLE = True
-except ImportError:
-    GRADIO_AVAILABLE = False
-
-try:
-    import torch
-
-    TORCH_AVAILABLE = True
-    # Imports for local model inference
-    from rfm.utils.save import load_model_from_hf
-    from rfm.utils.setup_utils import setup_batch_collator
-    from rfm.evals.eval_server import forward_model
-except ImportError:
-    TORCH_AVAILABLE = False
-    # Set to None so we can check if they're available
-    load_model_from_hf = None
-    setup_batch_collator = None
-    forward_model = None
-
-
-def find_video_files(directory: str) -> list[str]:
-    """Find all video files in a directory.
-
-    Args:
-        directory: Path to directory containing video files
-
-    Returns:
-        List of paths to video files
-    """
-    video_extensions = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv", ".wmv", ".m4v"}
-    video_files = []
-
-    directory_path = Path(directory)
-    if not directory_path.is_dir():
-        return []
-
-    for file_path in directory_path.iterdir():
-        if file_path.is_file() and file_path.suffix.lower() in video_extensions:
-            video_files.append(str(file_path))
-
-    # Sort for consistent ordering
-    video_files.sort()
-    return video_files
-
-
-def infer_task_from_video_name(video_path: str) -> str:
-    """Infer task name from video filename.
-
-    Task is everything before the comma (if comma exists), or everything before success/fail/failure.
-
-    Args:
-        video_path: Path to video file
-
-    Returns:
-        Inferred task name
-    """
-    video_name = Path(video_path).stem  # Get filename without extension
-
-    # If there's a comma, task is everything before the comma
-    if "," in video_name:
-        task_part = video_name.split(",")[0]
-    else:
-        # Otherwise, split by underscore and remove success/fail/failure suffixes
-        parts = video_name.split("_")
-        filtered_parts = []
-        for part in parts:
-            part_lower = part.lower()
-            if part_lower not in ["success", "fail", "failure"]:
-                filtered_parts.append(part)
-
-        if not filtered_parts:
-            return "Complete the task"
-
-        task_part = "_".join(filtered_parts)
-
-    # Split by underscore and join with spaces
-    task_words = task_part.split("_")
-    task = " ".join(task_words)
-
-    if task:
-        # Capitalize first letter of first word, keep rest as is
-        task = task[0].upper() + task[1:] if len(task) > 1 else task.upper()
-    else:
-        task = "Complete the task"
-
-    return task
-
-
-def setup_output_directory(output_dir: Optional[str], video_path: Optional[str] = None) -> str:
-    """Create output directory and return path."""
-    if output_dir:
-        save_dir = output_dir
-    else:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        save_dir = os.path.join(".", f"eval_outputs/{timestamp}")
-
-    os.makedirs(save_dir, exist_ok=True)
-    return save_dir
+from gradio_client import Client, file as gradio_file
+import torch
+from rfm.utils.save import load_model_from_hf
+from rfm.utils.setup_utils import setup_batch_collator
+from rfm.evals.eval_server import forward_model
 
 
 def save_info_file(
@@ -218,7 +119,7 @@ def save_info_file(
         return None
 
 
-def run_single_video_gradio(
+def run_progress_gradio(
     gradio_url: str,
     video_path: str,
     task_text: str,
@@ -226,10 +127,7 @@ def run_single_video_gradio(
     fps: float,
     output_dir: str,
 ) -> Dict[str, Any]:
-    """Run single video inference via Gradio API."""
-    if not GRADIO_AVAILABLE:
-        raise ImportError("gradio_client not installed. Install with: pip install gradio_client")
-
+    """Run progress evaluation via Gradio API."""
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"Video file not found: {video_path}")
 
@@ -270,20 +168,16 @@ def run_single_video_gradio(
     }
 
 
-def run_dual_video_gradio(
+def run_preference_gradio(
     gradio_url: str,
     video_a_path: str,
     video_b_path: str,
     task_text: str,
-    prediction_type: str,
     server_url: str,
     fps: float,
     output_dir: str,
 ) -> Dict[str, Any]:
-    """Run dual video inference via Gradio API."""
-    if not GRADIO_AVAILABLE:
-        raise ImportError("gradio_client not installed. Install with: pip install gradio_client")
-
+    """Run preference evaluation via Gradio API."""
     if not os.path.exists(video_a_path):
         raise FileNotFoundError(f"Video A file not found: {video_a_path}")
     if not os.path.exists(video_b_path):
@@ -297,12 +191,12 @@ def run_dual_video_gradio(
     video_a_file = gradio_file(video_a_path)
     video_b_file = gradio_file(video_b_path)
 
-    print(f"Running {prediction_type} inference on videos:")
+    print(f"Running preference inference on videos:")
     result = client.predict(
         video_a_file,
         video_b_file,
         task_text,
-        prediction_type,
+        "preference",
         server_url,
         fps,
         api_name="/process_dual_videos",
@@ -315,20 +209,18 @@ def run_dual_video_gradio(
     video_a_name = Path(video_a_path).stem
     video_b_name = Path(video_b_path).stem
 
-    local_comparison_plot = os.path.join(
-        output_dir, f"{video_a_name}_vs_{video_b_name}_{prediction_type}_{timestamp}.png"
-    )
+    local_comparison_plot = os.path.join(output_dir, f"{video_a_name}_vs_{video_b_name}_preference_{timestamp}.png")
 
     if comparison_plot_path:
         local_comparison_plot = download_gradio_file(client, comparison_plot_path, local_comparison_plot, gradio_url)
 
     info_file = save_info_file(
         output_dir,
-        f"{video_a_name}_vs_{video_b_name}_{prediction_type}",
+        f"{video_a_name}_vs_{video_b_name}_preference",
         video_a_path=video_a_path,
         video_b_path=video_b_path,
         task_text=task_text,
-        prediction_type=prediction_type,
+        prediction_type="preference",
         fps=fps,
         info_text=result_text,
     )
@@ -432,14 +324,14 @@ def download_gradio_file(client: Client, remote_path: str, local_path: str, grad
         return remote_path
 
 
-def run_single_video_server(
+def run_progress_server(
     server_url: str,
     video_path: str,
     task_text: str,
     fps: float,
     output_dir: str,
 ) -> Dict[str, Any]:
-    """Run single video inference directly with Azure server."""
+    """Run progress evaluation directly with Azure server."""
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"Video file not found: {video_path}")
 
@@ -541,16 +433,15 @@ def run_single_video_server(
     }
 
 
-def run_dual_video_server(
+def run_preference_server(
     server_url: str,
     video_a_path: str,
     video_b_path: str,
     task_text: str,
-    prediction_type: str,
     fps: float,
     output_dir: str,
 ) -> Dict[str, Any]:
-    """Run dual video inference directly with Azure server."""
+    """Run preference evaluation directly with Azure server."""
     if not os.path.exists(video_a_path):
         raise FileNotFoundError(f"Video A file not found: {video_a_path}")
     if not os.path.exists(video_b_path):
@@ -600,25 +491,15 @@ def run_dual_video_server(
         metadata={"source": "eval_script", "trajectory": "B"},
     )
 
-    # Create samples based on prediction type
-    if prediction_type == "preference":
-        sample = PreferenceSample(
-            chosen_trajectory=trajectory_a,
-            rejected_trajectory=trajectory_b,
-            data_gen_strategy="demo",
-        )
-    elif prediction_type == "progress":
-        sample_a = ProgressSample(trajectory=trajectory_a, data_gen_strategy="demo")
-        sample_b = ProgressSample(trajectory=trajectory_b, data_gen_strategy="demo")
-        sample = [sample_a, sample_b]
-    else:  # similarity
-        raise ValueError(f"Similarity prediction not yet supported in direct server mode")
+    # Create preference sample
+    sample = PreferenceSample(
+        chosen_trajectory=trajectory_a,
+        rejected_trajectory=trajectory_b,
+        data_gen_strategy="demo",
+    )
 
     # Build payload and send to server
-    if isinstance(sample, list):
-        files, sample_data = build_payload(sample)
-    else:
-        files, sample_data = build_payload([sample])
+    files, sample_data = build_payload([sample])
 
     response = post_batch_npy(server_url, files, sample_data, timeout_s=120.0)
 
@@ -627,59 +508,33 @@ def run_dual_video_server(
     video_a_name = Path(video_a_path).stem
     video_b_name = Path(video_b_path).stem
 
-    if prediction_type == "preference":
-        outputs_preference = response.get("outputs_preference", {})
-        prediction_probs = outputs_preference.get("prediction_probs", [])
+    outputs_preference = response.get("outputs_preference", {})
+    prediction_probs = outputs_preference.get("prediction_probs", [])
 
-        result_text = f"**Preference Prediction:**\n"
-        if prediction_probs and len(prediction_probs) > 0:
-            prob = prediction_probs[0]
-            result_text += f"- Probability (A preferred): {prob:.3f}\n"
-            result_text += f"- Interpretation: {'Video A is preferred' if prob > 0.5 else 'Video B is preferred'}\n"
-        else:
-            result_text += "Could not extract preference prediction from server response.\n"
-    elif prediction_type == "progress":
-        outputs_progress = response.get("outputs_progress", {})
-        progress_pred = outputs_progress.get("progress_pred", [])
-
-        result_text = f"**Progress Comparison:**\n"
-        if progress_pred and len(progress_pred) >= 2:
-            progress_a = np.array(progress_pred[0])
-            progress_b = np.array(progress_pred[1])
-
-            final_progress_a = float(progress_a[-1]) if len(progress_a) > 0 else 0.0
-            final_progress_b = float(progress_b[-1]) if len(progress_b) > 0 else 0.0
-
-            result_text += f"- Video A final progress: {final_progress_a:.3f}\n"
-            result_text += f"- Video B final progress: {final_progress_b:.3f}\n"
-            result_text += f"- Difference: {abs(final_progress_a - final_progress_b):.3f}\n"
-            if final_progress_a > final_progress_b:
-                result_text += f"- Video A has higher progress\n"
-            elif final_progress_b > final_progress_a:
-                result_text += f"- Video B has higher progress\n"
-            else:
-                result_text += f"- Both videos have equal progress\n"
-        else:
-            result_text += "Could not extract progress predictions from server response.\n"
+    result_text = f"**Preference Prediction:**\n"
+    if prediction_probs and len(prediction_probs) > 0:
+        prob = prediction_probs[0]
+        result_text += f"- Probability (A preferred): {prob:.3f}\n"
+        result_text += f"- Interpretation: {'Video A is preferred' if prob > 0.5 else 'Video B is preferred'}\n"
+    else:
+        result_text += "Could not extract preference prediction from server response.\n"
 
     # Create comparison plot using helper function
     frames_a_list = [Image.fromarray(frame) for frame in frames_array_a]
     frames_b_list = [Image.fromarray(frame) for frame in frames_array_b]
-    comparison_plot_file = create_comparison_plot(frames_a_list, frames_b_list, prediction_type)
+    comparison_plot_file = create_comparison_plot(frames_a_list, frames_b_list, "preference")
 
-    comparison_plot_path = os.path.join(
-        output_dir, f"{video_a_name}_vs_{video_b_name}_{prediction_type}_{timestamp}.png"
-    )
+    comparison_plot_path = os.path.join(output_dir, f"{video_a_name}_vs_{video_b_name}_preference_{timestamp}.png")
     shutil.copy2(comparison_plot_file, comparison_plot_path)
     os.unlink(comparison_plot_file)  # Clean up temp file
 
     info_file = save_info_file(
         output_dir,
-        f"{video_a_name}_vs_{video_b_name}_{prediction_type}",
+        f"{video_a_name}_vs_{video_b_name}_preference",
         video_a_path=video_a_path,
         video_b_path=video_b_path,
         task_text=task_text,
-        prediction_type=prediction_type,
+        prediction_type="preference",
         fps=fps,
         info_text=result_text,
     )
@@ -697,9 +552,6 @@ def load_model_for_inference(model_path: str, output_dir: str, device: str = "cu
     Returns:
         Dictionary with keys: exp_cfg, tokenizer, processor, model, batch_collator
     """
-    if not TORCH_AVAILABLE:
-        raise ImportError("PyTorch not available. Install with: pip install torch")
-
     print(f"Loading model from: {model_path}...")
     device_obj = torch.device(device if torch.cuda.is_available() else "cpu")
     exp_cfg, tokenizer, processor, model = load_model_from_hf(model_path=model_path, device=device_obj)
@@ -718,14 +570,14 @@ def load_model_for_inference(model_path: str, output_dir: str, device: str = "cu
     }
 
 
-def run_single_video_model(
+def run_progress_model(
     video_path: str,
     task_text: str,
     fps: float,
     output_dir: str,
     model_components: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Run single video inference using pre-loaded local model.
+    """Run progress evaluation using pre-loaded local model.
 
     Args:
         video_path: Path to video file
@@ -848,37 +700,154 @@ def run_single_video_model(
     }
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Run RFM evaluation on videos/images",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Single video via Gradio
-  uv run python run_eval.py --mode gradio --gradio-url https://rewardfm-rewardeval-ui.hf.space \\
-      --video video.mp4 --task "Pick up the red block" --server-url http://40.119.56.66:8000
+def run_preference_model(
+    video_a_path: str,
+    video_b_path: str,
+    task_text: str,
+    fps: float,
+    output_dir: str,
+    model_components: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Run preference evaluation using pre-loaded local model.
 
-  # Single video via Azure server (direct)
-  uv run python run_eval.py --mode server --server-url http://40.119.56.66:8000 \\
-      --video video.mp4 --task "Pick up the red block" --fps 1.0
+    Args:
+        video_a_path: Path to first video file
+        video_b_path: Path to second video file
+        task_text: Task description
+        fps: Frames per second
+        output_dir: Output directory
+        model_components: Dictionary with loaded model components (from load_model_for_inference)
+    """
+    model = model_components["model"]
+    batch_collator = model_components["batch_collator"]
+    device = next(model.parameters()).device
 
-  # Single video via local model
-  uv run python run_eval.py --mode model --model-path rewardfm/pref_prog_2frames_all \\
-      --video video.mp4 --task "Pick up the red block" --fps 1.0
+    # Extract frames from both videos
+    frames_array_a = extract_frames(video_a_path, fps=fps)
+    frames_array_b = extract_frames(video_b_path, fps=fps)
 
-  # Dual video preference via server
-  uv run python run_eval.py --mode server --server-url http://40.119.56.66:8000 \\
-      --video-a video1.mp4 --video-b video2.mp4 --prediction-type preference \\
-      --task "Pick up the red block"
-        """,
+    if frames_array_a is None or frames_array_a.size == 0:
+        raise ValueError("Could not extract frames from video A.")
+    if frames_array_b is None or frames_array_b.size == 0:
+        raise ValueError("Could not extract frames from video B.")
+
+    if frames_array_a.dtype != np.uint8:
+        frames_array_a = np.clip(frames_array_a, 0, 255).astype(np.uint8)
+    if frames_array_b.dtype != np.uint8:
+        frames_array_b = np.clip(frames_array_b, 0, 255).astype(np.uint8)
+
+    num_frames_a = frames_array_a.shape[0]
+    num_frames_b = frames_array_b.shape[0]
+
+    # Create trajectories
+    target_progress_a = np.linspace(0.0, 1.0, num=num_frames_a).tolist()
+    target_progress_b = np.linspace(0.0, 1.0, num=num_frames_b).tolist()
+    success_label_a = [1.0 if prog > 0.5 else 0.0 for prog in target_progress_a]
+    success_label_b = [1.0 if prog > 0.5 else 0.0 for prog in target_progress_b]
+
+    trajectory_a = Trajectory(
+        task=task_text,
+        frames=frames_array_a,
+        frames_shape=frames_array_a.shape,
+        target_progress=target_progress_a,
+        success_label=success_label_a,
+        metadata={"source": "eval_script", "trajectory": "A"},
     )
+
+    trajectory_b = Trajectory(
+        task=task_text,
+        frames=frames_array_b,
+        frames_shape=frames_array_b.shape,
+        target_progress=target_progress_b,
+        success_label=success_label_b,
+        metadata={"source": "eval_script", "trajectory": "B"},
+    )
+
+    # Create preference sample
+    preference_sample = PreferenceSample(
+        chosen_trajectory=trajectory_a,
+        rejected_trajectory=trajectory_b,
+        data_gen_strategy="demo",
+    )
+
+    # Prepare batch inputs
+    batch_inputs = batch_collator([preference_sample])
+
+    # Move inputs to device
+    preference_inputs = batch_inputs["preference_inputs"]
+    for key, value in preference_inputs.items():
+        if isinstance(value, torch.Tensor):
+            preference_inputs[key] = value.to(device)
+
+    # Run forward pass using forward_model
+    model_output, _ = forward_model(model, preference_inputs, sample_type="preference")
+
+    # Extract preference predictions (similar to compute_batch_outputs in eval_server.py)
+    prediction_prob = None
+    if model_output.pref_logits is not None:
+        logits = model_output.pref_logits.squeeze(-1)
+        probs = torch.sigmoid(logits)
+        # Extract first (and only) sample's preference probability
+        if probs.shape[0] > 0:
+            prediction_prob = float(probs[0].detach().cpu().float().item())
+
+    # Create result text
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    video_a_name = Path(video_a_path).stem
+    video_b_name = Path(video_b_path).stem
+
+    result_text = f"**Preference Prediction:**\n"
+    if prediction_prob is not None:
+        result_text += f"- Probability (A preferred): {prediction_prob:.3f}\n"
+        result_text += (
+            f"- Interpretation: {'Video A is preferred' if prediction_prob > 0.5 else 'Video B is preferred'}\n"
+        )
+    else:
+        result_text += "Could not extract preference prediction from model output.\n"
+
+    # Create comparison plot using helper function
+    frames_a_list = [Image.fromarray(frame) for frame in frames_array_a]
+    frames_b_list = [Image.fromarray(frame) for frame in frames_array_b]
+    comparison_plot_file = create_comparison_plot(frames_a_list, frames_b_list, "preference")
+
+    comparison_plot_path = os.path.join(output_dir, f"{video_a_name}_vs_{video_b_name}_preference_{timestamp}.png")
+    shutil.copy2(comparison_plot_file, comparison_plot_path)
+    os.unlink(comparison_plot_file)  # Clean up temp file
+
+    info_file = save_info_file(
+        output_dir,
+        f"{video_a_name}_vs_{video_b_name}_preference",
+        video_a_path=video_a_path,
+        video_b_path=video_b_path,
+        task_text=task_text,
+        prediction_type="preference",
+        fps=fps,
+        info_text=result_text,
+    )
+
+    return {
+        "result": result_text,
+        "comparison_plot": comparison_plot_path,
+        "info_file": info_file,
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Run RFM evaluation on videos/images")
 
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["gradio", "server", "model"],
+        choices=["gradio", "server", "local"],
         required=True,
-        help="Execution mode: gradio (via Gradio app), server (direct Azure server), or model (local model)",
+        help="Execution mode: gradio (via Gradio app), server (direct Azure server), or local (local model)",
+    )
+    parser.add_argument(
+        "--eval-type",
+        type=str,
+        choices=["progress", "preference"],
+        required=True,
+        help="Evaluation type: progress (single video) or preference (two videos)",
     )
     parser.add_argument(
         "--gradio-url",
@@ -893,35 +862,28 @@ Examples:
     parser.add_argument(
         "--model-path",
         type=str,
-        help="Path to model checkpoint (required for model mode)",
+        help="Path to model checkpoint (required for local mode)",
     )
     parser.add_argument(
         "--video",
         type=str,
-        help="Path to video file or directory containing videos for single video inference",
+        help="Path to video file or directory containing videos (required for progress evaluation)",
     )
     parser.add_argument(
         "--video-a",
         type=str,
-        help="Path to first video file for dual video inference",
+        help="Path to first video file (required for preference evaluation)",
     )
     parser.add_argument(
         "--video-b",
         type=str,
-        help="Path to second video file for dual video inference",
+        help="Path to second video file (required for preference evaluation)",
     )
     parser.add_argument(
         "--task",
         type=str,
         default=None,
         help="Task description. If not specified, will be inferred from video filename.",
-    )
-    parser.add_argument(
-        "--prediction-type",
-        type=str,
-        choices=["preference", "similarity", "progress"],
-        default="preference",
-        help="Prediction type for dual video inference (default: preference)",
     )
     parser.add_argument(
         "--fps",
@@ -939,7 +901,7 @@ Examples:
         "--device",
         type=str,
         default="cuda",
-        help="Device for model inference (default: cuda, only for model mode)",
+        help="Device for model inference (default: cuda, only for local mode)",
     )
 
     args = parser.parse_args()
@@ -949,24 +911,32 @@ Examples:
         parser.error("--gradio-url is required for gradio mode")
     if args.mode in ["gradio", "server"] and not args.server_url:
         parser.error("--server-url is required for gradio and server modes")
-    if args.mode == "model" and not args.model_path:
-        parser.error("--model-path is required for model mode")
+    if args.mode == "local" and not args.model_path:
+        parser.error("--model-path is required for local mode")
 
-    if args.video and (args.video_a or args.video_b):
-        parser.error("Cannot specify both --video and --video-a/--video-b")
-    if not args.video and not (args.video_a and args.video_b):
-        parser.error("Must specify either --video (single) or both --video-a and --video-b (dual)")
+    # Validate eval-type specific arguments
+    if args.eval_type == "progress":
+        if not args.video:
+            parser.error("--video is required for progress evaluation")
+        if args.video_a or args.video_b:
+            parser.error("--video-a and --video-b are not used for progress evaluation")
+    elif args.eval_type == "preference":
+        if not args.video_a or not args.video_b:
+            parser.error("Both --video-a and --video-b are required for preference evaluation")
+        if args.video:
+            parser.error("--video is not used for preference evaluation")
 
     # Setup output directory
-    output_dir = setup_output_directory(args.output_dir, args.video or args.video_a)
+    video_path_for_dir = args.video if args.eval_type == "progress" else args.video_a
+    output_dir = setup_output_directory(args.output_dir, video_path_for_dir)
     print(f"Output directory: {output_dir}")
 
-    # Load model once if using model mode
+    # Load model once if using local mode
     model_components = None
-    if args.mode == "model":
+    if args.mode == "local":
         model_components = load_model_for_inference(args.model_path, output_dir, args.device)
 
-    if args.video:
+    if args.eval_type == "progress":
         # Check if input is a directory
         video_path = Path(args.video)
         if video_path.is_dir():
@@ -993,13 +963,13 @@ Examples:
 
                 try:
                     if args.mode == "gradio":
-                        result = run_single_video_gradio(
+                        result = run_progress_gradio(
                             args.gradio_url, video_file, task_text, args.server_url, args.fps, output_dir
                         )
                     elif args.mode == "server":
-                        result = run_single_video_server(args.server_url, video_file, task_text, args.fps, output_dir)
-                    else:  # model
-                        result = run_single_video_model(video_file, task_text, args.fps, output_dir, model_components)
+                        result = run_progress_server(args.server_url, video_file, task_text, args.fps, output_dir)
+                    else:  # local
+                        result = run_progress_model(video_file, task_text, args.fps, output_dir, model_components)
                     results.append((video_file, result))
 
                     # Extract predictions for summary
@@ -1068,20 +1038,20 @@ Examples:
                             print(f"  Final Success Probability: {pred['final_success_prob']:.3f}")
                 print("\n" + "=" * 60)
         else:
-            # Single video inference
+            # Single video progress evaluation
             # Infer task from video name if not specified
             task_text = args.task if args.task else infer_task_from_video_name(args.video)
             if not args.task:
                 print(f"Inferred task from video name: {task_text}")
 
             if args.mode == "gradio":
-                result = run_single_video_gradio(
+                result = run_progress_gradio(
                     args.gradio_url, args.video, task_text, args.server_url, args.fps, output_dir
                 )
             elif args.mode == "server":
-                result = run_single_video_server(args.server_url, args.video, task_text, args.fps, output_dir)
-            else:  # model
-                result = run_single_video_model(args.video, task_text, args.fps, output_dir, model_components)
+                result = run_progress_server(args.server_url, args.video, task_text, args.fps, output_dir)
+            else:  # local
+                result = run_progress_model(args.video, task_text, args.fps, output_dir, model_components)
 
             print("\n" + "=" * 60)
             print("Evaluation completed successfully!")
@@ -1096,35 +1066,40 @@ Examples:
                 info_text = result.get("info", "")
                 print(info_text)
                 print("=" * 60)
-    else:
-        # Dual video inference
+    else:  # preference evaluation
         # Infer task from first video name if not specified
         task_text = args.task if args.task else infer_task_from_video_name(args.video_a)
         if not args.task:
             print(f"Inferred task from video name: {task_text}")
 
         if args.mode == "gradio":
-            result = run_dual_video_gradio(
+            result = run_preference_gradio(
                 args.gradio_url,
                 args.video_a,
                 args.video_b,
                 task_text,
-                args.prediction_type,
                 args.server_url,
                 args.fps,
                 output_dir,
             )
         elif args.mode == "server":
-            result = run_dual_video_server(
-                args.server_url, args.video_a, args.video_b, task_text, args.prediction_type, args.fps, output_dir
-            )
-        else:  # model
-            raise NotImplementedError("Dual video inference with local model not yet implemented")
+            result = run_preference_server(args.server_url, args.video_a, args.video_b, task_text, args.fps, output_dir)
+        else:  # local
+            result = run_preference_model(args.video_a, args.video_b, task_text, args.fps, output_dir, model_components)
 
         print("\n" + "=" * 60)
         print("Evaluation completed successfully!")
         print("=" * 60)
         print(f"Outputs saved to: {output_dir}")
+
+        # Print predictions
+        if result:
+            print("\n" + "=" * 60)
+            print("PREDICTIONS")
+            print("=" * 60)
+            result_text = result.get("result", "")
+            print(result_text)
+            print("=" * 60)
 
 
 if __name__ == "__main__":

@@ -2987,23 +2987,31 @@ class RFMHeadsTrainer(Trainer):
         logger.trace(f"sim_logits_ref_sim: {sim_logits_ref_sim}, shape: {sim_logits_ref_sim.shape}")
         logger.trace(f"sim_logits_ref_diff: {sim_logits_ref_diff}, shape: {sim_logits_ref_diff.shape}")
 
-        # Handle progress_logits
+        # Handle progress_logits - only extract A (reference trajectory)
         progress_logits_ref_sim = None
         progress_logits_ref_diff = None
         if batched_outputs.progress_logits is not None and batched_outputs.progress_logits.get("A") is not None:
             progress_A = batched_outputs.progress_logits["A"]
-            # Split along batch dimension
-            progress_logits_ref_sim = {"A": progress_A[::2], "B": None}
-            progress_logits_ref_diff = {"A": progress_A[1::2], "B": None}
+            # Split along batch dimension: even indices are ref_sim, odd indices are ref_diff
+            progress_A_ref_sim = progress_A[::2]  # A (ref) for ref_sim comparisons
+            progress_A_ref_diff = progress_A[1::2]  # A (ref) for ref_diff comparisons
+            
+            # Only use A (reference trajectory) for progress prediction
+            progress_logits_ref_sim = {"A": progress_A_ref_sim, "B": None}
+            progress_logits_ref_diff = {"A": progress_A_ref_diff, "B": None}
 
-        # Handle success_logits
+        # Handle success_logits - only extract A (reference trajectory)
         success_logits_ref_sim = None
         success_logits_ref_diff = None
         if batched_outputs.success_logits is not None and batched_outputs.success_logits.get("A") is not None:
             success_A = batched_outputs.success_logits["A"]
-            # Split along batch dimension
-            success_logits_ref_sim = {"A": success_A[::2], "B": None}
-            success_logits_ref_diff = {"A": success_A[1::2], "B": None}
+            # Split along batch dimension: even indices are ref_sim, odd indices are ref_diff
+            success_A_ref_sim = success_A[::2]  # A (ref) for ref_sim comparisons
+            success_A_ref_diff = success_A[1::2]  # A (ref) for ref_diff comparisons
+            
+            # Only use A (reference trajectory) for success prediction
+            success_logits_ref_sim = {"A": success_A_ref_sim, "B": None}
+            success_logits_ref_diff = {"A": success_A_ref_diff, "B": None}
 
         model_outputs_ref_sim = ModelOutput(
             sim_logits=sim_logits_ref_sim,
@@ -3034,83 +3042,39 @@ class RFMHeadsTrainer(Trainer):
         final_loss = similarity_loss
 
         # =========================================================================================
-        # Compute progress and success loss for randomly selected trajectory in both ref_sim and ref_diff
+        # Compute progress and success loss for trajectory A (first trajectory) in both ref_sim and ref_diff
         # =========================================================================================
-        # Randomly select which trajectory (A or B) to predict progress/success for in each comparison
-        # 1.0 means use trajectory A (ref), 0.0 means use trajectory B (sim/diff)
-        num_samples = len(inputs["data_source"])
-        progress_pred_traj_ref_sim = torch.randint(
-            0, 2, (num_samples,), device=self.accelerator.device, dtype=torch.float32
-        )
-        progress_pred_traj_ref_diff = torch.randint(
-            0, 2, (num_samples,), device=self.accelerator.device, dtype=torch.float32
-        )
-        success_pred_traj_ref_sim = torch.randint(
-            0, 2, (num_samples,), device=self.accelerator.device, dtype=torch.float32
-        )
-        success_pred_traj_ref_diff = torch.randint(
-            0, 2, (num_samples,), device=self.accelerator.device, dtype=torch.float32
-        )
+        # Always predict progress/success for trajectory A (first trajectory) for both comparisons
+        # Get target progress and masks for trajectory A in each comparison
+        target_progress_sim_A = inputs["target_progress_sim_A"]  # [batch_size, seq_len]
+        target_progress_sim_A_mask = inputs["target_progress_sim_A_mask"].unsqueeze(-1)  # [batch_size, 1]
+        target_progress_diff_A = inputs["target_progress_diff_A"]  # [batch_size, seq_len]
+        target_progress_diff_A_mask = inputs["target_progress_diff_A_mask"].unsqueeze(-1)  # [batch_size, 1]
 
-        # Get target progress and masks for all trajectories
-        target_progress_ref = inputs["target_progress_ref"]  # [batch_size, seq_len]
-        target_progress_sim = inputs["target_progress_sim"]  # [batch_size, seq_len]
-        target_progress_diff = inputs["target_progress_diff"]  # [batch_size, seq_len]
-        target_progress_ref_mask = inputs["target_progress_ref_mask"].unsqueeze(-1)  # [batch_size, 1]
-        target_progress_sim_mask = inputs["target_progress_sim_mask"].unsqueeze(-1)  # [batch_size, 1]
-        target_progress_diff_mask = inputs["target_progress_diff_mask"].unsqueeze(-1)  # [batch_size, 1]
-
-        # Get success labels for all trajectories
-        success_labels_ref = inputs["success_labels_ref"]  # [batch_size, seq_len]
-        success_labels_sim = inputs["success_labels_sim"]  # [batch_size, seq_len]
-        success_labels_diff = inputs["success_labels_diff"]  # [batch_size, seq_len]
+        # Get success labels for trajectory A in each comparison
+        success_labels_sim_A = inputs["success_labels_sim_A"]  # [batch_size, seq_len]
+        success_labels_diff_A = inputs["success_labels_diff_A"]  # [batch_size, seq_len]
 
         if self.config.model.train_progress_head and self.config.training.predict_sim_progress:
-            # Get progress logits for both comparisons
+            # Get progress logits for trajectory A (first trajectory) in both comparisons
             progress_logits_ref_sim = model_outputs_ref_sim.progress_logits
             progress_logits_ref_diff = model_outputs_ref_diff.progress_logits
-            progress_pred_ref_sim_A = progress_logits_ref_sim["A"]  # [batch_size, seq_len]
-            progress_pred_ref_sim_B = progress_logits_ref_sim.get("B")  # [batch_size, seq_len] or None
-            progress_pred_ref_diff_A = progress_logits_ref_diff["A"]  # [batch_size, seq_len]
-            progress_pred_ref_diff_B = progress_logits_ref_diff.get("B")  # [batch_size, seq_len] or None
+            progress_pred_ref_sim = progress_logits_ref_sim["A"]  # [batch_size, seq_len]
+            progress_pred_ref_diff = progress_logits_ref_diff["A"]  # [batch_size, seq_len]
 
-            # For ref_sim: select trajectory A (ref) or B (sim) based on random indicator
-            # progress_pred_traj_ref_sim[i] == 1.0 means use A (ref), 0.0 means use B (sim)
-            ref_sim_use_A = (progress_pred_traj_ref_sim == 1.0).float().unsqueeze(-1)  # [batch_size, 1]
-            target_progress_ref_sim = ref_sim_use_A * target_progress_ref + (1 - ref_sim_use_A) * target_progress_sim
-            target_progress_ref_sim_mask = (
-                ref_sim_use_A * target_progress_ref_mask + (1 - ref_sim_use_A) * target_progress_sim_mask
-            )
-            progress_pred_ref_sim = ref_sim_use_A * progress_pred_ref_sim_A
-            if progress_pred_ref_sim_B is not None:
-                progress_pred_ref_sim = progress_pred_ref_sim + (1 - ref_sim_use_A) * progress_pred_ref_sim_B
-
-            # For ref_diff: select trajectory A (ref) or B (diff) based on random indicator
-            # progress_pred_traj_ref_diff[i] == 1.0 means use A (ref), 0.0 means use B (diff)
-            ref_diff_use_A = (progress_pred_traj_ref_diff == 1.0).float().unsqueeze(-1)  # [batch_size, 1]
-            target_progress_ref_diff = (
-                ref_diff_use_A * target_progress_ref + (1 - ref_diff_use_A) * target_progress_diff
-            )
-            target_progress_ref_diff_mask = (
-                ref_diff_use_A * target_progress_ref_mask + (1 - ref_diff_use_A) * target_progress_diff_mask
-            )
-            progress_pred_ref_diff = ref_diff_use_A * progress_pred_ref_diff_A
-            if progress_pred_ref_diff_B is not None:
-                progress_pred_ref_diff = progress_pred_ref_diff + (1 - ref_diff_use_A) * progress_pred_ref_diff_B
-
-            # Compute progress loss for ref_sim
+            # Compute progress loss for ref_sim (using trajectory A)
             progress_loss_ref_sim, spearman_corr_ref_sim, progress_metrics_ref_sim = self._compute_progress_loss_helper(
                 progress_pred_ref_sim,
-                target_progress_ref_sim,
-                target_progress_ref_sim_mask,
+                target_progress_sim_A,
+                target_progress_sim_A_mask,
             )
 
-            # Compute progress loss for ref_diff
+            # Compute progress loss for ref_diff (using trajectory A)
             progress_loss_ref_diff, spearman_corr_ref_diff, progress_metrics_ref_diff = (
                 self._compute_progress_loss_helper(
                     progress_pred_ref_diff,
-                    target_progress_ref_diff,
-                    target_progress_ref_diff_mask,
+                    target_progress_diff_A,
+                    target_progress_diff_A_mask,
                 )
             )
 
@@ -3119,65 +3083,29 @@ class RFMHeadsTrainer(Trainer):
             final_loss = similarity_loss + total_progress_loss
 
         if self.config.model.train_success_head:
-            # Get success logits for both comparisons
+            # Get success logits for trajectory A (first trajectory) in both comparisons
             success_logits_ref_sim = model_outputs_ref_sim.success_logits
             success_logits_ref_diff = model_outputs_ref_diff.success_logits
-            success_pred_ref_sim_A = success_logits_ref_sim["A"]  # [batch_size, seq_len]
-            success_pred_ref_sim_B = success_logits_ref_sim.get("B")  # [batch_size, seq_len] or None
-            success_pred_ref_diff_A = success_logits_ref_diff["A"]  # [batch_size, seq_len]
-            success_pred_ref_diff_B = success_logits_ref_diff.get("B")  # [batch_size, seq_len] or None
+            success_pred_ref_sim = success_logits_ref_sim["A"]  # [batch_size, seq_len]
+            success_pred_ref_diff = success_logits_ref_diff["A"]  # [batch_size, seq_len]
 
-            # For ref_sim: select trajectory A (ref) or B (sim) based on random indicator
-            # success_pred_traj_ref_sim[i] == 1.0 means use A (ref), 0.0 means use B (sim)
-            ref_sim_use_A_success = (success_pred_traj_ref_sim == 1.0).float().unsqueeze(-1)  # [batch_size, 1]
-            target_progress_ref_sim_success = (
-                ref_sim_use_A_success * target_progress_ref + (1 - ref_sim_use_A_success) * target_progress_sim
-            )
-            success_labels_ref_sim = (
-                ref_sim_use_A_success * success_labels_ref + (1 - ref_sim_use_A_success) * success_labels_sim
-            )
-            target_progress_ref_sim_mask_success = (
-                ref_sim_use_A_success * target_progress_ref_mask
-                + (1 - ref_sim_use_A_success) * target_progress_sim_mask
-            )
-            success_pred_ref_sim = ref_sim_use_A_success * success_pred_ref_sim_A
-            if success_pred_ref_sim_B is not None:
-                success_pred_ref_sim = success_pred_ref_sim + (1 - ref_sim_use_A_success) * success_pred_ref_sim_B
-
-            # For ref_diff: select trajectory A (ref) or B (diff) based on random indicator
-            # success_pred_traj_ref_diff[i] == 1.0 means use A (ref), 0.0 means use B (diff)
-            ref_diff_use_A_success = (success_pred_traj_ref_diff == 1.0).float().unsqueeze(-1)  # [batch_size, 1]
-            target_progress_ref_diff_success = (
-                ref_diff_use_A_success * target_progress_ref + (1 - ref_diff_use_A_success) * target_progress_diff
-            )
-            success_labels_ref_diff = (
-                ref_diff_use_A_success * success_labels_ref + (1 - ref_diff_use_A_success) * success_labels_diff
-            )
-            target_progress_ref_diff_mask_success = (
-                ref_diff_use_A_success * target_progress_ref_mask
-                + (1 - ref_diff_use_A_success) * target_progress_diff_mask
-            )
-            success_pred_ref_diff = ref_diff_use_A_success * success_pred_ref_diff_A
-            if success_pred_ref_diff_B is not None:
-                success_pred_ref_diff = success_pred_ref_diff + (1 - ref_diff_use_A_success) * success_pred_ref_diff_B
-
-            # Compute success loss for ref_sim
+            # Compute success loss for ref_sim (using trajectory A)
             success_loss_ref_sim, success_accuracy_ref_sim, success_auprc_ref_sim, success_metrics_ref_sim = (
                 self._compute_success_loss_helper(
                     success_pred_ref_sim,
-                    target_progress_ref_sim_success,
-                    success_labels_ref_sim,
-                    progress_loss_mask=target_progress_ref_sim_mask_success,
+                    target_progress_sim_A,
+                    success_labels_sim_A,
+                    progress_loss_mask=target_progress_sim_A_mask,
                 )
             )
 
-            # Compute success loss for ref_diff
+            # Compute success loss for ref_diff (using trajectory A)
             success_loss_ref_diff, success_accuracy_ref_diff, success_auprc_ref_diff, success_metrics_ref_diff = (
                 self._compute_success_loss_helper(
                     success_pred_ref_diff,
-                    target_progress_ref_diff_success,
-                    success_labels_ref_diff,
-                    progress_loss_mask=target_progress_ref_diff_mask_success,
+                    target_progress_diff_A,
+                    success_labels_diff_A,
+                    progress_loss_mask=target_progress_diff_A_mask,
                 )
             )
 
@@ -3241,10 +3169,10 @@ class RFMHeadsTrainer(Trainer):
                     and "masked_progress_accuracy" in progress_metrics_ref_diff
                 ):
                     progress_accuracy_ref_sim = progress_metrics_ref_sim["masked_progress_accuracy"].sum() / (
-                        target_progress_ref_sim_mask.sum() + 1e-8
+                        target_progress_sim_A_mask.sum() + 1e-8
                     )
                     progress_accuracy_ref_diff = progress_metrics_ref_diff["masked_progress_accuracy"].sum() / (
-                        target_progress_ref_diff_mask.sum() + 1e-8
+                        target_progress_diff_A_mask.sum() + 1e-8
                     )
                     avg_progress_accuracy = (progress_accuracy_ref_sim + progress_accuracy_ref_diff) / 2.0
                     outputs_dict[f"{prefix}/sim_prog_accuracy"] = avg_progress_accuracy.item()

@@ -390,20 +390,20 @@ def get_segment_indices_with_middle(
     # Handle edge case: num_frames_total == 1
     if num_frames_total == 1:
         return [0]
-    
+
     # Handle edge case: num_frames_total == 2
     if num_frames_total == 2:
         if max_frames == 1:
             return [0]
         return [0, 1]
-    
+
     # Ensure indices are valid (allow end_idx < start_idx for reverse progress)
     start_idx = max(0, min(start_idx, num_frames_total - 1))
-    
+
     # Handle edge case: max_frames == 1 (only start_idx, end_idx and middle_idx are None)
     if end_idx is None or max_frames == 1:
         return [start_idx]
-    
+
     end_idx = max(0, min(end_idx, num_frames_total - 1))
 
     # Handle edge case: max_frames == 2 (start_idx and end_idx, no middle)
@@ -416,7 +416,7 @@ def get_segment_indices_with_middle(
             indices = list(range(end_idx, start_idx + 1))
             indices.reverse()
         return indices
-    
+
     middle_idx = max(0, min(middle_idx, num_frames_total - 1))
 
     # Enumerate frames from start -> middle

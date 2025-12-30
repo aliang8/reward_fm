@@ -177,6 +177,7 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
                 "task": traj["task"],
                 "id": traj["id"],
                 "video_path": sample_idx_info["video_path"],
+                "frame_step": frame_indices[-1] if frame_indices else 0,
             }
 
             trajectory = self._get_traj_from_data(

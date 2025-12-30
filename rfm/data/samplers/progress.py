@@ -20,15 +20,10 @@ class ProgressSampler(RFMBaseSampler):
 
     def __init__(
         self,
-        config,
-        dataset,
-        combined_indices,
-        dataset_success_cutoff_map=None,
         is_evaluation=False,
-        verbose=True,
         **kwargs,
     ):
-        super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
+        super().__init__(**kwargs)
 
     def _generate_sample(self, item: Dict[str, Any]):
         return self._create_progress_sample(item)

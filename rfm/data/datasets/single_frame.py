@@ -95,7 +95,7 @@ class SingleFrameProgressSampler(RFMBaseSampler):
                 "text_embedding": text_embedding,
             },
         )
-        progress_traj = self._post_process_trajectory(progress_traj, skip_padding=True)
+        progress_traj = self._post_process_trajectory(progress_traj)
 
         # Create progress sample
         sample = ProgressSample(
@@ -293,7 +293,7 @@ class SingleFramePreferenceSampler(RFMBaseSampler):
                 "text_embedding": text_embedding,
             },
         )
-        trajectory = self._post_process_trajectory(trajectory, skip_padding=True)
+        trajectory = self._post_process_trajectory(trajectory)
         return trajectory
 
     def _create_single_frame_preference_sample(self, traj: dict):

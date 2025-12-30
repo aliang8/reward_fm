@@ -68,7 +68,7 @@ class BaseDataset(torch.utils.data.Dataset):
         self.dataset, self._combined_indices = self._load_all_datasets()
 
         # Apply all filters simultaneously
-        excluded_keywords = ["rings", "hands", "flick"]
+        excluded_keywords = ["rings", "flick"]
         min_frames = config.min_frames_per_trajectory
 
         # Check if we're in progress_only mode (sample_type_ratio == [0, 1, 0])

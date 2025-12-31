@@ -7,7 +7,7 @@ This file contains evaluation configuration classes:
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from hydra.core.config_store import ConfigStore
 
@@ -65,7 +65,92 @@ class OfflineEvalConfig:
             self.custom_eval = CustomEvaluationConfig(**self.custom_eval)
 
 
+@dataclass
+class BaselineEvalConfig:
+    """Configuration for baseline evaluation runs (run_baseline_eval.py)."""
+
+    # Baseline type: "gvl" or "vlac" for progress evaluation or "rlvlmf" for preference evaluation
+    baseline_type: str = field(
+        default="rlvlmf",
+        metadata={"help": "Baseline type: 'gvl' or 'vlac' for progress, 'rlvlmf' for preference"},
+    )
+
+    # VLM provider for RL-VLM-F
+    vlm_provider: str = field(
+        default="gemini",
+        metadata={"help": "VLM provider for RL-VLM-F: 'gemini' or 'openai'"},
+    )
+
+    # RL-VLM-F settings
+    temperature: float = field(
+        default=0.0,
+        metadata={"help": "Temperature for RL-VLM-F"},
+    )
+
+    # GVL settings
+    gvl_api_key: Optional[str] = field(
+        default=None,
+        metadata={"help": "GVL API key (defaults to GEMINI_API_KEY env var)"},
+    )
+    gvl_max_frames: int = field(
+        default=15,
+        metadata={"help": "Maximum frames for GVL"},
+    )
+    gvl_offset: float = field(
+        default=0.5,
+        metadata={"help": "Frame offset for GVL"},
+    )
+
+    # VLAC settings
+    vlac_model_path: Optional[str] = field(
+        default=None,
+        metadata={"help": "Path to VLAC model checkpoint (required for vlac baseline)"},
+    )
+    vlac_device: str = field(
+        default="cuda:0",
+        metadata={"help": "Device for VLAC model"},
+    )
+    vlac_model_type: str = field(
+        default="internvl2",
+        metadata={"help": "VLAC model type"},
+    )
+    vlac_temperature: float = field(
+        default=0.5,
+        metadata={"help": "Temperature for VLAC"},
+    )
+    vlac_batch_num: int = field(
+        default=5,
+        metadata={"help": "Batch number for VLAC processing"},
+    )
+    vlac_skip: int = field(
+        default=5,
+        metadata={"help": "Pair-wise step size for VLAC"},
+    )
+    vlac_frame_skip: bool = field(
+        default=True,
+        metadata={"help": "Whether to skip frames for VLAC efficiency"},
+    )
+
+    # Custom evaluation configuration
+    custom_eval: CustomEvaluationConfig = field(
+        default_factory=CustomEvaluationConfig,
+        metadata={"help": "Custom evaluation configuration"},
+    )
+
+    # Output directory for evaluation results
+    output_dir: Optional[str] = field(
+        default=None,
+        metadata={"help": "Output directory for evaluation results"},
+    )
+
+    def __post_init__(self):
+        """Convert nested dict configs to dataclass instances."""
+        if isinstance(self.custom_eval, dict):
+            self.custom_eval = CustomEvaluationConfig(**self.custom_eval)
+
+
 # Register structured configs with Hydra
 cs = ConfigStore.instance()
 cs.store(name="eval_server_config", node=EvalServerConfig)
 cs.store(name="eval_only_config", node=OfflineEvalConfig)
+cs.store(name="baseline_eval_config", node=BaselineEvalConfig)

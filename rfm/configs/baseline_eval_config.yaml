@@ -1,0 +1,49 @@
+# @package _global_
+
+# Baseline Evaluation Configuration for RFM
+# This config is used for running baseline evaluations (GVL, RL-VLM-F) on datasets
+# Used by run_baseline_eval.py
+
+defaults:
+  - _self_
+
+# Baseline type: "gvl" or "vlac" for progress evaluation or "rlvlmf" for preference evaluation
+baseline_type: "rlvlmf"  # Options: "gvl", "vlac", "rlvlmf"
+
+# VLM provider for RL-VLM-F (only used if baseline_type is "rlvlmf")
+vlm_provider: "gemini"  # Options: "gemini", "openai"
+
+# RL-VLM-F settings (only used if baseline_type is "rlvlmf")
+temperature: 0.0
+
+# GVL settings (only used if baseline_type is "gvl")
+gvl_api_key: null  # Will use GEMINI_API_KEY env var if not set
+gvl_max_frames: 15
+gvl_offset: 0.5
+
+# VLAC settings (only used if baseline_type is "vlac")
+vlac_model_path: null  # Path to VLAC model checkpoint (required for vlac)
+vlac_device: "cuda:0"
+vlac_model_type: "internvl2"
+vlac_temperature: 0.5
+vlac_batch_num: 5
+vlac_skip: 5
+vlac_frame_skip: true
+
+# Custom evaluation configuration
+# This specifies which evaluation types and datasets to run
+custom_eval:
+  eval_types: ["quality_preference"]  # Options: ["quality_preference", "reward_alignment", "policy_ranking", "confusion_matrix"]
+  quality_preference: ["aliangdw_metaworld_metaworld_eval"]  # Datasets for preference evaluation
+  reward_alignment: ["aliangdw_metaworld_metaworld_eval"]  # Datasets for progress evaluation
+  policy_ranking: ["aliangdw_metaworld_metaworld_eval"]  # Datasets for progress evaluation
+  confusion_matrix: ["aliangdw_metaworld_metaworld_eval"]  # Datasets for progress evaluation
+  comparisons_per_task: null  # Limit number of comparisons per task (None = use all)
+  reward_alignment_max_trajectories: 10  # Max trajectories for reward alignment
+  policy_ranking_max_tasks: 100  # Max tasks for policy ranking
+  num_examples_per_quality_pr: 5  # Examples per quality label for policy ranking
+  custom_eval_random_seed: 42
+
+# Output directory for evaluation results
+output_dir: null  # Defaults to ./baseline_eval_output/<baseline_type>_<timestamp>
+

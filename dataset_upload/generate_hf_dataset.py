@@ -44,9 +44,16 @@ except Exception:
 
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
+
 def push_hf_dataset_and_video_files_to_hub(dataset, hub_repo_id, hub_token, dataset_name, output_dir):
     print(f"Pushing dataset to HuggingFace Hub: {hub_repo_id}")
-    dataset.push_to_hub(hub_repo_id, config_name=dataset_name.lower(), token=hub_token, private=False, commit_message=f"Add {dataset_name} dataset for RFM training")
+    dataset.push_to_hub(
+        hub_repo_id,
+        config_name=dataset_name.lower(),
+        token=hub_token,
+        private=False,
+        commit_message=f"Add {dataset_name} dataset for RFM training",
+    )
     print(f"✅ Successfully pushed dataset to: https://huggingface.co/datasets/{hub_repo_id}")
     api = HfApi(token=hub_token)
     api.upload_large_folder(
@@ -94,6 +101,7 @@ class DatasetConfig:
 
     dataset_path: str = field(default="", metadata={"help": "Path to the dataset"})
     dataset_name: str = field(default=None, metadata={"help": "Name of the dataset (defaults to dataset_type)"})
+
 
 @dataclass
 class OutputConfig:
@@ -491,7 +499,9 @@ def main(cfg: GenerateConfig):
         if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
             print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")
             try:
-                push_hf_dataset_and_video_files_to_hub(dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir)
+                push_hf_dataset_and_video_files_to_hub(
+                    dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir
+                )
             except Exception as e:
                 print(f"❌ Error pushing to hub: {e}")
                 print("Dataset was created locally but failed to push videos and/or metadata to hub")
@@ -517,7 +527,8 @@ def main(cfg: GenerateConfig):
         # Load the trajectories using the loader with max_trajectories limit
         print(f"Loading metaworld dataset from: {cfg.dataset.dataset_path}")
         task_data = load_metaworld_dataset(
-            cfg.dataset.dataset_path, dataset_name=cfg.dataset.dataset_name,
+            cfg.dataset.dataset_path,
+            dataset_name=cfg.dataset.dataset_name,
         )
         trajectories = flatten_task_data(task_data)
     elif "h2r" in cfg.dataset.dataset_name.lower():
@@ -539,7 +550,40 @@ def main(cfg: GenerateConfig):
         if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
             print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")
             try:
-                push_hf_dataset_and_video_files_to_hub(dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir)
+                push_hf_dataset_and_video_files_to_hub(
+                    dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir
+                )
+            except Exception as e:
+                print(f"❌ Error pushing to hub: {e}")
+                print("Dataset was created locally but failed to push videos and/or metadata to hub")
+        else:
+            dataset_path = os.path.join(cfg.output.output_dir, (cfg.dataset.dataset_name).lower())
+            dataset.save_to_disk(dataset_path)
+            print(f"Dataset saved locally to: {dataset_path}")
+        print("Dataset conversion complete!")
+        return
+    elif "fino_net" in cfg.dataset.dataset_name.lower() or "fino-net" in cfg.dataset.dataset_name.lower():
+        # Stream + convert directly inside the FinoNet loader (H2R/OXE-style)
+        from dataset_upload.dataset_loaders.fino_net_loader import convert_fino_net_dataset_to_hf
+
+        print(f"Converting FinoNet dataset directly to HF from: {cfg.dataset.dataset_path}")
+        dataset = convert_fino_net_dataset_to_hf(
+            dataset_path=cfg.dataset.dataset_path,
+            dataset_name=cfg.dataset.dataset_name,
+            output_dir=cfg.output.output_dir,
+            max_trajectories=cfg.output.max_trajectories,
+            max_frames=cfg.output.max_frames,
+            fps=cfg.output.fps,
+            num_workers=cfg.output.num_workers,
+        )
+
+        # Handle pushing/saving consistently
+        if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
+            print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")
+            try:
+                push_hf_dataset_and_video_files_to_hub(
+                    dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir
+                )
             except Exception as e:
                 print(f"❌ Error pushing to hub: {e}")
                 print("Dataset was created locally but failed to push videos and/or metadata to hub")
@@ -570,7 +614,9 @@ def main(cfg: GenerateConfig):
         if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
             print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")
             try:
-                push_hf_dataset_and_video_files_to_hub(dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir)
+                push_hf_dataset_and_video_files_to_hub(
+                    dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir
+                )
             except Exception as e:
                 print(f"❌ Error pushing to hub: {e}")
                 print("Dataset was created locally but failed to push videos and/or metadata to hub")
@@ -590,9 +636,7 @@ def main(cfg: GenerateConfig):
     elif "ph2d" in cfg.dataset.dataset_name.lower():
         from dataset_upload.dataset_loaders.ph2d_loader import load_ph2d_dataset
 
-        print(
-            f"Loading Ph2d dataset from: {cfg.dataset.dataset_path}"
-        )
+        print(f"Loading Ph2d dataset from: {cfg.dataset.dataset_path}")
         task_data = load_ph2d_dataset(cfg.dataset.dataset_path)
         trajectories = flatten_task_data(task_data)
     elif "galaxea" in cfg.dataset.dataset_name.lower():
@@ -600,9 +644,7 @@ def main(cfg: GenerateConfig):
         from dataset_upload.dataset_loaders.galaxea_loader import convert_galaxea_dataset_to_hf
 
         rlds_datasets = getattr(cfg.dataset, "rlds_datasets", []) or []
-        print(
-            f"Converting Galaxea RLDS to HF from: {cfg.dataset.dataset_path} | datasets={rlds_datasets}"
-        )
+        print(f"Converting Galaxea RLDS to HF from: {cfg.dataset.dataset_path} | datasets={rlds_datasets}")
         dataset = convert_galaxea_dataset_to_hf(
             dataset_path=cfg.dataset.dataset_path,
             dataset_name=cfg.dataset.dataset_name,
@@ -617,9 +659,11 @@ def main(cfg: GenerateConfig):
         if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
             print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")
             try:
-                # remove the galaxea_rfm prefix from the dataset name because otherwise it won't match the video folder name 
+                # remove the galaxea_rfm prefix from the dataset name because otherwise it won't match the video folder name
                 # don't need to do this for OXE or others because I processed it in their loaders but forgot for this.
-                push_hf_dataset_and_video_files_to_hub(dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir)
+                push_hf_dataset_and_video_files_to_hub(
+                    dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir
+                )
             except Exception as e:
                 print(f"❌ Error pushing to hub: {e}")
                 print("Dataset was created locally but failed to push metadata to hub")
@@ -645,12 +689,248 @@ def main(cfg: GenerateConfig):
 
         if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
             try:
-                push_hf_dataset_and_video_files_to_hub(dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir)
+                push_hf_dataset_and_video_files_to_hub(
+                    dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir
+                )
             except Exception as e:
                 print(f"❌ Error pushing to hub: {e}")
                 print("Dataset was created locally but failed to push metadata to hub")
         else:
             dataset_path_local = os.path.join(cfg.output.output_dir, (cfg.dataset.dataset_name).lower())
+            dataset.save_to_disk(dataset_path_local)
+            print(f"Dataset saved locally to: {dataset_path_local}")
+        print("Dataset conversion complete!")
+        return
+    elif "auto_eval" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.autoeval_loader import load_autoeval_dataset
+
+        print(f"Loading AutoEval dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_autoeval_dataset(cfg.dataset.dataset_path)
+        trajectories = flatten_task_data(task_data)
+    elif "usc_xarm_policy_ranking" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.usc_xarm_policy_ranking_loader import (
+            load_usc_xarm_policy_ranking_dataset,
+        )
+
+        print(f"Loading USC xArm Policy Ranking dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_usc_xarm_policy_ranking_dataset(
+            cfg.dataset.dataset_path,
+            max_trajectories=cfg.output.max_trajectories,
+        )
+        trajectories = flatten_task_data(task_data)
+    elif "usc_franka_policy_ranking" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.usc_franka_policy_ranking_loader import (
+            load_usc_franka_policy_ranking_dataset,
+        )
+
+        print(f"Loading USC Franka Policy Ranking dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_usc_franka_policy_ranking_dataset(
+            cfg.dataset.dataset_path,
+            max_trajectories=cfg.output.max_trajectories,
+        )
+        trajectories = flatten_task_data(task_data)
+    elif "utd_so101_policy_ranking" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.utd_so101_loader import (
+            load_utd_so101_dataset,
+        )
+
+        print(f"Loading UTD SO101 robot dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_utd_so101_dataset(
+            cfg.dataset.dataset_path,
+            max_trajectories=cfg.output.max_trajectories,
+            is_robot=True,
+            data_source="utd_so101",
+        )
+        trajectories = flatten_task_data(task_data)
+    elif "utd_so101_human" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.utd_so101_loader import (
+            load_utd_so101_dataset,
+        )
+
+        print(f"Loading UTD SO101 human dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_utd_so101_dataset(
+            cfg.dataset.dataset_path,
+            max_trajectories=cfg.output.max_trajectories,
+            is_robot=False,
+            data_source="utd_so101_human",
+        )
+        trajectories = flatten_task_data(task_data)
+    elif "soar" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.soar_loader import convert_soar_dataset_to_hf
+
+        print(f"Converting SOAR RLDS (local) to HF from: {cfg.dataset.dataset_path} ")
+        dataset = convert_soar_dataset_to_hf(
+            dataset_path=cfg.dataset.dataset_path,
+            dataset_name=cfg.dataset.dataset_name,
+            output_dir=cfg.output.output_dir,
+            max_trajectories=cfg.output.max_trajectories,
+            max_frames=cfg.output.max_frames,
+            fps=cfg.output.fps,
+            num_workers=cfg.output.num_workers,
+        )
+
+        # Handle pushing/saving consistently
+        if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
+            print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")
+            try:
+                push_hf_dataset_and_video_files_to_hub(
+                    dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir
+                )
+            except Exception as e:
+                print(f"❌ Error pushing to hub: {e}")
+                print("Dataset was created locally but failed to push metadata to hub")
+        else:
+            dataset_path_local = os.path.join(cfg.output.output_dir, (cfg.dataset.dataset_name).lower())
+            dataset.save_to_disk(dataset_path_local)
+            print(f"Dataset saved locally to: {dataset_path_local}")
+        print("Dataset conversion complete!")
+        return
+    elif "mit_franka_p-rank" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.mit_franka_prank_loader import convert_mit_franka_prank_dataset_to_hf
+
+        print(f"Converting MIT-Franka-Prank dataset to HF from: {cfg.dataset.dataset_path}")
+        dataset = convert_mit_franka_prank_dataset_to_hf(
+            dataset_path=cfg.dataset.dataset_path,
+            dataset_name=cfg.dataset.dataset_name,
+            output_dir=cfg.output.output_dir,
+            max_trajectories=cfg.output.max_trajectories,
+            max_frames=cfg.output.max_frames,
+            fps=cfg.output.fps,
+            num_workers=cfg.output.num_workers,
+        )
+
+        # Handle pushing/saving consistently
+        if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
+            print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")
+            try:
+                push_hf_dataset_and_video_files_to_hub(
+                    dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir
+                )
+            except Exception as e:
+                print(f"❌ Error pushing to hub: {e}")
+                print("Dataset was created locally but failed to push metadata to hub")
+        else:
+            dataset_path_local = os.path.join(cfg.output.output_dir, (cfg.dataset.dataset_name).lower())
+            dataset.save_to_disk(dataset_path_local)
+            print(f"Dataset saved locally to: {dataset_path_local}")
+        print("Dataset conversion complete!")
+        return
+    elif "utd_so101_clean_policy_ranking" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.utd_so101_clean_policy_ranking_loader import (
+            convert_utd_so101_clean_policy_ranking_to_hf,
+        )
+
+        # Determine view from dataset name
+        if "wrist" in cfg.dataset.dataset_name.lower():
+            view = "wrist"
+        elif "top" in cfg.dataset.dataset_name.lower():
+            view = "top"
+        else:
+            raise ValueError(f"Dataset name must specify view (wrist or top): {cfg.dataset.dataset_name}")
+
+        print(f"Converting UTD SO101 Clean Policy Ranking ({view} view) to HF from: {cfg.dataset.dataset_path}")
+        dataset = convert_utd_so101_clean_policy_ranking_to_hf(
+            dataset_path=cfg.dataset.dataset_path,
+            dataset_name=cfg.dataset.dataset_name,
+            output_dir=cfg.output.output_dir,
+            view=view,
+            max_trajectories=cfg.output.max_trajectories,
+            max_frames=cfg.output.max_frames,
+            fps=cfg.output.fps,
+            num_workers=cfg.output.num_workers,
+        )
+
+        # Handle pushing/saving consistently
+        if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
+            print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")
+            try:
+                push_hf_dataset_and_video_files_to_hub(
+                    dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir
+                )
+            except Exception as e:
+                print(f"❌ Error pushing to hub: {e}")
+                print("Dataset was created locally but failed to push metadata to hub")
+        else:
+            dataset_path_local = os.path.join(cfg.output.output_dir, (cfg.dataset.dataset_name).lower())
+            dataset.save_to_disk(dataset_path_local)
+            print(f"Dataset saved locally to: {dataset_path_local}")
+        print("Dataset conversion complete!")
+        return
+    elif "usc_koch_human_robot_paired" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.usc_koch_human_robot_paired_loader import (
+            convert_usc_koch_human_robot_paired_to_hf,
+        )
+
+        # Determine trajectory type from dataset name
+        if "usc_koch_human_robot_paired_human" in cfg.dataset.dataset_name.lower():
+            trajectory_type = "human"
+        elif "usc_koch_human_robot_paired_robot" in cfg.dataset.dataset_name.lower():
+            trajectory_type = "robot"
+        else:
+            raise ValueError(
+                f"Dataset name must specify either 'usc_koch_human_robot_paired_human' or 'usc_koch_human_robot_paired_robot': {cfg.dataset.dataset_name}. "
+            )
+
+        print(f"Converting USC Koch Human-Robot Paired ({trajectory_type}) to HF from: {cfg.dataset.dataset_path}")
+        dataset = convert_usc_koch_human_robot_paired_to_hf(
+            dataset_path=cfg.dataset.dataset_path,
+            dataset_name=cfg.dataset.dataset_name,
+            output_dir=cfg.output.output_dir,
+            trajectory_type=trajectory_type,
+            max_trajectories=cfg.output.max_trajectories,
+            max_frames=cfg.output.max_frames,
+            fps=cfg.output.fps,
+            num_workers=cfg.output.num_workers,
+        )
+
+        # Handle pushing/saving consistently
+        if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
+            updated_repo_id = cfg.hub.hub_repo_id.replace("usc_koch_human_robot_paired_", "")
+            print(f"\nPushing dataset to HuggingFace Hub: {updated_repo_id}")
+            try:
+                push_hf_dataset_and_video_files_to_hub(
+                    dataset, updated_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir
+                )
+            except Exception as e:
+                print(f"❌ Error pushing to hub: {e}")
+                print("Dataset was created locally but failed to push metadata to hub")
+        else:
+            dataset_path_local = os.path.join(output_dir_override, (cfg.dataset.dataset_name).lower())
+            dataset.save_to_disk(dataset_path_local)
+            print(f"Dataset saved locally to: {dataset_path_local}")
+        print("Dataset conversion complete!")
+        return
+    elif "usc_koch_p_ranking" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.usc_koch_p_ranking_loader import (  # type: ignore
+            convert_usc_koch_p_ranking_to_hf,
+        )
+
+        output_dir_override = os.path.join(os.path.dirname(cfg.output.output_dir), cfg.dataset.dataset_name.lower())
+
+        print(f"Converting USC Koch P-Ranking to HF from: {cfg.dataset.dataset_path}")
+        dataset = convert_usc_koch_p_ranking_to_hf(
+            dataset_path=cfg.dataset.dataset_path,
+            dataset_name=cfg.dataset.dataset_name,
+            output_dir=output_dir_override,
+            max_trajectories=cfg.output.max_trajectories,
+            max_frames=cfg.output.max_frames,
+            fps=cfg.output.fps,
+            num_workers=cfg.output.num_workers,
+        )
+
+        # Handle pushing/saving consistently
+        if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
+            updated_repo_id = cfg.hub.hub_repo_id.replace("usc_koch_p_ranking_rfm", "")
+            print(f"\nPushing dataset to HuggingFace Hub: {updated_repo_id}")
+            try:
+                push_hf_dataset_and_video_files_to_hub(
+                    dataset, updated_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, output_dir_override
+                )
+            except Exception as e:
+                print(f"❌ Error pushing to hub: {e}")
+                print("Dataset was created locally but failed to push metadata to hub")
+        else:
+            dataset_path_local = os.path.join(output_dir_override, (cfg.dataset.dataset_name).lower())
             dataset.save_to_disk(dataset_path_local)
             print(f"Dataset saved locally to: {dataset_path_local}")
         print("Dataset conversion complete!")
@@ -683,7 +963,9 @@ def main(cfg: GenerateConfig):
         if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
             print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")
             try:
-                push_hf_dataset_and_video_files_to_hub(dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir)
+                push_hf_dataset_and_video_files_to_hub(
+                    dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir
+                )
             except Exception as e:
                 print(f"❌ Error pushing to hub: {e}")
                 print("Dataset was created locally but failed to push videos and/or metadata to hub")
@@ -693,6 +975,30 @@ def main(cfg: GenerateConfig):
             print(f"Dataset saved locally to: {dataset_path}")
         print("Dataset conversion complete!")
         return
+    elif "motif" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.motif_loader import load_motif_dataset
+
+        print(f"Loading MotIF dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_motif_dataset(cfg.dataset.dataset_path)
+        trajectories = flatten_task_data(task_data)
+    elif "failsafe" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.failsafe_loader import load_failsafe_dataset
+
+        print(f"Loading FailSafe dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_failsafe_dataset(cfg.dataset.dataset_path)
+        trajectories = flatten_task_data(task_data)
+    elif "racer" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.racer_loader import load_racer_dataset
+
+        print(f"Loading RACER dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_racer_dataset(cfg.dataset.dataset_path, cfg.dataset.dataset_name)
+        trajectories = flatten_task_data(task_data)
+    elif "hand_paired" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.hand_paired_loader import load_hand_paired_dataset
+
+        print(f"Loading HAND_paired dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_hand_paired_dataset(cfg.dataset.dataset_path, cfg.dataset.dataset_name)
+        trajectories = flatten_task_data(task_data)
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")
 

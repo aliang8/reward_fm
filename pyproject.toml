@@ -3,7 +3,7 @@ name = "reward-fm"
 version = "0.0.1"
 description = "PyTorch implementation of a Reward Foundation Model (RFM)"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = "==3.10.*" # Based on your GitHub repo's setup
 authors = [
     { name = "Anthony Liang", email = "aliang80@usc.edu" }
 ]
@@ -15,30 +15,18 @@ dependencies = [
     "transformers==4.53.2",
     "accelerate>=1.9.0",
     "einops>=0.8.0",
+    "evaluate>=0.4.3",
+    "h5py>=3.10.0",
+    "huggingface-hub[hf-xet]>0.35",
+    "numpy>=1.21.0", # Compatible with modern PyTorch
+    "matplotlib>=3.5.0",
     "peft",
+    "pyrallis>=0.3.0",
     "safetensors>=0.6.0rc0",
     "sentence-transformers>=2.0.0",
-    
-    # Data & processing
-    "datasets>=3.6.0",
-    "h5py>=3.10.0",
-    "imageio>=2.37.0",
-    "numpy>=1.21.0",
-    "pillow>=9.0.0",
-    "opencv-python-headless>=4.8.0",
-    
-    # HuggingFace & VLM
-    "huggingface-hub[hf-xet]>=0.33.0",
-    "qwen-vl-utils>=0.0.11",
-    "google-generativeai>=0.8.0",
-    
-    # Server & API
-    "fastapi>=0.116.1",
-    "uvicorn>=0.35.0",
-    "requests>=2.32.4",
-    "aiohttp>=3.9.0",
-    
-    # Config & utilities
+    "transformers>=4.57", # Pinning to a specific version you use
+    "tqdm>=4.67.1",
+    "wandb>=0.20.1",
     "pyyaml>=6.0.0",
     "omegaconf>=2.3.0",
     "pyrallis>=0.3.0",
@@ -65,16 +53,39 @@ dev = [
     "gradio>=4.0.0",
     "ffmpeg",
     "termcolor>=3.1.0",
+    "qwen-vl-utils>=0.0.11",
+    "fastapi>=0.116.1",
+    "uvicorn>=0.35.0",
+    "requests>=2.32.4",
+    "scipy>=1.15.3",
+    "codetiming>=1.4.0",
     "robosuite==1.4.0",
     "opencv-python-headless>=4.8.0",
     "opencv-contrib-python-headless>=4.8.0", # Additional OpenCV modules
     "einops>=0.8.0",
     "num2words",
     "seaborn",
+    "bitsandbytes",
+    "torchvision",
     "moviepy",
     "wandb[media]",
     "torchcodec",
     "decord>=0.6.0",
+    "unsloth>=2025.10",
+    "gymnasium>=1.2.2",
+    "metaworld>=3.0.0",
+    "loguru>=0.7.3",
+    "xformers==0.0.32.post2",
+    "trl==0.20.0",
+    "tensorboard",
+    "requests",
+    "hydra-core",
+    "omegaconf",
+    "tensorflow-datasets==4.9.2", # just for oxe and other tfds dataset uploading
+    "tensorflow==2.19", # just for oxe and other tfds dataset uploading
+    "tf-keras>=2.19.0", # just for oxe and other tfds dataset uploading
+    "protobuf<3.21", # just for oxe and other tfds dataset uploading
+
 ]
 
 [project.urls]
@@ -95,13 +106,24 @@ packages = ["rfm"]
 
 # Configuration for the 'uv' package manager
 [tool.uv]
+# This section could be used for advanced features like overriding dependencies
+# from your environment if needed, similar to the 'openpi' example.
+#override-dependencies = ["av<16.0.0"]
+
+# Ensure flash-attn builds against the same Torch that's in your env
+[tool.uv.extra-build-dependencies]
+flash-attn = [{ requirement = "torch", match-runtime = true }]
+
+# Tell flash-attn to use a prebuilt wheel instead of compiling CUDA kernels
+[tool.uv.extra-build-variables]
+flash-attn = { FLASH_ATTENTION_SKIP_CUDA_BUILD = "TRUE" }
 
 # Tool configuration for the 'ruff' linter and formatter
 [tool.ruff]
 line-length = 120
 target-version = "py310"
 fix = true
-unsafe-fixes = true
+unsafe-fixes = true  # <- allow deletions that might have side effects; optional, use with care
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "C4", "UP", "RUF"]

@@ -748,7 +748,6 @@ OXE_DATASET_CONFIGS = {
         "state_encoding": StateEncoding.POS_EULER,
         "action_encoding": ActionEncoding.EEF_POS,
     },
-
     ### New datasets. Only image keys are somewhat correct, ignore rest
     "robo_set": {
         "image_obs_keys": {"primary": "image_right", "secondary": "image_left", "wrist": None},
@@ -799,14 +798,14 @@ OXE_DATASET_CONFIGS = {
         "state_encoding": StateEncoding.POS_QUAT,
         "action_encoding": ActionEncoding.JOINT_POS,
     },
-    "nyu_rot_dataset_converted_externally_to_rlds":{
+    "nyu_rot_dataset_converted_externally_to_rlds": {
         "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["state"],
         "state_encoding": StateEncoding.POS_QUAT,
         "action_encoding": ActionEncoding.JOINT_POS,
     },
-    "tokyo_u_lsmo_converted_externally_to_rlds":{
+    "tokyo_u_lsmo_converted_externally_to_rlds": {
         "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
         "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
         "state_obs_keys": ["state"],

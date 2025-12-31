@@ -9,6 +9,8 @@ This directory contains detailed guides for specific datasets supported by the R
 |---------|------|------|----------|-------|
 | **AgiBotWorld** | Real Robot | 600GB+ | Streaming, Head Camera | [📖 AgiBotWorld.md](AgiBotWorld.md) |
 | **LIBERO** | Simulation | ~5GB | HDF5, Multi-env | [📖 LIBERO.md](LIBERO.md) |
+| **FinoNet** | Manipulation | ~10GB | Success/Failure, PNG | [📖 FinoNet.md](FinoNet.md) |
+| **H2R** | Human-Robot | ~ | Paired videos | [📖 H2R.md](H2R.md) |
 
 ### Custom Integration
 | Type | Description | Guide |
@@ -33,6 +35,14 @@ uv run python data/generate_hf_dataset.py --config_path=configs/data_gen.yaml
 - ✅ **Multi-environment** (living room, kitchen, office, study)
 - ✅ **Simulation data** (high-quality manipulation tasks)
 
+### FinoNet (Success/Failure Data)
+```bash
+uv run python dataset_upload/generate_hf_dataset.py --config_path=dataset_upload/configs/data_gen_configs/fino_net.yaml
+```
+- ✅ **PNG sequences** (download from HuggingFace)
+- ✅ **5 manipulation tasks** (put_on, put_in, place, pour, push)
+- ✅ **Labeled success/failure** episodes for robust training
+
 ### Custom Dataset
 ```bash
 # 1. Create loader: data/{name}_loader.py
@@ -51,6 +61,8 @@ data/dataset_guides/
 ├── README.md              ← This overview
 ├── AgiBotWorld.md         ← Streaming dataset guide  
 ├── LIBERO.md              ← Local HDF5 dataset guide
+├── FinoNet.md             ← Success/failure dataset guide
+├── H2R.md                 ← Human-robot paired dataset guide
 └── CustomDataset.md       ← Template for new datasets
 ```
 

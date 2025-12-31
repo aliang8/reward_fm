@@ -199,16 +199,37 @@ def main() -> None:
                 for msg in conversations
             ]
 
-            image_inputs, video_inputs, _video_kwargs = process_vision_info(conversations, return_video_kwargs=True)
-
-            batch_inputs = processor(
-                text=texts,
-                images=image_inputs,
-                videos=video_inputs,
-                padding=True,
-                truncation=False,
-                return_tensors="pt",
+            is_qwen3 = "Qwen3" in args.model_id
+            image_inputs, video_inputs, video_kwargs = process_vision_info(
+                conversations, return_video_kwargs=True, return_video_metadata=is_qwen3
             )
+
+            # For Qwen3, video_inputs is a list of (video, video_metadata) tuples
+            # that need to be split before passing to processor
+            if is_qwen3 and video_inputs is not None:
+                videos, video_metadatas = zip(*video_inputs)
+                videos, video_metadatas = list(videos), list(video_metadatas)
+            else:
+                videos = video_inputs
+                video_metadatas = None
+
+            processor_kwargs = {
+                "text": texts,
+                "images": image_inputs,
+                "videos": videos,
+                "padding": True,
+                "truncation": False,
+                "return_tensors": "pt",
+            }
+
+            # Add video_metadata and video_kwargs for Qwen3
+            if is_qwen3:
+                if video_metadatas is not None:
+                    processor_kwargs["video_metadata"] = video_metadatas
+                if video_kwargs:
+                    processor_kwargs.update(video_kwargs)
+
+            batch_inputs = processor(**processor_kwargs)
         else:
             batch_inputs = processor.apply_chat_template(
                 conversations,

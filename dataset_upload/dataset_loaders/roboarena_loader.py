@@ -101,6 +101,7 @@ def load_roboarena_dataset(dataset_path: str) -> dict[str, list[dict]]:
             files_in_policy_folder = os.listdir(policy_folder_path)
             video_left = [f for f in files_in_policy_folder if f.endswith("_left.mp4")]
             video_right = [f for f in files_in_policy_folder if f.endswith("_right.mp4")]
+            # video_wrist = [f for f in files_in_policy_folder if f.endswith("_wrist.mp4")]
             if len(video_left) > 0:
                 video_path = os.path.join(policy_folder_path, video_left[0])
                 task_data[task].append(
@@ -111,6 +112,11 @@ def load_roboarena_dataset(dataset_path: str) -> dict[str, list[dict]]:
                 task_data[task].append(
                     create_new_trajectory(video_path, partial_success=partial_success, task_name=task)
                 )
+            # if len(video_wrist) > 0:
+            #    video_path = os.path.join(policy_folder_path, video_wrist[0])
+            #    task_data[task].append(
+            #        create_new_trajectory(video_path, partial_success=partial_success, task_name=task)
+            #    )
     print(
         f"Loaded {sum([len(task_list) for task_list in task_data.values()])} trajectories from {len(task_data)} tasks"
     )

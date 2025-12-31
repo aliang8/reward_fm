@@ -50,9 +50,11 @@ test*
 .triton/*
 .python_history
 *.h5
-
-# Baseline eval logs
-evals/baselines/**/vlm_eval_logs/
-evals/baselines/**/gvl_eval_logs/
-evals/baselines/**/test_logs/
-RL-VLM-F/
+unsloth_compiled_cache/*
+*.txt
+slurm_logs/*
+xarm_policy_ranking/*
+outputs/*
+rewardfm_eval_ui/*
+rewardfm_eval_ui
+run_scripts/*

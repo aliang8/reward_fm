@@ -24,8 +24,8 @@ def write_mp4(frames, out_path, fps=4):
     c.close()
 
 
-def pad_target_progress(progress_list):
-    """Helper function to pad target progress sequences to max length."""
+def pad_list_to_max(progress_list):
+    """Helper function to pad lists of sequences to max length."""
     if not progress_list:
         return None
 

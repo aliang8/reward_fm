@@ -29,8 +29,13 @@ from typing import List, Dict, Optional
 import numpy as np
 import cv2
 
-from evo_vlac import GAC_model
-from evo_vlac.utils.video_tool import compress_video
+try:
+    from evo_vlac import GAC_model
+    from evo_vlac.utils.video_tool import compress_video
+
+    VLAC_AVAILABLE = True
+except ImportError:
+    VLAC_AVAILABLE = False
 
 try:
     from huggingface_hub import snapshot_download

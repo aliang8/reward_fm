@@ -162,7 +162,7 @@ class GVL:
         """
         Call the Gemini SSE endpoint and return the concatenated streamed text.
         """
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:streamGenerateContent?alt=sse&key={self.api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse&key={self.api_key}"
         body = {"contents": [{"parts": parts}]}
         headers = {"Content-Type": "application/json"}
 
@@ -241,7 +241,7 @@ class GVL:
 
         :param frames_array: (N, H, W, 3) uint8 array from HDF5 (per-frame video data)
         :param task_description: Robot task description
-        :return: List of completion percentages (0-100) aligned with (gt_index)
+        :return: List of completion percentages (0-1, normalized from 0-100) aligned with (gt_index)
         """
         # 1) Extract frames
         self.extract_frames_from_memory(frames_array)
@@ -286,14 +286,11 @@ class GVL:
         # Iterate in ascending gt_index order
         frames_in_gt_order = sorted(self.frames_info, key=lambda f: f["gt_index"])
         task_completion_list = []
-        index_list = []
-        gt_index_list = []
         for f in frames_in_gt_order:
             if f["model_output"] is not None:
-                task_completion_list.append(f["model_output"].get("task_completion_percentage"))
-                index_list.append(f["model_output"].get("frame_number"))
-                gt_index_list.append(f["gt_index"])
-            else:
-                task_completion_list.append(None)
+                percentage = f["model_output"].get("task_completion_percentage")
+                # Normalize from 0-100 to 0-1
+                normalized = percentage / 100.0
+                task_completion_list.append(normalized)
         print("Task completion list:", task_completion_list)
-        return task_completion_list  # , index_list, gt_index_list
+        return task_completion_list

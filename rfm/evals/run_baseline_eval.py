@@ -28,7 +28,7 @@ Usage:
 import copy
 import json
 import os
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 from datetime import datetime
 
 import numpy as np
@@ -52,7 +52,7 @@ from rfm.evals.baselines.vlac import VLAC
 logger = get_logger()
 
 
-def process_preference_sample(sample: PreferenceSample, baseline: RLVLMF) -> Dict[str, Any]:
+def process_preference_sample(sample: PreferenceSample, model: RLVLMF) -> Dict[str, Any]:
     """Process a single preference sample with baseline."""
     chosen_traj = sample.chosen_trajectory
     rejected_traj = sample.rejected_trajectory
@@ -90,7 +90,7 @@ def process_preference_sample(sample: PreferenceSample, baseline: RLVLMF) -> Dic
     task = chosen_traj.task or rejected_traj.task or ""
 
     # Compute preference
-    result = baseline.compute_preference(chosen_images, rejected_images, task)
+    result = model.compute_preference(chosen_images, rejected_images, task)
 
     # Build result dict similar to trainer format
     return {
@@ -106,8 +106,7 @@ def process_preference_sample(sample: PreferenceSample, baseline: RLVLMF) -> Dic
 
 def process_progress_sample(
     sample: ProgressSample,
-    analyzer: Optional[GVL] = None,
-    vlac_model: Optional[VLAC] = None,
+    model: Union[GVL, VLAC],
     task_description: str = "",
 ) -> Dict[str, Any]:
     """Process a single progress sample with baseline."""
@@ -138,16 +137,8 @@ def process_progress_sample(
         return None
 
     # Compute progress
-    if vlac_model is not None:
-        # Use VLAC model
-        task = traj.task or ""
-        progress_pred = vlac_model.compute_progress(frames_array, task_description=task)
-    elif analyzer is not None:
-        # Use GVL analyzer
-        task = task_description or traj.task or ""
-        progress_pred = analyzer.compute_progress(frames_array, task_description=task)
-    else:
-        raise ValueError("Either analyzer or vlac_model must be provided")
+    task = task_description or traj.task or ""
+    progress_pred = model.compute_progress(frames_array, task_description=task)
 
     # Convert to numpy array and normalize to [0, 1] if needed
     progress_array = np.array([p / 100.0 if p is not None else 0.0 for p in progress_pred])
@@ -183,22 +174,17 @@ def process_progress_sample(
 def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) -> Dict[str, Any]:
     """Run baseline evaluation on datasets."""
 
-    # Initialize baseline
+    # Initialize model
     if cfg.baseline_type == "rlvlmf":
-        baseline = RLVLMF(vlm_provider=cfg.vlm_provider, temperature=cfg.temperature)
-        analyzer = None
-        vlac_model = None
+        model = RLVLMF(vlm_provider=cfg.vlm_provider, temperature=cfg.temperature)
     elif cfg.baseline_type == "gvl":
-        # Create a dummy analyzer - task will be set per sample
         # API key is read from GEMINI_API_KEY environment variable
-        analyzer = GVL(max_frames=cfg.gvl_max_frames, offset=cfg.gvl_offset)
-        baseline = None
-        vlac_model = None
+        model = GVL(max_frames=cfg.gvl_max_frames, offset=cfg.gvl_offset)
     elif cfg.baseline_type == "vlac":
         if not cfg.vlac_model_path:
             raise ValueError("vlac_model_path is required for VLAC baseline")
 
-        vlac_model = VLAC(
+        model = VLAC(
             model_path=cfg.vlac_model_path,
             device=cfg.vlac_device,
             model_type=cfg.vlac_model_type,
@@ -207,8 +193,6 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
             skip=cfg.vlac_skip,
             frame_skip=cfg.vlac_frame_skip,
         )
-        baseline = None
-        analyzer = None
     else:
         raise ValueError(f"Unknown baseline_type: {cfg.baseline_type}. Must be 'rlvlmf', 'gvl', or 'vlac'")
 
@@ -262,16 +246,11 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
             for i, sample in enumerate(tqdm(dataset, desc=f"Processing {dataset_name}")):
                 try:
                     if cfg.baseline_type == "rlvlmf" and isinstance(sample, PreferenceSample):
-                        result = process_preference_sample(sample, baseline)
+                        result = process_preference_sample(sample, model)
                         if result:
                             eval_results.append(result)
                     elif cfg.baseline_type in ["gvl", "vlac"] and isinstance(sample, ProgressSample):
-                        if cfg.baseline_type == "gvl":
-                            result = process_progress_sample(
-                                sample, analyzer=analyzer, task_description=sample.trajectory.task or ""
-                            )
-                        else:  # vlac
-                            result = process_progress_sample(sample, vlac_model=vlac_model)
+                        result = process_progress_sample(sample, model, task_description=sample.trajectory.task or "")
                         if result:
                             eval_results.append(result)
                     else:
@@ -310,7 +289,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
     return all_metrics
 
 
-@hydra_main(version_base=None, config_path="rfm/configs", config_name="baseline_eval_config")
+@hydra_main(version_base=None, config_path="../configs", config_name="baseline_eval_config")
 def main(cfg: DictConfig):
     """Main entry point for baseline evaluation."""
     # Convert Hydra config to dataclass
@@ -331,15 +310,11 @@ def main(cfg: DictConfig):
     os.makedirs(baseline_cfg.output_dir, exist_ok=True)
     logger.info(f"Output directory: {baseline_cfg.output_dir}")
 
-    # Create data config (needed for dataset setup)
-    # We need to load a base config to get data_root and other settings
-    # For now, use minimal config - datasets will be set per eval type
-    # In practice, you might want to load from an existing config file
-    data_cfg = DataConfig(
-        train_datasets=[],
-        eval_datasets=[],  # Will be set per eval type
-        data_root=None,  # Should be set from environment or config
-    )
+    # Create data config with default settings
+    # Datasets will be set per eval type during processing
+    data_cfg = DataConfig()
+
+    display_config(data_cfg)
 
     # Run evaluation
     metrics = run_baseline_evaluation(baseline_cfg, data_cfg)

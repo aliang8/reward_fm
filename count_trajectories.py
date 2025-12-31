@@ -132,6 +132,7 @@ def main():
     train_total = 0
     train_found = 0
     train_dataset_aggregates = {}  # To store aggregated counts per dataset
+    train_rows = []  # Collect rows for sorting
 
     for dataset_path, dataset_subsets in zip(train_datasets, train_subsets):
         if dataset_path not in train_dataset_aggregates:
@@ -150,18 +151,32 @@ def main():
                 train_found += 1
                 train_dataset_aggregates[dataset_path]["count"] += result["count"]
                 train_dataset_aggregates[dataset_path]["found"] += 1
+                count_value = result["count"]
             else:
                 count_str = "N/A"
                 status = f"✗ {result['error']}"
                 status_style = "red"
+                count_value = -1  # Use -1 for sorting (will appear at end)
 
-            train_table.add_row(dataset_path, subset, count_str, f"[{status_style}]{status}[/{status_style}]")
+            train_rows.append((
+                count_value,
+                dataset_path,
+                subset,
+                count_str,
+                f"[{status_style}]{status}[/{status_style}]",
+            ))
+
+    # Sort by count (descending), then add to table
+    train_rows.sort(key=lambda x: x[0], reverse=True)
+    for _, dataset_path, subset, count_str, status_display in train_rows:
+        train_table.add_row(dataset_path, subset, count_str, status_display)
 
     # Count evaluation datasets
     console.print("[bold blue]Processing Evaluation Datasets...[/bold blue]")
     eval_total = 0
     eval_found = 0
     eval_dataset_aggregates = {}  # To store aggregated counts per dataset
+    eval_rows = []  # Collect rows for sorting
 
     for dataset_path, dataset_subsets in zip(eval_datasets, eval_subsets):
         if dataset_path not in eval_dataset_aggregates:
@@ -180,12 +195,25 @@ def main():
                 eval_found += 1
                 eval_dataset_aggregates[dataset_path]["count"] += result["count"]
                 eval_dataset_aggregates[dataset_path]["found"] += 1
+                count_value = result["count"]
             else:
                 count_str = "N/A"
                 status = f"✗ {result['error']}"
                 status_style = "red"
+                count_value = -1  # Use -1 for sorting (will appear at end)
 
-            eval_table.add_row(dataset_path, subset, count_str, f"[{status_style}]{status}[/{status_style}]")
+            eval_rows.append((
+                count_value,
+                dataset_path,
+                subset,
+                count_str,
+                f"[{status_style}]{status}[/{status_style}]",
+            ))
+
+    # Sort by count (descending), then add to table
+    eval_rows.sort(key=lambda x: x[0], reverse=True)
+    for _, dataset_path, subset, count_str, status_display in eval_rows:
+        eval_table.add_row(dataset_path, subset, count_str, status_display)
 
     # Display results
     console.print()
@@ -202,8 +230,10 @@ def main():
     train_agg_table.add_column("Total Trajectories", justify="right", style="yellow")
     train_agg_table.add_column("Subsets Found/Total", justify="center", style="green")
 
-    for dataset_path in sorted(train_dataset_aggregates.keys()):
-        agg = train_dataset_aggregates[dataset_path]
+    # Sort by count (descending)
+    train_agg_items = sorted(train_dataset_aggregates.items(), key=lambda x: x[1]["count"], reverse=True)
+
+    for dataset_path, agg in train_agg_items:
         count_str = f"{agg['count']:,}" if agg["count"] > 0 else "0"
         subsets_str = f"{agg['found']}/{agg['total_subsets']}"
 
@@ -224,8 +254,10 @@ def main():
     eval_agg_table.add_column("Total Trajectories", justify="right", style="yellow")
     eval_agg_table.add_column("Subsets Found/Total", justify="center", style="green")
 
-    for dataset_path in sorted(eval_dataset_aggregates.keys()):
-        agg = eval_dataset_aggregates[dataset_path]
+    # Sort by count (descending)
+    eval_agg_items = sorted(eval_dataset_aggregates.items(), key=lambda x: x[1]["count"], reverse=True)
+
+    for dataset_path, agg in eval_agg_items:
         count_str = f"{agg['count']:,}" if agg["count"] > 0 else "0"
         subsets_str = f"{agg['found']}/{agg['total_subsets']}"
 

@@ -1,3 +1,6 @@
+from typing import Dict, List, Any
+
+import random
 from tqdm import tqdm
 
 from rfm.data.samplers.eval.base_pref import BaseQualityPreferenceSampler
@@ -13,15 +16,10 @@ class RoboArenaQualityPreferenceSampler(BaseQualityPreferenceSampler):
 
     def __init__(
         self,
-        config,
-        dataset,
-        combined_indices,
-        dataset_success_cutoff_map=None,
-        is_evaluation=False,
-        verbose=True,
+        comparisons_per_task=None,
         **kwargs,
     ):
-        super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
+        super().__init__(**kwargs)
 
         # Set data_gen_strategy for this sampler
         self.data_gen_strategy = "quality_preference_roboarena"
@@ -29,13 +27,15 @@ class RoboArenaQualityPreferenceSampler(BaseQualityPreferenceSampler):
         self._cached_tasks = self.dataset["task"]
         self._cached_partial_success = self.dataset.get("partial_success")
 
+        self.comparisons_per_task = comparisons_per_task
+
         # Generate all possible sample indices upfront (not the actual samples)
         self.sample_indices = self._generate_all_sample_indices()
         rank_0_print(
             f"Generated {len(self.sample_indices)} RoboArena quality preference sample indices", verbose=self.verbose
         )
 
-    def _generate_all_sample_indices(self) -> list[dict]:
+    def _generate_all_sample_indices(self) -> List[Dict[str, Any]]:
         """Generate all possible quality preference sample indices based on partial_reward (partial_success)."""
         sample_indices = []
 
@@ -79,6 +79,7 @@ class RoboArenaQualityPreferenceSampler(BaseQualityPreferenceSampler):
                 continue
 
             # Create all pairs of trajectories
+            task_pairs = []
             for i, traj1 in enumerate(trajs):
                 for j, traj2 in enumerate(trajs):
                     if i >= j:  # Avoid duplicates and self-pairs
@@ -103,12 +104,19 @@ class RoboArenaQualityPreferenceSampler(BaseQualityPreferenceSampler):
                         chosen_partial = partial2
                         rejected_partial = partial1
 
-                    sample_indices.append({
+                    task_pairs.append({
                         "chosen_traj_idx": chosen_traj_idx,
                         "rejected_traj_idx": rejected_traj_idx,
                         "task": task,
                         "chosen_partial_success": chosen_partial,
                         "rejected_partial_success": rejected_partial,
                     })
+
+            # Apply comparisons_per_task limit if set (sample uniformly across all pairs for this task)
+            if self.comparisons_per_task is not None and len(task_pairs) > self.comparisons_per_task:
+                # Uniformly sample comparisons for this task
+                task_pairs = random.sample(task_pairs, self.comparisons_per_task)
+
+            sample_indices.extend(task_pairs)
 
         return sample_indices

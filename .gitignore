@@ -55,3 +55,6 @@ unsloth_compiled_cache/*
 slurm_logs/*
 xarm_policy_ranking/*
 outputs/*
+rewardfm_eval_ui/*
+rewardfm_eval_ui
+run_scripts/*

@@ -7,6 +7,8 @@ For each trajectory, it creates multiple subsequences (0:2, 0:4, 0:6, etc.) and 
 as PreferenceSample objects that can be evaluated by the model.
 """
 
+from typing import Dict, List, Any
+
 import random
 import torch
 from tqdm import tqdm
@@ -15,10 +17,9 @@ from rfm.data.dataset_types import ProgressSample, Trajectory
 from rfm.data.samplers.base import RFMBaseSampler
 from rfm.data.datasets.helpers import (
     linspace_subsample_frames,
-    pad_trajectory_to_max_frames_np,
-    pad_trajectory_to_max_frames_torch,
     load_embeddings_from_path,
     load_frames_from_npz,
+    create_trajectory_from_dict,
 )
 from rfm.utils.distributed import rank_0_print
 
@@ -33,17 +34,11 @@ class RewardAlignmentSampler(RFMBaseSampler):
 
     def __init__(
         self,
-        config,
-        dataset,
-        combined_indices,
-        dataset_success_cutoff_map=None,
-        is_evaluation=False,
-        verbose=True,
         max_trajectories: int | None = None,
         frame_step: int = 1,
         **kwargs,
     ):
-        super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
+        super().__init__(**kwargs)
 
         self.max_trajectories = max_trajectories
         self.frame_step = frame_step
@@ -54,7 +49,7 @@ class RewardAlignmentSampler(RFMBaseSampler):
             verbose=self.verbose,
         )
 
-    def _generate_all_sample_indices(self) -> list[dict]:
+    def _generate_all_sample_indices(self) -> List[Dict[str, Any]]:
         """Generate all possible subsequence sample indices (not the actual samples)."""
         sample_indices = []
 
@@ -88,7 +83,6 @@ class RewardAlignmentSampler(RFMBaseSampler):
         end_idx = sample_idx_info["end_idx"]
         num_frames = sample_idx_info["num_frames"]
 
-        # Get the original trajectory
         original_traj = self.dataset[traj_idx]
 
         # Get frames and create subsequence
@@ -97,9 +91,10 @@ class RewardAlignmentSampler(RFMBaseSampler):
         text_embedding = None
 
         # Ground truth progress: linear from 0 to 1
-        if self.config.progress_pred_type == "absolute":
+        # If starts with "absolute", use linspace logic; if "relative", use 1/num_frames
+        if self.config.progress_pred_type.startswith("absolute"):
             gt_progress = (end_idx - 1) / (num_frames - 1)
-        else:
+        else:  # relative_first_frame
             gt_progress = 1 / num_frames
 
         if self.config.load_embeddings and original_traj.get("embeddings_path"):
@@ -109,11 +104,10 @@ class RewardAlignmentSampler(RFMBaseSampler):
 
             video_embeddings = video_embeddings[:end_idx]
 
-            subsequence_video_embeddings, _ = linspace_subsample_frames(video_embeddings, self.config.max_frames)
-            frames_shape_orig = subsequence_video_embeddings.shape
-            video_embeddings, _ = pad_trajectory_to_max_frames_torch(
-                subsequence_video_embeddings, [gt_progress], self.config.max_frames
+            subsequence_video_embeddings, frame_indices = linspace_subsample_frames(
+                video_embeddings, self.config.max_frames
             )
+            frames_shape_orig = subsequence_video_embeddings.shape
         else:
             frames = load_frames_from_npz(original_traj["frames"])
             if frames is None or len(frames) == 0:
@@ -126,13 +120,18 @@ class RewardAlignmentSampler(RFMBaseSampler):
             max_frames = self.config.max_frames
 
             # Uniform subsample to max_frames
-            subsequence_frames, _ = linspace_subsample_frames(subsequence_frames, max_frames)
+            subsequence_frames, frame_indices = linspace_subsample_frames(subsequence_frames, max_frames)
             frames_shape_orig = subsequence_frames.shape
 
-            # Use the existing helper function to pad/subsample frames
-            frames, _ = pad_trajectory_to_max_frames_np(subsequence_frames, [0], max_frames)
+        # Create progress values for each subsampled frame
+        # Progress should linearly interpolate from 0 to gt_progress across the frames
+        num_subsampled = len(frame_indices)
+        if num_subsampled > 1:
+            # Linear interpolation from 0 to gt_progress
+            progress_values = [gt_progress * (idx / (num_subsampled - 1)) for idx in range(num_subsampled)]
+        else:
+            progress_values = [gt_progress]
 
-        # Create metadata for the subsequence
         metadata = {
             "subsequence_end": end_idx,
             "ground_truth_progress": gt_progress,
@@ -140,24 +139,19 @@ class RewardAlignmentSampler(RFMBaseSampler):
             "id": original_traj["id"],
             "video_path": sample_idx_info["video_path"],
         }
-
-        # Create trajectory for the subsequence
-        subsequence_trajectory = Trajectory(
-            id=original_traj["id"],
-            task=original_traj["task"],
-            frames=frames,
-            frames_shape=frames_shape_orig,
-            video_embeddings=video_embeddings,
-            text_embedding=text_embedding,
-            data_source=original_traj["data_source"],
-            lang_vector=original_traj["lang_vector"],
-            is_robot=original_traj["is_robot"],
-            quality_label=original_traj["quality_label"],
-            data_gen_strategy="reward_alignment",
-            target_progress=[gt_progress],
-            partial_success=original_traj.get("partial_success"),
-            metadata=metadata,
+        subsequence_trajectory = create_trajectory_from_dict(
+            original_traj,
+            overrides={
+                "frames": subsequence_frames if not self.config.load_embeddings else None,
+                "frames_shape": frames_shape_orig,
+                "video_embeddings": subsequence_video_embeddings if self.config.load_embeddings else None,
+                "text_embedding": text_embedding,
+                "data_gen_strategy": "reward_alignment",
+                "target_progress": progress_values,
+                "metadata": metadata,
+            },
         )
+        subsequence_trajectory = self._post_process_trajectory(subsequence_trajectory)
 
         sample = ProgressSample(trajectory=subsequence_trajectory, sample_type="progress")
 

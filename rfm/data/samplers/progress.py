@@ -1,3 +1,5 @@
+from typing import Dict, Any
+
 import random
 import torch
 
@@ -7,6 +9,10 @@ from rfm.data.datasets.helpers import (
     DataGenStrat,
     load_embeddings_from_path,
 )
+from rfm.utils.distributed import rank_0_print
+from rfm.utils.logger import get_logger
+
+logger = get_logger()
 
 
 class ProgressSampler(RFMBaseSampler):
@@ -24,18 +30,17 @@ class ProgressSampler(RFMBaseSampler):
     ):
         super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
 
-    def _generate_sample(self, item: dict):
+    def _generate_sample(self, item: Dict[str, Any]):
         return self._create_progress_sample(item)
 
-    def _create_progress_sample(self, traj: dict):
+    def _create_progress_sample(self, traj: Dict[str, Any]):
         """Create a progress sample using normalized and rebalanced strategy selection.
 
-        Implements five strategies:
-        1. Successful: Linspace subsample with end_idx between cutoff and total
-        2. Rewind: Create rewound trajectory from same task
-        3. Different Task: Use trajectory from different task (progress set to 0.0)
-        4. Subsequence: Segment subsampling (same as previous default)
-        5. Reverse Progress: Same as subsequence but reverses frames and progress targets
+        Implements four strategies:
+        1. Different Task: Use trajectory from different task (progress set to 0.0)
+        2. Forward Progress: Sample with forward direction (start < middle < end)
+        3. Reverse Progress: Sample with reverse direction (end < middle < start)
+        4. Rewind: Sample with rewind direction (start < end < middle)
         """
         # Initialize variables for strategy selection
         processed_traj = None
@@ -43,30 +48,25 @@ class ProgressSampler(RFMBaseSampler):
         subsample_strategy = None
 
         # Strategy setup with rebalancing on failure
-        # [successful, rewind, different_task, subsequence, reverse_progress, different_task_instruction]
+        # [different_task_instruction, forward_progress, reverse_progress, rewind]
         strategies = [
-            (DataGenStrat.SUCCESSFUL, self.config.progress_strategy_ratio[0]),
-            (DataGenStrat.REWOUND, self.config.progress_strategy_ratio[1]),
             (
                 DataGenStrat.DIFFERENT_TASK_INSTRUCTION,
-                self.config.progress_strategy_ratio[2] if len(self.config.progress_strategy_ratio) > 2 else 0.0,
+                self.config.progress_strategy_ratio[0] if len(self.config.progress_strategy_ratio) > 0 else 0.0,
             ),
             (
-                DataGenStrat.SUBSEQUENCE,
-                self.config.progress_strategy_ratio[3] if len(self.config.progress_strategy_ratio) > 3 else 0.0,
+                DataGenStrat.FORWARD_PROGRESS,
+                self.config.progress_strategy_ratio[1] if len(self.config.progress_strategy_ratio) > 1 else 0.0,
             ),
             (
                 DataGenStrat.REVERSE_PROGRESS,
-                self.config.progress_strategy_ratio[4] if len(self.config.progress_strategy_ratio) > 4 else 0.0,
+                self.config.progress_strategy_ratio[2] if len(self.config.progress_strategy_ratio) > 2 else 0.0,
+            ),
+            (
+                DataGenStrat.REWIND,
+                self.config.progress_strategy_ratio[3] if len(self.config.progress_strategy_ratio) > 3 else 0.0,
             ),
         ]
-
-        if self.config.pairwise_progress:
-            # remove rewind same task strategy for pairwise progress
-            strategies[1] = (
-                DataGenStrat.REWOUND,
-                0.0,
-            )
 
         # Remove strategies with zero probability
         strategies = [(strat, prob) for strat, prob in strategies if prob > 0]
@@ -79,12 +79,12 @@ class ProgressSampler(RFMBaseSampler):
 
             # Check if we have any strategies left
             if not strategies:
-                raise ValueError("No strategies available - all strategies failed to generate samples")
+                return None
 
             # Rebalance probabilities based on remaining strategies
             total_prob = sum(prob for _, prob in strategies)
             if total_prob == 0:
-                raise ValueError("No strategies with positive probability available")
+                return None
 
             # Normalize probabilities
             normalized_strategies = [(strat, prob / total_prob) for strat, prob in strategies]
@@ -101,26 +101,20 @@ class ProgressSampler(RFMBaseSampler):
                     break
 
             # Execute selected strategy
-            if selected_strategy == DataGenStrat.SUCCESSFUL:
-                # Successful strategy: use original trajectory, will be processed with "successful" subsample_strategy
+            if selected_strategy == DataGenStrat.FORWARD_PROGRESS:
                 processed_traj = traj
-                subsample_strategy = "successful"
-            elif selected_strategy == DataGenStrat.SUBSEQUENCE:
-                # Subsequence strategy: use original trajectory, will be processed with "subsequence" subsample_strategy
-                processed_traj = traj
-                subsample_strategy = "subsequence"
+                subsample_strategy = "subsample_forward"
             elif selected_strategy == DataGenStrat.REVERSE_PROGRESS:
-                # Reverse progress strategy: use original trajectory, will be processed with "reverse_progress" subsample_strategy
                 processed_traj = traj
-                subsample_strategy = "reverse_progress"
-            elif selected_strategy == DataGenStrat.REWOUND:
-                processed_traj = self._get_rewound_traj(traj)
-                subsample_strategy = None  # Rewound trajectories are already processed
+                subsample_strategy = "subsample_reverse"
+            elif selected_strategy == DataGenStrat.REWIND:
+                processed_traj = traj
+                subsample_strategy = "subsample_rewind"
             elif selected_strategy == DataGenStrat.DIFFERENT_TASK_INSTRUCTION:
                 processed_traj = self._get_different_task_instruction(traj)
-                subsample_strategy = None  # Different task instruction uses same trajectory with different task
+                subsample_strategy = "subsample_forward"
             else:
-                raise ValueError(f"Invalid strategy selected: {selected_strategy}")
+                return None
 
             # Check if strategy succeeded
             if processed_traj is not None:
@@ -130,24 +124,22 @@ class ProgressSampler(RFMBaseSampler):
                 strategies = [(strat, prob) for strat, prob in strategies if strat != selected_strategy]
                 continue
 
-        # If we still don't have a sample after all attempts, raise an error
+        # If we still don't have a sample after all attempts, return None
         if processed_traj is None:
-            raise ValueError(
-                f"Failed to generate progress sample after {max_attempts} attempts - all strategies exhausted"
+            logger.trace(
+                f"[PROGRESS SAMPLER] Failed to generate progress sample after {max_attempts} attempts - all strategies exhausted"
             )
+            return None
 
         progress_traj = self._get_traj_from_data(processed_traj, subsample_strategy=subsample_strategy)
 
         # Handle special cases
-        if strategy_used == DataGenStrat.DIFFERENT_TASK:
+        if strategy_used in [DataGenStrat.DIFFERENT_TASK, DataGenStrat.DIFFERENT_TASK_INSTRUCTION]:
             # We need to use the original task embeddings instead of the different task embeddings
             if self.config.load_embeddings and traj.get("embeddings_path"):
                 progress_traj.text_embedding = load_embeddings_from_path(traj["embeddings_path"])["text_embedding"]
             progress_traj.lang_vector = traj["lang_vector"]
             progress_traj.task = traj["task"]
-            progress_traj.target_progress = [0.0] * len(progress_traj.target_progress)
-
-        if strategy_used == DataGenStrat.DIFFERENT_TASK_INSTRUCTION:
             progress_traj.target_progress = [0.0] * len(progress_traj.target_progress)
 
         strategy_value = strategy_used.value if isinstance(strategy_used, DataGenStrat) else strategy_used

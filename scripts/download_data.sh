@@ -106,31 +106,36 @@ retry_until_success() {
 # List of all repos to download (including the ones that were previously commented out)
 # ------------------------------
 repos=(
-  #abraranwar/libero_rfm
-  #abraranwar/agibotworld_alpha_rfm   
-  #abraranwar/usc_koch_rewind_rfm
-  #ykorkmaz/libero_failure_rfm
-  #aliangdw/metaworld
-  #jesbu1/oxe_rfm
-  #jesbu1/galaxea_rfm
-  #jesbu1/molmoact_rfm
-  #jesbu1/ph2d_rfm
-  #jesbu1/epic_rfm
-  #jesbu1/failsafe_rfm
-  #jesbu1/h2r_rfm
-  #jesbu1/roboarena_0825_rfm
-  #jesbu1/oxe_rfm_eval
-  #anqil/rh20t_subset_rfm # can be replaced with anqil/rh20t_rfm full dataset
-  #jesbu1/humanoid_everyday_rfm
-  #jesbu1/motif_rfm
-  #jesbu1/auto_eval_rfm
-  #jesbu1/soar_rfm 
-  #jesbu1/racer_rfm
-  #jesbu1/egodex_rfm
-  #aliangdw/usc_xarm_policy_ranking
-  #aliangdw/usc_franka_policy_ranking
+  abraranwar/libero_rfm
+  abraranwar/agibotworld_alpha_rfm   
+  abraranwar/usc_koch_rewind_rfm
+  ykorkmaz/libero_failure_rfm
+  aliangdw/metaworld
+  jesbu1/oxe_rfm
+  jesbu1/galaxea_rfm
+  jesbu1/molmoact_rfm
+  jesbu1/ph2d_rfm
+  jesbu1/epic_rfm
+  jesbu1/failsafe_rfm
+  jesbu1/h2r_rfm
+  jesbu1/roboarena_0825_rfm
+  jesbu1/oxe_rfm_eval
+  anqil/rh20t_subset_rfm # can be replaced with anqil/rh20t_rfm full dataset
+  jesbu1/humanoid_everyday_rfm
+  jesbu1/motif_rfm
+  jesbu1/auto_eval_rfm
+  jesbu1/soar_rfm 
+  jesbu1/racer_rfm
+  jesbu1/egodex_rfm
+  aliangdw/usc_xarm_policy_ranking
+  aliangdw/usc_franka_policy_ranking
   aliangdw/utd_so101_policy_ranking
   aliangdw/utd_so101_human
+  jesbu1/mit_franka_p-rank_rfm
+  jesbu1/utd_so101_clean_policy_ranking_top
+  jesbu1/utd_so101_clean_policy_ranking_wrist
+  jesbu1/usc_koch_human_robot_paired
+  jesbu1/usc_koch_p_ranking_rfm
 )
 
 # ------------------------------

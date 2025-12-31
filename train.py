@@ -1,6 +1,5 @@
 import json
 import os
-import warnings
 from dataclasses import asdict
 import shutil
 
@@ -8,11 +7,8 @@ import torch
 import torch.distributed as dist
 import yaml
 from rich import print as rprint
-from rich.console import Console
 from rich.panel import Panel
-from omegaconf import OmegaConf, DictConfig
-from hydra import compose, initialize
-from hydra.core.global_hydra import GlobalHydra
+from omegaconf import DictConfig
 from hydra.core.config_store import ConfigStore
 from hydra import main as hydra_main
 
@@ -28,11 +24,12 @@ from rfm.configs.experiment_configs import (
     SaveBestConfig,
     CustomEvaluationConfig,
 )
-from rfm.trainers import ReWiNDTrainer, RFMHeadsTrainer, RFMVQATrainer
+from rfm.trainers import ReWiNDTrainer, RFMHeadsTrainer, RFMVQATrainer, SingleFrameTrainer, ReWiNDSingleFrameTrainer
 from rfm.data.datasets.helpers import show_available_datasets
-from rfm.utils.distributed import is_rank_0, rank_0_print
+from rfm.utils.distributed import is_rank_0
+from rfm.utils.logger import rank_0_info
 from rfm.utils.timer import _timer
-from rfm.utils.save import SaveBestCallback
+from rfm.utils.save import SaveBestCallback, resolve_checkpoint_path
 from rfm.utils.setup_utils import (
     create_training_arguments,
     setup_batch_collator,
@@ -40,7 +37,10 @@ from rfm.utils.setup_utils import (
     setup_model_and_processor,
     setup_peft_model,
 )
+from rfm.data.datasets.base import resolve_dataset_keys
 from rfm.utils.logger import Logger
+from rfm.utils.distributed import banner
+from rfm.utils.config_utils import display_config, convert_hydra_to_dataclass
 import datasets
 
 datasets.logging.set_verbosity_error()
@@ -60,20 +60,35 @@ cs.store(group="logging/save_best", name="save_best_config", node=SaveBestConfig
 cs.store(group="custom_eval", name="custom_eval_config", node=CustomEvaluationConfig)
 
 
+import torch
+
+torch.set_num_threads(64)
+torch.set_num_interop_threads(8)
+
+
 def train(cfg: ExperimentConfig):
     timing_raw = {}
 
     run_name = cfg.training.exp_name
     if cfg.debug:
         run_name += "_debug"
+        cfg.training.logging_steps = 5
+        cfg.training.eval_steps = 5
+        # cfg.data.eval_subset_size = 100
+        cfg.training.custom_eval_steps = 5
+        cfg.logging.save_best.save_every = 5
+        cfg.data.dataloader_num_workers = 0
+        cfg.data.dataloader_persistent_workers = False
 
-    # will initialize wandb later via logger (after logger is constructed)
+        cfg.custom_eval.num_examples_per_quality_pr = 1
+        cfg.custom_eval.policy_ranking_max_tasks = 10
 
     # Set memory management
     torch.backends.cudnn.benchmark = True
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
+    banner("Setting up model and processor")
     # Use the shared function to set up model and processor
     with _timer("time/setup_model_and_processor", timing_raw=timing_raw):
         tokenizer, processor, rfm_model = setup_model_and_processor(cfg.model, peft_config=cfg.peft)
@@ -83,21 +98,14 @@ def train(cfg: ExperimentConfig):
         peft_rfm_model = setup_peft_model(rfm_model, cfg.peft)
     else:
         peft_rfm_model = rfm_model
-        rank_0_print("PEFT not enabled, using full model")
+        rank_0_info("PEFT not enabled, using full model")
 
     if cfg.model.quantization:
         peft_rfm_model = prepare_model_for_kbit_training(peft_rfm_model)
 
-    # Create training arguments from config
-    if cfg.debug:
-        cfg.training.logging_steps = 2
-        cfg.training.eval_steps = 2
-        cfg.data.eval_subset_size = 10
-        cfg.training.custom_eval_steps = 2
-
     output_dir = os.path.join(cfg.training.output_dir, run_name)
 
-    training_args = create_training_arguments(cfg, output_dir)
+    training_args = create_training_arguments(cfg.training, output_dir)
 
     # Handle output directory existence (works with accelerate/distributed training)
     overwrite_output_dir = getattr(cfg.training, "overwrite_output_dir", False)
@@ -109,7 +117,7 @@ def train(cfg: ExperimentConfig):
     # Check if output directory exists (only on rank 0 to avoid race conditions)
     if is_rank_0() and os.path.exists(output_dir):
         if overwrite_output_dir:
-            rank_0_print(f"Output directory {output_dir} already exists. Overwriting (overwrite_output_dir=True)...")
+            rank_0_info(f"Output directory {output_dir} already exists. Overwriting (overwrite_output_dir=True)...")
             shutil.rmtree(output_dir)
         else:
             raise ValueError(
@@ -122,6 +130,7 @@ def train(cfg: ExperimentConfig):
     if dist_initialized:
         dist.barrier()
 
+    banner("Creating output directory", f"Logging to: {output_dir}")
     # Create output directory (all processes need to do this for distributed training)
     # os.makedirs is safe to call multiple times (exist_ok=True)
     os.makedirs(output_dir, exist_ok=True)
@@ -132,12 +141,26 @@ def train(cfg: ExperimentConfig):
 
     # Initialize logger (works with wandb/tensorboard)
     log_to = cfg.logging.log_to
-    logger = Logger(log_to=log_to, output_dir=output_dir, is_main_process=is_rank_0())
+    log_level = cfg.logging.log_level
+    logger = Logger(log_to=log_to, output_dir=output_dir, is_main_process=is_rank_0(), log_level=log_level)
     config_save_path = os.path.join(output_dir, "config.yaml")
     config_dict = asdict(cfg)
     with open(config_save_path, "w") as f:
         yaml.dump(config_dict, f, default_flow_style=False, indent=2)
-    rank_0_print(f"Saved training config to: {config_save_path}")
+    rank_0_info(f"Saved training config to: {config_save_path}")
+
+    # Try to load existing wandb info if resuming training
+    wandb_info_path = os.path.join(output_dir, "wandb_info.json")
+    resume_id = None
+    if os.path.exists(wandb_info_path):
+        try:
+            with open(wandb_info_path) as f:
+                wandb_info = json.load(f)
+            resume_id = wandb_info.get("wandb_id")
+            if resume_id:
+                rank_0_info(f"Found existing wandb run ID: {resume_id}, will resume run")
+        except Exception as e:
+            rank_0_info(f"Could not load wandb info: {e}")
 
     # Initialize wandb via logger if requested
     if "wandb" in (cfg.logging.log_to or []) and is_rank_0():
@@ -148,8 +171,16 @@ def train(cfg: ExperimentConfig):
             entity=cfg.logging.wandb_entity,
             name=run_name,
             config=config_dict,
+            notes=cfg.logging.wandb_notes,
+            mode=cfg.logging.wandb_mode,
+            resume_id=resume_id,
         )
-        rank_0_print(f"Wandb initialized: {run_name}")
+        if resume_id:
+            rank_0_info(f"Wandb resumed run: {run_name} (ID: {resume_id})")
+        else:
+            rank_0_info(f"Wandb initialized: {run_name}")
+        if cfg.logging.wandb_notes:
+            rank_0_info(f"Wandb notes: {cfg.logging.wandb_notes}")
 
     logger.write_wandb_info(output_dir, run_name)
 
@@ -158,35 +189,58 @@ def train(cfg: ExperimentConfig):
     if is_rank_0():
         show_available_datasets()
 
+    banner("Resolving dataset keys")
+    cfg.data.train_datasets = resolve_dataset_keys(cfg.data.train_datasets, split="train")
+    rank_0_info(f"Resolved train datasets: {cfg.data.train_datasets}")
+    
+    if cfg.data.eval_datasets:
+        cfg.data.eval_datasets = resolve_dataset_keys(cfg.data.eval_datasets, split="eval")
+        rank_0_info(f"Resolved eval datasets: {cfg.data.eval_datasets}")
+    
+    # Resolve custom evaluation dataset keys once (replace in place)
+    for eval_type in cfg.custom_eval.eval_types:
+        datasets = getattr(cfg.custom_eval, eval_type, None)
+        if datasets:
+            resolved = resolve_dataset_keys(datasets, split="eval")
+            setattr(cfg.custom_eval, eval_type, resolved)
+            rank_0_info(f"Resolved {eval_type} datasets: {resolved}")
+    
+    rank_0_info("Dataset keys resolved")
+
+    banner("Setting up training and evaluation datasets and collator")
     with _timer("time/setup_data", timing_raw=timing_raw):
         batch_collator = setup_batch_collator(processor, tokenizer, cfg, is_eval=False)
-        train_dataset = setup_dataset(cfg.data, batch_size=cfg.training.per_device_train_batch_size)
+        train_dataset = setup_dataset(cfg.data)
+        num_train_samples = len(train_dataset)
+        rank_0_info(f"Training dataset created with {num_train_samples} samples")
+        rank_0_info(f"=" * 100)
 
     # Set up evaluation dataset if evaluation is enabled
     eval_dataset = None
     if cfg.training.do_eval:
-        dataset_kwargs = {"max_samples": cfg.data.eval_subset_size}
+        if cfg.data.eval_subset_size is not None:
+            dataset_kwargs = {"max_samples": cfg.data.eval_subset_size}
+        else:
+            dataset_kwargs = {}
 
         eval_dataset = setup_dataset(cfg.data, is_eval=True, **dataset_kwargs)
-        rank_0_print(f"Evaluation dataset created with {cfg.data.eval_subset_size} samples")
+        num_eval_samples = len(eval_dataset)
+        rank_0_info(f"Evaluation dataset created with {num_eval_samples} samples")
 
+    banner("Setting up trainer", f"Trainer class: {cfg.trainer_cls}")
     trainer_cls = {
         "rfm_heads": RFMHeadsTrainer,
         "rewind_transformer": ReWiNDTrainer,
         "rfm_vqa": RFMVQATrainer,
         "rewind_scale_transformer": ReWiNDTrainer,
+        "single_frame": SingleFrameTrainer,
+        "rewind_single_frame": ReWiNDSingleFrameTrainer,
     }[cfg.trainer_cls]
-    rank_0_print(f"Trainer class: {trainer_cls}")
 
     # Add SaveBestCallback to automatically save and upload best models
     save_best_cfg = cfg.logging.save_best
     save_callback = SaveBestCallback(
-        metric_names=save_best_cfg.metric_names,
-        greater_is_better=save_best_cfg.greater_is_better,
-        keep_top_k=save_best_cfg.keep_top_k,
-        upload_to_hub=save_best_cfg.upload_to_hub,
-        hub_token=save_best_cfg.hub_token,
-        hub_private=save_best_cfg.hub_private,
+        **asdict(save_best_cfg),
         base_model=cfg.model.base_model_id,
     )
 
@@ -205,15 +259,15 @@ def train(cfg: ExperimentConfig):
     save_callback.setup_trainer_reference(trainer)
 
     # Debug: Check if callback was added
-    rank_0_print(f"🔧 DEBUG: Trainer callbacks: {[type(cb).__name__ for cb in trainer.callback_handler.callbacks]}")
+    rank_0_info(f"🔧 DEBUG: Trainer callbacks: {[type(cb).__name__ for cb in trainer.callback_handler.callbacks]}")
 
     metrics_info = []
     for name, is_better in zip(save_best_cfg.metric_names, save_best_cfg.greater_is_better):
         direction = "↗️ higher" if is_better else "↘️ lower"
         metrics_info.append(f"{name} ({direction})")
 
-    rank_0_print(f"💾 SaveBest monitoring: {', '.join(metrics_info)}")
-    rank_0_print(f"📁 Keeping top {save_best_cfg.keep_top_k} checkpoint(s) and upload(s)")
+    rank_0_info(f"💾 SaveBest monitoring: {', '.join(metrics_info)}")
+    rank_0_info(f"📁 Keeping top {save_best_cfg.keep_top_k} checkpoint(s) and upload(s)")
 
     if is_rank_0():
         print("\n" + "=" * 80)
@@ -236,41 +290,25 @@ def train(cfg: ExperimentConfig):
     if is_rank_0():
         logger.log_scalars(timing_raw)
 
-    rank_0_print(f"Timing raw: {timing_raw}")
-    rank_0_print(f"Training from checkpoint: {cfg.training.resume_from_checkpoint}")
+    rank_0_info(f"Timing raw: {timing_raw}")
+
+    checkpoint_path = resolve_checkpoint_path(cfg.training.resume_from_checkpoint, hub_token=save_best_cfg.hub_token)
+    rank_0_info(f"Training from checkpoint: {checkpoint_path}")
 
     if cfg.debug:
-        rank_0_print("🐛 DEBUG MODE: eval_steps=2, custom_eval_steps=2, eval_subset_size=10")
+        rank_0_info("🐛 DEBUG MODE: eval_steps=2, custom_eval_steps=2, eval_subset_size=10")
 
-    trainer.train(resume_from_checkpoint=cfg.training.resume_from_checkpoint)
+    trainer.train(resume_from_checkpoint=checkpoint_path)
     trainer.save_model(cfg.training.output_dir)
-    rank_0_print(f"Training complete! Check {cfg.training.output_dir} for checkpoints and final model.")
-
-
-def display_config(cfg: ExperimentConfig):
-    """Display the configuration in a nice Rich format."""
-    if not is_rank_0():
-        return  # Only display config on rank 0
-
-    console = Console()
-    console.print(cfg)
-
-
-def convert_hydra_to_dataclass(cfg: DictConfig) -> ExperimentConfig:
-    """Convert Hydra DictConfig to ExperimentConfig dataclass."""
-    # Convert to dict and then to dataclass
-    # Use structured config if available, otherwise convert manually
-    if OmegaConf.is_struct(cfg):
-        cfg_dict = OmegaConf.to_container(cfg, resolve=True, structured_config_mode="convert")
-    else:
-        cfg_dict = OmegaConf.to_container(cfg, resolve=True)
-    return ExperimentConfig(**cfg_dict)
+    rank_0_info(f"Training complete! Check {cfg.training.output_dir} for checkpoints and final model.")
 
 
 @hydra_main(version_base=None, config_path="rfm/configs", config_name="config")
 def main(cfg: DictConfig):
+    banner("Starting RFM Training")
+
     # Convert Hydra config to dataclass
-    exp_cfg = convert_hydra_to_dataclass(cfg)
+    exp_cfg = convert_hydra_to_dataclass(cfg, ExperimentConfig)
 
     # Display the configuration in a nice Rich format
     display_config(exp_cfg)

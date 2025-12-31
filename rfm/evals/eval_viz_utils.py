@@ -6,6 +6,7 @@ Utility functions for visualization in RFM evaluations.
 from typing import Optional
 import os
 import logging
+import tempfile
 import numpy as np
 import matplotlib.pyplot as plt
 import decord
@@ -198,3 +199,49 @@ def extract_frames(video_path: str, fps: float = 1.0) -> np.ndarray:
     except Exception as e:
         logger.error(f"Error extracting frames from {video_path}: {e}")
         return None
+
+
+def create_comparison_plot(frames_a: list, frames_b: list, prediction_type: str) -> str:
+    """Create side-by-side comparison plot of two videos."""
+    plt.rcParams["font.family"] = "DejaVu Sans"
+    plt.rcParams["font.size"] = 16
+
+    fig, axes = plt.subplots(2, min(8, max(len(frames_a), len(frames_b))), figsize=(16, 4))
+
+    if len(axes.shape) == 1:
+        axes = axes.reshape(2, -1)
+
+    # Sample frames to display
+    num_display = min(8, max(len(frames_a), len(frames_b)))
+    indices_a = np.linspace(0, len(frames_a) - 1, num_display, dtype=int) if len(frames_a) > 1 else [0]
+    indices_b = np.linspace(0, len(frames_b) - 1, num_display, dtype=int) if len(frames_b) > 1 else [0]
+
+    # Display frames from video A (top row)
+    for idx, frame_idx in enumerate(indices_a):
+        if frame_idx < len(frames_a):
+            axes[0, idx].imshow(frames_a[frame_idx])
+            axes[0, idx].axis("off")
+            axes[0, idx].set_title(f"Frame {frame_idx}", fontsize=12)
+
+    # Display frames from video B (bottom row)
+    for idx, frame_idx in enumerate(indices_b):
+        if frame_idx < len(frames_b):
+            axes[1, idx].imshow(frames_b[frame_idx])
+            axes[1, idx].axis("off")
+            axes[1, idx].set_title(f"Frame {frame_idx}", fontsize=12)
+
+    # Add row labels
+    fig.text(0.02, 0.75, "Video A", rotation=90, fontsize=18, fontweight="bold", va="center")
+    fig.text(0.02, 0.25, "Video B", rotation=90, fontsize=18, fontweight="bold", va="center")
+
+    title = f"{prediction_type.capitalize()} Comparison: Video A vs Video B"
+    fig.suptitle(title, fontsize=20, fontweight="bold", y=0.98)
+
+    plt.tight_layout()
+
+    # Save to temporary file
+    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+    plt.savefig(tmp_file.name, dpi=150, bbox_inches="tight")
+    plt.close()
+
+    return tmp_file.name

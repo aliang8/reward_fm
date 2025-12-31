@@ -63,8 +63,8 @@ eval_datasets:
   - "jesbu1/usc_koch_p_ranking_rfm"
 
 eval_subsets:
-  - ["libero256_10"]
-  - ["libero_10_failure"]
+  - ["libero256_10", "libero256_goal", "libero256_object", "libero256_spatial"]
+  - ["libero_10_failure", "libero_goal_failure", "libero_object_failure", "libero_spatial_failure"]
   - ["oxe_bc_z_eval", "oxe_berkeley_cable_routing_eval", "oxe_bridge_v2_eval", "oxe_jaco_play_eval", "oxe_toto_eval", "oxe_viola_eval"]
   - ["metaworld_eval"]
   - ["racer_val"]

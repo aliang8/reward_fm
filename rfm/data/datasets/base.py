@@ -17,7 +17,7 @@ logger = get_logger()
 
 def resolve_dataset_keys(
     dataset_keys: Union[List[str], List[List[str]]], split: str
-) -> Union[List[str], List[List[str]]]: 
+) -> Union[List[str], List[List[str]]]:
     resolved_datasets = []
     for key in dataset_keys:
         if key in DATASET_MAP:
@@ -28,7 +28,7 @@ def resolve_dataset_keys(
         else:
             # Not a key, assume it's already a dataset name
             resolved_datasets.append(key)
-    
+
     # Deduplicate: handle both strings and lists
     seen = set()
     seen_lists = []
@@ -68,7 +68,7 @@ class BaseDataset(torch.utils.data.Dataset):
         self.dataset, self._combined_indices = self._load_all_datasets()
 
         # Apply all filters simultaneously
-        excluded_keywords = ["rings", "hands", "flick"]
+        excluded_keywords = ["rings", "flick"]
         min_frames = config.min_frames_per_trajectory
 
         # Check if we're in progress_only mode (sample_type_ratio == [0, 1, 0])

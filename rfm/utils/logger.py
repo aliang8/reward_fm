@@ -190,7 +190,7 @@ class Logger:
         videos_and_figures: List[tuple],
         columns: List[str],
         step: Optional[int] = None,
-        fps: int = 10,
+        fps: int = 6,
     ):
         """
         Log a table where first column can be video (wandb), second a figure, etc.
@@ -199,6 +199,7 @@ class Logger:
         """
         if not self._is_main:
             return
+        
         if self.enabled("wandb"):
             rows = []
             for item in videos_and_figures:
@@ -223,9 +224,10 @@ class Logger:
                             elif isinstance(x, torch.Tensor):
                                 arr = x.detach().cpu().numpy()
                             if arr is not None and arr.ndim == 4:
-                                # Convert T x H x W x C -> T x C x H x W if needed
-                                if arr.shape[-1] in (1, 3):
-                                    arr = np.transpose(arr, (0, 3, 1, 2))
+                                # wandb.Video expects T x H x W x C format
+                                # If last dimension is not 3 (or 1), rearrange from T x C x H x W
+                                if arr.shape[-1] not in (1, 3) and arr.shape[1] in (1, 3):
+                                    arr = np.transpose(arr, (0, 2, 3, 1))  # T x C x H x W -> T x H x W x C
                                 row.append(wandb.Video(arr, fps=fps, format="gif"))
                             else:
                                 # Fallback: store raw value
@@ -263,7 +265,7 @@ class Logger:
     def log_video(self, tag: str, video: Any, fps: int = 10, step: Optional[int] = None):
         """
         Log a single video clip.
-        - For wandb: accepts file path or numpy/torch array; arrays are expected as T x C x H x W or T x H x W x C.
+        - For wandb: accepts file path or numpy/torch array; arrays are expected as T x H x W x C.
         - For TensorBoard: accepts numpy/torch array; converted to 1 x C x T x H x W with values in [0,1].
         """
         if not self._is_main:
@@ -279,9 +281,10 @@ class Logger:
                 elif isinstance(video, torch.Tensor):
                     arr = video.detach().cpu().numpy()
                 if arr is not None and arr.ndim == 4:
-                    # Convert T x H x W x C -> T x C x H x W if needed
-                    if arr.shape[-1] in (1, 3):
-                        arr = np.transpose(arr, (0, 3, 1, 2))
+                    # wandb.Video expects T x H x W x C format
+                    # If last dimension is not 3 (or 1), rearrange from T x C x H x W
+                    if arr.shape[-1] not in (1, 3) and arr.shape[1] in (1, 3):
+                        arr = np.transpose(arr, (0, 2, 3, 1))  # T x C x H x W -> T x H x W x C
                     self._wandb_run.log({tag: wandb.Video(arr, fps=fps, format="mp4")}, step=step)
         # tensorboard
         if self.enabled("tensorboard"):

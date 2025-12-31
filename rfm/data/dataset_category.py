@@ -265,7 +265,7 @@ DATA_SOURCE_CATEGORY = {
         "oxe_bc_z",
         "oxe_dlr_edan_shared_control_converted_externally_to_rlds",
         "roboarena",
-        "auto_eval_rfm",
+        "autoeval",
         # "humanoid_everyday_rfm",
         "galaxea_part1_r1_lite",
         "galaxea_part2_r1_lite",

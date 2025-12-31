@@ -4,26 +4,21 @@ import random
 import re
 import requests
 import json
+import os
 from typing import List, Dict, Optional
 import numpy as np
 
 
-class GeminiVideoAnalyzerHDF5:
-    def __init__(
-        self,
-        api_key: str,
-        task_description: str,
-        max_frames: int = 15,
-        offset: float = 0.5
-    ):
+class GVL:
+    def __init__(self, max_frames: int = 15, offset: float = 0.5):
         """
-        :param api_key:          Gemini API Key
-        :param task_description: Robot task description
         :param max_frames:       If N > max_frames, sample exactly max_frames frames
         :param offset:           Time offset used when sampling frames (seconds/frame). Keep consistent meaning with the frontend if applicable.
         """
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY environment variable must be set")
         self.api_key = api_key
-        self.task_description = task_description
         self.max_frames = max_frames
         self.offset = offset
 
@@ -62,7 +57,9 @@ class GeminiVideoAnalyzerHDF5:
 
         else:
             # total_frames > max_frames
-            print(f"Extracting exactly {self.max_frames} frames from total={total_frames}, ensuring first & last included.")
+            print(
+                f"Extracting exactly {self.max_frames} frames from total={total_frames}, ensuring first & last included."
+            )
             # 1) Always include frame 0 and frame N-1
             temp_indices = [0, total_frames - 1]
 
@@ -79,7 +76,7 @@ class GeminiVideoAnalyzerHDF5:
                 for i in range(inner_count):
                     sample_time = self.offset + i * frame_interval
                     # Middle frame index falls within [1, N-2]
-                    frame_index = int(1 + sample_time)  
+                    frame_index = int(1 + sample_time)
                     if 1 <= frame_index < (total_frames - 1):
                         temp_indices.append(frame_index)
 
@@ -96,13 +93,9 @@ class GeminiVideoAnalyzerHDF5:
                 continue
 
             frame_b64 = base64.b64encode(buffer).decode("utf-8")
-            temp_frames_info.append({
-                "gt_index": len(temp_frames_info) + 1,
-                "base64": frame_b64
-            })
+            temp_frames_info.append({"gt_index": len(temp_frames_info) + 1, "base64": frame_b64})
 
         self.frames_info = temp_frames_info
-
 
     def shuffle_frames(self) -> None:
         """
@@ -113,13 +106,13 @@ class GeminiVideoAnalyzerHDF5:
         for frame, new_idx in zip(self.frames_info, indices):
             frame["shuffled_index"] = new_idx
 
-    def build_prompt_parts(self) -> List[Dict]:
+    def build_prompt_parts(self, task_description: str) -> List[Dict]:
         """
         Build the `parts` list for the request, following the previous logic:
           - First find the frame with gt_index=1 as the initial scene
           - Add prompt1 + that frame
           - Add prompt2
-          - Then, sorted by shuffled_index, append “Frame i:” + the corresponding frame
+          - Then, sorted by shuffled_index, append "Frame i:" + the corresponding frame
         """
         # Find the frame with gt_index = 1
         initial_frame = next((f for f in self.frames_info if f["gt_index"] == 1), None)
@@ -132,7 +125,7 @@ class GeminiVideoAnalyzerHDF5:
 
         prompt1 = (
             f"You are an expert roboticist tasked to predict task completion percentages "
-            f"for frames of a robot for the task of {self.task_description}. "
+            f"for frames of a robot for the task of {task_description}. "
             f"The task completion percentages are between 0 and 100, where 100 corresponds to full task completion. "
             f"Note that these frames are in random order, so please pay attention to the individual frames. "
             f"\nInitial robot scene:\nThis frame:"
@@ -140,7 +133,7 @@ class GeminiVideoAnalyzerHDF5:
 
         prompt2 = (
             f" shows the initial robot scene, where the task completion percentage is 0.\n\n"
-            f"Now, for the task of *{self.task_description}*, output the task completion percentage "
+            f"Now, for the task of *{task_description}*, output the task completion percentage "
             f"for the following frames that are presented in random order. "
             f"Format your response in JSON as follows, making sure to include all frames:\n\n"
             f"[\n"
@@ -152,12 +145,7 @@ class GeminiVideoAnalyzerHDF5:
         # 1) prompt1
         parts.append({"text": prompt1})
         # 2) initial_frame inline
-        parts.append({
-            "inline_data": {
-                "mime_type": "image/jpeg",
-                "data": initial_frame["base64"]
-            }
-        })
+        parts.append({"inline_data": {"mime_type": "image/jpeg", "data": initial_frame["base64"]}})
         # 3) prompt2
         parts.append({"text": prompt2})
 
@@ -166,12 +154,7 @@ class GeminiVideoAnalyzerHDF5:
 
         for i, frame in enumerate(frames_sorted_by_shuffle, start=1):
             parts.append({"text": f"Frame {i}:"})
-            parts.append({
-                "inline_data": {
-                    "mime_type": "image/jpeg",
-                    "data": frame["base64"]
-                }
-            })
+            parts.append({"inline_data": {"mime_type": "image/jpeg", "data": frame["base64"]}})
 
         return parts
 
@@ -180,16 +163,8 @@ class GeminiVideoAnalyzerHDF5:
         Call the Gemini SSE endpoint and return the concatenated streamed text.
         """
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:streamGenerateContent?alt=sse&key={self.api_key}"
-        body = {
-            "contents": [
-                {
-                    "parts": parts
-                }
-            ]
-        }
-        headers = {
-            "Content-Type": "application/json"
-        }
+        body = {"contents": [{"parts": parts}]}
+        headers = {"Content-Type": "application/json"}
 
         full_text = ""
         with requests.post(url, headers=headers, json=body, stream=True) as resp:
@@ -199,7 +174,7 @@ class GeminiVideoAnalyzerHDF5:
                 if not line:
                     continue
                 if line.startswith("data: "):
-                    data_str = line[len("data: "):]
+                    data_str = line[len("data: ") :]
                     if data_str == "[DONE]":
                         break
                     try:
@@ -241,7 +216,7 @@ class GeminiVideoAnalyzerHDF5:
         Try to extract JSON from the model text and json.loads it into a Python list.
         Return None on failure.
         """
-        json_str = GeminiVideoAnalyzerHDF5.extract_json_from_response(model_text)
+        json_str = GVL.extract_json_from_response(model_text)
         if not json_str:
             return None
         try:
@@ -252,10 +227,10 @@ class GeminiVideoAnalyzerHDF5:
         except (json.JSONDecodeError, TypeError):
             return None
 
-    def compute_progress(self, frames_array: np.ndarray) -> List[Optional[float]]:
+    def compute_progress(self, frames_array: np.ndarray, task_description: str = "") -> List[Optional[float]]:
         """
         Compute progress predictions for frames using GVL baseline.
-        
+
         Main pipeline:
           1) Extract and encode frames from the in-memory array
           2) Randomly shuffle
@@ -265,6 +240,7 @@ class GeminiVideoAnalyzerHDF5:
           6) Return completion array aligned with original frame order (gt_index)
 
         :param frames_array: (N, H, W, 3) uint8 array from HDF5 (per-frame video data)
+        :param task_description: Robot task description
         :return: List of completion percentages (0-100) aligned with (gt_index)
         """
         # 1) Extract frames
@@ -277,7 +253,7 @@ class GeminiVideoAnalyzerHDF5:
         self.shuffle_frames()
 
         # 3) Build prompt
-        parts = self.build_prompt_parts()
+        parts = self.build_prompt_parts(task_description)
         if not parts:
             print("[!] build_prompt_parts failed; possibly no frame data")
             return []
@@ -320,4 +296,4 @@ class GeminiVideoAnalyzerHDF5:
             else:
                 task_completion_list.append(None)
         print("Task completion list:", task_completion_list)
-        return task_completion_list #, index_list, gt_index_list
+        return task_completion_list  # , index_list, gt_index_list

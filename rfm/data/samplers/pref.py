@@ -23,18 +23,13 @@ class PrefSampler(RFMBaseSampler):
 
     def __init__(
         self,
-        config,
-        dataset,
-        combined_indices,
-        dataset_success_cutoff_map=None,
         is_evaluation=False,
-        verbose=True,
         **kwargs,
     ):
-        super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
+        super().__init__(**kwargs)
 
-        self.dataset_preference_ratio = config.dataset_preference_ratio
-        self.preference_strategy_ratio: List[float] = config.preference_strategy_ratio
+        self.dataset_preference_ratio = self.config.dataset_preference_ratio
+        self.preference_strategy_ratio: List[float] = self.config.preference_strategy_ratio
         self._has_suboptimal = (
             any(len(indices) > 0 for indices in self.suboptimal_by_task.values()) if self.suboptimal_by_task else False
         )

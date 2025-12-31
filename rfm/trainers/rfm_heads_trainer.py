@@ -732,6 +732,7 @@ class RFMHeadsTrainer(Trainer):
 
         # Create custom eval dataset with the appropriate sampler
         sampler_kwargs = {}
+        sampler_kwargs["random_seed"] = self.config.custom_eval.custom_eval_random_seed
 
         if eval_type == "reward_alignment":
             sampler_kwargs["max_trajectories"] = self.config.custom_eval.reward_alignment_max_trajectories
@@ -1007,7 +1008,9 @@ class RFMHeadsTrainer(Trainer):
             trajectory_id = processed_trajectory_ids[idx]
             # Get all results for this trajectory
             results_for_trajectory = [r for r in eval_results if r.get("id") == trajectory_id]
-            results_for_trajectory.sort(key=lambda r: r.get("metadata", {}).get("subsequence_end", 0))
+            # Sort by frame_step if available (for frame_steps mode)
+            # This orders subsequences from shortest to longest (e.g., [0], [0,1], [0,1,2], ...)
+            results_for_trajectory.sort(key=lambda r: r.get("metadata", {}).get("frame_step", 0))
 
             if not results_for_trajectory:
                 continue
@@ -1933,16 +1936,18 @@ class RFMHeadsTrainer(Trainer):
 
     def _cleanup_eval_dataset(self, dataset, dataloader, eval_results):
         """Clean up dataset, dataloader, and eval_results after evaluation."""
-        logger.info(f"  Cleaning up dataset and eval_results")
+        logger.info(f"  [Rank {get_rank()}] Cleaning up dataset and eval_results")
         # log_memory_usage(f"Before cleanup")
 
         # Aggressive cleanup to prevent memory leaks
         # First, delete eval_results which can be large
+        logger.debug(f"  [Rank {get_rank()}] Deleting eval_results")
         del eval_results
 
         # For the dataloader, we need to ensure worker processes are shut down
         # The accelerator.prepare() wraps the dataloader, so we need to clean both
         # Access the underlying dataloader if it exists and has workers
+        logger.debug(f"  [Rank {get_rank()}] Shutting down dataloader workers")
         try:
             if hasattr(dataloader, "_loader"):
                 # Accelerator-wrapped dataloader
@@ -1952,18 +1957,22 @@ class RFMHeadsTrainer(Trainer):
 
             # Shutdown workers if they exist
             if hasattr(underlying_dl, "_iterator") and underlying_dl._iterator is not None:
+                logger.debug(f"  [Rank {get_rank()}] Calling _shutdown_workers()")
                 underlying_dl._iterator._shutdown_workers()
                 underlying_dl._iterator = None
+                logger.debug(f"  [Rank {get_rank()}] Workers shut down successfully")
         except (AttributeError, RuntimeError) as e:
-            logger.debug(f"Could not explicitly shutdown workers: {e}")
+            logger.debug(f"  [Rank {get_rank()}] Could not explicitly shutdown workers: {e}")
 
         # Delete dataloader and dataset
+        logger.debug(f"  [Rank {get_rank()}] Deleting dataloader and dataset")
         del dataloader, dataset
         # log_memory_usage(f"After deleting dataloader and dataset")
 
         # Force garbage collection
         import gc
 
+        logger.debug(f"  [Rank {get_rank()}] Running garbage collection")
         gc.collect()
         # log_memory_usage(f"After first gc.collect()")
         gc.collect()  # Call twice for cyclic references
@@ -1971,8 +1980,10 @@ class RFMHeadsTrainer(Trainer):
 
         # Clear GPU cache
         if torch.cuda.is_available():
+            logger.debug(f"  [Rank {get_rank()}] Clearing CUDA cache")
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
+        logger.debug(f"  [Rank {get_rank()}] Cleanup complete")
 
     def _run_single_eval_dataset(self, eval_type, eval_dataset, eval_step, output_dir=None):
         """Run evaluation for a single dataset."""
@@ -2035,12 +2046,13 @@ class RFMHeadsTrainer(Trainer):
             dataloader_iter.close()
             del dataloader_iter
 
-            logger.info(f"  Finished processing {len(eval_results)} eval results")
+            logger.info(f"  [Rank {get_rank()}] Finished processing {len(eval_results)} eval results")
             # log_memory_usage(f"After eval loop, before compute_eval_metrics")
 
             # Compute metrics and create visualizations (only on main process)
             eval_metrics = {}
             if self.accelerator.is_main_process:
+                logger.info(f"  [Rank {get_rank()}] Starting metric computation")
                 # Use output_dir parameter if provided, otherwise fall back to config
                 actual_output_dir = output_dir if output_dir is not None else getattr(self.config, "output_dir", None)
                 eval_metrics = self._compute_and_log_eval_metrics(
@@ -2050,15 +2062,22 @@ class RFMHeadsTrainer(Trainer):
                 # Save eval_results as JSON if output_dir is available
                 if actual_output_dir is not None:
                     self._save_eval_results_json(eval_results, eval_type, ds_name, actual_output_dir)
+                logger.info(f"  [Rank {get_rank()}] Finished metric computation")
+            else:
+                logger.info(f"  [Rank {get_rank()}] Skipping metric computation (not main process)")
 
             # Cleanup
+            logger.info(f"  [Rank {get_rank()}] Starting dataset cleanup")
             self._cleanup_eval_dataset(dataset, dataloader, eval_results)
+            logger.info(f"  [Rank {get_rank()}] Finished dataset cleanup")
 
             # log_memory_usage(f"After cleanup for {eval_dataset}")
 
             # Store timing for this eval_dataset
             eval_dataset_time = self.timing_raw.get(timing_key, 0.0)
-            logger.info(f"  Finished {eval_type} for {eval_dataset} (took {eval_dataset_time:.2f} seconds)")
+            logger.info(
+                f"  [Rank {get_rank()}] Finished {eval_type} for {eval_dataset} (took {eval_dataset_time:.2f} seconds)"
+            )
             logger.info("-" * 80)
 
             return eval_metrics, ds_name
@@ -2121,11 +2140,10 @@ class RFMHeadsTrainer(Trainer):
 
                 # log_memory_usage(f"After completing all datasets for {eval_type}")
 
-                # Store timing for this eval_type
-                eval_type_time = self.timing_raw.get(f"time/eval_type/{eval_type}", 0.0)
-                eval_type_timings[f"time/eval_type/{eval_type}"] = eval_type_time
-                logger.info(f"Finished eval_type: {eval_type} (took {eval_type_time:.2f} seconds)")
-                logger.info("=" * 80)
+            eval_type_time = self.timing_raw.get(f"time/eval_type/{eval_type}", 0.0)
+            eval_type_timings[f"time/eval_type/{eval_type}"] = eval_type_time
+            logger.info(f"Finished eval_type: {eval_type} (took {eval_type_time:.2f} seconds)")
+            logger.info("=" * 80)
 
         flat_metrics = {}
         for ds_name, eval_type_metric in metrics.items():
@@ -2196,7 +2214,9 @@ class RFMHeadsTrainer(Trainer):
 
         # Final synchronization barrier to ensure all processes finish together
         if dist.is_initialized():
+            logger.info(f"  [Rank {get_rank()}] Waiting at barrier in _run_custom_evaluations")
             dist.barrier()
+            logger.info(f"  [Rank {get_rank()}] Passed barrier in _run_custom_evaluations")
 
         return callback_metrics
 
@@ -2969,23 +2989,31 @@ class RFMHeadsTrainer(Trainer):
         logger.trace(f"sim_logits_ref_sim: {sim_logits_ref_sim}, shape: {sim_logits_ref_sim.shape}")
         logger.trace(f"sim_logits_ref_diff: {sim_logits_ref_diff}, shape: {sim_logits_ref_diff.shape}")
 
-        # Handle progress_logits
+        # Handle progress_logits - only extract A (reference trajectory)
         progress_logits_ref_sim = None
         progress_logits_ref_diff = None
         if batched_outputs.progress_logits is not None and batched_outputs.progress_logits.get("A") is not None:
             progress_A = batched_outputs.progress_logits["A"]
-            # Split along batch dimension
-            progress_logits_ref_sim = {"A": progress_A[::2], "B": None}
-            progress_logits_ref_diff = {"A": progress_A[1::2], "B": None}
+            # Split along batch dimension: even indices are ref_sim, odd indices are ref_diff
+            progress_A_ref_sim = progress_A[::2]  # A (ref) for ref_sim comparisons
+            progress_A_ref_diff = progress_A[1::2]  # A (ref) for ref_diff comparisons
 
-        # Handle success_logits
+            # Only use A (reference trajectory) for progress prediction
+            progress_logits_ref_sim = {"A": progress_A_ref_sim, "B": None}
+            progress_logits_ref_diff = {"A": progress_A_ref_diff, "B": None}
+
+        # Handle success_logits - only extract A (reference trajectory)
         success_logits_ref_sim = None
         success_logits_ref_diff = None
         if batched_outputs.success_logits is not None and batched_outputs.success_logits.get("A") is not None:
             success_A = batched_outputs.success_logits["A"]
-            # Split along batch dimension
-            success_logits_ref_sim = {"A": success_A[::2], "B": None}
-            success_logits_ref_diff = {"A": success_A[1::2], "B": None}
+            # Split along batch dimension: even indices are ref_sim, odd indices are ref_diff
+            success_A_ref_sim = success_A[::2]  # A (ref) for ref_sim comparisons
+            success_A_ref_diff = success_A[1::2]  # A (ref) for ref_diff comparisons
+
+            # Only use A (reference trajectory) for success prediction
+            success_logits_ref_sim = {"A": success_A_ref_sim, "B": None}
+            success_logits_ref_diff = {"A": success_A_ref_diff, "B": None}
 
         model_outputs_ref_sim = ModelOutput(
             sim_logits=sim_logits_ref_sim,
@@ -3016,83 +3044,39 @@ class RFMHeadsTrainer(Trainer):
         final_loss = similarity_loss
 
         # =========================================================================================
-        # Compute progress and success loss for randomly selected trajectory in both ref_sim and ref_diff
+        # Compute progress and success loss for trajectory A (first trajectory) in both ref_sim and ref_diff
         # =========================================================================================
-        # Randomly select which trajectory (A or B) to predict progress/success for in each comparison
-        # 1.0 means use trajectory A (ref), 0.0 means use trajectory B (sim/diff)
-        num_samples = len(inputs["data_source"])
-        progress_pred_traj_ref_sim = torch.randint(
-            0, 2, (num_samples,), device=self.accelerator.device, dtype=torch.float32
-        )
-        progress_pred_traj_ref_diff = torch.randint(
-            0, 2, (num_samples,), device=self.accelerator.device, dtype=torch.float32
-        )
-        success_pred_traj_ref_sim = torch.randint(
-            0, 2, (num_samples,), device=self.accelerator.device, dtype=torch.float32
-        )
-        success_pred_traj_ref_diff = torch.randint(
-            0, 2, (num_samples,), device=self.accelerator.device, dtype=torch.float32
-        )
+        # Always predict progress/success for trajectory A (first trajectory) for both comparisons
+        # Get target progress and masks for trajectory A in each comparison
+        target_progress_sim_A = inputs["target_progress_sim_A"]  # [batch_size, seq_len]
+        target_progress_sim_A_mask = inputs["target_progress_sim_A_mask"].unsqueeze(-1)  # [batch_size, 1]
+        target_progress_diff_A = inputs["target_progress_diff_A"]  # [batch_size, seq_len]
+        target_progress_diff_A_mask = inputs["target_progress_diff_A_mask"].unsqueeze(-1)  # [batch_size, 1]
 
-        # Get target progress and masks for all trajectories
-        target_progress_ref = inputs["target_progress_ref"]  # [batch_size, seq_len]
-        target_progress_sim = inputs["target_progress_sim"]  # [batch_size, seq_len]
-        target_progress_diff = inputs["target_progress_diff"]  # [batch_size, seq_len]
-        target_progress_ref_mask = inputs["target_progress_ref_mask"].unsqueeze(-1)  # [batch_size, 1]
-        target_progress_sim_mask = inputs["target_progress_sim_mask"].unsqueeze(-1)  # [batch_size, 1]
-        target_progress_diff_mask = inputs["target_progress_diff_mask"].unsqueeze(-1)  # [batch_size, 1]
-
-        # Get success labels for all trajectories
-        success_labels_ref = inputs["success_labels_ref"]  # [batch_size, seq_len]
-        success_labels_sim = inputs["success_labels_sim"]  # [batch_size, seq_len]
-        success_labels_diff = inputs["success_labels_diff"]  # [batch_size, seq_len]
+        # Get success labels for trajectory A in each comparison
+        success_labels_sim_A = inputs["success_labels_sim_A"]  # [batch_size, seq_len]
+        success_labels_diff_A = inputs["success_labels_diff_A"]  # [batch_size, seq_len]
 
         if self.config.model.train_progress_head and self.config.training.predict_sim_progress:
-            # Get progress logits for both comparisons
+            # Get progress logits for trajectory A (first trajectory) in both comparisons
             progress_logits_ref_sim = model_outputs_ref_sim.progress_logits
             progress_logits_ref_diff = model_outputs_ref_diff.progress_logits
-            progress_pred_ref_sim_A = progress_logits_ref_sim["A"]  # [batch_size, seq_len]
-            progress_pred_ref_sim_B = progress_logits_ref_sim.get("B")  # [batch_size, seq_len] or None
-            progress_pred_ref_diff_A = progress_logits_ref_diff["A"]  # [batch_size, seq_len]
-            progress_pred_ref_diff_B = progress_logits_ref_diff.get("B")  # [batch_size, seq_len] or None
+            progress_pred_ref_sim = progress_logits_ref_sim["A"]  # [batch_size, seq_len]
+            progress_pred_ref_diff = progress_logits_ref_diff["A"]  # [batch_size, seq_len]
 
-            # For ref_sim: select trajectory A (ref) or B (sim) based on random indicator
-            # progress_pred_traj_ref_sim[i] == 1.0 means use A (ref), 0.0 means use B (sim)
-            ref_sim_use_A = (progress_pred_traj_ref_sim == 1.0).float().unsqueeze(-1)  # [batch_size, 1]
-            target_progress_ref_sim = ref_sim_use_A * target_progress_ref + (1 - ref_sim_use_A) * target_progress_sim
-            target_progress_ref_sim_mask = (
-                ref_sim_use_A * target_progress_ref_mask + (1 - ref_sim_use_A) * target_progress_sim_mask
-            )
-            progress_pred_ref_sim = ref_sim_use_A * progress_pred_ref_sim_A
-            if progress_pred_ref_sim_B is not None:
-                progress_pred_ref_sim = progress_pred_ref_sim + (1 - ref_sim_use_A) * progress_pred_ref_sim_B
-
-            # For ref_diff: select trajectory A (ref) or B (diff) based on random indicator
-            # progress_pred_traj_ref_diff[i] == 1.0 means use A (ref), 0.0 means use B (diff)
-            ref_diff_use_A = (progress_pred_traj_ref_diff == 1.0).float().unsqueeze(-1)  # [batch_size, 1]
-            target_progress_ref_diff = (
-                ref_diff_use_A * target_progress_ref + (1 - ref_diff_use_A) * target_progress_diff
-            )
-            target_progress_ref_diff_mask = (
-                ref_diff_use_A * target_progress_ref_mask + (1 - ref_diff_use_A) * target_progress_diff_mask
-            )
-            progress_pred_ref_diff = ref_diff_use_A * progress_pred_ref_diff_A
-            if progress_pred_ref_diff_B is not None:
-                progress_pred_ref_diff = progress_pred_ref_diff + (1 - ref_diff_use_A) * progress_pred_ref_diff_B
-
-            # Compute progress loss for ref_sim
+            # Compute progress loss for ref_sim (using trajectory A)
             progress_loss_ref_sim, spearman_corr_ref_sim, progress_metrics_ref_sim = self._compute_progress_loss_helper(
                 progress_pred_ref_sim,
-                target_progress_ref_sim,
-                target_progress_ref_sim_mask,
+                target_progress_sim_A,
+                target_progress_sim_A_mask,
             )
 
-            # Compute progress loss for ref_diff
+            # Compute progress loss for ref_diff (using trajectory A)
             progress_loss_ref_diff, spearman_corr_ref_diff, progress_metrics_ref_diff = (
                 self._compute_progress_loss_helper(
                     progress_pred_ref_diff,
-                    target_progress_ref_diff,
-                    target_progress_ref_diff_mask,
+                    target_progress_diff_A,
+                    target_progress_diff_A_mask,
                 )
             )
 
@@ -3101,65 +3085,29 @@ class RFMHeadsTrainer(Trainer):
             final_loss = similarity_loss + total_progress_loss
 
         if self.config.model.train_success_head:
-            # Get success logits for both comparisons
+            # Get success logits for trajectory A (first trajectory) in both comparisons
             success_logits_ref_sim = model_outputs_ref_sim.success_logits
             success_logits_ref_diff = model_outputs_ref_diff.success_logits
-            success_pred_ref_sim_A = success_logits_ref_sim["A"]  # [batch_size, seq_len]
-            success_pred_ref_sim_B = success_logits_ref_sim.get("B")  # [batch_size, seq_len] or None
-            success_pred_ref_diff_A = success_logits_ref_diff["A"]  # [batch_size, seq_len]
-            success_pred_ref_diff_B = success_logits_ref_diff.get("B")  # [batch_size, seq_len] or None
+            success_pred_ref_sim = success_logits_ref_sim["A"]  # [batch_size, seq_len]
+            success_pred_ref_diff = success_logits_ref_diff["A"]  # [batch_size, seq_len]
 
-            # For ref_sim: select trajectory A (ref) or B (sim) based on random indicator
-            # success_pred_traj_ref_sim[i] == 1.0 means use A (ref), 0.0 means use B (sim)
-            ref_sim_use_A_success = (success_pred_traj_ref_sim == 1.0).float().unsqueeze(-1)  # [batch_size, 1]
-            target_progress_ref_sim_success = (
-                ref_sim_use_A_success * target_progress_ref + (1 - ref_sim_use_A_success) * target_progress_sim
-            )
-            success_labels_ref_sim = (
-                ref_sim_use_A_success * success_labels_ref + (1 - ref_sim_use_A_success) * success_labels_sim
-            )
-            target_progress_ref_sim_mask_success = (
-                ref_sim_use_A_success * target_progress_ref_mask
-                + (1 - ref_sim_use_A_success) * target_progress_sim_mask
-            )
-            success_pred_ref_sim = ref_sim_use_A_success * success_pred_ref_sim_A
-            if success_pred_ref_sim_B is not None:
-                success_pred_ref_sim = success_pred_ref_sim + (1 - ref_sim_use_A_success) * success_pred_ref_sim_B
-
-            # For ref_diff: select trajectory A (ref) or B (diff) based on random indicator
-            # success_pred_traj_ref_diff[i] == 1.0 means use A (ref), 0.0 means use B (diff)
-            ref_diff_use_A_success = (success_pred_traj_ref_diff == 1.0).float().unsqueeze(-1)  # [batch_size, 1]
-            target_progress_ref_diff_success = (
-                ref_diff_use_A_success * target_progress_ref + (1 - ref_diff_use_A_success) * target_progress_diff
-            )
-            success_labels_ref_diff = (
-                ref_diff_use_A_success * success_labels_ref + (1 - ref_diff_use_A_success) * success_labels_diff
-            )
-            target_progress_ref_diff_mask_success = (
-                ref_diff_use_A_success * target_progress_ref_mask
-                + (1 - ref_diff_use_A_success) * target_progress_diff_mask
-            )
-            success_pred_ref_diff = ref_diff_use_A_success * success_pred_ref_diff_A
-            if success_pred_ref_diff_B is not None:
-                success_pred_ref_diff = success_pred_ref_diff + (1 - ref_diff_use_A_success) * success_pred_ref_diff_B
-
-            # Compute success loss for ref_sim
+            # Compute success loss for ref_sim (using trajectory A)
             success_loss_ref_sim, success_accuracy_ref_sim, success_auprc_ref_sim, success_metrics_ref_sim = (
                 self._compute_success_loss_helper(
                     success_pred_ref_sim,
-                    target_progress_ref_sim_success,
-                    success_labels_ref_sim,
-                    progress_loss_mask=target_progress_ref_sim_mask_success,
+                    target_progress_sim_A,
+                    success_labels_sim_A,
+                    progress_loss_mask=target_progress_sim_A_mask,
                 )
             )
 
-            # Compute success loss for ref_diff
+            # Compute success loss for ref_diff (using trajectory A)
             success_loss_ref_diff, success_accuracy_ref_diff, success_auprc_ref_diff, success_metrics_ref_diff = (
                 self._compute_success_loss_helper(
                     success_pred_ref_diff,
-                    target_progress_ref_diff_success,
-                    success_labels_ref_diff,
-                    progress_loss_mask=target_progress_ref_diff_mask_success,
+                    target_progress_diff_A,
+                    success_labels_diff_A,
+                    progress_loss_mask=target_progress_diff_A_mask,
                 )
             )
 
@@ -3223,10 +3171,10 @@ class RFMHeadsTrainer(Trainer):
                     and "masked_progress_accuracy" in progress_metrics_ref_diff
                 ):
                     progress_accuracy_ref_sim = progress_metrics_ref_sim["masked_progress_accuracy"].sum() / (
-                        target_progress_ref_sim_mask.sum() + 1e-8
+                        target_progress_sim_A_mask.sum() + 1e-8
                     )
                     progress_accuracy_ref_diff = progress_metrics_ref_diff["masked_progress_accuracy"].sum() / (
-                        target_progress_ref_diff_mask.sum() + 1e-8
+                        target_progress_diff_A_mask.sum() + 1e-8
                     )
                     avg_progress_accuracy = (progress_accuracy_ref_sim + progress_accuracy_ref_diff) / 2.0
                     outputs_dict[f"{prefix}/sim_prog_accuracy"] = avg_progress_accuracy.item()

@@ -65,7 +65,7 @@ DATASET_CATEGORY = {
         "jesbu1_oxe_rfm_oxe_dlr_edan_shared_control_converted_externally_to_rlds",
         # "roboarena",
         "auto_eval_rfm",
-        "jesbu1_epic_rfm_epic"
+        "jesbu1_epic_rfm_epic",
     ],
     "paired": [
         "jesbu1_h2r_rfm_h2r",
@@ -81,11 +81,11 @@ DATASET_MAP = {
         "train": [
             "jesbu1_molmoact_rfm_molmoact_dataset_household",
             "jesbu1_molmoact_rfm_molmoact_dataset_tabletop",
-            "jesbu1_egodex_rfm_egodex_part1",
-            "jesbu1_egodex_rfm_egodex_part2",
-            "jesbu1_egodex_rfm_egodex_part3",
-            "jesbu1_egodex_rfm_egodex_part4",
-            "jesbu1_egodex_rfm_egodex_part5",
+            # "jesbu1_egodex_rfm_egodex_part1",
+            # "jesbu1_egodex_rfm_egodex_part2",
+            # "jesbu1_egodex_rfm_egodex_part3",
+            # "jesbu1_egodex_rfm_egodex_part4",
+            # "jesbu1_egodex_rfm_egodex_part5",
             "abraranwar_agibotworld_alpha_rfm_agibotworld",
             "jesbu1_humanoid_everyday_rfm_humanoid_everyday_rfm",
             "jesbu1_epic_rfm_epic",
@@ -95,9 +95,9 @@ DATASET_MAP = {
             "jesbu1_galaxea_rfm_galaxea_part4_r1_lite",
             "jesbu1_galaxea_rfm_galaxea_part5_r1_lite",
         ],
-        "eval": [
-            "jesbu1_egodex_rfm_egodex_test",
-        ],
+        # "eval": [
+        #    #"jesbu1_egodex_rfm_egodex_test",
+        # ],
     },
     "oxe": {
         "train": [
@@ -177,14 +177,15 @@ DATASET_MAP = {
     },
     "paired": {
         "train": [
-            "jesbu1_h2r_rfm_h2r",
-            "jesbu1_motif_rfm_motif_rfm",
+            # "jesbu1_h2r_rfm_h2r",
+            # "jesbu1_motif_rfm_motif_rfm",
             "anqil_rh20t_subset_rfm_rh20t_human",
             "anqil_rh20t_subset_rfm_rh20t_robot",
-            "jesbu1_ph2d_rfm_ph2d",
+            # "jesbu1_ph2d_rfm_ph2d",
         ],
         "eval": [
             # "jesbu1_egodex_rfm_egodex_test",
+            # ["anqil_rh20t_subset_rfm_rh20t_human", "anqil_rh20t_subset_rfm_rh20t_robot"],
             "aliangdw_utd_so101_human_utd_so101_human",
             "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
         ],
@@ -209,11 +210,11 @@ DATASET_MAP = {
                 "anqil_rh20t_subset_rfm_rh20t_human",
                 "anqil_rh20t_subset_rfm_rh20t_robot",
             ],
-            [
-                "aliangdw_utd_so101_human_utd_so101_human",
-                "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
-            ],
-            ["jesbu1_hand_paired_rfm_hand_paired_robot", "jesbu1_hand_paired_rfm_hand_paired_human"],
+            # [
+            #     "aliangdw_utd_so101_human_utd_so101_human",
+            #     "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
+            # ],
+            # ["jesbu1_hand_paired_rfm_hand_paired_robot", "jesbu1_hand_paired_rfm_hand_paired_human"],
         ]
     },
     "franka": {
@@ -265,13 +266,13 @@ DATA_SOURCE_CATEGORY = {
         "oxe_dlr_edan_shared_control_converted_externally_to_rlds",
         "roboarena",
         "auto_eval_rfm",
-        "humanoid_everyday_rfm",
+        # "humanoid_everyday_rfm",
         "galaxea_part1_r1_lite",
         "galaxea_part2_r1_lite",
         "galaxea_part3_r1_lite",
         "galaxea_part4_r1_lite",
         "galaxea_part5_r1_lite",
-        "galaxea"
+        "epic",
     ],
     "paired": [
         "h2r",

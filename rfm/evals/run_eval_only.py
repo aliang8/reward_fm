@@ -32,7 +32,7 @@ from omegaconf import OmegaConf, DictConfig
 from rfm.configs.eval_configs import OfflineEvalConfig
 from rfm.configs.experiment_configs import ExperimentConfig
 from rfm.utils.save import load_model_from_hf, load_wandb_run_info
-from rfm.trainers import RFMHeadsTrainer, RFMVQATrainer, SingleFrameTrainer
+from rfm.trainers import RFMHeadsTrainer, RFMVQATrainer
 from rfm.utils.distributed import is_rank_0
 from rfm.utils.logger import get_logger
 from rfm.utils.config_utils import display_config, convert_hydra_to_dataclass
@@ -53,7 +53,7 @@ def create_eval_trainer(
 ):
     """Create trainer configured for evaluation only.
 
-    Supports RFMHeadsTrainer, SingleFrameTrainer, and RFMVQATrainer based on config.trainer_cls.
+    Supports RFMHeadsTrainer and RFMVQATrainer based on config.trainer_cls.
     """
     logger.info("Setting up trainer for evaluation...")
 
@@ -78,16 +78,7 @@ def create_eval_trainer(
     # Determine trainer class based on config (check trainer_cls first, then model_type)
     trainer_cls_name = getattr(cfg, "trainer_cls", None) or "rfm_heads"
 
-    if trainer_cls_name == "single_frame":
-        trainer = SingleFrameTrainer(
-            model=model,
-            args=training_args,
-            train_dataset=None,  # Not needed for eval
-            eval_dataset=None,  # Will be created in _run_custom_evaluations
-            data_collator=batch_collator,
-            config=cfg,
-        )
-    elif cfg.model.model_type == "vqa":
+    if cfg.model.model_type == "vqa":
         trainer = RFMVQATrainer(
             model=model,
             args=training_args,

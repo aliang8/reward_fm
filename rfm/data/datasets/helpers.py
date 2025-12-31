@@ -359,59 +359,65 @@ def randomly_subsample_frames(
     return subsampled_frames, indices
 
 
-def subsample_segment_frames_with_middle(
-    frames: np.ndarray,
-    max_frames: int,
+def get_segment_indices_with_middle(
+    num_frames_total: int,
     start_idx: int,
-    end_idx: int,
+    end_idx: Optional[int],
     middle_idx: Optional[int] = None,
-    method: str = "linspace",
-) -> tuple[np.ndarray, int, int, int, list[int]]:
-    """Subsample frames following the path: start -> middle -> end.
+    max_frames: int = 8,
+) -> list[int]:
+    """Get frame indices following the path: start -> middle -> end, constrained by max_frames.
 
     Logic:
-    1. If middle_idx is None, set it to end_idx (simple start -> end path)
-    2. Enumerate all frames from start -> middle
-    3. Enumerate all frames from middle -> end
-    4. Join the two segments together
-    5. Apply random or linspace subsampling to the combined segment
+    1. Handle edge cases for max_frames == 1 (only start_idx) or max_frames == 2 (start_idx and end_idx)
+    2. Handle edge cases for num_frames_total == 1 or 2
+    3. If middle_idx is None, set it to end_idx (simple start -> end path)
+    4. Enumerate all frames from start -> middle
+    5. Enumerate all frames from middle -> end
+    6. Join the two segments together, removing duplicate middle
+    7. Subsample to max_frames using linspace
 
     Args:
-        frames: Input frames array
-        max_frames: Maximum number of frames to subsample
+        num_frames_total: Total number of frames in the trajectory
         start_idx: Start index
-        end_idx: End index
+        end_idx: End index (can be None for max_frames == 1 case)
         middle_idx: Optional middle index. If None, set to end_idx (simple start -> end path)
-        method: Subsampling method ("linspace" or "random")
+        max_frames: Maximum number of indices to return
 
     Returns:
-        Tuple of (subsampled_frames, start_idx, middle_idx, end_idx, subsampled_indices)
-        where subsampled_indices are indices into the original frames array, ordered as start -> middle -> end
+        List of indices into the original frames array, ordered as start -> middle -> end, constrained to max_frames
     """
-    num_frames_total = len(frames)
+    # Handle edge case: num_frames_total == 1
+    if num_frames_total == 1:
+        return [0]
+
+    # Handle edge case: num_frames_total == 2
+    if num_frames_total == 2:
+        if max_frames == 1:
+            return [0]
+        return [0, 1]
 
     # Ensure indices are valid (allow end_idx < start_idx for reverse progress)
     start_idx = max(0, min(start_idx, num_frames_total - 1))
 
-    # Handle edge cases for max_frames == 1 or 2
-    if max_frames == 1:
-        # Just return the single frame at start_idx
-        indices = [start_idx]
-        subsampled_frames = frames[start_idx : start_idx + 1]
-        return subsampled_frames, start_idx, None, None, indices
+    # Handle edge case: max_frames == 1 (only start_idx, end_idx and middle_idx are None)
+    if end_idx is None or max_frames == 1:
+        return [start_idx]
 
     end_idx = max(0, min(end_idx, num_frames_total - 1))
 
-    if max_frames == 2:
-        indices = [start_idx, end_idx]
-        subsampled_frames = frames[indices]
-        return subsampled_frames, start_idx, None, end_idx, indices
-
-    # If middle_idx is not provided, set it to end_idx (simple start -> end path)
+    # Handle edge case: max_frames == 2 (start_idx and end_idx, no middle)
     if middle_idx is None:
-        middle_idx = end_idx
-    else:
-        middle_idx = max(0, min(middle_idx, num_frames_total - 1))
+        # Simple start -> end path
+        if start_idx <= end_idx:
+            indices = list(range(start_idx, end_idx + 1))
+        else:
+            # Reverse: end -> start
+            indices = list(range(end_idx, start_idx + 1))
+            indices.reverse()
+        return indices
+
+    middle_idx = max(0, min(middle_idx, num_frames_total - 1))
 
     # Enumerate frames from start -> middle
     if start_idx <= middle_idx:
@@ -444,18 +450,7 @@ def subsample_segment_frames_with_middle(
         # All indices are the same
         combined_indices = [start_idx]
 
-    # Extract the frames corresponding to combined_indices
-    combined_frames = frames[combined_indices]
-
-    if method == "random":
-        subsampled_frames, relative_indices = randomly_subsample_frames(combined_frames, num_frames=max_frames)
-    else:
-        subsampled_frames, relative_indices = linspace_subsample_frames(combined_frames, num_frames=max_frames)
-
-    # Map relative indices back to original frame indices
-    actual_indices = [combined_indices[i] for i in relative_indices]
-
-    return subsampled_frames, start_idx, middle_idx, end_idx, actual_indices
+    return combined_indices
 
 
 def convert_absolute_to_relative_progress(absolute_progress: List[float]) -> List[float]:

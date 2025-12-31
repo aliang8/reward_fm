@@ -16,12 +16,13 @@ Usage:
         custom_eval.eval_types=[reward_alignment] \
         custom_eval.reward_alignment=[aliangdw_metaworld_metaworld_eval]
     
-    # Run VLAC progress evaluation
-    uv run python rfm/evals/run_baseline_eval.py \
+    # Run VLAC progress evaluation (requires separate dependency set due to trl conflict)
+    uv run --project pyproject-vlac.toml python rfm/evals/run_baseline_eval.py \
         baseline_type=vlac \
-        vlac_model_path=/path/to/vlac/model \
+        vlac_model_path=InternRobotics/VLAC \
         custom_eval.eval_types=[reward_alignment] \
         custom_eval.reward_alignment=[aliangdw_metaworld_metaworld_eval]
+
 """
 
 import copy
@@ -38,7 +39,8 @@ from tqdm import tqdm
 
 from rfm.configs.eval_configs import BaselineEvalConfig
 from rfm.configs.experiment_configs import DataConfig, CustomEvaluationConfig
-from rfm.utils.setup_utils import setup_custom_eval_dataset, resolve_dataset_keys
+from rfm.utils.setup_utils import setup_custom_eval_dataset
+from rfm.data.datasets.base import resolve_dataset_keys
 from rfm.utils.distributed import is_rank_0
 from rfm.utils.logger import get_logger
 from rfm.utils.config_utils import display_config, convert_hydra_to_dataclass

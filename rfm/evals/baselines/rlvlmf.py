@@ -10,9 +10,17 @@ from typing import List, Dict, Any, Optional, Tuple
 from PIL import Image
 import numpy as np
 
-import google.generativeai as genai
-import openai
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
 
+try:
+    import openai
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
 
 class RLVLMF:
     """RL-VLM-F baseline for preference comparison between trajectories.

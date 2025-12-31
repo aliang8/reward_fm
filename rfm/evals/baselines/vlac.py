@@ -7,6 +7,20 @@ It provides robust evaluation capabilities for task progress prediction and
 task completion verification based on images and task descriptions.
 
 Reference: https://github.com/InternRobotics/VLAC
+Model: https://huggingface.co/InternRobotics/VLAC
+
+Downloading the model:
+    # Option 1: Use Hugging Face CLI
+    pip install huggingface_hub
+    huggingface-cli download InternRobotics/VLAC
+    
+    # Option 2: Use Python API (automatic in VLAC.__init__)
+    from rfm.evals.baselines.vlac import VLAC
+    model = VLAC(model_path="InternRobotics/VLAC")  # Auto-downloads if not found
+    
+    # Option 3: Use download function directly
+    from rfm.evals.baselines.vlac import download_vlac_model
+    model_path = download_vlac_model(local_dir="./models/vlac")
 """
 
 import os
@@ -17,6 +31,48 @@ import cv2
 
 from evo_vlac import GAC_model
 from evo_vlac.utils.video_tool import compress_video
+
+try:
+    from huggingface_hub import snapshot_download
+    HF_AVAILABLE = True
+except ImportError:
+    HF_AVAILABLE = False
+
+
+def download_vlac_model(
+    repo_id: str = "InternRobotics/VLAC",
+    cache_dir: Optional[str] = None,
+    local_dir: Optional[str] = None
+) -> str:
+    """
+    Download VLAC model from Hugging Face.
+    
+    Args:
+        repo_id: Hugging Face repository ID (default: "InternRobotics/VLAC")
+        cache_dir: Optional cache directory for Hugging Face downloads
+        local_dir: Optional local directory to download model to (if None, uses cache)
+    
+    Returns:
+        Path to the downloaded model directory
+    
+    Example:
+        >>> model_path = download_vlac_model()
+        >>> model_path = download_vlac_model(local_dir="./models/vlac")
+    """
+    if not HF_AVAILABLE:
+        raise ImportError(
+            "huggingface_hub is required to download models. Install with: pip install huggingface_hub"
+        )
+    
+    print(f"Downloading VLAC model from {repo_id}...")
+    model_path = snapshot_download(
+        repo_id=repo_id,
+        cache_dir=cache_dir,
+        local_dir=local_dir,
+        local_dir_use_symlinks=False  # Use actual files, not symlinks
+    )
+    print(f"Model downloaded to: {model_path}")
+    return model_path
 
 
 class VLAC:
@@ -36,13 +92,16 @@ class VLAC:
         top_k: int = 1,
         batch_num: int = 5,
         skip: int = 5,
-        frame_skip: bool = True
+        frame_skip: bool = True,
+        auto_download: bool = True
     ):
         """
         Initialize VLAC model.
         
         Args:
-            model_path: Path to local VLAC model checkpoint
+            model_path: Path to local VLAC model checkpoint, or Hugging Face repo ID 
+                       (e.g., "InternRobotics/VLAC"). If repo ID and model doesn't exist 
+                       locally, will download automatically if auto_download=True.
             device: Device to run model on (e.g., "cuda:0")
             model_type: Model type (default: "internvl2")
             temperature: Temperature for generation
@@ -50,7 +109,33 @@ class VLAC:
             batch_num: Batch number for processing
             skip: Pair-wise step size
             frame_skip: Whether to skip frames for efficiency
+            auto_download: If True and model_path is a Hugging Face repo ID, automatically 
+                          download the model if not found locally
         """
+        # Check if model_path exists locally first
+        if not os.path.exists(model_path):
+            # If not found locally and looks like a Hugging Face repo ID (contains "/" but not an absolute path)
+            # and auto_download is enabled, download from Hugging Face
+            is_hf_repo_id = (
+                "/" in model_path and 
+                not os.path.isabs(model_path) and 
+                not model_path.startswith(".") and
+                not model_path.startswith("~")
+            )
+            
+            if is_hf_repo_id and auto_download:
+                if not HF_AVAILABLE:
+                    raise ImportError(
+                        "huggingface_hub is required to download models. Install with: pip install huggingface_hub"
+                    )
+                print(f"Model path '{model_path}' not found locally. Downloading from Hugging Face...")
+                model_path = download_vlac_model(repo_id=model_path)
+            elif not is_hf_repo_id:
+                raise FileNotFoundError(
+                    f"Model path '{model_path}' does not exist. "
+                    f"To download from Hugging Face, use model_path='InternRobotics/VLAC'"
+                )
+        
         self.model_path = model_path
         self.device = device
         self.model_type = model_type
@@ -172,4 +257,47 @@ class VLAC:
             out.write(frame_bgr)
         
         out.release()
+
+
+if __name__ == "__main__":
+    """Command-line interface for downloading VLAC model."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Download VLAC model from Hugging Face")
+    parser.add_argument(
+        "--repo-id",
+        type=str,
+        default="InternRobotics/VLAC",
+        help="Hugging Face repository ID (default: InternRobotics/VLAC)"
+    )
+    parser.add_argument(
+        "--local-dir",
+        type=str,
+        default=None,
+        help="Local directory to download model to (default: uses Hugging Face cache)"
+    )
+    parser.add_argument(
+        "--cache-dir",
+        type=str,
+        default=None,
+        help="Cache directory for Hugging Face downloads (default: uses default cache)"
+    )
+    
+    args = parser.parse_args()
+    
+    try:
+        model_path = download_vlac_model(
+            repo_id=args.repo_id,
+            cache_dir=args.cache_dir,
+            local_dir=args.local_dir
+        )
+        print(f"\n✓ Model successfully downloaded to: {model_path}")
+        print(f"\nYou can now use it with:")
+        print(f"  VLAC(model_path='{model_path}')")
+        if args.local_dir:
+            print(f"  or")
+            print(f"  VLAC(model_path='{args.local_dir}')")
+    except Exception as e:
+        print(f"Error downloading model: {e}")
+        exit(1)
 

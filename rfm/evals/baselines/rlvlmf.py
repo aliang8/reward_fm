@@ -123,6 +123,9 @@ class RLVLMF:
         else:  # tie
             prediction_prob = 0.5
 
+        # preference_pred: 1 if chosen is selected, 0 otherwise
+        preference_pred = 1.0 if vlm_chose_chosen is True else 0.0
+
         processing_time = time.time() - start_time
 
         # Build result with all metadata
@@ -130,6 +133,7 @@ class RLVLMF:
             "is_correct": is_correct,
             "vlm_preference": preference,
             "prediction_prob": prediction_prob,
+            "preference_pred": preference_pred,
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "task": task_description,
             "num_chosen_frames": len(chosen_images),

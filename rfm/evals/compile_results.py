@@ -30,7 +30,7 @@ def compute_eval_metrics(
     data_source: Optional[str] = None,
 ):
     if eval_type == "quality_preference" or eval_type == "quality_preference_roboarena":
-        return run_quality_preference_eval(results)
+        return run_quality_preference_eval(results, data_source=data_source)
     elif eval_type == "reward_alignment":
         return run_reward_alignment_eval_per_trajectory(
             results, progress_pred_type, is_discrete_mode, num_bins, data_source
@@ -43,28 +43,22 @@ def compute_eval_metrics(
         return run_similarity_score_eval(results)
 
 
-def run_quality_preference_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def run_quality_preference_eval(results: List[Dict[str, Any]], data_source: Optional[str] = None) -> Dict[str, Any]:
     """Run quality_preference evaluation analysis.
 
     Groups results by task and quality labels (or partial_success for RoboArena),
     computes preference accuracy per group and aggregate.
     Returns metrics, task_groups, and task_details similar to policy_ranking.
     """
+    use_partial_success = data_source and "roboarena" in str(data_source).lower()
 
-    # First, gather all logits and labels, convert to arrays
+    # First, gather all predictions and labels, convert to arrays
+    # Note: preference_pred is already binary (0/1) from the trainer
     all_preds = []
     all_labels = []
     all_tasks = []
     all_quality_combos = []
     valid_indices = []
-    use_partial_success = False
-
-    # Check if we should use partial_success (RoboArena) or quality_label
-    if results and len(results) > 0:
-        first_r = results[0]
-        chosen_meta = first_r.get("metadata", {}).get("chosen_metadata", {})
-        if chosen_meta and "partial_success" in chosen_meta:
-            use_partial_success = True
 
     for idx, r in enumerate(results):
         pred = r.get("preference_pred")
@@ -108,10 +102,10 @@ def run_quality_preference_eval(results: List[Dict[str, Any]]) -> Dict[str, Any]
         return {"error": "No valid predictions found"}, {}, {}
 
     # Convert to numpy arrays for vectorized operations
+    # preference_pred is already binary (0/1), so no sigmoid conversion needed
     all_preds = np.array(all_preds)
     all_labels = np.array(all_labels)
-    # Convert logits to binary predictions (1 if pred > 0, else 0)
-    binary_preds = (all_preds > 0).astype(float)
+    binary_preds = all_preds.astype(float)
 
     # Group results by task (using valid indices to map back)
     task_groups = defaultdict(list)

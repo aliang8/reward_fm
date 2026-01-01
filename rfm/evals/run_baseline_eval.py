@@ -174,27 +174,15 @@ def process_preference_sample(sample: PreferenceSample, model: RLVLMF) -> Dict[s
     chosen_images = convert_frames_to_pil_images(chosen_traj.frames)
     rejected_images = convert_frames_to_pil_images(rejected_traj.frames)
 
-    task = chosen_traj.task or rejected_traj.task or ""
+    assert chosen_traj.task == rejected_traj.task, "Chosen and rejected trajectories must have the same task"
 
     # Compute preference
-    result = model.compute_preference(chosen_images, rejected_images, task)
+    result = model.compute_preference(
+        chosen_images=chosen_images,
+        rejected_images=rejected_images,
+        task_description=chosen_traj.task,
+    )
 
-    # Derive preference label from quality labels if available
-    preference_label = None
-    chosen_quality = chosen_traj.quality_label
-    rejected_quality = rejected_traj.quality_label
-    if chosen_quality and rejected_quality:
-        quality_order = {"failure": 1, "suboptimal": 2, "successful": 3}
-        chosen_order = quality_order.get(chosen_quality, 0)
-        rejected_order = quality_order.get(rejected_quality, 0)
-        # Label is 1.0 if chosen has higher quality (is preferred), 0.0 otherwise
-        preference_label = 1.0 if chosen_order > rejected_order else 0.0
-    elif result.get("is_correct") is not None:
-        # Fall back to is_correct if available (but convert to 0/1 label format)
-        # is_correct means vlm chose the correct one (chosen), so label should be 1.0
-        preference_label = 1.0 if result["is_correct"] else None
-
-    # Build metadata dict
     chosen_metadata = {
         "quality_label": chosen_traj.quality_label,
         "data_source": chosen_traj.data_source,
@@ -215,21 +203,15 @@ def process_preference_sample(sample: PreferenceSample, model: RLVLMF) -> Dict[s
     if rejected_traj.partial_success is not None:
         rejected_metadata["partial_success"] = rejected_traj.partial_success
 
-    # Convert prediction_prob to logit (preference_pred)
-    # prediction_prob is in [0, 1], convert to logit: log(p / (1-p))
-    prediction_prob = result["prediction_prob"]
-    if prediction_prob is not None:
-        # Clamp to avoid log(0) or log(inf)
-        prediction_prob = max(1e-7, min(1 - 1e-7, prediction_prob))
-        preference_pred = np.log(prediction_prob / (1 - prediction_prob))
-    else:
-        preference_pred = None
+    prediction_prob = result.get("prediction_prob")
+    is_correct = result.get("is_correct")
+    preference_pred = result.get("preference_pred")
 
-    # Build result dict
     return {
-        "preference_pred": float(preference_pred) if preference_pred is not None else None,
-        "preference_labels": float(preference_label) if preference_label is not None else None,
-        "task": task,
+        "preference_pred": float(preference_pred) if preference_pred is not None else (float(prediction_prob) if prediction_prob is not None else None),
+        "preference_labels": 1.0,  # Always 1.0 because chosen trajectory is always preferred by construction
+        "is_correct": bool(is_correct) if is_correct is not None else None,
+        "task": chosen_traj.task,
         "data_source": chosen_traj.data_source or rejected_traj.data_source,
         "chosen_data_gen_strategy": chosen_traj.data_gen_strategy,
         "rejected_data_gen_strategy": rejected_traj.data_gen_strategy,
@@ -243,7 +225,6 @@ def process_preference_sample(sample: PreferenceSample, model: RLVLMF) -> Dict[s
 def process_progress_sample(
     sample: ProgressSample,
     model: Union[GVL, VLAC],
-    task_description: str = "",
 ) -> Dict[str, Any]:
     """Process a single progress sample with baseline."""
     traj = sample.trajectory
@@ -255,20 +236,11 @@ def process_progress_sample(
         logger.warning("No frames found in trajectory")
         return None
 
-    # Compute progress
-    task = task_description or traj.task or ""
-    progress_pred = model.compute_progress(frames_array, task_description=task)
+    progress_pred = model.compute_progress(frames_array, task_description=traj.task)
 
     # Convert to numpy array and normalize to [0, 1] if needed
     progress_array = np.array([p if p is not None else 0.0 for p in progress_pred])
     # Note: GVL/VLAC already return normalized [0, 1] values, so no division by 100 needed
-
-    # Get target progress if available
-    target_progress = traj.target_progress
-    if target_progress is not None:
-        target_array = np.array(target_progress)
-    else:
-        target_array = None
 
     # Build metadata dict - get video_path and frame_step from trajectory metadata
     metadata = {}
@@ -290,7 +262,7 @@ def process_progress_sample(
         "id": traj.id,
         "video_path": metadata.get("video_path"),
         "partial_success": traj.partial_success,
-        "target_progress": target_array.tolist() if target_array is not None else None,
+        "target_progress": traj.target_progress,
         "quality_label": traj.quality_label,
     }
 
@@ -380,7 +352,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                         if result:
                             eval_results.append(result)
                     elif cfg.baseline_type in ["gvl", "vlac"] and isinstance(sample, ProgressSample):
-                        result = process_progress_sample(sample, model, task_description=sample.trajectory.task or "")
+                        result = process_progress_sample(sample, model)
                         if result:
                             eval_results.append(result)
                     else:
@@ -402,13 +374,15 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
             if eval_results:
                 if cfg.baseline_type == "rlvlmf":
                     # For preference evaluation, use quality_preference eval function
-                    # Note: RLVLMF results should already be in the correct format
+                    # Determine data_source from first result
+                    data_source = eval_results[0].get("data_source") if eval_results else None
                     eval_metrics_result = compute_eval_metrics(
                         eval_type="quality_preference",
                         results=eval_results,
                         progress_pred_type="absolute",  # Not used for preference
                         is_discrete_mode=False,  # Not used for preference
                         num_bins=None,  # Not used for preference
+                        data_source=data_source,
                     )
                     if isinstance(eval_metrics_result, tuple):
                         metrics_dict, task_groups, task_details = eval_metrics_result

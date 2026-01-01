@@ -33,6 +33,9 @@ from datetime import datetime
 
 import numpy as np
 from PIL import Image
+import matplotlib.pyplot as plt
+import imageio
+from io import BytesIO
 from hydra import main as hydra_main
 from omegaconf import DictConfig
 from tqdm import tqdm
@@ -45,11 +48,121 @@ from rfm.utils.distributed import is_rank_0
 from rfm.utils.logger import get_logger
 from rfm.utils.config_utils import display_config, convert_hydra_to_dataclass
 from rfm.data.dataset_types import PreferenceSample, ProgressSample
+from rfm.data.collators.utils import convert_frames_to_pil_images, frames_to_numpy_array
 from rfm.evals.baselines.rlvlmf import RLVLMF
 from rfm.evals.baselines.gvl import GVL
 from rfm.evals.baselines.vlac import VLAC
+from rfm.evals.compile_results import compute_eval_metrics
 
 logger = get_logger()
+
+
+def _create_plot_with_video_gif(
+    fig: plt.Figure,
+    video_frames: Optional[np.ndarray],
+    output_path: str,
+    plot_width: int = 800,
+    video_height: int = 224,
+    fps: int = 2,
+) -> None:
+    """Create a GIF combining a static plot with animated video frames side by side.
+    
+    Args:
+        fig: Matplotlib figure to include as static plot
+        video_frames: Video frames array of shape [T, C, H, W] or [T, H, W, C]
+        output_path: Path to save the GIF
+        plot_width: Width of the plot in pixels
+        video_height: Height of the video frames in pixels
+        fps: Frames per second for the GIF
+    """
+    if video_frames is None or video_frames.size == 0:
+        # If no video, just save the plot as PNG
+        fig.savefig(output_path.replace('.gif', '.png'), dpi=150, bbox_inches="tight")
+        return
+    
+    # Convert matplotlib figure to PIL Image
+    buf = BytesIO()
+    fig.savefig(buf, format='png', dpi=150, bbox_inches="tight")
+    buf.seek(0)
+    plot_img = Image.open(buf)
+    plot_img = plot_img.convert('RGB')
+    
+    # Resize plot to desired width while maintaining aspect ratio
+    plot_aspect = plot_img.height / plot_img.width
+    plot_height = int(plot_width * plot_aspect)
+    plot_img = plot_img.resize((plot_width, plot_height), Image.Resampling.LANCZOS)
+    
+    # Process video frames
+    # video_frames is [T, C, H, W] - need to convert to [T, H, W, C] for PIL
+    if video_frames.ndim == 4:
+        if video_frames.shape[1] == 3 or video_frames.shape[1] == 1:  # [T, C, H, W]
+            video_frames = video_frames.transpose(0, 2, 3, 1)  # [T, H, W, C]
+        # Now it's [T, H, W, C]
+    
+    # Resize video frames to match video_height
+    num_frames = video_frames.shape[0]
+    frame_height, frame_width = video_frames.shape[1], video_frames.shape[2]
+    video_aspect = frame_height / frame_width
+    video_width = int(video_height / video_aspect)
+    
+    # Create combined frames
+    combined_frames = []
+    for t in range(num_frames):
+        frame = video_frames[t]
+        
+        # Ensure uint8
+        if frame.dtype != np.uint8:
+            if frame.max() <= 1.0:
+                frame = (frame * 255).astype(np.uint8)
+            else:
+                frame = np.clip(frame, 0, 255).astype(np.uint8)
+        
+        # Convert to PIL Image
+        if frame.shape[2] == 1:  # Grayscale
+            frame_pil = Image.fromarray(frame[:, :, 0], mode='L').convert('RGB')
+        else:
+            frame_pil = Image.fromarray(frame, mode='RGB')
+        
+        # Resize video frame
+        frame_pil = frame_pil.resize((video_width, video_height), Image.Resampling.LANCZOS)
+        
+        # Combine plot and video side by side
+        # Use the maximum height and pad if needed
+        max_height = max(plot_height, video_height)
+        combined = Image.new('RGB', (plot_width + video_width, max_height), color='white')
+        
+        # Paste plot on the left
+        plot_y = (max_height - plot_height) // 2
+        combined.paste(plot_img, (0, plot_y))
+        
+        # Paste video frame on the right
+        video_y = (max_height - video_height) // 2
+        combined.paste(frame_pil, (plot_width, video_y))
+        
+        # Convert to numpy array for imageio
+        combined_frames.append(np.array(combined))
+    
+    # Save as GIF
+    imageio.mimwrite(output_path, combined_frames, fps=fps, loop=0)
+    plt.close(fig)  # Close figure to free memory
+
+
+def _make_json_serializable(obj: Any) -> Any:
+    """Convert numpy types and other non-serializable objects to JSON-serializable types."""
+    if isinstance(obj, (np.integer, np.int64, np.int32)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64, np.float32)):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {k: _make_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_make_json_serializable(item) for item in obj]
+    elif obj is None:
+        return None
+    else:
+        return obj
 
 
 def process_preference_sample(sample: PreferenceSample, model: RLVLMF) -> Dict[str, Any]:
@@ -58,49 +171,72 @@ def process_preference_sample(sample: PreferenceSample, model: RLVLMF) -> Dict[s
     rejected_traj = sample.rejected_trajectory
 
     # Convert frames to PIL Images
-    chosen_images = []
-    if chosen_traj.frames is not None:
-        if isinstance(chosen_traj.frames, np.ndarray):
-            for frame in chosen_traj.frames:
-                if frame.dtype != np.uint8:
-                    frame = np.clip(frame, 0, 255).astype(np.uint8)
-                chosen_images.append(Image.fromarray(frame))
-        elif isinstance(chosen_traj.frames, list):
-            # Assume paths or already images
-            for frame in chosen_traj.frames:
-                if isinstance(frame, str):
-                    chosen_images.append(Image.open(frame))
-                else:
-                    chosen_images.append(frame)
-
-    rejected_images = []
-    if rejected_traj.frames is not None:
-        if isinstance(rejected_traj.frames, np.ndarray):
-            for frame in rejected_traj.frames:
-                if frame.dtype != np.uint8:
-                    frame = np.clip(frame, 0, 255).astype(np.uint8)
-                rejected_images.append(Image.fromarray(frame))
-        elif isinstance(rejected_traj.frames, list):
-            for frame in rejected_traj.frames:
-                if isinstance(frame, str):
-                    rejected_images.append(Image.open(frame))
-                else:
-                    rejected_images.append(frame)
+    chosen_images = convert_frames_to_pil_images(chosen_traj.frames)
+    rejected_images = convert_frames_to_pil_images(rejected_traj.frames)
 
     task = chosen_traj.task or rejected_traj.task or ""
 
     # Compute preference
     result = model.compute_preference(chosen_images, rejected_images, task)
 
-    # Build result dict similar to trainer format
+    # Derive preference label from quality labels if available
+    preference_label = None
+    chosen_quality = chosen_traj.quality_label
+    rejected_quality = rejected_traj.quality_label
+    if chosen_quality and rejected_quality:
+        quality_order = {"failure": 1, "suboptimal": 2, "successful": 3}
+        chosen_order = quality_order.get(chosen_quality, 0)
+        rejected_order = quality_order.get(rejected_quality, 0)
+        # Label is 1.0 if chosen has higher quality (is preferred), 0.0 otherwise
+        preference_label = 1.0 if chosen_order > rejected_order else 0.0
+    elif result.get("is_correct") is not None:
+        # Fall back to is_correct if available (but convert to 0/1 label format)
+        # is_correct means vlm chose the correct one (chosen), so label should be 1.0
+        preference_label = 1.0 if result["is_correct"] else None
+
+    # Build metadata dict
+    chosen_metadata = {
+        "quality_label": chosen_traj.quality_label,
+        "data_source": chosen_traj.data_source,
+        "task": chosen_traj.task,
+        "id": chosen_traj.id,
+        "video_path": chosen_traj.frames if isinstance(chosen_traj.frames, str) else None,
+    }
+    if chosen_traj.partial_success is not None:
+        chosen_metadata["partial_success"] = chosen_traj.partial_success
+
+    rejected_metadata = {
+        "quality_label": rejected_traj.quality_label,
+        "data_source": rejected_traj.data_source,
+        "task": rejected_traj.task,
+        "id": rejected_traj.id,
+        "video_path": rejected_traj.frames if isinstance(rejected_traj.frames, str) else None,
+    }
+    if rejected_traj.partial_success is not None:
+        rejected_metadata["partial_success"] = rejected_traj.partial_success
+
+    # Convert prediction_prob to logit (preference_pred)
+    # prediction_prob is in [0, 1], convert to logit: log(p / (1-p))
+    prediction_prob = result["prediction_prob"]
+    if prediction_prob is not None:
+        # Clamp to avoid log(0) or log(inf)
+        prediction_prob = max(1e-7, min(1 - 1e-7, prediction_prob))
+        preference_pred = np.log(prediction_prob / (1 - prediction_prob))
+    else:
+        preference_pred = None
+
+    # Build result dict
     return {
-        "prediction_prob": result["prediction_prob"],
-        "is_correct": result.get("is_correct", None),  # May be None if no ground truth
+        "preference_pred": float(preference_pred) if preference_pred is not None else None,
+        "preference_labels": float(preference_label) if preference_label is not None else None,
         "task": task,
         "data_source": chosen_traj.data_source or rejected_traj.data_source,
         "chosen_data_gen_strategy": chosen_traj.data_gen_strategy,
         "rejected_data_gen_strategy": rejected_traj.data_gen_strategy,
-        "vlm_preference": result["vlm_preference"],
+        "metadata": {
+            "chosen_metadata": chosen_metadata,
+            "rejected_metadata": rejected_metadata,
+        },
     }
 
 
@@ -113,24 +249,7 @@ def process_progress_sample(
     traj = sample.trajectory
 
     # Get frames array
-    frames_array = None
-    if traj.frames is not None:
-        if isinstance(traj.frames, np.ndarray):
-            frames_array = traj.frames
-            if frames_array.dtype != np.uint8:
-                frames_array = np.clip(frames_array, 0, 255).astype(np.uint8)
-        elif isinstance(traj.frames, list):
-            # Convert list of images/paths to array
-            frame_list = []
-            for frame in traj.frames:
-                if isinstance(frame, str):
-                    img = np.array(Image.open(frame))
-                elif isinstance(frame, Image.Image):
-                    img = np.array(frame)
-                else:
-                    img = np.array(frame)
-                frame_list.append(img)
-            frames_array = np.stack(frame_list)
+    frames_array = frames_to_numpy_array(traj.frames)
 
     if frames_array is None or frames_array.size == 0:
         logger.warning("No frames found in trajectory")
@@ -141,7 +260,8 @@ def process_progress_sample(
     progress_pred = model.compute_progress(frames_array, task_description=task)
 
     # Convert to numpy array and normalize to [0, 1] if needed
-    progress_array = np.array([p / 100.0 if p is not None else 0.0 for p in progress_pred])
+    progress_array = np.array([p if p is not None else 0.0 for p in progress_pred])
+    # Note: GVL/VLAC already return normalized [0, 1] values, so no division by 100 needed
 
     # Get target progress if available
     target_progress = traj.target_progress
@@ -150,23 +270,29 @@ def process_progress_sample(
     else:
         target_array = None
 
-    # Build result dict similar to trainer format
+    # Build metadata dict - get video_path and frame_step from trajectory metadata
+    metadata = {}
+    if traj.id is not None:
+        metadata["id"] = traj.id
+    if traj.metadata is not None:
+        metadata["video_path"] = traj.metadata.get("video_path")
+        frame_step = traj.metadata.get("frame_step")
+        if frame_step is not None:
+            metadata["frame_step"] = frame_step
+
+    # Build result dict
     result = {
         "progress_pred": progress_array.tolist(),
         "task": traj.task,
         "data_source": traj.data_source,
         "data_gen_strategy": traj.data_gen_strategy,
+        "metadata": metadata,
+        "id": traj.id,
+        "video_path": metadata.get("video_path"),
+        "partial_success": traj.partial_success,
+        "target_progress": target_array.tolist() if target_array is not None else None,
+        "quality_label": traj.quality_label,
     }
-
-    if target_array is not None:
-        result["target_progress"] = target_array.tolist()
-        # Compute MSE
-        if len(progress_array) == len(target_array):
-            mse = float(np.mean((progress_array - target_array) ** 2))
-            result["mse"] = mse
-
-    if traj.quality_label is not None:
-        result["quality_label"] = traj.quality_label
 
     return result
 
@@ -231,9 +357,11 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
 
             if eval_type == "reward_alignment":
                 sampler_kwargs["max_trajectories"] = cfg.custom_eval.reward_alignment_max_trajectories
+                sampler_kwargs["use_frame_steps"] = cfg.custom_eval.use_frame_steps
             elif eval_type == "policy_ranking":
                 sampler_kwargs["num_examples_per_quality_pr"] = cfg.custom_eval.num_examples_per_quality_pr
                 sampler_kwargs["max_tasks"] = cfg.custom_eval.policy_ranking_max_tasks
+                sampler_kwargs["use_frame_steps"] = cfg.custom_eval.use_frame_steps
             elif "quality_preference" in eval_type:
                 sampler_kwargs["comparisons_per_task"] = cfg.custom_eval.comparisons_per_task
 
@@ -261,28 +389,92 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
 
             logger.info(f"Processed {len(eval_results)} samples from {dataset_name}")
 
-            # Compute metrics (simplified - would need to import metric computation from trainer)
-            # For now, just save results
+            # Save results to JSON
             if cfg.output_dir:
                 results_file = os.path.join(cfg.output_dir, f"{eval_type}_{dataset_name}_results.json")
                 with open(results_file, "w") as f:
                     json.dump(eval_results, f, indent=2)
                 logger.info(f"Saved results to {results_file}")
 
-            # Store basic metrics
+            # Compute metrics using the same functions as the trainer
             if eval_results:
                 if cfg.baseline_type == "rlvlmf":
-                    # Preference metrics
-                    correct = [r.get("is_correct") for r in eval_results if r.get("is_correct") is not None]
-                    if correct:
-                        accuracy = sum(correct) / len(correct)
-                        eval_type_metrics[f"{dataset_name}/accuracy"] = accuracy
+                    # For preference evaluation, use quality_preference eval function
+                    # Note: RLVLMF results should already be in the correct format
+                    eval_metrics_result = compute_eval_metrics(
+                        eval_type="quality_preference",
+                        results=eval_results,
+                        progress_pred_type="absolute",  # Not used for preference
+                        is_discrete_mode=False,  # Not used for preference
+                        num_bins=None,  # Not used for preference
+                    )
+                    if isinstance(eval_metrics_result, tuple):
+                        metrics_dict, task_groups, task_details = eval_metrics_result
+                        # Save task_groups and task_details if available
+                        if cfg.output_dir:
+                            task_groups_file = os.path.join(cfg.output_dir, f"{eval_type}_{dataset_name}_task_groups.json")
+                            task_details_file = os.path.join(cfg.output_dir, f"{eval_type}_{dataset_name}_task_details.json")
+                            with open(task_groups_file, "w") as f:
+                                json.dump(_make_json_serializable(task_groups), f, indent=2)
+                            with open(task_details_file, "w") as f:
+                                json.dump(_make_json_serializable(task_details), f, indent=2)
+                            logger.info(f"Saved task_groups to {task_groups_file}")
+                            logger.info(f"Saved task_details to {task_details_file}")
+                    else:
+                        metrics_dict = eval_metrics_result
+                    
+                    # Extract metrics from the returned dict
+                    for key, value in metrics_dict.items():
+                        if isinstance(value, (int, float)):
+                            eval_type_metrics[f"{dataset_name}/{key}"] = float(value)
+                            
                 elif cfg.baseline_type in ["gvl", "vlac"]:
-                    # Progress metrics
-                    mse_values = [r.get("mse") for r in eval_results if r.get("mse") is not None]
-                    if mse_values:
-                        avg_mse = np.mean(mse_values)
-                        eval_type_metrics[f"{dataset_name}/mse"] = float(avg_mse)
+                    # For progress evaluation, use the appropriate eval function based on eval_type
+                    # Determine data_source from first result
+                    data_source = eval_results[0].get("data_source") if eval_results else None
+                    
+                    eval_metrics_result = compute_eval_metrics(
+                        eval_type=eval_type,
+                        results=eval_results,
+                        progress_pred_type="absolute_wrt_total_frames",  # Baselines use absolute progress
+                        is_discrete_mode=False,  # Baselines output continuous values
+                        num_bins=None,
+                        data_source=data_source,
+                    )
+                    
+                    if isinstance(eval_metrics_result, tuple):
+                        if eval_type == "reward_alignment":
+                            metrics_dict, plots, video_frames_list, _ = eval_metrics_result
+                            # Save plots with videos as GIFs if available
+                            if plots and cfg.output_dir:
+                                plots_dir = os.path.join(cfg.output_dir, f"{eval_type}_{dataset_name}_plots")
+                                os.makedirs(plots_dir, exist_ok=True)
+                                for i, fig in enumerate(plots):
+                                    video_frames = video_frames_list[i] if i < len(video_frames_list) else None
+                                    gif_path = os.path.join(plots_dir, f"trajectory_{i:04d}.gif")
+                                    _create_plot_with_video_gif(fig, video_frames, gif_path)
+                                logger.info(f"Saved {len(plots)} plot+video GIFs to {plots_dir}")
+                        elif eval_type == "policy_ranking":
+                            metrics_dict, task_groups, task_details = eval_metrics_result
+                            # Save task_groups and task_details if available
+                            if cfg.output_dir:
+                                task_groups_file = os.path.join(cfg.output_dir, f"{eval_type}_{dataset_name}_task_groups.json")
+                                task_details_file = os.path.join(cfg.output_dir, f"{eval_type}_{dataset_name}_task_details.json")
+                                with open(task_groups_file, "w") as f:
+                                    json.dump(_make_json_serializable(task_groups), f, indent=2)
+                                with open(task_details_file, "w") as f:
+                                    json.dump(_make_json_serializable(task_details), f, indent=2)
+                                logger.info(f"Saved task_groups to {task_groups_file}")
+                                logger.info(f"Saved task_details to {task_details_file}")
+                        else:
+                            metrics_dict = eval_metrics_result[0] if len(eval_metrics_result) > 0 else {}
+                    else:
+                        metrics_dict = eval_metrics_result
+                    
+                    # Extract metrics from the returned dict
+                    for key, value in metrics_dict.items():
+                        if isinstance(value, (int, float)):
+                            eval_type_metrics[f"{dataset_name}/{key}"] = float(value)
 
         all_metrics[eval_type] = eval_type_metrics
 
@@ -312,7 +504,9 @@ def main(cfg: DictConfig):
 
     # Create data config with default settings
     # Datasets will be set per eval type during processing
-    data_cfg = DataConfig()
+    data_cfg = DataConfig(
+        max_frames=baseline_cfg.gvl_max_frames,
+    )
 
     display_config(data_cfg)
 

@@ -24,7 +24,7 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
 
         self.num_examples_per_quality_pr = num_examples_per_quality_pr
         self.frame_step = frame_step
-        self.use_frame_steps = True
+        self.use_frame_steps = use_frame_steps
         self.max_tasks = max_tasks
         logger.info(f"ProgressPolicyRankingSampler initialized with {len(self.robot_trajectories)} trajectories")
 

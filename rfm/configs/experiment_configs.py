@@ -222,7 +222,7 @@ class DataConfig:
     )
 
     progress_pred_type: str = field(
-        default="absolute", metadata={"help": "Type of progress prediction: 'absolute' or 'relative'"}
+        default="absolute_wrt_total_frames", metadata={"help": "Type of progress prediction: 'absolute' or 'relative'"}
     )
 
     # Success prediction thresholds
@@ -294,6 +294,12 @@ class CustomEvaluationConfig:
         default=10,
         metadata={
             "help": "Maximum number of trajectories to use for reward alignment evaluation. None = use all trajectories."
+        },
+    )
+    use_frame_steps: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to use frame steps (subsequences) for reward_alignment and policy_ranking evaluations. True = generate subsequences (0:frame_step, 0:2*frame_step, etc.), False = use whole trajectory."
         },
     )
 

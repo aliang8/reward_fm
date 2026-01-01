@@ -18,7 +18,7 @@ temperature: 0.0
 
 # GVL settings (only used if baseline_type is "gvl")
 gvl_api_key: null  # Will use GEMINI_API_KEY env var if not set
-gvl_max_frames: 15
+gvl_max_frames: 32
 gvl_offset: 0.5
 
 # VLAC settings (only used if baseline_type is "vlac")
@@ -40,8 +40,9 @@ custom_eval:
   confusion_matrix: ["aliangdw_metaworld_metaworld_eval"]  # Datasets for progress evaluation
   comparisons_per_task: null  # Limit number of comparisons per task (None = use all)
   reward_alignment_max_trajectories: 10  # Max trajectories for reward alignment
-  policy_ranking_max_tasks: 100  # Max tasks for policy ranking
-  num_examples_per_quality_pr: 5  # Examples per quality label for policy ranking
+  policy_ranking_max_tasks: 20  # Max tasks for policy ranking
+  use_frame_steps: false  # Whether to use frame steps (subsequences) for reward_alignment and policy_ranking. true = generate subsequences, false = use whole trajectory.
+  num_examples_per_quality_pr: 3  # Examples per quality label for policy ranking
   custom_eval_random_seed: 42
 
 # Output directory for evaluation results

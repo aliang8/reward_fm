@@ -9,7 +9,7 @@ from rfm.utils.distributed import rank_0_print
 
 class QualityPreferenceSampler(BaseQualityPreferenceSampler):
     """Dataset that generates preference samples by pairing trajectories with different quality labels or partial_success values for the same task.
-    
+
     For non-RoboArena: Pairs trajectories with different quality labels (failure, suboptimal, successful).
     For RoboArena: Pairs trajectories with different partial_success values (higher partial_success = chosen).
     """
@@ -33,7 +33,7 @@ class QualityPreferenceSampler(BaseQualityPreferenceSampler):
 
     def _generate_all_sample_indices(self) -> List[Dict[str, Any]]:
         """Generate all possible quality preference sample indices (not the actual samples).
-        
+
         For non-RoboArena: Groups by task and quality_label, pairs trajectories with different quality labels.
         For RoboArena: Groups by task and partial_success values, pairs trajectories with different partial_success.
         """

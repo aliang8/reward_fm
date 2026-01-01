@@ -94,14 +94,14 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
             if is_roboarena:
                 # RoboArena: Use num_partial_successes for circular sampling
                 num_to_sample_total = self.num_partial_successes
-                
+
                 # Build lists of available indices per partial_success (sorted for deterministic sampling)
                 available_lists = []
                 for partial_success in sorted(key_to_trajs.keys()):
                     traj_indices = sorted(key_to_trajs[partial_success])
                     if traj_indices:
                         available_lists.append(traj_indices)
-                
+
                 # Circular sampling: cycle through partial_success groups until we reach max
                 sampled_traj_indices = []
                 for available_indices in cycle(available_lists):
@@ -112,13 +112,13 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
                         if all(not lst for lst in available_lists):
                             break
                         continue
-                    
+
                     # Sample one trajectory from this group
                     sampled_idx = self._local_random.choice(available_indices)
                     sampled_traj_indices.append(sampled_idx)
                     # Remove the sampled index from this list
                     available_indices.remove(sampled_idx)
-                
+
                 # Generate samples for all sampled trajectories
                 for traj_idx in sampled_traj_indices:
                     traj = self.dataset[traj_idx]

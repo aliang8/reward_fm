@@ -11,8 +11,7 @@ from typing import Optional, Dict, Any
 
 from hydra.core.config_store import ConfigStore
 
-from rfm.configs.experiment_configs import CustomEvaluationConfig
-from rfm.configs.experiment_configs import DataConfig
+from rfm.configs.experiment_configs import CustomEvaluationConfig, DataConfig
 
 
 @dataclass
@@ -69,10 +68,12 @@ class OfflineEvalConfig:
 class BaselineEvalConfig:
     """Configuration for baseline evaluation runs (run_baseline_eval.py)."""
 
-    # Baseline type: "gvl" or "vlac" for progress evaluation or "rlvlmf" for preference evaluation
-    baseline_type: str = field(
+    # Reward model: "gvl", "vlac", "rlvlmf", "rfm", or "rewind"
+    reward_model: str = field(
         default="rlvlmf",
-        metadata={"help": "Baseline type: 'gvl' or 'vlac' for progress, 'rlvlmf' for preference"},
+        metadata={
+            "help": "Reward model: 'gvl' or 'vlac' for progress, 'rlvlmf' for preference, 'rfm' or 'rewind' for trained models"
+        },
     )
 
     # VLM provider for RL-VLM-F
@@ -132,7 +133,21 @@ class BaselineEvalConfig:
     )
     vlac_use_images: bool = field(
         default=False,
-        metadata={"help": "If True, use image mode (get_trajectory_critic). If False, use video mode (web_trajectory_critic)"},
+        metadata={
+            "help": "If True, use image mode (get_trajectory_critic). If False, use video mode (web_trajectory_critic)"
+        },
+    )
+
+    # RFM/ReWiND settings (only used if reward_model is "rfm" or "rewind")
+    rfm_checkpoint_path: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Path to RFM/ReWiND model checkpoint (HuggingFace repo ID or local path, required for rfm/rewind)"
+        },
+    )
+    rfm_batch_size: int = field(
+        default=32,
+        metadata={"help": "Batch size for RFM/ReWiND model inference"},
     )
 
     # Custom evaluation configuration

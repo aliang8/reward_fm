@@ -5,20 +5,20 @@ Script to run baseline evaluations (GVL, RL-VLM-F, VLAC) on datasets.
 Usage:
     # Run RL-VLM-F preference evaluation
     uv run python rfm/evals/run_baseline_eval.py \
-        baseline_type=rlvlmf \
+        reward_model=rlvlmf \
         vlm_provider=gemini \
         custom_eval.eval_types=[quality_preference] \
         custom_eval.quality_preference=[aliangdw_metaworld_metaworld_eval]
     
     # Run GVL progress evaluation
     uv run python rfm/evals/run_baseline_eval.py \
-        baseline_type=gvl \
+        reward_model=gvl \
         custom_eval.eval_types=[reward_alignment] \
         custom_eval.reward_alignment=[aliangdw_metaworld_metaworld_eval]
     
     # Run VLAC progress evaluation (requires separate dependency set due to trl conflict)
     PYTHONPATH=.venv-vlac/bin/python rfm/evals/run_baseline_eval.py \
-        baseline_type=vlac \
+        reward_model=vlac \
         vlac_model_path=InternRobotics/VLAC \
         custom_eval.eval_types=[reward_alignment] \
         custom_eval.reward_alignment=[aliangdw_metaworld_metaworld_eval]
@@ -47,11 +47,13 @@ from rfm.data.datasets.base import resolve_dataset_keys
 from rfm.utils.distributed import is_rank_0
 from rfm.utils.logger import get_logger
 from rfm.utils.config_utils import display_config, convert_hydra_to_dataclass
-from rfm.data.dataset_types import PreferenceSample, ProgressSample
+from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample
 from rfm.data.collators.utils import convert_frames_to_pil_images, frames_to_numpy_array
 from rfm.evals.baselines.rlvlmf import RLVLMF
 from rfm.evals.baselines.gvl import GVL
 from rfm.evals.baselines.vlac import VLAC
+from rfm.evals.baselines.rfm_model import RFMModel
+from rfm.data.dataset_types import SampleType
 from rfm.evals.compile_results import compute_eval_metrics
 
 logger = get_logger()
@@ -66,7 +68,7 @@ def _create_plot_with_video_gif(
     fps: int = 2,
 ) -> None:
     """Create a GIF combining a static plot with animated video frames side by side.
-    
+
     Args:
         fig: Matplotlib figure to include as static plot
         video_frames: Video frames array of shape [T, C, H, W] or [T, H, W, C]
@@ -77,71 +79,71 @@ def _create_plot_with_video_gif(
     """
     if video_frames is None or video_frames.size == 0:
         # If no video, just save the plot as PNG
-        fig.savefig(output_path.replace('.gif', '.png'), dpi=150, bbox_inches="tight")
+        fig.savefig(output_path.replace(".gif", ".png"), dpi=150, bbox_inches="tight")
         return
-    
+
     # Convert matplotlib figure to PIL Image
     buf = BytesIO()
-    fig.savefig(buf, format='png', dpi=150, bbox_inches="tight")
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
     buf.seek(0)
     plot_img = Image.open(buf)
-    plot_img = plot_img.convert('RGB')
-    
+    plot_img = plot_img.convert("RGB")
+
     # Resize plot to desired width while maintaining aspect ratio
     plot_aspect = plot_img.height / plot_img.width
     plot_height = int(plot_width * plot_aspect)
     plot_img = plot_img.resize((plot_width, plot_height), Image.Resampling.LANCZOS)
-    
+
     # Process video frames
     # video_frames is [T, C, H, W] - need to convert to [T, H, W, C] for PIL
     if video_frames.ndim == 4:
         if video_frames.shape[1] == 3 or video_frames.shape[1] == 1:  # [T, C, H, W]
             video_frames = video_frames.transpose(0, 2, 3, 1)  # [T, H, W, C]
         # Now it's [T, H, W, C]
-    
+
     # Resize video frames to match video_height
     num_frames = video_frames.shape[0]
     frame_height, frame_width = video_frames.shape[1], video_frames.shape[2]
     video_aspect = frame_height / frame_width
     video_width = int(video_height / video_aspect)
-    
+
     # Create combined frames
     combined_frames = []
     for t in range(num_frames):
         frame = video_frames[t]
-        
+
         # Ensure uint8
         if frame.dtype != np.uint8:
             if frame.max() <= 1.0:
                 frame = (frame * 255).astype(np.uint8)
             else:
                 frame = np.clip(frame, 0, 255).astype(np.uint8)
-        
+
         # Convert to PIL Image
         if frame.shape[2] == 1:  # Grayscale
-            frame_pil = Image.fromarray(frame[:, :, 0], mode='L').convert('RGB')
+            frame_pil = Image.fromarray(frame[:, :, 0], mode="L").convert("RGB")
         else:
-            frame_pil = Image.fromarray(frame, mode='RGB')
-        
+            frame_pil = Image.fromarray(frame, mode="RGB")
+
         # Resize video frame
         frame_pil = frame_pil.resize((video_width, video_height), Image.Resampling.LANCZOS)
-        
+
         # Combine plot and video side by side
         # Use the maximum height and pad if needed
         max_height = max(plot_height, video_height)
-        combined = Image.new('RGB', (plot_width + video_width, max_height), color='white')
-        
+        combined = Image.new("RGB", (plot_width + video_width, max_height), color="white")
+
         # Paste plot on the left
         plot_y = (max_height - plot_height) // 2
         combined.paste(plot_img, (0, plot_y))
-        
+
         # Paste video frame on the right
         video_y = (max_height - video_height) // 2
         combined.paste(frame_pil, (plot_width, video_y))
-        
+
         # Convert to numpy array for imageio
         combined_frames.append(np.array(combined))
-    
+
     # Save as GIF
     imageio.mimwrite(output_path, combined_frames, fps=fps, loop=0)
     plt.close(fig)  # Close figure to free memory
@@ -208,7 +210,9 @@ def process_preference_sample(sample: PreferenceSample, model: RLVLMF) -> Dict[s
     preference_pred = result.get("preference_pred")
 
     return {
-        "preference_pred": float(preference_pred) if preference_pred is not None else (float(prediction_prob) if prediction_prob is not None else None),
+        "preference_pred": float(preference_pred)
+        if preference_pred is not None
+        else (float(prediction_prob) if prediction_prob is not None else None),
         "preference_labels": 1.0,  # Always 1.0 because chosen trajectory is always preferred by construction
         "is_correct": bool(is_correct) if is_correct is not None else None,
         "task": chosen_traj.task,
@@ -269,16 +273,148 @@ def process_progress_sample(
     return result
 
 
+def process_batched_rfm_samples(
+    samples: List[SampleType],
+    model: RFMModel,
+    batch_size: int = 32,
+) -> List[Dict[str, Any]]:
+    """Process a batch of RFM/ReWiND samples using batched computation with minibatching.
+
+    Args:
+        samples: List of ProgressSample, PreferenceSample, or SimilaritySample objects
+        model: RFMModel instance
+        batch_size: Batch size for processing samples
+
+    Returns:
+        List of result dictionaries in the same format as process_progress_sample/process_preference_sample
+    """
+    if not samples:
+        return []
+
+    # Group samples by type
+    progress_samples = []
+    preference_samples = []
+    similarity_samples = []
+
+    for sample in samples:
+        if isinstance(sample, ProgressSample):
+            progress_samples.append(sample)
+        elif isinstance(sample, PreferenceSample):
+            preference_samples.append(sample)
+        elif isinstance(sample, SimilaritySample):
+            similarity_samples.append(sample)
+        else:
+            logger.warning(f"Unknown sample type: {type(sample)}")
+
+    results = []
+
+    # Process progress samples in minibatches
+    if progress_samples:
+        for i in range(0, len(progress_samples), batch_size):
+            batch = progress_samples[i : i + batch_size]
+            progress_preds = model.compute_batched_progress(batch)
+            for sample, progress_pred in zip(batch, progress_preds):
+                traj = sample.trajectory
+
+                # Build metadata dict - get video_path and frame_step from trajectory metadata
+                metadata = {}
+                if traj.id is not None:
+                    metadata["id"] = traj.id
+                if traj.metadata is not None:
+                    metadata["video_path"] = traj.metadata.get("video_path")
+                    frame_step = traj.metadata.get("frame_step")
+                    if frame_step is not None:
+                        metadata["frame_step"] = frame_step
+
+                # Build result dict
+                result = {
+                    "progress_pred": progress_pred,
+                    "task": traj.task,
+                    "data_source": traj.data_source,
+                    "data_gen_strategy": traj.data_gen_strategy,
+                    "metadata": metadata,
+                    "id": traj.id,
+                    "video_path": metadata.get("video_path"),
+                    "partial_success": traj.partial_success,
+                    "target_progress": traj.target_progress,
+                    "quality_label": traj.quality_label,
+                }
+                results.append(result)
+
+    # Process preference samples in minibatches
+    if preference_samples:
+        for i in range(0, len(preference_samples), batch_size):
+            batch = preference_samples[i : i + batch_size]
+            preference_results = model.compute_batched_preference(batch)
+            for sample, result in zip(batch, preference_results):
+                chosen_traj = sample.chosen_trajectory
+                rejected_traj = sample.rejected_trajectory
+
+                chosen_metadata = {
+                    "quality_label": chosen_traj.quality_label,
+                    "data_source": chosen_traj.data_source,
+                    "task": chosen_traj.task,
+                    "id": chosen_traj.id,
+                    "video_path": chosen_traj.frames if isinstance(chosen_traj.frames, str) else None,
+                }
+                if chosen_traj.partial_success is not None:
+                    chosen_metadata["partial_success"] = chosen_traj.partial_success
+
+                rejected_metadata = {
+                    "quality_label": rejected_traj.quality_label,
+                    "data_source": rejected_traj.data_source,
+                    "task": rejected_traj.task,
+                    "id": rejected_traj.id,
+                    "video_path": rejected_traj.frames if isinstance(rejected_traj.frames, str) else None,
+                }
+                if rejected_traj.partial_success is not None:
+                    rejected_metadata["partial_success"] = rejected_traj.partial_success
+
+                prediction_prob = result.get("prediction_prob")
+                is_correct = result.get("is_correct")
+                preference_pred = result.get("preference_pred")
+
+                formatted_result = {
+                    "preference_pred": float(preference_pred)
+                    if preference_pred is not None
+                    else (float(prediction_prob) if prediction_prob is not None else None),
+                    "preference_labels": 1.0,  # Always 1.0 because chosen trajectory is always preferred by construction
+                    "is_correct": bool(is_correct) if is_correct is not None else None,
+                    "task": chosen_traj.task,
+                    "data_source": chosen_traj.data_source or rejected_traj.data_source,
+                    "chosen_data_gen_strategy": chosen_traj.data_gen_strategy,
+                    "rejected_data_gen_strategy": rejected_traj.data_gen_strategy,
+                    "metadata": {
+                        "chosen_metadata": chosen_metadata,
+                        "rejected_metadata": rejected_metadata,
+                    },
+                }
+                results.append(formatted_result)
+
+    # Process similarity samples in minibatches (if needed in the future)
+    if similarity_samples:
+        for i in range(0, len(similarity_samples), batch_size):
+            batch = similarity_samples[i : i + batch_size]
+            similarity_results = model.compute_batched_similarity(batch)
+            # For now, similarity samples are not used in baseline evaluation
+            # but we process them for completeness
+            for sample, result in zip(batch, similarity_results):
+                # Format similarity result if needed
+                results.append(result)
+
+    return results
+
+
 def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) -> Dict[str, Any]:
     """Run baseline evaluation on datasets."""
 
     # Initialize model
-    if cfg.baseline_type == "rlvlmf":
+    if cfg.reward_model == "rlvlmf":
         model = RLVLMF(vlm_provider=cfg.vlm_provider, temperature=cfg.temperature)
-    elif cfg.baseline_type == "gvl":
+    elif cfg.reward_model == "gvl":
         # API key is read from GEMINI_API_KEY environment variable
         model = GVL(max_frames=cfg.gvl_max_frames, offset=cfg.gvl_offset)
-    elif cfg.baseline_type == "vlac":
+    elif cfg.reward_model == "vlac":
         if not cfg.vlac_model_path:
             raise ValueError("vlac_model_path is required for VLAC baseline")
 
@@ -292,15 +428,24 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
             frame_skip=cfg.vlac_frame_skip,
             use_images=cfg.vlac_use_images,
         )
+    elif cfg.reward_model in ["rfm", "rewind"]:
+        if not cfg.rfm_checkpoint_path:
+            raise ValueError("rfm_checkpoint_path is required for RFM/ReWiND reward model")
+
+        model = RFMModel(
+            checkpoint_path=cfg.rfm_checkpoint_path,
+        )
     else:
-        raise ValueError(f"Unknown baseline_type: {cfg.baseline_type}. Must be 'rlvlmf', 'gvl', or 'vlac'")
+        raise ValueError(
+            f"Unknown reward_model: {cfg.reward_model}. Must be 'rlvlmf', 'gvl', 'vlac', 'rfm', or 'rewind'"
+        )
 
     all_metrics = {}
 
     # Process each evaluation type
     for eval_type in cfg.custom_eval.eval_types:
         logger.info(f"=" * 80)
-        logger.info(f"Running {eval_type} evaluation with {cfg.baseline_type} baseline")
+        logger.info(f"Running {eval_type} evaluation with {cfg.reward_model} reward model")
         logger.info(f"=" * 80)
 
         # Get datasets for this eval type
@@ -345,21 +490,35 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
 
             # Process samples
             eval_results = []
-            for i, sample in enumerate(tqdm(dataset, desc=f"Processing {dataset_name}")):
+            
+            if cfg.reward_model in ["rfm", "rewind"]:
+                # For RFM/ReWiND, collect all samples and process in batches
+                all_samples = list(dataset)
+                logger.info(f"Processing {len(all_samples)} samples in batches for RFM/ReWiND")
+                
                 try:
-                    if cfg.baseline_type == "rlvlmf" and isinstance(sample, PreferenceSample):
-                        result = process_preference_sample(sample, model)
-                        if result:
-                            eval_results.append(result)
-                    elif cfg.baseline_type in ["gvl", "vlac"] and isinstance(sample, ProgressSample):
-                        result = process_progress_sample(sample, model)
-                        if result:
-                            eval_results.append(result)
-                    else:
-                        logger.warning(f"Sample type mismatch: baseline={cfg.baseline_type}, sample={type(sample)}")
+                    batch_results = process_batched_rfm_samples(all_samples, model, batch_size=cfg.rfm_batch_size)
+                    eval_results.extend(batch_results)
                 except Exception as e:
-                    logger.error(f"Error processing sample {i}: {e}")
-                    continue
+                    logger.error(f"Error processing batch: {e}")
+                    raise
+            else:
+                # For other models, process samples one at a time
+                for i, sample in enumerate(tqdm(dataset, desc=f"Processing {dataset_name}")):
+                    try:
+                        if cfg.reward_model == "rlvlmf" and isinstance(sample, PreferenceSample):
+                            result = process_preference_sample(sample, model)
+                            if result:
+                                eval_results.append(result)
+                        elif cfg.reward_model in ["gvl", "vlac"] and isinstance(sample, ProgressSample):
+                            result = process_progress_sample(sample, model)
+                            if result:
+                                eval_results.append(result)
+                        else:
+                            logger.warning(f"Sample type mismatch: reward_model={cfg.reward_model}, sample={type(sample)}")
+                    except Exception as e:
+                        logger.error(f"Error processing sample {i}: {e}")
+                        continue
 
             logger.info(f"Processed {len(eval_results)} samples from {dataset_name}")
 
@@ -372,10 +531,16 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
 
             # Compute metrics using the same functions as the trainer
             if eval_results:
-                if cfg.baseline_type == "rlvlmf":
-                    # For preference evaluation, use quality_preference eval function
-                    # Determine data_source from first result
-                    data_source = eval_results[0].get("data_source") if eval_results else None
+                # Determine data_source from first result
+                data_source = eval_results[0].get("data_source") if eval_results else None
+
+                if eval_type == "quality_preference":
+                    # Quality preference evaluation for rlvlmf, rfm, rewind
+                    if cfg.reward_model not in ["rlvlmf", "rfm", "rewind"]:
+                        raise ValueError(
+                            f"quality_preference evaluation only supported for rlvlmf, rfm, rewind, got {cfg.reward_model}"
+                        )
+                    
                     eval_metrics_result = compute_eval_metrics(
                         eval_type="quality_preference",
                         results=eval_results,
@@ -388,8 +553,12 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                         metrics_dict, task_groups, task_details = eval_metrics_result
                         # Save task_groups and task_details if available
                         if cfg.output_dir:
-                            task_groups_file = os.path.join(cfg.output_dir, f"{eval_type}_{dataset_name}_task_groups.json")
-                            task_details_file = os.path.join(cfg.output_dir, f"{eval_type}_{dataset_name}_task_details.json")
+                            task_groups_file = os.path.join(
+                                cfg.output_dir, f"{eval_type}_{dataset_name}_task_groups.json"
+                            )
+                            task_details_file = os.path.join(
+                                cfg.output_dir, f"{eval_type}_{dataset_name}_task_details.json"
+                            )
                             with open(task_groups_file, "w") as f:
                                 json.dump(_make_json_serializable(task_groups), f, indent=2)
                             with open(task_details_file, "w") as f:
@@ -398,17 +567,19 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                             logger.info(f"Saved task_details to {task_details_file}")
                     else:
                         metrics_dict = eval_metrics_result
-                    
+
                     # Extract metrics from the returned dict
                     for key, value in metrics_dict.items():
                         if isinstance(value, (int, float)):
                             eval_type_metrics[f"{dataset_name}/{key}"] = float(value)
-                            
-                elif cfg.baseline_type in ["gvl", "vlac"]:
-                    # For progress evaluation, use the appropriate eval function based on eval_type
-                    # Determine data_source from first result
-                    data_source = eval_results[0].get("data_source") if eval_results else None
-                    
+
+                else:
+                    # Progress evaluation (reward_alignment, policy_ranking) for gvl, vlac, rfm, rewind
+                    if cfg.reward_model not in ["gvl", "vlac", "rfm", "rewind"]:
+                        raise ValueError(
+                            f"Progress evaluation only supported for gvl, vlac, rfm, rewind, got {cfg.reward_model}"
+                        )
+
                     eval_metrics_result = compute_eval_metrics(
                         eval_type=eval_type,
                         results=eval_results,
@@ -417,7 +588,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                         num_bins=None,
                         data_source=data_source,
                     )
-                    
+
                     if isinstance(eval_metrics_result, tuple):
                         if eval_type == "reward_alignment":
                             metrics_dict, plots, video_frames_list, _ = eval_metrics_result
@@ -434,8 +605,12 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                             metrics_dict, task_groups, task_details = eval_metrics_result
                             # Save task_groups and task_details if available
                             if cfg.output_dir:
-                                task_groups_file = os.path.join(cfg.output_dir, f"{eval_type}_{dataset_name}_task_groups.json")
-                                task_details_file = os.path.join(cfg.output_dir, f"{eval_type}_{dataset_name}_task_details.json")
+                                task_groups_file = os.path.join(
+                                    cfg.output_dir, f"{eval_type}_{dataset_name}_task_groups.json"
+                                )
+                                task_details_file = os.path.join(
+                                    cfg.output_dir, f"{eval_type}_{dataset_name}_task_details.json"
+                                )
                                 with open(task_groups_file, "w") as f:
                                     json.dump(_make_json_serializable(task_groups), f, indent=2)
                                 with open(task_details_file, "w") as f:
@@ -446,7 +621,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                             metrics_dict = eval_metrics_result[0] if len(eval_metrics_result) > 0 else {}
                     else:
                         metrics_dict = eval_metrics_result
-                    
+
                     # Extract metrics from the returned dict
                     for key, value in metrics_dict.items():
                         if isinstance(value, (int, float)):
@@ -466,14 +641,16 @@ def main(cfg: DictConfig):
     # Display config
     display_config(baseline_cfg)
 
-    # Validate baseline type
-    if baseline_cfg.baseline_type not in ["gvl", "vlac", "rlvlmf"]:
-        raise ValueError(f"baseline_type must be 'gvl', 'vlac', or 'rlvlmf', got {baseline_cfg.baseline_type}")
+    # Validate reward model
+    if baseline_cfg.reward_model not in ["gvl", "vlac", "rlvlmf", "rfm", "rewind"]:
+        raise ValueError(
+            f"reward_model must be 'gvl', 'vlac', 'rlvlmf', 'rfm', or 'rewind', got {baseline_cfg.reward_model}"
+        )
 
     # Setup output directory
     if baseline_cfg.output_dir is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        baseline_cfg.output_dir = os.path.join("./baseline_eval_output", f"{baseline_cfg.baseline_type}_{timestamp}")
+        baseline_cfg.output_dir = os.path.join("./baseline_eval_output", f"{baseline_cfg.reward_model}_{timestamp}")
 
     os.makedirs(baseline_cfg.output_dir, exist_ok=True)
     logger.info(f"Output directory: {baseline_cfg.output_dir}")

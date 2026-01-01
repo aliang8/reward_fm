@@ -208,9 +208,12 @@ def run_reward_alignment_eval_per_trajectory(
     # Collect all success_probs and success_labels for AUPRC computation
     all_success_probs = []
     all_success_labels = []
-    
+
     # Collect absolute deltas between final reward and partial_success for RoboArena
     roboarena_deltas = []
+
+    # Collect success_acc for binary success accuracy
+    success_acc_list = []
 
     for r in results:
         trajectory_id = r.get("id")
@@ -238,7 +241,7 @@ def run_reward_alignment_eval_per_trajectory(
         # This orders subsequences from shortest to longest (e.g., [0], [0,1], [0,1,2], ...)
         # Only sort if there are multiple results (indicating frame_steps mode)
         if len(results_for_trajectory) > 1:
-            results_for_trajectory.sort(key=lambda r: r.get("metadata", {}).get("frame_step", 0))
+        results_for_trajectory.sort(key=lambda r: r.get("metadata", {}).get("frame_step", 0))
 
         # Get task and quality label from first result
         task = results_for_trajectory[0]["task"]
@@ -347,80 +350,80 @@ def run_reward_alignment_eval_per_trajectory(
 
         else:
             # Frame steps mode: multiple results, one per subsequence
-            for timestep, r in enumerate(results_for_trajectory):
-                pred = r.get("progress_pred")
-                tgt = r.get("target_progress")
+        for timestep, r in enumerate(results_for_trajectory):
+            pred = r.get("progress_pred")
+            tgt = r.get("target_progress")
 
-                if pred is not None:
-                    pred_array = np.array(pred)
-                    if is_discrete_mode:
-                        # Discrete mode: pred is logits [seq_len, num_bins]
-                        if last_frame_only:
-                            # Use last frame's logits
-                            all_pred_logits.append(pred_array[-1])
-                            if tgt is not None and len(tgt) > 0:
-                                all_target_bins.append(int(tgt[-1]))
+            if pred is not None:
+                pred_array = np.array(pred)
+                if is_discrete_mode:
+                    # Discrete mode: pred is logits [seq_len, num_bins]
+                    if last_frame_only:
+                        # Use last frame's logits
+                        all_pred_logits.append(pred_array[-1])
+                        if tgt is not None and len(tgt) > 0:
+                            all_target_bins.append(int(tgt[-1]))
+                    else:
+                        # Use prediction at current timestep
+                        if timestep >= len(pred_array) - 1:
+                            indx = -1
                         else:
-                            # Use prediction at current timestep
-                            if timestep >= len(pred_array) - 1:
-                                indx = -1
+                            indx = timestep
+                        all_pred_logits.append(pred_array[indx])
+                        if tgt is not None and len(tgt) > 0:
+                            # Target is already a discrete bin index
+                            if timestep >= len(tgt) - 1:
+                                all_target_bins.append(int(tgt[-1]))
                             else:
-                                indx = timestep
-                            all_pred_logits.append(pred_array[indx])
-                            if tgt is not None and len(tgt) > 0:
-                                # Target is already a discrete bin index
-                                if timestep >= len(tgt) - 1:
-                                    all_target_bins.append(int(tgt[-1]))
-                                else:
-                                    all_target_bins.append(int(tgt[indx]))
-                        # For visualization: use argmax to get predicted bin (raw integer)
-                        if last_frame_only:
+                                all_target_bins.append(int(tgt[indx]))
+                    # For visualization: use argmax to get predicted bin (raw integer)
+                    if last_frame_only:
+                        pred_bin = np.argmax(pred_array[-1])
+                    else:
+                        if timestep >= len(pred_array) - 1:
                             pred_bin = np.argmax(pred_array[-1])
                         else:
-                            if timestep >= len(pred_array) - 1:
-                                pred_bin = np.argmax(pred_array[-1])
-                            else:
-                                pred_bin = np.argmax(pred_array[timestep])
-                        all_preds.append(int(pred_bin))
+                            pred_bin = np.argmax(pred_array[timestep])
+                    all_preds.append(int(pred_bin))
+                else:
+                    # Continuous mode: original logic
+                    if last_frame_only:
+                        all_preds.append(float(pred[-1]))
                     else:
-                        # Continuous mode: original logic
-                        if last_frame_only:
-                            all_preds.append(float(pred[-1]))
+                        if timestep >= len(pred) - 1:
+                            indx = -1
                         else:
-                            if timestep >= len(pred) - 1:
-                                indx = -1
-                            else:
-                                indx = timestep
-                            all_preds.append(float(pred[indx]))
+                            indx = timestep
+                        all_preds.append(float(pred[indx]))
+            else:
+                all_preds.append(0.0)
+
+            if tgt is not None and len(tgt) > 0:
+                if is_discrete_mode:
+                    # Target is already a discrete bin index (raw integer)
+                    tgt_bin = int(
+                        tgt[-1] if last_frame_only else (tgt[-1] if timestep >= len(tgt) - 1 else tgt[timestep])
+                    )
+                    all_targets.append(tgt_bin)
                 else:
-                    all_preds.append(0.0)
+                    all_targets.append(float(tgt[-1]))
+            else:
+                all_targets.append(0 if is_discrete_mode else 0.0)
 
-                if tgt is not None and len(tgt) > 0:
-                    if is_discrete_mode:
-                        # Target is already a discrete bin index (raw integer)
-                        tgt_bin = int(
-                            tgt[-1] if last_frame_only else (tgt[-1] if timestep >= len(tgt) - 1 else tgt[timestep])
-                        )
-                        all_targets.append(tgt_bin)
-                    else:
-                        all_targets.append(float(tgt[-1]))
-                else:
-                    all_targets.append(0 if is_discrete_mode else 0.0)
+            # Optional success prediction (binary) from trainer outputs
+            succ = r.get("success_pred", None)
+            if succ is not None and len(succ) > 0:
+                all_success_preds.append(float(succ[-1]))
 
-                # Optional success prediction (binary) from trainer outputs
-                succ = r.get("success_pred", None)
-                if succ is not None and len(succ) > 0:
-                    all_success_preds.append(float(succ[-1]))
+            # Optional success labels (ground truth) from trainer outputs
+            succ_labels = r.get("success_labels", None)
+            if succ_labels is not None and len(succ_labels) > 0:
+                all_success_labels_list.append(float(succ_labels[-1]))
 
-                # Optional success labels (ground truth) from trainer outputs
-                succ_labels = r.get("success_labels", None)
-                if succ_labels is not None and len(succ_labels) > 0:
-                    all_success_labels_list.append(float(succ_labels[-1]))
-
-                # Optional success probabilities from trainer outputs
-                succ_probs = r.get("success_probs", None)
-                if succ_probs is not None and len(succ_probs) > 0:
-                    all_success_probs_list.append(float(succ_probs[-1]))
+            # Optional success probabilities from trainer outputs
+            succ_probs = r.get("success_probs", None)
+            if succ_probs is not None and len(succ_probs) > 0:
+                all_success_probs_list.append(float(succ_probs[-1]))
 
         if len(all_preds) == 0 or len(all_targets) == 0:
             print("No valid predictions or targets found for trajectory: ", trajectory_id)
@@ -435,15 +438,15 @@ def run_reward_alignment_eval_per_trajectory(
         # Load video frames if video path exists
         frames = None
         if video_path:
-            frames = load_frames_from_npz(video_path)
-            frames = frames.transpose(0, 3, 1, 2)
+                frames = load_frames_from_npz(video_path)
+                frames = frames.transpose(0, 3, 1, 2)
 
-            # Resize frames to make them smaller for wandb table display
-            resized_frames = []
-            for frame in frames:
-                frame_resized = cv2.resize(frame.transpose(1, 2, 0), (64, 64))
-                resized_frames.append(frame_resized.transpose(2, 0, 1))
-            frames = np.array(resized_frames)
+                # Resize frames to make them smaller for wandb table display
+                resized_frames = []
+                for frame in frames:
+                    frame_resized = cv2.resize(frame.transpose(1, 2, 0), (64, 64))
+                    resized_frames.append(frame_resized.transpose(2, 0, 1))
+                frames = np.array(resized_frames)
 
         video_frames_list.append(frames)
 
@@ -504,6 +507,23 @@ def run_reward_alignment_eval_per_trajectory(
 
         plots.append(fig)
 
+        # Compute binary success accuracy
+        # For successful trajectories: True if anywhere success_prob > 0.5
+        # For non-successful trajectories: True if everywhere success_prob <= 0.5
+        is_successful_trajectory = quality_label == "successful"
+        if last_success_probs is not None and len(last_success_probs) > 0:
+            max_success_prob = float(np.max(last_success_probs))
+            if is_successful_trajectory:
+                # For successful: True if max > 0.5 (we correctly predict success somewhere)
+                traj_success_acc = max_success_prob > 0.5
+            else:
+                # For non-successful: True if max <= 0.5 (we correctly don't predict success)
+                traj_success_acc = max_success_prob <= 0.5
+            success_acc_list.append(float(traj_success_acc))
+        elif have_success_probs:
+            # If we have success_probs available but not for this trajectory, skip
+            pass
+
         # Accumulate metrics only for successful trajectories
         if quality_label == "successful":
             loss_trajectories.append(traj_loss)
@@ -537,7 +557,11 @@ def run_reward_alignment_eval_per_trajectory(
 
     if success_auprc is not None:
         metrics["success_auprc"] = success_auprc
-    
+
+    # Add binary success accuracy if available
+    if success_acc_list:
+        metrics["success_acc"] = float(np.mean(success_acc_list))
+
     # Add RoboArena delta metric if available
     if use_partial_success and roboarena_deltas:
         metrics["roboarena_abs_delta"] = float(np.mean(roboarena_deltas))

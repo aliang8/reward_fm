@@ -76,7 +76,7 @@ class GVL:
                 for i in range(inner_count):
                     sample_time = self.offset + i * frame_interval
                     # Middle frame index falls within [1, N-2]
-                    frame_index = int(1 + sample_time)
+                    frame_index = int(1 + sample_time)  
                     if 1 <= frame_index < (total_frames - 1):
                         temp_indices.append(frame_index)
 
@@ -230,7 +230,7 @@ class GVL:
     def compute_progress(self, frames_array: np.ndarray, task_description: str = "") -> List[Optional[float]]:
         """
         Compute progress predictions for frames using GVL baseline.
-
+        
         Main pipeline:
           1) Extract and encode frames from the in-memory array
           2) Randomly shuffle

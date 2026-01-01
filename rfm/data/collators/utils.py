@@ -43,7 +43,7 @@ def pad_list_to_max(progress_list):
 
 def convert_frames_to_pil_images(frames, frames_shape=None):
     """Convert frames to PIL images if they are numpy arrays or serialized bytes.
-    
+
     Handles:
     - Bytes with shape: deserializes to numpy array then converts
     - Numpy arrays (TxHxWxC or HxWxC): converts each frame to PIL Image
@@ -127,7 +127,7 @@ def convert_frames_to_pil_images(frames, frames_shape=None):
 
 def frames_to_numpy_array(frames):
     """Convert frames to a numpy array of shape (T, H, W, C).
-    
+
     Handles:
     - None: returns None
     - Numpy arrays: returns as-is (ensures uint8 dtype)
@@ -136,10 +136,10 @@ def frames_to_numpy_array(frames):
     - List of numpy arrays: stacks them
     """
     from PIL import Image
-    
+
     if frames is None:
         return None
-    
+
     if isinstance(frames, np.ndarray):
         # Already numpy array - ensure uint8 dtype
         frames_array = frames
@@ -161,5 +161,5 @@ def frames_to_numpy_array(frames):
             frame_list.append(img)
         if frame_list:
             return np.stack(frame_list)
-    
+
     return None

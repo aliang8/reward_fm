@@ -241,7 +241,7 @@ class VLAC:
                     compressed_frames.append(frame_rgb)
                 cap.release()
                 compressed_frames_array = np.array(compressed_frames)  # [T, H, W, C] in RGB
-                
+
                 # Check shape match - frames_array is [T, H, W, C] format (checked in _frames_to_video)
                 assert compressed_frames_array.shape[0] == frames_array.shape[0], (
                     f"Shape mismatch: original {frames_array.shape} vs compressed {compressed_frames_array.shape}"
@@ -273,7 +273,7 @@ class VLAC:
             if value_list and len(value_list) > 0:
                 # Convert to list of floats
                 progress_list = [float(val) for val in value_list]
-                
+
                 # Check if values need normalization from [0, 100] to [0, 1]
                 max_val = max(progress_list) if progress_list else 0.0
                 if max_val > 1.0:

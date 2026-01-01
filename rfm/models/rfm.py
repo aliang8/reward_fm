@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 from transformers import PreTrainedModel, Qwen2_5_VLModel
 
-try:    
+try:
     from transformers import Qwen3VLModel
 except ImportError:
     Qwen3VLModel = None

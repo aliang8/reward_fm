@@ -1,0 +1,163 @@
+# Baseline Evaluation Guide
+
+This guide documents how to run baseline evaluations for GVL, RL-VLM-F, and VLAC on all datasets.
+
+## Overview
+
+The baseline evaluation system supports several baseline models:
+- **GVL** (Gemini Video Language): Progress prediction using Gemini API
+- **RL-VLM-F** (RL-VLM-F): Preference comparison using Vision-Language Models (Gemini or OpenAI)
+- **VLAC**: Progress prediction using the VLAC model
+- **RFM/ReWiND**: Progress prediction and preference comparison using trained RFM or ReWiND models
+
+## Evaluation Types
+
+1. **Reward Alignment**: Evaluates progress prediction along trajectories
+2. **Policy Ranking**: Evaluates ability to rank trajectories by quality/partial_success
+3. **Quality Preference**: Evaluates preference comparison between trajectory pairs
+
+## Standard Evaluation Configuration
+
+For comprehensive evaluation across all datasets, use the following settings:
+
+- **Reward Alignment**: 20 trajectories per dataset
+- **Policy Ranking**: 20 tasks per dataset, 2 trajectories per quality label
+- **Quality Preference**: 100 comparisons per dataset
+
+## Prerequisites
+
+### Environment Variables
+
+For **GVL** and **RL-VLM-F** (Gemini):
+```bash
+export GEMINI_API_KEY="your-gemini-api-key"
+```
+
+For **RL-VLM-F** (OpenAI):
+```bash
+export OPENAI_API_KEY="your-openai-api-key"
+```
+
+### VLAC Model Setup
+
+For **VLAC**, you need to either:
+1. Download the model from Hugging Face (auto-download if `model_path` is a Hugging Face repo ID)
+2. Provide a local path to the model checkpoint
+
+### RFM/ReWiND Model Setup
+
+For **RFM/ReWiND**, you need to provide:
+1. `rfm_checkpoint_path`: Path to model checkpoint (HuggingFace repo ID or local path)
+   - The config.yaml will be loaded automatically from the checkpoint
+2. Optionally set `rfm_batch_size` for inference batch size (default: 32)
+
+
+### Output
+
+- `output_dir`: Output directory (default: `./baseline_eval_output/<reward_model>_<timestamp>`)
+
+## Output Structure
+
+Each evaluation run creates an output directory with:
+
+```
+baseline_eval_output/
+└── <reward_model>_<timestamp>/
+    ├── baseline_metrics.json                    # Aggregated metrics
+    ├── <eval_type>_<dataset>_results.json       # Detailed results per eval type and dataset
+    ├── <eval_type>_<dataset>_task_groups.json  # Task-level groupings (for policy_ranking, quality_preference)
+    ├── <eval_type>_<dataset>_task_details.json # Task-level details (for policy_ranking, quality_preference)
+    └── <eval_type>_<dataset>_plots/             # Visualization plots (for reward_alignment)
+        └── trajectory_*.gif                     # Plot+video GIFs
+```
+
+## Dataset Names
+
+Common dataset names (use the full dataset key as it appears in the Hugging Face dataset):
+
+- `aliangdw_metaworld_metaworld_eval`
+- `jesbu1_roboarena_eval_debug_nowrist`
+- `jesbu1_oxe_rfm_eval`
+- `abraranwar_libero_rfm`
+- `ykorkmaz_libero_failure_rfm`
+- And many more...
+
+To see all available datasets, check the dataset loading code or Hugging Face.
+
+## Notes
+
+1. **RoboArena Datasets**: For RoboArena datasets, policy ranking uses `partial_success` values instead of quality labels. Use `num_partial_successes` parameter for circular sampling across partial_success values.
+
+2. **Frame Steps vs Whole Trajectories**: 
+   - `use_frame_steps=true`: Generates subsequences (0:frame_step, 0:2*frame_step, etc.)
+   - `use_frame_steps=false`: Uses whole trajectories
+
+3. **VLAC Dependencies**: VLAC requires a separate environment due to dependency conflicts. See `pyproject.toml` for optional dependency groups.
+
+4. **API Rate Limits**: Be aware of API rate limits when running RL-VLM-F or GVL evaluations on large datasets.
+
+5. **GPU Memory**: VLAC evaluations may require significant GPU memory depending on model size and batch settings.
+
+## Troubleshooting
+
+### Common Issues
+
+1. **API Key Not Found**: Ensure `GEMINI_API_KEY` or `OPENAI_API_KEY` is set in your environment
+2. **VLAC Model Not Found**: Check that `vlac_model_path` is correct or that the Hugging Face model can be downloaded
+3. **CUDA Out of Memory**: Reduce `vlac_batch_num` or use a smaller model
+4. **Dataset Not Found**: Verify the dataset name matches exactly (including underscores and case)
+
+## Example: Running All Baselines on All Datasets
+
+To run a complete evaluation suite:
+
+```bash
+# 1. GVL - Reward Alignment + Policy Ranking
+uv run python -m rfm.evals.run_baseline_eval \
+  reward_model=gvl \
+  custom_eval.eval_types="[reward_alignment,policy_ranking]" \
+  custom_eval.reward_alignment="[aliangdw_metaworld_metaworld_eval,jesbu1_roboarena_eval_debug_nowrist]" \
+  custom_eval.policy_ranking="[aliangdw_metaworld_metaworld_eval,jesbu1_roboarena_eval_debug_nowrist]" \
+  custom_eval.reward_alignment_max_trajectories=20 \
+  custom_eval.policy_ranking_max_tasks=20 \
+  custom_eval.num_examples_per_quality_pr=2 \
+  custom_eval.use_frame_steps=false
+
+# 2. RL-VLM-F - Quality Preference
+uv run python -m rfm.evals.run_baseline_eval \
+  reward_model=rlvlmf \
+  vlm_provider=gemini \
+  custom_eval.eval_types="[quality_preference]" \
+  custom_eval.quality_preference="[aliangdw_metaworld_metaworld_eval,jesbu1_roboarena_eval_debug_nowrist]" \
+  custom_eval.max_comparisons=100
+
+# 3. VLAC - Reward Alignment + Policy Ranking
+uv run python -m rfm.evals.run_baseline_eval \
+  reward_model=vlac \
+  vlac_model_path="InternRobotics/VLAC" \
+  vlac_device="cuda:0" \
+  vlac_use_images=true \
+  custom_eval.eval_types="[reward_alignment,policy_ranking]" \
+  custom_eval.reward_alignment="[aliangdw_metaworld_metaworld_eval,jesbu1_roboarena_eval_debug_nowrist]" \
+  custom_eval.policy_ranking="[aliangdw_metaworld_metaworld_eval,jesbu1_roboarena_eval_debug_nowrist]" \
+  custom_eval.reward_alignment_max_trajectories=20 \
+  custom_eval.policy_ranking_max_tasks=20 \
+  custom_eval.num_examples_per_quality_pr=2 \
+  custom_eval.use_frame_steps=false
+
+# 4. RFM/ReWiND - All Evaluation Types (Progress + Preference)
+uv run python -m rfm.evals.run_baseline_eval \
+  reward_model=rfm \
+  rfm_checkpoint_path="your-checkpoint-path-or-hf-repo-id" \
+  rfm_batch_size=32 \
+  custom_eval.eval_types="[reward_alignment,policy_ranking,quality_preference]" \
+  custom_eval.reward_alignment="[aliangdw_metaworld_metaworld_eval,jesbu1_roboarena_eval_debug_nowrist]" \
+  custom_eval.policy_ranking="[aliangdw_metaworld_metaworld_eval,jesbu1_roboarena_eval_debug_nowrist]" \
+  custom_eval.quality_preference="[aliangdw_metaworld_metaworld_eval,jesbu1_roboarena_eval_debug_nowrist]" \
+  custom_eval.reward_alignment_max_trajectories=20 \
+  custom_eval.policy_ranking_max_tasks=20 \
+  custom_eval.num_examples_per_quality_pr=2 \
+  custom_eval.max_comparisons=100 \
+  custom_eval.use_frame_steps=false
+```
+

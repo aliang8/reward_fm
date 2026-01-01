@@ -272,6 +272,12 @@ class CustomEvaluationConfig:
             "help": "Limit number of quality preference comparisons per task. None = use all comparisons. Uniformly samples if limit is set."
         },
     )
+    max_comparisons: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Limit total number of quality preference comparisons across all tasks. None = use all comparisons. Uniformly samples if limit is set."
+        },
+    )
     num_examples_per_quality_pr: int = field(
         default=5,
         metadata={

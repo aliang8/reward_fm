@@ -47,6 +47,7 @@ dependencies = [
     "fastapi>=0.116.1",
     "uvicorn>=0.35.0",
     "requests>=2.32.4",
+    "google-generativeai",  # For RL-VLM-F baseline (Gemini API)
     "scipy>=1.15.3",
     "codetiming>=1.4.0",
     "robosuite==1.4.0",
@@ -133,6 +134,14 @@ allow-direct-references = true
 
 # Configuration for the 'uv' package manager
 [tool.uv]
+# Declare that rfm and vlac optional dependencies are incompatible
+# They have conflicting trl and transformers version requirements
+conflicts = [
+    [
+        { extra = "rfm" },
+        { extra = "vlac" },
+    ],
+]
 # This section could be used for advanced features like overriding dependencies
 # from your environment if needed, similar to the 'openpi' example.
 #override-dependencies = ["av<16.0.0"]

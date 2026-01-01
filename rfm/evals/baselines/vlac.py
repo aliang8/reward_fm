@@ -220,7 +220,6 @@ class VLAC:
                     rich=True,  # Output decimal values
                     reverse_eval=False,
                 )
-                import ipdb; ipdb.set_trace()
             else:
                 # Video mode: use web_trajectory_critic with video file
                 video_path = os.path.join(tmpdir, "trajectory.mp4")
@@ -270,10 +269,16 @@ class VLAC:
 
             # Extract progress values from value_list
             # value_list contains progress predictions for each frame
-            # VLAC returns values in [0, 1] range
+            # VLAC may return values in [0, 100] or [0, 1] range, normalize to [0, 1] if needed
             if value_list and len(value_list) > 0:
                 # Convert to list of floats
                 progress_list = [float(val) for val in value_list]
+                
+                # Check if values need normalization from [0, 100] to [0, 1]
+                max_val = max(progress_list) if progress_list else 0.0
+                if max_val > 1.0:
+                    # Normalize from [0, 100] to [0, 1]
+                    progress_list = [val / 100.0 for val in progress_list]
 
                 # Ensure we have predictions for all frames
                 num_frames = frames_array.shape[0]

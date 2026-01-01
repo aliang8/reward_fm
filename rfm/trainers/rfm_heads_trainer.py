@@ -749,6 +749,7 @@ class RFMHeadsTrainer(Trainer):
             sampler_kwargs["use_frame_steps"] = self.config.custom_eval.use_frame_steps
         elif eval_type == "quality_preference":
             sampler_kwargs["comparisons_per_task"] = self.config.custom_eval.comparisons_per_task
+            sampler_kwargs["max_comparisons"] = self.config.custom_eval.max_comparisons
 
         dataset = setup_custom_eval_dataset(
             eval_cfg, sampler_type=eval_type, is_eval=True, verbose=False, sampler_kwargs=sampler_kwargs

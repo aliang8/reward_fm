@@ -365,6 +365,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                 sampler_kwargs["use_frame_steps"] = cfg.custom_eval.use_frame_steps
             elif "quality_preference" in eval_type:
                 sampler_kwargs["comparisons_per_task"] = cfg.custom_eval.comparisons_per_task
+                sampler_kwargs["max_comparisons"] = cfg.custom_eval.max_comparisons
 
             dataset = setup_custom_eval_dataset(
                 cfg=eval_data_cfg, sampler_type=eval_type, is_eval=True, verbose=True, sampler_kwargs=sampler_kwargs

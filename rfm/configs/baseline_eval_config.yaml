@@ -39,7 +39,8 @@ custom_eval:
   reward_alignment: ["aliangdw_metaworld_metaworld_eval"]  # Datasets for progress evaluation
   policy_ranking: ["aliangdw_metaworld_metaworld_eval"]  # Datasets for progress evaluation
   confusion_matrix: ["aliangdw_metaworld_metaworld_eval"]  # Datasets for progress evaluation
-  comparisons_per_task: null  # Limit number of comparisons per task (None = use all)
+  comparisons_per_task: 3  # Limit number of comparisons per task (None = use all)
+  max_comparisons: 100  # Limit total number of comparisons across all tasks (None = use all)
   reward_alignment_max_trajectories: 10  # Max trajectories for reward alignment
   policy_ranking_max_tasks: 20  # Max tasks for policy ranking
   use_frame_steps: false  # Whether to use frame steps (subsequences) for reward_alignment and policy_ranking. true = generate subsequences, false = use whole trajectory.

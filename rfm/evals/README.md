@@ -40,9 +40,16 @@ export OPENAI_API_KEY="your-openai-api-key"
 
 ### VLAC Model Setup
 
-For **VLAC**, you need to either:
-1. Download the model from Hugging Face (auto-download if `model_path` is a Hugging Face repo ID)
-2. Provide a local path to the model checkpoint
+For **VLAC**, you need to:
+
+1. **Create a separate virtual environment** (required because VLAC dependencies conflict with RFM dependencies):
+   ```bash
+   uv venv .venv-vlac
+   uv pip install -e ".[vlac]" --python .venv-vlac/bin/python
+   ```
+   This creates a separate `.venv-vlac` environment with VLAC-compatible dependencies.
+
+2. **Download the model** from Hugging Face (auto-download if `model_path` is a Hugging Face repo ID) or provide a local path to the model checkpoint
 
 ### RFM/ReWiND Model Setup
 
@@ -132,12 +139,13 @@ uv run python -m rfm.evals.run_baseline_eval \
   custom_eval.max_comparisons=100
 
 # 3. VLAC - Reward Alignment + Policy Ranking
+# First, create the .venv-vlac environment (see VLAC Model Setup section above)
 uv run --extra vlac --python .venv-vlac/bin/python -m rfm.evals.run_baseline_eval \
   reward_model=vlac \
   vlac_model_path="InternRobotics/VLAC" \
   vlac_device="cuda:0" \
   vlac_use_images=true \
-  custom_eval.eval_types="[reward_alignment,policy_ranking]" \
+  custom_eval.eval_types="[policy_ranking]" \
   custom_eval.reward_alignment="[oxe,mw,reward_alignment]" \
   custom_eval.policy_ranking="[policy_ranking]" \
   custom_eval.reward_alignment_max_trajectories=20 \
@@ -151,9 +159,9 @@ uv run python -m rfm.evals.run_baseline_eval \
   rfm_checkpoint_path="rewardfm/rfm_qwen_pref_prog_2frames_franka" \
   rfm_batch_size=32 \
   custom_eval.eval_types="[reward_alignment,policy_ranking,quality_preference]" \
-  custom_eval.reward_alignment="[aliangdw_metaworld_metaworld_eval]" \
-  custom_eval.policy_ranking="[aliangdw_metaworld_metaworld_eval]" \
-  custom_eval.quality_preference="[aliangdw_metaworld_metaworld_eval]" \
+  custom_eval.reward_alignment="[oxe,mw,reward_alignment]" \
+  custom_eval.policy_ranking="[policy_ranking]" \
+  custom_eval.quality_preference="[quality_preference]" \
   custom_eval.reward_alignment_max_trajectories=20 \
   custom_eval.policy_ranking_max_tasks=20 \
   custom_eval.num_examples_per_quality_pr=2 \

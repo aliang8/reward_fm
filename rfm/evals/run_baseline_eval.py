@@ -41,7 +41,7 @@ from omegaconf import DictConfig
 from tqdm import tqdm
 
 from rfm.configs.eval_configs import BaselineEvalConfig
-from rfm.configs.experiment_configs import DataConfig, CustomEvaluationConfig
+from rfm.configs.experiment_configs import DataConfig
 from rfm.utils.setup_utils import setup_custom_eval_dataset
 from rfm.data.datasets.base import resolve_dataset_keys
 from rfm.utils.distributed import is_rank_0
@@ -53,7 +53,6 @@ from rfm.evals.baselines.rlvlmf import RLVLMF
 from rfm.evals.baselines.gvl import GVL
 from rfm.evals.baselines.vlac import VLAC
 from rfm.evals.baselines.rfm_model import RFMModel
-from rfm.data.dataset_types import SampleType
 from rfm.evals.compile_results import compute_eval_metrics
 
 logger = get_logger()
@@ -575,6 +574,10 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                     for key, value in metrics_dict.items():
                         if isinstance(value, (int, float)):
                             eval_type_metrics[f"{dataset_name}/{key}"] = float(value)
+                    
+                    # Write metrics incrementally after each dataset
+                    if cfg.output_dir:
+                        _write_metrics_incremental(cfg.output_dir, eval_type, eval_type_metrics)
 
                 else:
                     # Progress evaluation (reward_alignment, policy_ranking) for gvl, vlac, rfm, rewind
@@ -629,10 +632,46 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                     for key, value in metrics_dict.items():
                         if isinstance(value, (int, float)):
                             eval_type_metrics[f"{dataset_name}/{key}"] = float(value)
+                    
+                    # Write metrics incrementally after each dataset
+                    if cfg.output_dir:
+                        _write_metrics_incremental(cfg.output_dir, eval_type, eval_type_metrics)
 
         all_metrics[eval_type] = eval_type_metrics
 
     return all_metrics
+
+
+def _write_metrics_incremental(output_dir: str, eval_type: str, eval_type_metrics: Dict[str, float]):
+    """Write metrics to shared file incrementally after each dataset.
+    
+    Args:
+        output_dir: Output directory for metrics file
+        eval_type: Evaluation type (e.g., "reward_alignment", "policy_ranking")
+        eval_type_metrics: Dictionary of metrics for this eval_type (keyed by dataset_name/metric_name)
+    """
+    metrics_file = os.path.join(output_dir, "baseline_metrics.json")
+    
+    # Read existing metrics if file exists
+    existing_metrics = {}
+    if os.path.exists(metrics_file):
+        try:
+            with open(metrics_file, "r") as f:
+                existing_metrics = json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            logger.warning(f"Could not read existing metrics file: {e}, starting fresh")
+            existing_metrics = {}
+    
+    # Update with new metrics for this eval_type
+    existing_metrics[eval_type] = eval_type_metrics
+    
+    # Write back to file
+    try:
+        with open(metrics_file, "w") as f:
+            json.dump(existing_metrics, f, indent=2)
+        logger.info(f"Updated metrics file: {metrics_file} (eval_type: {eval_type})")
+    except IOError as e:
+        logger.error(f"Could not write metrics file: {e}")
 
 
 @hydra_main(version_base=None, config_path="../configs", config_name="baseline_eval_config")
@@ -671,7 +710,7 @@ def main(cfg: DictConfig):
 
     # Save metrics
     if metrics and is_rank_0():
-        metrics_file = os.path.join(baseline_cfg.output_dir, "baseline_metrics.json")
+        metrics_file = os.path.join(baseline_cfg.output_dir, "baseline_metrics_final.json")
         metrics_serializable = {}
         for k, v in metrics.items():
             if isinstance(v, dict):

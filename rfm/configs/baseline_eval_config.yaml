@@ -28,7 +28,8 @@ vlac_model_type: "internvl2"
 vlac_temperature: 0.5
 vlac_batch_num: 5
 vlac_skip: 5
-vlac_frame_skip: true
+vlac_frame_skip: false
+vlac_use_images: true  # If true, use image mode; if false, use video mode
 
 # Custom evaluation configuration
 # This specifies which evaluation types and datasets to run

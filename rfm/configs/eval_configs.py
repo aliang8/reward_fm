@@ -130,6 +130,10 @@ class BaselineEvalConfig:
         default=True,
         metadata={"help": "Whether to skip frames for VLAC efficiency"},
     )
+    vlac_use_images: bool = field(
+        default=False,
+        metadata={"help": "If True, use image mode (get_trajectory_critic). If False, use video mode (web_trajectory_critic)"},
+    )
 
     # Custom evaluation configuration
     custom_eval: CustomEvaluationConfig = field(

@@ -17,7 +17,7 @@ Usage:
         custom_eval.reward_alignment=[aliangdw_metaworld_metaworld_eval]
     
     # Run VLAC progress evaluation (requires separate dependency set due to trl conflict)
-    uv run --project pyproject-vlac.toml python rfm/evals/run_baseline_eval.py \
+    PYTHONPATH=.venv-vlac/bin/python rfm/evals/run_baseline_eval.py \
         baseline_type=vlac \
         vlac_model_path=InternRobotics/VLAC \
         custom_eval.eval_types=[reward_alignment] \
@@ -318,6 +318,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
             batch_num=cfg.vlac_batch_num,
             skip=cfg.vlac_skip,
             frame_skip=cfg.vlac_frame_skip,
+            use_images=cfg.vlac_use_images,
         )
     else:
         raise ValueError(f"Unknown baseline_type: {cfg.baseline_type}. Must be 'rlvlmf', 'gvl', or 'vlac'")

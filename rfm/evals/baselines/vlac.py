@@ -96,6 +96,7 @@ class VLAC:
         skip: int = 5,
         frame_skip: bool = True,
         auto_download: bool = True,
+        use_images: bool = False,
     ):
         """
         Initialize VLAC model.
@@ -113,6 +114,8 @@ class VLAC:
             frame_skip: Whether to skip frames for efficiency
             auto_download: If True and model_path is a Hugging Face repo ID, automatically
                           download the model if not found locally
+            use_images: If True, use image mode (get_trajectory_critic with image files).
+                       If False, use video mode (web_trajectory_critic with video file).
         """
         # Check if model_path exists locally first
         if not os.path.exists(model_path):
@@ -146,6 +149,7 @@ class VLAC:
         self.batch_num = batch_num
         self.skip = skip
         self.frame_skip = frame_skip
+        self.use_images = use_images
 
         # Initialize model
         self.critic = GAC_model(tag="critic")
@@ -173,69 +177,117 @@ class VLAC:
         if frames_array is None or frames_array.size == 0:
             return []
 
-        # Create temporary video file from frames
+        # Create temporary directory for intermediate files
         with tempfile.TemporaryDirectory() as tmpdir:
-            video_path = os.path.join(tmpdir, "trajectory.mp4")
-            self._frames_to_video(frames_array, video_path, fps=5.0)
+            if self.use_images:
+                # Image mode: save frames as image files and use get_trajectory_critic
+                image_list = []
+                for i, frame in enumerate(frames_array):
+                    # Ensure frame is uint8
+                    if frame.dtype != np.uint8:
+                        frame = np.clip(frame, 0, 255).astype(np.uint8)
+                    # Save frame as image
+                    image_path = os.path.join(tmpdir, f"frame_{i:05d}.jpg")
+                    # Convert RGB to BGR for OpenCV
+                    frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                    cv2.imwrite(image_path, frame_bgr)
+                    image_list.append(image_path)
 
-            # Compress video (VLAC expects compressed video)
-            compressed_video = os.path.join(tmpdir, "compressed.mp4")
-            _, output_fps = compress_video(video_path, compressed_video, fps=5.0)
+                # Handle reference images if provided
+                ref_image_list = []
+                if reference_video_path:
+                    # Load reference video frames
+                    ref_cap = cv2.VideoCapture(reference_video_path)
+                    ref_idx = 0
+                    while True:
+                        ret, frame = ref_cap.read()
+                        if not ret:
+                            break
+                        # Save reference frame
+                        ref_image_path = os.path.join(tmpdir, f"ref_frame_{ref_idx:05d}.jpg")
+                        cv2.imwrite(ref_image_path, frame)
+                        ref_image_list.append(ref_image_path)
+                        ref_idx += 1
+                    ref_cap.release()
 
-            # Run VLAC trajectory critic
-            result_path, value_list, critic_list, done_list = self.critic.web_trajectory_critic(
-                task_description=task_description,
-                main_video_path=compressed_video,
-                reference_video_path=reference_video_path,
-                batch_num=self.batch_num,
-                ref_num=6 if reference_video_path else 0,
-                think=False,
-                skip=self.skip,
-                rich=False,
-                reverse_eval=False,
-                output_path=tmpdir,
-                fps=float(output_fps),
-                frame_skip=self.frame_skip,
-                done_flag=False,
-                in_context_done=False,
-                done_threshold=0.9,
-                video_output=False,
-            )
+                # Run VLAC trajectory critic with images
+                critic_list, value_list = self.critic.get_trajectory_critic(
+                    task=task_description,
+                    image_list=image_list,
+                    ref_image_list=ref_image_list if ref_image_list else None,
+                    batch_num=self.batch_num,
+                    ref_num=len(ref_image_list) if ref_image_list else 0,
+                    rich=True,  # Output decimal values
+                    reverse_eval=False,
+                )
+                import ipdb; ipdb.set_trace()
+            else:
+                # Video mode: use web_trajectory_critic with video file
+                video_path = os.path.join(tmpdir, "trajectory.mp4")
+                self._frames_to_video(frames_array, video_path, fps=1.0)
+
+                # Compress video (VLAC expects compressed video)
+                compressed_video = os.path.join(tmpdir, "compressed.mp4")
+                _, output_fps = compress_video(video_path, compressed_video, fps=1.0)
+
+                # Verify compressed video shape matches original frames
+                cap = cv2.VideoCapture(compressed_video)
+                compressed_frames = []
+                while True:
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
+                    # Convert BGR to RGB for consistency
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    compressed_frames.append(frame_rgb)
+                cap.release()
+                compressed_frames_array = np.array(compressed_frames)  # [T, H, W, C] in RGB
+                
+                # Check shape match - frames_array is [T, H, W, C] format (checked in _frames_to_video)
+                assert compressed_frames_array.shape[0] == frames_array.shape[0], (
+                    f"Shape mismatch: original {frames_array.shape} vs compressed {compressed_frames_array.shape}"
+                )
+
+                # Run VLAC trajectory critic with video
+                result_path, value_list, critic_list, done_list = self.critic.web_trajectory_critic(
+                    task_description=task_description,
+                    main_video_path=compressed_video,
+                    reference_video_path=reference_video_path,
+                    batch_num=self.batch_num,
+                    ref_num=6 if reference_video_path else 0,
+                    think=False,
+                    skip=self.skip,
+                    rich=True,
+                    reverse_eval=False,
+                    output_path=tmpdir,
+                    fps=float(output_fps),
+                    frame_skip=self.frame_skip,
+                    done_flag=False,
+                    in_context_done=False,
+                    done_threshold=0.9,
+                    video_output=False,
+                )
 
             # Extract progress values from value_list
             # value_list contains progress predictions for each frame
-            # VLAC returns values in [0, 1] range, we need to convert to [0, 100]
+            # VLAC returns values in [0, 1] range
             if value_list and len(value_list) > 0:
-                # Convert to list of floats, handling any None values
-                progress_list = []
-                for val in value_list:
-                    if val is not None:
-                        if isinstance(val, (int, float)):
-                            # VLAC typically returns values in [0, 1] range
-                            # Convert to [0, 100] if needed
-                            if val <= 1.0:
-                                progress_list.append(float(val * 100))
-                            else:
-                                # Already in 0-100 range
-                                progress_list.append(float(val))
-                        else:
-                            progress_list.append(None)
-                    else:
-                        progress_list.append(None)
+                # Convert to list of floats
+                progress_list = [float(val) for val in value_list]
 
                 # Ensure we have predictions for all frames
                 num_frames = frames_array.shape[0]
                 if len(progress_list) < num_frames:
-                    # Pad with None
-                    progress_list.extend([None] * (num_frames - len(progress_list)))
+                    # Pad with last value
+                    progress_list.extend([progress_list[-1]] * (num_frames - len(progress_list)))
                 elif len(progress_list) > num_frames:
                     # Truncate to match frame count
                     progress_list = progress_list[:num_frames]
 
                 return progress_list
             else:
-                # Return None for all frames if no predictions
-                return [None] * frames_array.shape[0]
+                # Return zeros for all frames if no predictions
+                return [0.0] * frames_array.shape[0]
 
     def _frames_to_video(self, frames_array: np.ndarray, output_path: str, fps: float = 5.0):
         """Convert frames array to video file."""
@@ -252,42 +304,3 @@ class VLAC:
             out.write(frame_bgr)
 
         out.release()
-
-
-if __name__ == "__main__":
-    """Command-line interface for downloading VLAC model."""
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Download VLAC model from Hugging Face")
-    parser.add_argument(
-        "--repo-id",
-        type=str,
-        default="InternRobotics/VLAC",
-        help="Hugging Face repository ID (default: InternRobotics/VLAC)",
-    )
-    parser.add_argument(
-        "--local-dir",
-        type=str,
-        default=None,
-        help="Local directory to download model to (default: uses Hugging Face cache)",
-    )
-    parser.add_argument(
-        "--cache-dir",
-        type=str,
-        default=None,
-        help="Cache directory for Hugging Face downloads (default: uses default cache)",
-    )
-
-    args = parser.parse_args()
-
-    try:
-        model_path = download_vlac_model(repo_id=args.repo_id, cache_dir=args.cache_dir, local_dir=args.local_dir)
-        print(f"\n✓ Model successfully downloaded to: {model_path}")
-        print(f"\nYou can now use it with:")
-        print(f"  VLAC(model_path='{model_path}')")
-        if args.local_dir:
-            print(f"  or")
-            print(f"  VLAC(model_path='{args.local_dir}')")
-    except Exception as e:
-        print(f"Error downloading model: {e}")
-        exit(1)

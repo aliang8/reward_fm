@@ -11,14 +11,14 @@ from PIL import Image
 import numpy as np
 
 try:
-import google.generativeai as genai
+    import google.generativeai as genai
 
     GEMINI_AVAILABLE = True
 except ImportError:
     GEMINI_AVAILABLE = False
 
 try:
-import openai
+    import openai
 
     OPENAI_AVAILABLE = True
 except ImportError:

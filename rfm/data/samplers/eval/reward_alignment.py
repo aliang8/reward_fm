@@ -73,7 +73,7 @@ class RewardAlignmentSampler(RFMBaseSampler):
         Returns:
             List of sample index dictionaries
         """
-            num_frames = traj["num_frames"]
+        num_frames = traj["num_frames"]
         indices = []
 
         if self.use_frame_steps:
@@ -108,21 +108,22 @@ class RewardAlignmentSampler(RFMBaseSampler):
 
         if use_frame_steps:
             # Frame steps mode: create subsequence like reward_alignment
-        frame_indices = sample_idx_info["frame_indices"]
-        num_frames = sample_idx_info["num_frames"]
+            frame_indices = sample_idx_info["frame_indices"]
+            num_frames = sample_idx_info["num_frames"]
 
-        metadata = {
-            "data_gen_strategy": "reward_alignment",
+            metadata = {
+                "data_gen_strategy": "reward_alignment",
                 "id": traj["id"],
-            "video_path": sample_idx_info["video_path"],
-            "frame_step": frame_indices[-1] if frame_indices else 0,
-        }
+                "video_path": sample_idx_info["video_path"],
+                "frame_step": frame_indices[-1] if frame_indices else 0,
+                "num_frames": num_frames,
+            }
 
             trajectory = self._get_traj_from_data(
                 traj=traj,
-            frame_indices=frame_indices,
-            metadata=metadata,
-        )
+                frame_indices=frame_indices,
+                metadata=metadata,
+            )
         else:
             # Whole trajectory mode
             metadata = {

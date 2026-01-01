@@ -241,7 +241,7 @@ def run_reward_alignment_eval_per_trajectory(
         # This orders subsequences from shortest to longest (e.g., [0], [0,1], [0,1,2], ...)
         # Only sort if there are multiple results (indicating frame_steps mode)
         if len(results_for_trajectory) > 1:
-        results_for_trajectory.sort(key=lambda r: r.get("metadata", {}).get("frame_step", 0))
+            results_for_trajectory.sort(key=lambda r: r.get("metadata", {}).get("frame_step", 0))
 
         # Get task and quality label from first result
         task = results_for_trajectory[0]["task"]
@@ -350,80 +350,80 @@ def run_reward_alignment_eval_per_trajectory(
 
         else:
             # Frame steps mode: multiple results, one per subsequence
-        for timestep, r in enumerate(results_for_trajectory):
-            pred = r.get("progress_pred")
-            tgt = r.get("target_progress")
+            for timestep, r in enumerate(results_for_trajectory):
+                pred = r.get("progress_pred")
+                tgt = r.get("target_progress")
 
-            if pred is not None:
-                pred_array = np.array(pred)
-                if is_discrete_mode:
-                    # Discrete mode: pred is logits [seq_len, num_bins]
-                    if last_frame_only:
-                        # Use last frame's logits
-                        all_pred_logits.append(pred_array[-1])
-                        if tgt is not None and len(tgt) > 0:
-                            all_target_bins.append(int(tgt[-1]))
-                    else:
-                        # Use prediction at current timestep
-                        if timestep >= len(pred_array) - 1:
-                            indx = -1
-                        else:
-                            indx = timestep
-                        all_pred_logits.append(pred_array[indx])
-                        if tgt is not None and len(tgt) > 0:
-                            # Target is already a discrete bin index
-                            if timestep >= len(tgt) - 1:
+                if pred is not None:
+                    pred_array = np.array(pred)
+                    if is_discrete_mode:
+                        # Discrete mode: pred is logits [seq_len, num_bins]
+                        if last_frame_only:
+                            # Use last frame's logits
+                            all_pred_logits.append(pred_array[-1])
+                            if tgt is not None and len(tgt) > 0:
                                 all_target_bins.append(int(tgt[-1]))
+                        else:
+                            # Use prediction at current timestep
+                            if timestep >= len(pred_array) - 1:
+                                indx = -1
                             else:
-                                all_target_bins.append(int(tgt[indx]))
-                    # For visualization: use argmax to get predicted bin (raw integer)
-                    if last_frame_only:
-                        pred_bin = np.argmax(pred_array[-1])
-                    else:
-                        if timestep >= len(pred_array) - 1:
+                                indx = timestep
+                            all_pred_logits.append(pred_array[indx])
+                            if tgt is not None and len(tgt) > 0:
+                                # Target is already a discrete bin index
+                                if timestep >= len(tgt) - 1:
+                                    all_target_bins.append(int(tgt[-1]))
+                                else:
+                                    all_target_bins.append(int(tgt[indx]))
+                        # For visualization: use argmax to get predicted bin (raw integer)
+                        if last_frame_only:
                             pred_bin = np.argmax(pred_array[-1])
                         else:
-                            pred_bin = np.argmax(pred_array[timestep])
-                    all_preds.append(int(pred_bin))
-                else:
-                    # Continuous mode: original logic
-                    if last_frame_only:
-                        all_preds.append(float(pred[-1]))
+                            if timestep >= len(pred_array) - 1:
+                                pred_bin = np.argmax(pred_array[-1])
+                            else:
+                                pred_bin = np.argmax(pred_array[timestep])
+                        all_preds.append(int(pred_bin))
                     else:
-                        if timestep >= len(pred) - 1:
-                            indx = -1
+                        # Continuous mode: original logic
+                        if last_frame_only:
+                            all_preds.append(float(pred[-1]))
                         else:
-                            indx = timestep
-                        all_preds.append(float(pred[indx]))
-            else:
-                all_preds.append(0.0)
-
-            if tgt is not None and len(tgt) > 0:
-                if is_discrete_mode:
-                    # Target is already a discrete bin index (raw integer)
-                    tgt_bin = int(
-                        tgt[-1] if last_frame_only else (tgt[-1] if timestep >= len(tgt) - 1 else tgt[timestep])
-                    )
-                    all_targets.append(tgt_bin)
+                            if timestep >= len(pred) - 1:
+                                indx = -1
+                            else:
+                                indx = timestep
+                            all_preds.append(float(pred[indx]))
                 else:
-                    all_targets.append(float(tgt[-1]))
-            else:
-                all_targets.append(0 if is_discrete_mode else 0.0)
+                    all_preds.append(0.0)
 
-            # Optional success prediction (binary) from trainer outputs
-            succ = r.get("success_pred", None)
-            if succ is not None and len(succ) > 0:
-                all_success_preds.append(float(succ[-1]))
+                if tgt is not None and len(tgt) > 0:
+                    if is_discrete_mode:
+                        # Target is already a discrete bin index (raw integer)
+                        tgt_bin = int(
+                            tgt[-1] if last_frame_only else (tgt[-1] if timestep >= len(tgt) - 1 else tgt[timestep])
+                        )
+                        all_targets.append(tgt_bin)
+                    else:
+                        all_targets.append(float(tgt[-1]))
+                else:
+                    all_targets.append(0 if is_discrete_mode else 0.0)
 
-            # Optional success labels (ground truth) from trainer outputs
-            succ_labels = r.get("success_labels", None)
-            if succ_labels is not None and len(succ_labels) > 0:
-                all_success_labels_list.append(float(succ_labels[-1]))
+                # Optional success prediction (binary) from trainer outputs
+                succ = r.get("success_pred", None)
+                if succ is not None and len(succ) > 0:
+                    all_success_preds.append(float(succ[-1]))
 
-            # Optional success probabilities from trainer outputs
-            succ_probs = r.get("success_probs", None)
-            if succ_probs is not None and len(succ_probs) > 0:
-                all_success_probs_list.append(float(succ_probs[-1]))
+                # Optional success labels (ground truth) from trainer outputs
+                succ_labels = r.get("success_labels", None)
+                if succ_labels is not None and len(succ_labels) > 0:
+                    all_success_labels_list.append(float(succ_labels[-1]))
+
+                # Optional success probabilities from trainer outputs
+                succ_probs = r.get("success_probs", None)
+                if succ_probs is not None and len(succ_probs) > 0:
+                    all_success_probs_list.append(float(succ_probs[-1]))
 
         if len(all_preds) == 0 or len(all_targets) == 0:
             print("No valid predictions or targets found for trajectory: ", trajectory_id)

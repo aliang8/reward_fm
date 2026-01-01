@@ -1,4 +1,5 @@
 from typing import Dict, List, Any, Optional
+from itertools import cycle
 
 import numpy as np
 from collections import defaultdict
@@ -15,6 +16,7 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
     def __init__(
         self,
         num_examples_per_quality_pr: int = 5,
+        num_partial_successes: Optional[int] = None,
         frame_step: int = 1,
         use_frame_steps: bool = True,
         max_tasks: Optional[int] = None,
@@ -23,6 +25,7 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
         super().__init__(**kwargs)
 
         self.num_examples_per_quality_pr = num_examples_per_quality_pr
+        self.num_partial_successes = num_partial_successes
         self.frame_step = frame_step
         self.use_frame_steps = use_frame_steps
         self.max_tasks = max_tasks
@@ -89,20 +92,38 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
         # Sort tasks to ensure deterministic processing order
         for task, key_to_trajs in sorted(tasks_with_multiple_values.items()):
             if is_roboarena:
-                # RoboArena: Sample N trajectories per partial_success value
-                # Sort partial_success values to ensure deterministic order
+                # RoboArena: Use num_partial_successes for circular sampling
+                num_to_sample_total = self.num_partial_successes
+                
+                # Build lists of available indices per partial_success (sorted for deterministic sampling)
+                available_lists = []
                 for partial_success in sorted(key_to_trajs.keys()):
-                    traj_indices = key_to_trajs[partial_success]
+                    traj_indices = sorted(key_to_trajs[partial_success])
                     if traj_indices:
-                        # Sort trajectory indices to ensure deterministic sampling
-                        traj_indices = sorted(traj_indices)
-                        # Sample up to num_examples_per_quality_pr trajectories for this partial_success value
-                        num_to_sample = min(self.num_examples_per_quality_pr, len(traj_indices))
-                        sampled_traj_indices = self._local_random.sample(traj_indices, num_to_sample)
-                        for traj_idx in sampled_traj_indices:
-                            traj = self.dataset[traj_idx]
-                            sample_indices.extend(self._generate_indices_for_trajectory(traj_idx, traj))
-                            all_sampled_traj_indices.append(traj_idx)
+                        available_lists.append(traj_indices)
+                
+                # Circular sampling: cycle through partial_success groups until we reach max
+                sampled_traj_indices = []
+                for available_indices in cycle(available_lists):
+                    if len(sampled_traj_indices) >= num_to_sample_total:
+                        break
+                    if not available_indices:
+                        # If all lists are empty, stop
+                        if all(not lst for lst in available_lists):
+                            break
+                        continue
+                    
+                    # Sample one trajectory from this group
+                    sampled_idx = self._local_random.choice(available_indices)
+                    sampled_traj_indices.append(sampled_idx)
+                    # Remove the sampled index from this list
+                    available_indices.remove(sampled_idx)
+                
+                # Generate samples for all sampled trajectories
+                for traj_idx in sampled_traj_indices:
+                    traj = self.dataset[traj_idx]
+                    sample_indices.extend(self._generate_indices_for_trajectory(traj_idx, traj))
+                    all_sampled_traj_indices.append(traj_idx)
             else:
                 # Non-RoboArena: Sample N trajectories per quality label
                 # Sort quality labels to ensure deterministic order

@@ -49,6 +49,7 @@ custom_eval:
   policy_ranking_max_tasks: 20  # Max tasks for policy ranking
   use_frame_steps: false  # Whether to use frame steps (subsequences) for reward_alignment and policy_ranking. true = generate subsequences, false = use whole trajectory.
   num_examples_per_quality_pr: 3  # Examples per quality label for policy ranking
+  num_partial_successes: 5  # For RoboArena: Total trajectories to sample via circular sampling (None = use num_examples_per_quality_pr per group)
   custom_eval_random_seed: 42
 
 # Output directory for evaluation results

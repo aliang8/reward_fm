@@ -95,7 +95,7 @@ class RewardAlignmentSampler(RFMBaseSampler):
                 "video_path": traj["frames"],
                 "id": traj["id"],
                 "use_frame_steps": False,
-                })
+            })
 
         return indices
 

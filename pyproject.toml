@@ -59,6 +59,7 @@ dependencies = [
     "num2words",
     "seaborn",
     "bitsandbytes",
+    "torch==2.8.0",  # Required for Qwen models, xformers, and modern transformers. Use CUDA build on Linux via tool.uv.sources
     "torchvision",
     "moviepy",
     "wandb[media]",
@@ -153,6 +154,16 @@ flash-attn = [{ requirement = "torch", match-runtime = true }]
 # Tell flash-attn to use a prebuilt wheel instead of compiling CUDA kernels
 [tool.uv.extra-build-variables]
 flash-attn = { FLASH_ATTENTION_SKIP_CUDA_BUILD = "TRUE" }
+
+# Specify PyTorch CUDA index for Linux/Windows (CUDA 12.8 builds)
+[tool.uv.sources]
+torch = { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" }
+torchvision = { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
 # Tool configuration for the 'ruff' linter and formatter
 [tool.ruff]

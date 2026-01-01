@@ -438,15 +438,15 @@ def run_reward_alignment_eval_per_trajectory(
         # Load video frames if video path exists
         frames = None
         if video_path:
-                frames = load_frames_from_npz(video_path)
-                frames = frames.transpose(0, 3, 1, 2)
+            frames = load_frames_from_npz(video_path)
+            frames = frames.transpose(0, 3, 1, 2)
 
-                # Resize frames to make them smaller for wandb table display
-                resized_frames = []
-                for frame in frames:
-                    frame_resized = cv2.resize(frame.transpose(1, 2, 0), (64, 64))
-                    resized_frames.append(frame_resized.transpose(2, 0, 1))
-                frames = np.array(resized_frames)
+            # Resize frames to make them smaller for wandb table display
+            resized_frames = []
+            for frame in frames:
+                frame_resized = cv2.resize(frame.transpose(1, 2, 0), (64, 64))
+                resized_frames.append(frame_resized.transpose(2, 0, 1))
+            frames = np.array(resized_frames)
 
         video_frames_list.append(frames)
 

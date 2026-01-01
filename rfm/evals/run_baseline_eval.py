@@ -274,44 +274,45 @@ def process_progress_sample(
 
 
 def process_batched_rfm_samples(
-    samples: List[SampleType],
+    dataset,
     model: RFMModel,
     batch_size: int = 32,
 ) -> List[Dict[str, Any]]:
-    """Process a batch of RFM/ReWiND samples using batched computation with minibatching.
+    """Process RFM/ReWiND samples using batched computation with minibatching.
 
     Args:
-        samples: List of ProgressSample, PreferenceSample, or SimilaritySample objects
+        dataset: Dataset object that supports indexing (e.g., CustomEvalDataset)
         model: RFMModel instance
         batch_size: Batch size for processing samples
 
     Returns:
         List of result dictionaries in the same format as process_progress_sample/process_preference_sample
     """
-    if not samples:
-        return []
+    dataset_len = len(dataset)
 
-    # Group samples by type
-    progress_samples = []
-    preference_samples = []
-    similarity_samples = []
+    # Group indices by sample type (iterate once, only storing indices)
+    progress_indices = []
+    preference_indices = []
+    similarity_indices = []
 
-    for sample in samples:
+    for i in range(dataset_len):
+        sample = dataset[i]
         if isinstance(sample, ProgressSample):
-            progress_samples.append(sample)
+            progress_indices.append(i)
         elif isinstance(sample, PreferenceSample):
-            preference_samples.append(sample)
+            preference_indices.append(i)
         elif isinstance(sample, SimilaritySample):
-            similarity_samples.append(sample)
+            similarity_indices.append(i)
         else:
             logger.warning(f"Unknown sample type: {type(sample)}")
 
     results = []
 
     # Process progress samples in minibatches
-    if progress_samples:
-        for i in range(0, len(progress_samples), batch_size):
-            batch = progress_samples[i : i + batch_size]
+    if progress_indices:
+        for batch_start in tqdm(range(0, len(progress_indices), batch_size), desc="Processing progress batches"):
+            batch_indices = progress_indices[batch_start : batch_start + batch_size]
+            batch = [dataset[i] for i in batch_indices]
             progress_preds = model.compute_batched_progress(batch)
             for sample, progress_pred in zip(batch, progress_preds):
                 traj = sample.trajectory
@@ -342,9 +343,10 @@ def process_batched_rfm_samples(
                 results.append(result)
 
     # Process preference samples in minibatches
-    if preference_samples:
-        for i in range(0, len(preference_samples), batch_size):
-            batch = preference_samples[i : i + batch_size]
+    if preference_indices:
+        for batch_start in tqdm(range(0, len(preference_indices), batch_size), desc="Processing preference batches"):
+            batch_indices = preference_indices[batch_start : batch_start + batch_size]
+            batch = [dataset[i] for i in batch_indices]
             preference_results = model.compute_batched_preference(batch)
             for sample, result in zip(batch, preference_results):
                 chosen_traj = sample.chosen_trajectory
@@ -392,9 +394,10 @@ def process_batched_rfm_samples(
                 results.append(formatted_result)
 
     # Process similarity samples in minibatches (if needed in the future)
-    if similarity_samples:
-        for i in range(0, len(similarity_samples), batch_size):
-            batch = similarity_samples[i : i + batch_size]
+    if similarity_indices:
+        for batch_start in tqdm(range(0, len(similarity_indices), batch_size), desc="Processing similarity batches"):
+            batch_indices = similarity_indices[batch_start : batch_start + batch_size]
+            batch = [dataset[i] for i in batch_indices]
             similarity_results = model.compute_batched_similarity(batch)
             # For now, similarity samples are not used in baseline evaluation
             # but we process them for completeness
@@ -432,9 +435,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
         if not cfg.rfm_checkpoint_path:
             raise ValueError("rfm_checkpoint_path is required for RFM/ReWiND reward model")
 
-        model = RFMModel(
-            checkpoint_path=cfg.rfm_checkpoint_path,
-        )
+        model = RFMModel(checkpoint_path=cfg.rfm_checkpoint_path)
     else:
         raise ValueError(
             f"Unknown reward_model: {cfg.reward_model}. Must be 'rlvlmf', 'gvl', 'vlac', 'rfm', or 'rewind'"
@@ -478,6 +479,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                 sampler_kwargs["use_frame_steps"] = cfg.custom_eval.use_frame_steps
             elif eval_type == "policy_ranking":
                 sampler_kwargs["num_examples_per_quality_pr"] = cfg.custom_eval.num_examples_per_quality_pr
+                sampler_kwargs["num_partial_successes"] = cfg.custom_eval.num_partial_successes
                 sampler_kwargs["max_tasks"] = cfg.custom_eval.policy_ranking_max_tasks
                 sampler_kwargs["use_frame_steps"] = cfg.custom_eval.use_frame_steps
             elif "quality_preference" in eval_type:
@@ -490,14 +492,13 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
 
             # Process samples
             eval_results = []
-            
+
             if cfg.reward_model in ["rfm", "rewind"]:
-                # For RFM/ReWiND, collect all samples and process in batches
-                all_samples = list(dataset)
-                logger.info(f"Processing {len(all_samples)} samples in batches for RFM/ReWiND")
-                
+                # For RFM/ReWiND, process dataset using indices to avoid materializing entire dataset
+                logger.info(f"Processing {len(dataset)} samples in batches for RFM/ReWiND")
+
                 try:
-                    batch_results = process_batched_rfm_samples(all_samples, model, batch_size=cfg.rfm_batch_size)
+                    batch_results = process_batched_rfm_samples(dataset, model, batch_size=cfg.rfm_batch_size)
                     eval_results.extend(batch_results)
                 except Exception as e:
                     logger.error(f"Error processing batch: {e}")
@@ -515,7 +516,9 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                             if result:
                                 eval_results.append(result)
                         else:
-                            logger.warning(f"Sample type mismatch: reward_model={cfg.reward_model}, sample={type(sample)}")
+                            logger.warning(
+                                f"Sample type mismatch: reward_model={cfg.reward_model}, sample={type(sample)}"
+                            )
                     except Exception as e:
                         logger.error(f"Error processing sample {i}: {e}")
                         continue
@@ -540,7 +543,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                         raise ValueError(
                             f"quality_preference evaluation only supported for rlvlmf, rfm, rewind, got {cfg.reward_model}"
                         )
-                    
+
                     eval_metrics_result = compute_eval_metrics(
                         eval_type="quality_preference",
                         results=eval_results,

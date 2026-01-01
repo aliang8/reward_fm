@@ -742,6 +742,7 @@ class RFMHeadsTrainer(Trainer):
             sampler_kwargs["use_frame_steps"] = self.config.custom_eval.use_frame_steps
         elif eval_type == "policy_ranking":
             sampler_kwargs["num_examples_per_quality_pr"] = self.config.custom_eval.num_examples_per_quality_pr
+            sampler_kwargs["num_partial_successes"] = self.config.custom_eval.num_partial_successes
             sampler_kwargs["max_tasks"] = self.config.custom_eval.policy_ranking_max_tasks
             sampler_kwargs["frame_step"] = (
                 2 if (self.config.trainer_cls == "rfm_heads" and not self.config.data.use_multi_image) else 1

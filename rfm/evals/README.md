@@ -132,14 +132,14 @@ uv run python -m rfm.evals.run_baseline_eval \
   custom_eval.max_comparisons=100
 
 # 3. VLAC - Reward Alignment + Policy Ranking
-uv run python -m rfm.evals.run_baseline_eval \
+uv run --extra vlac --python .venv-vlac/bin/python -m rfm.evals.run_baseline_eval \
   reward_model=vlac \
   vlac_model_path="InternRobotics/VLAC" \
   vlac_device="cuda:0" \
   vlac_use_images=true \
   custom_eval.eval_types="[reward_alignment,policy_ranking]" \
-  custom_eval.reward_alignment="[aliangdw_metaworld_metaworld_eval,jesbu1_roboarena_eval_debug_nowrist]" \
-  custom_eval.policy_ranking="[aliangdw_metaworld_metaworld_eval,jesbu1_roboarena_eval_debug_nowrist]" \
+  custom_eval.reward_alignment="[oxe,mw,reward_alignment]" \
+  custom_eval.policy_ranking="[policy_ranking]" \
   custom_eval.reward_alignment_max_trajectories=20 \
   custom_eval.policy_ranking_max_tasks=20 \
   custom_eval.num_examples_per_quality_pr=2 \
@@ -148,16 +148,16 @@ uv run python -m rfm.evals.run_baseline_eval \
 # 4. RFM/ReWiND - All Evaluation Types (Progress + Preference)
 uv run python -m rfm.evals.run_baseline_eval \
   reward_model=rfm \
-  rfm_checkpoint_path="your-checkpoint-path-or-hf-repo-id" \
+  rfm_checkpoint_path="rewardfm/rfm_qwen_pref_prog_2frames_franka" \
   rfm_batch_size=32 \
   custom_eval.eval_types="[reward_alignment,policy_ranking,quality_preference]" \
-  custom_eval.reward_alignment="[aliangdw_metaworld_metaworld_eval,jesbu1_roboarena_eval_debug_nowrist]" \
-  custom_eval.policy_ranking="[aliangdw_metaworld_metaworld_eval,jesbu1_roboarena_eval_debug_nowrist]" \
-  custom_eval.quality_preference="[aliangdw_metaworld_metaworld_eval,jesbu1_roboarena_eval_debug_nowrist]" \
+  custom_eval.reward_alignment="[aliangdw_metaworld_metaworld_eval]" \
+  custom_eval.policy_ranking="[aliangdw_metaworld_metaworld_eval]" \
+  custom_eval.quality_preference="[aliangdw_metaworld_metaworld_eval]" \
   custom_eval.reward_alignment_max_trajectories=20 \
   custom_eval.policy_ranking_max_tasks=20 \
   custom_eval.num_examples_per_quality_pr=2 \
   custom_eval.max_comparisons=100 \
-  custom_eval.use_frame_steps=false
+  custom_eval.use_frame_steps=true
 ```
 

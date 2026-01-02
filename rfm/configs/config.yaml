@@ -142,7 +142,8 @@ custom_eval:
   custom_eval_random_seed: 42  # Random seed for custom eval samplers to ensure deterministic sampling across ranks.
   policy_ranking_max_tasks: 100  # Maximum number of tasks to use for policy ranking evaluation. null = use all tasks with multiple quality labels.
   use_frame_steps: true  # Whether to use frame steps (subsequences) for reward_alignment and policy_ranking. true = generate subsequences, false = use whole trajectory.
-
+  num_partial_successes: 5  # Number of partial successes to sample for policy ranking evaluation. null = use all partial successes.
+  
 # =====================================================================================
 # Training Configuration
 # =====================================================================================

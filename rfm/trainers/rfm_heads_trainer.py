@@ -2688,6 +2688,7 @@ class RFMHeadsTrainer(Trainer):
         strategy_values: Optional[List[str]],
         data_source_values: List[str],
         metrics: Dict[str, torch.Tensor],
+        loss_mask: Optional[torch.Tensor] = None,
     ) -> None:
         """
         Add stratified metrics (by strategy and data source) to outputs_dict.
@@ -2698,8 +2699,13 @@ class RFMHeadsTrainer(Trainer):
             strategy_values: List of strategy values to split by (e.g., data_gen_strategy), or None to skip
             data_source_values: List of data source values to split by
             metrics: Dictionary of metric tensors, e.g., {"acc": tensor, "loss": tensor, "margin": tensor}
+            loss_mask: Optional[torch.Tensor] = None,
         """
         device = self.accelerator.device
+
+        # Flatten loss_mask to 1D if it has extra dimensions (e.g., [batch_size, 1] -> [batch_size])
+        if loss_mask is not None:
+            loss_mask = loss_mask.squeeze()
 
         # Split by strategy
         if strategy_values is not None:
@@ -2710,7 +2716,10 @@ class RFMHeadsTrainer(Trainer):
                 )
                 # Apply mask to each metric and compute mean
                 for metric_name, metric_tensor in metrics.items():
-                    masked_metric = metric_tensor[mask == 1].detach()
+                    if loss_mask is not None:
+                        masked_metric = metric_tensor[(mask == 1) & (loss_mask == 1)].detach()
+                    else:
+                        masked_metric = metric_tensor[mask == 1].detach()
                     # get mean over non-nan values
                     non_nan_masked_metric = masked_metric[~torch.isnan(masked_metric)]
                     if non_nan_masked_metric.numel() > 0:
@@ -2725,7 +2734,10 @@ class RFMHeadsTrainer(Trainer):
             )
             # Apply mask to each metric and compute mean
             for metric_name, metric_tensor in metrics.items():
-                masked_metric = metric_tensor[mask == 1].detach()
+                if loss_mask is not None:
+                    masked_metric = metric_tensor[(mask == 1) & (loss_mask == 1)].detach()
+                else:
+                    masked_metric = metric_tensor[mask == 1].detach()
                 non_nan_masked_metric = masked_metric[~torch.isnan(masked_metric)]
                 if non_nan_masked_metric.numel() > 0:
                     mean_value = non_nan_masked_metric.mean().item()
@@ -2843,6 +2855,7 @@ class RFMHeadsTrainer(Trainer):
                 strategy_values,
                 inputs["data_source"],
                 stratified_metrics,
+                progress_target_mask,
             )
 
             outputs_dict.update({
@@ -2966,6 +2979,7 @@ class RFMHeadsTrainer(Trainer):
                     inputs["trajectory_A_data_gen_strategy"],
                     inputs["trajectory_A_data_source"],
                     stratified_progress_metrics,
+                    target_progress_A_mask,
                 )
 
             if self.config.model.train_success_head:
@@ -2993,6 +3007,7 @@ class RFMHeadsTrainer(Trainer):
                     inputs["trajectory_A_data_gen_strategy"],
                     inputs["trajectory_A_data_source"],
                     stratified_success_metrics,
+                    target_progress_A_mask,
                 )
 
             if preference_loss is not None:
@@ -3278,6 +3293,7 @@ class RFMHeadsTrainer(Trainer):
                     inputs["data_gen_strategy"],
                     inputs["trajectory_A_data_source"],
                     stratified_progress_metrics,
+                    target_progress_sim_A_mask,
                 )
 
             # Add success loss metrics if computed
@@ -3322,6 +3338,7 @@ class RFMHeadsTrainer(Trainer):
                     inputs["data_gen_strategy"],
                     inputs["trajectory_A_data_source"],
                     stratified_success_metrics,
+                    target_progress_sim_A_mask,
                 )
 
             return final_loss, outputs_dict

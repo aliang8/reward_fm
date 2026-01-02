@@ -739,14 +739,18 @@ class RFMHeadsTrainer(Trainer):
             sampler_kwargs["frame_step"] = (
                 2 if (self.config.trainer_cls == "rfm_heads" and not self.config.data.use_multi_image) else 1
             )
+            sampler_kwargs["use_frame_steps"] = self.config.custom_eval.use_frame_steps
         elif eval_type == "policy_ranking":
             sampler_kwargs["num_examples_per_quality_pr"] = self.config.custom_eval.num_examples_per_quality_pr
+            sampler_kwargs["num_partial_successes"] = self.config.custom_eval.num_partial_successes
             sampler_kwargs["max_tasks"] = self.config.custom_eval.policy_ranking_max_tasks
             sampler_kwargs["frame_step"] = (
                 2 if (self.config.trainer_cls == "rfm_heads" and not self.config.data.use_multi_image) else 1
             )
+            sampler_kwargs["use_frame_steps"] = self.config.custom_eval.use_frame_steps
         elif eval_type == "quality_preference":
             sampler_kwargs["comparisons_per_task"] = self.config.custom_eval.comparisons_per_task
+            sampler_kwargs["max_comparisons"] = self.config.custom_eval.max_comparisons
 
         dataset = setup_custom_eval_dataset(
             eval_cfg, sampler_type=eval_type, is_eval=True, verbose=False, sampler_kwargs=sampler_kwargs
@@ -874,6 +878,10 @@ class RFMHeadsTrainer(Trainer):
         pref_logits = self.accelerator.gather_for_metrics(pref_logits)
         preference_labels = self.accelerator.gather_for_metrics(preference_samples["preference_labels"])
 
+        # Convert logits to binary predictions (0/1): apply sigmoid, then threshold at 0.5
+        pref_probs = torch.sigmoid(pref_logits)
+        binary_preds = (pref_probs > 0.5).float()
+
         # Gather non-tensor metadata using helper (handles single and multi GPU)
         gathered_pref_metadata = self._gather_metadata_fields(
             preference_samples,
@@ -885,17 +893,18 @@ class RFMHeadsTrainer(Trainer):
                 "metadata",
             ],
         )
-        num_pref_samples = pref_logits.shape[0] if pref_logits is not None else 0
+        num_pref_samples = binary_preds.shape[0] if binary_preds is not None else 0
         gathered_pref_metadata = self._truncate_metadata_lists(gathered_pref_metadata, num_pref_samples)
 
         # Build eval_results on all processes for compute_eval_metrics
         batch_results = []
-        for i in range(len(pref_logits)):
-            if pref_logits[i] is None:
+        for i in range(len(binary_preds)):
+            if binary_preds[i] is None:
                 continue
             sample_result = {
                 "task": gathered_pref_metadata["task"][i],
-                "preference_pred": t2n(pref_logits[i]),
+                "preference_pred": t2n(binary_preds[i]),
+                "preference_logits": t2n(pref_logits[i]),
                 "preference_labels": t2n(preference_labels[i]),
                 "data_source": gathered_pref_metadata["data_source"][i],
                 "chosen_data_gen_strategy": gathered_pref_metadata["chosen_data_gen_strategy"][i],
@@ -905,7 +914,7 @@ class RFMHeadsTrainer(Trainer):
             batch_results.append(sample_result)
 
         # Clean up gathered tensors and metadata after building results
-        del pref_logits, preference_labels, gathered_pref_metadata
+        del pref_logits, pref_probs, binary_preds, preference_labels, gathered_pref_metadata
 
         return batch_results, outputs
 
@@ -2894,7 +2903,7 @@ class RFMHeadsTrainer(Trainer):
                     outputs_dict,
                     prefix,
                     inputs["trajectory_A_data_gen_strategy"],
-                    inputs["data_source"],
+                    inputs["trajectory_A_data_source"],
                     stratified_progress_metrics,
                 )
 
@@ -2914,7 +2923,7 @@ class RFMHeadsTrainer(Trainer):
                     outputs_dict,
                     prefix,
                     inputs["trajectory_A_data_gen_strategy"],
-                    inputs["data_source"],
+                    inputs["trajectory_A_data_source"],
                     stratified_success_metrics,
                 )
 
@@ -3199,7 +3208,7 @@ class RFMHeadsTrainer(Trainer):
                     outputs_dict,
                     prefix,
                     inputs["data_gen_strategy"],
-                    inputs["data_source"],
+                    inputs["trajectory_A_data_source"],
                     stratified_progress_metrics,
                 )
 
@@ -3231,7 +3240,7 @@ class RFMHeadsTrainer(Trainer):
                     outputs_dict,
                     prefix,
                     inputs["data_gen_strategy"],
-                    inputs["data_source"],
+                    inputs["trajectory_A_data_source"],
                     stratified_success_metrics,
                 )
 

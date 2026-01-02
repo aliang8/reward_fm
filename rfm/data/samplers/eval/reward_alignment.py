@@ -29,12 +29,14 @@ class RewardAlignmentSampler(RFMBaseSampler):
         self,
         max_trajectories: int | None = None,
         frame_step: int = 1,
+        use_frame_steps: bool = True,
         **kwargs,
     ):
         super().__init__(**kwargs)
 
         self.max_trajectories = max_trajectories
         self.frame_step = frame_step
+        self.use_frame_steps = use_frame_steps
         self.sample_indices = self._generate_all_sample_indices()
 
         rank_0_print(
@@ -57,43 +59,85 @@ class RewardAlignmentSampler(RFMBaseSampler):
 
         for traj_idx in trajectories_to_process:
             traj = self.dataset[traj_idx]
-            num_frames = traj["num_frames"]
-            # Create subsequence indices: 0:1, 0:2, 0:3, etc.
+            sample_indices.extend(self._generate_indices_for_trajectory(traj_idx, traj))
+
+        return sample_indices
+
+    def _generate_indices_for_trajectory(self, traj_idx: int, traj: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Generate sample indices for a single trajectory.
+
+        Args:
+            traj_idx: Index of the trajectory in the dataset
+            traj: Trajectory dictionary
+
+        Returns:
+            List of sample index dictionaries
+        """
+        num_frames = traj["num_frames"]
+        indices = []
+
+        if self.use_frame_steps:
+            # Generate subsequence indices like reward_alignment: 0:frame_step, 0:2*frame_step, etc.
             for end_idx in range(self.frame_step, num_frames + 1, self.frame_step):
                 frame_indices = list(range(end_idx))
-                sample_indices.append({
+                indices.append({
                     "traj_idx": traj_idx,
                     "frame_indices": frame_indices,
                     "num_frames": num_frames,
                     "video_path": traj["frames"],
                     "id": traj["id"],
+                    "use_frame_steps": True,
                 })
+        else:
+            # Generate one sample per trajectory (whole trajectory)
+            indices.append({
+                "traj_idx": traj_idx,
+                "video_path": traj["frames"],
+                "id": traj["id"],
+                "use_frame_steps": False,
+            })
 
-        return sample_indices
+        return indices
 
     def _generate_sample_from_indices(self, sample_idx_info: dict) -> ProgressSample:
         """Generate a single subsequence sample from stored indices."""
         traj_idx = sample_idx_info["traj_idx"]
-        frame_indices = sample_idx_info["frame_indices"]
-        num_frames = sample_idx_info["num_frames"]
+        use_frame_steps = sample_idx_info.get("use_frame_steps", True)
 
-        original_traj = self.dataset[traj_idx]
+        traj = self.dataset[traj_idx]
 
-        metadata = {
-            "data_gen_strategy": "reward_alignment",
-            "id": original_traj["id"],
-            "video_path": sample_idx_info["video_path"],
-            "frame_step": frame_indices[-1] if frame_indices else 0,
-        }
+        if use_frame_steps:
+            # Frame steps mode: create subsequence like reward_alignment
+            frame_indices = sample_idx_info["frame_indices"]
+            num_frames = sample_idx_info["num_frames"]
 
-        subsequence_trajectory = self._get_traj_from_data(
-            traj=original_traj,
-            frame_indices=frame_indices,
-            metadata=metadata,
-        )
+            metadata = {
+                "data_gen_strategy": "reward_alignment",
+                "id": traj["id"],
+                "video_path": sample_idx_info["video_path"],
+                "frame_step": frame_indices[-1] if frame_indices else 0,
+                "num_frames": num_frames,
+            }
 
-        sample = ProgressSample(trajectory=subsequence_trajectory, sample_type="progress")
+            trajectory = self._get_traj_from_data(
+                traj=traj,
+                frame_indices=frame_indices,
+                metadata=metadata,
+            )
+        else:
+            # Whole trajectory mode
+            metadata = {
+                "data_gen_strategy": "reward_alignment",
+                "id": traj["id"],
+                "video_path": sample_idx_info["video_path"],
+            }
 
+            trajectory = self._get_traj_from_data(
+                traj=traj,
+                metadata=metadata,
+            )
+
+        sample = ProgressSample(trajectory=trajectory, sample_type="progress")
         return sample
 
     def __len__(self):

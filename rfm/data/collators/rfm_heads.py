@@ -486,6 +486,7 @@ class RFMBatchCollator(BaseCollator):
         ]
 
         batch_inputs["trajectory_A_quality_label"] = [traj.quality_label for traj in trajectory_A_list]
+        batch_inputs["trajectory_A_data_source"] = [traj.data_source for traj in trajectory_A_list]
 
         trajectory_A_data_gen_strategy = []
         trajectory_B_data_gen_strategy = []
@@ -800,6 +801,7 @@ class RFMBatchCollator(BaseCollator):
         # For ref_sim: A is ref if ref_sim_order[i] is True, otherwise A is sim
         target_progress_sim_A = []
         target_progress_sim_A_mask = []
+        trajectory_A_data_source_sim = []  # Data source for trajectory A in ref_sim comparison
         for i, sample in enumerate(similarity_samples):
             if ref_sim_order[i]:
                 # Ref is A (first)
@@ -811,6 +813,7 @@ class RFMBatchCollator(BaseCollator):
                         data_source=sample.ref_trajectory.data_source,
                     )
                 )
+                trajectory_A_data_source_sim.append(sample.ref_trajectory.data_source)
             else:
                 # Sim is A (first)
                 target_progress_sim_A.append(sample.sim_trajectory.target_progress)
@@ -821,10 +824,12 @@ class RFMBatchCollator(BaseCollator):
                         data_source=sample.sim_trajectory.data_source,
                     )
                 )
+                trajectory_A_data_source_sim.append(sample.sim_trajectory.data_source)
 
         # For ref_diff: A is ref if ref_diff_order[i] is True, otherwise A is diff
         target_progress_diff_A = []
         target_progress_diff_A_mask = []
+        trajectory_A_data_source_diff = []  # Data source for trajectory A in ref_diff comparison
         for i, sample in enumerate(similarity_samples):
             if ref_diff_order[i]:
                 # Ref is A (first)
@@ -836,6 +841,7 @@ class RFMBatchCollator(BaseCollator):
                         data_source=sample.ref_trajectory.data_source,
                     )
                 )
+                trajectory_A_data_source_diff.append(sample.ref_trajectory.data_source)
             else:
                 # Diff is A (first)
                 target_progress_diff_A.append(sample.diff_trajectory.target_progress)
@@ -846,11 +852,14 @@ class RFMBatchCollator(BaseCollator):
                         data_source=sample.diff_trajectory.data_source,
                     )
                 )
+                trajectory_A_data_source_diff.append(sample.diff_trajectory.data_source)
 
         batch_inputs["target_progress_sim_A"] = pad_list_to_max(target_progress_sim_A)
         batch_inputs["target_progress_sim_A_mask"] = torch.tensor(target_progress_sim_A_mask, dtype=torch.float32)
         batch_inputs["target_progress_diff_A"] = pad_list_to_max(target_progress_diff_A)
         batch_inputs["target_progress_diff_A_mask"] = torch.tensor(target_progress_diff_A_mask, dtype=torch.float32)
+
+        batch_inputs["trajectory_A_data_source"] = trajectory_A_data_source_sim
 
         ref_frames_shape_list = [sample.ref_trajectory.frames_shape for sample in similarity_samples]
         traj_sim_frames_shape_list = [sample.sim_trajectory.frames_shape for sample in similarity_samples]

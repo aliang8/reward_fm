@@ -222,7 +222,7 @@ class DataConfig:
     )
 
     progress_pred_type: str = field(
-        default="absolute", metadata={"help": "Type of progress prediction: 'absolute' or 'relative'"}
+        default="absolute_wrt_total_frames", metadata={"help": "Type of progress prediction: 'absolute' or 'relative'"}
     )
 
     # Success prediction thresholds
@@ -272,10 +272,22 @@ class CustomEvaluationConfig:
             "help": "Limit number of quality preference comparisons per task. None = use all comparisons. Uniformly samples if limit is set."
         },
     )
+    max_comparisons: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Limit total number of quality preference comparisons across all tasks. None = use all comparisons. Uniformly samples if limit is set."
+        },
+    )
     num_examples_per_quality_pr: int = field(
         default=5,
         metadata={
             "help": "Number of trajectories to sample per quality label for policy ranking evaluation. Only tasks with multiple quality labels are used."
+        },
+    )
+    num_partial_successes: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "For RoboArena datasets: Number of total trajectories to sample using circular sampling across partial_success values. None = use num_examples_per_quality_pr per partial_success group."
         },
     )
     policy_ranking_max_tasks: Optional[int] = field(
@@ -294,6 +306,12 @@ class CustomEvaluationConfig:
         default=10,
         metadata={
             "help": "Maximum number of trajectories to use for reward alignment evaluation. None = use all trajectories."
+        },
+    )
+    use_frame_steps: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to use frame steps (subsequences) for reward_alignment and policy_ranking evaluations. True = generate subsequences (0:frame_step, 0:2*frame_step, etc.), False = use whole trajectory."
         },
     )
 

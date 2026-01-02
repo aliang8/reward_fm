@@ -2390,7 +2390,6 @@ class RFMHeadsTrainer(Trainer):
             logger.trace(f"{key}: {value}, type: {type(value)}")
             if isinstance(value, torch.Tensor):
                 logger.trace(f"\t{key}: shape={value.shape}")
-
         # Check for NaN in total loss before returning
         if torch.isnan(total_loss).any():
             logger.warning(f"NaN detected in total_loss, replacing with 0.0")
@@ -2488,9 +2487,10 @@ class RFMHeadsTrainer(Trainer):
             weight=sample_weights,
             reduction="none",
         )
+        combined_mask_index = combined_mask.bool()
+        loss = (loss * combined_mask) / (sample_weights + 1e-8)
+        success_loss = loss[combined_mask_index].mean()
 
-        loss = (loss * combined_mask) / sample_weights
-        success_loss = loss.mean()
 
         # Compute accuracy per sample
         success_preds = (torch.sigmoid(success_logits) > 0.5).float()
@@ -2499,8 +2499,8 @@ class RFMHeadsTrainer(Trainer):
 
         # Compute weighted accuracy (balanced accuracy)
         # Weight each class's accuracy by inverse of its frequency
-        positive_correct = (correct * success_labels * combined_mask).sum()
-        negative_correct = (correct * (1 - success_labels) * combined_mask).sum()
+        positive_correct = (correct[combined_mask_index] * success_labels[combined_mask_index]).sum()
+        negative_correct = (correct[combined_mask_index] * (1 - success_labels[combined_mask_index])).sum()
 
         if num_positives > 0 and num_negatives > 0:
             # Balanced accuracy: average of recall for each class
@@ -2711,8 +2711,11 @@ class RFMHeadsTrainer(Trainer):
                 # Apply mask to each metric and compute mean
                 for metric_name, metric_tensor in metrics.items():
                     masked_metric = metric_tensor[mask == 1].detach()
-                    mean_value = masked_metric.mean().item() if masked_metric.numel() > 0 else 0.0
-                    outputs_dict[f"{prefix}_strat_{metric_name}/{strat}"] = mean_value
+                    # get mean over non-nan values
+                    non_nan_masked_metric = masked_metric[~torch.isnan(masked_metric)]
+                    if non_nan_masked_metric.numel() > 0:
+                        mean_value = non_nan_masked_metric.mean().item()
+                        outputs_dict[f"{prefix}_strat_{metric_name}/{strat}"] = mean_value
 
         # Split by data source
         data_sources = set(data_source_values)
@@ -2723,8 +2726,10 @@ class RFMHeadsTrainer(Trainer):
             # Apply mask to each metric and compute mean
             for metric_name, metric_tensor in metrics.items():
                 masked_metric = metric_tensor[mask == 1].detach()
-                mean_value = masked_metric.mean().item() if masked_metric.numel() > 0 else 0.0
-                outputs_dict[f"{prefix}_ds_{metric_name}/{data_source}"] = mean_value
+                non_nan_masked_metric = masked_metric[~torch.isnan(masked_metric)]
+                if non_nan_masked_metric.numel() > 0:
+                    mean_value = non_nan_masked_metric.mean().item()
+                    outputs_dict[f"{prefix}_ds_{metric_name}/{data_source}"] = mean_value
 
     def forward_model(self, model, inputs, sample_type="progress"):
         """Forward pass for the model."""
@@ -2982,7 +2987,6 @@ class RFMHeadsTrainer(Trainer):
                     "success_loss": success_metrics_A["masked_loss"],
                     "success_acc": success_metrics_A["masked_correct"],
                 }
-
                 self._add_stratified_metrics(
                     outputs_dict,
                     prefix,

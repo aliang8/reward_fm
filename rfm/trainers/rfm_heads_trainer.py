@@ -2903,7 +2903,7 @@ class RFMHeadsTrainer(Trainer):
                     outputs_dict,
                     prefix,
                     inputs["trajectory_A_data_gen_strategy"],
-                    inputs["data_source"],
+                    inputs["trajectory_A_data_source"],
                     stratified_progress_metrics,
                 )
 
@@ -2923,7 +2923,7 @@ class RFMHeadsTrainer(Trainer):
                     outputs_dict,
                     prefix,
                     inputs["trajectory_A_data_gen_strategy"],
-                    inputs["data_source"],
+                    inputs["trajectory_A_data_source"],
                     stratified_success_metrics,
                 )
 
@@ -3208,7 +3208,7 @@ class RFMHeadsTrainer(Trainer):
                     outputs_dict,
                     prefix,
                     inputs["data_gen_strategy"],
-                    inputs["data_source"],
+                    inputs["trajectory_A_data_source"],
                     stratified_progress_metrics,
                 )
 
@@ -3240,7 +3240,7 @@ class RFMHeadsTrainer(Trainer):
                     outputs_dict,
                     prefix,
                     inputs["data_gen_strategy"],
-                    inputs["data_source"],
+                    inputs["trajectory_A_data_source"],
                     stratified_success_metrics,
                 )
 

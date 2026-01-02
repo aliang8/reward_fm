@@ -2864,8 +2864,12 @@ class RFMHeadsTrainer(Trainer):
                     f"{prefix}/success_loss": success_loss.item(),
                     f"{prefix}/success_accuracy": success_accuracy.item(),
                     f"{prefix}/success_auprc": success_auprc.item(),
-                    f"{prefix}/weighted_success_accuracy": weighted_accuracy.item() if torch.is_tensor(weighted_accuracy) else weighted_accuracy,
-                    f"{prefix}/success_loss_weight": success_loss_weight.item() if torch.is_tensor(success_loss_weight) else success_loss_weight,
+                    f"{prefix}/weighted_success_accuracy": weighted_accuracy.item()
+                    if torch.is_tensor(weighted_accuracy)
+                    else weighted_accuracy,
+                    f"{prefix}/success_loss_weight": success_loss_weight.item()
+                    if torch.is_tensor(success_loss_weight)
+                    else success_loss_weight,
                     f"{prefix}/success_num_positives": success_metrics["num_positives"].item(),
                     f"{prefix}/success_num_negatives": success_metrics["num_negatives"].item(),
                 })
@@ -2971,8 +2975,12 @@ class RFMHeadsTrainer(Trainer):
                     f"{prefix}/pref_success_loss": success_loss.item(),
                     f"{prefix}/pref_success_accuracy": success_accuracy.item(),
                     f"{prefix}/pref_success_auprc": success_auprc.item(),
-                    f"{prefix}/pref_weighted_success_accuracy": weighted_accuracy.item() if torch.is_tensor(weighted_accuracy) else weighted_accuracy,
-                    f"{prefix}/pref_success_loss_weight": success_loss_weight.item() if torch.is_tensor(success_loss_weight) else success_loss_weight,
+                    f"{prefix}/pref_weighted_success_accuracy": weighted_accuracy.item()
+                    if torch.is_tensor(weighted_accuracy)
+                    else weighted_accuracy,
+                    f"{prefix}/pref_success_loss_weight": success_loss_weight.item()
+                    if torch.is_tensor(success_loss_weight)
+                    else success_loss_weight,
                 })
 
                 stratified_success_metrics = {
@@ -3286,8 +3294,12 @@ class RFMHeadsTrainer(Trainer):
                     f"{prefix}/sim_success_loss_ref_diff": success_loss_ref_diff.item(),
                     f"{prefix}/sim_success_accuracy": success_accuracy.item(),
                     f"{prefix}/sim_success_auprc": success_auprc.item(),
-                    f"{prefix}/sim_weighted_success_accuracy": avg_weighted_accuracy.item() if torch.is_tensor(avg_weighted_accuracy) else avg_weighted_accuracy,
-                    f"{prefix}/sim_success_loss_weight": avg_success_loss_weight.item() if torch.is_tensor(avg_success_loss_weight) else avg_success_loss_weight,
+                    f"{prefix}/sim_weighted_success_accuracy": avg_weighted_accuracy.item()
+                    if torch.is_tensor(avg_weighted_accuracy)
+                    else avg_weighted_accuracy,
+                    f"{prefix}/sim_success_loss_weight": avg_success_loss_weight.item()
+                    if torch.is_tensor(avg_success_loss_weight)
+                    else avg_success_loss_weight,
                 })
 
                 # Combine metrics from both ref_sim and ref_diff for stratification

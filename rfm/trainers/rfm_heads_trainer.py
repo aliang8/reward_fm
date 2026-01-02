@@ -2486,12 +2486,11 @@ class RFMHeadsTrainer(Trainer):
             success_logits,
             success_labels,
             weight=sample_weights,
-            reduction="sum",
+            reduction="none",
         )
 
-        # Normalize loss by sum of weights
-        weight_sum = sample_weights.sum()
-        success_loss = loss / (weight_sum + 1e-8)
+        loss = (loss * combined_mask) / sample_weights
+        success_loss = loss.mean()
 
         # Compute accuracy per sample
         success_preds = (torch.sigmoid(success_logits) > 0.5).float()
@@ -2530,6 +2529,7 @@ class RFMHeadsTrainer(Trainer):
 
         metrics = {
             "masked_correct": masked_correct,
+            "masked_loss": loss,
             "weighted_accuracy": weighted_acc,
             "success_loss_weight": success_loss_weight,
             "num_positives": num_positives,
@@ -2973,7 +2973,6 @@ class RFMHeadsTrainer(Trainer):
                 stratified_success_metrics = {
                     "success_loss": success_metrics_A["masked_loss"],
                     "success_acc": success_metrics_A["masked_correct"],
-                    "success_auprc": success_metrics_A["success_auprc"],
                 }
 
                 self._add_stratified_metrics(
@@ -3299,7 +3298,6 @@ class RFMHeadsTrainer(Trainer):
                 stratified_success_metrics = {
                     "success_loss": combined_success_loss,
                     "success_acc": combined_success_acc,
-                    "success_auprc": success_auprc.item(),
                 }
 
                 self._add_stratified_metrics(

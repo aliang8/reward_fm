@@ -9,7 +9,12 @@ heads or there will be some problems with FSDP sharding.
 
 import torch
 import torch.nn as nn
-from transformers import PreTrainedModel, Qwen2_5_VLModel, Qwen3VLModel
+from transformers import PreTrainedModel, Qwen2_5_VLModel
+
+try:
+    from transformers import Qwen3VLModel
+except ImportError:
+    Qwen3VLModel = None
 
 # from transformers import AutoModelForImageTextToText as Molmo2VLModel  # Molmo2 uses AutoModelForImageTextToText
 from transformers import SmolVLMModel

@@ -148,6 +148,7 @@ def process_batch_helper(
     outputs_preference = None
     outputs_progress = None
     outputs_similarity = None
+    outputs_success = None
 
     num_preferences = batch_inputs.get("num_preferences", 0)
     num_progress = batch_inputs.get("num_progress", 0)
@@ -188,6 +189,9 @@ def process_batch_helper(
                 sample_type="progress",
             )
 
+        if "outputs_success" in outputs_progress:
+            outputs_success = outputs_progress.pop("outputs_success")
+
     if num_similarities > 0:
         if model_type == "vqa":
             raise ValueError("Similarity evaluation is not supported for VQA model type.")
@@ -201,6 +205,7 @@ def process_batch_helper(
     return {
         "outputs_preference": outputs_preference,
         "outputs_progress": outputs_progress,
+        "outputs_success": outputs_success,
         "outputs_similarity": outputs_similarity,
     }
 
@@ -227,6 +232,7 @@ class MultiGPUEvalServer:
             model_path=self.model_path,
             device=torch.device("cpu"),
         )
+
         self.exp_config: ExperimentConfig = exp_config
         self.base_tokenizer = tokenizer
         self.base_processor = processor
@@ -449,6 +455,13 @@ def compute_batch_outputs(
                 progress_pred = [[] for _ in range(batch_size)]
             results["progress_pred"] = progress_pred
             logger.debug(f"progress_pred: {progress_pred}")
+            if model_output.success_logits is not None:
+                success_pred = model_output.success_logits["A"]
+                success_probs = torch.sigmoid(success_pred)
+                results["outputs_success"] = {
+                    "success_probs": success_probs.detach().cpu().tolist(),
+                }
+                logger.debug(f"success_probs: {success_probs}")
 
     # Similarity logits
     if sample_type == "similarity" and model_output.sim_logits is not None:

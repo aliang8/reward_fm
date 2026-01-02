@@ -421,7 +421,11 @@ class RFMBaseSampler:
         selected_idx = random.choice(candidate_indices)
         result = self.dataset[selected_idx]
         result_partial_success = result.get("partial_success")
-        direction = "higher" if result_partial_success > ref_partial_success else "lower"
+        # If ref_partial_success is 1.0, direction is always "lower" since 1.0 is the maximum
+        if ref_partial_success == 1.0:
+            direction = "lower"
+        else:
+            direction = "higher" if result_partial_success > ref_partial_success else "lower"
         logger.trace(
             f"[BASE SAMPLER] _get_different_partial_success_traj: Found trajectory {result.get('id', 'unknown')} with partial_success {result_partial_success} ({direction} than {ref_partial_success}, abs diff: {abs(ref_partial_success - result_partial_success):.3f}, threshold: {min_threshold})"
         )

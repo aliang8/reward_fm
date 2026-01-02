@@ -84,11 +84,29 @@ class SimSampler(RFMBaseSampler):
             optimal_idx = self._local_random.choice(optimal_indices)
             ref_traj = self.dataset[optimal_idx]
 
+        # Check if ref_traj is successful - if not, return None to try a different trajectory
+        quality_label = ref_traj.get("quality_label")
+        partial_success = ref_traj.get("partial_success")
+        data_source = ref_traj.get("data_source", "")
+        is_roboarena = partial_success is not None and data_source and "roboarena" in str(data_source).lower()
+
+        if is_roboarena:
+            # For RoboArena, require partial_success to exist
+            if partial_success is None:
+                logger.trace(
+                    f"[SIM SAMPLER] Ref trajectory {ref_traj.get('id', 'unknown')} missing partial_success, skipping"
+                )
+                return None
+        else:
+            # For non-RoboArena, require quality_label to be "successful"
+            if quality_label != "successful":
+                logger.trace(
+                    f"[SIM SAMPLER] Ref trajectory {ref_traj.get('id', 'unknown')} is not successful (quality_label: {quality_label}), skipping"
+                )
+                return None
+
         traj_sim, traj_diff = None, None
         strategy_used = None
-
-        # Get data_source from ref_traj to filter and boost strategies
-        data_source = ref_traj["data_source"]
         is_failure_source = is_failure_ds(data_source) if data_source else False
         is_paired_source = is_paired_ds(data_source) if data_source else False
 
@@ -99,10 +117,9 @@ class SimSampler(RFMBaseSampler):
         if self.similarity_strategy_ratio[0] > 0:
             strategies.append((DataGenStrat.REWIND, self.similarity_strategy_ratio[0]))
 
-        # SUBOPTIMAL: only include if data_source is in failure category
+        # SUBOPTIMAL: include if data_source is in failure category
         if (
-            self._has_suboptimal
-            and len(self.similarity_strategy_ratio) > 1
+            len(self.similarity_strategy_ratio) > 1
             and self.similarity_strategy_ratio[1] > 0
             and is_failure_source
         ):
@@ -217,24 +234,24 @@ class SimSampler(RFMBaseSampler):
 
         Returns:
             Tuple of (traj_sim, traj_diff) where:
-            - traj_sim = rewound trajectory
-            - traj_diff = different task trajectory
+            - traj_sim = optimal trajectory from same task
+            - traj_diff = rewound trajectory
             Returns None if either cannot be generated after retries.
             The main strategy loop will handle retries with different strategies.
         """
         max_retries = 3  # Number of retry attempts for sampling
 
-        # Try to get rewound trajectory for sim
+        # Try to get optimal trajectory from same task for sim
         traj_sim = None
         for _ in range(max_retries):
-            traj_sim = self._get_traj_from_data(ref_traj, subsample_strategy="subsample_rewind")
+            traj_sim = self._get_same_task_optimal(ref_traj)
             if traj_sim is not None:
                 break
 
-        # Try to get different task trajectory for diff
+        # Try to get rewound trajectory for diff
         traj_diff = None
         for _ in range(max_retries):
-            traj_diff = self._get_different_video_traj(ref_traj)
+            traj_diff = self._get_traj_from_data(ref_traj, subsample_strategy="subsample_rewind")
             if traj_diff is not None:
                 break
 
@@ -288,17 +305,19 @@ class SimSampler(RFMBaseSampler):
 
         Returns:
             Tuple of (traj_sim, traj_diff) or None if not available. Both can be dict or Trajectory objects.
+            traj_sim is an optimal trajectory from same task
+            traj_diff is a suboptimal trajectory from same task
         """
         max_retries = 3  # Number of retry attempts for sampling
 
-        # Retry traj_sim separately
+        # Get optimal trajectory from same task for sim
         traj_sim = None
         for _ in range(max_retries):
             traj_sim = self._get_same_task_optimal(ref_traj)
             if traj_sim is not None:
                 break
 
-        # Retry traj_diff separately
+        # Get suboptimal trajectory from same task for diff
         traj_diff = None
         for _ in range(max_retries):
             traj_diff = self._get_same_task_suboptimal(ref_traj)

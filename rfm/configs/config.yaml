@@ -110,8 +110,8 @@ data:
   roboarena_partial_success_threshold: 0.2  # Minimum difference in partial_success between chosen and rejected trajectories for RoboArena
 
   # Success label parameters
-  min_success: 0.8  # Progress threshold below which success label is 0
-  max_success: 1.0  # Progress threshold above which success label is 1
+  min_success: 0.8  # Progress threshold below which success label pred is applied, anything in between min and max is not used for success pred loss unless succ = 1 for those frames.
+  max_success: 1.0  # Progress threshold above which success label is 1. Most sim datasets don't have a special cutoff number so we use 1.0 as default as sims will succeed at 1.0 progress.
   # Dataset-specific success thresholds (CSV format: dataset_name,success_percentage)
   dataset_success_cutoff_file: "rfm/data/dataset_success_cutoff.txt"
   
@@ -212,8 +212,8 @@ training:
 # Loss Configuration
 # =====================================================================================
 loss:
-  # 6:1 ratio of success to failure for BCEWithLogits loss
-  success_positive_weight: 6
+  # Success loss weight and pos_weight are computed dynamically from class imbalance
+  # to weight positive and negative classes equally (balanced accuracy)
   predict_last_frame_progress: false  # If true, only compute progress loss for the last frame
   progress_loss_type: "l2"  # Options: "l1", "l2", or "discrete" (default: "l2")
   progress_discrete_bins: 10  # Number of discrete bins for progress when using discrete loss (default: 10)

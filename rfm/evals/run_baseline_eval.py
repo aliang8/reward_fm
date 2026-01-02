@@ -574,7 +574,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                     for key, value in metrics_dict.items():
                         if isinstance(value, (int, float)):
                             eval_type_metrics[f"{dataset_name}/{key}"] = float(value)
-                    
+
                     # Write metrics incrementally after each dataset
                     if cfg.output_dir:
                         _write_metrics_incremental(cfg.output_dir, eval_type, eval_type_metrics)
@@ -632,7 +632,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                     for key, value in metrics_dict.items():
                         if isinstance(value, (int, float)):
                             eval_type_metrics[f"{dataset_name}/{key}"] = float(value)
-                    
+
                     # Write metrics incrementally after each dataset
                     if cfg.output_dir:
                         _write_metrics_incremental(cfg.output_dir, eval_type, eval_type_metrics)
@@ -644,14 +644,14 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
 
 def _write_metrics_incremental(output_dir: str, eval_type: str, eval_type_metrics: Dict[str, float]):
     """Write metrics to shared file incrementally after each dataset.
-    
+
     Args:
         output_dir: Output directory for metrics file
         eval_type: Evaluation type (e.g., "reward_alignment", "policy_ranking")
         eval_type_metrics: Dictionary of metrics for this eval_type (keyed by dataset_name/metric_name)
     """
     metrics_file = os.path.join(output_dir, "baseline_metrics.json")
-    
+
     # Read existing metrics if file exists
     existing_metrics = {}
     if os.path.exists(metrics_file):
@@ -661,10 +661,10 @@ def _write_metrics_incremental(output_dir: str, eval_type: str, eval_type_metric
         except (json.JSONDecodeError, IOError) as e:
             logger.warning(f"Could not read existing metrics file: {e}, starting fresh")
             existing_metrics = {}
-    
+
     # Update with new metrics for this eval_type
     existing_metrics[eval_type] = eval_type_metrics
-    
+
     # Write back to file
     try:
         with open(metrics_file, "w") as f:

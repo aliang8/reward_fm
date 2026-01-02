@@ -118,11 +118,7 @@ class SimSampler(RFMBaseSampler):
             strategies.append((DataGenStrat.REWIND, self.similarity_strategy_ratio[0]))
 
         # SUBOPTIMAL: include if data_source is in failure category
-        if (
-            len(self.similarity_strategy_ratio) > 1
-            and self.similarity_strategy_ratio[1] > 0
-            and is_failure_source
-        ):
+        if len(self.similarity_strategy_ratio) > 1 and self.similarity_strategy_ratio[1] > 0 and is_failure_source:
             # Boost probability by 2x if data_source is in failure category
             boosted_prob = self.similarity_strategy_ratio[1] * 2.0
             strategies.append((DataGenStrat.SUBOPTIMAL, boosted_prob))

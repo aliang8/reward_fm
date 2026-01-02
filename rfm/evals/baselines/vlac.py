@@ -32,11 +32,14 @@ import cv2
 # Disable tqdm globally before importing evo_vlac to prevent progress bars
 try:
     import tqdm
+
     # Monkey-patch tqdm to always disable before evo_vlac imports it
     _original_tqdm = tqdm.tqdm
+
     def _disabled_tqdm(*args, **kwargs):
-        kwargs['disable'] = True
+        kwargs["disable"] = True
         return _original_tqdm(*args, **kwargs)
+
     tqdm.tqdm = _disabled_tqdm
 except ImportError:
     pass  # tqdm not available, nothing to patch

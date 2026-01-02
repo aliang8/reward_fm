@@ -103,8 +103,8 @@ def compute_success_labels(
     else:
         threshold = max_success
 
-    # Generate success labels: 1.0 for success (progress > threshold), 0.0 for failure
-    success_labels = [1.0 if prog > threshold else 0.0 for prog in target_progress]
+    # Generate success labels: 1.0 for success (progress >= threshold), 0.0 for failure
+    success_labels = [1.0 if prog >= threshold else 0.0 for prog in target_progress]
 
     return success_labels
 

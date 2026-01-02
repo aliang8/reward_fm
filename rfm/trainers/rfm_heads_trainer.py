@@ -739,14 +739,18 @@ class RFMHeadsTrainer(Trainer):
             sampler_kwargs["frame_step"] = (
                 2 if (self.config.trainer_cls == "rfm_heads" and not self.config.data.use_multi_image) else 1
             )
+            sampler_kwargs["use_frame_steps"] = self.config.custom_eval.use_frame_steps
         elif eval_type == "policy_ranking":
             sampler_kwargs["num_examples_per_quality_pr"] = self.config.custom_eval.num_examples_per_quality_pr
+            sampler_kwargs["num_partial_successes"] = self.config.custom_eval.num_partial_successes
             sampler_kwargs["max_tasks"] = self.config.custom_eval.policy_ranking_max_tasks
             sampler_kwargs["frame_step"] = (
                 2 if (self.config.trainer_cls == "rfm_heads" and not self.config.data.use_multi_image) else 1
             )
+            sampler_kwargs["use_frame_steps"] = self.config.custom_eval.use_frame_steps
         elif eval_type == "quality_preference":
             sampler_kwargs["comparisons_per_task"] = self.config.custom_eval.comparisons_per_task
+            sampler_kwargs["max_comparisons"] = self.config.custom_eval.max_comparisons
 
         dataset = setup_custom_eval_dataset(
             eval_cfg, sampler_type=eval_type, is_eval=True, verbose=False, sampler_kwargs=sampler_kwargs
@@ -874,6 +878,10 @@ class RFMHeadsTrainer(Trainer):
         pref_logits = self.accelerator.gather_for_metrics(pref_logits)
         preference_labels = self.accelerator.gather_for_metrics(preference_samples["preference_labels"])
 
+        # Convert logits to binary predictions (0/1): apply sigmoid, then threshold at 0.5
+        pref_probs = torch.sigmoid(pref_logits)
+        binary_preds = (pref_probs > 0.5).float()
+
         # Gather non-tensor metadata using helper (handles single and multi GPU)
         gathered_pref_metadata = self._gather_metadata_fields(
             preference_samples,
@@ -885,17 +893,18 @@ class RFMHeadsTrainer(Trainer):
                 "metadata",
             ],
         )
-        num_pref_samples = pref_logits.shape[0] if pref_logits is not None else 0
+        num_pref_samples = binary_preds.shape[0] if binary_preds is not None else 0
         gathered_pref_metadata = self._truncate_metadata_lists(gathered_pref_metadata, num_pref_samples)
 
         # Build eval_results on all processes for compute_eval_metrics
         batch_results = []
-        for i in range(len(pref_logits)):
-            if pref_logits[i] is None:
+        for i in range(len(binary_preds)):
+            if binary_preds[i] is None:
                 continue
             sample_result = {
                 "task": gathered_pref_metadata["task"][i],
-                "preference_pred": t2n(pref_logits[i]),
+                "preference_pred": t2n(binary_preds[i]),
+                "preference_logits": t2n(pref_logits[i]),
                 "preference_labels": t2n(preference_labels[i]),
                 "data_source": gathered_pref_metadata["data_source"][i],
                 "chosen_data_gen_strategy": gathered_pref_metadata["chosen_data_gen_strategy"][i],
@@ -905,7 +914,7 @@ class RFMHeadsTrainer(Trainer):
             batch_results.append(sample_result)
 
         # Clean up gathered tensors and metadata after building results
-        del pref_logits, preference_labels, gathered_pref_metadata
+        del pref_logits, pref_probs, binary_preds, preference_labels, gathered_pref_metadata
 
         return batch_results, outputs
 
@@ -2408,16 +2417,19 @@ class RFMHeadsTrainer(Trainer):
         - progress > max_success (label=1, success)
         - ignores frames in between
 
+        The loss is automatically balanced by applying a weight to the minority class
+        (whichever has fewer samples - positives or negatives) so both classes contribute equally.
+
         Args:
             success_logits: Success prediction logits (can be tensor or list of tensors)
             target_progress: Target progress tensors (can be tensor or list of tensors)
             success_labels: Success labels from batch (computed in collator) (can be tensor or list of tensors)
             progress_loss_mask: Per-sample mask tensor of shape (batch_size,) with 1.0 for samples
                 where we should compute progress/success loss (e.g., successful, rewound, different_task)
-            aggregate: Whether to return the mean of the losses and accuracies
 
         Returns:
             tuple: (success_loss, success_accuracy, success_auprc, metrics)
+                   The loss is already balanced via per-sample weighting of the minority class
         """
         # Get base thresholds from config
         min_success = self.config.data.min_success
@@ -2440,33 +2452,70 @@ class RFMHeadsTrainer(Trainer):
         # Clamp logits to prevent extreme values and gradient issues
         success_logits = torch.clamp(success_logits, min=-50.0, max=50.0)
 
-        positive_weight_value = float(getattr(self.config.loss, "success_positive_weight", 1.0))
-        pos_weight_tensor = torch.tensor(
-            positive_weight_value, device=success_logits.device, dtype=success_logits.dtype
-        )
+        # Compute class counts for balancing
+        num_positives = (success_labels * combined_mask).sum()
+        num_negatives = ((1 - success_labels) * combined_mask).sum()
 
+        # Compute per-sample weights to balance classes
+        # Weight the minority class so both classes contribute equally to the loss
+        # success_loss_weight = max(num_pos, num_neg) / min(num_pos, num_neg)
+        # Applied to whichever class has fewer samples
+        if num_positives > 0 and num_negatives > 0:
+            if num_positives < num_negatives:
+                # Positives are minority - weight them up
+                success_loss_weight = (num_negatives / num_positives).detach()
+                sample_weights = torch.where(
+                    success_labels > 0.5,
+                    success_loss_weight * combined_mask,
+                    combined_mask,
+                )
+            else:
+                # Negatives are minority (or equal) - weight them up
+                success_loss_weight = (num_positives / num_negatives).detach()
+                sample_weights = torch.where(
+                    success_labels > 0.5,
+                    combined_mask,
+                    success_loss_weight * combined_mask,
+                )
+        else:
+            success_loss_weight = torch.tensor(1.0, device=success_logits.device, dtype=success_logits.dtype)
+            sample_weights = combined_mask
+
+        # Compute BCE loss with per-sample weights (includes combined_mask)
         loss = F.binary_cross_entropy_with_logits(
             success_logits,
             success_labels,
+            weight=sample_weights,
             reduction="none",
-            pos_weight=pos_weight_tensor,
         )
-        # [Bx1]
-        masked_loss = loss * combined_mask
+
+        loss = (loss * combined_mask) / sample_weights
+        success_loss = loss.mean()
 
         # Compute accuracy per sample
         success_preds = (torch.sigmoid(success_logits) > 0.5).float()
         correct = (success_preds == success_labels).float()
         masked_correct = correct * combined_mask
 
+        # Compute weighted accuracy (balanced accuracy)
+        # Weight each class's accuracy by inverse of its frequency
+        positive_correct = (correct * success_labels * combined_mask).sum()
+        negative_correct = (correct * (1 - success_labels) * combined_mask).sum()
+
+        if num_positives > 0 and num_negatives > 0:
+            # Balanced accuracy: average of recall for each class
+            positive_acc = positive_correct / (num_positives + 1e-8)
+            negative_acc = negative_correct / (num_negatives + 1e-8)
+            weighted_acc = (positive_acc + negative_acc) / 2.0
+        else:
+            weighted_acc = masked_correct.sum() / (combined_mask.sum() + 1e-8)
+
+        success_acc = masked_correct.sum() / (combined_mask.sum() + 1e-8)
+
         # Compute AUPRC (Area Under Precision-Recall Curve)
-        # Flatten tensors for AUPRC computation
         success_probs = torch.sigmoid(success_logits)
         success_probs_flat = success_probs[combined_mask > 0]
         success_labels_flat = success_labels[combined_mask > 0]
-
-        success_loss = masked_loss.sum() / (combined_mask.sum() + 1e-8)
-        success_acc = masked_correct.sum() / (combined_mask.sum() + 1e-8)
 
         # Compute AUPRC across all valid frames
         if success_probs_flat.numel() > 0 and len(torch.unique(success_labels_flat)) > 1:
@@ -2479,8 +2528,12 @@ class RFMHeadsTrainer(Trainer):
             batch_auprc = torch.tensor(0.0, device=success_loss.device, dtype=torch.float32)
 
         metrics = {
-            "masked_loss": masked_loss,
             "masked_correct": masked_correct,
+            "masked_loss": loss,
+            "weighted_accuracy": weighted_acc,
+            "success_loss_weight": success_loss_weight,
+            "num_positives": num_positives,
+            "num_negatives": num_negatives,
         }
 
         return success_loss, success_acc, batch_auprc, metrics
@@ -2757,6 +2810,7 @@ class RFMHeadsTrainer(Trainer):
                 success_labels,
                 progress_loss_mask=progress_target_mask,
             )
+            # success_loss is already balanced via per-sample weighting of minority class
             final_loss = progress_loss + success_loss
 
         # Check for NaN in final loss
@@ -2799,10 +2853,20 @@ class RFMHeadsTrainer(Trainer):
                 outputs_dict[f"{prefix}/prog_accuracy"] = progress_accuracy.item()
 
             if self.config.model.train_success_head:
+                weighted_accuracy = success_metrics["weighted_accuracy"]
+                success_loss_weight = success_metrics["success_loss_weight"]
                 outputs_dict.update({
                     f"{prefix}/success_loss": success_loss.item(),
                     f"{prefix}/success_accuracy": success_accuracy.item(),
                     f"{prefix}/success_auprc": success_auprc.item(),
+                    f"{prefix}/weighted_success_accuracy": weighted_accuracy.item()
+                    if torch.is_tensor(weighted_accuracy)
+                    else weighted_accuracy,
+                    f"{prefix}/success_loss_weight": success_loss_weight.item()
+                    if torch.is_tensor(success_loss_weight)
+                    else success_loss_weight,
+                    f"{prefix}/success_num_positives": success_metrics["num_positives"].item(),
+                    f"{prefix}/success_num_negatives": success_metrics["num_negatives"].item(),
                 })
 
         if not return_outputs:
@@ -2859,6 +2923,7 @@ class RFMHeadsTrainer(Trainer):
                 success_labels_A,
                 progress_loss_mask=target_progress_A_mask,
             )
+            # success_loss is already balanced via per-sample weighting of minority class
             final_loss += success_loss
 
         # Check for NaN in final loss
@@ -2899,10 +2964,18 @@ class RFMHeadsTrainer(Trainer):
                 )
 
             if self.config.model.train_success_head:
+                weighted_accuracy = success_metrics_A["weighted_accuracy"]
+                success_loss_weight = success_metrics_A["success_loss_weight"]
                 outputs_dict.update({
                     f"{prefix}/pref_success_loss": success_loss.item(),
                     f"{prefix}/pref_success_accuracy": success_accuracy.item(),
                     f"{prefix}/pref_success_auprc": success_auprc.item(),
+                    f"{prefix}/pref_weighted_success_accuracy": weighted_accuracy.item()
+                    if torch.is_tensor(weighted_accuracy)
+                    else weighted_accuracy,
+                    f"{prefix}/pref_success_loss_weight": success_loss_weight.item()
+                    if torch.is_tensor(success_loss_weight)
+                    else success_loss_weight,
                 })
 
                 stratified_success_metrics = {
@@ -3111,7 +3184,7 @@ class RFMHeadsTrainer(Trainer):
                 )
             )
 
-            # Sum the success losses
+            # Sum the success losses (already balanced via per-sample weighting of minority class)
             total_success_loss = success_loss_ref_sim + success_loss_ref_diff
             success_accuracy = (success_accuracy_ref_sim + success_accuracy_ref_diff) / 2.0
             success_auprc = (success_auprc_ref_sim + success_auprc_ref_diff) / 2.0
@@ -3205,12 +3278,24 @@ class RFMHeadsTrainer(Trainer):
 
             # Add success loss metrics if computed
             if self.config.model.train_success_head:
+                weighted_accuracy_ref_sim = success_metrics_ref_sim["weighted_accuracy"]
+                weighted_accuracy_ref_diff = success_metrics_ref_diff["weighted_accuracy"]
+                avg_weighted_accuracy = (weighted_accuracy_ref_sim + weighted_accuracy_ref_diff) / 2.0
+                success_loss_weight_ref_sim = success_metrics_ref_sim["success_loss_weight"]
+                success_loss_weight_ref_diff = success_metrics_ref_diff["success_loss_weight"]
+                avg_success_loss_weight = (success_loss_weight_ref_sim + success_loss_weight_ref_diff) / 2.0
                 outputs_dict.update({
                     f"{prefix}/sim_success_loss": total_success_loss.item(),
                     f"{prefix}/sim_success_loss_ref_sim": success_loss_ref_sim.item(),
                     f"{prefix}/sim_success_loss_ref_diff": success_loss_ref_diff.item(),
                     f"{prefix}/sim_success_accuracy": success_accuracy.item(),
                     f"{prefix}/sim_success_auprc": success_auprc.item(),
+                    f"{prefix}/sim_weighted_success_accuracy": avg_weighted_accuracy.item()
+                    if torch.is_tensor(avg_weighted_accuracy)
+                    else avg_weighted_accuracy,
+                    f"{prefix}/sim_success_loss_weight": avg_success_loss_weight.item()
+                    if torch.is_tensor(avg_success_loss_weight)
+                    else avg_success_loss_weight,
                 })
 
                 # Combine metrics from both ref_sim and ref_diff for stratification

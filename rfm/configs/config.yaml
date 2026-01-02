@@ -110,8 +110,8 @@ data:
   roboarena_partial_success_threshold: 0.2  # Minimum difference in partial_success between chosen and rejected trajectories for RoboArena
 
   # Success label parameters
-  min_success: 0.8  # Progress threshold below which success label is 0
-  max_success: 1.0  # Progress threshold above which success label is 1
+  min_success: 0.8  # Progress threshold below which success label pred is applied, anything in between min and max is not used for success pred loss unless succ = 1 for those frames.
+  max_success: 1.0  # Progress threshold above which success label is 1. Most sim datasets don't have a special cutoff number so we use 1.0 as default as sims will succeed at 1.0 progress.
   # Dataset-specific success thresholds (CSV format: dataset_name,success_percentage)
   dataset_success_cutoff_file: "rfm/data/dataset_success_cutoff.txt"
   
@@ -136,11 +136,14 @@ custom_eval:
   quality_preference:
     - mw
   comparisons_per_task: 5  # Limit number of quality preference comparisons per task. null = use all comparisons. Uniformly samples if limit is set.
+  max_comparisons: null  # Limit total number of quality preference comparisons across all tasks. null = use all comparisons. Uniformly samples if limit is set.
   num_examples_per_quality_pr: 5  # Number of trajectories to sample per quality label for policy ranking evaluation. Only tasks with multiple quality labels are used.
   reward_alignment_max_trajectories: 10  # Maximum number of trajectories to use for reward alignment evaluation. null = use all trajectories.
   custom_eval_random_seed: 42  # Random seed for custom eval samplers to ensure deterministic sampling across ranks.
   policy_ranking_max_tasks: 100  # Maximum number of tasks to use for policy ranking evaluation. null = use all tasks with multiple quality labels.
-
+  use_frame_steps: true  # Whether to use frame steps (subsequences) for reward_alignment and policy_ranking. true = generate subsequences, false = use whole trajectory.
+  num_partial_successes: 5  # Number of partial successes to sample for policy ranking evaluation. null = use all partial successes.
+  
 # =====================================================================================
 # Training Configuration
 # =====================================================================================
@@ -209,8 +212,8 @@ training:
 # Loss Configuration
 # =====================================================================================
 loss:
-  # 6:1 ratio of success to failure for BCEWithLogits loss
-  success_positive_weight: 6
+  # Success loss weight and pos_weight are computed dynamically from class imbalance
+  # to weight positive and negative classes equally (balanced accuracy)
   predict_last_frame_progress: false  # If true, only compute progress loss for the last frame
   progress_loss_type: "l2"  # Options: "l1", "l2", or "discrete" (default: "l2")
   progress_discrete_bins: 10  # Number of discrete bins for progress when using discrete loss (default: 10)

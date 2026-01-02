@@ -100,7 +100,7 @@ def create_eval_trainer(
     return trainer
 
 
-@hydra_main(version_base=None, config_path="rfm/configs", config_name="eval_only_config")
+@hydra_main(version_base=None, config_path="../configs", config_name="eval_only_config")
 def main(cfg: DictConfig):
     # Convert Hydra config to dataclass
     eval_only_cfg = convert_hydra_to_dataclass(cfg, OfflineEvalConfig)

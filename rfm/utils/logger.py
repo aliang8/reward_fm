@@ -199,7 +199,7 @@ class Logger:
         """
         if not self._is_main:
             return
-        
+
         if self.enabled("wandb"):
             rows = []
             for item in videos_and_figures:

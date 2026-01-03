@@ -14,7 +14,7 @@ output:
   num_workers: 4
 
 hub:
-  push_to_hub: true # false
+  push_to_hub: true
   hub_repo_id: soar_rfm
 
 

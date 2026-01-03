@@ -515,7 +515,6 @@ def run_reward_alignment_eval_per_trajectory(
             success_probs=last_success_probs if have_success_probs and last_success_probs is not None else None,
             success_labels=last_success_labels if have_success_labels and last_success_labels is not None else None,
             is_discrete_mode=is_discrete_mode,
-            num_bins=num_bins,
             title=title,
             loss=traj_loss,
             pearson=traj_pearson,
@@ -572,14 +571,14 @@ def run_reward_alignment_eval_per_trajectory(
         if success_probs_flat.size > 0:
             # Convert probabilities to binary predictions (threshold at 0.5)
             success_preds_flat = (success_probs_flat > 0.5).astype(float)
-            
+
             # Compute accuracy for positive samples (where label == 1)
             positive_mask = success_labels_flat == 1
             num_positives = positive_mask.sum()
             if num_positives > 0:
                 positive_correct = ((success_preds_flat == success_labels_flat) & positive_mask).sum()
                 positive_success_acc = float(positive_correct / num_positives)
-            
+
             # Compute accuracy for negative samples (where label == 0)
             negative_mask = success_labels_flat == 0
             num_negatives = negative_mask.sum()
@@ -1126,15 +1125,11 @@ def run_policy_ranking_eval(
                 # Convert to continuous values using weighted sum of bin centers
                 if pred_array.ndim > 1:
                     # It's logits [seq_len, num_bins], convert to continuous values
-                    continuous_preds = convert_bins_to_continuous(
-                        torch.tensor(pred_array, dtype=torch.float32)
-                    ).numpy()
+                    continuous_preds = convert_bins_to_continuous(torch.tensor(pred_array, dtype=torch.float32)).numpy()
                     processed_progress_preds.append(continuous_preds.tolist())
                 elif pred_array.ndim == 1:
                     # Single frame logits [num_bins], convert to continuous
-                    continuous_pred = convert_bins_to_continuous(
-                        torch.tensor(pred_array, dtype=torch.float32)
-                    ).item()
+                    continuous_pred = convert_bins_to_continuous(torch.tensor(pred_array, dtype=torch.float32)).item()
                     processed_progress_preds.append([float(continuous_pred)])
                 else:
                     # Scalar (shouldn't happen, but handle it)

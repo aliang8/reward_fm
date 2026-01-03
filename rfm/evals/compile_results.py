@@ -19,6 +19,7 @@ from sklearn.metrics import average_precision_score
 from rfm.data.datasets.helpers import load_frames_from_npz
 from rfm.evals.eval_metrics_utils import compute_pearson, compute_spearman
 from rfm.evals.eval_viz_utils import create_combined_progress_success_plot
+from rfm.models.utils import convert_bins_to_continuous
 
 
 def compute_eval_metrics(
@@ -271,27 +272,34 @@ def run_reward_alignment_eval_per_trajectory(
                 pred_array = np.array(pred)
                 if is_discrete_mode:
                     # Discrete mode: pred is logits [seq_len, num_bins]
+                    # Convert to continuous values using weighted sum of bin centers
                     if last_frame_only:
                         # Use last frame's logits
                         all_pred_logits.append(pred_array[-1])
                         if tgt is not None and len(tgt) > 0:
                             all_target_bins.append(int(tgt[-1]))
-                        all_preds.append(int(np.argmax(pred_array[-1])))
+                        continuous_pred = convert_bins_to_continuous(
+                            torch.tensor(pred_array[-1], dtype=torch.float32)
+                        ).item()
+                        all_preds.append(float(continuous_pred))
                     else:
-                        # Use all predictions: convert logits to bin indices
+                        # Use all predictions: convert logits to continuous values
                         if pred_array.ndim > 1:
-                            # pred_array is [seq_len, num_bins], convert to bin indices
-                            pred_bins = np.argmax(pred_array, axis=-1)
-                            all_preds = pred_bins.tolist()
+                            # pred_array is [seq_len, num_bins], convert to continuous
+                            continuous_preds = convert_bins_to_continuous(
+                                torch.tensor(pred_array, dtype=torch.float32)
+                            ).numpy()
+                            all_preds = continuous_preds.tolist()
                             # Store logits as list of lists (one per timestep) - same format as frame_steps mode
                             all_pred_logits = pred_array.tolist()
                         else:
-                            # Already bin indices (shouldn't happen in discrete mode, but handle it)
+                            # Already continuous (shouldn't happen in discrete mode, but handle it)
                             all_preds = pred_array.tolist()
                         if tgt is not None and len(tgt) > 0:
                             tgt_array = np.array(tgt)
                             all_target_bins = [int(t) for t in tgt_array]
-                            all_targets = [int(t) for t in tgt_array]
+                            # Convert target bins to continuous values for comparison
+                            all_targets = [(float(t) / (num_bins - 1)) for t in tgt_array]
                 else:
                     # Continuous mode: use all predictions directly
                     if last_frame_only:
@@ -358,6 +366,7 @@ def run_reward_alignment_eval_per_trajectory(
                     pred_array = np.array(pred)
                     if is_discrete_mode:
                         # Discrete mode: pred is logits [seq_len, num_bins]
+                        # Convert to continuous values using weighted sum of bin centers
                         if last_frame_only:
                             # Use last frame's logits
                             all_pred_logits.append(pred_array[-1])
@@ -376,15 +385,21 @@ def run_reward_alignment_eval_per_trajectory(
                                     all_target_bins.append(int(tgt[-1]))
                                 else:
                                     all_target_bins.append(int(tgt[indx]))
-                        # For visualization: use argmax to get predicted bin (raw integer)
+                        # For visualization: convert logits to continuous value
                         if last_frame_only:
-                            pred_bin = np.argmax(pred_array[-1])
+                            continuous_pred = convert_bins_to_continuous(
+                                torch.tensor(pred_array[-1], dtype=torch.float32)
+                            ).item()
                         else:
                             if timestep >= len(pred_array) - 1:
-                                pred_bin = np.argmax(pred_array[-1])
+                                continuous_pred = convert_bins_to_continuous(
+                                    torch.tensor(pred_array[-1], dtype=torch.float32)
+                                ).item()
                             else:
-                                pred_bin = np.argmax(pred_array[timestep])
-                        all_preds.append(int(pred_bin))
+                                continuous_pred = convert_bins_to_continuous(
+                                    torch.tensor(pred_array[timestep], dtype=torch.float32)
+                                ).item()
+                        all_preds.append(float(continuous_pred))
                     else:
                         # Continuous mode: original logic
                         if last_frame_only:
@@ -400,15 +415,16 @@ def run_reward_alignment_eval_per_trajectory(
 
                 if tgt is not None and len(tgt) > 0:
                     if is_discrete_mode:
-                        # Target is already a discrete bin index (raw integer)
+                        # Target is a discrete bin index, convert to continuous value
                         tgt_bin = int(
                             tgt[-1] if last_frame_only else (tgt[-1] if timestep >= len(tgt) - 1 else tgt[timestep])
                         )
-                        all_targets.append(tgt_bin)
+                        # Convert bin index to continuous value in [0, 1]
+                        all_targets.append(float(tgt_bin) / (num_bins - 1) if num_bins > 1 else 0.0)
                     else:
                         all_targets.append(float(tgt[-1]))
                 else:
-                    all_targets.append(0 if is_discrete_mode else 0.0)
+                    all_targets.append(0.0)
 
                 # Optional success prediction (binary) from trainer outputs
                 succ = r.get("success_pred", None)
@@ -574,23 +590,22 @@ def _extract_trajectory_rewards(
     progress_pred_type: str,
     is_discrete_mode: bool,
     aggregation: str = "last",
-) -> float | int:
+) -> float:
     """Extract trajectory reward using different aggregation methods.
 
     Args:
         progress_pred: Progress predictions for a single trajectory.
-                       For continuous: list of scalars or [seq_len] array
-                       For discrete: list of bin indices (integers)
+                       For both continuous and discrete modes: list of floats in [0, 1]
+                       (discrete mode uses convert_bins_to_continuous to get continuous values)
         progress_pred_type: "relative" or "absolute"
-        is_discrete_mode: Whether predictions are discrete bin indices
+        is_discrete_mode: Whether predictions came from discrete mode (now converted to continuous)
         aggregation: "last", "sum", or "average"
 
     Returns:
-        Aggregated reward (float for continuous, int for discrete)
+        Aggregated reward (float)
     """
-    # For discrete mode, progress_pred is already a list of bin indices (integers)
-    # For continuous mode, progress_pred is a list/array of scalar values
-    pred_array = np.array(progress_pred)
+    # Both discrete and continuous modes now use continuous values
+    pred_array = np.array(progress_pred, dtype=np.float32)
 
     # Apply cumsum if relative (for both discrete and continuous modes)
     if progress_pred_type == "relative":
@@ -610,9 +625,8 @@ def _extract_trajectory_rewards(
     else:
         raise ValueError(f"Unknown aggregation method: {aggregation}")
 
-    # Convert to appropriate type: int for discrete mode, float for continuous
-    reward = int(reward) if is_discrete_mode else float(reward)
-    return reward
+    # Always return float (discrete mode now uses continuous values)
+    return float(reward)
 
 
 def _compute_policy_ranking_metrics_roboarena(
@@ -942,10 +956,10 @@ def run_confusion_matrix_eval(
 
         if is_discrete_mode:
             # Discrete mode: progress_pred is logits [seq_len, num_bins]
-            # Use argmax on the last frame to get predicted bin index
+            # Convert to continuous values using weighted sum of bin centers
             last_frame_logits = pred_array[-1] if pred_array.ndim > 1 else pred_array
-            pred_bin = np.argmax(last_frame_logits)
-            final_reward = int(pred_bin)  # Use raw bin index as reward
+            continuous_pred = convert_bins_to_continuous(torch.tensor(last_frame_logits, dtype=torch.float32)).item()
+            final_reward = float(continuous_pred)
         else:
             # Continuous mode: use last frame value
             if progress_pred_type == "relative":
@@ -1075,23 +1089,29 @@ def run_policy_ranking_eval(
     for trajectory_id, progress_preds_list in trajectory_progress_preds.items():
         metadata = trajectory_metadata[trajectory_id]
 
-        # Process progress predictions: convert logits to bin indices if needed
+        # Process progress predictions: convert logits to continuous values if needed
         processed_progress_preds = []
         for progress_pred in progress_preds_list:
             pred_array = np.array(progress_pred)
 
             if is_discrete_mode:
-                # Discrete mode: pred_array might be logits [seq_len, num_bins] or already bin indices
+                # Discrete mode: pred_array might be logits [seq_len, num_bins]
+                # Convert to continuous values using weighted sum of bin centers
                 if pred_array.ndim > 1:
-                    # It's logits, convert to bin indices using argmax
-                    bin_indices = np.argmax(pred_array, axis=-1)
-                    processed_progress_preds.append(bin_indices.tolist())
+                    # It's logits [seq_len, num_bins], convert to continuous values
+                    continuous_preds = convert_bins_to_continuous(
+                        torch.tensor(pred_array, dtype=torch.float32)
+                    ).numpy()
+                    processed_progress_preds.append(continuous_preds.tolist())
                 elif pred_array.ndim == 1:
-                    # Already bin indices
-                    processed_progress_preds.append(pred_array.tolist())
+                    # Single frame logits [num_bins], convert to continuous
+                    continuous_pred = convert_bins_to_continuous(
+                        torch.tensor(pred_array, dtype=torch.float32)
+                    ).item()
+                    processed_progress_preds.append([float(continuous_pred)])
                 else:
-                    # Scalar, convert to int
-                    processed_progress_preds.append([int(pred_array)])
+                    # Scalar (shouldn't happen, but handle it)
+                    processed_progress_preds.append([float(pred_array)])
             else:
                 # Continuous mode: pred_array is scalar values
                 if pred_array.ndim > 0:

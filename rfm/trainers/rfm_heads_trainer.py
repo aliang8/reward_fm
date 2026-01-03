@@ -2899,8 +2899,15 @@ class RFMHeadsTrainer(Trainer):
 
             # Add progress accuracy for discrete mode
             if "masked_progress_accuracy" in progress_metrics:
-                progress_accuracy = progress_metrics["masked_progress_accuracy"].sum() / (
-                    progress_target_mask.sum() + 1e-8
+                # Expand mask to match masked_progress_accuracy shape [batch_size, seq_len]
+                masked_progress_accuracy = progress_metrics["masked_progress_accuracy"]
+                batch_size, seq_len = masked_progress_accuracy.shape
+                if progress_target_mask.shape[1] != seq_len:
+                    mask_expanded = progress_target_mask.expand(batch_size, seq_len)
+                else:
+                    mask_expanded = progress_target_mask
+                progress_accuracy = masked_progress_accuracy.sum() / (
+                    mask_expanded.sum() + 1e-8
                 )
                 outputs_dict[f"{prefix}/prog_accuracy"] = progress_accuracy.item()
 
@@ -3012,8 +3019,15 @@ class RFMHeadsTrainer(Trainer):
 
                 # Add progress accuracy for discrete mode
                 if "masked_progress_accuracy" in progress_metrics_A:
-                    progress_accuracy_A = progress_metrics_A["masked_progress_accuracy"].sum() / (
-                        target_progress_A_mask.sum() + 1e-8
+                    # Expand mask to match masked_progress_accuracy shape [batch_size, seq_len]
+                    masked_progress_accuracy = progress_metrics_A["masked_progress_accuracy"]
+                    batch_size, seq_len = masked_progress_accuracy.shape
+                    if target_progress_A_mask.shape[1] != seq_len:
+                        mask_expanded = target_progress_A_mask.expand(batch_size, seq_len)
+                    else:
+                        mask_expanded = target_progress_A_mask
+                    progress_accuracy_A = masked_progress_accuracy.sum() / (
+                        mask_expanded.sum() + 1e-8
                     )
                     outputs_dict[f"{prefix}/pref_prog_accuracy"] = progress_accuracy_A.item()
 
@@ -3322,11 +3336,26 @@ class RFMHeadsTrainer(Trainer):
                     "masked_progress_accuracy" in progress_metrics_ref_sim
                     and "masked_progress_accuracy" in progress_metrics_ref_diff
                 ):
-                    progress_accuracy_ref_sim = progress_metrics_ref_sim["masked_progress_accuracy"].sum() / (
-                        target_progress_sim_A_mask.sum() + 1e-8
+                    # Expand masks to match masked_progress_accuracy shape [batch_size, seq_len]
+                    masked_progress_accuracy_sim = progress_metrics_ref_sim["masked_progress_accuracy"]
+                    masked_progress_accuracy_diff = progress_metrics_ref_diff["masked_progress_accuracy"]
+                    batch_size, seq_len = masked_progress_accuracy_sim.shape
+                    
+                    if target_progress_sim_A_mask.shape[1] != seq_len:
+                        mask_expanded_sim = target_progress_sim_A_mask.expand(batch_size, seq_len)
+                    else:
+                        mask_expanded_sim = target_progress_sim_A_mask
+                    
+                    if target_progress_diff_A_mask.shape[1] != seq_len:
+                        mask_expanded_diff = target_progress_diff_A_mask.expand(batch_size, seq_len)
+                    else:
+                        mask_expanded_diff = target_progress_diff_A_mask
+                    
+                    progress_accuracy_ref_sim = masked_progress_accuracy_sim.sum() / (
+                        mask_expanded_sim.sum() + 1e-8
                     )
-                    progress_accuracy_ref_diff = progress_metrics_ref_diff["masked_progress_accuracy"].sum() / (
-                        target_progress_diff_A_mask.sum() + 1e-8
+                    progress_accuracy_ref_diff = masked_progress_accuracy_diff.sum() / (
+                        mask_expanded_diff.sum() + 1e-8
                     )
                     avg_progress_accuracy = (progress_accuracy_ref_sim + progress_accuracy_ref_diff) / 2.0
                     outputs_dict[f"{prefix}/sim_prog_accuracy"] = avg_progress_accuracy.item()

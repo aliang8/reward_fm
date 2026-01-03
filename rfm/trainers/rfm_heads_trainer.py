@@ -2390,7 +2390,7 @@ class RFMHeadsTrainer(Trainer):
                     model, similarity_inputs, return_outputs=True, training=training
                 )
                 if not torch.isnan(similarity_loss).any():
-                    total_loss += similarity_loss
+                total_loss += similarity_loss
                 else:
                     logger.warning(f"NaN detected in similarity loss, replacing with 0.0")
             log_metadata.update(loss_dict)

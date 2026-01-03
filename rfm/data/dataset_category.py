@@ -128,7 +128,7 @@ DATASET_MAP = {
         "eval": [
             "jesbu1_oxe_rfm_eval_oxe_bc_z_eval",
             "jesbu1_oxe_rfm_eval_oxe_berkeley_cable_routing_eval",
-            # "jesbu1_oxe_rfm_eval_oxe_bridge_v2_eval",
+            "jesbu1_oxe_rfm_eval_oxe_bridge_v2_eval",
             "jesbu1_oxe_rfm_eval_oxe_jaco_play_eval",
             "jesbu1_oxe_rfm_eval_oxe_toto_eval",
             "jesbu1_oxe_rfm_eval_oxe_viola_eval",
@@ -226,7 +226,7 @@ DATASET_MAP = {
         ],
         "eval": [
             "jesbu1_mit_franka_p-rank_rfm_mit_franka_p-rank_rfm",
-            # "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
+            "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
             # "jesbu1_roboarena_0825_rfm_roboarena",
             "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",
             "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",

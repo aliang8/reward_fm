@@ -2729,6 +2729,8 @@ class RFMHeadsTrainer(Trainer):
                 )
                 # Apply mask to each metric and compute mean
                 for metric_name, metric_tensor in metrics.items():
+                    if len(metric_tensor.shape) == 0:
+                        continue
                     if loss_mask is not None:
                         masked_metric = metric_tensor[(mask == 1) & (loss_mask == 1)].detach()
                     else:
@@ -2747,6 +2749,8 @@ class RFMHeadsTrainer(Trainer):
             )
             # Apply mask to each metric and compute mean
             for metric_name, metric_tensor in metrics.items():
+                if len(metric_tensor.shape) == 0:
+                    continue
                 if loss_mask is not None:
                     masked_metric = metric_tensor[(mask == 1) & (loss_mask == 1)].detach()
                 else:

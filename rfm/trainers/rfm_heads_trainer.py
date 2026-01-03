@@ -2365,7 +2365,7 @@ class RFMHeadsTrainer(Trainer):
                 preference_loss, loss_dict = self._compute_preference_loss(
                     model, preference_inputs, return_outputs=True, training=training
                 )
-                if not torch.isnan(preference_loss):
+                if not torch.isnan(preference_loss).any():
                     total_loss += preference_loss
                 else:
                     logger.warning(f"NaN detected in preference loss, replacing with 0.0")
@@ -2377,7 +2377,7 @@ class RFMHeadsTrainer(Trainer):
                 progress_loss, loss_dict = self._compute_progress_loss(
                     model, progress_inputs, return_outputs=True, training=training
                 )
-                if not torch.isnan(progress_loss):
+                if not torch.isnan(progress_loss).any():
                     total_loss += progress_loss
                 else:
                     logger.warning(f"NaN detected in progress loss, replacing with 0.0")
@@ -2389,7 +2389,7 @@ class RFMHeadsTrainer(Trainer):
                 similarity_loss, loss_dict = self._compute_similarity_loss(
                     model, similarity_inputs, return_outputs=True, training=training
                 )
-                if not torch.isnan(similarity_loss):
+                if not torch.isnan(similarity_loss).any():
                     total_loss += similarity_loss
                 else:
                     logger.warning(f"NaN detected in similarity loss, replacing with 0.0")
@@ -2842,7 +2842,7 @@ class RFMHeadsTrainer(Trainer):
                 progress_loss_mask=progress_target_mask,
             )
             # success_loss is already balanced via per-sample weighting of minority class
-            if not torch.isnan(success_loss):
+            if not torch.isnan(success_loss).any():
                 final_loss += success_loss
             else:
                 logger.warning(f"NaN detected in success loss")
@@ -2939,7 +2939,7 @@ class RFMHeadsTrainer(Trainer):
 
         final_loss = 0
 
-        if not torch.isnan(preference_loss):
+        if not torch.isnan(preference_loss).any():
             final_loss += preference_loss
         else:
             logger.warning(f"NaN detected in preference loss")
@@ -2972,15 +2972,14 @@ class RFMHeadsTrainer(Trainer):
                 progress_loss_mask=target_progress_A_mask,
             )
             # success_loss is already balanced via per-sample weighting of minority class
-            if not torch.isnan(success_loss):
+            if not torch.isnan(success_loss).any():
                 final_loss += success_loss
             else:
                 logger.warning(f"NaN detected in success loss")
 
         # Check for NaN in final loss
         if torch.isnan(final_loss).any():
-            logger.warning(f"NaN detected in preference loss, replacing with 0.0")
-            final_loss = torch.tensor(0.0, device=final_loss.device, dtype=final_loss.dtype)
+            logger.warning(f"NaN detected in preference loss")
 
         if return_outputs:
             outputs_dict = {}
@@ -3177,7 +3176,7 @@ class RFMHeadsTrainer(Trainer):
         similarity_loss = similarity_loss_all.mean()
         similarity_margin = (score_ref_sim - score_ref_diff).detach()
         final_loss = 0
-        if not torch.isnan(similarity_loss):
+        if not torch.isnan(similarity_loss).any():
             final_loss += similarity_loss
         else:
             logger.warning(f"NaN detected in similarity loss")
@@ -3254,7 +3253,7 @@ class RFMHeadsTrainer(Trainer):
             total_success_loss = success_loss_ref_sim + success_loss_ref_diff
             success_accuracy = (success_accuracy_ref_sim + success_accuracy_ref_diff) / 2.0
             success_auprc = (success_auprc_ref_sim + success_auprc_ref_diff) / 2.0
-            if not torch.isnan(total_success_loss):
+            if not torch.isnan(total_success_loss).any():
                 final_loss = final_loss + total_success_loss
 
 

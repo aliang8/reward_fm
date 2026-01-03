@@ -2505,21 +2505,31 @@ class RFMHeadsTrainer(Trainer):
         correct = (success_preds == success_labels).float()
         masked_correct = correct * combined_mask
 
-        # Compute weighted accuracy (balanced accuracy)
+        # Compute per-sample positive and negative accuracy tensors (like masked_correct)
+        # Only include values for samples of the corresponding class, use NaN for other class
+        # positive_correct: correct (0 or 1) for positive samples (label==1), NaN for negative samples
+        positive_mask = (success_labels == 1) & (combined_mask > 0)
+        positive_correct_tensor = torch.where(positive_mask, correct, torch.tensor(float('nan'), device=correct.device, dtype=torch.float32))
+        
+        # negative_correct: correct (0 or 1) for negative samples (label==0), NaN for positive samples
+        negative_mask = (success_labels == 0) & (combined_mask > 0)
+        negative_correct_tensor = torch.where(negative_mask, correct, torch.tensor(float('nan'), device=correct.device, dtype=torch.float32))
+
+        # Compute weighted accuracy (balanced accuracy) - scalar values for logging
         # Weight each class's accuracy by inverse of its frequency
-        positive_correct = (correct[combined_mask_index] * success_labels[combined_mask_index]).sum()
-        negative_correct = (correct[combined_mask_index] * (1 - success_labels[combined_mask_index])).sum()
+        positive_correct_sum = (correct[combined_mask_index] * success_labels[combined_mask_index]).sum()
+        negative_correct_sum = (correct[combined_mask_index] * (1 - success_labels[combined_mask_index])).sum()
 
         if num_positives > 0 and num_negatives > 0:
             # Balanced accuracy: average of recall for each class
-            positive_acc = positive_correct / (num_positives + 1e-8)
-            negative_acc = negative_correct / (num_negatives + 1e-8)
-            weighted_acc = (positive_acc + negative_acc) / 2.0
+            positive_acc_scalar = positive_correct_sum / (num_positives + 1e-8)
+            negative_acc_scalar = negative_correct_sum / (num_negatives + 1e-8)
+            weighted_acc = (positive_acc_scalar + negative_acc_scalar) / 2.0
         else:
             weighted_acc = masked_correct.sum() / (combined_mask.sum() + 1e-8)
             # Set accuracies to 0.0 when we can't compute them properly
-            positive_acc = torch.tensor(0.0, device=success_loss.device, dtype=torch.float32)
-            negative_acc = torch.tensor(0.0, device=success_loss.device, dtype=torch.float32)
+            positive_acc_scalar = torch.tensor(0.0, device=success_loss.device, dtype=torch.float32)
+            negative_acc_scalar = torch.tensor(0.0, device=success_loss.device, dtype=torch.float32)
 
         success_acc = masked_correct.sum() / (combined_mask.sum() + 1e-8)
 
@@ -2542,8 +2552,10 @@ class RFMHeadsTrainer(Trainer):
             "masked_correct": masked_correct,
             "masked_loss": loss,
             "weighted_accuracy": weighted_acc,
-            "positive_accuracy": positive_acc,
-            "negative_accuracy": negative_acc,
+            "positive_accuracy": positive_correct_tensor,  # Per-sample tensor like masked_correct
+            "negative_accuracy": negative_correct_tensor,  # Per-sample tensor like masked_correct
+            "positive_accuracy_scalar": positive_acc_scalar,  # Scalar for logging
+            "negative_accuracy_scalar": negative_acc_scalar,  # Scalar for logging
             "success_loss_weight": success_loss_weight,
             "num_positives": num_positives,
             "num_negatives": num_negatives,
@@ -2735,6 +2747,7 @@ class RFMHeadsTrainer(Trainer):
                         masked_metric = metric_tensor[(mask == 1) & (loss_mask == 1)].detach()
                     else:
                         masked_metric = metric_tensor[mask == 1].detach()
+                        
                     # get mean over non-nan values
                     non_nan_masked_metric = masked_metric[~torch.isnan(masked_metric)]
                     if non_nan_masked_metric.numel() > 0:
@@ -2893,8 +2906,8 @@ class RFMHeadsTrainer(Trainer):
 
             if self.config.model.train_success_head:
                 weighted_accuracy = success_metrics["weighted_accuracy"]
-                positive_accuracy = success_metrics["positive_accuracy"]
-                negative_accuracy = success_metrics["negative_accuracy"]
+                positive_accuracy_scalar = success_metrics["positive_accuracy_scalar"]
+                negative_accuracy_scalar = success_metrics["negative_accuracy_scalar"]
                 success_loss_weight = success_metrics["success_loss_weight"]
                 outputs_dict.update({
                     f"{prefix}/success_loss": success_loss.item(),
@@ -2903,12 +2916,12 @@ class RFMHeadsTrainer(Trainer):
                     f"{prefix}/weighted_success_accuracy": weighted_accuracy.item()
                     if torch.is_tensor(weighted_accuracy)
                     else weighted_accuracy,
-                    f"{prefix}/positive_success_accuracy": positive_accuracy.item()
-                    if torch.is_tensor(positive_accuracy)
-                    else positive_accuracy,
-                    f"{prefix}/negative_success_accuracy": negative_accuracy.item()
-                    if torch.is_tensor(negative_accuracy)
-                    else negative_accuracy,
+                    f"{prefix}/positive_success_accuracy": positive_accuracy_scalar.item()
+                    if torch.is_tensor(positive_accuracy_scalar)
+                    else positive_accuracy_scalar,
+                    f"{prefix}/negative_success_accuracy": negative_accuracy_scalar.item()
+                    if torch.is_tensor(negative_accuracy_scalar)
+                    else negative_accuracy_scalar,
                     f"{prefix}/success_loss_weight": success_loss_weight.item()
                     if torch.is_tensor(success_loss_weight)
                     else success_loss_weight,
@@ -3020,8 +3033,8 @@ class RFMHeadsTrainer(Trainer):
 
             if self.config.model.train_success_head:
                 weighted_accuracy = success_metrics_A["weighted_accuracy"]
-                positive_accuracy = success_metrics_A["positive_accuracy"]
-                negative_accuracy = success_metrics_A["negative_accuracy"]
+                positive_accuracy_scalar = success_metrics_A["positive_accuracy_scalar"]
+                negative_accuracy_scalar = success_metrics_A["negative_accuracy_scalar"]
                 success_loss_weight = success_metrics_A["success_loss_weight"]
                 outputs_dict.update({
                     f"{prefix}/pref_success_loss": success_loss.item(),
@@ -3030,12 +3043,12 @@ class RFMHeadsTrainer(Trainer):
                     f"{prefix}/pref_weighted_success_accuracy": weighted_accuracy.item()
                     if torch.is_tensor(weighted_accuracy)
                     else weighted_accuracy,
-                    f"{prefix}/pref_positive_success_accuracy": positive_accuracy.item()
-                    if torch.is_tensor(positive_accuracy)
-                    else positive_accuracy,
-                    f"{prefix}/pref_negative_success_accuracy": negative_accuracy.item()
-                    if torch.is_tensor(negative_accuracy)
-                    else negative_accuracy,
+                    f"{prefix}/pref_positive_success_accuracy": positive_accuracy_scalar.item()
+                    if torch.is_tensor(positive_accuracy_scalar)
+                    else positive_accuracy_scalar,
+                    f"{prefix}/pref_negative_success_accuracy": negative_accuracy_scalar.item()
+                    if torch.is_tensor(negative_accuracy_scalar)
+                    else negative_accuracy_scalar,
                     f"{prefix}/pref_success_loss_weight": success_loss_weight.item()
                     if torch.is_tensor(success_loss_weight)
                     else success_loss_weight,
@@ -3348,12 +3361,13 @@ class RFMHeadsTrainer(Trainer):
                 weighted_accuracy_ref_sim = success_metrics_ref_sim["weighted_accuracy"]
                 weighted_accuracy_ref_diff = success_metrics_ref_diff["weighted_accuracy"]
                 avg_weighted_accuracy = (weighted_accuracy_ref_sim + weighted_accuracy_ref_diff) / 2.0
-                positive_accuracy_ref_sim = success_metrics_ref_sim["positive_accuracy"]
-                positive_accuracy_ref_diff = success_metrics_ref_diff["positive_accuracy"]
-                avg_positive_accuracy = (positive_accuracy_ref_sim + positive_accuracy_ref_diff) / 2.0
-                negative_accuracy_ref_sim = success_metrics_ref_sim["negative_accuracy"]
-                negative_accuracy_ref_diff = success_metrics_ref_diff["negative_accuracy"]
-                avg_negative_accuracy = (negative_accuracy_ref_sim + negative_accuracy_ref_diff) / 2.0
+                # Use scalar versions for logging
+                positive_accuracy_scalar_ref_sim = success_metrics_ref_sim["positive_accuracy_scalar"]
+                positive_accuracy_scalar_ref_diff = success_metrics_ref_diff["positive_accuracy_scalar"]
+                avg_positive_accuracy = (positive_accuracy_scalar_ref_sim + positive_accuracy_scalar_ref_diff) / 2.0
+                negative_accuracy_scalar_ref_sim = success_metrics_ref_sim["negative_accuracy_scalar"]
+                negative_accuracy_scalar_ref_diff = success_metrics_ref_diff["negative_accuracy_scalar"]
+                avg_negative_accuracy = (negative_accuracy_scalar_ref_sim + negative_accuracy_scalar_ref_diff) / 2.0
                 success_loss_weight_ref_sim = success_metrics_ref_sim["success_loss_weight"]
                 success_loss_weight_ref_diff = success_metrics_ref_diff["success_loss_weight"]
                 avg_success_loss_weight = (success_loss_weight_ref_sim + success_loss_weight_ref_diff) / 2.0

@@ -256,11 +256,11 @@ class Logger:
         if not self._is_main:
             return
         if self.enabled("wandb"):
-            if step is not None:
-                tag_with_step = f"{tag}/step_{step}"
-            else:
-                tag_with_step = tag
-            self._wandb_run.log({tag_with_step: wandb.Table(data=data, columns=columns)}, step=step)
+            # if step is not None:
+            #     tag_with_step = f"{tag}/step_{step}"
+            # else:
+            #     tag_with_step = tag
+            self._wandb_run.log({tag: wandb.Table(data=data, columns=columns)}, step=step)
 
     def log_video(self, tag: str, video: Any, fps: int = 10, step: Optional[int] = None):
         """

@@ -555,6 +555,8 @@ def run_reward_alignment_eval_per_trajectory(
 
     # Compute success_auprc across all collected success predictions and labels
     success_auprc = None
+    positive_success_acc = None
+    negative_success_acc = None
     if all_success_probs and all_success_labels:
         # Flatten all collected probabilities and labels
         success_probs_flat = np.concatenate(all_success_probs)
@@ -565,6 +567,25 @@ def run_reward_alignment_eval_per_trajectory(
             success_auprc = float(average_precision_score(success_labels_flat, success_probs_flat))
         else:
             success_auprc = 0.0
+
+        # Compute positive and negative accuracy
+        if success_probs_flat.size > 0:
+            # Convert probabilities to binary predictions (threshold at 0.5)
+            success_preds_flat = (success_probs_flat > 0.5).astype(float)
+            
+            # Compute accuracy for positive samples (where label == 1)
+            positive_mask = success_labels_flat == 1
+            num_positives = positive_mask.sum()
+            if num_positives > 0:
+                positive_correct = ((success_preds_flat == success_labels_flat) & positive_mask).sum()
+                positive_success_acc = float(positive_correct / num_positives)
+            
+            # Compute accuracy for negative samples (where label == 0)
+            negative_mask = success_labels_flat == 0
+            num_negatives = negative_mask.sum()
+            if num_negatives > 0:
+                negative_correct = ((success_preds_flat == success_labels_flat) & negative_mask).sum()
+                negative_success_acc = float(negative_correct / num_negatives)
 
     metrics = {
         "loss": loss_per_trajectory,
@@ -577,6 +598,12 @@ def run_reward_alignment_eval_per_trajectory(
     # Add binary success accuracy if available
     if success_acc_list:
         metrics["success_acc"] = float(np.mean(success_acc_list))
+
+    # Add positive and negative success accuracy if available
+    if positive_success_acc is not None:
+        metrics["positive_success_acc"] = positive_success_acc
+    if negative_success_acc is not None:
+        metrics["negative_success_acc"] = negative_success_acc
 
     # Add RoboArena delta metric if available
     if use_partial_success and roboarena_deltas:

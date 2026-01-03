@@ -3020,6 +3020,8 @@ class RFMHeadsTrainer(Trainer):
                 stratified_success_metrics = {
                     "success_loss": success_metrics_A["masked_loss"],
                     "success_acc": success_metrics_A["masked_correct"],
+                    "positive_acc": success_metrics_A["positive_accuracy"],
+                    "negative_acc": success_metrics_A["negative_accuracy"],
                 }
                 self._add_stratified_metrics(
                     outputs_dict,
@@ -3358,10 +3360,18 @@ class RFMHeadsTrainer(Trainer):
                 combined_success_acc = (
                     success_metrics_ref_sim["masked_correct"] + success_metrics_ref_diff["masked_correct"]
                 ) / 2.0
+                combined_positive_acc = (
+                    success_metrics_ref_sim["positive_accuracy"] + success_metrics_ref_diff["positive_accuracy"]
+                ) / 2.0
+                combined_negative_acc = (
+                    success_metrics_ref_sim["negative_accuracy"] + success_metrics_ref_diff["negative_accuracy"]
+                ) / 2.0
 
                 stratified_success_metrics = {
                     "success_loss": combined_success_loss,
                     "success_acc": combined_success_acc,
+                    "positive_acc": combined_positive_acc,
+                    "negative_acc": combined_negative_acc,
                 }
 
                 self._add_stratified_metrics(

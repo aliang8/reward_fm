@@ -2365,7 +2365,10 @@ class RFMHeadsTrainer(Trainer):
                 preference_loss, loss_dict = self._compute_preference_loss(
                     model, preference_inputs, return_outputs=True, training=training
                 )
-                total_loss += preference_loss
+                if not torch.isnan(preference_loss):
+                    total_loss += preference_loss
+                else:
+                    logger.warning(f"NaN detected in preference loss, replacing with 0.0")
                 log_metadata.update(loss_dict)
 
         # Compute progress loss if we have progress samples
@@ -2374,7 +2377,10 @@ class RFMHeadsTrainer(Trainer):
                 progress_loss, loss_dict = self._compute_progress_loss(
                     model, progress_inputs, return_outputs=True, training=training
                 )
-                total_loss += progress_loss
+                if not torch.isnan(progress_loss):
+                    total_loss += progress_loss
+                else:
+                    logger.warning(f"NaN detected in progress loss, replacing with 0.0")
             log_metadata.update(loss_dict)
 
         # Compute similarity loss if we have similarity samples
@@ -2383,7 +2389,10 @@ class RFMHeadsTrainer(Trainer):
                 similarity_loss, loss_dict = self._compute_similarity_loss(
                     model, similarity_inputs, return_outputs=True, training=training
                 )
-                total_loss += similarity_loss
+                if not torch.isnan(similarity_loss):
+                    total_loss += similarity_loss
+                else:
+                    logger.warning(f"NaN detected in similarity loss, replacing with 0.0")
             log_metadata.update(loss_dict)
 
         for key, value in log_metadata.items():

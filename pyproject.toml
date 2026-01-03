@@ -60,7 +60,7 @@ dependencies = [
     "seaborn",
     "bitsandbytes",
     "torch==2.8.0",  # Required for Qwen models, xformers, and modern transformers. Use CUDA build on Linux via tool.uv.sources
-    "torchvision",
+    "torchvision>=0.23.0,<0.24.0",  # Compatible with torch 2.8.0
     "moviepy",
     "wandb[media]",
     "torchcodec",
@@ -74,7 +74,7 @@ dependencies = [
     "requests",
     "hydra-core",
     "omegaconf",
-    "tensorflow-datasets==4.9.2", # just for oxe and other tfds dataset uploading
+    "tensorflow-datasets>=4.9.2", # just for oxe and other tfds dataset uploading
     "tensorflow==2.19", # just for oxe and other tfds dataset uploading
     "tf-keras>=2.19.0", # just for oxe and other tfds dataset uploading
     "protobuf<3.21", # just for oxe and other tfds dataset uploading
@@ -111,6 +111,11 @@ vlac = [
     "trl>=0.13,<0.17",  # Required by evo-vlac
     "evo-vlac @ git+https://github.com/InternRobotics/VLAC.git",
 ]
+# LeRobot dataset format support (for conversion scripts and LeRobot dataset loaders)
+# Note: torch 2.8.0 is allowed via override-dependencies (lerobot normally requires <2.8.0)
+lerobot = [
+    "lerobot",
+]
 
 # ==================================================================================
 # Build System
@@ -135,17 +140,25 @@ allow-direct-references = true
 
 # Configuration for the 'uv' package manager
 [tool.uv]
-# Declare that rfm and vlac optional dependencies are incompatible
-# They have conflicting trl and transformers version requirements
+# Declare incompatible optional dependency groups
+# - rfm and vlac: conflicting trl and transformers version requirements
+# - lerobot and vlac: conflicting numpy requirements (lerobot needs numpy>=2, vlac needs numpy<2.0)
 conflicts = [
     [
         { extra = "rfm" },
         { extra = "vlac" },
     ],
+    [
+        { extra = "lerobot" },
+        { extra = "vlac" },
+    ],
 ]
-# This section could be used for advanced features like overriding dependencies
-# from your environment if needed, similar to the 'openpi' example.
-#override-dependencies = ["av<16.0.0"]
+# Override dependencies to allow torch 2.8 with lerobot
+# Lerobot's dependencies may specify torch<2.8.0, but we override to allow torch 2.8
+override-dependencies = [
+    "torch==2.8.0",  # Force torch 2.8.0 even when lerobot requests <2.8.0
+    "torchvision>=0.23.0,<0.24.0",  # Ensure torchvision compatibility with torch 2.8.0
+]
 
 # Ensure flash-attn builds against the same Torch that's in your env
 [tool.uv.extra-build-dependencies]
@@ -159,6 +172,9 @@ flash-attn = { FLASH_ATTENTION_SKIP_CUDA_BUILD = "TRUE" }
 [tool.uv.sources]
 torch = { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" }
 torchvision = { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" }
+# LeRobot from git (same version as opengvl uses for compatibility)
+# Install with: uv pip install .[lerobot]
+lerobot = { git = "https://github.com/huggingface/lerobot.git", rev = "main#a0d7627d81c57f9ca826029e581deca313e0d548" }
 
 [[tool.uv.index]]
 name = "pytorch-cu128"

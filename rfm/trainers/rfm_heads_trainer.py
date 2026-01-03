@@ -3,7 +3,7 @@ import copy
 import json
 import os
 import random
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Tuple, Optional, Any, final
 
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
@@ -2827,8 +2827,9 @@ class RFMHeadsTrainer(Trainer):
         progress_loss, spearman_corr, progress_metrics = self._compute_progress_loss_helper(
             progress_pred, progress_target, progress_target_mask
         )
+        final_loss = 0
 
-        final_loss = progress_loss
+        final_loss += progress_loss
         if self.config.model.train_success_head:
             success_logits = model_output.success_logits
             success_pred = success_logits["A"]
@@ -2841,7 +2842,10 @@ class RFMHeadsTrainer(Trainer):
                 progress_loss_mask=progress_target_mask,
             )
             # success_loss is already balanced via per-sample weighting of minority class
-            final_loss = progress_loss + success_loss
+            if not torch.isnan(success_loss):
+                final_loss += success_loss
+            else:
+                logger.warning(f"NaN detected in success loss")
 
         # Check for NaN in final loss
         if torch.isnan(final_loss).any():
@@ -2933,7 +2937,12 @@ class RFMHeadsTrainer(Trainer):
         )
         preference_loss = preference_loss_all.mean()
 
-        final_loss = preference_loss
+        final_loss = 0
+
+        if not torch.isnan(preference_loss):
+            final_loss += preference_loss
+        else:
+            logger.warning(f"NaN detected in preference loss")
 
         # =========================================================================================
         # Compute progress and success loss for the first trajectory in the paired samples
@@ -2963,7 +2972,10 @@ class RFMHeadsTrainer(Trainer):
                 progress_loss_mask=target_progress_A_mask,
             )
             # success_loss is already balanced via per-sample weighting of minority class
-            final_loss += success_loss
+            if not torch.isnan(success_loss):
+                final_loss += success_loss
+            else:
+                logger.warning(f"NaN detected in success loss")
 
         # Check for NaN in final loss
         if torch.isnan(final_loss).any():
@@ -3164,7 +3176,11 @@ class RFMHeadsTrainer(Trainer):
         similarity_loss_all = F.softplus(-diff_scores)
         similarity_loss = similarity_loss_all.mean()
         similarity_margin = (score_ref_sim - score_ref_diff).detach()
-        final_loss = similarity_loss
+        final_loss = 0
+        if not torch.isnan(similarity_loss):
+            final_loss += similarity_loss
+        else:
+            logger.warning(f"NaN detected in similarity loss")
 
         # =========================================================================================
         # Compute progress and success loss for trajectory A (first trajectory) in both ref_sim and ref_diff
@@ -3238,12 +3254,9 @@ class RFMHeadsTrainer(Trainer):
             total_success_loss = success_loss_ref_sim + success_loss_ref_diff
             success_accuracy = (success_accuracy_ref_sim + success_accuracy_ref_diff) / 2.0
             success_auprc = (success_auprc_ref_sim + success_auprc_ref_diff) / 2.0
-            final_loss = final_loss + total_success_loss
+            if not torch.isnan(total_success_loss):
+                final_loss = final_loss + total_success_loss
 
-        # Check for NaN in final loss
-        if torch.isnan(final_loss).any():
-            logger.warning(f"NaN detected in similarity loss, replacing with 0.0")
-            final_loss = torch.tensor(0.0, device=final_loss.device, dtype=final_loss.dtype)
 
         if return_outputs:
             outputs_dict = {}

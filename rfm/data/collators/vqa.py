@@ -38,8 +38,13 @@ class VQABatchCollator(RFMBatchCollator):
         # Collect all messages for batch processing
         all_messages = []
 
-        # Randomly decide whether chosen trajectory goes first or second
-        preference_labels = np.random.randint(0, 2, len(preference_samples))
+        # During inference, keep original order (chosen=A, rejected=B)
+        # During training, randomly decide whether chosen trajectory goes first or second
+        if self.inference:
+            # Keep original order: chosen is always A (preference_label=1.0)
+            preference_labels = np.ones(len(preference_samples), dtype=np.int32)
+        else:
+            preference_labels = np.random.randint(0, 2, len(preference_samples))
 
         for i, sample in enumerate(preference_samples):
             # Convert frames to appropriate format using stored shapes

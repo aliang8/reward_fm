@@ -208,8 +208,8 @@ class PrefSampler(RFMBaseSampler):
         if self.preference_strategy_ratio[3] > 0:
             strategies.append((DataGenStrat.REVERSE_PROGRESS, self.preference_strategy_ratio[3]))
 
-        if is_roboarena:
-            strategies.append((DataGenStrat.ROBOARENA_PARTIAL_SUCCESS, 10.0))
+        if is_roboarena and self.preference_strategy_ratio[1] > 0:
+            strategies.append((DataGenStrat.ROBOARENA_PARTIAL_SUCCESS, self.preference_strategy_ratio[1]))
             # remove suboptimal strategy
             strategies = [(strat, prob) for strat, prob in strategies if strat != DataGenStrat.SUBOPTIMAL]
 

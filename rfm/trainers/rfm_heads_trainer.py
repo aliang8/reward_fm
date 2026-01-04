@@ -19,7 +19,7 @@ from transformers import Trainer
 
 from rfm.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
 from rfm.evals.compile_results import compute_eval_metrics
-from rfm.models.utils import ModelOutput
+from rfm.models.utils import ModelOutput, convert_bins_to_continuous
 from rfm.utils.distributed import banner, get_rank, is_rank_0, log_fsdp_diagnostics
 from rfm.utils.logger import Logger, get_logger, log_memory_usage
 from rfm.utils.metrics import compute_spearman_correlation
@@ -2225,15 +2225,8 @@ class RFMHeadsTrainer(Trainer):
 
         # For discrete mode, convert predictions back to continuous for spearman correlation
         # For L1/L2, use predictions as-is
-        if loss_type == "discrete":
-            # Convert logits to probabilities, then to expected value (weighted sum)
-            progress_pred_continuous = torch.softmax(progress_pred, dim=-1)  # [B, T, num_bins]
-            # Create bin centers: [0, 1/(num_bins-1), 2/(num_bins-1), ..., 1]
-            bin_centers = torch.linspace(0.0, 1.0, num_bins, device=progress_pred.device, dtype=progress_pred.dtype)
-            # Compute expected value: sum(prob * bin_center) for each timestep
-            progress_pred_for_corr = (progress_pred_continuous * bin_centers.unsqueeze(0).unsqueeze(0)).sum(
-                dim=-1
-            )  # [B, T]
+        if loss_type == "discrete": 
+            progress_pred_for_corr = convert_bins_to_continuous(progress_pred)
         else:
             progress_pred_for_corr = progress_pred
 
@@ -2525,10 +2518,11 @@ class RFMHeadsTrainer(Trainer):
         # =========================================================================================
         target_progress_A = inputs["target_progress_A"]
         target_progress_A_mask = inputs["target_progress_A_mask"].unsqueeze(-1)
+        data_gen_strat = inputs['trajectory_A_data_gen_strategy']
+        logger.warning(f"DATA GEN STRAT FOR TRAJ A: {data_gen_strat}")
 
         if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
             progress_pred_A = progress_logits["A"]
-
             progress_loss_A, spearman_corr_A, progress_metrics_A = self._compute_progress_loss_helper(
                 progress_pred_A,
                 target_progress_A,

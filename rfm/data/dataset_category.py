@@ -63,6 +63,8 @@ DATASET_CATEGORY = {
     "preference_only": [
         "jesbu1_oxe_rfm_oxe_bc_z",
         "jesbu1_oxe_rfm_oxe_dlr_edan_shared_control_converted_externally_to_rlds",
+        "jesbu1_roboarena_0825_rfm_roboarena",
+        "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
         # "roboarena",
         "auto_eval_rfm",
         "jesbu1_epic_rfm_epic",
@@ -198,6 +200,7 @@ DATASET_MAP = {
             "jesbu1_soar_rfm_soar_rfm",
             "jesbu1_auto_eval_rfm_auto_eval_rfm",
             "jesbu1_racer_rfm_racer_train",
+            "jesbu1_roboarena_0825_rfm_roboarena",
         ],
         "eval": [
             "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
@@ -273,6 +276,7 @@ DATA_SOURCE_CATEGORY = {
         "galaxea_part4_r1_lite",
         "galaxea_part5_r1_lite",
         "epic",
+        "roboarena_eval_debug_nowrist"
     ],
     "paired": [
         "h2r",
@@ -289,6 +293,7 @@ DATA_SOURCE_CATEGORY = {
         "auto_eval_rfm",
         "racer_train",
         "racer_val",
+        "roboarena_eval_debug_nowrist",
     ],
     "franka": [
         "oxe_droid",
@@ -382,3 +387,13 @@ def is_failure_ds(data_source_name: str) -> bool:
 def is_success_ds(data_source_name: str) -> bool:
     """Check if a data source contains successful trajectories."""
     return data_source_name in DATA_SOURCE_CATEGORY.get("success", [])
+
+
+def get_suboptimal_fail_ds() -> List[str]:
+    """Get list of data sources containing suboptimal/failure trajectories."""
+    return DATA_SOURCE_CATEGORY.get("suboptimal_fail", [])
+
+
+def is_suboptimal_fail_ds(data_source_name: str) -> bool:
+    """Check if a data source contains suboptimal/failure trajectories."""
+    return data_source_name in DATA_SOURCE_CATEGORY.get("suboptimal_fail", [])

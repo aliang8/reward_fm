@@ -50,7 +50,7 @@ def convert_continuous_to_discrete_bin(value: float, num_bins: int) -> int:
     Returns:
         Discrete bin index in [0, num_bins-1]
     """
-    return int(min(max(value, 0.0), 1.0) * (num_bins - 1))
+    return round(min(max(value, 0.0), 1.0) * (num_bins - 1))
 
 
 def convert_continuous_to_discrete_bins(progress_values: Union[List[float], np.ndarray], num_bins: int) -> List[int]:

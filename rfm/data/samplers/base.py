@@ -211,7 +211,7 @@ class RFMBaseSampler:
         Returns:
             Different task trajectory dict or None if not available
         """
-        same_source_prob = self.config.task_instruction_same_source_prob
+        same_source_prob = self.config.traj_same_source_prob
         data_source = ref_traj.get("data_source")
         other_tasks = []
 
@@ -249,7 +249,7 @@ class RFMBaseSampler:
         Returns:
             Trajectory dict with different task instruction or None if not available
         """
-        same_source_prob = self.config.task_instruction_same_source_prob
+        same_source_prob = self.config.traj_same_source_prob
         data_source = ref_traj.get("data_source")
         candidate_tasks = []
 

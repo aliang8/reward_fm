@@ -1931,7 +1931,7 @@ class RFMHeadsTrainer(Trainer):
                     total_loss += progress_loss
                 else:
                     logger.warning(f"NaN detected in progress loss, replacing with 0.0")
-            log_metadata.update(loss_dict)
+                log_metadata.update(loss_dict)
 
         # Compute similarity loss if we have similarity samples
         if num_similarities > 0 and similarity_inputs and self.config.model.train_similarity_head:
@@ -1943,7 +1943,7 @@ class RFMHeadsTrainer(Trainer):
                     total_loss += similarity_loss
                 else:
                     logger.warning(f"NaN detected in similarity loss, replacing with 0.0")
-            log_metadata.update(loss_dict)
+                log_metadata.update(loss_dict)
 
         for key, value in log_metadata.items():
             logger.trace(f"{key}: {value}, type: {type(value)}")

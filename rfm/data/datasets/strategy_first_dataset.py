@@ -7,7 +7,11 @@ from rfm.data.samplers.pref import PrefSampler
 from rfm.data.samplers.sim import SimSampler
 from rfm.data.samplers.progress import ProgressSampler
 from rfm.data.datasets.helpers import DataGenStrat
-from rfm.data.dataset_category import is_preference_only
+from rfm.data.dataset_category import (
+    is_preference_only,
+    is_suboptimal_fail_ds,
+    is_paired_ds,
+)
 from rfm.utils.logger import get_logger
 
 logger = get_logger()
@@ -95,11 +99,20 @@ class StrategyFirstDataset(BaseDataset):
             f"[StrategyFirstDataset] Selected strategy: {strategy.value if hasattr(strategy, 'value') else strategy}"
         )
 
-        # Step 3: Select data source uniformly
-        # Step 4: Sample and generate
+        # Step 3: Filter data sources based on strategy requirements
+        filtered_sources = self._filter_data_sources_by_strategy(sample_type, strategy)
+        if not filtered_sources:
+            logger.trace(
+                f"[StrategyFirstDataset] No viable data sources for strategy {strategy.value if hasattr(strategy, 'value') else strategy}, retrying..."
+            )
+            # Retry by selecting a different strategy/sample type
+            return self._generate_without_specific_strategy(sample_type)
+
+        # Step 4: Select data source uniformly from filtered sources
+        # Step 5: Sample and generate
         max_attempts = 10  # Limit attempts to prevent infinite loops
         for attempt in range(max_attempts):
-            selected_source = self._select_data_source_uniformly()
+            selected_source = self._select_data_source_uniformly(filtered_sources)
             source_indices = self.source_indices.get(selected_source)
 
             if not source_indices:
@@ -236,14 +249,62 @@ class StrategyFirstDataset(BaseDataset):
         # Fallback
         return strategies[0][0]
 
-    def _select_data_source_uniformly(self) -> str:
-        """Select a data source uniformly from all available data sources."""
-        available_sources = list(self.source_indices.keys())
+    def _select_data_source_uniformly(self, allowed_sources: Optional[List[str]] = None) -> str:
+        """Select a data source uniformly from allowed data sources.
+
+        Args:
+            allowed_sources: Optional list of allowed data source names. If None, uses all available sources.
+
+        Returns:
+            Selected data source name
+        """
+        if allowed_sources is None:
+            available_sources = list(self.source_indices.keys())
+        else:
+            # Filter to only include sources that exist in our source_indices
+            available_sources = [source for source in allowed_sources if source in self.source_indices]
 
         if not available_sources:
             raise ValueError("No available data sources")
 
         return random.choice(available_sources)
+
+    def _filter_data_sources_by_strategy(
+        self, sample_type: str, strategy: Optional[DataGenStrat]
+    ) -> List[str]:
+        """Filter data sources based on strategy requirements.
+
+        Args:
+            sample_type: The sample type (pref/progress/similarity)
+            strategy: The selected strategy
+
+        Returns:
+            List of viable data source names for the strategy
+        """
+        all_sources = list(self.source_indices.keys())
+
+        if strategy is None:
+            return all_sources
+
+        # Filter based on strategy requirements
+        if strategy == DataGenStrat.SUBOPTIMAL:
+            # SUBOPTIMAL strategy needs data sources with suboptimal/failure trajectories
+            filtered = [source for source in all_sources if is_suboptimal_fail_ds(source)]
+            logger.trace(
+                f"[StrategyFirstDataset] Filtered {len(filtered)}/{len(all_sources)} data sources for SUBOPTIMAL strategy"
+            )
+            return filtered if filtered else all_sources
+
+        elif strategy == DataGenStrat.PAIRED_HUMAN_ROBOT:
+            # PAIRED_HUMAN_ROBOT strategy needs paired data sources
+            filtered = [source for source in all_sources if is_paired_ds(source)]
+            logger.trace(
+                f"[StrategyFirstDataset] Filtered {len(filtered)}/{len(all_sources)} data sources for PAIRED_HUMAN_ROBOT strategy"
+            )
+            return filtered if filtered else all_sources
+
+        # Other strategies (REWIND, DIFFERENT_TASK, REVERSE_PROGRESS, etc.) can work with any data source
+        return all_sources
 
     def _generate_sample_for_type(
         self, sample_type: str, item: Dict[str, Any], preferred_strategy: Optional[DataGenStrat] = None

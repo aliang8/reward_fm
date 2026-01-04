@@ -72,7 +72,7 @@ def train(cfg: ExperimentConfig):
     run_name = cfg.training.exp_name
     if cfg.debug:
         run_name += "_debug"
-        cfg.training.logging_steps = 5
+        cfg.training.logging_steps = 1
         cfg.training.eval_steps = 5
         # cfg.data.eval_subset_size = 100
         cfg.training.custom_eval_steps = 5

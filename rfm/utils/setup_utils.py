@@ -775,7 +775,7 @@ def create_training_arguments(cfg: TrainingConfig, output_dir: str, is_eval: boo
             "per_device_eval_batch_size": 2,
             "num_train_epochs": -1,
             "max_steps": 1,
-            "report_to": "none",
+            "report_to": [],
         })
     else:
         # Training-specific arguments
@@ -783,7 +783,7 @@ def create_training_arguments(cfg: TrainingConfig, output_dir: str, is_eval: boo
             "num_train_epochs": cfg.num_train_epochs if cfg.num_train_epochs is not None else 1,
             "max_steps": cfg.max_steps if cfg.max_steps is not None else -1,
             # Disable HuggingFace's automatic logging - we use custom Logger class instead
-            "report_to": "none",
+            "report_to": [],
         })
 
     return TrainingArguments(**base_args)

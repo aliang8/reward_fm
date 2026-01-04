@@ -211,7 +211,16 @@ class RFMBaseSampler:
         Returns:
             Different task trajectory dict or None if not available
         """
-        other_tasks = [task for task in self.optimal_by_task.keys() if task != ref_traj["task"]]
+        same_source_prob = self.config.task_instruction_same_source_prob
+        data_source = ref_traj.get("data_source")
+        other_tasks = []
+
+        if data_source and data_source in self.tasks_by_data_source and random.random() < same_source_prob:
+            other_tasks = [task for task in self.tasks_by_data_source[data_source] if task != ref_traj["task"]]
+
+        if not other_tasks:
+            other_tasks= [task for task in self.optimal_by_task.keys() if task != ref_traj["task"]]
+        
         if not other_tasks:
             logger.trace(
                 f"[BASE SAMPLER] _get_different_video_traj: No other tasks available (ref task: '{ref_traj['task']}')"

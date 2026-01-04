@@ -16,10 +16,10 @@ logger = get_logger()
 class StrategyFirstDataset(BaseDataset):
     """
     Dataset that first selects sample type, then strategy, then picks a data source uniformly.
-    
+
     This is different from RFMDataset which selects a trajectory first based on dataset iteration,
     and from StrategyBalancedDataset which selects sample type then data source (with optional weights).
-    
+
     Sampling flow:
     1. Select sample type (preference/progress/similarity) based on sample_type_ratio
     2. Select strategy for that sample type based on strategy ratios
@@ -91,7 +91,9 @@ class StrategyFirstDataset(BaseDataset):
             logger.trace(f"[StrategyFirstDataset] No strategy selected, using sampler default")
             return self._generate_without_specific_strategy(sample_type)
 
-        logger.trace(f"[StrategyFirstDataset] Selected strategy: {strategy.value if hasattr(strategy, 'value') else strategy}")
+        logger.trace(
+            f"[StrategyFirstDataset] Selected strategy: {strategy.value if hasattr(strategy, 'value') else strategy}"
+        )
 
         # Step 3: Select data source uniformly
         # Step 4: Sample and generate
@@ -266,9 +268,7 @@ class StrategyFirstDataset(BaseDataset):
         # Handle non-successful trajectories: force preference-only
         if quality_label != "successful" and sample_type != "pref":
             if self.pref_sampler is not None:
-                logger.trace(
-                    f"[StrategyFirstDataset] Non-successful quality detected, switching to preference sampler"
-                )
+                logger.trace(f"[StrategyFirstDataset] Non-successful quality detected, switching to preference sampler")
                 return self.pref_sampler._generate_sample(item)
             else:
                 return None
@@ -310,4 +310,3 @@ class StrategyFirstDataset(BaseDataset):
 
     def get_resample_dataset_attempt_stats(self):
         return self._resample_dataset_attempt_stats
-

@@ -452,15 +452,15 @@ def compute_batch_outputs(
             elif is_discrete_mode:
                 # seq_A_item is [seq_len, num_bins] logits, convert entire sequence to continuous
                 continuous_pred = convert_bins_to_continuous(seq_A_item.detach().cpu().float())
-                #continuous_pred = convert_bins_to_continuous_hard(seq_A_item.detach().cpu().float())
+                # continuous_pred = convert_bins_to_continuous_hard(seq_A_item.detach().cpu().float())
                 progress_pred.append(continuous_pred.numpy().flatten().tolist())
             else:
                 progress_pred.append(seq_A_item.detach().cpu().flatten().tolist())
-        
+
         if not progress_pred:
             batch_size = len(batch_inputs.get("task", []))
             progress_pred = [[] for _ in range(batch_size)]
-        
+
         results["progress_pred"] = progress_pred
         logger.debug(f"progress_pred: {progress_pred}")
         if model_output.success_logits is not None:

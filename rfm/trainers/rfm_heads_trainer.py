@@ -2225,7 +2225,7 @@ class RFMHeadsTrainer(Trainer):
 
         # For discrete mode, convert predictions back to continuous for spearman correlation
         # For L1/L2, use predictions as-is
-        if loss_type == "discrete": 
+        if loss_type == "discrete":
             progress_pred_for_corr = convert_bins_to_continuous(progress_pred)
         else:
             progress_pred_for_corr = progress_pred
@@ -2518,8 +2518,9 @@ class RFMHeadsTrainer(Trainer):
         # =========================================================================================
         target_progress_A = inputs["target_progress_A"]
         target_progress_A_mask = inputs["target_progress_A_mask"].unsqueeze(-1)
-        data_gen_strat = inputs['trajectory_A_data_gen_strategy']
+        data_gen_strat = inputs["trajectory_A_data_gen_strategy"]
         logger.warning(f"DATA GEN STRAT FOR TRAJ A: {data_gen_strat}")
+        logger.warning(f"DATA SOURCE FOR TRAJ A: {inputs['trajectory_A_data_source']}")
 
         if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
             progress_pred_A = progress_logits["A"]

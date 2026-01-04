@@ -193,12 +193,6 @@ class PrefSampler(RFMBaseSampler):
 
         # Strategy selection with rebalancing on failure
         strategies = []
-        # # For RoboArena, always use partial_success strategy only
-        # if is_roboarena:
-        #     strategies.append((DataGenStrat.ROBOARENA_PARTIAL_SUCCESS, 1.0))
-        # else:
-
-        # Add other strategies if not RoboArena
         if self.preference_strategy_ratio[0] > 0:
             strategies.append((DataGenStrat.REWIND, self.preference_strategy_ratio[0]))
         if self._has_suboptimal and self.preference_strategy_ratio[1] > 0:
@@ -207,11 +201,6 @@ class PrefSampler(RFMBaseSampler):
             strategies.append((DataGenStrat.DIFFERENT_TASK, self.preference_strategy_ratio[2]))
         if self.preference_strategy_ratio[3] > 0:
             strategies.append((DataGenStrat.REVERSE_PROGRESS, self.preference_strategy_ratio[3]))
-
-        if is_roboarena and self.preference_strategy_ratio[1] > 0:
-            strategies.append((DataGenStrat.ROBOARENA_PARTIAL_SUCCESS, self.preference_strategy_ratio[1]))
-            # remove suboptimal strategy
-            strategies = [(strat, prob) for strat, prob in strategies if strat != DataGenStrat.SUBOPTIMAL]
 
         max_attempts = 10  # Limit retry attempts to prevent infinite loops
         max_strategy_attempts = 3  # Maximum attempts per strategy before removing it
@@ -256,32 +245,7 @@ class PrefSampler(RFMBaseSampler):
 
             rejected_subsample_strategy = None
 
-            if selected_strategy == DataGenStrat.ROBOARENA_PARTIAL_SUCCESS:
-                rejected_traj = None
-                for _ in range(max_retries):
-                    different_traj = self._get_different_partial_success_traj(chosen_traj)
-                    if different_traj is not None:
-                        # If the returned trajectory has higher partial_success, swap them
-                        # so the higher one becomes chosen and the lower one becomes rejected
-                        chosen_partial_success = chosen_traj.get("partial_success")
-                        different_partial_success = different_traj.get("partial_success")
-                        if different_partial_success is not None and chosen_partial_success is not None:
-                            if different_partial_success > chosen_partial_success:
-                                # Swap: higher becomes chosen, original chosen becomes rejected
-                                logger.trace(
-                                    f"[PREF SAMPLER] Swapping trajectories: found higher partial_success "
-                                    f"({different_partial_success} > {chosen_partial_success}), making higher trajectory chosen"
-                                )
-                                rejected_traj = chosen_traj
-                                chosen_traj = different_traj
-                            else:
-                                # Lower becomes rejected
-                                rejected_traj = different_traj
-                        else:
-                            rejected_traj = different_traj
-                        break
-                rejected_subsample_strategy = "subsample_forward"
-            elif selected_strategy == DataGenStrat.REWIND:
+            if selected_strategy == DataGenStrat.REWIND:
                 # REWIND: use the same trajectory but with rewind subsampling
                 rejected_traj = chosen_traj
                 rejected_subsample_strategy = "subsample_rewind"
@@ -290,6 +254,19 @@ class PrefSampler(RFMBaseSampler):
                 for _ in range(max_retries):
                     rejected_traj = self._get_same_task_suboptimal(chosen_traj)
                     if rejected_traj is not None:
+                        # For RoboArena, if the returned trajectory has higher partial_success, swap them
+                        # so the higher one becomes chosen and the lower one becomes rejected
+                        if is_roboarena:
+                            chosen_partial_success = chosen_traj.get("partial_success")
+                            rejected_partial_success = rejected_traj.get("partial_success")
+                            if rejected_partial_success is not None and chosen_partial_success is not None:
+                                if rejected_partial_success > chosen_partial_success:
+                                    # Swap: higher becomes chosen, original chosen becomes rejected
+                                    logger.trace(
+                                        f"[PREF SAMPLER] Swapping trajectories: found higher partial_success "
+                                        f"({rejected_partial_success} > {chosen_partial_success}), making higher trajectory chosen"
+                                    )
+                                    rejected_traj, chosen_traj = chosen_traj, rejected_traj
                         break
                 rejected_subsample_strategy = "subsample_forward"
             elif selected_strategy == DataGenStrat.DIFFERENT_TASK:

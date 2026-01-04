@@ -149,7 +149,7 @@ class Logger:
         if not self._is_main:
             return
         if self.enabled("wandb"):
-            self._wandb_run.log(scalars, step=step, commit=True)
+            self._wandb_run.log(scalars, step=step)
         if self.enabled("tensorboard"):
             for k, v in scalars.items():
                 if isinstance(v, (int, float)):
@@ -159,7 +159,7 @@ class Logger:
         if not self._is_main:
             return
         if self.enabled("wandb"):
-            self._wandb_run.log({tag: wandb.Image(figure)}, step=step, commit=True)
+            self._wandb_run.log({tag: wandb.Image(figure)}, step=step)
         if self.enabled("tensorboard"):
             self._tb_writer.add_figure(tag, figure, global_step=step)
 
@@ -175,7 +175,7 @@ class Logger:
             if image.ndim == 3 and image.shape[2] == 3:
                 if image.dtype != np.uint8:
                     image = np.clip(image, 0, 255).astype(np.uint8)
-                self._wandb_run.log({tag: wandb.Image(image)}, step=step, commit=True)
+                self._wandb_run.log({tag: wandb.Image(image)}, step=step)
         if self.enabled("tensorboard"):
             # Convert to (C, H, W) for tensorboard
             if image.ndim == 3 and image.shape[2] == 3:
@@ -237,7 +237,7 @@ class Logger:
             #     tag_with_step = f"{tag}/step_{step}"
             # else:
             #     tag_with_step = tag
-            self._wandb_run.log({tag: wandb.Table(data=rows, columns=columns)}, step=step, commit=True)
+            self._wandb_run.log({tag: wandb.Table(data=rows, columns=columns)}, step=step)
 
     def add_text(self, tag: str, text: str, step: Optional[int] = None):
         if not self._is_main:
@@ -247,7 +247,7 @@ class Logger:
         # For wandb, text can be added via log_scalars or a media panel; skip for simplicity
         if self.enabled("wandb"):
             # Store as a simple text panel by wrapping in a dict
-            self._wandb_run.log({tag: wandb.Html(f"<pre>{text}</pre>")}, step=step, commit=True)
+            self._wandb_run.log({tag: wandb.Html(f"<pre>{text}</pre>")}, step=step)
 
     def log_table(self, tag: str, data: List[List[Any]], columns: List[str], step: Optional[int] = None):
         """
@@ -260,7 +260,7 @@ class Logger:
             #     tag_with_step = f"{tag}/step_{step}"
             # else:
             #     tag_with_step = tag
-            self._wandb_run.log({tag: wandb.Table(data=data, columns=columns)}, step=step, commit=True)
+            self._wandb_run.log({tag: wandb.Table(data=data, columns=columns)}, step=step)
 
     def log_video(self, tag: str, video: Any, fps: int = 10, step: Optional[int] = None):
         """
@@ -273,7 +273,7 @@ class Logger:
         # wandb
         if self.enabled("wandb"):
             if isinstance(video, str):
-                self._wandb_run.log({tag: wandb.Video(video, fps=fps)}, step=step, commit=True)
+                self._wandb_run.log({tag: wandb.Video(video, fps=fps)}, step=step)
             else:
                 arr = None
                 if isinstance(video, np.ndarray):
@@ -285,7 +285,7 @@ class Logger:
                     # If last dimension is 3 (or 1), it's THWC format, convert to TCHW
                     if arr.shape[-1] in (1, 3) and arr.shape[1] not in (1, 3):
                         arr = np.transpose(arr, (0, 3, 1, 2))  # T x H x W x C -> T x C x H x W
-                    self._wandb_run.log({tag: wandb.Video(arr, fps=fps, format="mp4")}, step=step, commit=True)
+                    self._wandb_run.log({tag: wandb.Video(arr, fps=fps, format="mp4")}, step=step)
         # tensorboard
         if self.enabled("tensorboard"):
             tens = None

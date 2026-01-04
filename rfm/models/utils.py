@@ -29,3 +29,27 @@ def convert_bins_to_continuous(bin_logits: torch.Tensor | np.ndarray) -> torch.T
         if isinstance(bin_logits, torch.Tensor)
         else (bin_probs * bin_centers).sum(axis=-1)
     )
+
+def convert_bins_to_continuous_hard(
+    bin_logits: torch.Tensor | np.ndarray,
+) -> torch.Tensor | np.ndarray:
+    """
+    Convert discrete bins to a continuous value in [0, 1]
+    by selecting the argmax bin and returning its center.
+    """
+    num_bins = bin_logits.shape[-1]
+
+    if isinstance(bin_logits, torch.Tensor):
+        idx = torch.argmax(bin_logits, dim=-1)
+        bin_centers = torch.linspace(
+            0.0, 1.0, num_bins,
+            device=bin_logits.device,
+            dtype=bin_logits.dtype,
+        )
+        return bin_centers[idx]
+
+    else:
+        idx = np.argmax(bin_logits, axis=-1)
+        bin_centers = np.linspace(0.0, 1.0, num_bins)
+        return bin_centers[idx]
+

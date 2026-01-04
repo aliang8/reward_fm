@@ -51,7 +51,7 @@ from rfm.configs.eval_configs import EvalServerConfig
 from rfm.configs.experiment_configs import ExperimentConfig
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample
 from rfm.utils.setup_utils import setup_model_and_processor, setup_batch_collator
-from rfm.models.utils import ModelOutput, convert_bins_to_continuous
+from rfm.models.utils import ModelOutput, convert_bins_to_continuous, convert_bins_to_continuous_hard
 from rfm.utils.config_utils import display_config, convert_hydra_to_dataclass
 from rfm.utils.logger import get_logger, setup_loguru_logging
 
@@ -452,6 +452,7 @@ def compute_batch_outputs(
             elif is_discrete_mode:
                 # seq_A_item is [seq_len, num_bins] logits, convert entire sequence to continuous
                 continuous_pred = convert_bins_to_continuous(seq_A_item.detach().cpu().float())
+                #continuous_pred = convert_bins_to_continuous_hard(seq_A_item.detach().cpu().float())
                 progress_pred.append(continuous_pred.numpy().flatten().tolist())
             else:
                 progress_pred.append(seq_A_item.detach().cpu().flatten().tolist())

@@ -696,8 +696,8 @@ class RFMHeadsTrainer(Trainer):
             logger.info(f"Timing raw: {rounded_times}")
 
             # Log optimizer stats to console
-            if optim_stats:
-                logger.info(f"Optimizer stats: {optim_stats}")
+            # if optim_stats:
+            #     logger.info(f"Optimizer stats: {optim_stats}")
 
     def _make_eval_dataloader(self, dataset):
         """Create a distributed evaluation dataloader with proper sampling."""
@@ -2615,8 +2615,8 @@ class RFMHeadsTrainer(Trainer):
                 stratified_success_metrics = {
                     "success_loss": success_metrics_A["masked_loss"],
                     "success_acc": success_metrics_A["masked_correct"],
-                    "positive_acc": success_metrics_A["positive_accuracy"],
-                    "negative_acc": success_metrics_A["negative_accuracy"],
+                    "success_pos_acc": success_metrics_A["positive_accuracy"],
+                    "success_neg_acc": success_metrics_A["negative_accuracy"],
                 }
                 self._add_stratified_metrics(
                     outputs_dict,
@@ -2977,8 +2977,8 @@ class RFMHeadsTrainer(Trainer):
                 stratified_success_metrics = {
                     "success_loss": combined_success_loss,
                     "success_acc": combined_success_acc,
-                    "positive_acc": combined_positive_acc,
-                    "negative_acc": combined_negative_acc,
+                    "success_pos_acc": combined_positive_acc,
+                    "success_neg_acc": combined_negative_acc,
                 }
 
                 self._add_stratified_metrics(

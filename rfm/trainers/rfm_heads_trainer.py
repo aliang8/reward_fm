@@ -683,7 +683,7 @@ class RFMHeadsTrainer(Trainer):
         # make sure values are floats so they are loggable into wandb reports
         log_data = {k: float(v) for k, v in log_data.items()}
 
-        self.logger.log_scalars(log_data, step=self.state.global_step)
+        self.logger.log_scalars(log_data, step=self.state.global_step + 1)
 
         if is_rank_0():
             logger.info(f"Step {self.state.global_step}, Epoch {self.state.epoch:.2f}:")
@@ -1272,14 +1272,14 @@ class RFMHeadsTrainer(Trainer):
                     "avg_differences",
                 ]
 
-            # table_name = f"policy_ranking_samples/{ds_name}"
+            table_name = f"policy_ranking_samples/{ds_name}"
 
-            # self.logger.log_table(
-            #     table_name,
-            #     data=data,
-            #     columns=columns,
-            #     step=eval_step,
-            # )
+            self.logger.log_table(
+                table_name,
+                data=data,
+                columns=columns,
+                step=eval_step,
+            )
 
             # Save policy ranking samples as JSON metadata
             # Convert table data (list of lists) to list of dictionaries
@@ -1785,7 +1785,7 @@ class RFMHeadsTrainer(Trainer):
         """
         Override evaluate method to implement custom RFM evaluation metrics.
         """
-        eval_step = self.state.global_step
+        eval_step = self.state.global_step + 1
 
         # Save current training mode and set to eval mode
         was_training = self.model.training

@@ -22,7 +22,6 @@ class DataGenStrat(Enum):
     DIFFERENT_TASK = "different_task"
     DIFFERENT_TASK_INSTRUCTION = "different_task_instruction"
     PAIRED_HUMAN_ROBOT = "paired_human_robot"
-    ROBOARENA_PARTIAL_SUCCESS = "roboarena_partial_success"
 
 
 def load_dataset_success_percent(cutoff_file_path):

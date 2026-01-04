@@ -17,7 +17,7 @@ from dataset_upload.helpers import (
 # We do not stream; assume RLDS TFDS builders are already downloaded locally.
 import tensorflow_datasets as tfds
 
-#soar_new_success_labels_path = "dataset_upload/dataset_helpers/soar_vlm_labels_checkpoint.json"
+# soar_new_success_labels_path = "dataset_upload/dataset_helpers/soar_vlm_labels_checkpoint.json"
 soar_new_success_labels_path = "dataset_upload/dataset_helpers/soar_label_corrections_full.json"
 
 
@@ -119,13 +119,13 @@ def convert_soar_dataset_to_hf(
 
         if split_name == "success":
             with open(soar_new_success_labels_path, "r") as f:
-                #new_success_labels = json.load(f)["results"]
+                # new_success_labels = json.load(f)["results"]
                 new_success_labels = json.load(f)["label_corrections"]
                 # episodes where qwen-3-vl predicted success
-                #new_success_labels = [
+                # new_success_labels = [
                 #    result["predicted_label"] for result in new_success_labels if result["original_label"] == "success"
-                #]
-                
+                # ]
+
                 # convert to int keys
                 new_success_labels = {int(k): v for k, v in new_success_labels.items()}
 
@@ -159,7 +159,7 @@ def convert_soar_dataset_to_hf(
             if not task_text:
                 continue
             elif split_name == "failure":
-                if new_success_labels[ep_idx] != "failure": # skip if the label is not correct
+                if new_success_labels[ep_idx] != "failure":  # skip if the label is not correct
                     continue
                 elif task_text not in success_episode_instructions:
                     # no corresponding success episode, skip this failure

@@ -547,7 +547,7 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
         with _timer("time/progress_logits", timing_raw=timing_raw):
             if not skip_frame_extraction:
                 is_multi_image = self.use_multi_image
-                
+
                 if is_multi_image:
                     # Multi-image mode: collect all frames first, then batch process
                     all_trajectory_A_frames = []
@@ -555,7 +555,7 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
                     trajectory_A_lengths = []
                     trajectory_B_lengths = []
                     has_trajectory_B = sample_type != "progress"
-                    
+
                     # First pass: extract all frame embeddings
                     for i, seq_ids in enumerate(input_ids):
                         # Find all vision token positions
@@ -588,7 +588,9 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
                             vision_end_positions = torch.tensor([], device=seq_ids.device)
 
                         if len(vision_start_positions) == 0:
-                            raise ValueError(f"vision_start_token (id={vision_start_token_id}) not found in sequence {i}")
+                            raise ValueError(
+                                f"vision_start_token (id={vision_start_token_id}) not found in sequence {i}"
+                            )
 
                         # Extract embeddings from each vision_start/end pair
                         frame_embeddings = self._extract_hidden_states_from_token_pairs(
@@ -619,7 +621,7 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
                         # Collect frames for batch processing
                         all_trajectory_A_frames.append(trajectory_A_frames)
                         trajectory_A_lengths.append(trajectory_A_frames.shape[0])
-                        
+
                         if trajectory_B_frames is not None:
                             all_trajectory_B_frames.append(trajectory_B_frames)
                             trajectory_B_lengths.append(trajectory_B_frames.shape[0])
@@ -631,11 +633,11 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
                     if len(all_trajectory_A_frames) > 0:
                         # Concatenate all trajectory A frames
                         batched_trajectory_A = torch.cat(all_trajectory_A_frames, dim=0)  # [sum(T_A), hidden_dim]
-                        
+
                         # Apply heads in batch
                         progress_A_output_batched = self.progress_head(batched_trajectory_A)
                         success_A_output_batched = self.success_head(batched_trajectory_A)
-                        
+
                         # Split results back to individual samples
                         if self.use_discrete_progress:
                             # progress_A_output_batched: [sum(T_A), num_bins]
@@ -644,10 +646,10 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
                             # progress_A_output_batched: [sum(T_A), 1]
                             progress_A_output_batched = progress_A_output_batched.squeeze(-1)  # [sum(T_A)]
                             progress_A_split = torch.split(progress_A_output_batched, trajectory_A_lengths, dim=0)
-                        
+
                         success_A_output_batched = success_A_output_batched.squeeze(-1)  # [sum(T_A)]
                         success_A_split = torch.split(success_A_output_batched, trajectory_A_lengths, dim=0)
-                        
+
                         # Append to output lists
                         for progress_A, success_A in zip(progress_A_split, success_A_split):
                             progress_logits_A.append(progress_A)
@@ -657,16 +659,20 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
                     if has_trajectory_B and any(f is not None for f in all_trajectory_B_frames):
                         # Filter out None entries and track which samples have trajectory B
                         valid_B_frames = [f for f in all_trajectory_B_frames if f is not None]
-                        valid_B_lengths = [traj_len for traj_len, frame in zip(trajectory_B_lengths, all_trajectory_B_frames) if frame is not None]
-                        
+                        valid_B_lengths = [
+                            traj_len
+                            for traj_len, frame in zip(trajectory_B_lengths, all_trajectory_B_frames)
+                            if frame is not None
+                        ]
+
                         if len(valid_B_frames) > 0:
                             # Concatenate all trajectory B frames
                             batched_trajectory_B = torch.cat(valid_B_frames, dim=0)  # [sum(T_B), hidden_dim]
-                            
+
                             # Apply heads in batch
                             progress_B_output_batched = self.progress_head(batched_trajectory_B)
                             success_B_output_batched = self.success_head(batched_trajectory_B)
-                            
+
                             # Split results back to individual samples
                             if self.use_discrete_progress:
                                 # progress_B_output_batched: [sum(T_B), num_bins]
@@ -675,10 +681,10 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
                                 # progress_B_output_batched: [sum(T_B), 1]
                                 progress_B_output_batched = progress_B_output_batched.squeeze(-1)  # [sum(T_B)]
                                 progress_B_split = torch.split(progress_B_output_batched, valid_B_lengths, dim=0)
-                            
+
                             success_B_output_batched = success_B_output_batched.squeeze(-1)  # [sum(T_B)]
                             success_B_split = torch.split(success_B_output_batched, valid_B_lengths, dim=0)
-                            
+
                             # Map back to original sample order (some may be None)
                             valid_idx = 0
                             for frame in all_trajectory_B_frames:
@@ -706,7 +712,9 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
                         vision_start_positions = (seq_ids == vision_start_token_id).nonzero(as_tuple=True)[0]
 
                         if len(vision_start_positions) == 0:
-                            raise ValueError(f"vision_start_token (id={vision_start_token_id}) not found in sequence {i}")
+                            raise ValueError(
+                                f"vision_start_token (id={vision_start_token_id}) not found in sequence {i}"
+                            )
 
                         # Video mode: use existing temporal patch logic
                         if video_grid_thw is None or i >= len(video_grid_thw):

@@ -161,12 +161,24 @@ class RFMBaseSampler:
     def _get_same_task_suboptimal(self, ref_traj: dict) -> dict | None:
         """Get suboptimal trajectory from same task.
 
+        For RoboArena trajectories, uses partial_success logic instead of quality_label logic.
+
         Args:
             ref_traj: Reference trajectory
 
         Returns:
             Suboptimal trajectory dict or None if not available
         """
+        # Check if this is a RoboArena trajectory (has partial_success and data_source contains "roboarena")
+        data_source = ref_traj.get("data_source", "")
+        partial_success = ref_traj.get("partial_success")
+        is_roboarena = partial_success is not None and data_source and "roboarena" in str(data_source).lower()
+
+        if is_roboarena:
+            # For RoboArena, use partial_success logic
+            return self._get_different_partial_success_traj(ref_traj)
+
+        # For non-RoboArena, use the standard suboptimal logic
         task_name = ref_traj["task"]
         same_task_suboptimal_indices = self.suboptimal_by_task.get(task_name, [])
         if not same_task_suboptimal_indices:
@@ -219,8 +231,8 @@ class RFMBaseSampler:
             other_tasks = [task for task in self.tasks_by_data_source[data_source] if task != ref_traj["task"]]
 
         if not other_tasks:
-            other_tasks= [task for task in self.optimal_by_task.keys() if task != ref_traj["task"]]
-        
+            other_tasks = [task for task in self.optimal_by_task.keys() if task != ref_traj["task"]]
+
         if not other_tasks:
             logger.trace(
                 f"[BASE SAMPLER] _get_different_video_traj: No other tasks available (ref task: '{ref_traj['task']}')"

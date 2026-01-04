@@ -239,10 +239,33 @@ class RFMBaseSampler:
             )
             return None
 
-        other_task = random.choice(other_tasks)
-        other_task_indices = self.optimal_by_task[other_task]
-        if not other_task_indices:
-            logger.trace(f"[BASE SAMPLER] _get_different_video_traj: Task '{other_task}' has no optimal indices")
+        # Try up to 2 times to find a valid task
+        max_retries = 2
+        other_task_indices = None
+        other_task = None
+
+        for attempt in range(max_retries):
+            other_task = random.choice(other_tasks)
+            if other_task not in self.optimal_by_task:
+                logger.trace(
+                    f"[BASE SAMPLER] _get_different_video_traj: Attempt {attempt + 1}/{max_retries}: Task '{other_task}' not found in optimal_by_task"
+                )
+                continue
+
+            other_task_indices = self.optimal_by_task[other_task]
+            if not other_task_indices:
+                logger.trace(
+                    f"[BASE SAMPLER] _get_different_video_traj: Attempt {attempt + 1}/{max_retries}: Task '{other_task}' has no optimal indices"
+                )
+                continue
+
+            # Found a valid task with indices
+            break
+
+        if other_task_indices is None or not other_task_indices:
+            logger.trace(
+                f"[BASE SAMPLER] _get_different_video_traj: Failed to find valid task after {max_retries} attempts"
+            )
             return None
 
         other_idx = random.choice(other_task_indices)

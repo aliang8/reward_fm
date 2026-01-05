@@ -37,10 +37,33 @@ class SimSampler(RFMBaseSampler):
             f"[SIM SAMPLER] Has paired human/robot: {self._has_paired_human_robot}, Has suboptimal: {self._has_suboptimal}"
         )
 
-    def _generate_sample(self, item: dict):
-        return self._create_similarity_sample(ref_traj=item)
+    def _generate_sample(self, item: dict, preferred_strategy: Optional[DataGenStrat] = None):
+        return self._create_similarity_sample(ref_traj=item, preferred_strategy=preferred_strategy)
 
-    def _create_similarity_sample(self, ref_traj: Optional[Dict[str, Any]] = None) -> SimilaritySample:
+    def _execute_strategy(
+        self, strategy: DataGenStrat, ref_traj: Dict[str, Any]
+    ) -> tuple[Dict[str, Any], Dict[str, Any]] | None:
+        """Execute a strategy to get trajectory pairs.
+        
+        Args:
+            strategy: The strategy to execute
+            ref_traj: The reference trajectory
+            
+        Returns:
+            Tuple of (traj_sim, traj_diff) or None if failed
+        """
+        if strategy == DataGenStrat.REWIND:
+            return self._get_traj_dicts_for_rewind(ref_traj)
+        elif strategy == DataGenStrat.SUBOPTIMAL:
+            return self._get_traj_dicts_for_suboptimal(ref_traj)
+        elif strategy == DataGenStrat.PAIRED_HUMAN_ROBOT:
+            return self._get_traj_dicts_for_paired_human_robot(ref_traj)
+        else:
+            return None
+
+    def _create_similarity_sample(
+        self, ref_traj: Optional[Dict[str, Any]] = None, preferred_strategy: Optional[DataGenStrat] = None
+    ) -> SimilaritySample:
         """Create a similarity scoring sample: o^1 and o^2 ranked against o^ref.
 
         Two modes:
@@ -110,111 +133,117 @@ class SimSampler(RFMBaseSampler):
         is_failure_source = is_failure_ds(data_source) if data_source else False
         is_paired_source = is_paired_ds(data_source) if data_source else False
 
-        # Strategy selection with data_source-based filtering and boosting
-        strategies = []
-
-        # Always include REWIND if ratio > 0
-        if self.similarity_strategy_ratio[0] > 0:
-            strategies.append((DataGenStrat.REWIND, self.similarity_strategy_ratio[0]))
-
-        # SUBOPTIMAL: include if data_source is in failure category
-        if len(self.similarity_strategy_ratio) > 1 and self.similarity_strategy_ratio[1] > 0 and is_failure_source:
-            # Boost probability by 2x if data_source is in failure category
-            boosted_prob = self.similarity_strategy_ratio[1] * 2.0
-            strategies.append((DataGenStrat.SUBOPTIMAL, boosted_prob))
-
-        # PAIRED_HUMAN_ROBOT: only include if data_source is in paired category
-        if (
-            self._has_paired_human_robot
-            and len(self.similarity_strategy_ratio) > 2
-            and self.similarity_strategy_ratio[2] > 0
-            and is_paired_source
-        ):
-            # Boost probability by 2x if data_source is in paired category
-            boosted_prob = self.similarity_strategy_ratio[2] * 2.0
-            strategies.append((DataGenStrat.PAIRED_HUMAN_ROBOT, boosted_prob))
-
-        # Remove strategies with zero probability
-        strategies = [(strat, prob) for strat, prob in strategies if prob > 0]
-
-        max_attempts = 10  # Limit retry attempts to prevent infinite loops
-        max_strategy_attempts = 4  # Maximum attempts per strategy before removing it
-        attempt = 0
-
-        strategies_tried = []
-        # Track attempts per strategy
-        strategy_attempt_counts = {strat: 0 for strat, _ in strategies}
-
-        while traj_sim is None and attempt < max_attempts:
-            attempt += 1
-
-            # Check if we have any strategies left
-            if not strategies:
-                return None
-
-            # Rebalance probabilities based on remaining strategies
-            total_prob = sum(prob for _, prob in strategies)
-            if total_prob == 0:
-                return None
-
-            # Normalize probabilities
-            normalized_strategies = [(strat, prob / total_prob) for strat, prob in strategies]
-
-            # Select strategy based on rebalanced probabilities
-            prob = self._local_random.random()
-            cumulative_prob = 0.0
-            selected_strategy = None
-
-            for strat, normalized_prob in normalized_strategies:
-                cumulative_prob += normalized_prob
-                if prob <= cumulative_prob:
-                    selected_strategy = strat
-                    strategies_tried.append(selected_strategy)
-                    break
-
-            # Log strategy attempt
+        # Strategy selection: use preferred_strategy if provided, otherwise select based on ratios
+        if preferred_strategy is not None:
+            # Use the preferred strategy directly
             logger.trace(
-                f"[SIM SAMPLER] Attempt {attempt}/{max_attempts}: Trying strategy {selected_strategy.value if selected_strategy else 'None'}"
+                f"[SIM SAMPLER] Using preferred strategy: {preferred_strategy.value}"
             )
-
-            # Execute selected strategy
-            if selected_strategy == DataGenStrat.REWIND:
-                result = self._get_traj_dicts_for_rewind(ref_traj)
-            elif selected_strategy == DataGenStrat.SUBOPTIMAL:
-                result = self._get_traj_dicts_for_suboptimal(ref_traj)
-            elif selected_strategy == DataGenStrat.PAIRED_HUMAN_ROBOT:
-                result = self._get_traj_dicts_for_paired_human_robot(ref_traj)
-            else:
-                return None
-
-            # Check if strategy succeeded
-            if result is not None:
-                traj_sim, traj_diff = result
-                strategy_used = selected_strategy
-                logger.trace(f"[SIM SAMPLER] Strategy {selected_strategy.value} succeeded on attempt {attempt}")
-            else:
-                # Strategy failed - increment attempt count
-                strategy_attempt_counts[selected_strategy] = strategy_attempt_counts.get(selected_strategy, 0) + 1
-                failed_count = strategy_attempt_counts[selected_strategy]
-
+            result = self._execute_strategy(preferred_strategy, ref_traj)
+            if result is None:
                 logger.trace(
-                    f"[SIM SAMPLER] Strategy {selected_strategy.value} failed (failure count: {failed_count}/{max_strategy_attempts})"
+                    f"[SIM SAMPLER] Preferred strategy {preferred_strategy.value} failed, returning None"
+                )
+                return None
+            traj_sim, traj_diff = result
+            strategy_used = preferred_strategy
+        else:
+            # Strategy selection with data_source-based filtering and boosting
+            strategies = []
+
+            # Always include REWIND if ratio > 0
+            if self.similarity_strategy_ratio[0] > 0:
+                strategies.append((DataGenStrat.REWIND, self.similarity_strategy_ratio[0]))
+
+            # SUBOPTIMAL: include if data_source is in failure category
+            if len(self.similarity_strategy_ratio) > 1 and self.similarity_strategy_ratio[1] > 0 and is_failure_source:
+                # Boost probability by 2x if data_source is in failure category
+                boosted_prob = self.similarity_strategy_ratio[1] * 2.0
+                strategies.append((DataGenStrat.SUBOPTIMAL, boosted_prob))
+
+            # PAIRED_HUMAN_ROBOT: only include if data_source is in paired category
+            if (
+                self._has_paired_human_robot
+                and len(self.similarity_strategy_ratio) > 2
+                and self.similarity_strategy_ratio[2] > 0
+                and is_paired_source
+            ):
+                # Boost probability by 2x if data_source is in paired category
+                boosted_prob = self.similarity_strategy_ratio[2] * 2.0
+                strategies.append((DataGenStrat.PAIRED_HUMAN_ROBOT, boosted_prob))
+
+            # Remove strategies with zero probability
+            strategies = [(strat, prob) for strat, prob in strategies if prob > 0]
+
+            max_attempts = 10  # Limit retry attempts to prevent infinite loops
+            max_strategy_attempts = 4  # Maximum attempts per strategy before removing it
+            attempt = 0
+
+            strategies_tried = []
+            # Track attempts per strategy
+            strategy_attempt_counts = {strat: 0 for strat, _ in strategies}
+
+            while traj_sim is None and attempt < max_attempts:
+                attempt += 1
+
+                # Check if we have any strategies left
+                if not strategies:
+                    return None
+
+                # Rebalance probabilities based on remaining strategies
+                total_prob = sum(prob for _, prob in strategies)
+                if total_prob == 0:
+                    return None
+
+                # Normalize probabilities
+                normalized_strategies = [(strat, prob / total_prob) for strat, prob in strategies]
+
+                # Select strategy based on rebalanced probabilities
+                prob = self._local_random.random()
+                cumulative_prob = 0.0
+                selected_strategy = None
+
+                for strat, normalized_prob in normalized_strategies:
+                    cumulative_prob += normalized_prob
+                    if prob <= cumulative_prob:
+                        selected_strategy = strat
+                        strategies_tried.append(selected_strategy)
+                        break
+
+                # Log strategy attempt
+                logger.trace(
+                    f"[SIM SAMPLER] Attempt {attempt}/{max_attempts}: Trying strategy {selected_strategy.value if selected_strategy else 'None'}"
                 )
 
-                # Only remove strategy if it has failed max_strategy_attempts times
-                if strategy_attempt_counts[selected_strategy] >= max_strategy_attempts:
-                    logger.trace(
-                        f"[SIM SAMPLER] Removing strategy {selected_strategy.value} after {max_strategy_attempts} consecutive failures"
-                    )
-                    strategies = [(strat, prob) for strat, prob in strategies if strat != selected_strategy]
-                    continue
+                # Execute selected strategy
+                result = self._execute_strategy(selected_strategy, ref_traj)
+                if result is not None:
+                    traj_sim, traj_diff = result
+                    strategy_used = selected_strategy
+                    logger.trace(f"[SIM SAMPLER] Strategy {selected_strategy.value} succeeded on attempt {attempt}")
+                else:
+                    # Strategy failed - increment attempt count
+                    strategy_attempt_counts[selected_strategy] = strategy_attempt_counts.get(selected_strategy, 0) + 1
+                    failed_count = strategy_attempt_counts[selected_strategy]
 
-        # If we still don't have a sample after all attempts, return None
-        if traj_sim is None or traj_diff is None:
-            logger.trace(
-                f"[SIM SAMPLER] Failed to generate similarity sample after {max_attempts} attempts - all strategies exhausted"
-            )
-            return None
+                    logger.trace(
+                        f"[SIM SAMPLER] Strategy {selected_strategy.value} failed (failure count: {failed_count}/{max_strategy_attempts})"
+                    )
+
+                    # Only remove strategy if it has failed max_strategy_attempts times
+                    if strategy_attempt_counts[selected_strategy] >= max_strategy_attempts:
+                        logger.trace(
+                            f"[SIM SAMPLER] Removing strategy {selected_strategy.value} after {max_strategy_attempts} consecutive failures"
+                        )
+                        strategies = [(strat, prob) for strat, prob in strategies if strat != selected_strategy]
+                        continue
+
+            # If we still don't have a sample after all attempts, return None
+            if traj_sim is None or traj_diff is None:
+                logger.trace(
+                    f"[SIM SAMPLER] Failed to generate similarity sample after {max_attempts} attempts - all strategies exhausted"
+                )
+                return None
 
         sample = SimilaritySample(
             ref_trajectory=self._get_traj_from_data(ref_traj),

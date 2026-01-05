@@ -28,15 +28,13 @@ class ProgressSampler(RFMBaseSampler):
     def _generate_sample(self, item: Dict[str, Any], preferred_strategy: Optional[DataGenStrat] = None):
         return self._create_progress_sample(item, preferred_strategy=preferred_strategy)
 
-    def _execute_strategy(
-        self, strategy: DataGenStrat, traj: Dict[str, Any]
-    ) -> tuple[Dict[str, Any], str] | None:
+    def _execute_strategy(self, strategy: DataGenStrat, traj: Dict[str, Any]) -> tuple[Dict[str, Any], str] | None:
         """Execute a strategy to get processed trajectory.
-        
+
         Args:
             strategy: The strategy to execute
             traj: The trajectory to process
-            
+
         Returns:
             Tuple of (processed_traj, subsample_strategy) or None if failed
         """
@@ -71,14 +69,10 @@ class ProgressSampler(RFMBaseSampler):
         # Strategy selection: use preferred_strategy if provided, otherwise select based on ratios
         if preferred_strategy is not None:
             # Use the preferred strategy directly
-            logger.trace(
-                f"[PROGRESS SAMPLER] Using preferred strategy: {preferred_strategy.value}"
-            )
+            logger.trace(f"[PROGRESS SAMPLER] Using preferred strategy: {preferred_strategy.value}")
             result = self._execute_strategy(preferred_strategy, traj)
             if result is None:
-                logger.trace(
-                    f"[PROGRESS SAMPLER] Preferred strategy {preferred_strategy.value} failed, returning None"
-                )
+                logger.trace(f"[PROGRESS SAMPLER] Preferred strategy {preferred_strategy.value} failed, returning None")
                 return None
             processed_traj, subsample_strategy = result
             strategy_used = preferred_strategy

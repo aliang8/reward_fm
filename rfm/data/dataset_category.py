@@ -276,7 +276,7 @@ DATA_SOURCE_CATEGORY = {
         "galaxea_part4_r1_lite",
         "galaxea_part5_r1_lite",
         "epic",
-        "roboarena_eval_debug_nowrist"
+        "roboarena_eval_debug_nowrist",
     ],
     "paired": [
         "h2r",

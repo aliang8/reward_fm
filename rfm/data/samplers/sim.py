@@ -44,11 +44,11 @@ class SimSampler(RFMBaseSampler):
         self, strategy: DataGenStrat, ref_traj: Dict[str, Any]
     ) -> tuple[Dict[str, Any], Dict[str, Any]] | None:
         """Execute a strategy to get trajectory pairs.
-        
+
         Args:
             strategy: The strategy to execute
             ref_traj: The reference trajectory
-            
+
         Returns:
             Tuple of (traj_sim, traj_diff) or None if failed
         """
@@ -136,14 +136,10 @@ class SimSampler(RFMBaseSampler):
         # Strategy selection: use preferred_strategy if provided, otherwise select based on ratios
         if preferred_strategy is not None:
             # Use the preferred strategy directly
-            logger.trace(
-                f"[SIM SAMPLER] Using preferred strategy: {preferred_strategy.value}"
-            )
+            logger.trace(f"[SIM SAMPLER] Using preferred strategy: {preferred_strategy.value}")
             result = self._execute_strategy(preferred_strategy, ref_traj)
             if result is None:
-                logger.trace(
-                    f"[SIM SAMPLER] Preferred strategy {preferred_strategy.value} failed, returning None"
-                )
+                logger.trace(f"[SIM SAMPLER] Preferred strategy {preferred_strategy.value} failed, returning None")
                 return None
             traj_sim, traj_diff = result
             strategy_used = preferred_strategy

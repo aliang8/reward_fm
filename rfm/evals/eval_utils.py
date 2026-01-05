@@ -7,7 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Union, Optional
+from typing import Any, Dict, List, Union, Optional, Tuple
 from datetime import datetime
 
 import aiohttp
@@ -27,7 +27,7 @@ def extract_answer_from_text(text: str) -> str:
 
 
 def raw_dict_to_sample(
-    raw_data: Dict[str, Any],
+    raw_data: Union[Tuple[Dict[str, Any], Dict[str, Any]], Dict[str, Any]],
     max_frames: int = 16,
     sample_type: str = "progress",
 ) -> Union[ProgressSample, PreferenceSample]:
@@ -35,70 +35,77 @@ def raw_dict_to_sample(
     Convert raw data dictionary to a ProgressSample or PreferenceSample.
 
     Args:
-        raw_data: Dict with 'frames', 'task', 'id', 'metadata', 'video_embeddings', 'text_embedding'
+        raw_data: Dict with 'frames', 'task', 'id', 'metadata', 'video_embeddings', 'text_embedding' or Tuple of (Dict[str, Any], Dict[str, Any])
         max_frames: Maximum number of frames to use (default: 16)
         sample_type: Either "progress" or "preference" (default: "progress")
 
     Returns:
         ProgressSample or PreferenceSample
     """
-    num_frames = max_frames
-    processed_item: Dict[str, Any] = {}
+    def _build_trajectory(raw_data: Dict[str, Any], num_frames: int) -> Trajectory:
+        processed_item: Dict[str, Any] = {}
 
-    # Process frames
-    frames_array = raw_data["frames"]
+        # Process frames
+        frames_array = raw_data["frames"]
 
-    # Ensure we have the correct shape: (T, H, W, C)
-    if len(frames_array.shape) != 4:
-        raise ValueError(f"Expected 4D array (T, H, W, C), got shape {frames_array.shape}")
+        # Ensure we have the correct shape: (T, H, W, C)
+        if len(frames_array.shape) != 4:
+            raise ValueError(f"Expected 4D array (T, H, W, C), got shape {frames_array.shape}")
 
-    # Convert from CxHxW to HxWxC if needed
-    if frames_array.shape[1] == 3:
-        frames_array = np.transpose(frames_array, (0, 2, 3, 1))
+        # Convert from CxHxW to HxWxC if needed
+        if frames_array.shape[1] == 3:
+            frames_array = np.transpose(frames_array, (0, 2, 3, 1))
 
-    frames_array, _ = linspace_subsample_frames(frames_array, num_frames)
-    dummy_progress = [0.0] * len(frames_array)
-    frames_array, _ = pad_trajectory_to_max_frames_np(frames_array, dummy_progress, num_frames, pad_from="right")
+        frames_array, _ = linspace_subsample_frames(frames_array, num_frames)
+        dummy_progress = [0.0] * len(frames_array)
+        frames_array, _ = pad_trajectory_to_max_frames_np(frames_array, dummy_progress, num_frames, pad_from="right")
 
-    if frames_array.size == 0:
-        raise ValueError("No frames processed for example")
+        if frames_array.size == 0:
+            raise ValueError("No frames processed for example")
 
-    processed_item["frames"] = frames_array
-    processed_item["frames_shape"] = frames_array.shape
-    processed_item["task"] = raw_data["task"]
-    processed_item["lang_vector"] = None
-    processed_item["metadata"] = raw_data.get("metadata", None)
+        processed_item["frames"] = frames_array
+        processed_item["frames_shape"] = frames_array.shape
+        processed_item["task"] = raw_data["task"]
+        processed_item["lang_vector"] = None
+        processed_item["metadata"] = raw_data.get("metadata", None)
 
-    # Process video embeddings using same helper functions
-    video_embeddings = raw_data.get("video_embeddings")
-    if video_embeddings is not None:
-        video_embeddings, _ = linspace_subsample_frames(video_embeddings, num_frames)
-        dummy_progress_emb = [0.0] * len(video_embeddings)
-        video_embeddings, _ = pad_trajectory_to_max_frames_np(
-            video_embeddings, dummy_progress_emb, num_frames, pad_from="right"
-        )
+        # Process video embeddings using same helper functions
+        video_embeddings = raw_data.get("video_embeddings")
+        if video_embeddings is not None:
+            video_embeddings, _ = linspace_subsample_frames(video_embeddings, num_frames)
+            dummy_progress_emb = [0.0] * len(video_embeddings)
+            video_embeddings, _ = pad_trajectory_to_max_frames_np(
+                video_embeddings, dummy_progress_emb, num_frames, pad_from="right"
+            )
 
-    text_embedding = raw_data.get("text_embedding")
+        text_embedding = raw_data.get("text_embedding")
 
-    # Convert to tensors if they are numpy arrays
-    if video_embeddings is not None and isinstance(video_embeddings, np.ndarray):
-        video_embeddings = torch.tensor(video_embeddings)
-    if text_embedding is not None and isinstance(text_embedding, np.ndarray):
-        text_embedding = torch.tensor(text_embedding)
+        # Convert to tensors if they are numpy arrays
+        if video_embeddings is not None and isinstance(video_embeddings, np.ndarray):
+            video_embeddings = torch.tensor(video_embeddings)
+        if text_embedding is not None and isinstance(text_embedding, np.ndarray):
+            text_embedding = torch.tensor(text_embedding)
 
-    processed_item["video_embeddings"] = video_embeddings
-    processed_item["text_embedding"] = text_embedding
-    processed_item["video_shape"] = video_embeddings.shape if video_embeddings is not None else None
-    processed_item["text_shape"] = text_embedding.shape if text_embedding is not None else None
+        processed_item["video_embeddings"] = video_embeddings
+        processed_item["text_embedding"] = text_embedding
+        processed_item["video_shape"] = video_embeddings.shape if video_embeddings is not None else None
+        processed_item["text_shape"] = text_embedding.shape if text_embedding is not None else None
 
-    trajectory = Trajectory(**processed_item)
+        trajectory = Trajectory(**processed_item)
+        return trajectory
 
     if sample_type == "progress":
+        assert isinstance(raw_data, dict), "raw_data must be a dictionary"
+        trajectory = _build_trajectory(raw_data=raw_data, num_frames=max_frames)
         return ProgressSample(trajectory=trajectory)
     elif sample_type == "preference":
-        # For preference, we'd need two trajectories, but this function only handles one
-        # So we'll raise an error for now
-        raise ValueError("Preference samples require two trajectories. Use raw_dict_to_preference_sample instead.")
+        assert isinstance(raw_data, tuple), "raw_data must be a tuple"
+        assert len(raw_data) == 2, "raw_data must be a tuple of two dictionaries"
+        trajectories: List[Trajectory] = []
+        for trajectory_data in raw_data:
+            trajectory = _build_trajectory(raw_data=trajectory_data, num_frames=max_frames)
+            trajectories.append(trajectory)
+        return PreferenceSample(chosen_trajectory=trajectories[0], rejected_trajectory=trajectories[1])
     else:
         raise ValueError(f"Unsupported sample_type: {sample_type}")
 

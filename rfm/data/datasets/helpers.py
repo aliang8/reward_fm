@@ -51,6 +51,23 @@ def convert_continuous_to_discrete_bin(value: float, num_bins: int) -> int:
     """
     return round(min(max(value, 0.0), 1.0) * (num_bins - 1))
 
+def convert_continuous_to_discrete_bin_c51(x, num_bins):
+    """
+    x: (...,) tensor with values in [0, 1]
+    returns: (..., num_bins) probability distribution
+    """
+    b = x * (num_bins - 1)          # fractional bin index
+    l = torch.floor(b).long()       # left bin
+    u = torch.ceil(b).long()        # right bin
+
+    probs = torch.zeros(x.shape + (num_bins,),
+                        device=x.device,
+                        dtype=x.dtype)
+
+    probs.scatter_add_(-1, l.unsqueeze(-1), (u - b).unsqueeze(-1))
+    probs.scatter_add_(-1, u.unsqueeze(-1), (b - l).unsqueeze(-1))
+
+    return probs
 
 def convert_continuous_to_discrete_bins(progress_values: Union[List[float], np.ndarray], num_bins: int) -> List[int]:
     """Convert continuous progress values in [0, 1] to discrete bins [0, num_bins-1].
@@ -64,7 +81,7 @@ def convert_continuous_to_discrete_bins(progress_values: Union[List[float], np.n
     """
     if isinstance(progress_values, np.ndarray):
         progress_values = progress_values.tolist()
-    return [convert_continuous_to_discrete_bin(p, num_bins) for p in progress_values]
+    return [convert_continuous_to_discrete_bin_c51(p, num_bins) for p in progress_values]
 
 
 def compute_success_labels(

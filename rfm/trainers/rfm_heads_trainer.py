@@ -2163,13 +2163,19 @@ class RFMHeadsTrainer(Trainer):
 
             # Target progress is already discrete bins [0, num_bins-1] from data sampling
             # Convert to long tensor
-            target_bins = target_progress.long()  # [batch_size, seq_len]
-            # Ensure bins are in valid range [0, num_bins-1]
-            target_bins = torch.clamp(target_bins, 0, num_bins - 1)
+            if len(target_bins.shape) == 2:
+                target_bins = target_progress.long()  # [batch_size, seq_len]
+                # Ensure bins are in valid range [0, num_bins-1]
+                target_bins = torch.clamp(target_bins, 0, num_bins - 1)
 
-            # progress_pred should be [batch_size, seq_len, num_bins] logits
-            # Reshape for cross-entropy: [batch_size * seq_len, num_bins] and [batch_size * seq_len]
-            batch_size, seq_len = target_bins.shape
+                # progress_pred should be [batch_size, seq_len, num_bins] logits
+                # Reshape for cross-entropy: [batch_size * seq_len, num_bins] and [batch_size * seq_len]
+                batch_size, seq_len = target_bins.shape
+                target_bins_flat = target_bins.view(batch_size * seq_len)  # [B*T]
+            else:
+                # if we're using C51-style soft bins
+                batch_size, seq_len, num_bins = target_bins.shape 
+                target_bins_flat = target_bins.view(batch_size * seq_len, num_bins)
 
             # Check if progress_pred has the correct shape for discrete mode
             if len(progress_pred.shape) == 2:
@@ -2189,7 +2195,6 @@ class RFMHeadsTrainer(Trainer):
                 )
 
             progress_pred_flat = progress_pred.view(batch_size * seq_len, num_bins)  # [B*T, num_bins]
-            target_bins_flat = target_bins.view(batch_size * seq_len)  # [B*T]
             # Mask shape may be [B, 1] or [B, seq_len] depending on downsampling/last_frame_mask
             # Ensure it matches target_bins shape [B, seq_len] before flattening
             if mask.shape[1] != seq_len:

@@ -19,7 +19,7 @@ from tqdm import tqdm
 
 import datasets
 from datasets import Dataset
-from rfm.data.dataset_types import Trajectory
+# from rfm.data.dataset_types import Trajectory  # not needed, just type hint
 from dataset_upload.helpers import (
     create_hf_trajectory,
     create_output_directory,
@@ -194,7 +194,7 @@ def process_single_trajectory(args):
 
 def convert_dataset_to_hf_format(
     trajectories: list[dict],
-    hf_creator_fn: Callable[[dict, str, str, int, Any, int, str], Trajectory],
+    hf_creator_fn: Callable[[dict, str, str, int, Any, int, str], Any],
     output_dir: str = "rfm_dataset",
     dataset_name: str = "",
     max_trajectories: int | None = None,

@@ -17,6 +17,7 @@ from rfm.data.datasets.helpers import (
     compute_success_labels,
     convert_continuous_to_discrete_bins,
     convert_continuous_to_discrete_bin,
+    convert_continuous_to_discrete_bin_c51,
     create_trajectory_from_dict,
     load_embeddings_from_path,
     create_rewind_trajectory,

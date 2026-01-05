@@ -78,7 +78,8 @@ hub:
 ## Usage
 
 ```bash
-uv run python -m dataset_upload.generate_hf_dataset --config_path=dataset_upload/configs/data_gen_configs/hand_paired.yaml
+uv run python -m dataset_upload.generate_hf_dataset --config_path=dataset_upload/configs/data_gen_configs/hand_paired.yaml --dataset.dataset_name hand_paired_robot
+uv run python -m dataset_upload.generate_hf_dataset --config_path=dataset_upload/configs/data_gen_configs/hand_paired.yaml --dataset.dataset_name hand_paired_human
 ```
 
 This will:

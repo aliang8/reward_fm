@@ -5,7 +5,6 @@ from rfm.data.samplers.pref import PrefSampler
 from rfm.data.samplers.sim import SimSampler
 from rfm.data.samplers.progress import ProgressSampler
 from rfm.data.dataset_category import is_preference_only
-from rfm.utils.distributed import rank_0_print
 from rfm.utils.logger import get_logger
 
 logger = get_logger()
@@ -14,43 +13,31 @@ logger = get_logger()
 class RFMDataset(BaseDataset):
     """Dataset that combines preference, similarity, and progress generation."""
 
-    def __init__(self, config, is_evaluation=False, max_samples=None, **kwargs):
+    def __init__(self, config, is_evaluation=False, max_samples=None, sampler_kwargs=None, **kwargs):
         super().__init__(config, is_evaluation, **kwargs)
 
         self.pref_sampler = None
         self.progress_sampler = None
         self.similarity_sampler = None
 
+        if sampler_kwargs is None:
+            sampler_kwargs = {}
+
+        base_sampler_kwargs = {
+            "config": config,
+            "dataset": self.dataset,
+            "combined_indices": self._combined_indices,
+            "dataset_success_cutoff_map": self.dataset_success_cutoff_map,
+            "verbose": False,
+            **sampler_kwargs,
+        }
+
         if self.config.sample_type_ratio[0] > 0:
-            self.pref_sampler = PrefSampler(
-                config,
-                self.dataset,
-                self._combined_indices,
-                self.dataset_success_cutoff_map,
-                is_evaluation,
-                verbose=False,
-                **kwargs,
-            )
+            self.pref_sampler = PrefSampler(is_evaluation=is_evaluation, **base_sampler_kwargs)
         if self.config.sample_type_ratio[1] > 0:
-            self.progress_sampler = ProgressSampler(
-                config,
-                self.dataset,
-                self._combined_indices,
-                self.dataset_success_cutoff_map,
-                is_evaluation,
-                verbose=False,
-                **kwargs,
-            )
+            self.progress_sampler = ProgressSampler(is_evaluation=is_evaluation, **base_sampler_kwargs)
         if self.config.sample_type_ratio[2] > 0:
-            self.similarity_sampler = SimSampler(
-                config,
-                self.dataset,
-                self._combined_indices,
-                self.dataset_success_cutoff_map,
-                is_evaluation,
-                verbose=False,
-                **kwargs,
-            )
+            self.similarity_sampler = SimSampler(is_evaluation=is_evaluation, **base_sampler_kwargs)
 
         self.sample_type_ratio = config.sample_type_ratio
         self.max_samples = max_samples

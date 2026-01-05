@@ -38,14 +38,10 @@ class ModelConfig(PretrainedConfig):
         },
     )
 
-    pairwise_progress: bool = field(
-        default=False,
-        metadata={"help": "Whether to use pairwise progress sampling strategy for progress prediction"},
-    )
     use_progress_token: bool = field(
         default=False,
         metadata={
-            "help": "If True and pairwise_progress is True, use <|prog_token|> to predict progress from hidden state at that token. "
+            "help": "If True, use <|prog_token|> to predict progress from hidden state at that token. "
             "Otherwise, use average pooling of frame embeddings."
         },
     )
@@ -92,9 +88,6 @@ class ModelConfig(PretrainedConfig):
         from rfm.models.rewind_transformer_scale import ReWINDScaleTransformerConfig
 
         if self.rewind is not None and isinstance(self.rewind, dict):
-            import pdb
-
-            pdb.set_trace()
             if self.rewind_scale_model:
                 self.rewind = ReWINDScaleTransformerConfig(**self.rewind)
             else:
@@ -153,7 +146,7 @@ class DataConfig:
             "This avoids video encoding overhead and works for both SmolVLM and Qwen models."
         },
     )
-    task_instruction_same_source_prob: float = field(
+    traj_same_source_prob: float = field(
         default=0.5,
         metadata={
             "help": "Probability of sampling a different task instruction from the same data source "
@@ -176,16 +169,10 @@ class DataConfig:
         default=0.8, metadata={"help": "Ratio of dataset preference samples to generated preference samples"}
     )
     # [rewind, suboptimal_same_task, different_task, reverse_progress]
-    preference_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 0])
-    # [successful, rewind, different_task, subsequence, reverse_progress]
-    progress_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 1, 0])
+    preference_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 1])
+    # [different_task, forward_progress, reverse_progress, rewind]
+    progress_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 1])
     similarity_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1])
-    use_uniform_sampling: bool = field(
-        default=False,
-        metadata={
-            "help": "If True, use uniform sampling when selecting rejected trajectories for SUBOPTIMAL and DIFFERENT_TASK strategies in preference sampling"
-        },
-    )
 
     data_source_weights: Optional[Dict[str, float]] = field(
         default=None,
@@ -227,15 +214,15 @@ class DataConfig:
     )
 
     # Data source weighting parameters
-    data_source_weights: Optional[Dict[str, float]] = field(
-        default=None,
+    use_data_source_balance: bool = field(
+        default=False,
         metadata={
-            "help": "Dictionary mapping data source names to sampling weights (e.g., {'metaworld': 0.2, 'libero': 0.8})"
+            "help": "If True, apply data source balancing to the dataset. Requires data_source_weights to be set."
         },
     )
 
     progress_pred_type: str = field(
-        default="absolute", metadata={"help": "Type of progress prediction: 'absolute' or 'relative'"}
+        default="absolute_wrt_total_frames", metadata={"help": "Type of progress prediction: 'absolute' or 'relative'"}
     )
 
     # Success prediction thresholds
@@ -250,11 +237,6 @@ class DataConfig:
         metadata={"help": "Path to dataset-specific success cutoff file (CSV format: dataset_name,success_percentage)"},
     )
 
-    pairwise_progress: bool = field(
-        default=False,
-        metadata={"help": "Whether to use pairwise progress sampling strategy for progress prediction"},
-    )
-
     # RoboArena partial success threshold
     roboarena_partial_success_threshold: float = field(
         default=0.2,
@@ -262,7 +244,7 @@ class DataConfig:
             "help": "Minimum difference in partial_success required between chosen and rejected trajectories for RoboArena preference sampling"
         },
     )
-    
+
     # Progress loss configuration
     progress_loss_type: str = field(
         default="l2",
@@ -290,10 +272,46 @@ class CustomEvaluationConfig:
             "help": "Limit number of quality preference comparisons per task. None = use all comparisons. Uniformly samples if limit is set."
         },
     )
+    max_comparisons: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Limit total number of quality preference comparisons across all tasks. None = use all comparisons. Uniformly samples if limit is set."
+        },
+    )
     num_examples_per_quality_pr: int = field(
         default=5,
         metadata={
             "help": "Number of trajectories to sample per quality label for policy ranking evaluation. Only tasks with multiple quality labels are used."
+        },
+    )
+    num_partial_successes: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "For RoboArena datasets: Number of total trajectories to sample using circular sampling across partial_success values. None = use num_examples_per_quality_pr per partial_success group."
+        },
+    )
+    policy_ranking_max_tasks: Optional[int] = field(
+        default=100,
+        metadata={
+            "help": "Maximum number of tasks to use for policy ranking evaluation. None = use all tasks with multiple quality labels."
+        },
+    )
+    custom_eval_random_seed: int = field(
+        default=42,
+        metadata={
+            "help": "Random seed for sampling trajectories in custom evaluation samplers. Ensures all ranks sample the same trajectories to prevent hangs when dataloaders have different lengths."
+        },
+    )
+    reward_alignment_max_trajectories: Optional[int] = field(
+        default=10,
+        metadata={
+            "help": "Maximum number of trajectories to use for reward alignment evaluation. None = use all trajectories."
+        },
+    )
+    use_frame_steps: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to use frame steps (subsequences) for reward_alignment and policy_ranking evaluations. True = generate subsequences (0:frame_step, 0:2*frame_step, etc.), False = use whole trajectory."
         },
     )
 

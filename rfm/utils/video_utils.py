@@ -2,7 +2,7 @@ import base64
 import io
 import os
 import random
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 import cv2
 import numpy as np
@@ -190,11 +190,9 @@ def add_text_overlay(
 
 def create_video_grid_with_progress(
     video_frames_list: list[Optional[np.ndarray]],
-    trajectory_progress_data: Optional[list[dict]] = None,
+    trajectory_progress_data: list[Union[list[float], list[int], np.ndarray, None]],
     grid_size: tuple[int, int] = (3, 3),
     max_videos: int = 9,
-    progress_key_pred: str = "progress_pred",
-    progress_key_target: str = "target_progress",
     is_discrete_mode: bool = False,
 ) -> Optional[np.ndarray]:
     """
@@ -202,13 +200,11 @@ def create_video_grid_with_progress(
 
     Args:
         video_frames_list: List of videos, each in (T, C, H, W) format or None
-        trajectory_progress_data: Optional list of dicts with progress information, one per video.
-                                  Each dict should have progress_key_pred and progress_key_target keys.
-                                  If None, no progress overlay will be added.
+        trajectory_progress_data: List of progress_pred values, one per video.
+                                  Each element is a list/array of progress predictions.
         grid_size: Tuple of (rows, cols) for the grid
         max_videos: Maximum number of videos to sample
-        progress_key_pred: Key for predicted progress in trajectory_progress_data
-        progress_key_target: Key for target progress in trajectory_progress_data
+        is_discrete_mode: Whether predictions are in discrete mode
 
     Returns:
         Grid video in (T, C, H, W) format, or None if insufficient valid videos
@@ -224,11 +220,8 @@ def create_video_grid_with_progress(
     num_to_sample = min(grid_cells, len(valid_videos))
     sampled_videos = random.sample(valid_videos, num_to_sample)
 
-    # Get corresponding progress data if available (assume alignment)
-    if trajectory_progress_data is not None:
-        valid_items = [(v_idx, v, trajectory_progress_data[v_idx]) for v_idx, v in sampled_videos]
-    else:
-        valid_items = [(v_idx, v, None) for v_idx, v in sampled_videos]
+    # Get corresponding progress data (assume alignment)
+    valid_items = [(v_idx, v, trajectory_progress_data[v_idx]) for v_idx, v in sampled_videos]
 
     # Find maximum time dimension across valid videos
     max_time = max(v.shape[0] for _, v, _ in valid_items) if valid_items else 1
@@ -237,25 +230,23 @@ def create_video_grid_with_progress(
     processed_videos = []
     target_h, target_w = 128, 128  # Target size for each cell in grid
 
-    for _, video, progress_data in valid_items:
+    for _, video, progress_pred in valid_items:
         # Pad video to max_time by repeating the last frame
-        video_len = video.shape[0]
-        if video_len < max_time:
-            # Get last frame and repeat it
-            last_frame = video[-1:]  # (1, C, H, W)
-            num_padding = max_time - video_len
-            padding = np.repeat(last_frame, num_padding, axis=0)  # (num_padding, C, H, W)
-            video = np.concatenate([video, padding], axis=0)  # (max_time, C, H, W)
+        if video.shape[0] < max_time:
+            padding = np.repeat(video[-1:], max_time - video.shape[0], axis=0)
+            video = np.concatenate([video, padding], axis=0)
+
+        # Pad progress_pred to match video length if needed
+        if progress_pred is not None and isinstance(progress_pred, (list, np.ndarray)):
+            pred_arr = np.array(progress_pred) if isinstance(progress_pred, list) else progress_pred
+            if len(pred_arr) < max_time:
+                padding = np.repeat([pred_arr[-1]], max_time - len(pred_arr), axis=0)
+                progress_pred = np.concatenate([pred_arr, padding], axis=0)
+            else:
+                progress_pred = pred_arr
 
         # Convert (T, C, H, W) to (T, H, W, C) for processing
         video = video.transpose(0, 2, 3, 1)
-
-        # Get progress information
-        progress_pred = None
-        progress_target = None
-        if progress_data is not None:
-            progress_pred = progress_data.get(progress_key_pred, None)
-            progress_target = progress_data.get(progress_key_target, None)
 
         # Resize each frame and add progress overlay
         resized_frames = []
@@ -266,7 +257,7 @@ def create_video_grid_with_progress(
             frame_resized = cv2.resize(frame, (target_w, target_h))
 
             # Add progress text overlay in bottom right corner
-            if progress_pred is not None and progress_target is not None:
+            if progress_pred is not None:
                 # Get progress value for this frame (index by t)
                 if isinstance(progress_pred, (list, np.ndarray)):
                     pred_elem = progress_pred[t]
@@ -277,19 +268,13 @@ def create_video_grid_with_progress(
                         # Continuous mode: convert to float directly
                         pred_val = float(pred_elem)
                 else:
-                    pred_val = float(progress_pred) if progress_pred is not None else 0.0
+                    pred_val = float(progress_pred)
 
-                if isinstance(progress_target, (list, np.ndarray)):
-                    # Target is already a discrete bin index (integer) in discrete mode, or continuous in continuous mode
-                    target_val = float(progress_target[t])
-                else:
-                    target_val = float(progress_target) if progress_target is not None else 0.0
-
-                # Format text
-                progress_text = f"P:{pred_val:.2f} T:{target_val:.2f}"
+                # Format text (only show predicted value)
+                progress_text = f"P:{pred_val:.2f}"
 
                 # Calculate position (bottom right, with padding)
-                text_x = target_w - 110
+                text_x = target_w - 60
                 text_y = target_h - 10
 
                 # Add text with background
@@ -526,7 +511,11 @@ def create_frame_pair_with_progress(
 
 
 def create_policy_ranking_grid(
-    eval_results: list[dict], grid_size: tuple[int, int] = (2, 2), max_samples: int = 4, border_width: int = 4, is_discrete_mode: bool = False
+    eval_results: list[dict],
+    grid_size: tuple[int, int] = (2, 2),
+    max_samples: int = 4,
+    border_width: int = 4,
+    is_discrete_mode: bool = False,
 ) -> Optional[np.ndarray]:
     """
     Create a vertical stack of trajectory rows, each showing all frames horizontally.

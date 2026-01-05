@@ -30,6 +30,7 @@ DS_SHORT_NAME_MAPPING = {
     "jesbu1_oxe_rfm_oxe_iamlab_cmu_pickup_insert_converted_externally_to_rlds": "oxe_cmu_pickup",
     "jesbu1_oxe_rfm_oxe_imperialcollege_sawyer_wrist_cam": "oxe_imperial_sawyer",
     "jesbu1_oxe_rfm_oxe_language_table": "oxe_language_table",
+    "jesbu1_oxe_rfm_oxe_jaco_play": "oxe_jaco",
     "jesbu1_oxe_rfm_oxe_nyu_rot_dataset_converted_externally_to_rlds": "oxe_nyu_rot",
     "jesbu1_oxe_rfm_oxe_robo_set": "oxe_robo_set",
     "jesbu1_oxe_rfm_oxe_stanford_hydra_dataset_converted_externally_to_rlds": "oxe_stanford_hydra",
@@ -41,7 +42,7 @@ DS_SHORT_NAME_MAPPING = {
     "jesbu1_oxe_rfm_eval_oxe_bc_z_eval": "oxe_bc_z_eval",
     "jesbu1_oxe_rfm_eval_oxe_berkeley_cable_routing_eval": "oxe_berkeley_cable_eval",
     "jesbu1_oxe_rfm_eval_oxe_bridge_v2_eval": "oxe_bridge_v2_eval",
-    "jesbu1_oxe_rfm_eval_oxe_jaco_play_eval": "oxe_jaco",
+    "jesbu1_oxe_rfm_eval_oxe_jaco_play_eval": "oxe_jaco_eval",
     "jesbu1_oxe_rfm_eval_oxe_toto_eval": "oxe_toto_eval",
     "jesbu1_oxe_rfm_eval_oxe_viola_eval": "oxe_viola_eval",
     # Others - Train
@@ -53,6 +54,13 @@ DS_SHORT_NAME_MAPPING = {
     "jesbu1_egodex_rfm_egodex_part4": "egodex_part4",
     "jesbu1_egodex_rfm_egodex_part5": "egodex_part5",
     "abraranwar_agibotworld_alpha_rfm_agibotworld": "agibotworld",
+    "jesbu1_epic_rfm_epic": "epic_kitchens",
+    "jesbu1_galaxea_rfm_galaxea_part1_r1_lite": "galaxea_part1",
+    "jesbu1_galaxea_rfm_galaxea_part2_r1_lite": "galaxea_part2",
+    "jesbu1_galaxea_rfm_galaxea_part3_r1_lite": "galaxea_part3",
+    "jesbu1_galaxea_rfm_galaxea_part4_r1_lite": "galaxea_part4",
+    "jesbu1_galaxea_rfm_galaxea_part5_r1_lite": "galaxea_part5",
+    "jesbu1_humanoid_everyday_rfm_humanoid_everyday_rfm": "humanoid_everyday",
     # Others - Eval
     "jesbu1_egodex_rfm_egodex_test": "egodex_test",
     # Paired
@@ -72,9 +80,13 @@ DS_SHORT_NAME_MAPPING = {
     "jesbu1_racer_rfm_racer_train": "racer_train",
     "jesbu1_racer_rfm_racer_val": "racer_val",
     "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist": "roboarena_eval",
+    "jesbu1_roboarena_0825_rfm_roboarena": "roboarena_w_wrist",
     # Policy Ranking
     "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking": "usc_xarm",
     "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking": "usc_franka",
+    "jesbu1_mit_franka_p-rank_rfm_mit_franka_p-rank_rfm": "mit_franka",
+    "jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top": "utd_so101_clean_top",
+    "jesbu1_utd_so101_clean_policy_ranking_wrist_utd_so101_clean_policy_ranking_wrist": "utd_so101_clean_wrist",
     # Reward Alignment
     "abraranwar_usc_koch_rewind_rfm_usc_koch_rewind": "usc_koch_rewind",
 }

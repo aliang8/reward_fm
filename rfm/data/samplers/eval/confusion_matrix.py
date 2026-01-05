@@ -3,6 +3,8 @@
 Data generator for confusion matrix analysis.
 """
 
+from typing import Dict, List, Any
+
 from tqdm import tqdm
 import torch
 from collections import Counter
@@ -10,14 +12,6 @@ from collections import Counter
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, Trajectory
 from rfm.data.samplers.base import RFMBaseSampler
 from rfm.data.datasets.helpers import DataGenStrat
-from rfm.data.datasets.helpers import (
-    linspace_subsample_frames,
-    pad_trajectory_to_max_frames_np,
-    pad_trajectory_to_max_frames_torch,
-    load_embeddings_from_path,
-    load_frames_from_npz,
-    compute_success_labels,
-)
 from rfm.utils.distributed import rank_0_print
 from sentence_transformers import SentenceTransformer
 
@@ -32,15 +26,9 @@ class ConfusionMatrixSampler(RFMBaseSampler):
 
     def __init__(
         self,
-        config,
-        dataset,
-        combined_indices,
-        dataset_success_cutoff_map=None,
-        is_evaluation=False,
-        verbose=True,
         **kwargs,
     ):
-        super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
+        super().__init__(**kwargs)
 
         # Load sentence transformer model and precompute embeddings for all unique tasks
         self.sentence_model = SentenceTransformer("sentence-transformers/all-MiniLM-L12-v2")
@@ -111,36 +99,6 @@ class ConfusionMatrixSampler(RFMBaseSampler):
 
         video_traj = self.dataset[traj_idx]
 
-        frames = None
-        video_embeddings = None
-        text_embedding = None
-        max_frames = self.config.max_frames
-
-        if self.config.load_embeddings and video_traj.get("embeddings_path"):
-            embeddings = load_embeddings_from_path(video_traj["embeddings_path"])
-            video_embeddings = embeddings["video_embeddings"]
-            video_embeddings, frame_indices = linspace_subsample_frames(video_embeddings, max_frames)
-            frames_shape_orig = video_embeddings.shape
-        else:
-            frames = load_frames_from_npz(video_traj["frames"])
-            if frames is None or len(frames) == 0:
-                return None
-
-            frames, frame_indices = linspace_subsample_frames(frames, max_frames)
-            frames_shape_orig = frames.shape
-
-        # Create progress values for each subsampled frame (all 1.0 since trajectory is complete)
-        num_subsampled = len(frame_indices)
-        progress_values = [1.0] * num_subsampled
-
-        # Pad trajectory and progress
-        if self.config.load_embeddings and video_traj.get("embeddings_path"):
-            video_embeddings, padded_progress = pad_trajectory_to_max_frames_torch(
-                video_embeddings, progress_values, max_frames
-            )
-        else:
-            frames, padded_progress = pad_trajectory_to_max_frames_np(frames, progress_values, max_frames)
-
         # Look up precomputed embedding instead of encoding
         text_embedding = self.task_embeddings[lang_task]
 
@@ -151,30 +109,13 @@ class ConfusionMatrixSampler(RFMBaseSampler):
             "video_path": video_path,
         }
 
-        # Compute success labels
-        success_label = compute_success_labels(
-            target_progress=padded_progress,
-            data_source=video_traj["data_source"],
-            dataset_success_percent=self.dataset_success_cutoff_map,
-            max_success=self.config.max_success,
-        )
+        # Override task and text_embedding in the trajectory dict
+        video_traj_with_task = video_traj.copy()
+        video_traj_with_task["task"] = lang_task
+        video_traj_with_task["text_embedding"] = text_embedding
 
-        # Create trajectory for the sample (using the original trajectory data but with new task)
-        sample_trajectory = Trajectory(
-            id=video_traj["id"],
-            task=lang_task,  # Use the confusion matrix task, not the original trajectory task
-            frames=frames,
-            frames_shape=frames_shape_orig,
-            video_embeddings=video_embeddings,
-            text_embedding=text_embedding,
-            data_source=video_traj["data_source"],
-            lang_vector=video_traj["lang_vector"],  # Keep original language vector
-            is_robot=video_traj["is_robot"],
-            quality_label=video_traj["quality_label"],
-            data_gen_strategy=DataGenStrat.SUCCESSFUL.value,
-            target_progress=padded_progress,  # Padded progress sequence (all 1.0 since trajectory is complete)
-            partial_success=video_traj.get("partial_success"),
-            success_label=success_label,
+        sample_trajectory = self._get_traj_from_data(
+            traj=video_traj_with_task,
             metadata=metadata,
         )
 

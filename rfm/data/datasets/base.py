@@ -2,10 +2,11 @@
 import collections
 import json
 import os
-from typing import Any
+from typing import Any, Dict, List, Tuple, Set, Optional, Union
 import torch
 
 from datasets import Dataset, concatenate_datasets
+from rfm.configs.experiment_configs import DataConfig
 from rfm.data.datasets.helpers import load_dataset_success_percent
 from rfm.data.dataset_category import DATASET_MAP, DATA_SOURCE_CATEGORY, get_paired_ds
 from rfm.utils.distributed import banner
@@ -14,45 +15,12 @@ from rfm.utils.logger import get_logger
 logger = get_logger()
 
 
-def resolve_dataset_keys(dataset_keys: list[str] | list[list[str]], split: str) -> list[str] | list[list[str]]:
-    """
-    Resolve dataset keys through DATASET_MAP.
-
-    Args:
-        dataset_keys: List of dataset keys (e.g., ["mw", "oxe"]) or actual dataset names.
-                     Can also be a list of lists for cases like similarity_score where multiple
-                     datasets need to be grouped together (e.g., [["human_ds", "robot_ds"], ["other_ds"]]).
-        split: Either "train" or "eval"
-
-    Returns:
-        List of resolved dataset names, combining all datasets from the keys.
-        If input is a list of lists, returns a list of lists (each inner list resolved separately).
-        If input is a flat list, returns a flat list.
-    """
-    # Check if this is a list of lists (nested structure)
-    if dataset_keys and isinstance(dataset_keys[0], list):
-        # Handle nested lists: resolve each inner list separately
-        resolved_datasets = []
-        for key_group in dataset_keys:
-            resolved_group = []
-            for key in key_group:
-                if key in DATASET_MAP:
-                    # Key found in DATASET_MAP, resolve it
-                    if split in DATASET_MAP[key]:
-                        resolved_group.extend(DATASET_MAP[key][split])
-                    else:
-                        logger.warning(f"Key '{key}' found in DATASET_MAP but no '{split}' split defined. Skipping.")
-                else:
-                    # Not a key, assume it's already a dataset name
-                    resolved_group.append(key)
-            resolved_datasets.append(resolved_group)
-        return resolved_datasets
-
-    # Handle flat list (original behavior)
+def resolve_dataset_keys(
+    dataset_keys: Union[List[str], List[List[str]]], split: str
+) -> Union[List[str], List[List[str]]]:
     resolved_datasets = []
     for key in dataset_keys:
         if key in DATASET_MAP:
-            # Key found in DATASET_MAP, resolve it
             if split in DATASET_MAP[key]:
                 resolved_datasets.extend(DATASET_MAP[key][split])
             else:
@@ -60,23 +28,36 @@ def resolve_dataset_keys(dataset_keys: list[str] | list[list[str]], split: str) 
         else:
             # Not a key, assume it's already a dataset name
             resolved_datasets.append(key)
-    return resolved_datasets
+
+    # Deduplicate: handle both strings and lists
+    seen = set()
+    seen_lists = []
+    deduplicated_datasets = []
+    for item in resolved_datasets:
+        if isinstance(item, list):
+            # For lists, convert to tuple for hashing, but store the original list
+            item_tuple = tuple(item)
+            if item_tuple not in seen:
+                seen.add(item_tuple)
+                seen_lists.append(item)
+                deduplicated_datasets.append(item)
+        else:
+            # For strings, use normal set membership
+            if item not in seen:
+                seen.add(item)
+                deduplicated_datasets.append(item)
+    return deduplicated_datasets
 
 
 class BaseDataset(torch.utils.data.Dataset):
-    def __init__(self, config, is_evaluation=False, **kwargs):
+    def __init__(self, config: DataConfig, is_evaluation: bool = False):
         self.config = config
         self.is_evaluation = is_evaluation
 
-        # Choose datasets based on whether this is for evaluation or training
         if is_evaluation and config.eval_datasets:
-            dataset_keys = config.eval_datasets
-            split = "eval"
+            self.datasets = config.eval_datasets
         else:
-            dataset_keys = config.train_datasets
-            split = "train"
-
-        self.datasets = resolve_dataset_keys(dataset_keys, split)
+            self.datasets = config.train_datasets
 
         # Load dataset-specific success cutoff map if available
         self.dataset_success_cutoff_map = {}
@@ -87,7 +68,7 @@ class BaseDataset(torch.utils.data.Dataset):
         self.dataset, self._combined_indices = self._load_all_datasets()
 
         # Apply all filters simultaneously
-        excluded_keywords = ["rings", "hands", "flick"]
+        excluded_keywords = ["rings", "flick"]
         min_frames = config.min_frames_per_trajectory
 
         # Check if we're in progress_only mode (sample_type_ratio == [0, 1, 0])
@@ -99,7 +80,8 @@ class BaseDataset(torch.utils.data.Dataset):
                 "Progress-only mode detected (sample_type_ratio=[0, 1, 0]), filtering to only successful trajectories"
             )
 
-        logger.info(f"Filtering dataset with {len(self.dataset)} total trajectories")
+        dataset_type = "evaluation" if is_evaluation else "training"
+        logger.info(f"Filtering {dataset_type} dataset with {len(self.dataset)} total trajectories")
         self.dataset, self._combined_indices = self._filter_dataset(
             excluded_keywords=excluded_keywords,
             min_frames=min_frames,
@@ -107,7 +89,14 @@ class BaseDataset(torch.utils.data.Dataset):
             combined_indices=self._combined_indices,
             filter_successful_only=filter_successful_only,
         )
-        logger.info(f"Dataset filtered with {len(self.dataset)} total trajectories")
+        if filter_successful_only:
+            logger.info(
+                f"{dataset_type.capitalize()} dataset filtered with {len(self.dataset)} total trajectories (filtered for successful trajectories only)"
+            )
+        else:
+            logger.info(
+                f"{dataset_type.capitalize()} dataset filtered with {len(self.dataset)} total trajectories (excluded keywords and min_frames only, not filtering for successful trajectories)"
+            )
 
         # Filter out trajectories based on multiple criteria (build indices first, then filter once)
         self.dataset, self._combined_indices = self._filter_task_based_criteria(
@@ -122,12 +111,12 @@ class BaseDataset(torch.utils.data.Dataset):
         logger.info(f"Dataset loaded with {len(self.dataset)} total trajectories")
 
         # Initialize resampling stats containers shared by subclasses
-        self._resample_attempt_stats: dict[str, collections.defaultdict[str, list[int]]] = {
+        self._resample_attempt_stats: Dict[str, collections.defaultdict[str, List[int]]] = {
             "preference": collections.defaultdict(list),
             "progress": collections.defaultdict(list),
             "similarity": collections.defaultdict(list),
         }
-        self._resample_dataset_attempt_stats: dict[str, collections.defaultdict[str, list[int]]] = {
+        self._resample_dataset_attempt_stats: Dict[str, collections.defaultdict[str, List[int]]] = {
             "preference": collections.defaultdict(list),
             "progress": collections.defaultdict(list),
             "similarity": collections.defaultdict(list),
@@ -136,7 +125,7 @@ class BaseDataset(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.dataset)
 
-    def _load_all_datasets(self):
+    def _load_all_datasets(self) -> Tuple[Dataset, Dict[str, Any]]:
         """Load trajectory dataset using preprocessed index-based cache.
 
         Returns:
@@ -171,7 +160,7 @@ class BaseDataset(torch.utils.data.Dataset):
                 "This will create the necessary index-based cache for efficient data loading."
             )
 
-    def _get_available_datasets(self, cache_dir: str):
+    def _get_available_datasets(self, cache_dir: str) -> Tuple[List[Tuple[str, str]], List[str]]:
         """Check which datasets are available in the cache.
 
         Returns:
@@ -222,7 +211,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         return available_datasets, missing_datasets
 
-    def _load_datasets(self, available_datasets: list[tuple[str, str]]):
+    def _load_datasets(self, available_datasets: List[Tuple[str, str]]) -> Tuple[List[Dataset], List[Dict[str, Any]]]:
         """Load datasets from cache and return them along with per-dataset index mappings.
 
         Args:
@@ -262,7 +251,9 @@ class BaseDataset(torch.utils.data.Dataset):
 
         return loaded_datasets, dataset_indices_list
 
-    def _build_indices(self, loaded_datasets: list[Dataset], dataset_indices_list: list[dict], cached_is_robot: list):
+    def _build_indices(
+        self, loaded_datasets: List[Dataset], dataset_indices_list: List[Dict[str, Any]], cached_is_robot: List[bool]
+    ) -> Dict[str, Any]:
         """Build combined indices from loaded datasets and their index mappings.
 
         Args:
@@ -316,7 +307,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         return combined_indices
 
-    def _load_preprocessed_cache(self, cache_dir: str, is_training: bool = True):
+    def _load_preprocessed_cache(self, cache_dir: str, is_training: bool = True) -> Tuple[Dataset, Dict[str, Any]]:
         """Load the preprocessed cache with index mappings for datasets.
 
         Returns:
@@ -343,31 +334,37 @@ class BaseDataset(torch.utils.data.Dataset):
         logger.info(f"✅ Loaded {len(dataset)} total trajectories from preprocessed {dataset_type} datasets")
         logger.debug(f"Available datasets: {len(available_datasets)}/{len(missing_datasets) + len(available_datasets)}")
         logger.debug(f"Missing datasets: {len(missing_datasets)}")
-        banner("Dataset statistics")
-        logger.debug(f"Robot trajectories: {len(combined_indices['robot_trajectories'])}")
-        logger.debug(f"Human trajectories: {len(combined_indices['human_trajectories'])}")
-        logger.debug(f"Number of different tasks: {len(combined_indices['task_indices'])}")
-        logger.debug(f"Data sources: {len(combined_indices['source_indices'])}")
-        logger.debug(f"Tasks available: {list[Any](combined_indices['task_indices'].keys())[:10]} ...")
-        logger.debug(f"Number of quality labels: {len(combined_indices['quality_indices'])}")
-        for quality_label in combined_indices["quality_indices"]:
-            logger.debug(f"  {quality_label}: {len(combined_indices['quality_indices'][quality_label])}")
-        logger.debug(f"Data sources available: {combined_indices['source_indices'].keys()}")
-        logger.debug(f"Number of paired tasks: {len(combined_indices['paired_human_robot_by_task'])}")
+        banner(f"{dataset_type.capitalize()} dataset statistics")
+        logger.debug(f"[{dataset_type.upper()}] Robot trajectories: {len(combined_indices['robot_trajectories'])}")
+        logger.debug(f"[{dataset_type.upper()}] Human trajectories: {len(combined_indices['human_trajectories'])}")
+        logger.debug(f"[{dataset_type.upper()}] Number of different tasks: {len(combined_indices['task_indices'])}")
+        logger.debug(f"[{dataset_type.upper()}] Data sources: {len(combined_indices['source_indices'])}")
         logger.debug(
-            f"Number of tasks with both multiple quality labels: {len(combined_indices['tasks_with_multiple_quality_labels'])}"
+            f"[{dataset_type.upper()}] Tasks available: {list(combined_indices['task_indices'].keys())[:10]} ..."
+        )
+        logger.debug(f"[{dataset_type.upper()}] Number of quality labels: {len(combined_indices['quality_indices'])}")
+        for quality_label in combined_indices["quality_indices"]:
+            logger.debug(
+                f"[{dataset_type.upper()}]   {quality_label}: {len(combined_indices['quality_indices'][quality_label])}"
+            )
+        logger.debug(f"[{dataset_type.upper()}] Data sources available: {combined_indices['source_indices'].keys()}")
+        logger.debug(
+            f"[{dataset_type.upper()}] Number of paired tasks: {len(combined_indices['paired_human_robot_by_task'])}"
+        )
+        logger.debug(
+            f"[{dataset_type.upper()}] Number of tasks with both multiple quality labels: {len(combined_indices['tasks_with_multiple_quality_labels'])}"
         )
 
         return dataset, combined_indices
 
     def _filter_dataset(
         self,
-        excluded_keywords: list[str],
+        excluded_keywords: List[str],
         min_frames: int,
-        dataset,
-        combined_indices: dict,
+        dataset: Dataset,
+        combined_indices: Dict[str, Any],
         filter_successful_only: bool = False,
-    ):
+    ) -> Tuple[Dataset, Dict[str, Any]]:
         """Filter dataset based on multiple criteria simultaneously.
 
         Filters out trajectories that:
@@ -539,11 +536,13 @@ class BaseDataset(torch.utils.data.Dataset):
 
     def _filter_task_based_criteria(
         self,
-        dataset,
-        combined_indices: dict,
-    ):
+        dataset: Dataset,
+        combined_indices: Dict[str, Any],
+    ) -> Tuple[Dataset, Dict[str, Any]]:
         """Filter out suboptimal/failed trajectories that don't have optimal counterparts with the same task name.
         Also filter out tasks that only have failed/suboptimal trajectories.
+
+        This filtering is skipped for RoboArena datasets.
 
         Args:
             dataset: The dataset to filter
@@ -560,16 +559,22 @@ class BaseDataset(torch.utils.data.Dataset):
         # Get all tasks in the dataset
         all_tasks = dataset["task"]
         quality_labels = dataset["quality_label"]
+        data_sources = dataset["data_source"]
 
         # Identify trajectories to remove:
         # All trajectories from tasks that have no optimal trajectories
         indices_to_remove = set()
         tasks_removed = set()
 
-        for idx, (task, quality_label) in enumerate(zip(all_tasks, quality_labels)):
+        for idx, (task, quality_label, data_source) in enumerate(zip(all_tasks, quality_labels, data_sources)):
             if task is None:
                 # Skip trajectories with None task
                 continue
+
+            # Skip filtering for RoboArena data sources
+            if data_source and "roboarena" in str(data_source).lower():
+                continue
+
             if task not in tasks_with_optimal:
                 # This task has no optimal trajectories
                 # Remove all trajectories from this task (they're all suboptimal/failed with no optimal counterparts)
@@ -600,7 +605,9 @@ class BaseDataset(torch.utils.data.Dataset):
 
         return filtered_dataset, filtered_combined_indices
 
-    def _update_indices_after_filtering(self, combined_indices: dict, keep_indices: list[int]) -> dict:
+    def _update_indices_after_filtering(
+        self, combined_indices: Dict[str, Any], keep_indices: List[int]
+    ) -> Dict[str, Any]:
         """Update combined_indices after filtering the dataset.
 
         Args:
@@ -685,7 +692,9 @@ class BaseDataset(torch.utils.data.Dataset):
     def get_resample_dataset_attempt_stats(self):
         return self._resample_dataset_attempt_stats
 
-    def _build_paired_human_robot_index(self, combined_indices: dict, cached_is_robot: list):
+    def _build_paired_human_robot_index(
+        self, combined_indices: Dict[str, Any], cached_is_robot: List[bool]
+    ) -> Dict[str, Dict[str, List[int]]]:
         """Build paired_human_robot_by_task index from task_indices by checking is_robot field.
 
         This builds the index after concatenation by iterating through task_indices

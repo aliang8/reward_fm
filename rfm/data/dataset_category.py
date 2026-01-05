@@ -9,6 +9,8 @@ This module defines categories for datasets to control sampling behavior:
 - paired: Datasets containing paired human/robot trajectories
 """
 
+from typing import List
+
 ALL_DATASOURCES = [
     "auto_eval_rfm",
     "failsafe",
@@ -32,6 +34,7 @@ ALL_DATASOURCES = [
     "oxe_furniture_bench_dataset_converted_externally_to_rlds",
     "oxe_iamlab_cmu_pickup_insert_converted_externally_to_rlds",
     "oxe_imperialcollege_sawyer_wrist_cam",
+    "oxe_jaco_play",
     "oxe_language_table",
     "oxe_nyu_rot_dataset_converted_externally_to_rlds",
     "oxe_robo_set",
@@ -60,8 +63,11 @@ DATASET_CATEGORY = {
     "preference_only": [
         "jesbu1_oxe_rfm_oxe_bc_z",
         "jesbu1_oxe_rfm_oxe_dlr_edan_shared_control_converted_externally_to_rlds",
+        "jesbu1_roboarena_0825_rfm_roboarena",
+        "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
         # "roboarena",
         "auto_eval_rfm",
+        "jesbu1_epic_rfm_epic",
     ],
     "paired": [
         "jesbu1_h2r_rfm_h2r",
@@ -83,10 +89,17 @@ DATASET_MAP = {
             # "jesbu1_egodex_rfm_egodex_part4",
             # "jesbu1_egodex_rfm_egodex_part5",
             "abraranwar_agibotworld_alpha_rfm_agibotworld",
+            "jesbu1_humanoid_everyday_rfm_humanoid_everyday_rfm",
+            "jesbu1_epic_rfm_epic",
+            "jesbu1_galaxea_rfm_galaxea_part1_r1_lite",
+            "jesbu1_galaxea_rfm_galaxea_part2_r1_lite",
+            "jesbu1_galaxea_rfm_galaxea_part3_r1_lite",
+            "jesbu1_galaxea_rfm_galaxea_part4_r1_lite",
+            "jesbu1_galaxea_rfm_galaxea_part5_r1_lite",
         ],
-        "eval": [
-            "jesbu1_egodex_rfm_egodex_test",
-        ],
+        # "eval": [
+        #    #"jesbu1_egodex_rfm_egodex_test",
+        # ],
     },
     "oxe": {
         "train": [
@@ -104,6 +117,7 @@ DATASET_MAP = {
             "jesbu1_oxe_rfm_oxe_furniture_bench_dataset_converted_externally_to_rlds",
             "jesbu1_oxe_rfm_oxe_iamlab_cmu_pickup_insert_converted_externally_to_rlds",
             "jesbu1_oxe_rfm_oxe_imperialcollege_sawyer_wrist_cam",
+            "jesbu1_oxe_rfm_oxe_jaco_play",
             "jesbu1_oxe_rfm_oxe_language_table",
             "jesbu1_oxe_rfm_oxe_nyu_rot_dataset_converted_externally_to_rlds",
             "jesbu1_oxe_rfm_oxe_robo_set",
@@ -116,7 +130,7 @@ DATASET_MAP = {
         "eval": [
             "jesbu1_oxe_rfm_eval_oxe_bc_z_eval",
             "jesbu1_oxe_rfm_eval_oxe_berkeley_cable_routing_eval",
-            # "jesbu1_oxe_rfm_eval_oxe_bridge_v2_eval",
+            "jesbu1_oxe_rfm_eval_oxe_bridge_v2_eval",
             "jesbu1_oxe_rfm_eval_oxe_jaco_play_eval",
             "jesbu1_oxe_rfm_eval_oxe_toto_eval",
             "jesbu1_oxe_rfm_eval_oxe_viola_eval",
@@ -135,7 +149,7 @@ DATASET_MAP = {
             # "aliangdw_metaworld_metaworld_eval",
             "abraranwar_usc_koch_rewind_rfm_usc_koch_rewind",
             "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
-            "jesbu1_soar_rfm_soar_rfm"
+            "jesbu1_soar_rfm_soar_rfm",
             # "jesbu1_egodex_rfm_egodex_test",
         ]
     },
@@ -157,18 +171,23 @@ DATASET_MAP = {
             "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
             "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
             "jesbu1_soar_rfm_soar_rfm",
+            "jesbu1_mit_franka_p-rank_rfm_mit_franka_p-rank_rfm",
+            "jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top",
+            "jesbu1_utd_so101_clean_policy_ranking_wrist_utd_so101_clean_policy_ranking_wrist",
+            # ["abraranwar_libero_rfm_libero256_10", "ykorkmaz_libero_failure_rfm_libero_10_failure"],
         ]
     },
     "paired": {
         "train": [
-            "jesbu1_h2r_rfm_h2r",
-            "jesbu1_motif_rfm_motif_rfm",
+            # "jesbu1_h2r_rfm_h2r",
+            # "jesbu1_motif_rfm_motif_rfm",
             "anqil_rh20t_subset_rfm_rh20t_human",
             "anqil_rh20t_subset_rfm_rh20t_robot",
-            "jesbu1_ph2d_rfm_ph2d",
+            # "jesbu1_ph2d_rfm_ph2d",
         ],
         "eval": [
             # "jesbu1_egodex_rfm_egodex_test",
+            # ["anqil_rh20t_subset_rfm_rh20t_human", "anqil_rh20t_subset_rfm_rh20t_robot"],
             "aliangdw_utd_so101_human_utd_so101_human",
             "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
         ],
@@ -181,6 +200,7 @@ DATASET_MAP = {
             "jesbu1_soar_rfm_soar_rfm",
             "jesbu1_auto_eval_rfm_auto_eval_rfm",
             "jesbu1_racer_rfm_racer_train",
+            "jesbu1_roboarena_0825_rfm_roboarena",
         ],
         "eval": [
             "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
@@ -193,11 +213,41 @@ DATASET_MAP = {
                 "anqil_rh20t_subset_rfm_rh20t_human",
                 "anqil_rh20t_subset_rfm_rh20t_robot",
             ],
-            [
-                "aliangdw_utd_so101_human_utd_so101_human",
-                "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
-            ],
+            # [
+            #     "aliangdw_utd_so101_human_utd_so101_human",
+            #     "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
+            # ],
+            # ["jesbu1_hand_paired_rfm_hand_paired_robot", "jesbu1_hand_paired_rfm_hand_paired_human"],
         ]
+    },
+    "franka": {
+        "train": [
+            "jesbu1_oxe_rfm_oxe_droid",
+            "jesbu1_roboarena_0825_rfm_roboarena",
+            "jesbu1_molmoact_rfm_molmoact_dataset_household",
+            "jesbu1_molmoact_rfm_molmoact_dataset_tabletop",
+        ],
+        "eval": [
+            "jesbu1_mit_franka_p-rank_rfm_mit_franka_p-rank_rfm",
+            "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
+            # "jesbu1_roboarena_0825_rfm_roboarena",
+            "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",
+            "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
+        ],
+    },
+    "libero": {
+        "train": [
+            "abraranwar_libero_rfm_libero256_90",
+            "ykorkmaz_libero_failure_rfm_libero_90_failure",
+        ],
+        "eval": [
+            "abraranwar_libero_rfm_libero256_10",
+            "abraranwar_libero_rfm_libero256_object",
+            "abraranwar_libero_rfm_libero256_spatial",
+            "abraranwar_libero_rfm_libero256_goal",
+            # "ykorkmaz_libero_failure_rfm_libero_90_failure",
+            # "ykorkmaz_libero_failure_rfm_libero_10_failure",
+        ],
     },
 }
 
@@ -219,6 +269,14 @@ DATA_SOURCE_CATEGORY = {
         "oxe_dlr_edan_shared_control_converted_externally_to_rlds",
         "roboarena",
         "auto_eval_rfm",
+        # "humanoid_everyday_rfm",
+        "galaxea_part1_r1_lite",
+        "galaxea_part2_r1_lite",
+        "galaxea_part3_r1_lite",
+        "galaxea_part4_r1_lite",
+        "galaxea_part5_r1_lite",
+        "epic",
+        "roboarena_eval_debug_nowrist"
     ],
     "paired": [
         "h2r",
@@ -235,28 +293,35 @@ DATA_SOURCE_CATEGORY = {
         "auto_eval_rfm",
         "racer_train",
         "racer_val",
+        "roboarena_eval_debug_nowrist",
+    ],
+    "franka": [
+        "oxe_droid",
+        "roboarena",
+        "molmoact_dataset_household",
+        "molmoact_dataset_tabletop",
     ],
 }
 
 # DATASET helper functions
 
 
-def get_preference_only_datasets() -> list[str]:
+def get_preference_only_datasets() -> List[str]:
     """Get list of datasets that should only generate preference samples."""
     return DATASET_CATEGORY.get("preference_only", [])
 
 
-def get_paired_datasets() -> list[str]:
+def get_paired_datasets() -> List[str]:
     """Get list of datasets containing paired human/robot trajectories."""
     return DATASET_CATEGORY.get("paired", [])
 
 
-def get_failure_datasets() -> list[str]:
+def get_failure_datasets() -> List[str]:
     """Get list of datasets containing failure trajectories."""
     return DATASET_CATEGORY.get("failure", [])
 
 
-def get_success_datasets() -> list[str]:
+def get_success_datasets() -> List[str]:
     """Get list of datasets containing successful trajectories."""
     return DATASET_CATEGORY.get("success", [])
 
@@ -284,22 +349,22 @@ def is_success(dataset_name: str) -> bool:
 # DATA_SOURCE helper functions
 
 
-def get_preference_only_ds() -> list[str]:
+def get_preference_only_ds() -> List[str]:
     """Get list of data sources that should only generate preference samples."""
     return DATA_SOURCE_CATEGORY.get("preference_only", [])
 
 
-def get_paired_ds() -> list[str]:
+def get_paired_ds() -> List[str]:
     """Get list of data sources containing paired human/robot trajectories."""
     return DATA_SOURCE_CATEGORY.get("paired", [])
 
 
-def get_failure_ds() -> list[str]:
+def get_failure_ds() -> List[str]:
     """Get list of data sources containing failure trajectories."""
     return DATA_SOURCE_CATEGORY.get("failure", [])
 
 
-def get_success_ds() -> list[str]:
+def get_success_ds() -> List[str]:
     """Get list of data sources containing successful trajectories."""
     return DATA_SOURCE_CATEGORY.get("success", [])
 
@@ -322,3 +387,13 @@ def is_failure_ds(data_source_name: str) -> bool:
 def is_success_ds(data_source_name: str) -> bool:
     """Check if a data source contains successful trajectories."""
     return data_source_name in DATA_SOURCE_CATEGORY.get("success", [])
+
+
+def get_suboptimal_fail_ds() -> List[str]:
+    """Get list of data sources containing suboptimal/failure trajectories."""
+    return DATA_SOURCE_CATEGORY.get("suboptimal_fail", [])
+
+
+def is_suboptimal_fail_ds(data_source_name: str) -> bool:
+    """Check if a data source contains suboptimal/failure trajectories."""
+    return data_source_name in DATA_SOURCE_CATEGORY.get("suboptimal_fail", [])

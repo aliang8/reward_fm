@@ -1,3 +1,5 @@
+from typing import Dict, Any, Optional
+
 import random
 import torch
 
@@ -18,133 +20,139 @@ class ProgressSampler(RFMBaseSampler):
 
     def __init__(
         self,
-        config,
-        dataset,
-        combined_indices,
-        dataset_success_cutoff_map=None,
         is_evaluation=False,
-        verbose=True,
         **kwargs,
     ):
-        super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
+        super().__init__(**kwargs)
 
-    def _generate_sample(self, item: dict):
-        return self._create_progress_sample(item)
+    def _generate_sample(self, item: Dict[str, Any], preferred_strategy: Optional[DataGenStrat] = None):
+        return self._create_progress_sample(item, preferred_strategy=preferred_strategy)
 
-    def _create_progress_sample(self, traj: dict):
+    def _execute_strategy(
+        self, strategy: DataGenStrat, traj: Dict[str, Any]
+    ) -> tuple[Dict[str, Any], str] | None:
+        """Execute a strategy to get processed trajectory.
+        
+        Args:
+            strategy: The strategy to execute
+            traj: The trajectory to process
+            
+        Returns:
+            Tuple of (processed_traj, subsample_strategy) or None if failed
+        """
+        if strategy == DataGenStrat.FORWARD_PROGRESS:
+            return (traj, "subsample_forward")
+        elif strategy == DataGenStrat.REVERSE_PROGRESS:
+            return (traj, "subsample_reverse")
+        elif strategy == DataGenStrat.REWIND:
+            return (traj, "subsample_rewind")
+        elif strategy == DataGenStrat.DIFFERENT_TASK_INSTRUCTION:
+            processed_traj = self._get_different_task_instruction(traj)
+            if processed_traj is None:
+                return None
+            return (processed_traj, "subsample_forward")
+        else:
+            return None
+
+    def _create_progress_sample(self, traj: Dict[str, Any], preferred_strategy: Optional[DataGenStrat] = None):
         """Create a progress sample using normalized and rebalanced strategy selection.
 
-        Implements six strategies:
-        1. Successful: Linspace subsample with end_idx between cutoff and total
-        2. Rewind: Create rewound trajectory from same task
-        3. Different Task: Use trajectory from different task (progress set to 0.0)
-        4. Subsequence: Segment subsampling (same as previous default)
-        5. Reverse Progress: Same as subsequence but reverses frames and progress targets
-        6. Uniform Sample: Sample two random frames, use them as segment bounds, then linspace subsample
+        Implements four strategies:
+        1. Different Task: Use trajectory from different task (progress set to 0.0)
+        2. Forward Progress: Sample with forward direction (start < middle < end)
+        3. Reverse Progress: Sample with reverse direction (end < middle < start)
+        4. Rewind: Sample with rewind direction (start < end < middle)
         """
         # Initialize variables for strategy selection
         processed_traj = None
         strategy_used = None
         subsample_strategy = None
 
-        # Strategy setup with rebalancing on failure
-        # [successful, rewind, different_task_instruction, subsequence, reverse_progress, uniform_sample]
-        strategies = [
-            (DataGenStrat.SUCCESSFUL, self.config.progress_strategy_ratio[0]),
-            (DataGenStrat.REWOUND, self.config.progress_strategy_ratio[1]),
-            (
-                DataGenStrat.DIFFERENT_TASK_INSTRUCTION,
-                self.config.progress_strategy_ratio[2] if len(self.config.progress_strategy_ratio) > 2 else 0.0,
-            ),
-            (
-                DataGenStrat.SUBSEQUENCE,
-                self.config.progress_strategy_ratio[3] if len(self.config.progress_strategy_ratio) > 3 else 0.0,
-            ),
-            (
-                DataGenStrat.REVERSE_PROGRESS,
-                self.config.progress_strategy_ratio[4] if len(self.config.progress_strategy_ratio) > 4 else 0.0,
-            ),
-            (
-                DataGenStrat.UNIFORM_SAMPLE,
-                self.config.progress_strategy_ratio[5] if len(self.config.progress_strategy_ratio) > 5 else 0.0,
-            ),
-        ]
-
-        if self.config.pairwise_progress:
-            # remove rewind same task strategy for pairwise progress
-            strategies[1] = (
-                DataGenStrat.REWOUND,
-                0.0,
-            )
-
-        # Remove strategies with zero probability
-        strategies = [(strat, prob) for strat, prob in strategies if prob > 0]
-
-        max_attempts = 10  # Limit retry attempts to prevent infinite loops
-        attempt = 0
-
-        while processed_traj is None and attempt < max_attempts:
-            attempt += 1
-
-            # Check if we have any strategies left
-            if not strategies:
-                return None
-
-            # Rebalance probabilities based on remaining strategies
-            total_prob = sum(prob for _, prob in strategies)
-            if total_prob == 0:
-                return None
-
-            # Normalize probabilities
-            normalized_strategies = [(strat, prob / total_prob) for strat, prob in strategies]
-
-            # Select strategy based on rebalanced probabilities
-            prob = random.random()
-            cumulative_prob = 0.0
-            selected_strategy = None
-
-            for strat, normalized_prob in normalized_strategies:
-                cumulative_prob += normalized_prob
-                if prob <= cumulative_prob:
-                    selected_strategy = strat
-                    break
-
-            # Execute selected strategy
-            if selected_strategy == DataGenStrat.SUCCESSFUL:
-                processed_traj = traj
-                subsample_strategy = "successful"
-            elif selected_strategy == DataGenStrat.SUBSEQUENCE:
-                processed_traj = traj
-                subsample_strategy = "subsequence"
-            elif selected_strategy == DataGenStrat.REVERSE_PROGRESS:
-                processed_traj = traj
-                subsample_strategy = "reverse_progress"
-            elif selected_strategy == DataGenStrat.UNIFORM_SAMPLE:
-                processed_traj = traj
-                subsample_strategy = "uniform_sample"
-            elif selected_strategy == DataGenStrat.REWOUND:
-                processed_traj = self._get_rewound_traj(traj)
-                subsample_strategy = None  # Rewound trajectories are already processed
-            elif selected_strategy == DataGenStrat.DIFFERENT_TASK_INSTRUCTION:
-                processed_traj = self._get_different_task_instruction(traj)
-                subsample_strategy = None  # Different task instruction uses same trajectory with different task
-            else:
-                return None
-
-            # Check if strategy succeeded
-            if processed_traj is not None:
-                strategy_used = selected_strategy
-            else:
-                # Remove failed strategy and try again
-                strategies = [(strat, prob) for strat, prob in strategies if strat != selected_strategy]
-                continue
-
-        # If we still don't have a sample after all attempts, return None
-        if processed_traj is None:
+        # Strategy selection: use preferred_strategy if provided, otherwise select based on ratios
+        if preferred_strategy is not None:
+            # Use the preferred strategy directly
             logger.trace(
-                f"[PROGRESS SAMPLER] Failed to generate progress sample after {max_attempts} attempts - all strategies exhausted"
+                f"[PROGRESS SAMPLER] Using preferred strategy: {preferred_strategy.value}"
             )
-            return None
+            result = self._execute_strategy(preferred_strategy, traj)
+            if result is None:
+                logger.trace(
+                    f"[PROGRESS SAMPLER] Preferred strategy {preferred_strategy.value} failed, returning None"
+                )
+                return None
+            processed_traj, subsample_strategy = result
+            strategy_used = preferred_strategy
+            attempt = 1  # Set attempt for preferred strategy path
+        else:
+            # Strategy setup with rebalancing on failure
+            # [different_task_instruction, forward_progress, reverse_progress, rewind]
+            strategies = [
+                (
+                    DataGenStrat.DIFFERENT_TASK_INSTRUCTION,
+                    self.config.progress_strategy_ratio[0] if len(self.config.progress_strategy_ratio) > 0 else 0.0,
+                ),
+                (
+                    DataGenStrat.FORWARD_PROGRESS,
+                    self.config.progress_strategy_ratio[1] if len(self.config.progress_strategy_ratio) > 1 else 0.0,
+                ),
+                (
+                    DataGenStrat.REVERSE_PROGRESS,
+                    self.config.progress_strategy_ratio[2] if len(self.config.progress_strategy_ratio) > 2 else 0.0,
+                ),
+                (
+                    DataGenStrat.REWIND,
+                    self.config.progress_strategy_ratio[3] if len(self.config.progress_strategy_ratio) > 3 else 0.0,
+                ),
+            ]
+
+            # Remove strategies with zero probability
+            strategies = [(strat, prob) for strat, prob in strategies if prob > 0]
+
+            max_attempts = 10  # Limit retry attempts to prevent infinite loops
+            attempt = 0
+
+            while processed_traj is None and attempt < max_attempts:
+                attempt += 1
+
+                # Check if we have any strategies left
+                if not strategies:
+                    return None
+
+                # Rebalance probabilities based on remaining strategies
+                total_prob = sum(prob for _, prob in strategies)
+                if total_prob == 0:
+                    return None
+
+                # Normalize probabilities
+                normalized_strategies = [(strat, prob / total_prob) for strat, prob in strategies]
+
+                # Select strategy based on rebalanced probabilities
+                prob = random.random()
+                cumulative_prob = 0.0
+                selected_strategy = None
+
+                for strat, normalized_prob in normalized_strategies:
+                    cumulative_prob += normalized_prob
+                    if prob <= cumulative_prob:
+                        selected_strategy = strat
+                        break
+
+                # Execute selected strategy
+                result = self._execute_strategy(selected_strategy, traj)
+                if result is not None:
+                    processed_traj, subsample_strategy = result
+                    strategy_used = selected_strategy
+                else:
+                    # Remove failed strategy and try again
+                    strategies = [(strat, prob) for strat, prob in strategies if strat != selected_strategy]
+                    continue
+
+            # If we still don't have a sample after all attempts, return None
+            if processed_traj is None:
+                logger.trace(
+                    f"[PROGRESS SAMPLER] Failed to generate progress sample after {max_attempts} attempts - all strategies exhausted"
+                )
+                return None
 
         progress_traj = self._get_traj_from_data(processed_traj, subsample_strategy=subsample_strategy)
 

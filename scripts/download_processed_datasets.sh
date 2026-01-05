@@ -7,4 +7,4 @@ fi
 # increase the number of open files limit
 ulimit -n 65535
 # download processed datasets
-hf download rewardfm/processed_datasets --repo-type dataset --local-dir=$RFM_PROCESSED_DATASETS_PATH
+hf download jesbu1/processed_datasets --repo-type dataset --local-dir=$RFM_PROCESSED_DATASETS_PATH

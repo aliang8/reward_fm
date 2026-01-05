@@ -18,7 +18,6 @@ Example commands:
         --num_videos 10 \
         --progress_pred_type absolute_wrt_total_frames \
         --output data_sample_vis \
-        --use_uniform_sampling
 
     uv run python rfm/data/scripts/vis_data_sample.py \
         --dataset jesbu1/oxe_rfm_oxe_bc_z \
@@ -619,16 +618,6 @@ def main():
         help="Progress prediction type: 'absolute_first_frame', 'relative_first_frame', or 'absolute_wrt_total_frames' (default: absolute_first_frame)",
     )
     parser.add_argument(
-        "--pairwise_progress",
-        action="store_true",
-        help="Use pairwise progress sampling",
-    )
-    parser.add_argument(
-        "--use_uniform_sampling",
-        action="store_true",
-        help="Use uniform sampling for trajectory subsampling",
-    )
-    parser.add_argument(
         "--load_embeddings",
         action="store_true",
         help="Load embeddings instead of frames (not supported for visualization)",
@@ -709,8 +698,6 @@ def main():
         eval_datasets=[args.dataset],
         max_frames=args.max_frames,
         progress_pred_type=args.progress_pred_type,
-        pairwise_progress=args.pairwise_progress,
-        use_uniform_sampling=args.use_uniform_sampling,
         load_embeddings=args.load_embeddings,
         max_success=1.00,
         max_frames_after_preprocessing=16,

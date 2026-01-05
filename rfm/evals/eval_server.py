@@ -34,7 +34,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from threading import Lock
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional, Tuple
 
 import uvicorn
 
@@ -51,11 +51,11 @@ from rfm.configs.eval_configs import EvalServerConfig
 from rfm.configs.experiment_configs import ExperimentConfig
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample
 from rfm.utils.setup_utils import setup_model_and_processor, setup_batch_collator
-from rfm.models.utils import ModelOutput
+from rfm.models.utils import ModelOutput, convert_bins_to_continuous, convert_bins_to_continuous_hard
 from rfm.utils.config_utils import display_config, convert_hydra_to_dataclass
 from rfm.utils.logger import get_logger, setup_loguru_logging
 
-LOG_LEVEL = os.environ.get("RFM_LOG_LEVEL", "INFO").upper()
+LOG_LEVEL = "DEBUG"
 setup_loguru_logging(log_level=LOG_LEVEL)
 logger = get_logger()
 logger.info(f"rfm.eval_server logger initialized at level {LOG_LEVEL}")
@@ -73,8 +73,8 @@ def log_logits(name: str, value: Any) -> None:
 
 
 def forward_model(
-    model, batch_inputs: Dict[str, Any], sample_type: str = "progress"
-) -> tuple[ModelOutput, Dict[str, Any]]:
+    model: Any, batch_inputs: Dict[str, Any], sample_type: str = "progress"
+) -> Tuple[ModelOutput, Dict[str, Any]]:
     """Forward pass that mirrors trainer logic (handles ReWiND vs RFM)."""
     with torch.no_grad():
         if "rewind" in model.__class__.__name__.lower():
@@ -100,6 +100,124 @@ def forward_model(
     return model_output, extra
 
 
+def process_batch_helper(
+    model_type: str,
+    model: Any,
+    tokenizer: Any,
+    batch_collator: Any,
+    device: torch.device,
+    batch_data: List[Dict[str, Any]],
+    job_id: int = 0,
+    is_discrete_mode: bool = False,
+    num_bins: int = 10,
+) -> Dict[str, Any]:
+    """Synchronous batch processing on specific GPU."""
+    if not batch_data:
+        raise ValueError("No samples found in batch data")
+
+    logger.debug(f"[job {job_id}] Processing {len(batch_data)} samples on device {device}")
+
+    input_samples: List[Any] = []
+    for sample in batch_data:
+        if isinstance(sample, (PreferenceSample, ProgressSample, SimilaritySample)):
+            input_samples.append(sample)
+        elif isinstance(sample, dict):
+            sample_type = sample.get("sample_type")
+            if sample_type == "preference":
+                input_samples.append(PreferenceSample(**sample))
+            elif sample_type == "progress":
+                input_samples.append(ProgressSample(**sample))
+            elif sample_type == "similarity":
+                input_samples.append(SimilaritySample(**sample))
+            else:
+                raise ValueError(f"Unsupported sample_type: {sample_type}")
+        else:
+            raise ValueError(f"Unsupported sample object type: {type(sample)}")
+
+    batch_inputs = batch_collator(input_samples)
+
+    # Move inputs to the correct GPU
+    for key, value in batch_inputs["preference_inputs"].items():
+        if isinstance(value, torch.Tensor):
+            batch_inputs["preference_inputs"][key] = value.to(device)
+    for key, value in batch_inputs["progress_inputs"].items():
+        if isinstance(value, torch.Tensor):
+            batch_inputs["progress_inputs"][key] = value.to(device)
+    for key, value in batch_inputs["similarity_inputs"].items():
+        if isinstance(value, torch.Tensor):
+            batch_inputs["similarity_inputs"][key] = value.to(device)
+
+    outputs_preference = None
+    outputs_progress = None
+    outputs_similarity = None
+    outputs_success = None
+
+    num_preferences = batch_inputs.get("num_preferences", 0)
+    num_progress = batch_inputs.get("num_progress", 0)
+    num_similarities = batch_inputs.get("num_similarities", 0)
+    logger.debug(
+        f"[job {job_id}] Batch counts — preference: {num_preferences} "
+        f"progress: {num_progress} similarity: {num_similarities}"
+    )
+
+    if num_preferences > 0:
+        if model_type == "vqa":
+            outputs_preference = compute_batch_outputs_vqa(
+                model,
+                tokenizer,
+                batch_inputs["preference_inputs"],
+                mode="preference",
+            )
+        else:
+            outputs_preference = compute_batch_outputs(
+                model,
+                tokenizer,
+                batch_inputs["preference_inputs"],
+                sample_type="preference",
+                is_discrete_mode=is_discrete_mode,
+                num_bins=num_bins,
+            )
+    else:
+        outputs_preference = None
+
+    if num_progress > 0:
+        if model_type == "vqa":
+            outputs_progress = compute_batch_outputs_vqa(
+                model, tokenizer, batch_inputs["progress_inputs"], mode="progress"
+            )
+        else:
+            outputs_progress = compute_batch_outputs(
+                model,
+                tokenizer,
+                batch_inputs["progress_inputs"],
+                sample_type="progress",
+                is_discrete_mode=is_discrete_mode,
+                num_bins=num_bins,
+            )
+
+        if "outputs_success" in outputs_progress:
+            outputs_success = outputs_progress.pop("outputs_success")
+
+    if num_similarities > 0:
+        if model_type == "vqa":
+            raise ValueError("Similarity evaluation is not supported for VQA model type.")
+        outputs_similarity = compute_batch_outputs(
+            model,
+            tokenizer,
+            batch_inputs["similarity_inputs"],
+            sample_type="similarity",
+            is_discrete_mode=is_discrete_mode,
+            num_bins=num_bins,
+        )
+
+    return {
+        "outputs_preference": outputs_preference,
+        "outputs_progress": outputs_progress,
+        "outputs_success": outputs_success,
+        "outputs_similarity": outputs_similarity,
+    }
+
+
 class MultiGPUEvalServer:
     """Multi-GPU inference server that schedules requests across devices."""
 
@@ -122,6 +240,7 @@ class MultiGPUEvalServer:
             model_path=self.model_path,
             device=torch.device("cpu"),
         )
+
         self.exp_config: ExperimentConfig = exp_config
         self.base_tokenizer = tokenizer
         self.base_processor = processor
@@ -182,7 +301,7 @@ class MultiGPUEvalServer:
 
             logger.info(f"Successfully loaded model on GPU {gpu_id}")
 
-    async def process_batch(self, batch_data: dict[str, Any] | list[dict[str, Any]]):
+    async def process_batch(self, batch_data: List[Dict[str, Any]]):
         """Process a batch using whichever GPU is available."""
         loop = asyncio.get_event_loop()
 
@@ -207,13 +326,28 @@ class MultiGPUEvalServer:
         self.gpu_stats[gpu_info["gpu_id"]]["last_used"] = start_time
 
         try:
+            # Determine if discrete mode is enabled
+            progress_loss_type = getattr(self.exp_config.loss, "progress_loss_type", "l2")
+            is_discrete_mode = progress_loss_type.lower() == "discrete"
+            num_bins = getattr(
+                self.exp_config.loss,
+                "progress_discrete_bins",
+                getattr(self.exp_config.model, "progress_discrete_bins", 10),
+            )
+
             # Process batch in thread pool
             result = await loop.run_in_executor(
                 self.executor,
-                self._process_batch_helper,
-                gpu_info,
+                process_batch_helper,
+                self.exp_config.model.model_type,
+                gpu_info["model"],
+                gpu_info["tokenizer"],
+                gpu_info["batch_collator"],
+                gpu_info["device"],
                 batch_data,
                 job_id,
+                is_discrete_mode,
+                num_bins,
             )
 
             # Update stats
@@ -243,127 +377,7 @@ class MultiGPUEvalServer:
                 f"processing_time={processing_time:.3f}s"
             )
 
-    def _process_batch_helper(
-        self,
-        gpu_info: dict,
-        batch_data: dict[str, Any] | list[dict[str, Any]],
-        job_id: int,
-    ):
-        """Synchronous batch processing on specific GPU."""
-
-        # Handle both dict and list inputs
-        if isinstance(batch_data, dict):
-            # Legacy format - extract samples from dict
-            samples = batch_data.get("samples", [])
-        else:
-            # New format - batch_data is already a list of samples
-            samples = batch_data
-
-        if not samples:
-            raise ValueError("No samples found in batch data")
-
-        logger.debug(f"[job {job_id}] Processing {len(samples)} samples on GPU {gpu_info['gpu_id']}")
-
-        batch_collator = gpu_info["batch_collator"]
-        input_samples = []
-        for sample in samples:
-            if isinstance(sample, (PreferenceSample, ProgressSample, SimilaritySample)):
-                input_samples.append(sample)
-            elif isinstance(sample, dict):
-                sample_type = sample.get("sample_type")
-                if sample_type == "preference":
-                    input_samples.append(PreferenceSample(**sample))
-                elif sample_type == "progress":
-                    input_samples.append(ProgressSample(**sample))
-                elif sample_type == "similarity":
-                    input_samples.append(SimilaritySample(**sample))
-                else:
-                    raise ValueError(f"Unsupported sample_type: {sample_type}")
-            else:
-                raise ValueError(f"Unsupported sample object type: {type(sample)}")
-
-        batch_inputs = batch_collator(input_samples)
-
-        # Move inputs to the correct GPU
-        device = gpu_info["device"]
-        for key, value in batch_inputs["preference_inputs"].items():
-            if isinstance(value, torch.Tensor):
-                batch_inputs["preference_inputs"][key] = value.to(device)
-        for key, value in batch_inputs["progress_inputs"].items():
-            if isinstance(value, torch.Tensor):
-                batch_inputs["progress_inputs"][key] = value.to(device)
-        for key, value in batch_inputs["similarity_inputs"].items():
-            if isinstance(value, torch.Tensor):
-                batch_inputs["similarity_inputs"][key] = value.to(device)
-
-        outputs_preference = None
-        outputs_progress = None
-        outputs_similarity = None
-
-        num_preferences = batch_inputs.get("num_preferences", 0)
-        num_progress = batch_inputs.get("num_progress", 0)
-        num_similarities = batch_inputs.get("num_similarities", 0)
-        logger.debug(
-            f"[job {job_id}] Batch counts — preference: {num_preferences} "
-            f"progress: {num_progress} similarity: {num_similarities}"
-        )
-
-        if num_preferences > 0:
-            if self.exp_config.model.model_type == "vqa":
-                outputs_preference = compute_batch_outputs_vqa(
-                    gpu_info["model"],
-                    gpu_info["tokenizer"],
-                    batch_inputs["preference_inputs"],
-                    mode="preference",
-                )
-            else:
-                outputs_preference = compute_batch_outputs(
-                    gpu_info["model"],
-                    gpu_info["tokenizer"],
-                    batch_inputs["preference_inputs"],
-                    sample_type="preference",
-                )
-        else:
-            outputs_preference = None
-
-        if num_progress > 0:
-            if self.exp_config.model.model_type == "vqa":
-                outputs_progress = compute_batch_outputs_vqa(
-                    gpu_info["model"], gpu_info["tokenizer"], batch_inputs["progress_inputs"], mode="progress"
-                )
-            else:
-                outputs_progress = compute_batch_outputs(
-                    gpu_info["model"],
-                    gpu_info["tokenizer"],
-                    batch_inputs["progress_inputs"],
-                    sample_type="progress",
-                )
-
-        if num_similarities > 0:
-            if self.exp_config.model.model_type == "vqa":
-                raise ValueError("Similarity evaluation is not supported for VQA model type.")
-            outputs_similarity = compute_batch_outputs(
-                gpu_info["model"],
-                gpu_info["tokenizer"],
-                batch_inputs["similarity_inputs"],
-                sample_type="similarity",
-            )
-
-        # if logger.isEnabledFor(logging.DEBUG):
-        #     if outputs_preference is not None:
-        #         log_logits(f"job{job_id}.outputs_preference", outputs_preference)
-        #     if outputs_progress is not None:
-        #         log_logits(f"job{job_id}.outputs_progress", outputs_progress)
-        #     if outputs_similarity is not None:
-        #         log_logits(f"job{job_id}.outputs_similarity", outputs_similarity)
-
-        return {
-            "outputs_preference": outputs_preference,
-            "outputs_progress": outputs_progress,
-            "outputs_similarity": outputs_similarity,
-        }
-
-    def get_pool_status(self):
+    def get_pool_status(self) -> Dict[str, Any]:
         """Get status of the GPU pool."""
         return {
             "total_gpus": self.num_gpus,
@@ -380,7 +394,14 @@ class MultiGPUEvalServer:
         logger.info("GPU pool shutdown complete")
 
 
-def compute_batch_outputs(model, tokenizer, batch_inputs: dict[str, torch.Tensor], sample_type: str) -> dict[str, Any]:
+def compute_batch_outputs(
+    model: Any,
+    tokenizer: Any,
+    batch_inputs: Dict[str, torch.Tensor],
+    sample_type: str,
+    is_discrete_mode: bool = False,
+    num_bins: int = 10,
+) -> Dict[str, Any]:
     """
     Run a forward pass for non-VQA models and return the raw head outputs we
     need for eval logging.
@@ -398,7 +419,7 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: dict[str, torch.Tensor
     logger.debug(f"compute_batch_outputs sample_type={sample_type}")
     model_output, _ = forward_model(model, batch_inputs, sample_type=sample_type)
 
-    results: dict[str, Any] = {}
+    results: Dict[str, Any] = {}
 
     # Preference logits and metadata
     if sample_type == "preference" and model_output.pref_logits is not None:
@@ -415,49 +436,40 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: dict[str, torch.Tensor
         logger.debug(f"prediction_probs: {results['prediction_probs']}")
         logger.debug(f"preference_labels: {results['preference_labels']}")
 
-    # Progress predictions (used by both preference + progress sample types)
+    # Progress predictions (only for progress sample type)
     progress_logits = model_output.progress_logits
-    if progress_logits is not None and isinstance(progress_logits, dict):
-        if sample_type == "preference":
-            progress_pred_chosen: list[list[float]] = []
-            progress_pred_rejected: list[list[float]] = []
-            preference_labels = results.get("preference_labels", batch_inputs["preference_labels"].cpu().tolist())
-            seq_A = progress_logits.get("A")
-            seq_B = progress_logits.get("B")
+    if progress_logits is not None and isinstance(progress_logits, dict) and sample_type == "progress":
+        progress_pred = []
+        seq_A = progress_logits.get("A")
 
-            # Convert tensors to lists
-            seq_A_list = [seq_A[i] for i in range(seq_A.shape[0])] if seq_A is not None else []
-            seq_B_list = [seq_B[i] for i in range(seq_B.shape[0])] if seq_B is not None else []
+        # Convert tensor to list
+        seq_A_list = [seq_A[i] for i in range(seq_A.shape[0])] if seq_A is not None else []
 
-            for label, seq_A_item, seq_B_item in zip(preference_labels, seq_A_list, seq_B_list, strict=False):
-                if label == 1.0:
-                    chosen_seq, rejected_seq = seq_A_item, seq_B_item
-                else:
-                    chosen_seq, rejected_seq = seq_B_item, seq_A_item
-                progress_pred_chosen.append([] if chosen_seq is None else chosen_seq.detach().cpu().flatten().tolist())
-                progress_pred_rejected.append(
-                    [] if rejected_seq is None else rejected_seq.detach().cpu().flatten().tolist()
-                )
-            results.update({
-                "progress_pred_chosen": progress_pred_chosen,
-                "progress_pred_rejected": progress_pred_rejected,
-            })
-            logger.debug(f"progress_pred_chosen: {progress_pred_chosen}")
-            logger.debug(f"progress_pred_rejected: {progress_pred_rejected}")
-        elif sample_type == "progress":
-            progress_pred = []
-            seq_A = progress_logits.get("A")
+        # Process seq_A
+        for seq_A_item in seq_A_list:
+            if seq_A_item is None:
+                progress_pred.append([])
+            elif is_discrete_mode:
+                # seq_A_item is [seq_len, num_bins] logits, convert entire sequence to continuous
+                continuous_pred = convert_bins_to_continuous(seq_A_item.detach().cpu().float())
+                # continuous_pred = convert_bins_to_continuous_hard(seq_A_item.detach().cpu().float())
+                progress_pred.append(continuous_pred.numpy().flatten().tolist())
+            else:
+                progress_pred.append(seq_A_item.detach().cpu().flatten().tolist())
 
-            # Convert tensor to list
-            seq_A_list = [seq_A[i] for i in range(seq_A.shape[0])] if seq_A is not None else []
+        if not progress_pred:
+            batch_size = len(batch_inputs.get("task", []))
+            progress_pred = [[] for _ in range(batch_size)]
 
-            for seq_A_item in seq_A_list:
-                progress_pred.append([] if seq_A_item is None else seq_A_item.detach().cpu().flatten().tolist())
-            if not progress_pred:
-                batch_size = len(batch_inputs.get("task", []))
-                progress_pred = [[] for _ in range(batch_size)]
-            results["progress_pred"] = progress_pred
-            logger.debug(f"progress_pred: {progress_pred}")
+        results["progress_pred"] = progress_pred
+        logger.debug(f"progress_pred: {progress_pred}")
+        if model_output.success_logits is not None:
+            success_pred = model_output.success_logits["A"]
+            success_probs = torch.sigmoid(success_pred)
+            results["outputs_success"] = {
+                "success_probs": success_probs.detach().cpu().tolist(),
+            }
+            logger.debug(f"success_probs: {success_probs}")
 
     # Similarity logits
     if sample_type == "similarity" and model_output.sim_logits is not None:
@@ -469,7 +481,7 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: dict[str, torch.Tensor
         else:
             sim_tensor = None
 
-        sim_scores_list: list[float] = []
+        sim_scores_list: List[float] = []
         if sim_tensor is not None:
             sim_scores_list = sim_tensor.detach().cpu().flatten().tolist()
 
@@ -477,8 +489,8 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: dict[str, torch.Tensor
         if num_samples == 0 and sim_scores_list:
             num_samples = len(sim_scores_list) // 2
 
-        sim_score_ref_sim: list[float | None] = []
-        sim_score_ref_diff: list[float | None] = []
+        sim_score_ref_sim: List[Optional[float]] = []
+        sim_score_ref_diff: List[Optional[float]] = []
         for i in range(num_samples):
             idx_sim = i * 2
             idx_diff = idx_sim + 1
@@ -504,8 +516,8 @@ def compute_batch_outputs(model, tokenizer, batch_inputs: dict[str, torch.Tensor
 
 
 def compute_batch_outputs_vqa(
-    model, tokenizer, batch_inputs: dict[str, torch.Tensor], mode: str = "preference"
-) -> dict[str, Any]:
+    model: Any, tokenizer: Any, batch_inputs: Dict[str, torch.Tensor], mode: str = "preference"
+) -> Dict[str, Any]:
     """
     Generate text answers for VQA-style models and post-process into numeric
     predictions so downstream aggregation matches the non-VQA path.
@@ -600,13 +612,13 @@ def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | Non
     logger.info(f"Multi-GPU eval server initialized with {multi_gpu_server.num_gpus} GPUs")
 
     @app.post("/evaluate_batch")
-    async def evaluate_batch(batch: dict[str, Any]):
+    async def evaluate_batch(batch: Dict[str, Any]) -> Dict[str, Any]:
         """Evaluate a batch of preference samples using the Multi-GPU server."""
         logger.debug(f"Received /evaluate_batch request with keys: {list(batch.keys())}")
         return await multi_gpu_server.process_batch(batch)
 
     @app.post("/evaluate_batch_npy")
-    async def evaluate_batch_npy(request: Request):
+    async def evaluate_batch_npy(request: Request) -> Dict[str, Any]:
         """Evaluate a batch with .npy file support for numpy arrays.
 
         This endpoint handles multipart form data where:
@@ -653,8 +665,8 @@ def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | Non
         return await multi_gpu_server.process_batch(batch_data)
 
     def reconstruct_payload_from_npy(
-        numpy_arrays: dict[str, np.ndarray], other_data: dict[str, Any]
-    ) -> list[dict[str, Any]]:
+        numpy_arrays: Dict[str, np.ndarray], other_data: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
         """Reconstruct the original payload structure from .npy files and form data.
 
         The client sends data in this format:
@@ -705,21 +717,21 @@ def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | Non
         return samples
 
     @app.get("/gpu_status")
-    def get_gpu_status():
+    def get_gpu_status() -> Dict[str, Any]:
         """Get status of all GPUs and pool."""
         return multi_gpu_server.get_pool_status()
 
     @app.get("/health")
-    def health_check():
+    def health_check() -> Dict[str, Any]:
         """Health check endpoint."""
         status = multi_gpu_server.get_pool_status()
         return {"status": "healthy", "available_gpus": status["available_gpus"], "total_gpus": status["total_gpus"]}
 
     @app.get("/model_info")
-    def get_model_info():
+    def get_model_info() -> Dict[str, Any]:
         """Get model information and experiment configuration."""
 
-        def serialize_config(config_obj):
+        def serialize_config(config_obj: Any) -> Any:
             """Recursively serialize dataclass to dict, handling nested dataclasses."""
             if hasattr(config_obj, "__dataclass_fields__"):
                 result = {}
@@ -736,7 +748,7 @@ def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | Non
                 # Fallback: convert to string for non-serializable types
                 return str(config_obj)
 
-        def get_model_architecture_info(model):
+        def get_model_architecture_info(model: Any) -> Dict[str, Any]:
             """Extract model architecture information."""
             model_info = {
                 "model_class": model.__class__.__name__,

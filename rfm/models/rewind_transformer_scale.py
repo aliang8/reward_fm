@@ -13,6 +13,7 @@ import torch.nn as nn
 from transformers import PreTrainedModel, AutoConfig, AutoModel
 from transformers import PretrainedConfig
 from rfm.models.utils import ModelOutput
+from rfm.models.heads import PredictionHeadsMixin
 
 
 def mean_pooling(model_output, attention_mask):
@@ -47,19 +48,12 @@ class ReWINDScaleTransformerConfig(PretrainedConfig):
         self.causal_mask = causal_mask
 
 
-class ReWiNDScaleTransformer(PreTrainedModel):
+class ReWiNDScaleTransformer(PredictionHeadsMixin, PreTrainedModel):
     """ReWiND Transformer with three prediction heads for different objectives."""
 
     config_class = ReWINDScaleTransformerConfig
 
     def __init__(self, config, processor=None, tokenizer=None, image_encoder=None, text_encoder=None):
-        super().__init__(config)
-
-        self.image_encoder = image_encoder
-        self.text_encoder = text_encoder
-        self.tokenizer = tokenizer
-        self.processor = processor
-
         video_feature_dim = config.video_feature_dim
         text_feature_dim = config.text_feature_dim
         hidden_dim = config.hidden_dim
@@ -68,6 +62,18 @@ class ReWiNDScaleTransformer(PreTrainedModel):
             video_feature_dim = image_encoder.config.hidden_size
         if text_encoder is not None:
             text_feature_dim = text_encoder.config.hidden_size
+
+        # Initialize mixin with head parameters, then PreTrainedModel
+        super().__init__(
+            config,
+            hidden_dim=hidden_dim,
+            dropout=config.dropout,
+        )
+
+        self.image_encoder = image_encoder
+        self.text_encoder = text_encoder
+        self.tokenizer = tokenizer
+        self.processor = processor
 
         self.video_proj = nn.Linear(video_feature_dim, hidden_dim)
         self.text_proj = nn.Linear(text_feature_dim, hidden_dim)
@@ -99,39 +105,6 @@ class ReWiNDScaleTransformer(PreTrainedModel):
         # Prediction tokens
         self.preference_token = nn.Parameter(torch.randn(1, 1, config.hidden_dim))
         self.similarity_token = nn.Parameter(torch.randn(1, 1, config.hidden_dim))
-
-        self.progress_head = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.LayerNorm(hidden_dim // 2),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Linear(hidden_dim // 2, 1),
-            nn.Sigmoid(),
-        )
-
-        self.preference_head = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.LayerNorm(hidden_dim // 2),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Linear(hidden_dim // 2, 1),
-        )
-
-        self.similarity_head = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.LayerNorm(hidden_dim // 2),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Linear(hidden_dim // 2, 1),
-        )
-
-        self.success_head = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.LayerNorm(hidden_dim // 2),
-            nn.GELU(),
-            nn.Dropout(0.1),
-            nn.Linear(hidden_dim // 2, 1),
-        )
 
         base_mask = torch.zeros((1 + 3 * config.max_len + 1, 1 + 3 * config.max_len + 1), dtype=torch.bool)
 

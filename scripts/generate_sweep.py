@@ -28,7 +28,6 @@ KEY_SHORTEN_MAP = {
     "model.train_preference_head": "pref",
     "model.train_similarity_head": "sim",
     "model.train_success_head": "succ",
-    "data.pairwise_progress": "2frames",
 }
 
 

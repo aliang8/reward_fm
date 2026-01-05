@@ -8,20 +8,10 @@ This generator creates similarity samples for evaluation:
 - Creates similarity samples: ref=human, traj_sim=robot (same task), traj_diff=negative (different task)
 """
 
-import random
-import torch
-from tqdm import tqdm
+from typing import Dict, List, Any
 
 from rfm.data.dataset_types import SimilaritySample, Trajectory
 from rfm.data.samplers.base import RFMBaseSampler
-from rfm.data.datasets.helpers import (
-    linspace_subsample_frames,
-    pad_trajectory_to_max_frames_np,
-    pad_trajectory_to_max_frames_torch,
-    load_embeddings_from_path,
-    load_frames_from_npz,
-    compute_success_labels,
-)
 from rfm.utils.distributed import rank_0_print
 
 
@@ -34,18 +24,8 @@ class SimilarityScoreSampler(RFMBaseSampler):
     - Samples N negative trajectories from other tasks for each pairing
     """
 
-    def __init__(
-        self,
-        config,
-        dataset,
-        combined_indices,
-        dataset_success_cutoff_map=None,
-        is_evaluation=False,
-        verbose=True,
-        num_negatives: int = 2,
-        **kwargs,
-    ):
-        super().__init__(config, dataset, combined_indices, dataset_success_cutoff_map, verbose=verbose)
+    def __init__(self, num_negatives: int = 2, **kwargs):
+        super().__init__(**kwargs)
 
         self.num_negatives = num_negatives
         self.sample_indices = self._generate_all_sample_indices()
@@ -55,7 +35,7 @@ class SimilarityScoreSampler(RFMBaseSampler):
             verbose=self.verbose,
         )
 
-    def _generate_all_sample_indices(self) -> list[dict]:
+    def _generate_all_sample_indices(self) -> List[Dict[str, Any]]:
         """Generate all possible similarity score sample indices."""
         sample_indices = []
 
@@ -75,12 +55,12 @@ class SimilarityScoreSampler(RFMBaseSampler):
 
             # Limit number of human/robot trajectories considered per task to reduce combinatorics
             if len(human_indices) > 2:
-                selected_humans = random.sample(human_indices, 2)
+                selected_humans = self._local_random.sample(human_indices, 2)
             else:
                 selected_humans = human_indices
 
             if len(robot_indices) > 2:
-                selected_robots = random.sample(robot_indices, 2)
+                selected_robots = self._local_random.sample(robot_indices, 2)
             else:
                 selected_robots = robot_indices
 
@@ -88,7 +68,7 @@ class SimilarityScoreSampler(RFMBaseSampler):
             for human_idx in selected_humans:
                 for robot_idx in selected_robots:
                     # Sample N negative tasks (with replacement if needed)
-                    negative_tasks = random.choices(other_tasks, k=self.num_negatives)
+                    negative_tasks = self._local_random.choices(other_tasks, k=self.num_negatives)
 
                     # Create one sample index entry per negative
                     for negative_task in negative_tasks:
@@ -123,7 +103,7 @@ class SimilarityScoreSampler(RFMBaseSampler):
         if not negative_task_indices:
             return None
 
-        negative_idx = random.choice(negative_task_indices)
+        negative_idx = self._local_random.choice(negative_task_indices)
         negative_traj = self.dataset[negative_idx]
 
         # Create trajectories for the similarity sample
@@ -138,7 +118,6 @@ class SimilarityScoreSampler(RFMBaseSampler):
             "human_id": human_traj["id"],
             "robot_id": robot_traj["id"],
             "negative_id": negative_traj["id"],
-            "data_gen_strategy": "similarity_score_eval",
         }
 
         # Add metadata to trajectories
@@ -157,65 +136,13 @@ class SimilarityScoreSampler(RFMBaseSampler):
 
     def _create_trajectory_from_data(self, traj_data: dict) -> Trajectory:
         """Create a Trajectory object from dataset entry."""
-        # Get frames or embeddings
-        frames = None
-        video_embeddings = None
-        text_embedding = None
+        metadata = {
+            "data_gen_strategy": "similarity_score_eval",
+        }
 
-        if self.config.load_embeddings and traj_data.get("embeddings_path"):
-            embeddings = load_embeddings_from_path(traj_data["embeddings_path"])
-            video_embeddings = embeddings["video_embeddings"]
-            text_embedding = embeddings["text_embedding"]
-
-            # Subsample frames
-            subsequence_video_embeddings, frame_indices = linspace_subsample_frames(
-                video_embeddings, self.config.max_frames
-            )
-            frames_shape_orig = subsequence_video_embeddings.shape
-
-            # Pad trajectory
-            video_embeddings, padded_progress = pad_trajectory_to_max_frames_torch(
-                subsequence_video_embeddings, [1.0] * len(frame_indices), self.config.max_frames
-            )
-        else:
-            frames = load_frames_from_npz(traj_data["frames"])
-            if frames is None or len(frames) == 0:
-                return None
-
-            # Subsample frames
-            subsequence_frames, frame_indices = linspace_subsample_frames(frames, self.config.max_frames)
-            frames_shape_orig = subsequence_frames.shape
-
-            # Pad trajectory
-            frames, padded_progress = pad_trajectory_to_max_frames_np(
-                subsequence_frames, [1.0] * len(frame_indices), self.config.max_frames
-            )
-
-        # Compute success labels
-        success_label = compute_success_labels(
-            target_progress=padded_progress,
-            data_source=traj_data["data_source"],
-            dataset_success_percent=self.dataset_success_cutoff_map,
-            max_success=self.config.max_success,
-        )
-
-        # Create trajectory
-        trajectory = Trajectory(
-            id=traj_data["id"],
-            task=traj_data["task"],
-            frames=frames,
-            frames_shape=frames_shape_orig,
-            video_embeddings=video_embeddings,
-            text_embedding=text_embedding,
-            data_source=traj_data["data_source"],
-            lang_vector=traj_data.get("lang_vector"),
-            is_robot=traj_data["is_robot"],
-            quality_label=traj_data.get("quality_label"),
-            data_gen_strategy="similarity_score_eval",
-            target_progress=padded_progress,
-            partial_success=traj_data.get("partial_success"),
-            success_label=success_label,
-            metadata={},
+        trajectory = self._get_traj_from_data(
+            traj=traj_data,
+            metadata=metadata,
         )
 
         return trajectory

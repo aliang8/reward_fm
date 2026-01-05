@@ -42,6 +42,7 @@ def raw_dict_to_sample(
     Returns:
         ProgressSample or PreferenceSample
     """
+
     def _build_trajectory(raw_data: Dict[str, Any], num_frames: int) -> Trajectory:
         processed_item: Dict[str, Any] = {}
 

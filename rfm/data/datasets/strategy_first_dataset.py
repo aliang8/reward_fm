@@ -146,58 +146,21 @@ class StrategyFirstDataset(BaseDataset):
             # Retry by selecting a different strategy/sample type
             return self._generate_without_specific_strategy(sample_type)
 
-        # Step 4: Select data source from filtered sources (using weights if available)
-        # Step 5: Filter indices based on strategy requirements
-        # Step 6: Sample and generate
-        max_attempts = 10  # Limit attempts to prevent infinite loops
-        for attempt in range(max_attempts):
-            selected_source = self._select_data_source(filtered_sources)
-            source_indices = self.source_indices.get(selected_source)
+        # Step 4-6: Sample and generate using helper method
+        sample = self._try_generate_sample(
+            sample_type=sample_type,
+            filtered_sources=filtered_sources,
+            strategy=strategy,
+            preferred_strategy=strategy,
+        )
+        if sample is not None:
+            return sample
 
-            if not source_indices:
-                logger.trace(f"[StrategyFirstDataset] No indices for source {selected_source}, retrying...")
-                continue
-
-            # Filter indices based on strategy requirements
-            filtered_indices = self._filter_indices_by_strategy(source_indices, selected_source, sample_type, strategy)
-            if not filtered_indices:
-                logger.trace(
-                    f"[StrategyFirstDataset] No viable indices after strategy filtering for source {selected_source}, retrying..."
-                )
-                continue
-
-            # Select a trajectory from filtered indices
-            selected_traj_idx = self._local_random.choice(filtered_indices)
-            item = self.dataset[selected_traj_idx]
-
-            traj_id = item["id"]
-            data_source = item["data_source"]
-            quality_label = item["quality_label"]
-
-            logger.trace(
-                f"[StrategyFirstDataset] Attempt {attempt + 1}/{max_attempts}: "
-                f"Selected traj ID={traj_id}, source={data_source}, quality={quality_label}, "
-                f"sample_type={sample_type}, strategy={strategy.value if hasattr(strategy, 'value') else strategy}"
-            )
-
-            # Generate sample using the selected sampler with the preferred strategy
-            sample = self._generate_sample_for_type(sample_type, item, preferred_strategy=strategy)
-            if sample is not None:
-                # Check if the generated sample matches our preferred strategy (if available)
-                generated_strategy = getattr(sample, "data_gen_strategy", None)
-                if generated_strategy:
-                    logger.trace(
-                        f"[StrategyFirstDataset] Generated sample with strategy {generated_strategy} "
-                        f"(preferred: {strategy.value if hasattr(strategy, 'value') else strategy})"
-                    )
-                logger.trace(f"[StrategyFirstDataset] Successfully generated {sample_type} sample for ID={traj_id}")
-                return self._set_resample_attempts(sample, attempt + 1)
-
-            logger.trace(f"[StrategyFirstDataset] Sampler returned None for ID={traj_id}, retrying...")
-
-        # All attempts failed
-        logger.error(f"[StrategyFirstDataset] Failed to generate {sample_type} sample after {max_attempts} attempts")
-        raise ValueError(f"Failed to generate {sample_type} sample after {max_attempts} attempts")
+        # All attempts failed for the selected sample type, try other samplers as fallback
+        logger.trace(
+            f"[StrategyFirstDataset] Failed to generate {sample_type} sample, trying other samplers..."
+        )
+        return self._try_other_samplers(sample_type)
 
     def _select_sample_type(self) -> str:
         """Select a sample type based on sample_type_ratio."""
@@ -509,24 +472,148 @@ class StrategyFirstDataset(BaseDataset):
         # Generate sample using the selected sampler with preferred strategy
         return sampler._generate_sample(item, preferred_strategy=preferred_strategy)
 
-    def _generate_without_specific_strategy(self, sample_type: str):
-        """Fallback method to generate sample without specific strategy selection."""
-        max_attempts = 10
+    def _try_generate_sample(
+        self,
+        sample_type: str,
+        filtered_sources: Optional[List[str]] = None,
+        strategy: Optional[DataGenStrat] = None,
+        preferred_strategy: Optional[DataGenStrat] = None,
+        max_attempts: int = 10,
+    ):
+        """Helper method to try generating a sample with retry logic.
+        
+        Args:
+            sample_type: The sample type to generate (pref/progress/similarity)
+            filtered_sources: Optional list of allowed data sources. If None, uses all sources.
+            strategy: Optional strategy for filtering indices. If None, no index filtering.
+            preferred_strategy: Optional strategy to pass to sampler. If None, sampler selects its own.
+            max_attempts: Maximum number of attempts before giving up.
+            
+        Returns:
+            Generated sample if successful, None otherwise.
+        """
         for attempt in range(max_attempts):
-            selected_source = self._select_data_source()
+            selected_source = self._select_data_source(filtered_sources)
             source_indices = self.source_indices.get(selected_source)
 
             if not source_indices:
+                logger.trace(f"[StrategyFirstDataset] No indices for source {selected_source}, retrying...")
                 continue
 
-            selected_traj_idx = self._local_random.choice(source_indices)
+            # Filter indices based on strategy requirements if strategy is provided
+            if strategy is not None:
+                filtered_indices = self._filter_indices_by_strategy(
+                    source_indices, selected_source, sample_type, strategy
+                )
+                if not filtered_indices:
+                    logger.trace(
+                        f"[StrategyFirstDataset] No viable indices after strategy filtering for source {selected_source}, retrying..."
+                    )
+                    continue
+            else:
+                filtered_indices = source_indices
+
+            # Select a trajectory from filtered indices
+            selected_traj_idx = self._local_random.choice(filtered_indices)
             item = self.dataset[selected_traj_idx]
 
-            sample = self._generate_sample_for_type(sample_type, item)
+            traj_id = item["id"]
+            data_source = item["data_source"]
+            quality_label = item["quality_label"]
+
+            strategy_str = strategy.value if strategy and hasattr(strategy, "value") else strategy
+            logger.trace(
+                f"[StrategyFirstDataset] Attempt {attempt + 1}/{max_attempts}: "
+                f"Selected traj ID={traj_id}, source={data_source}, quality={quality_label}, "
+                f"sample_type={sample_type}, strategy={strategy_str}"
+            )
+
+            # Generate sample using the selected sampler with the preferred strategy
+            sample = self._generate_sample_for_type(sample_type, item, preferred_strategy=preferred_strategy)
             if sample is not None:
+                # Check if the generated sample matches our preferred strategy (if available)
+                generated_strategy = getattr(sample, "data_gen_strategy", None)
+                if generated_strategy and preferred_strategy:
+                    logger.trace(
+                        f"[StrategyFirstDataset] Generated sample with strategy {generated_strategy} "
+                        f"(preferred: {preferred_strategy.value if hasattr(preferred_strategy, 'value') else preferred_strategy})"
+                    )
+                logger.trace(f"[StrategyFirstDataset] Successfully generated {sample_type} sample for ID={traj_id}")
                 return self._set_resample_attempts(sample, attempt + 1)
 
-        raise ValueError(f"Failed to generate {sample_type} sample after {max_attempts} attempts")
+            logger.trace(f"[StrategyFirstDataset] Sampler returned None for ID={traj_id}, retrying...")
+
+        return None
+
+    def _try_other_samplers(self, failed_sample_type: str):
+        """Try other available samplers when the selected one fails.
+        
+        Args:
+            failed_sample_type: The sample type that failed
+            
+        Returns:
+            A sample from one of the other samplers, or raises ValueError if all fail
+        """
+        # Get list of available samplers excluding the one that failed
+        available_samplers = []
+        if failed_sample_type != "pref" and self.pref_sampler is not None:
+            available_samplers.append("pref")
+        if failed_sample_type != "progress" and self.progress_sampler is not None:
+            available_samplers.append("progress")
+        if failed_sample_type != "similarity" and self.similarity_sampler is not None:
+            available_samplers.append("similarity")
+
+        if not available_samplers:
+            logger.error(
+                f"[StrategyFirstDataset] No other samplers available after {failed_sample_type} failed"
+            )
+            raise ValueError(f"Failed to generate {failed_sample_type} sample and no other samplers available")
+
+        # Try each available sampler
+        for fallback_sample_type in available_samplers:
+            logger.trace(
+                f"[StrategyFirstDataset] Trying fallback sampler: {fallback_sample_type}"
+            )
+            sample = self._try_generate_sample(
+                sample_type=fallback_sample_type,
+                filtered_sources=None,
+                strategy=None,
+                preferred_strategy=None,
+            )
+            if sample is not None:
+                logger.trace(
+                    f"[StrategyFirstDataset] Fallback sampler {fallback_sample_type} succeeded"
+                )
+                return sample
+
+            logger.trace(
+                f"[StrategyFirstDataset] Fallback sampler {fallback_sample_type} failed"
+            )
+
+        # All fallback samplers failed
+        logger.error(
+            f"[StrategyFirstDataset] All samplers (including fallbacks) failed"
+        )
+        raise ValueError(
+            f"Failed to generate {failed_sample_type} sample and all fallback samplers also failed"
+        )
+
+    def _generate_without_specific_strategy(self, sample_type: str):
+        """Fallback method to generate sample without specific strategy selection."""
+        sample = self._try_generate_sample(
+            sample_type=sample_type,
+            filtered_sources=None,
+            strategy=None,
+            preferred_strategy=None,
+        )
+        if sample is not None:
+            return sample
+
+        # If this also fails, try other samplers
+        logger.trace(
+            f"[StrategyFirstDataset] _generate_without_specific_strategy failed for {sample_type}, trying other samplers..."
+        )
+        return self._try_other_samplers(sample_type)
 
     def get_resample_attempt_stats(self):
         return self._resample_attempt_stats

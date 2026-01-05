@@ -44,7 +44,7 @@ class PrefSampler(RFMBaseSampler):
         If the item has a non-successful quality label, it will be used as the rejected
         trajectory and an optimal trajectory from the same task will be found as the chosen one.
         Otherwise, normal preference sampling logic is used.
-        
+
         Args:
             item: The trajectory item
             preferred_strategy: Optional strategy to use (if None, will select strategy based on ratios)
@@ -95,12 +95,12 @@ class PrefSampler(RFMBaseSampler):
         self, strategy: DataGenStrat, chosen_traj: Dict[str, Any], is_roboarena: bool
     ) -> tuple[Dict[str, Any], str, Dict[str, Any]] | None:
         """Execute a strategy to get rejected trajectory.
-        
+
         Args:
             strategy: The strategy to execute
             chosen_traj: The chosen trajectory
             is_roboarena: Whether this is a RoboArena trajectory
-            
+
         Returns:
             Tuple of (rejected_traj, rejected_subsample_strategy, chosen_traj) or None if failed
             Note: chosen_traj may be swapped with rejected_traj for RoboArena partial_success
@@ -108,7 +108,7 @@ class PrefSampler(RFMBaseSampler):
         max_retries = 3
         rejected_subsample_strategy = None
         rejected_traj = None
-        
+
         if strategy == DataGenStrat.REWIND:
             rejected_traj = chosen_traj
             rejected_subsample_strategy = "subsample_rewind"
@@ -140,10 +140,10 @@ class PrefSampler(RFMBaseSampler):
             rejected_subsample_strategy = "subsample_reverse"
         else:
             return None
-        
+
         if rejected_traj is None:
             return None
-        
+
         return (rejected_traj, rejected_subsample_strategy, chosen_traj)
 
     def _create_pref_sample_from_dataset(self) -> PreferenceSample:
@@ -255,14 +255,10 @@ class PrefSampler(RFMBaseSampler):
         # Strategy selection: use preferred_strategy if provided, otherwise select based on ratios
         if preferred_strategy is not None:
             # Use the preferred strategy directly
-            logger.trace(
-                f"[PREF SAMPLER] Using preferred strategy: {preferred_strategy.value}"
-            )
+            logger.trace(f"[PREF SAMPLER] Using preferred strategy: {preferred_strategy.value}")
             result = self._execute_strategy(preferred_strategy, chosen_traj, is_roboarena)
             if result is None:
-                logger.trace(
-                    f"[PREF SAMPLER] Preferred strategy {preferred_strategy.value} failed, returning None"
-                )
+                logger.trace(f"[PREF SAMPLER] Preferred strategy {preferred_strategy.value} failed, returning None")
                 return None
             rejected_traj, rejected_subsample_strategy, chosen_traj = result
             strategy_used = preferred_strategy

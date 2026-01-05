@@ -68,22 +68,29 @@ class StrategyFirstDataset(BaseDataset):
             for i, source in enumerate(sources):
                 self.source_indices[source].append(i)
 
+        # Handle data source weights if provided
+        self.data_source_weights = getattr(config, "data_source_weights", None)
+        if self.data_source_weights:
+            self._normalize_data_source_weights()
+        else:
+            self.normalized_weights = None
+
         # Build set of tasks with optimal trajectories for efficient filtering
         self.tasks_with_optimal = set(self._combined_indices.get("optimal_by_task", {}).keys())
-        
+
         # Build set of tasks with both optimal and suboptimal trajectories for SUBOPTIMAL strategy
         suboptimal_by_task = self._combined_indices.get("suboptimal_by_task", {})
         # Only include tasks that have non-empty suboptimal indices
         tasks_with_suboptimal = {task for task, indices in suboptimal_by_task.items() if indices}
         self.tasks_with_both = self.tasks_with_optimal & tasks_with_suboptimal
-        
+
         # Build set of all indices from tasks with optimal trajectories for efficient filtering
         task_indices = self._combined_indices.get("task_indices", {})
         self.optimal_task_indices = set()
         for task in self.tasks_with_optimal:
             if task in task_indices:
                 self.optimal_task_indices.update(task_indices[task])
-        
+
         # Build set of all indices from tasks with both optimal and suboptimal trajectories
         self.tasks_with_both_indices = set()
         for task in self.tasks_with_both:
@@ -95,6 +102,10 @@ class StrategyFirstDataset(BaseDataset):
             f"Sample type ratios: pref={self.sample_type_ratio[0]}, progress={self.sample_type_ratio[1]}, sim={self.sample_type_ratio[2]}"
         )
         logger.info(f"Available data sources: {list(self.source_indices.keys())}")
+        if self.normalized_weights:
+            logger.info("Data source weights enabled:")
+            for source, weight in sorted(self.normalized_weights.items(), key=lambda x: x[1], reverse=True):
+                logger.info(f"  {source}: {weight:.3f}")
         logger.info(f"Tasks with optimal trajectories: {len(self.tasks_with_optimal)}")
         logger.info(f"Tasks with both optimal and suboptimal trajectories: {len(self.tasks_with_both)}")
 
@@ -132,12 +143,12 @@ class StrategyFirstDataset(BaseDataset):
             # Retry by selecting a different strategy/sample type
             return self._generate_without_specific_strategy(sample_type)
 
-        # Step 4: Select data source uniformly from filtered sources
+        # Step 4: Select data source from filtered sources (using weights if available)
         # Step 5: Filter indices based on strategy requirements
         # Step 6: Sample and generate
         max_attempts = 10  # Limit attempts to prevent infinite loops
         for attempt in range(max_attempts):
-            selected_source = self._select_data_source_uniformly(filtered_sources)
+            selected_source = self._select_data_source(filtered_sources)
             source_indices = self.source_indices.get(selected_source)
 
             if not source_indices:
@@ -282,8 +293,33 @@ class StrategyFirstDataset(BaseDataset):
         # Fallback
         return strategies[0][0]
 
-    def _select_data_source_uniformly(self, allowed_sources: Optional[List[str]] = None) -> str:
-        """Select a data source uniformly from allowed data sources.
+    def _normalize_data_source_weights(self):
+        """Normalize data source weights across all available sources."""
+        available_sources = list(self.source_indices.keys())
+
+        if not available_sources:
+            self.normalized_weights = {}
+            return
+
+        # Get weights for available sources
+        weights = {}
+        total_weight = 0.0
+
+        for source in available_sources:
+            weight = self.data_source_weights.get(source, 1.0)
+            weights[source] = weight
+            total_weight += weight
+
+        # Normalize weights
+        if total_weight > 0:
+            self.normalized_weights = {source: weight / total_weight for source, weight in weights.items()}
+        else:
+            # Equal weights fallback
+            equal_weight = 1.0 / len(available_sources)
+            self.normalized_weights = {source: equal_weight for source in available_sources}
+
+    def _select_data_source(self, allowed_sources: Optional[List[str]] = None) -> str:
+        """Select a data source from allowed data sources, using weights if available.
 
         Args:
             allowed_sources: Optional list of allowed data source names. If None, uses all available sources.
@@ -300,6 +336,40 @@ class StrategyFirstDataset(BaseDataset):
         if not available_sources:
             raise ValueError("No available data sources")
 
+        if len(available_sources) == 1:
+            return available_sources[0]
+
+        # Use weighted selection if weights are provided
+        if self.normalized_weights:
+            # Re-normalize weights for filtered sources
+            filtered_weights = {}
+            total_weight = 0.0
+            for source in available_sources:
+                weight = self.normalized_weights.get(source, 0.0)
+                if weight > 0:
+                    filtered_weights[source] = weight
+                    total_weight += weight
+
+            if total_weight > 0:
+                # Use re-normalized weights for filtered sources
+                prob = random.random()
+                cumulative_prob = 0.0
+
+                for source in available_sources:
+                    weight = filtered_weights.get(source, 0.0)
+                    if weight <= 0:
+                        continue
+                    normalized_weight = weight / total_weight
+                    cumulative_prob += normalized_weight
+                    if prob <= cumulative_prob:
+                        return source
+
+                # Fallback: return last source with positive weight
+                for source in reversed(available_sources):
+                    if filtered_weights.get(source, 0.0) > 0:
+                        return source
+
+        # Uniform selection fallback
         return random.choice(available_sources)
 
     def _filter_data_sources_by_strategy(self, strategy: Optional[DataGenStrat]) -> List[str]:
@@ -377,9 +447,7 @@ class StrategyFirstDataset(BaseDataset):
             filtered = self.tasks_with_both_indices & indices_set
 
             if not filtered:
-                logger.trace(
-                    f"[StrategyFirstDataset] No viable indices after filtering for SUBOPTIMAL strategy"
-                )
+                logger.trace(f"[StrategyFirstDataset] No viable indices after filtering for SUBOPTIMAL strategy")
                 return []
 
             logger.trace(
@@ -395,7 +463,7 @@ class StrategyFirstDataset(BaseDataset):
         self, sample_type: str, item: Dict[str, Any], preferred_strategy: Optional[DataGenStrat] = None
     ):
         """Generate a sample using the appropriate sampler for the sample type.
-        
+
         Args:
             sample_type: The sample type (pref/progress/similarity)
             item: The trajectory item
@@ -442,7 +510,7 @@ class StrategyFirstDataset(BaseDataset):
         """Fallback method to generate sample without specific strategy selection."""
         max_attempts = 10
         for attempt in range(max_attempts):
-            selected_source = self._select_data_source_uniformly()
+            selected_source = self._select_data_source()
             source_indices = self.source_indices.get(selected_source)
 
             if not source_indices:

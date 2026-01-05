@@ -147,6 +147,7 @@ class SimSampler(RFMBaseSampler):
                 return None
             traj_sim, traj_diff = result
             strategy_used = preferred_strategy
+            attempt = 1  # Set attempt for preferred strategy path
         else:
             # Strategy selection with data_source-based filtering and boosting
             strategies = []

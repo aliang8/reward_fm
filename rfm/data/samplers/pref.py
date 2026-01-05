@@ -266,6 +266,7 @@ class PrefSampler(RFMBaseSampler):
                 return None
             rejected_traj, rejected_subsample_strategy, chosen_traj = result
             strategy_used = preferred_strategy
+            attempt = 1  # Set attempt for preferred strategy path
         else:
             # Strategy selection with rebalancing on failure
             strategies = []

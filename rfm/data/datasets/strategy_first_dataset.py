@@ -68,11 +68,35 @@ class StrategyFirstDataset(BaseDataset):
             for i, source in enumerate(sources):
                 self.source_indices[source].append(i)
 
+        # Build set of tasks with optimal trajectories for efficient filtering
+        self.tasks_with_optimal = set(self._combined_indices.get("optimal_by_task", {}).keys())
+        
+        # Build set of tasks with both optimal and suboptimal trajectories for SUBOPTIMAL strategy
+        suboptimal_by_task = self._combined_indices.get("suboptimal_by_task", {})
+        # Only include tasks that have non-empty suboptimal indices
+        tasks_with_suboptimal = {task for task, indices in suboptimal_by_task.items() if indices}
+        self.tasks_with_both = self.tasks_with_optimal & tasks_with_suboptimal
+        
+        # Build set of all indices from tasks with optimal trajectories for efficient filtering
+        task_indices = self._combined_indices.get("task_indices", {})
+        self.optimal_task_indices = set()
+        for task in self.tasks_with_optimal:
+            if task in task_indices:
+                self.optimal_task_indices.update(task_indices[task])
+        
+        # Build set of all indices from tasks with both optimal and suboptimal trajectories
+        self.tasks_with_both_indices = set()
+        for task in self.tasks_with_both:
+            if task in task_indices:
+                self.tasks_with_both_indices.update(task_indices[task])
+
         logger.info(f"StrategyFirstDataset initialized with {len(self.dataset)} trajectories")
         logger.info(
             f"Sample type ratios: pref={self.sample_type_ratio[0]}, progress={self.sample_type_ratio[1]}, sim={self.sample_type_ratio[2]}"
         )
         logger.info(f"Available data sources: {list(self.source_indices.keys())}")
+        logger.info(f"Tasks with optimal trajectories: {len(self.tasks_with_optimal)}")
+        logger.info(f"Tasks with both optimal and suboptimal trajectories: {len(self.tasks_with_both)}")
 
     def __len__(self):
         if self.max_samples is None:
@@ -100,7 +124,7 @@ class StrategyFirstDataset(BaseDataset):
         )
 
         # Step 3: Filter data sources based on strategy requirements
-        filtered_sources = self._filter_data_sources_by_strategy(sample_type, strategy)
+        filtered_sources = self._filter_data_sources_by_strategy(strategy)
         if not filtered_sources:
             logger.trace(
                 f"[StrategyFirstDataset] No viable data sources for strategy {strategy.value if hasattr(strategy, 'value') else strategy}, retrying..."
@@ -109,7 +133,8 @@ class StrategyFirstDataset(BaseDataset):
             return self._generate_without_specific_strategy(sample_type)
 
         # Step 4: Select data source uniformly from filtered sources
-        # Step 5: Sample and generate
+        # Step 5: Filter indices based on strategy requirements
+        # Step 6: Sample and generate
         max_attempts = 10  # Limit attempts to prevent infinite loops
         for attempt in range(max_attempts):
             selected_source = self._select_data_source_uniformly(filtered_sources)
@@ -119,8 +144,16 @@ class StrategyFirstDataset(BaseDataset):
                 logger.trace(f"[StrategyFirstDataset] No indices for source {selected_source}, retrying...")
                 continue
 
-            # Select a trajectory from this source
-            selected_traj_idx = random.choice(source_indices)
+            # Filter indices based on strategy requirements
+            filtered_indices = self._filter_indices_by_strategy(source_indices, selected_source, sample_type, strategy)
+            if not filtered_indices:
+                logger.trace(
+                    f"[StrategyFirstDataset] No viable indices after strategy filtering for source {selected_source}, retrying..."
+                )
+                continue
+
+            # Select a trajectory from filtered indices
+            selected_traj_idx = random.choice(filtered_indices)
             item = self.dataset[selected_traj_idx]
 
             traj_id = item["id"]
@@ -133,7 +166,7 @@ class StrategyFirstDataset(BaseDataset):
                 f"sample_type={sample_type}, strategy={strategy.value if hasattr(strategy, 'value') else strategy}"
             )
 
-            # Generate sample using the selected sampler
+            # Generate sample using the selected sampler with the preferred strategy
             sample = self._generate_sample_for_type(sample_type, item, preferred_strategy=strategy)
             if sample is not None:
                 # Check if the generated sample matches our preferred strategy (if available)
@@ -269,13 +302,10 @@ class StrategyFirstDataset(BaseDataset):
 
         return random.choice(available_sources)
 
-    def _filter_data_sources_by_strategy(
-        self, sample_type: str, strategy: Optional[DataGenStrat]
-    ) -> List[str]:
+    def _filter_data_sources_by_strategy(self, strategy: Optional[DataGenStrat]) -> List[str]:
         """Filter data sources based on strategy requirements.
 
         Args:
-            sample_type: The sample type (pref/progress/similarity)
             strategy: The selected strategy
 
         Returns:
@@ -306,10 +336,71 @@ class StrategyFirstDataset(BaseDataset):
         # Other strategies (REWIND, DIFFERENT_TASK, REVERSE_PROGRESS, etc.) can work with any data source
         return all_sources
 
+    def _filter_indices_by_strategy(
+        self, indices: List[int], data_source: str, sample_type: str, strategy: Optional[DataGenStrat]
+    ) -> List[int]:
+        """Filter indices based on strategy requirements.
+
+        For SUBOPTIMAL strategy (preference or similarity), filters to only include indices from tasks
+        that have optimal trajectories (unless RoboArena).
+
+        Args:
+            indices: List of trajectory indices to filter
+            data_source: The data source name
+            sample_type: The sample type (pref/progress/similarity)
+            strategy: The selected strategy
+
+        Returns:
+            Filtered list of viable indices for the strategy
+        """
+        if strategy is None:
+            return indices
+
+        # Check if this is RoboArena (skip task filtering for RoboArena)
+        is_roboarena = data_source and "roboarena" in str(data_source).lower()
+
+        # For SUBOPTIMAL strategy (preference or similarity), filter to tasks with both optimal and suboptimal trajectories
+        if strategy == DataGenStrat.SUBOPTIMAL and sample_type in ["pref", "similarity"]:
+            if is_roboarena:
+                # RoboArena uses partial_success logic, don't filter by task requirements
+                return indices
+
+            if not self.tasks_with_both:
+                # No tasks with both optimal and suboptimal trajectories, return empty list
+                logger.trace(
+                    f"[StrategyFirstDataset] No tasks with both optimal and suboptimal trajectories available for SUBOPTIMAL strategy"
+                )
+                return []
+
+            # Use pre-computed tasks_with_both_indices and intersect with our current indices
+            indices_set = set(indices)
+            filtered = self.tasks_with_both_indices & indices_set
+
+            if not filtered:
+                logger.trace(
+                    f"[StrategyFirstDataset] No viable indices after filtering for SUBOPTIMAL strategy"
+                )
+                return []
+
+            logger.trace(
+                f"[StrategyFirstDataset] Filtered {len(filtered)}/{len(indices)} indices for SUBOPTIMAL strategy "
+                f"(keeping only tasks with both optimal and suboptimal trajectories)"
+            )
+            return list(filtered)
+
+        # Other strategies don't require task-level filtering
+        return indices
+
     def _generate_sample_for_type(
         self, sample_type: str, item: Dict[str, Any], preferred_strategy: Optional[DataGenStrat] = None
     ):
-        """Generate a sample using the appropriate sampler for the sample type."""
+        """Generate a sample using the appropriate sampler for the sample type.
+        
+        Args:
+            sample_type: The sample type (pref/progress/similarity)
+            item: The trajectory item
+            preferred_strategy: Optional strategy to use (if None, sampler will select its own)
+        """
         data_source = item["data_source"]
         quality_label = item["quality_label"]
 
@@ -330,7 +421,7 @@ class StrategyFirstDataset(BaseDataset):
         if quality_label != "successful" and sample_type != "pref":
             if self.pref_sampler is not None:
                 logger.trace(f"[StrategyFirstDataset] Non-successful quality detected, switching to preference sampler")
-                return self.pref_sampler._generate_sample(item)
+                return self.pref_sampler._generate_sample(item, preferred_strategy=preferred_strategy)
             else:
                 return None
 
@@ -340,12 +431,12 @@ class StrategyFirstDataset(BaseDataset):
                 logger.trace(
                     f"[StrategyFirstDataset] Preference-only data source detected, switching to preference sampler"
                 )
-                return self.pref_sampler._generate_sample(item)
+                return self.pref_sampler._generate_sample(item, preferred_strategy=preferred_strategy)
             else:
                 return None
 
-        # Generate sample using the selected sampler
-        return sampler._generate_sample(item)
+        # Generate sample using the selected sampler with preferred strategy
+        return sampler._generate_sample(item, preferred_strategy=preferred_strategy)
 
     def _generate_without_specific_strategy(self, sample_type: str):
         """Fallback method to generate sample without specific strategy selection."""
@@ -360,7 +451,7 @@ class StrategyFirstDataset(BaseDataset):
             selected_traj_idx = random.choice(source_indices)
             item = self.dataset[selected_traj_idx]
 
-            sample = self._generate_sample_for_type(sample_type, item, preferred_strategy=None)
+            sample = self._generate_sample_for_type(sample_type, item)
             if sample is not None:
                 return self._set_resample_attempts(sample, attempt + 1)
 

@@ -369,7 +369,7 @@ def create_hf_trajectory(
         "id": id,
         "task": task_description,
         "lang_vector": lang_vector,  # Pre-computed language vector
-        "data_source": dataset_name,
+        "data_source": data_source,
         "frames": video_path,
         "is_robot": is_robot,
         "quality_label": quality_label,

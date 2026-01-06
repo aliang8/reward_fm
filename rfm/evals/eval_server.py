@@ -486,20 +486,31 @@ def compute_batch_outputs(
             sim_scores_list = sim_tensor.detach().cpu().flatten().tolist()
 
         num_samples = len(batch_inputs.get("task", []))
-        if num_samples == 0 and sim_scores_list:
-            num_samples = len(sim_scores_list) // 2
+        
+        # Eval server is always in inference mode (only ref_sim, no ref_diff)
+        # In inference mode, batch structure is [ref_sim_0, ref_sim_1, ...]
+        # Assert that we have one score per sample (inference mode)
+        if num_samples > 0:
+            assert len(sim_scores_list) == num_samples, (
+                f"Expected {num_samples} similarity scores (inference mode: one per sample), "
+                f"but got {len(sim_scores_list)} scores. This suggests the collator is not in inference mode."
+            )
+        elif sim_scores_list:
+            # Infer num_samples from list length (should be 1:1 ratio in inference mode)
+            num_samples = len(sim_scores_list)
+            assert num_samples % 2 != 0 or num_samples == 0, (
+                f"Got {num_samples} scores which is even - this suggests training mode structure. "
+                f"Eval server should always be in inference mode (one score per sample)."
+            )
 
         sim_score_ref_sim: List[Optional[float]] = []
-        sim_score_ref_diff: List[Optional[float]] = []
+        
+        # Inference mode: one score per sample (only ref_sim)
         for i in range(num_samples):
-            idx_sim = i * 2
-            idx_diff = idx_sim + 1
-            sim_score_ref_sim.append(sim_scores_list[idx_sim] if idx_sim < len(sim_scores_list) else None)
-            sim_score_ref_diff.append(sim_scores_list[idx_diff] if idx_diff < len(sim_scores_list) else None)
+            sim_score_ref_sim.append(sim_scores_list[i] if i < len(sim_scores_list) else None)
 
         results.update({
             "sim_score_ref_sim": sim_score_ref_sim,
-            "sim_score_ref_diff": sim_score_ref_diff,
             "task": batch_inputs.get("task", []),
             "data_source": batch_inputs.get("data_source", []),
             "data_gen_strategy": batch_inputs.get("data_gen_strategy", []),
@@ -507,7 +518,6 @@ def compute_batch_outputs(
         })
 
         logger.debug(f"sim_score_ref_sim: {sim_score_ref_sim}")
-        logger.debug(f"sim_score_ref_diff: {sim_score_ref_diff}")
         logger.debug(f"task: {batch_inputs.get('task', [])}")
         logger.debug(f"data_source: {batch_inputs.get('data_source', [])}")
         logger.debug(f"data_gen_strategy: {batch_inputs.get('data_gen_strategy', [])}")

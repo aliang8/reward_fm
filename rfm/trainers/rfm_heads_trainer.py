@@ -19,7 +19,7 @@ from transformers import Trainer
 
 from rfm.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
 from rfm.evals.compile_results import compute_eval_metrics
-from rfm.models.utils import ModelOutput, convert_bins_to_continuous
+from rfm.models.utils import ModelOutput, convert_bins_to_continuous, convert_discrete_target_to_continuous
 from rfm.utils.distributed import banner, get_rank, is_rank_0, log_fsdp_diagnostics
 from rfm.utils.logger import Logger, get_logger, log_memory_usage
 from rfm.utils.metrics import compute_spearman_correlation
@@ -2003,7 +2003,7 @@ class RFMHeadsTrainer(Trainer):
             success_labels = success_labels[:, ::2]
 
         if self.config.loss.progress_loss_type.lower() == "discrete":
-            target_progress = convert_bins_to_continuous(target_progress)
+            target_progress = convert_discrete_target_to_continuous(target_progress, num_bins=self.config.loss.progress_discrete_bins)
 
         combined_mask = ((target_progress < min_success) | (success_labels > 0.5)).float()
 
@@ -2239,16 +2239,16 @@ class RFMHeadsTrainer(Trainer):
         # For L1/L2, use predictions as-is
         if loss_type == "discrete":
             progress_pred_for_corr = convert_bins_to_continuous(progress_pred)
-            target_progress = convert_bins_to_continuous(target_progress)
+            target_progress_for_corr = convert_discrete_target_to_continuous(target_progress, num_bins=num_bins)
         else:
             progress_pred_for_corr = progress_pred
-
-        if mask.shape[1] != target_progress.shape[1]:
-            repeated_mask = mask.repeat(1, target_progress.shape[1])
+        
+        if mask.shape[1] != target_progress_for_corr.shape[1]:
+            repeated_mask = mask.repeat(1, target_progress_for_corr.shape[1])
         else:
             repeated_mask = mask
         masked_spearman_corr = compute_spearman_correlation(
-            progress_pred_for_corr, target_progress, aggregate=False, mask=repeated_mask
+            progress_pred_for_corr, target_progress_for_corr, aggregate=False, mask=repeated_mask
         )
         masked_spearman_corr = masked_spearman_corr.detach()
 

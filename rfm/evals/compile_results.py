@@ -250,6 +250,9 @@ def run_reward_alignment_eval_per_trajectory(
         video_path = results_for_trajectory[0]["video_path"]
         partial_success = results_for_trajectory[0].get("partial_success")
 
+        if is_discrete_mode and partial_success is not None:
+            partial_success = convert_bins_to_continuous(partial_success).item()
+
         # Detect if we're in whole trajectory mode (use_frame_steps=False) or frame_steps mode
         is_whole_trajectory_mode = len(results_for_trajectory) == 1
 
@@ -416,11 +419,7 @@ def run_reward_alignment_eval_per_trajectory(
                 if tgt is not None and len(tgt) > 0:
                     if is_discrete_mode:
                         # Target is a discrete bin index, convert to continuous value
-                        tgt_bin = int(
-                            tgt[-1] if last_frame_only else (tgt[-1] if timestep >= len(tgt) - 1 else tgt[timestep])
-                        )
-                        # Convert bin index to continuous value in [0, 1]
-                        all_targets.append(float(tgt_bin) / (num_bins - 1) if num_bins > 1 else 0.0)
+                        all_targets.append(convert_bins_to_continuous(torch.tensor(tgt[-1] if last_frame_only else (tgt[-1] if timestep >= len(tgt) - 1 else tgt[timestep]), dtype=torch.float32)).item())
                     else:
                         all_targets.append(float(tgt[-1]))
                 else:

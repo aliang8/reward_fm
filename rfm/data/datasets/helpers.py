@@ -1,4 +1,4 @@
-from math import e
+from math import e, floor, ceil
 from typing import List, Dict, Tuple, Optional, Union, Any
 import os
 import random
@@ -51,20 +51,39 @@ def convert_continuous_to_discrete_bin(value: float, num_bins: int) -> int:
     """
     return round(min(max(value, 0.0), 1.0) * (num_bins - 1))
 
+def convert_continuous_to_discrete_bin_c51(x, num_bins):
+    """
+    x: (...,) tensor with values in [0, 1]
+    returns: (..., num_bins) probability distribution
+    """
+    b = x * (num_bins - 1)          # fractional bin index
+    l = floor(b) # left bin
+    u = ceil(b) # right bin
 
-def convert_continuous_to_discrete_bins(progress_values: Union[List[float], np.ndarray], num_bins: int) -> List[int]:
-    """Convert continuous progress values in [0, 1] to discrete bins [0, num_bins-1].
+    probs = torch.zeros((num_bins,), dtype=torch.float32)
+
+    probs[l] += (u - b)
+    probs[u] += (b - l)
+
+    # special case: l == u then assign all probability to the left bin
+    if l == u:
+        probs[l] = 1.0
+
+    return probs
+
+def convert_continuous_to_discrete_bins(progress_values: Union[List[float], np.ndarray], num_bins: int) -> List[torch.Tensor]:
+    """Convert continuous progress values in [0, 1] to C51-style discrete probability distributions.
 
     Args:
         progress_values: List or array of continuous progress values in [0, 1]
         num_bins: Number of discrete bins to use
 
     Returns:
-        List of discrete bin indices in [0, num_bins-1]
+        List of probability distributions as torch tensors, each of shape (num_bins,)
     """
     if isinstance(progress_values, np.ndarray):
         progress_values = progress_values.tolist()
-    return [convert_continuous_to_discrete_bin(p, num_bins) for p in progress_values]
+    return [convert_continuous_to_discrete_bin_c51(p, num_bins) for p in progress_values]
 
 
 def compute_success_labels(

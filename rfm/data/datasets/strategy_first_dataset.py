@@ -1,6 +1,6 @@
-import random
 from collections import defaultdict
 from typing import Dict, List, Optional, Any
+from random import Random
 
 from rfm.data.datasets.base import BaseDataset
 from rfm.data.samplers.pref import PrefSampler
@@ -31,8 +31,11 @@ class StrategyFirstDataset(BaseDataset):
     4. Sample trajectory from selected data source and generate sample
     """
 
-    def __init__(self, config, is_evaluation=False, max_samples=None, sampler_kwargs=None, **kwargs):
+    def __init__(self, config, is_evaluation=False, max_samples=None, sampler_kwargs=None, random_seed=42, **kwargs):
         super().__init__(config, is_evaluation, **kwargs)
+
+        # Initialize local random instance for deterministic sampling
+        self._local_random = Random(random_seed)
 
         self.pref_sampler = None
         self.progress_sampler = None
@@ -164,7 +167,7 @@ class StrategyFirstDataset(BaseDataset):
                 continue
 
             # Select a trajectory from filtered indices
-            selected_traj_idx = random.choice(filtered_indices)
+            selected_traj_idx = self._local_random.choice(filtered_indices)
             item = self.dataset[selected_traj_idx]
 
             traj_id = item["id"]
@@ -221,7 +224,7 @@ class StrategyFirstDataset(BaseDataset):
         normalized_probs = [p / total_prob for p in available_probs]
 
         # Select based on weighted random sampling
-        prob = random.random()
+        prob = self._local_random.random()
         cumulative_prob = 0.0
 
         for sample_type, normalized_prob in zip(available_types, normalized_probs):
@@ -282,7 +285,7 @@ class StrategyFirstDataset(BaseDataset):
         normalized_strategies = [(strat, prob / total_prob) for strat, prob in strategies]
 
         # Select based on weighted random sampling
-        prob = random.random()
+        prob = self._local_random.random()
         cumulative_prob = 0.0
 
         for strategy, normalized_prob in normalized_strategies:
@@ -352,7 +355,7 @@ class StrategyFirstDataset(BaseDataset):
 
             if total_weight > 0:
                 # Use re-normalized weights for filtered sources
-                prob = random.random()
+                prob = self._local_random.random()
                 cumulative_prob = 0.0
 
                 for source in available_sources:
@@ -370,7 +373,7 @@ class StrategyFirstDataset(BaseDataset):
                         return source
 
         # Uniform selection fallback
-        return random.choice(available_sources)
+        return self._local_random.choice(available_sources)
 
     def _filter_data_sources_by_strategy(self, strategy: Optional[DataGenStrat]) -> List[str]:
         """Filter data sources based on strategy requirements.
@@ -516,7 +519,7 @@ class StrategyFirstDataset(BaseDataset):
             if not source_indices:
                 continue
 
-            selected_traj_idx = random.choice(source_indices)
+            selected_traj_idx = self._local_random.choice(source_indices)
             item = self.dataset[selected_traj_idx]
 
             sample = self._generate_sample_for_type(sample_type, item)

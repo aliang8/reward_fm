@@ -65,9 +65,9 @@ def convert_continuous_to_discrete_bin_c51(x, num_bins):
     probs[l] += (u - b)
     probs[u] += (b - l)
 
-    # special case if the value is 0 then ceil(b) will be 0 and l will be 0, so we need to manually set the probability of the 0th bin to 1.0
-    if x == 0:
-        probs[0] = 1.0
+    # special case: l == u then assign all probability to the left bin
+    if l == u:
+        probs[l] = 1.0
 
     return probs
 

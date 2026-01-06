@@ -2002,6 +2002,9 @@ class RFMHeadsTrainer(Trainer):
             target_progress = target_progress[:, ::2]
             success_labels = success_labels[:, ::2]
 
+        if self.config.loss.progress_loss_type.lower() == "discrete":
+            target_progress = convert_bins_to_continuous(target_progress)
+
         combined_mask = ((target_progress < min_success) | (success_labels > 0.5)).float()
 
         if progress_loss_mask is not None:
@@ -2163,7 +2166,7 @@ class RFMHeadsTrainer(Trainer):
 
             # Target progress is already discrete bins [0, num_bins-1] from data sampling
             # Convert to long tensor
-            if len(target_bins.shape) == 2:
+            if len(target_progress.shape) == 2:
                 target_bins = target_progress.long()  # [batch_size, seq_len]
                 # Ensure bins are in valid range [0, num_bins-1]
                 target_bins = torch.clamp(target_bins, 0, num_bins - 1)
@@ -2173,6 +2176,7 @@ class RFMHeadsTrainer(Trainer):
                 batch_size, seq_len = target_bins.shape
                 target_bins_flat = target_bins.view(batch_size * seq_len)  # [B*T]
             else:
+                target_bins = target_progress
                 # if we're using C51-style soft bins
                 batch_size, seq_len, num_bins = target_bins.shape 
                 target_bins_flat = target_bins.view(batch_size * seq_len, num_bins)
@@ -2210,7 +2214,10 @@ class RFMHeadsTrainer(Trainer):
 
             # Compute accuracy: compare predicted bins (argmax) with target bins
             pred_bins_flat = torch.argmax(progress_pred_flat, dim=-1)  # [B*T]
-            correct_flat = (pred_bins_flat == target_bins_flat).float()  # [B*T]
+            if len(target_bins_flat.shape) == 2:
+                correct_flat = (pred_bins_flat == torch.argmax(target_bins_flat, dim=-1)).float()  # [B*T]
+            else:
+                correct_flat = (pred_bins_flat == target_bins_flat).float()  # [B*T]
 
             # Apply mask and reshape back
             masked_loss_flat = loss_per_sample_flat * mask_flat  # [B*T]
@@ -2232,6 +2239,7 @@ class RFMHeadsTrainer(Trainer):
         # For L1/L2, use predictions as-is
         if loss_type == "discrete":
             progress_pred_for_corr = convert_bins_to_continuous(progress_pred)
+            target_progress = convert_bins_to_continuous(target_progress)
         else:
             progress_pred_for_corr = progress_pred
 

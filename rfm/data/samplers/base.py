@@ -15,13 +15,11 @@ from rfm.data.datasets.helpers import (
     pad_trajectory_to_max_frames_torch,
     pad_trajectory_to_max_frames_np,
     compute_success_labels,
-    convert_continuous_to_discrete_bins,
-    convert_continuous_to_discrete_bin,
-    convert_continuous_to_discrete_bin_c51,
     create_trajectory_from_dict,
     load_embeddings_from_path,
     create_rewind_trajectory,
     linspace_subsample_frames,
+    convert_continuous_to_discrete_bins,
 )
 from rfm.data.dataset_types import Trajectory
 from rfm.utils.logger import get_logger
@@ -756,16 +754,13 @@ class RFMBaseSampler:
             quality_label=traj.get("quality_label"),
         )
 
-        # Convert partial_success to discrete bins if in discrete mode
         partial_success = traj.get("partial_success")
-        if partial_success is not None and self.config.progress_loss_type.lower() == "discrete":
-            num_bins = self.config.progress_discrete_bins
-            partial_success = convert_continuous_to_discrete_bin(partial_success, num_bins)
 
-        # Convert progress to discrete if needed
+        # Convert partial_success and target_progress to discrete bins if in discrete mode
         if self.config.progress_loss_type.lower() == "discrete":
-            num_bins = self.config.progress_discrete_bins
-            target_progress = convert_continuous_to_discrete_bins(target_progress, num_bins)
+            if partial_success is not None:
+                partial_success = convert_continuous_to_discrete_bins([partial_success], self.config.progress_discrete_bins)[0]
+            target_progress = convert_continuous_to_discrete_bins(target_progress, self.config.progress_discrete_bins)
 
         trajectory = create_trajectory_from_dict(
             traj,

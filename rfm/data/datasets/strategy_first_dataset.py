@@ -157,9 +157,7 @@ class StrategyFirstDataset(BaseDataset):
             return sample
 
         # All attempts failed for the selected sample type, try other samplers as fallback
-        logger.trace(
-            f"[StrategyFirstDataset] Failed to generate {sample_type} sample, trying other samplers..."
-        )
+        logger.trace(f"[StrategyFirstDataset] Failed to generate {sample_type} sample, trying other samplers...")
         return self._try_other_samplers(sample_type)
 
     def _select_sample_type(self) -> str:
@@ -481,14 +479,14 @@ class StrategyFirstDataset(BaseDataset):
         max_attempts: int = 10,
     ):
         """Helper method to try generating a sample with retry logic.
-        
+
         Args:
             sample_type: The sample type to generate (pref/progress/similarity)
             filtered_sources: Optional list of allowed data sources. If None, uses all sources.
             strategy: Optional strategy for filtering indices. If None, no index filtering.
             preferred_strategy: Optional strategy to pass to sampler. If None, sampler selects its own.
             max_attempts: Maximum number of attempts before giving up.
-            
+
         Returns:
             Generated sample if successful, None otherwise.
         """
@@ -547,10 +545,10 @@ class StrategyFirstDataset(BaseDataset):
 
     def _try_other_samplers(self, failed_sample_type: str):
         """Try other available samplers when the selected one fails.
-        
+
         Args:
             failed_sample_type: The sample type that failed
-            
+
         Returns:
             A sample from one of the other samplers, or raises ValueError if all fail
         """
@@ -564,16 +562,12 @@ class StrategyFirstDataset(BaseDataset):
             available_samplers.append("similarity")
 
         if not available_samplers:
-            logger.error(
-                f"[StrategyFirstDataset] No other samplers available after {failed_sample_type} failed"
-            )
+            logger.error(f"[StrategyFirstDataset] No other samplers available after {failed_sample_type} failed")
             raise ValueError(f"Failed to generate {failed_sample_type} sample and no other samplers available")
 
         # Try each available sampler
         for fallback_sample_type in available_samplers:
-            logger.trace(
-                f"[StrategyFirstDataset] Trying fallback sampler: {fallback_sample_type}"
-            )
+            logger.trace(f"[StrategyFirstDataset] Trying fallback sampler: {fallback_sample_type}")
             sample = self._try_generate_sample(
                 sample_type=fallback_sample_type,
                 filtered_sources=None,
@@ -581,22 +575,14 @@ class StrategyFirstDataset(BaseDataset):
                 preferred_strategy=None,
             )
             if sample is not None:
-                logger.trace(
-                    f"[StrategyFirstDataset] Fallback sampler {fallback_sample_type} succeeded"
-                )
+                logger.trace(f"[StrategyFirstDataset] Fallback sampler {fallback_sample_type} succeeded")
                 return sample
 
-            logger.trace(
-                f"[StrategyFirstDataset] Fallback sampler {fallback_sample_type} failed"
-            )
+            logger.trace(f"[StrategyFirstDataset] Fallback sampler {fallback_sample_type} failed")
 
         # All fallback samplers failed
-        logger.error(
-            f"[StrategyFirstDataset] All samplers (including fallbacks) failed"
-        )
-        raise ValueError(
-            f"Failed to generate {failed_sample_type} sample and all fallback samplers also failed"
-        )
+        logger.error(f"[StrategyFirstDataset] All samplers (including fallbacks) failed")
+        raise ValueError(f"Failed to generate {failed_sample_type} sample and all fallback samplers also failed")
 
     def _generate_without_specific_strategy(self, sample_type: str):
         """Fallback method to generate sample without specific strategy selection."""

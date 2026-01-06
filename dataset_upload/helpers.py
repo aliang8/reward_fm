@@ -362,6 +362,7 @@ def create_hf_trajectory(
     preference_group_id = traj_dict.get("preference_group_id", None)
     preference_rank = traj_dict.get("preference_rank", None)
     partial_success = traj_dict.get("partial_success", None)
+    data_source = traj_dict.get("data_source", dataset_name)
 
     # Create dataset trajectory
     trajectory = {

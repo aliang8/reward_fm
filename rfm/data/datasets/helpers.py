@@ -79,7 +79,7 @@ def convert_continuous_to_discrete_bins(progress_values: Union[List[float], np.n
     """
     if isinstance(progress_values, np.ndarray):
         progress_values = progress_values.tolist()
-    return [convert_continuous_to_discrete_bin_c51(p, num_bins) for p in progress_values]
+    return [convert_continuous_to_discrete_bin(p, num_bins) for p in progress_values]
 
 
 def compute_success_labels(

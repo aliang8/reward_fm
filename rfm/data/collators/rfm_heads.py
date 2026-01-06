@@ -18,24 +18,36 @@ from rfm.data.datasets.helpers import DataGenStrat
 from typing import List, Dict, Union
 
 
-def should_compute_progress(quality_label: str, data_gen_strategy: str, data_source: str = None) -> float:
+def should_compute_progress(
+    quality_label: str, data_gen_strategy: str, data_source: str = None, is_chosen: bool = False
+) -> float:
     """
     Check if progress should be computed for a trajectory.
 
     Includes if it is successful or rewound
-    but NOT suboptimal or failure. Also masks out progress if data_source is in preference_only category.
+    but NOT suboptimal or failure. Also masks out progress if data_source is in preference_only category,
+    except when the strategy is DIFFERENT_TASK and it's the rejected trajectory (where progress should still be computed, but will be 0.0).
 
     Args:
         quality_label: The quality label of the trajectory
         data_gen_strategy: The data generation strategy
         data_source: The data source name (optional)
+        is_chosen: Whether this is the chosen trajectory (traj A) in a preference sample
 
     Returns:
         1.0 if progress should be computed, 0.0 otherwise
     """
     # Mask out progress if data_source is in preference_only category
     if data_source is not None and is_preference_only_ds(data_source):
-        return 0.0
+        # For preference_only datasets:
+        # - If it's the chosen trajectory, always mask out (don't compute)
+        # - If it's the rejected trajectory with DIFFERENT_TASK strategy, still compute (it will be 0.0)
+        if is_chosen:
+            return 0.0
+        elif data_gen_strategy == DataGenStrat.DIFFERENT_TASK.value:
+            return 1.0
+        else:
+            return 0.0
 
     if quality_label in ["suboptimal", "failure", "failed"]:
         return 0.0
@@ -551,6 +563,7 @@ class RFMBatchCollator(BaseCollator):
                 sample.chosen_trajectory.quality_label,
                 DataGenStrat.FORWARD_PROGRESS.value,
                 data_source=sample.chosen_trajectory.data_source,
+                is_chosen=True,
             )
             for sample in preference_samples
         ]
@@ -559,6 +572,7 @@ class RFMBatchCollator(BaseCollator):
                 sample.rejected_trajectory.quality_label,
                 sample.data_gen_strategy,
                 data_source=sample.rejected_trajectory.data_source,
+                is_chosen=False,
             )
             for sample in preference_samples
         ]

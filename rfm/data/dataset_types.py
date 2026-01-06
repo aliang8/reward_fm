@@ -67,7 +67,7 @@ class SimilaritySample(BaseModel):
     # Trajectories
     ref_trajectory: Trajectory  # o^ref
     sim_trajectory: Trajectory  # Similar trajectory
-    diff_trajectory: Trajectory  # Different trajectory
+    diff_trajectory: Optional[Trajectory] = None  # Different trajectory (optional in inference mode)
 
     sample_type: str = "similarity"
     data_gen_strategy: Optional[str] = None

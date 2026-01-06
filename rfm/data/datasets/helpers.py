@@ -65,6 +65,10 @@ def convert_continuous_to_discrete_bin_c51(x, num_bins):
     probs[l] += (u - b)
     probs[u] += (b - l)
 
+    # special case if the value is 0 then ceil(b) will be 0 and l will be 0, so we need to manually set the probability of the 0th bin to 1.0
+    if x == 0:
+        probs[0] = 1.0
+
     return probs
 
 def convert_continuous_to_discrete_bins(progress_values: Union[List[float], np.ndarray], num_bins: int) -> List[torch.Tensor]:

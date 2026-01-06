@@ -1177,6 +1177,8 @@ def run_policy_ranking_eval(
         if use_partial_success:
             if metadata["partial_success"] is None:
                 continue
+            if is_discrete_mode:
+                metadata["partial_success"] = convert_bins_to_continuous(metadata["partial_success"]).item()
             all_partial_successes.append(metadata["partial_success"])
         else:
             all_quality_labels.append(metadata["quality_label"])

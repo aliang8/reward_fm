@@ -56,7 +56,7 @@ def _reward_to_partial_success(reward: int) -> float:
     return (reward - 1) / 4.0
 
 
-def _make_traj(video_path: str, task: str, reward: int) -> dict[str, Any]:
+def _make_traj(video_path: str, task: str, reward: int, dataset_name: str) -> dict[str, Any]:
     """Create a trajectory dictionary from RoboReward metadata."""
     partial_success = _reward_to_partial_success(reward)
     
@@ -67,7 +67,7 @@ def _make_traj(video_path: str, task: str, reward: int) -> dict[str, Any]:
     traj["is_robot"] = True
     traj["quality_label"] = "successful" if partial_success == 1.0 else "failure"
     traj["partial_success"] = partial_success
-    traj["data_source"] = "roboreward"
+    traj["data_source"] = f"roboreward_{dataset_name}"
     traj["preference_group_id"] = None
     traj["preference_rank"] = None
     return traj
@@ -143,8 +143,13 @@ def load_roboreward_dataset(dataset_path: str, dataset_name: str) -> dict[str, l
                 print(f"Warning: Video file not found: {video_path}")
                 continue
 
+            dataset_name = file_name.split("/")[0]
+
+            if dataset_name == "robo_arena":
+                dataset_name = "roboarena"
+
             # Create trajectory
-            traj = _make_traj(str(video_path), task, reward)
+            traj = _make_traj(str(video_path), task, reward, dataset_name)
             task_data.setdefault(task, []).append(traj)
 
     print(f"Loaded {len(task_data)} unique tasks from RoboReward {split} split")

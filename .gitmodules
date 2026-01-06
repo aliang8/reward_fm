@@ -4,3 +4,6 @@
 [submodule "deps/libero/LIBERO"]
 	path = deps/libero/LIBERO
 	url = https://github.com/Lifelong-Robot-Learning/LIBERO.git
+[submodule "deps/opengvl"]
+	path = deps/opengvl
+	url = https://github.com/aliang8/opengvl_rfm.git

@@ -382,9 +382,9 @@ def run_reward_alignment_eval_per_trajectory(
                             if tgt is not None and len(tgt) > 0:
                                 # Target is already a discrete bin index
                                 if timestep >= len(tgt) - 1:
-                                    all_target_bins.append(int(tgt[-1]))
+                                    all_target_bins.append(tgt[-1])
                                 else:
-                                    all_target_bins.append(int(tgt[indx]))
+                                    all_target_bins.append(tgt[indx])
                         # For visualization: convert logits to continuous value
                         if last_frame_only:
                             continuous_pred = convert_bins_to_continuous(
@@ -484,8 +484,9 @@ def run_reward_alignment_eval_per_trajectory(
             if is_discrete_mode and all_pred_logits and all_target_bins:
                 # Discrete mode: compute cross-entropy loss between logits and target bins
                 pred_logits_tensor = torch.tensor(np.array(all_pred_logits), dtype=torch.float32)  # [seq_len, num_bins]
-                target_bins_tensor = torch.tensor(all_target_bins, dtype=torch.long)  # [seq_len]
-                target_bins_tensor = torch.clamp(target_bins_tensor, 0, num_bins - 1)
+                target_bins_tensor = torch.tensor(all_target_bins)  # [seq_len, num_bins] or [seq_len]
+                if len(target_bins_tensor.shape) == 1:
+                    target_bins_tensor = target_bins_tensor.long()
                 loss_per_timestep = F.cross_entropy(pred_logits_tensor, target_bins_tensor, reduction="none")
                 traj_loss = float(loss_per_timestep.mean().item())
             else:

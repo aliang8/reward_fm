@@ -18,11 +18,7 @@ logger = get_logger()
 class ProgressSampler(RFMBaseSampler):
     """Data generator for progress samples."""
 
-    def __init__(
-        self,
-        is_evaluation=False,
-        **kwargs,
-    ):
+    def __init__(self, is_evaluation=False, **kwargs):
         super().__init__(**kwargs)
 
     def _generate_sample(self, item: Dict[str, Any], preferred_strategy: Optional[DataGenStrat] = None):

@@ -61,6 +61,7 @@ eval_datasets:
   - "jesbu1/utd_so101_clean_policy_ranking_wrist"
   - "jesbu1/usc_koch_human_robot_paired"
   - "jesbu1/usc_koch_p_ranking_rfm"
+  - "jesbu1/roboreward_rfm"
 
 eval_subsets:
   - ["libero256_10", "libero256_goal", "libero256_object", "libero256_spatial"]
@@ -81,6 +82,7 @@ eval_subsets:
   - ["utd_so101_clean_policy_ranking_wrist"]
   - ["usc_koch_human_robot_paired_human", "usc_koch_human_robot_paired_robot"]
   - ["usc_koch_p_ranking_all"]
+  - ["roboreward_train", "roboreward_val", "roboreward_test"]
 
 
 max_frames_for_preprocessing: 32

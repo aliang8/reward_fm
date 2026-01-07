@@ -11,6 +11,7 @@ from rfm.data.dataset_types import PreferenceSample, Trajectory
 from rfm.data.samplers.base import RFMBaseSampler
 from rfm.data.datasets.helpers import (
     DataGenStrat,
+    convert_continuous_to_discrete_bins,
 )
 from rfm.utils.logger import get_logger, rank_0_info, trace
 from rfm.utils.timer import timer
@@ -350,6 +351,8 @@ class PrefSampler(RFMBaseSampler):
             DataGenStrat.DIFFERENT_TASK_INSTRUCTION,
         ]:
             rejected_trajectory.target_progress = [0.0] * len(rejected_trajectory.target_progress)
+            if self.config.progress_loss_type.lower() == "discrete":
+                rejected_trajectory.target_progress = convert_continuous_to_discrete_bins(rejected_trajectory.target_progress, self.config.progress_discrete_bins)
 
         # Create preference sample structure
         sample = PreferenceSample(

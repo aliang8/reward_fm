@@ -8,6 +8,7 @@ from rfm.data.samplers.base import RFMBaseSampler
 from rfm.data.datasets.helpers import (
     DataGenStrat,
     load_embeddings_from_path,
+    convert_continuous_to_discrete_bins,
 )
 from rfm.utils.distributed import rank_0_print
 from rfm.utils.logger import get_logger
@@ -154,6 +155,8 @@ class ProgressSampler(RFMBaseSampler):
             progress_traj.lang_vector = traj["lang_vector"]
             progress_traj.task = traj["task"]
             progress_traj.target_progress = [0.0] * len(progress_traj.target_progress)
+            if self.config.progress_loss_type.lower() == "discrete":
+                progress_traj.target_progress = convert_continuous_to_discrete_bins(progress_traj.target_progress, self.config.progress_discrete_bins)
 
         strategy_value = strategy_used.value if isinstance(strategy_used, DataGenStrat) else strategy_used
         sample = ProgressSample(

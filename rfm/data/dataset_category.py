@@ -277,6 +277,7 @@ DATA_SOURCE_CATEGORY = {
     "preference_only": [
         "oxe_bc_z",
         "oxe_dlr_edan_shared_control_converted_externally_to_rlds",
+        "roboreward_dlr_edan_shared_control_converted_externally_to_rlds",
         "roboarena",
         "auto_eval_rfm",
         # "humanoid_everyday_rfm",

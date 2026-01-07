@@ -729,11 +729,6 @@ class RFMBaseSampler:
             quality_label=traj.get("quality_label"),
         )
 
-        # Convert partial_success to discrete bins if in discrete mode
-        if partial_success is not None and self.config.progress_loss_type.lower() == "discrete":
-            num_bins = self.config.progress_discrete_bins
-            partial_success = convert_continuous_to_discrete_bins(partial_success, num_bins)
-
         # Convert partial_success and target_progress to discrete bins if in discrete mode
         if self.config.progress_loss_type.lower() == "discrete":
             if partial_success is not None:

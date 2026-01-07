@@ -551,9 +551,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                         if result:
                             eval_results.append(result)
                     else:
-                        logger.warning(
-                            f"Sample type mismatch: reward_model={cfg.reward_model}, sample={type(sample)}"
-                        )
+                        logger.warning(f"Sample type mismatch: reward_model={cfg.reward_model}, sample={type(sample)}")
 
             logger.info(f"Processed {len(eval_results)} samples from {dataset_name}")
 

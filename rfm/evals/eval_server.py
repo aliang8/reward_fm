@@ -486,7 +486,7 @@ def compute_batch_outputs(
             sim_scores_list = sim_tensor.detach().cpu().flatten().tolist()
 
         num_samples = len(batch_inputs.get("task", []))
-        
+
         # Eval server is always in inference mode (only ref_sim, no ref_diff)
         # In inference mode, batch structure is [ref_sim_0, ref_sim_1, ...]
         # Assert that we have one score per sample (inference mode)
@@ -504,7 +504,7 @@ def compute_batch_outputs(
             )
 
         sim_score_ref_sim: List[Optional[float]] = []
-        
+
         # Inference mode: one score per sample (only ref_sim)
         for i in range(num_samples):
             sim_score_ref_sim.append(sim_scores_list[i] if i < len(sim_scores_list) else None)

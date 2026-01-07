@@ -27,6 +27,7 @@ from qwen_vl_utils import process_vision_info
 
 try:
     from unsloth import FastVisionModel
+
     HAS_UNSLOTH = True
 except ImportError:
     HAS_UNSLOTH = False
@@ -98,9 +99,7 @@ Rubric for end-of-episode progress (judge only the final state without time limi
 
 Task: {task}
 
-ANSWER:""".format(
-            task=task_description
-        )
+ANSWER:""".format(task=task_description)
         return prompt
 
     def _parse_score(self, output_text: str) -> Optional[int]:
@@ -143,9 +142,7 @@ ANSWER:""".format(
         # Linear mapping: 1 -> 0.0, 5 -> 1.0
         return (score - 1) / 4.0
 
-    def compute_progress(
-        self, frames_array: np.ndarray, task_description: str = ""
-    ) -> List[Optional[float]]:
+    def compute_progress(self, frames_array: np.ndarray, task_description: str = "") -> List[Optional[float]]:
         """
         Compute progress prediction for a frame sequence using RoboReward baseline.
 
@@ -200,9 +197,7 @@ ANSWER:""".format(
             ]
 
             # Apply chat template with fps=1 to match video FPS
-            text = self.processor.apply_chat_template(
-                message, tokenize=False, add_generation_prompt=True, fps=1
-            )
+            text = self.processor.apply_chat_template(message, tokenize=False, add_generation_prompt=True, fps=1)
 
             # Process vision info - need return_video_kwargs=True to get 3 return values
             is_qwen3 = "Qwen3" in self.model_path or "qwen3" in self.model_path.lower()
@@ -211,7 +206,7 @@ ANSWER:""".format(
                 return_video_kwargs=True,
                 return_video_metadata=is_qwen3,
             )
-            
+
             # Ensure video file still exists - process_vision_info may have created its own processing
             # but we need to keep our file until after processor() is called
             assert video_path.exists(), f"Video file was deleted before processing: {video_path}"
@@ -288,6 +283,5 @@ ANSWER:""".format(
             # Clean up temporary directory and files after all processing is complete
             # This ensures the video file exists during process_vision_info and processor calls
             shutil.rmtree(tmpdir, ignore_errors=True)
-        
-        return result
 
+        return result

@@ -2143,8 +2143,7 @@ class RFMHeadsTrainer(Trainer):
             target_progress = target_progress[:, ::2]
             mask = mask[:, ::2]
 
-        # If predict_last_frame_progress is True, only compute loss for the last frame
-        last_frame_mask = None
+        # Apply config-based logic for predict_last_frame_progress if enabled
         if self.config.loss.predict_last_frame_progress:
             # Create a mask that only selects the last frame for each sequence
             last_frame_mask = torch.zeros_like(target_progress, dtype=torch.float32)

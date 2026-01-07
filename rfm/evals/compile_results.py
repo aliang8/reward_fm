@@ -187,7 +187,7 @@ def run_reward_alignment_eval_per_trajectory(
     """
     # Check if this is RoboArena (uses partial_success instead of quality_label)
     use_partial_success = data_source and "roboarena" in str(data_source).lower()
-    
+
     # Check if this is RoboReward (needs MAE metric)
     is_roboreward = data_source and "roboreward" in str(data_source).lower()
 
@@ -218,7 +218,7 @@ def run_reward_alignment_eval_per_trajectory(
 
     # Collect success_acc for binary success accuracy
     success_acc_list = []
-    
+
     # Collect bins for MAE computation (RoboReward)
     pred_bins_mae = []
     gt_bins_mae = []
@@ -484,18 +484,18 @@ def run_reward_alignment_eval_per_trajectory(
             final_reward = float(last_preds[-1])
             delta = abs(final_reward - partial_success)
             roboarena_deltas.append(delta)
-        
+
         # For RoboReward, collect bins for MAE computation
         if is_roboreward and partial_success is not None:
             # Get last predicted reward (final reward)
             final_predicted_reward = float(last_preds[-1])
-            
+
             # Convert predicted reward to bin (1-5)
             pred_bin = _convert_reward_to_bin(final_predicted_reward)
-            
+
             # Convert partial_success to bin (0->1, 1->5)
             gt_bin = _convert_partial_success_to_bin(partial_success)
-            
+
             pred_bins_mae.append(pred_bin)
             gt_bins_mae.append(gt_bin)
 
@@ -630,7 +630,7 @@ def run_reward_alignment_eval_per_trajectory(
     # Add RoboArena delta metric if available
     if use_partial_success and roboarena_deltas:
         metrics["roboarena_abs_delta"] = float(np.mean(roboarena_deltas))
-    
+
     # Add RoboReward MAE metric if available
     if is_roboreward and pred_bins_mae and gt_bins_mae:
         mae = _compute_mae_between_bins(pred_bins_mae, gt_bins_mae)
@@ -641,71 +641,73 @@ def run_reward_alignment_eval_per_trajectory(
 
 def _convert_reward_to_bin(reward: float, min_bin: int = 1, max_bin: int = 5) -> int:
     """Convert a continuous reward value (0-1) to a discrete bin (1-5).
-    
+
     Args:
         reward: Continuous reward value in [0, 1]
         min_bin: Minimum bin value (default: 1)
         max_bin: Maximum bin value (default: 5)
-    
+
     Returns:
         Discrete bin value in [min_bin, max_bin]
     """
     # Clamp reward to [0, 1]
     reward = np.clip(reward, 0.0, 1.0)
-    
+
     # Map [0, 1] to [min_bin, max_bin]
     # Linear mapping: 0 -> min_bin, 1 -> max_bin
     bin_value = int(np.round(reward * (max_bin - min_bin) + min_bin))
-    
+
     # Ensure bin is within valid range
     return int(np.clip(bin_value, min_bin, max_bin))
 
 
 def _convert_partial_success_to_bin(partial_success: float, min_bin: int = 1, max_bin: int = 5) -> int:
     """Convert partial_success value (0-1) to a discrete bin (1-5).
-    
+
     Maps 0 -> 1 and 1 -> 5.
-    
+
     Args:
         partial_success: Partial success value in [0, 1]
         min_bin: Minimum bin value (default: 1)
         max_bin: Maximum bin value (default: 5)
-    
+
     Returns:
         Discrete bin value in [min_bin, max_bin]
     """
     # Clamp partial_success to [0, 1]
     partial_success = np.clip(partial_success, 0.0, 1.0)
-    
+
     # Map [0, 1] to [min_bin, max_bin]
     # Linear mapping: 0 -> min_bin, 1 -> max_bin
     bin_value = int(np.round(partial_success * (max_bin - min_bin) + min_bin))
-    
+
     # Ensure bin is within valid range
     return int(np.clip(bin_value, min_bin, max_bin))
 
 
 def _compute_mae_between_bins(pred_bins: List[int], gt_bins: List[int]) -> float:
     """Compute Mean Absolute Error (MAE) between predicted bins and ground truth bins.
-    
+
     MAE(4, 5) = 1, MAE(3, 5) = 2, etc.
-    
+
     Args:
         pred_bins: List of predicted bin values
         gt_bins: List of ground truth bin values
-    
+
     Returns:
         Mean Absolute Error (float)
     """
     if len(pred_bins) != len(gt_bins):
-        raise ValueError(f"Length mismatch: pred_bins has {len(pred_bins)} elements, gt_bins has {len(gt_bins)} elements")
-    
+        raise ValueError(
+            f"Length mismatch: pred_bins has {len(pred_bins)} elements, gt_bins has {len(gt_bins)} elements"
+        )
+
     if len(pred_bins) == 0:
         return 0.0
-    
+
     # Compute absolute differences
     abs_diffs = [abs(pred - gt) for pred, gt in zip(pred_bins, gt_bins)]
-    
+
     # Return mean
     return float(np.mean(abs_diffs))
 

@@ -19,7 +19,7 @@ from sklearn.metrics import average_precision_score
 from rfm.data.datasets.helpers import load_frames_from_npz
 from rfm.evals.eval_metrics_utils import compute_pearson, compute_spearman
 from rfm.evals.eval_viz_utils import create_combined_progress_success_plot
-from rfm.models.utils import convert_bins_to_continuous
+from rfm.models.utils import convert_bins_to_continuous, convert_discrete_target_to_continuous 
 
 
 def compute_eval_metrics(
@@ -257,6 +257,15 @@ def run_reward_alignment_eval_per_trajectory(
         video_path = results_for_trajectory[0]["video_path"]
         partial_success = results_for_trajectory[0].get("partial_success")
 
+        if is_discrete_mode and partial_success is not None:
+            if isinstance(partial_success, torch.Tensor):
+                # [num_bins] -> [1, 1, num_bins]
+                partial_success_tensor = partial_success[None, None] # to make it 3-dim for convert_discrete_target_to_continuous
+            else:
+                # number -> [1, 1]
+                partial_success_tensor = torch.tensor([partial_success], dtype=torch.float32).unsqueeze(0)
+            partial_success = convert_discrete_target_to_continuous(partial_success_tensor, num_bins=num_bins).item()
+
         # Detect if we're in whole trajectory mode (use_frame_steps=False) or frame_steps mode
         is_whole_trajectory_mode = len(results_for_trajectory) == 1
 
@@ -301,7 +310,9 @@ def run_reward_alignment_eval_per_trajectory(
                             all_pred_logits = pred_array.tolist()
                         else:
                             # Already continuous (shouldn't happen in discrete mode, but handle it)
-                            all_preds = pred_array.tolist()
+                            #all_preds = pred_array.tolist()
+                            print("Warning: Pred array should not be continuous in discrete mode, breakpointing to debug")
+                            breakpoint()
                         if tgt is not None and len(tgt) > 0:
                             tgt_array = np.array(tgt)
                             all_target_bins = [int(t) for t in tgt_array]
@@ -389,9 +400,9 @@ def run_reward_alignment_eval_per_trajectory(
                             if tgt is not None and len(tgt) > 0:
                                 # Target is already a discrete bin index
                                 if timestep >= len(tgt) - 1:
-                                    all_target_bins.append(int(tgt[-1]))
+                                    all_target_bins.append(tgt[-1])
                                 else:
-                                    all_target_bins.append(int(tgt[indx]))
+                                    all_target_bins.append(tgt[indx])
                         # For visualization: convert logits to continuous value
                         if last_frame_only:
                             continuous_pred = convert_bins_to_continuous(
@@ -423,11 +434,23 @@ def run_reward_alignment_eval_per_trajectory(
                 if tgt is not None and len(tgt) > 0:
                     if is_discrete_mode:
                         # Target is a discrete bin index, convert to continuous value
-                        tgt_bin = int(
-                            tgt[-1] if last_frame_only else (tgt[-1] if timestep >= len(tgt) - 1 else tgt[timestep])
-                        )
-                        # Convert bin index to continuous value in [0, 1]
-                        all_targets.append(float(tgt_bin) / (num_bins - 1) if num_bins > 1 else 0.0)
+                        # Convert discrete bin target to a continuous value for logging/metrics
+                        if last_frame_only:
+                            target_bin = tgt[-1]
+                        else:
+                            if timestep >= len(tgt) - 1:
+                                target_bin = tgt[-1]
+                            else:
+                                target_bin = tgt[timestep]
+                        # convert target_bin to tensor of shape (1, ...)
+                        if isinstance(target_bin, torch.Tensor):
+                            # [num_bins] -> [1, 1, num_bins]
+                            target_bin_tensor = target_bin[None, None] # to make it 3-dim for convert_discrete_target_to_continuous
+                        else:
+                            # number -> [1, 1]
+                            target_bin_tensor = torch.tensor([target_bin]).unsqueeze(0)
+                        continuous_target = convert_discrete_target_to_continuous(target_bin_tensor, num_bins=num_bins).item()
+                        all_targets.append(continuous_target)
                     else:
                         all_targets.append(float(tgt[-1]))
                 else:
@@ -505,8 +528,9 @@ def run_reward_alignment_eval_per_trajectory(
             if is_discrete_mode and all_pred_logits and all_target_bins:
                 # Discrete mode: compute cross-entropy loss between logits and target bins
                 pred_logits_tensor = torch.tensor(np.array(all_pred_logits), dtype=torch.float32)  # [seq_len, num_bins]
-                target_bins_tensor = torch.tensor(all_target_bins, dtype=torch.long)  # [seq_len]
-                target_bins_tensor = torch.clamp(target_bins_tensor, 0, num_bins - 1)
+                target_bins_tensor = torch.tensor(all_target_bins)  # [seq_len, num_bins] or [seq_len]
+                if len(target_bins_tensor.shape) == 1:
+                    target_bins_tensor = target_bins_tensor.long()
                 loss_per_timestep = F.cross_entropy(pred_logits_tensor, target_bins_tensor, reduction="none")
                 traj_loss = float(loss_per_timestep.mean().item())
             else:
@@ -1278,6 +1302,14 @@ def run_policy_ranking_eval(
         if use_partial_success:
             if metadata["partial_success"] is None:
                 continue
+            if is_discrete_mode:
+                if isinstance(metadata["partial_success"], torch.Tensor):
+                    # [num_bins] -> [1, 1, num_bins]
+                    partial_success_tensor = metadata["partial_success"][None, None] # to make it 3-dim for convert_discrete_target_to_continuous
+                else:
+                    # number -> [1, 1]
+                    partial_success_tensor = torch.tensor([metadata["partial_success"]], dtype=torch.float32).unsqueeze(0)
+                metadata["partial_success"] = convert_discrete_target_to_continuous(partial_success_tensor, num_bins=num_bins).item()
             all_partial_successes.append(metadata["partial_success"])
         else:
             all_quality_labels.append(metadata["quality_label"])

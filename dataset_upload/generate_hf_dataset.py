@@ -19,6 +19,7 @@ from tqdm import tqdm
 
 import datasets
 from datasets import Dataset
+
 # from rfm.data.dataset_types import Trajectory  # not needed, just type hint
 from dataset_upload.helpers import (
     create_hf_trajectory,
@@ -998,6 +999,12 @@ def main(cfg: GenerateConfig):
 
         print(f"Loading HAND_paired dataset from: {cfg.dataset.dataset_path}")
         task_data = load_hand_paired_dataset(cfg.dataset.dataset_path, cfg.dataset.dataset_name)
+        trajectories = flatten_task_data(task_data)
+    elif "roboreward" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.roboreward_loader import load_roboreward_dataset
+
+        print(f"Loading RoboReward dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_roboreward_dataset(cfg.dataset.dataset_path, cfg.dataset.dataset_name)
         trajectories = flatten_task_data(task_data)
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")

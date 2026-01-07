@@ -7,3 +7,6 @@
 [submodule "opengvl"]
 	path = opengvl
 	url = https://github.com/aliang8/opengvl_rfm.git
+[submodule "rewardeval_ui"]
+	path = rewardeval_ui
+	url = https://huggingface.co/spaces/rewardfm/rewardeval_ui

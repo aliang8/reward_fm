@@ -16,6 +16,7 @@ from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilarityS
 from rfm.data.dataset_category import is_preference_only_ds
 from rfm.data.datasets.helpers import DataGenStrat
 from typing import List, Dict, Union
+from rfm.models.utils import convert_discrete_target_to_continuous
 
 
 def should_compute_progress(
@@ -99,7 +100,7 @@ def create_padding_mask(frames_shapes: torch.Tensor, max_length: int = None) -> 
 
 
 def create_predict_last_frame_mask(
-    partial_success: float | None, target_progress: list[float] | None
+    partial_success: float | None | list[float], target_progress: list[float] | None
 ) -> list[float]:
     """
     Create predict_last_frame mask for trajectories with partial_success.
@@ -124,20 +125,24 @@ def create_predict_last_frame_mask(
         return [1.0] * len(target_progress) if target_progress else []
 
     # Only mask if partial_success < 1.0 (not full success)
-    if abs(partial_success - 1.0) < 1e-6:
-        # Full success: return all-ones mask (don't mask anything)
-        return [1.0] * len(target_progress)
+    if partial_success is not None:
+        if isinstance(partial_success, torch.Tensor) or partial_success > 1: # discrete mode for both C51 and single index discrete targets
+            partial_success = convert_discrete_target_to_continuous(partial_success[None, None], num_bins=partial_success.shape[-1]).item()
+            target_progress = [convert_discrete_target_to_continuous(p[None, None], num_bins=p.shape[-1]).item() for p in target_progress]
+        if abs(partial_success - 1.0) < 1e-6:
+            # Full success: return all-ones mask (don't mask anything)
+            return [1.0] * len(target_progress)
 
-    # Check which frames have partial_success as their target_progress value
-    # Use approximate equality to handle floating point precision issues
-    mask = []
-    for progress_val in target_progress:
-        # Check if this frame's progress equals partial_success (within tolerance)
-        # This handles both continuous and discrete (binned) values
-        if abs(progress_val - partial_success) < 1e-6:
-            mask.append(1.0)
-        else:
-            mask.append(0.0)
+        # Check which frames have partial_success as their target_progress value
+        # Use approximate equality to handle floating point precision issues
+        mask = []
+        for progress_val in target_progress:
+            # Check if this frame's progress equals partial_success (within tolerance)
+            # This handles both continuous and discrete (binned) values
+            if abs(progress_val - partial_success) < 1e-6:
+                mask.append(1.0)
+            else:
+                mask.append(0.0)
 
     return mask
 

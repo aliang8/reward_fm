@@ -106,8 +106,8 @@ data:
 
   progress_pred_type: "absolute_first_frame" # "absolute_first_frame", "relative_first_frame", or "absolute_wrt_total_frames"
 
-  # RoboArena partial success threshold
-  roboarena_partial_success_threshold: 0.2  # Minimum difference in partial_success between chosen and rejected trajectories for RoboArena
+  # Partial success threshold (for datasets with partial_success like RoboArena and RoboReward)
+  partial_success_threshold: 0.2  # Minimum difference in partial_success between chosen and rejected trajectories
 
   # Success label parameters
   min_success: 0.5  # Progress threshold below which success label pred is applied, anything in between min and max is not used for success pred loss unless succ = 1 for those frames.

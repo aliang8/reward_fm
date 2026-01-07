@@ -17,7 +17,6 @@ from rfm.data.datasets.helpers import (
     compute_success_labels,
     create_trajectory_from_dict,
     load_embeddings_from_path,
-    create_rewind_trajectory,
     linspace_subsample_frames,
     convert_continuous_to_discrete_bins,
 )
@@ -160,7 +159,7 @@ class RFMBaseSampler:
     def _get_same_task_suboptimal(self, ref_traj: dict) -> dict | None:
         """Get suboptimal trajectory from same task.
 
-        For RoboArena trajectories, uses partial_success logic instead of quality_label logic.
+        For trajectories with partial_success, uses partial_success logic instead of quality_label logic.
 
         Args:
             ref_traj: Reference trajectory
@@ -168,16 +167,14 @@ class RFMBaseSampler:
         Returns:
             Suboptimal trajectory dict or None if not available
         """
-        # Check if this is a RoboArena trajectory (has partial_success and data_source contains "roboarena")
-        data_source = ref_traj.get("data_source", "")
-        partial_success = ref_traj.get("partial_success")
-        is_roboarena = partial_success is not None and data_source and "roboarena" in str(data_source).lower()
+        # Check if this trajectory uses partial_success
+        use_partial_success = ref_traj.get("partial_success") is not None
 
-        if is_roboarena:
-            # For RoboArena, use partial_success logic
+        if use_partial_success:
+            # For trajectories with partial_success, use partial_success logic
             return self._get_different_partial_success_traj(ref_traj)
 
-        # For non-RoboArena, use the standard suboptimal logic
+        # For trajectories without partial_success, use the standard suboptimal logic
         task_name = ref_traj["task"]
         same_task_suboptimal_indices = self.suboptimal_by_task.get(task_name, [])
         if not same_task_suboptimal_indices:
@@ -397,7 +394,7 @@ class RFMBaseSampler:
         return paired_traj
 
     def _get_different_partial_success_traj(self, ref_traj: dict) -> dict | None:
-        """Get trajectory from same task with different partial_success (for RoboArena).
+        """Get trajectory from same task with different partial_success.
 
         Finds trajectories with either higher or lower partial_success than the reference,
         using absolute difference for threshold checking.
@@ -418,8 +415,8 @@ class RFMBaseSampler:
             )
             return None
 
-        # Get minimum threshold from config (default to 0.0 if not set)
-        min_threshold = self.config.roboarena_partial_success_threshold
+        # Get minimum threshold from config
+        min_threshold = getattr(self.config, "partial_success_threshold", 0.2)
 
         # Get all trajectories from the same task
         same_task_indices = self.task_indices.get(task_name, [])
@@ -472,33 +469,6 @@ class RFMBaseSampler:
         logger.trace(
             f"[BASE SAMPLER] _get_different_partial_success_traj: Found trajectory {result.get('id', 'unknown')} with partial_success {result_partial_success} ({direction} than {ref_partial_success}, abs diff: {abs(ref_partial_success - result_partial_success):.3f}, threshold: {min_threshold})"
         )
-        return result
-
-    def _get_rewound_traj(self, ref_traj: dict) -> Trajectory:
-        """Get rewound trajectory from reference trajectory.
-
-        Args:
-            ref_traj: Reference trajectory
-
-        Returns:
-            Rewound trajectory as Trajectory object (already processed)
-        """
-        traj_id = ref_traj.get("id", "unknown")
-        logger.trace(f"[BASE SAMPLER] _get_rewound_traj: Creating rewound trajectory for ID: {traj_id}")
-
-        ds_key = ref_traj["data_source"]
-        success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
-        result = create_rewind_trajectory(
-            ref_traj,
-            max_frames=self.config.max_frames,
-            use_embeddings=self.config.load_embeddings,
-            progress_pred_type=getattr(self.config, "progress_pred_type", "absolute"),
-            success_cutoff=success_cutoff,
-            dataset_success_percent=self.dataset_success_cutoff_map,
-            max_success=self.config.max_success,
-            partial_success=ref_traj.get("partial_success"),
-        )
-        logger.trace(f"[BASE SAMPLER] _get_rewound_traj: Successfully created rewound trajectory for ID: {traj_id}")
         return result
 
     def _get_subsample_indices(
@@ -762,7 +732,7 @@ class RFMBaseSampler:
         # Convert partial_success to discrete bins if in discrete mode
         if partial_success is not None and self.config.progress_loss_type.lower() == "discrete":
             num_bins = self.config.progress_discrete_bins
-            partial_success = convert_continuous_to_discrete_bin(partial_success, num_bins)
+            partial_success = convert_continuous_to_discrete_bins(partial_success, num_bins)
 
         # Convert partial_success and target_progress to discrete bins if in discrete mode
         if self.config.progress_loss_type.lower() == "discrete":

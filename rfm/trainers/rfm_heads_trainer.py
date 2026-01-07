@@ -1186,11 +1186,17 @@ class RFMHeadsTrainer(Trainer):
                 inner_padding=1,
             )
 
-            is_roboarena = "roboarena" in str(ds_name).lower()
+            # Check if any trajectory has partial_success to determine visualization type
+            use_partial_success = False
+            if task_groups:
+                # Check first task group to see if it has partial_success
+                first_group = next(iter(task_groups.values()))
+                if first_group and len(first_group) > 0:
+                    use_partial_success = first_group[0].get("partial_success") is not None
 
             data = []
-            if is_roboarena:
-                # RoboArena visualization: show partial vs predicted rewards for each aggregation type
+            if use_partial_success:
+                # Visualization for datasets with partial_success: show partial vs predicted rewards for each aggregation type
                 for task, group in task_groups.items():
                     partial_successes = np.array([t["partial_success"] for t in group]).round(2)
                     predicted_rewards_last = np.array([t["final_predicted_reward_last"] for t in group]).round(2)
@@ -2125,6 +2131,7 @@ class RFMHeadsTrainer(Trainer):
         progress_pred: torch.Tensor,
         target_progress: torch.Tensor,
         mask: torch.Tensor,
+        predict_last_frame_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Helper function to compute progress loss.
@@ -2134,6 +2141,8 @@ class RFMHeadsTrainer(Trainer):
                           or (batch_size, seq_len, num_bins) for discrete loss (logits)
             target_progress: Target progress tensors of shape (batch_size, seq_len) with values in [0, 1]
             mask: Per-sample mask tensor of shape (batch_size, seq_len) with 1.0 for samples where we should compute loss
+            predict_last_frame_mask: Optional mask tensor of shape (batch_size, seq_len) with 1.0 for frames with partial_success.
+                                    If provided, this takes precedence over config.
 
         Returns:
             tuple: (masked_loss, spearman_correlations, metrics)
@@ -2145,10 +2154,23 @@ class RFMHeadsTrainer(Trainer):
         ) and not self.config.data.use_multi_image:
             target_progress = target_progress[:, ::2]
             mask = mask[:, ::2]
+            if predict_last_frame_mask is not None:
+                predict_last_frame_mask = predict_last_frame_mask[:, ::2]
 
-        # Apply config-based logic for predict_last_frame_progress if enabled
-        if self.config.loss.predict_last_frame_progress:
-            # Create a mask that only selects the last frame for each sequence
+        # Apply predict_last_frame_mask if provided
+        # The mask defaults to all 1s (include all frames) unless explicitly set to 0
+        if predict_last_frame_mask is not None:
+            # Use the mask from batch inputs (already handles partial_success)
+            # Ensure shapes match
+            if predict_last_frame_mask.shape != mask.shape:
+                # If predict_last_frame_mask is [batch_size, seq_len] and mask is [batch_size, 1], expand mask first
+                if mask.shape[1] == 1 and predict_last_frame_mask.shape[1] > 1:
+                    mask = mask.expand_as(predict_last_frame_mask)
+                elif predict_last_frame_mask.shape[1] == 1 and mask.shape[1] > 1:
+                    predict_last_frame_mask = predict_last_frame_mask.expand_as(mask)
+            mask = mask * predict_last_frame_mask
+        elif self.config.loss.predict_last_frame_progress:
+            # Fallback to config-based logic: create a mask that only selects the last frame for each sequence
             last_frame_mask = torch.zeros_like(target_progress, dtype=torch.float32)
             last_frame_mask[:, -1] = 1.0  # Set last frame to 1.0 for all sequences
             mask = mask * last_frame_mask
@@ -2241,6 +2263,7 @@ class RFMHeadsTrainer(Trainer):
             target_progress_for_corr = convert_discrete_target_to_continuous(target_progress, num_bins=num_bins)
         else:
             progress_pred_for_corr = progress_pred
+            target_progress_for_corr = target_progress
         
         if mask.shape[1] != target_progress_for_corr.shape[1]:
             repeated_mask = mask.repeat(1, target_progress_for_corr.shape[1])
@@ -2399,9 +2422,10 @@ class RFMHeadsTrainer(Trainer):
         progress_pred = progress_logits["A"]
         progress_target = inputs["target_progress"]
         progress_target_mask = inputs["target_progress_mask"].unsqueeze(-1)
+        predict_last_frame_mask = inputs.get("predict_last_frame_mask", None)
 
         progress_loss, spearman_corr, progress_metrics = self._compute_progress_loss_helper(
-            progress_pred, progress_target, progress_target_mask
+            progress_pred, progress_target, progress_target_mask, predict_last_frame_mask=predict_last_frame_mask
         )
         final_loss = 0
 
@@ -2533,13 +2557,17 @@ class RFMHeadsTrainer(Trainer):
         data_gen_strat = inputs["trajectory_A_data_gen_strategy"]
         logger.warning(f"DATA GEN STRAT FOR TRAJ A: {data_gen_strat}")
         logger.warning(f"DATA SOURCE FOR TRAJ A: {inputs['trajectory_A_data_source']}")
+        logger.warning(f"PREFERENCE LABELS: {inputs['preference_labels']}")
 
+        import ipdb; ipdb.set_trace()
         if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
             progress_pred_A = progress_logits["A"]
+            predict_last_frame_mask_A = inputs.get("predict_last_frame_mask_A", None)
             progress_loss_A, spearman_corr_A, progress_metrics_A = self._compute_progress_loss_helper(
                 progress_pred_A,
                 target_progress_A,
                 target_progress_A_mask,
+                predict_last_frame_mask=predict_last_frame_mask_A,
             )
             final_loss += progress_loss_A
 
@@ -2791,18 +2819,22 @@ class RFMHeadsTrainer(Trainer):
             progress_pred_ref_diff = progress_logits_ref_diff["A"]  # [batch_size, seq_len]
 
             # Compute progress loss for ref_sim (using trajectory A)
+            predict_last_frame_mask_sim_A = inputs.get("predict_last_frame_mask_sim_A", None)
             progress_loss_ref_sim, spearman_corr_ref_sim, progress_metrics_ref_sim = self._compute_progress_loss_helper(
                 progress_pred_ref_sim,
                 target_progress_sim_A,
                 target_progress_sim_A_mask,
+                predict_last_frame_mask=predict_last_frame_mask_sim_A,
             )
 
             # Compute progress loss for ref_diff (using trajectory A)
+            predict_last_frame_mask_diff_A = inputs.get("predict_last_frame_mask_diff_A", None)
             progress_loss_ref_diff, spearman_corr_ref_diff, progress_metrics_ref_diff = (
                 self._compute_progress_loss_helper(
                     progress_pred_ref_diff,
                     target_progress_diff_A,
                     target_progress_diff_A_mask,
+                    predict_last_frame_mask=predict_last_frame_mask_diff_A,
                 )
             )
 

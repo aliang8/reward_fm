@@ -51,7 +51,14 @@ def run_quality_preference_eval(results: List[Dict[str, Any]], data_source: Opti
     computes preference accuracy per group and aggregate.
     Returns metrics, task_groups, and task_details similar to policy_ranking.
     """
-    use_partial_success = data_source and "roboarena" in str(data_source).lower()
+    # Check if any trajectory in results has partial_success to determine if we should use partial_success logic
+    use_partial_success = False
+    if results and len(results) > 0:
+        # Check first result's metadata for partial_success
+        first_result = results[0]
+        chosen_meta = first_result.get("metadata", {}).get("chosen_metadata", {})
+        rejected_meta = first_result.get("metadata", {}).get("rejected_metadata", {})
+        use_partial_success = chosen_meta.get("partial_success") is not None or rejected_meta.get("partial_success") is not None
 
     # First, gather all predictions and labels, convert to arrays
     # Note: preference_pred is already binary (0/1) from the trainer
@@ -75,18 +82,18 @@ def run_quality_preference_eval(results: List[Dict[str, Any]], data_source: Opti
             else:
                 label = float(label)
 
-            # For non-RoboArena, extract quality combo; for RoboArena, just validate metadata exists
+            # For datasets without partial_success, extract quality combo; for datasets with partial_success, just validate metadata exists
             chosen_meta = r.get("metadata", {}).get("chosen_metadata", {})
             rejected_meta = r.get("metadata", {}).get("rejected_metadata", {})
 
             if use_partial_success:
-                # For RoboArena, just check that partial_success exists (we don't use it)
+                # For datasets with partial_success, just check that partial_success exists (we don't use it)
                 chosen_val = chosen_meta.get("partial_success")
                 rejected_val = rejected_meta.get("partial_success")
                 if chosen_val is None or rejected_val is None:
                     continue
             else:
-                # For non-RoboArena, extract quality combo for later use
+                # For datasets without partial_success, extract quality combo for later use
                 chosen_val = chosen_meta.get("quality_label")
                 rejected_val = rejected_meta.get("quality_label")
                 if chosen_val is None or rejected_val is None:
@@ -135,7 +142,7 @@ def run_quality_preference_eval(results: List[Dict[str, Any]], data_source: Opti
             "num_total": task_total,
         }
 
-        # Only compute quality accuracies for non-RoboArena datasets
+        # Only compute quality accuracies for datasets without partial_success
         if not use_partial_success:
             # Compute accuracy per quality combination using vectorized operations
             task_quality_combos = [all_quality_combos[i] for i in task_idx]
@@ -185,8 +192,20 @@ def run_reward_alignment_eval_per_trajectory(
         where trajectory_progress_data is a list of progress_pred values
         for each trajectory (one per video in video_frames_list)
     """
-    # Check if this is RoboArena (uses partial_success instead of quality_label)
-    use_partial_success = data_source and "roboarena" in str(data_source).lower()
+    # Check if any trajectory in results has partial_success to determine if we should use partial_success logic
+    use_partial_success = False
+    if results and len(results) > 0:
+        # Check if any result has partial_success (could be in result directly or in metadata)
+        for r in results:
+            if r.get("partial_success") is not None:
+                use_partial_success = True
+                break
+            # Also check metadata for preference samples
+            chosen_meta = r.get("metadata", {}).get("chosen_metadata", {})
+            rejected_meta = r.get("metadata", {}).get("rejected_metadata", {})
+            if chosen_meta.get("partial_success") is not None or rejected_meta.get("partial_success") is not None:
+                use_partial_success = True
+                break
 
     # Check if this is RoboReward (needs MAE metric)
     is_roboreward = data_source and "roboreward" in str(data_source).lower()
@@ -213,8 +232,8 @@ def run_reward_alignment_eval_per_trajectory(
     all_success_probs = []
     all_success_labels = []
 
-    # Collect absolute deltas between final reward and partial_success for RoboArena
-    roboarena_deltas = []
+    # Collect absolute deltas between final reward and partial_success for trajectories with partial_success
+    partial_success_deltas = []
 
     # Collect success_acc for binary success accuracy
     success_acc_list = []
@@ -502,11 +521,11 @@ def run_reward_alignment_eval_per_trajectory(
 
         trajectory_progress_data.append(last_preds.tolist())
 
-        # For RoboArena, compute absolute delta between final reward and partial_success
+        # For trajectories with partial_success, compute absolute delta between final reward and partial_success
         if use_partial_success and partial_success is not None:
             final_reward = float(last_preds[-1])
             delta = abs(final_reward - partial_success)
-            roboarena_deltas.append(delta)
+            partial_success_deltas.append(delta)
 
         # For RoboReward, collect bins for MAE computation
         if is_roboreward and partial_success is not None:
@@ -651,9 +670,9 @@ def run_reward_alignment_eval_per_trajectory(
     if negative_success_acc is not None:
         metrics["negative_success_acc"] = negative_success_acc
 
-    # Add RoboArena delta metric if available
-    if use_partial_success and roboarena_deltas:
-        metrics["roboarena_abs_delta"] = float(np.mean(roboarena_deltas))
+    # Add partial_success delta metric if available
+    if use_partial_success and partial_success_deltas:
+        metrics["partial_success_abs_delta"] = float(np.mean(partial_success_deltas))
 
     # Add RoboReward MAE metric if available
     if is_roboreward and pred_bins_mae and gt_bins_mae:
@@ -780,12 +799,12 @@ def _extract_trajectory_rewards(
     return float(reward)
 
 
-def _compute_policy_ranking_metrics_roboarena(
+def _compute_policy_ranking_metrics_partial_success(
     all_rewards: np.ndarray,
     all_partial_successes: np.ndarray,
     all_tasks: List[str],
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    """Compute policy ranking metrics for RoboArena datasets using partial_success.
+    """Compute policy ranking metrics for datasets with partial_success.
 
     Args:
         all_rewards: Array of aggregated rewards
@@ -810,7 +829,7 @@ def _compute_policy_ranking_metrics_roboarena(
     all_total_pairs = []
     all_spearman_rewind = []
 
-    # RoboArena: compute ranking accuracy for pairs based on partial_success vs predicted rewards
+    # Compute ranking accuracy for pairs based on partial_success vs predicted rewards
     for task, task_idx in task_indices.items():
         if len(task_idx) < 2:
             continue
@@ -1056,7 +1075,7 @@ def _compute_policy_ranking_metrics_from_rewards(
 
     Args:
         all_rewards: Array of aggregated rewards
-        use_partial_success: Whether this is RoboArena (uses partial_success)
+        use_partial_success: Whether this dataset uses partial_success
         all_partial_successes: Array of partial_success values (already converted to discrete bins if needed)
         all_quality_labels: List of quality labels (if not use_partial_success)
         all_tasks: List of task names
@@ -1065,7 +1084,7 @@ def _compute_policy_ranking_metrics_from_rewards(
         Tuple of (metrics dictionary, task_details dictionary)
     """
     if use_partial_success and all_partial_successes is not None:
-        return _compute_policy_ranking_metrics_roboarena(all_rewards, all_partial_successes, all_tasks)
+        return _compute_policy_ranking_metrics_partial_success(all_rewards, all_partial_successes, all_tasks)
     else:
         return _compute_policy_ranking_metrics_quality_label(all_rewards, all_quality_labels, all_tasks)
 
@@ -1181,11 +1200,17 @@ def run_policy_ranking_eval(
     Groups results by trajectory_id (like reward_alignment) and computes policy ranking metrics
     using "last", "average", and "sum" aggregation methods.
 
-    For non-RoboArena: Uses quality_label and quality_order for ranking.
-    For RoboArena: Uses partial_success for ranking (no quality_order computation).
+    For datasets without partial_success: Uses quality_label and quality_order for ranking.
+    For datasets with partial_success: Uses partial_success for ranking (no quality_order computation).
     """
-    # Check if this is RoboArena (uses partial_success instead of quality_label)
-    use_partial_success = data_source and "roboarena" in str(data_source).lower()
+    # Check if any trajectory in results has partial_success to determine if we should use partial_success logic
+    use_partial_success = False
+    if results and len(results) > 0:
+        # Check first result's metadata for partial_success
+        first_result = results[0]
+        chosen_meta = first_result.get("metadata", {}).get("chosen_metadata", {})
+        rejected_meta = first_result.get("metadata", {}).get("rejected_metadata", {})
+        use_partial_success = chosen_meta.get("partial_success") is not None or rejected_meta.get("partial_success") is not None
 
     # Group results by trajectory_id
     unique_trajectory_ids = set()
@@ -1298,7 +1323,7 @@ def run_policy_ranking_eval(
             aggregation="sum",
         )
 
-        # Skip trajectories with None partial_success for RoboArena
+        # Skip trajectories with None partial_success for datasets with partial_success
         if use_partial_success:
             if metadata["partial_success"] is None:
                 continue

@@ -390,13 +390,14 @@ class StrategyFirstDataset(BaseDataset):
         if strategy is None:
             return indices
 
-        # Check if this is RoboArena (skip task filtering for RoboArena)
+        # Check if this is RoboArena or RoboReward (skip task filtering for these datasets)
         is_roboarena = data_source and "roboarena" in str(data_source).lower()
+        is_roboreward = data_source and "roboreward" in str(data_source).lower()
 
         # For SUBOPTIMAL strategy (preference or similarity), filter to tasks with both optimal and suboptimal trajectories
         if strategy == DataGenStrat.SUBOPTIMAL and sample_type in ["pref", "similarity"]:
-            if is_roboarena:
-                # RoboArena uses partial_success logic, don't filter by task requirements
+            # Skip task filtering for RoboArena and RoboReward (they use partial_success logic)
+            if is_roboarena or is_roboreward:
                 return indices
 
             if not self.tasks_with_both:

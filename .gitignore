@@ -59,3 +59,4 @@ rewardfm_eval_ui/*
 rewardfm_eval_ui
 run_scripts/*
 *.parquet
+processed_datasets/*

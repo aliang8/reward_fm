@@ -109,10 +109,9 @@ def convert_soar_dataset_to_hf(
     lang_model = load_sentence_transformer_model()
     lang_cache: dict[str, Any] = {}
 
-    # Load label corrections (maps global_idx -> corrected quality_label)
     label_corrections = {}
-    if os.path.exists(soar_label_corrections_path):
-        with open(soar_label_corrections_path) as f:
+    if os.path.exists(soar_new_success_labels_path):
+        with open(soar_new_success_labels_path) as f:
             data = json.load(f)
         # Keys are strings in JSON, convert to int
         label_corrections = {int(k): v for k, v in data.get("label_corrections", {}).items()}
@@ -121,7 +120,7 @@ def convert_soar_dataset_to_hf(
     datasets_list: list[Dataset] = []
 
     builder = tfds.builder_from_directory(root)
-    global_idx = 0  # track global index across splits
+    success_episode_instructions = set()  # to only upload failures that have a corresponding success episode
     for split_name in ["success", "failure"]:
         ds = builder.as_dataset(split=split_name, shuffle_files=False)
 
@@ -153,7 +152,6 @@ def convert_soar_dataset_to_hf(
             try:
                 steps_np = list(tfds.as_numpy(episode["steps"]))
             except Exception:
-                global_idx += 1
                 continue
 
             # Extract language instruction from first step
@@ -166,7 +164,6 @@ def convert_soar_dataset_to_hf(
                     task_text = val.decode() if isinstance(val, (bytes, bytearray)) else str(val)
 
             if not task_text:
-                global_idx += 1
                 continue
             elif split_name == "failure":
                 if new_success_labels[ep_idx] != "failure":  # skip if the label is not correct
@@ -184,11 +181,8 @@ def convert_soar_dataset_to_hf(
             valid_img_key: str | None = None
             valid_img_key = "image_0"
 
-            # Determine quality label (use correction if available)
-            if global_idx in label_corrections:
-                quality_label = label_corrections[global_idx]
-            else:
-                quality_label = "successful" if split_name.lower().startswith("success") else "failure"
+            # Determine quality label 
+            quality_label = "successful" if split_name.lower().startswith("success") else "failure"
 
             # Build entry for this view
             episode_entries = _process_episode((
@@ -205,7 +199,6 @@ def convert_soar_dataset_to_hf(
             ))
             entries.extend(episode_entries)
             produced += len(episode_entries)
-            global_idx += 1
 
         if not entries:
             ds_out = Dataset.from_dict({

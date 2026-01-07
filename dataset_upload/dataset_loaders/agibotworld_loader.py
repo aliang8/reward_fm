@@ -13,25 +13,20 @@ from typing import Any
 
 import h5py
 import numpy as np
-from helpers import (
+from dataset_upload.helpers import (
     create_hf_trajectory,
     create_trajectory_video_optimized,
     load_sentence_transformer_model,
+    generate_unique_id
 )
-from dataset_upload.helpers import generate_unique_id
-from rfm.data.video_helpers import load_video_frames
+from dataset_upload.video_helpers import load_video_frames
 from tqdm import tqdm
 
 import datasets as hfds
 from datasets import Dataset, load_dataset
 
 # Episode/task helpers built earlier
-try:
-    from rfm.data.data_scripts.agibot import get_episode_record
-except Exception:
-    # Fallback for direct execution context
-    from ..data_scripts.agibot.agibot_helper import get_episode_record  # type: ignore
-
+from dataset_upload.data_scripts.agibot.agibot_helper import get_episode_record
 
 # ------------------------------
 # Small utilities

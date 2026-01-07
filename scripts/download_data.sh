@@ -136,6 +136,7 @@ repos=(
   jesbu1/utd_so101_clean_policy_ranking_wrist
   jesbu1/usc_koch_human_robot_paired
   jesbu1/usc_koch_p_ranking_rfm
+  jesbu1/roboreward_rfm
 )
 
 # ------------------------------

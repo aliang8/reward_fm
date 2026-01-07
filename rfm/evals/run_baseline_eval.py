@@ -22,7 +22,42 @@ Usage:
         vlac_model_path=InternRobotics/VLAC \
         custom_eval.eval_types=[reward_alignment] \
         custom_eval.reward_alignment=[aliangdw_metaworld_metaworld_eval]
-
+    
+    # Run RoboReward-8B progress evaluation
+    uv run python rfm/evals/run_baseline_eval.py \
+        reward_model=roboreward \
+        roboreward_model_path=teetone/RoboReward-8B \
+        custom_eval.eval_types=[reward_alignment] \
+        custom_eval.reward_alignment=[franka] \
+        custom_eval.use_frame_steps=true \
+        gvl_max_frames=8
+    
+    # Run RFM model preference evaluation
+    uv run python rfm/evals/run_baseline_eval.py \
+        reward_model=rfm \
+        rfm_checkpoint_path=rewardfm/rfm-base \
+        custom_eval.eval_types=[quality_preference] \
+        custom_eval.quality_preference=[aliangdw_metaworld_metaworld_eval] \
+        rfm_batch_size=32
+    
+    # Run RFM model progress evaluation (reward alignment)
+    uv run python rfm/evals/run_baseline_eval.py \
+        reward_model=rfm \
+        rfm_checkpoint_path=rewardfm/rfm_qwen_pref_prog_succ_4frames_all_strategy \
+        custom_eval.eval_types=[reward_alignment] \
+        custom_eval.reward_alignment=[aliangdw_metaworld_metaworld_eval] \
+        custom_eval.use_frame_steps=true \
+        custom_eval.reward_alignment_max_trajectories=10 \
+        rfm_batch_size=32
+    
+    # Run ReWiND model progress evaluation (policy ranking)
+    uv run python rfm/evals/run_baseline_eval.py \
+        reward_model=rewind \
+        rfm_checkpoint_path=rewardfm/rewind-base \
+        custom_eval.eval_types=[policy_ranking] \
+        custom_eval.policy_ranking=[aliangdw_usc_franka_policy_ranking] \
+        custom_eval.use_frame_steps=true \
+        rfm_batch_size=32
 """
 
 import copy
@@ -52,6 +87,7 @@ from rfm.data.collators.utils import convert_frames_to_pil_images, frames_to_num
 from rfm.evals.baselines.rlvlmf import RLVLMF
 from rfm.evals.baselines.gvl import GVL
 from rfm.evals.baselines.vlac import VLAC
+from rfm.evals.baselines.roboreward import RoboReward
 from rfm.evals.baselines.rfm_model import RFMModel
 from rfm.evals.compile_results import compute_eval_metrics
 
@@ -227,7 +263,7 @@ def process_preference_sample(sample: PreferenceSample, model: RLVLMF) -> Dict[s
 
 def process_progress_sample(
     sample: ProgressSample,
-    model: Union[GVL, VLAC],
+    model: Union[GVL, VLAC, RoboReward],
 ) -> Dict[str, Any]:
     """Process a single progress sample with baseline."""
     traj = sample.trajectory
@@ -430,6 +466,11 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
             frame_skip=cfg.vlac_frame_skip,
             use_images=cfg.vlac_use_images,
         )
+    elif cfg.reward_model == "roboreward":
+        model = RoboReward(
+            model_path=cfg.roboreward_model_path,
+            max_new_tokens=cfg.roboreward_max_new_tokens,
+        )
     elif cfg.reward_model in ["rfm", "rewind"]:
         if not cfg.rfm_checkpoint_path:
             raise ValueError("rfm_checkpoint_path is required for RFM/ReWiND reward model")
@@ -437,7 +478,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
         model = RFMModel(checkpoint_path=cfg.rfm_checkpoint_path)
     else:
         raise ValueError(
-            f"Unknown reward_model: {cfg.reward_model}. Must be 'rlvlmf', 'gvl', 'vlac', 'rfm', or 'rewind'"
+            f"Unknown reward_model: {cfg.reward_model}. Must be 'rlvlmf', 'gvl', 'vlac', 'roboreward', 'rfm', or 'rewind'"
         )
 
     all_metrics = {}
@@ -496,31 +537,23 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                 # For RFM/ReWiND, process dataset using indices to avoid materializing entire dataset
                 logger.info(f"Processing {len(dataset)} samples in batches for RFM/ReWiND")
 
-                try:
-                    batch_results = process_batched_rfm_samples(dataset, model, batch_size=cfg.rfm_batch_size)
-                    eval_results.extend(batch_results)
-                except Exception as e:
-                    logger.error(f"Error processing batch: {e}")
-                    raise
+                batch_results = process_batched_rfm_samples(dataset, model, batch_size=cfg.rfm_batch_size)
+                eval_results.extend(batch_results)
             else:
                 # For other models, process samples one at a time
                 for i, sample in enumerate(tqdm(dataset, desc=f"Processing {dataset_name}")):
-                    try:
-                        if cfg.reward_model == "rlvlmf" and isinstance(sample, PreferenceSample):
-                            result = process_preference_sample(sample, model)
-                            if result:
-                                eval_results.append(result)
-                        elif cfg.reward_model in ["gvl", "vlac"] and isinstance(sample, ProgressSample):
-                            result = process_progress_sample(sample, model)
-                            if result:
-                                eval_results.append(result)
-                        else:
-                            logger.warning(
-                                f"Sample type mismatch: reward_model={cfg.reward_model}, sample={type(sample)}"
-                            )
-                    except Exception as e:
-                        logger.error(f"Error processing sample {i}: {e}")
-                        continue
+                    if cfg.reward_model == "rlvlmf" and isinstance(sample, PreferenceSample):
+                        result = process_preference_sample(sample, model)
+                        if result:
+                            eval_results.append(result)
+                    elif cfg.reward_model in ["gvl", "vlac", "roboreward"] and isinstance(sample, ProgressSample):
+                        result = process_progress_sample(sample, model)
+                        if result:
+                            eval_results.append(result)
+                    else:
+                        logger.warning(
+                            f"Sample type mismatch: reward_model={cfg.reward_model}, sample={type(sample)}"
+                        )
 
             logger.info(f"Processed {len(eval_results)} samples from {dataset_name}")
 
@@ -580,10 +613,10 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                         _write_metrics_incremental(cfg.output_dir, eval_type, eval_type_metrics)
 
                 else:
-                    # Progress evaluation (reward_alignment, policy_ranking) for gvl, vlac, rfm, rewind
-                    if cfg.reward_model not in ["gvl", "vlac", "rfm", "rewind"]:
+                    # Progress evaluation (reward_alignment, policy_ranking) for gvl, vlac, roboreward, rfm, rewind
+                    if cfg.reward_model not in ["gvl", "vlac", "roboreward", "rfm", "rewind"]:
                         raise ValueError(
-                            f"Progress evaluation only supported for gvl, vlac, rfm, rewind, got {cfg.reward_model}"
+                            f"Progress evaluation only supported for gvl, vlac, roboreward, rfm, rewind, got {cfg.reward_model}"
                         )
 
                     eval_metrics_result = compute_eval_metrics(
@@ -684,9 +717,9 @@ def main(cfg: DictConfig):
     display_config(baseline_cfg)
 
     # Validate reward model
-    if baseline_cfg.reward_model not in ["gvl", "vlac", "rlvlmf", "rfm", "rewind"]:
+    if baseline_cfg.reward_model not in ["gvl", "vlac", "rlvlmf", "roboreward", "rfm", "rewind"]:
         raise ValueError(
-            f"reward_model must be 'gvl', 'vlac', 'rlvlmf', 'rfm', or 'rewind', got {baseline_cfg.reward_model}"
+            f"reward_model must be 'gvl', 'vlac', 'rlvlmf', 'roboreward', 'rfm', or 'rewind', got {baseline_cfg.reward_model}"
         )
 
     # Setup output directory

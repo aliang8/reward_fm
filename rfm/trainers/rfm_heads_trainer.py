@@ -2557,9 +2557,8 @@ class RFMHeadsTrainer(Trainer):
         data_gen_strat = inputs["trajectory_A_data_gen_strategy"]
         logger.warning(f"DATA GEN STRAT FOR TRAJ A: {data_gen_strat}")
         logger.warning(f"DATA SOURCE FOR TRAJ A: {inputs['trajectory_A_data_source']}")
-        logger.warning(f"PREFERENCE LABELS: {inputs['preference_labels']}")
+        # logger.warning(f"PREFERENCE LABELS: {inputs['preference_labels']}")
 
-        import ipdb; ipdb.set_trace()
         if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
             progress_pred_A = progress_logits["A"]
             predict_last_frame_mask_A = inputs.get("predict_last_frame_mask_A", None)

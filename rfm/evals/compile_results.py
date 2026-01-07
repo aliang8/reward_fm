@@ -251,7 +251,12 @@ def run_reward_alignment_eval_per_trajectory(
         partial_success = results_for_trajectory[0].get("partial_success")
 
         if is_discrete_mode and partial_success is not None:
-            partial_success_tensor = torch.tensor([partial_success], dtype=torch.float32).unsqueeze(0)
+            if isinstance(partial_success, torch.Tensor):
+                # [num_bins] -> [1, 1, num_bins]
+                partial_success_tensor = partial_success[None, None] # to make it 3-dim for convert_discrete_target_to_continuous
+            else:
+                # number -> [1, 1]
+                partial_success_tensor = torch.tensor([partial_success], dtype=torch.float32).unsqueeze(0)
             partial_success = convert_discrete_target_to_continuous(partial_success_tensor, num_bins=num_bins).item()
 
         # Detect if we're in whole trajectory mode (use_frame_steps=False) or frame_steps mode
@@ -431,7 +436,12 @@ def run_reward_alignment_eval_per_trajectory(
                             else:
                                 target_bin = tgt[timestep]
                         # convert target_bin to tensor of shape (1, ...)
-                        target_bin_tensor = torch.tensor([target_bin]).unsqueeze(0)
+                        if isinstance(target_bin, torch.Tensor):
+                            # [num_bins] -> [1, 1, num_bins]
+                            target_bin_tensor = target_bin[None, None] # to make it 3-dim for convert_discrete_target_to_continuous
+                        else:
+                            # number -> [1, 1]
+                            target_bin_tensor = torch.tensor([target_bin]).unsqueeze(0)
                         continuous_target = convert_discrete_target_to_continuous(target_bin_tensor, num_bins=num_bins).item()
                         all_targets.append(continuous_target)
                     else:
@@ -1192,7 +1202,12 @@ def run_policy_ranking_eval(
             if metadata["partial_success"] is None:
                 continue
             if is_discrete_mode:
-                partial_success_tensor = torch.tensor([metadata["partial_success"]], dtype=torch.float32).unsqueeze(0)
+                if isinstance(metadata["partial_success"], torch.Tensor):
+                    # [num_bins] -> [1, 1, num_bins]
+                    partial_success_tensor = metadata["partial_success"][None, None] # to make it 3-dim for convert_discrete_target_to_continuous
+                else:
+                    # number -> [1, 1]
+                    partial_success_tensor = torch.tensor([metadata["partial_success"]], dtype=torch.float32).unsqueeze(0)
                 metadata["partial_success"] = convert_discrete_target_to_continuous(partial_success_tensor, num_bins=num_bins).item()
             all_partial_successes.append(metadata["partial_success"])
         else:

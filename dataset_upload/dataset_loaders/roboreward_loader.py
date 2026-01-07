@@ -26,7 +26,7 @@ class RoboRewardVideoLoader:
         """Load all frames from the video file."""
         cap = cv2.VideoCapture(self.video_path)
         frames = []
-        
+
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -34,18 +34,18 @@ class RoboRewardVideoLoader:
             # Convert BGR to RGB
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             frames.append(frame_rgb)
-        
+
         cap.release()
-        
+
         if not frames:
             return np.empty((0, 0, 0, 3), dtype=np.uint8)
-        
+
         return np.asarray(frames, dtype=np.uint8)
 
 
 def _reward_to_partial_success(reward: int) -> float:
     """Convert RoboReward score (1-5) to partial_success (0.0-1.0).
-    
+
     Reward scale:
         1: No success -> 0.0
         2: Minimal progress -> 0.25
@@ -59,7 +59,7 @@ def _reward_to_partial_success(reward: int) -> float:
 def _make_traj(video_path: str, task: str, reward: int, dataset_name: str) -> dict[str, Any]:
     """Create a trajectory dictionary from RoboReward metadata."""
     partial_success = _reward_to_partial_success(reward)
-    
+
     traj: dict[str, Any] = {}
     traj["id"] = generate_unique_id()
     traj["task"] = task
@@ -118,7 +118,7 @@ def load_roboreward_dataset(dataset_path: str, dataset_name: str) -> dict[str, l
         raise FileNotFoundError(f"Metadata file not found: {metadata_file}")
 
     task_data: dict[str, list[dict]] = {}
-    
+
     # Read metadata.jsonl
     print(f"Loading RoboReward {split} split from {metadata_file}")
     with open(metadata_file, "r") as f:
@@ -153,7 +153,7 @@ def load_roboreward_dataset(dataset_path: str, dataset_name: str) -> dict[str, l
             task_data.setdefault(task, []).append(traj)
 
     print(f"Loaded {len(task_data)} unique tasks from RoboReward {split} split")
-    
+
     # Print reward distribution
     all_trajs = [t for trajs in task_data.values() for t in trajs]
     reward_counts = {i: 0 for i in range(1, 6)}
@@ -161,7 +161,7 @@ def load_roboreward_dataset(dataset_path: str, dataset_name: str) -> dict[str, l
         # Reverse conversion to get original reward
         reward = int(traj["partial_success"] * 4 + 1)
         reward_counts[reward] += 1
-    
+
     print(f"Reward distribution:")
     for reward, count in sorted(reward_counts.items()):
         print(f"  Reward {reward}: {count} trajectories")

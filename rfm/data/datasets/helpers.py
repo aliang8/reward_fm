@@ -475,6 +475,7 @@ def _compute_absolute_wrt_total_frames_progress(
     num_frames_total: int,
     subsampled_indices: List[int],
     success_cutoff: Optional[float] = None,
+    partial_success: Optional[float] = None,
 ) -> List[float]:
     """Compute progress using absolute_wrt_total_frames method.
 
@@ -482,6 +483,7 @@ def _compute_absolute_wrt_total_frames_progress(
         num_frames_total: Total number of frames in the original trajectory.
         subsampled_indices: Absolute indices into the original trajectory.
         success_cutoff: Optional success cutoff threshold.
+        partial_success: Optional partial success value to use for frames past cutoff instead of 1.0.
 
     Returns:
         List of progress values: progress[i] = (subsampled_indices[i] + 1) / num_frames_total.
@@ -494,8 +496,8 @@ def _compute_absolute_wrt_total_frames_progress(
 
     for abs_idx in subsampled_indices:
         if cutoff_index is not None and abs_idx >= cutoff_index:
-            # All frames after cutoff get 1.0 progress
-            progress = 1.0
+            # All frames after cutoff get partial_success (if available) or 1.0 progress
+            progress = partial_success if partial_success is not None else 1.0
         else:
             progress = (abs_idx + 1) / num_frames_total
         segment_progress.append(progress)
@@ -506,6 +508,7 @@ def _compute_absolute_first_frame_progress(
     num_frames_total: int,
     subsampled_indices: List[int],
     success_cutoff: Optional[float] = None,
+    partial_success: Optional[float] = None,
 ) -> List[float]:
     """Compute progress using absolute_first_frame method.
 
@@ -513,6 +516,7 @@ def _compute_absolute_first_frame_progress(
         num_frames_total: Total number of frames in the original trajectory.
         subsampled_indices: Absolute indices into the original trajectory.
         success_cutoff: Optional success cutoff threshold.
+        partial_success: Optional partial success value to use for frames past cutoff instead of 1.0.
 
     Returns:
         List of progress values: progress[i] = (subsampled_indices[i] - start_idx) / (num_frames_total - start_idx - 1),
@@ -537,8 +541,12 @@ def _compute_absolute_first_frame_progress(
         if cutoff_index is not None:
             # ensure denominator is at least 1 to avoid division by zero
             denominator = max(1, cutoff_index - start_idx - 1)
-            # if it goes pass the cutoff, the progress will be set to 1
-            segment_progress.append(min(1.0, relative_pos / denominator))
+            # if it goes pass the cutoff, use partial_success (if available) or cap at 1.0
+            computed_progress = relative_pos / denominator
+            if computed_progress >= 1.0 and partial_success is not None:
+                segment_progress.append(partial_success)
+            else:
+                segment_progress.append(min(1.0, computed_progress))
         else:
             # ensure denominator is at least 1 to avoid division by zero
             denominator = max(1, num_frames_total - start_idx - 1)
@@ -552,6 +560,7 @@ def _compute_relative_first_frame_progress(
     num_frames_total: int,
     subsampled_indices: List[int],
     success_cutoff: Optional[float] = None,
+    partial_success: Optional[float] = None,
 ) -> List[float]:
     """Compute progress using relative_first_frame method.
 
@@ -559,13 +568,16 @@ def _compute_relative_first_frame_progress(
         num_frames_total: Total number of frames in the original trajectory.
         subsampled_indices: Absolute indices into the original trajectory.
         success_cutoff: Optional success cutoff threshold.
+        partial_success: Optional partial success value to use for frames past cutoff instead of 1.0.
 
     Returns:
         List of relative progress deltas: progress[0] = 0.0;
         progress[i] = (subsampled_indices[i] - subsampled_indices[i-1]) / (num_frames_total - start_idx).
     """
     # First compute absolute_first_frame progress
-    absolute_progress = _compute_absolute_first_frame_progress(num_frames_total, subsampled_indices, success_cutoff)
+    absolute_progress = _compute_absolute_first_frame_progress(
+        num_frames_total, subsampled_indices, success_cutoff, partial_success
+    )
     # Convert to relative deltas
     return convert_absolute_to_relative_progress(absolute_progress)
 
@@ -575,6 +587,7 @@ def compute_progress_from_segment(
     frame_indices: List[int],
     progress_pred_type: str = "absolute_first_frame",
     success_cutoff: Optional[float] = None,
+    partial_success: Optional[float] = None,
 ) -> List[float]:
     """Compute progress values given total frames and subsampled indices.
 
@@ -587,16 +600,34 @@ def compute_progress_from_segment(
             - "relative_first_frame": progress[0] = 0.0; progress[i] = (frame_indices[i] - frame_indices[i-1]) / (num_frames_total - start_idx).
             - "absolute_wrt_total_frames": progress[i] = (frame_indices[i] + 1) / num_frames_total.
         success_cutoff: Optional success cutoff threshold.
+        partial_success: Optional partial success value to use for frames past cutoff instead of 1.0.
 
     Returns:
         List of progress values based on the specified progress_pred_type.
     """
     if progress_pred_type == "absolute_wrt_total_frames":
-        return _compute_absolute_wrt_total_frames_progress(num_frames_total, frame_indices, success_cutoff)
+        progress = _compute_absolute_wrt_total_frames_progress(
+            num_frames_total, frame_indices, success_cutoff, partial_success
+        )
     elif progress_pred_type == "relative_first_frame":
-        return _compute_relative_first_frame_progress(num_frames_total, frame_indices, success_cutoff)
+        progress = _compute_relative_first_frame_progress(num_frames_total, frame_indices, success_cutoff, partial_success)
     else:  # default: "absolute_first_frame"
-        return _compute_absolute_first_frame_progress(num_frames_total, frame_indices, success_cutoff)
+        progress = _compute_absolute_first_frame_progress(num_frames_total, frame_indices, success_cutoff, partial_success)
+    
+    # If partial_success is present and not 0, zero out frames that don't have partial_success as their value
+    if partial_success is not None and abs(partial_success - 0.0) > 1e-6 and progress:
+        modified_progress = []
+        for progress_val in progress:
+            # Check if this frame's progress equals partial_success (within tolerance)
+            if abs(progress_val - partial_success) < 1e-6:
+                # Keep partial_success value
+                modified_progress.append(progress_val)
+            else:
+                # Zero out non-partial_success frames
+                modified_progress.append(0.0)
+        return modified_progress
+    
+    return progress
 
 
 def create_rewind_trajectory(
@@ -608,6 +639,7 @@ def create_rewind_trajectory(
     success_cutoff: Optional[float] = None,
     dataset_success_percent: Optional[Dict[str, float]] = None,
     max_success: float = 0.95,
+    partial_success: Optional[float] = None,
 ) -> Trajectory:
     """Create a suboptimal trajectory by rewinding the original trajectory.
 
@@ -733,7 +765,7 @@ def create_rewind_trajectory(
         for i in range(len(forward_indices)):
             abs_idx = start_idx + i
             if cutoff_index is not None and abs_idx >= cutoff_index:
-                progress = 1.0
+                progress = partial_success if partial_success is not None else 1.0
             else:
                 progress = (abs_idx + 1) / num_frames
             forward_progress_abs.append(progress)
@@ -744,7 +776,7 @@ def create_rewind_trajectory(
         rewind_progress_abs = []
         for idx in rewind_actual_indices:
             if cutoff_index is not None and idx >= cutoff_index:
-                progress = 1.0
+                progress = partial_success if partial_success is not None else 1.0
             else:
                 progress = (idx + 1) / num_frames
             rewind_progress_abs.append(progress)
@@ -763,7 +795,11 @@ def create_rewind_trajectory(
                 if current_abs_idx < cutoff_index:
                     forward_progress_abs.append(i / denom_norm)
                 else:
-                    forward_progress_abs.append(min(1.0, i / denom_cut))
+                    computed_progress = i / denom_cut
+                    if computed_progress >= 1.0 and partial_success is not None:
+                        forward_progress_abs.append(partial_success)
+                    else:
+                        forward_progress_abs.append(min(1.0, computed_progress))
             else:
                 forward_progress_abs.append(i / denom_norm)
 
@@ -779,6 +815,19 @@ def create_rewind_trajectory(
 
     if progress_pred_type == "relative_first_frame":
         subsampled_progress = convert_absolute_to_relative_progress(subsampled_progress)
+
+    # If partial_success is present and not 0, zero out frames that don't have partial_success as their value
+    if partial_success is not None and abs(partial_success - 0.0) > 1e-6 and subsampled_progress:
+        modified_progress = []
+        for progress_val in subsampled_progress:
+            # Check if this frame's progress equals partial_success (within tolerance)
+            if abs(progress_val - partial_success) < 1e-6:
+                # Keep partial_success value
+                modified_progress.append(progress_val)
+            else:
+                # Zero out non-partial_success frames
+                modified_progress.append(0.0)
+        subsampled_progress = modified_progress
 
     if use_embeddings:
         subsampled_frames, subsampled_progress = pad_trajectory_to_max_frames_torch(

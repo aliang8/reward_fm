@@ -21,11 +21,7 @@ logger = get_logger()
 class PrefSampler(RFMBaseSampler):
     """Data generator for producing batches of preference prediction data."""
 
-    def __init__(
-        self,
-        is_evaluation=False,
-        **kwargs,
-    ):
+    def __init__(self, is_evaluation=False, **kwargs):
         super().__init__(**kwargs)
 
         self.dataset_preference_ratio = self.config.dataset_preference_ratio
@@ -349,7 +345,6 @@ class PrefSampler(RFMBaseSampler):
         rejected_trajectory = self._get_traj_from_data(rejected_traj, subsample_strategy=rejected_subsample_strategy)
 
         # If our strategy is different task, make sure the rejected trajectory has 0 progress
-        # For RoboArena partial_success, keep the original progress (chosen has higher partial_success, rejected has lower)
         if strategy_used in [
             DataGenStrat.DIFFERENT_TASK,
             DataGenStrat.DIFFERENT_TASK_INSTRUCTION,

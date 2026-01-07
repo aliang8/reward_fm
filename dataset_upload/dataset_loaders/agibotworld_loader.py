@@ -17,7 +17,7 @@ from dataset_upload.helpers import (
     create_hf_trajectory,
     create_trajectory_video_optimized,
     load_sentence_transformer_model,
-    generate_unique_id
+    generate_unique_id,
 )
 from dataset_upload.video_helpers import load_video_frames
 from tqdm import tqdm

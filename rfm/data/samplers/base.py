@@ -497,6 +497,7 @@ class RFMBaseSampler:
             success_cutoff=success_cutoff,
             dataset_success_percent=self.dataset_success_cutoff_map,
             max_success=self.config.max_success,
+            partial_success=ref_traj.get("partial_success"),
         )
         logger.trace(f"[BASE SAMPLER] _get_rewound_traj: Successfully created rewound trajectory for ID: {traj_id}")
         return result
@@ -709,12 +710,16 @@ class RFMBaseSampler:
         # Extract data using indices
         subsampled = data[indices]
 
+        # Get partial_success early to pass to compute_progress_from_segment
+        partial_success = traj.get("partial_success")
+
         # Compute progress
         target_progress = compute_progress_from_segment(
             num_frames_total=num_frames_total,
             frame_indices=indices,
             progress_pred_type=self.config.progress_pred_type,
             success_cutoff=success_cutoff,
+            partial_success=partial_success,
         )
 
         # Subsample uniformly if needed (if we have more frames than max_frames)
@@ -756,7 +761,6 @@ class RFMBaseSampler:
         )
 
         # Convert partial_success to discrete bins if in discrete mode
-        partial_success = traj.get("partial_success")
         if partial_success is not None and self.config.progress_loss_type.lower() == "discrete":
             num_bins = self.config.progress_discrete_bins
             partial_success = convert_continuous_to_discrete_bin(partial_success, num_bins)

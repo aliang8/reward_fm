@@ -43,11 +43,11 @@ Usage:
     # Run RFM model progress evaluation (reward alignment)
     uv run python rfm/evals/run_baseline_eval.py \
         reward_model=rfm \
-        rfm_checkpoint_path=rewardfm/rfm_qwen_pref_prog_succ_4frames_all_strategy \
+        rfm_checkpoint_path=rewardfm/rfm_qwen_pref_prog_4frames_all_strategy \
         custom_eval.eval_types=[reward_alignment] \
-        custom_eval.reward_alignment=[aliangdw_metaworld_metaworld_eval] \
-        custom_eval.use_frame_steps=true \
-        custom_eval.reward_alignment_max_trajectories=10 \
+        custom_eval.reward_alignment=[jesbu1_roboreward_rfm_roboreward_test] \
+        custom_eval.reward_alignment_max_trajectories=null \
+        gvl_max_frames=4 \
         rfm_batch_size=32
     
     # Run ReWiND model progress evaluation (policy ranking)
@@ -635,7 +635,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                             if plots and cfg.output_dir:
                                 plots_dir = os.path.join(cfg.output_dir, f"{eval_type}_{dataset_name}_plots")
                                 os.makedirs(plots_dir, exist_ok=True)
-                                for i, fig in enumerate(plots):
+                                for i, fig in enumerate(plots[:10]):
                                     video_frames = video_frames_list[i] if i < len(video_frames_list) else None
                                     gif_path = os.path.join(plots_dir, f"trajectory_{i:04d}.gif")
                                     _create_plot_with_video_gif(fig, video_frames, gif_path)

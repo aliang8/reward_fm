@@ -110,18 +110,17 @@ class SimSampler(RFMBaseSampler):
         # Check if ref_traj is successful - if not, return None to try a different trajectory
         quality_label = ref_traj.get("quality_label")
         partial_success = ref_traj.get("partial_success")
-        data_source = ref_traj.get("data_source", "")
-        is_roboarena = partial_success is not None and data_source and "roboarena" in str(data_source).lower()
+        use_partial_success = partial_success is not None
 
-        if is_roboarena:
-            # For RoboArena, require partial_success to exist
+        if use_partial_success:
+            # For trajectories with partial_success, require partial_success to exist
             if partial_success is None:
                 logger.trace(
                     f"[SIM SAMPLER] Ref trajectory {ref_traj.get('id', 'unknown')} missing partial_success, skipping"
                 )
                 return None
         else:
-            # For non-RoboArena, require quality_label to be "successful"
+            # For trajectories without partial_success, require quality_label to be "successful"
             if quality_label != "successful":
                 logger.trace(
                     f"[SIM SAMPLER] Ref trajectory {ref_traj.get('id', 'unknown')} is not successful (quality_label: {quality_label}), skipping"

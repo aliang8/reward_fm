@@ -390,7 +390,7 @@ class BaseDataset(torch.utils.data.Dataset):
         """
         excluded_keywords_lower = [kw.lower() for kw in excluded_keywords]
 
-        # Pre-compute RoboArena tasks with only one partial_success category
+        # Pre-compute tasks with only one partial_success category (for datasets with partial_success)
         all_tasks = dataset["task"]
         data_sources = dataset["data_source"]
         # Handle case where partial_success column might not exist
@@ -399,21 +399,20 @@ class BaseDataset(torch.utils.data.Dataset):
         else:
             partial_successes = [None] * len(dataset)
 
-        # Group RoboArena trajectories by task
-        roboarena_tasks_to_partial_success = collections.defaultdict(set)
+        # Group trajectories with partial_success by task
+        tasks_to_partial_success = collections.defaultdict(set)
 
-        for task, data_source, partial_success in zip(all_tasks, data_sources, partial_successes):
+        for task, partial_success in zip(all_tasks, partial_successes):
             if task is None:
                 continue
-            # Check if this is a RoboArena trajectory
-            if data_source and "roboarena" in str(data_source).lower():
-                if partial_success is not None:
-                    roboarena_tasks_to_partial_success[task].add(partial_success)
+            # Check if this trajectory has partial_success
+            if partial_success is not None:
+                tasks_to_partial_success[task].add(partial_success)
 
         # Find tasks with only one unique partial_success category
-        roboarena_tasks_with_single_partial_success = {
+        tasks_with_single_partial_success = {
             task
-            for task, partial_success_set in roboarena_tasks_to_partial_success.items()
+            for task, partial_success_set in tasks_to_partial_success.items()
             if len(partial_success_set) == 1
         }
 
@@ -423,13 +422,15 @@ class BaseDataset(torch.utils.data.Dataset):
             frames_shapes = batch["frames_shape"]
             quality_labels = batch["quality_label"]
             data_sources_batch = batch.get("data_source", [None] * len(tasks))
+            # Handle case where partial_success column might not exist
+            batch_partial_success = batch.get("partial_success", [None] * len(tasks))
 
             drop_kw = []
             drop_frames = []
             drop_quality = []
             drop_roboarena = []
 
-            for task, fs, quality_label, data_source in zip(tasks, frames_shapes, quality_labels, data_sources_batch):
+            for idx, (task, fs, quality_label, data_source, partial_success) in enumerate(zip(tasks, frames_shapes, quality_labels, data_sources_batch, batch_partial_success)):
                 dkw = False
                 dfr = False
                 dq = False
@@ -455,11 +456,11 @@ class BaseDataset(torch.utils.data.Dataset):
                     if quality_label != "successful":
                         dq = True
 
-                # Check RoboArena tasks with single partial_success (only if not dropped by other filters)
+                # Check tasks with single partial_success (only if not dropped by other filters)
                 if not dkw and not dfr and not dq:
-                    if task is not None and task in roboarena_tasks_with_single_partial_success:
-                        # Check if this is a RoboArena trajectory
-                        if data_source and "roboarena" in str(data_source).lower():
+                    if task is not None and task in tasks_with_single_partial_success:
+                        # Check if this trajectory has partial_success
+                        if partial_success is not None:
                             dr = True
 
                 drop_kw.append(dkw)
@@ -505,7 +506,7 @@ class BaseDataset(torch.utils.data.Dataset):
                 filter_messages.append(f"{filtered_by_quality} with quality_label != 'successful'")
             if filtered_by_roboarena > 0:
                 filter_messages.append(
-                    f"{filtered_by_roboarena} RoboArena trajectories from {len(roboarena_tasks_with_single_partial_success)} tasks with only one partial_success category"
+                    f"{filtered_by_roboarena} trajectories with partial_success from {len(tasks_with_single_partial_success)} tasks with only one partial_success category"
                 )
 
             logger.info(f"Filtering out {total_filtered} trajectories ({', '.join(filter_messages)})")
@@ -543,7 +544,7 @@ class BaseDataset(torch.utils.data.Dataset):
         """Filter out suboptimal/failed trajectories that don't have optimal counterparts with the same task name.
         Also filter out tasks that only have failed/suboptimal trajectories.
 
-        This filtering is skipped for RoboArena datasets.
+        This filtering is skipped for datasets with partial_success.
 
         Args:
             dataset: The dataset to filter
@@ -560,20 +561,24 @@ class BaseDataset(torch.utils.data.Dataset):
         # Get all tasks in the dataset
         all_tasks = dataset["task"]
         quality_labels = dataset["quality_label"]
-        data_sources = dataset["data_source"]
+        # Handle case where partial_success column might not exist
+        if "partial_success" in dataset.column_names:
+            partial_successes = dataset["partial_success"]
+        else:
+            partial_successes = [None] * len(dataset)
 
         # Identify trajectories to remove:
         # All trajectories from tasks that have no optimal trajectories
         indices_to_remove = set()
         tasks_removed = set()
 
-        for idx, (task, quality_label, data_source) in enumerate(zip(all_tasks, quality_labels, data_sources)):
+        for idx, (task, quality_label, partial_success) in enumerate(zip(all_tasks, quality_labels, partial_successes)):
             if task is None:
                 # Skip trajectories with None task
                 continue
 
-            # Skip filtering for RoboArena data sources
-            if data_source and "roboarena" in str(data_source).lower():
+            # Skip filtering for trajectories with partial_success
+            if partial_success is not None:
                 continue
 
             if task not in tasks_with_optimal:

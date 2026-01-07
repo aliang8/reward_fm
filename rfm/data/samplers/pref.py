@@ -47,11 +47,11 @@ class PrefSampler(RFMBaseSampler):
             preferred_strategy: Optional strategy to use (if None, will select strategy based on ratios)
         """
         quality_label = item["quality_label"]
-        is_roboarena = "roboarena" in str(item.get("data_source", "")).lower()
+        use_partial_success = item.get("partial_success") is not None
 
         # Handle non-successful trajectories: use as rejected, find optimal from same task as chosen
-        # skip this for RoboArena trajectories which we will handle with partial success
-        if quality_label != "successful" and not is_roboarena:
+        # skip this for trajectories with partial_success which we will handle with partial success logic
+        if quality_label != "successful" and not use_partial_success:
             traj_id = item["id"]
             task_name = item["task"]
 
@@ -89,18 +89,18 @@ class PrefSampler(RFMBaseSampler):
         return self._create_pref_sample(item, preferred_strategy=preferred_strategy)
 
     def _execute_strategy(
-        self, strategy: DataGenStrat, chosen_traj: Dict[str, Any], is_roboarena: bool
+        self, strategy: DataGenStrat, chosen_traj: Dict[str, Any], use_partial_success: bool
     ) -> tuple[Dict[str, Any], str, Dict[str, Any]] | None:
         """Execute a strategy to get rejected trajectory.
 
         Args:
             strategy: The strategy to execute
             chosen_traj: The chosen trajectory
-            is_roboarena: Whether this is a RoboArena trajectory
+            use_partial_success: Whether this trajectory uses partial_success
 
         Returns:
             Tuple of (rejected_traj, rejected_subsample_strategy, chosen_traj) or None if failed
-            Note: chosen_traj may be swapped with rejected_traj for RoboArena partial_success
+            Note: chosen_traj may be swapped with rejected_traj for partial_success trajectories
         """
         max_retries = 3
         rejected_subsample_strategy = None
@@ -113,8 +113,8 @@ class PrefSampler(RFMBaseSampler):
             for _ in range(max_retries):
                 rejected_traj = self._get_same_task_suboptimal(chosen_traj)
                 if rejected_traj is not None:
-                    # For RoboArena, if the returned trajectory has higher partial_success, swap them
-                    if is_roboarena:
+                    # For trajectories with partial_success, if the returned trajectory has higher partial_success, swap them
+                    if use_partial_success:
                         chosen_partial_success = chosen_traj.get("partial_success")
                         rejected_partial_success = rejected_traj.get("partial_success")
                         if rejected_partial_success is not None and chosen_partial_success is not None:
@@ -239,21 +239,19 @@ class PrefSampler(RFMBaseSampler):
         strategy_used = None
         rejected_subsample_strategy = None
 
-        # Check if this is a RoboArena trajectory (has partial_success and data_source contains "roboarena")
-        is_roboarena = False
-        data_source = chosen_traj.get("data_source", "")
-        partial_success = chosen_traj.get("partial_success")
-        if partial_success is not None and data_source and "roboarena" in str(data_source).lower():
-            is_roboarena = True
+        # Check if this trajectory uses partial_success
+        use_partial_success = chosen_traj.get("partial_success") is not None
+        if use_partial_success:
+            partial_success = chosen_traj.get("partial_success")
             logger.trace(
-                f"[PREF SAMPLER] RoboArena trajectory detected (ID: {chosen_traj.get('id', 'unknown')}, partial_success: {partial_success})"
+                f"[PREF SAMPLER] Trajectory with partial_success detected (ID: {chosen_traj.get('id', 'unknown')}, partial_success: {partial_success})"
             )
 
         # Strategy selection: use preferred_strategy if provided, otherwise select based on ratios
         if preferred_strategy is not None:
             # Use the preferred strategy directly
             logger.trace(f"[PREF SAMPLER] Using preferred strategy: {preferred_strategy.value}")
-            result = self._execute_strategy(preferred_strategy, chosen_traj, is_roboarena)
+            result = self._execute_strategy(preferred_strategy, chosen_traj, use_partial_success)
             if result is None:
                 logger.trace(f"[PREF SAMPLER] Preferred strategy {preferred_strategy.value} failed, returning None")
                 return None
@@ -311,7 +309,7 @@ class PrefSampler(RFMBaseSampler):
                 )
 
                 # Execute selected strategy
-                result = self._execute_strategy(selected_strategy, chosen_traj, is_roboarena)
+                result = self._execute_strategy(selected_strategy, chosen_traj, use_partial_success)
                 if result is not None:
                     rejected_traj, rejected_subsample_strategy, chosen_traj = result
                     strategy_used = selected_strategy

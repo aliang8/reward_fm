@@ -237,11 +237,11 @@ class DataConfig:
         metadata={"help": "Path to dataset-specific success cutoff file (CSV format: dataset_name,success_percentage)"},
     )
 
-    # RoboArena partial success threshold
-    roboarena_partial_success_threshold: float = field(
+    # Partial success threshold (for datasets with partial_success like RoboArena and RoboReward)
+    partial_success_threshold: float = field(
         default=0.2,
         metadata={
-            "help": "Minimum difference in partial_success required between chosen and rejected trajectories for RoboArena preference sampling"
+            "help": "Minimum difference in partial_success required between chosen and rejected trajectories for preference sampling"
         },
     )
 

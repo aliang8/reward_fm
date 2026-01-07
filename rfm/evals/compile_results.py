@@ -523,25 +523,27 @@ def run_reward_alignment_eval_per_trajectory(
 
         # Create a wandb plot for progress predictions and, if available, success predictions
         # Use the shared helper function from eval_viz_utils
-        has_success_binary = have_success and last_success is not None and len(last_success) == len(last_preds)
+        # Limit to 10 plots to avoid creating too many
+        if len(plots) < 10:
+            has_success_binary = have_success and last_success is not None and len(last_success) == len(last_preds)
 
-        title = f"Task: {task} - {quality_label}\nLoss: {traj_loss:.3f}, pearson: {traj_pearson:.2f}"
-        if partial_success is not None:
-            title += f", partial_success: {partial_success:.3f}"
+            title = f"Task: {task} - {quality_label}\nLoss: {traj_loss:.3f}, pearson: {traj_pearson:.2f}"
+            if partial_success is not None:
+                title += f", partial_success: {partial_success:.3f}"
 
-        fig = create_combined_progress_success_plot(
-            progress_pred=last_preds,
-            num_frames=len(last_preds),
-            success_binary=last_success if has_success_binary else None,
-            success_probs=last_success_probs if have_success_probs and last_success_probs is not None else None,
-            success_labels=last_success_labels if have_success_labels and last_success_labels is not None else None,
-            is_discrete_mode=is_discrete_mode,
-            title=title,
-            loss=traj_loss,
-            pearson=traj_pearson,
-        )
+            fig = create_combined_progress_success_plot(
+                progress_pred=last_preds,
+                num_frames=len(last_preds),
+                success_binary=last_success if has_success_binary else None,
+                success_probs=last_success_probs if have_success_probs and last_success_probs is not None else None,
+                success_labels=last_success_labels if have_success_labels and last_success_labels is not None else None,
+                is_discrete_mode=is_discrete_mode,
+                title=title,
+                loss=traj_loss,
+                pearson=traj_pearson,
+            )
 
-        plots.append(fig)
+            plots.append(fig)
 
         # Compute binary success accuracy
         # For successful trajectories: True if anywhere success_prob > 0.5

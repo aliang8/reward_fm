@@ -336,10 +336,7 @@ def run_reward_alignment_eval_per_trajectory(
                             print("Warning: Pred array should not be continuous in discrete mode, breakpointing to debug")
                             breakpoint()
                         if tgt is not None and len(tgt) > 0:
-                            tgt_array = np.array(tgt)
-                            all_target_bins = [int(t) for t in tgt_array]
-                            # Convert target bins to continuous values for comparison
-                            all_targets = [(float(t) / (num_bins - 1)) for t in tgt_array]
+                            all_targets = convert_discrete_target_to_continuous(torch.tensor(tgt[None]), num_bins=num_bins)[0].tolist()
                 else:
                     # Continuous mode: use all predictions directly
                     if last_frame_only:
@@ -411,7 +408,7 @@ def run_reward_alignment_eval_per_trajectory(
                             # Use last frame's logits
                             all_pred_logits.append(pred_array[-1])
                             if tgt is not None and len(tgt) > 0:
-                                all_target_bins.append(int(tgt[-1]))
+                                all_target_bins.append(tgt[-1])
                         else:
                             # Use prediction at current timestep
                             if timestep >= len(pred_array) - 1:
@@ -452,7 +449,6 @@ def run_reward_alignment_eval_per_trajectory(
                             all_preds.append(float(pred[indx]))
                 else:
                     all_preds.append(0.0)
-
                 if tgt is not None and len(tgt) > 0:
                     if is_discrete_mode:
                         # Target is a discrete bin index, convert to continuous value
@@ -492,7 +488,6 @@ def run_reward_alignment_eval_per_trajectory(
                 succ_probs = r.get("success_probs", None)
                 if succ_probs is not None and len(succ_probs) > 0:
                     all_success_probs_list.append(float(succ_probs[-1]))
-
         if len(all_preds) == 0 or len(all_targets) == 0:
             print("No valid predictions or targets found for trajectory: ", trajectory_id)
             continue

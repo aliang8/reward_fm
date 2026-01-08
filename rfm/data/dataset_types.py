@@ -31,8 +31,9 @@ class Trajectory(BaseModel):
     is_robot: Optional[bool] = None
 
     # Progress and metadata
-    target_progress: Optional[List[float]] = None
-    partial_success: Optional[float] = None
+    # Can be List[float] for continuous progress, np.ndarray, or List[np.ndarray] for C51 discrete distributions
+    target_progress: Optional[Union[List[float], List[torch.Tensor], torch.Tensor, None]] = None
+    partial_success: Optional[Union[float, torch.Tensor]] = None  # float for continuous, Tensor for C51 discrete
     success_label: Optional[List[float]] = None  # Success labels for each frame (1.0 for success, 0.0 for failure)
     metadata: Optional[Dict[str, Any]] = None
     data_gen_strategy: Optional[str] = None
@@ -67,7 +68,7 @@ class SimilaritySample(BaseModel):
     # Trajectories
     ref_trajectory: Trajectory  # o^ref
     sim_trajectory: Trajectory  # Similar trajectory
-    diff_trajectory: Trajectory  # Different trajectory
+    diff_trajectory: Optional[Trajectory] = None  # Different trajectory (optional in inference mode)
 
     sample_type: str = "similarity"
     data_gen_strategy: Optional[str] = None

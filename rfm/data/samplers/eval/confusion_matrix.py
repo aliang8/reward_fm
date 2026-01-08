@@ -3,15 +3,11 @@
 Data generator for confusion matrix analysis.
 """
 
-from typing import Dict, List, Any
-
-from tqdm import tqdm
 import torch
 from collections import Counter
 
-from rfm.data.dataset_types import PreferenceSample, ProgressSample, Trajectory
+from rfm.data.dataset_types import PreferenceSample, ProgressSample
 from rfm.data.samplers.base import RFMBaseSampler
-from rfm.data.datasets.helpers import DataGenStrat
 from rfm.utils.distributed import rank_0_print
 from sentence_transformers import SentenceTransformer
 
@@ -24,10 +20,7 @@ class ConfusionMatrixSampler(RFMBaseSampler):
     how well the model can distinguish between different tasks.
     """
 
-    def __init__(
-        self,
-        **kwargs,
-    ):
+    def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
         # Load sentence transformer model and precompute embeddings for all unique tasks

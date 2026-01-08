@@ -362,13 +362,14 @@ def create_hf_trajectory(
     preference_group_id = traj_dict.get("preference_group_id", None)
     preference_rank = traj_dict.get("preference_rank", None)
     partial_success = traj_dict.get("partial_success", None)
+    data_source = traj_dict.get("data_source", dataset_name)
 
     # Create dataset trajectory
     trajectory = {
         "id": id,
         "task": task_description,
         "lang_vector": lang_vector,  # Pre-computed language vector
-        "data_source": dataset_name,
+        "data_source": data_source,
         "frames": video_path,
         "is_robot": is_robot,
         "quality_label": quality_label,

@@ -11,8 +11,13 @@ from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilarityS
 class ReWiNDBatchCollator(RFMBatchCollator):
     def _process_preference_batch(self, preference_samples: list[PreferenceSample]) -> dict[str, torch.Tensor]:
         """Process a batch of preference samples."""
-        # Randomly decide whether chosen trajectory goes first or second
-        preference_labels = np.random.randint(0, 2, len(preference_samples))
+        # During inference, keep original order (chosen=A, rejected=B)
+        # During training, randomly decide whether chosen trajectory goes first or second
+        if self.inference:
+            # Keep original order: chosen is always A (preference_label=1.0)
+            preference_labels = np.ones(len(preference_samples), dtype=np.int32)
+        else:
+            preference_labels = np.random.randint(0, 2, len(preference_samples))
 
         if self.load_embeddings:
             # Use embeddings directly from trajectories (already loaded by dataset)

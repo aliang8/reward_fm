@@ -5,7 +5,6 @@ from rfm.data.samplers.pref import PrefSampler
 from rfm.data.samplers.sim import SimSampler
 from rfm.data.samplers.progress import ProgressSampler
 from rfm.data.dataset_category import is_preference_only
-from rfm.utils.distributed import rank_0_print
 from rfm.utils.logger import get_logger
 
 logger = get_logger()

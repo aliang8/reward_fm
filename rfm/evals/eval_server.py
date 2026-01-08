@@ -51,7 +51,7 @@ from rfm.configs.eval_configs import EvalServerConfig
 from rfm.configs.experiment_configs import ExperimentConfig
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample
 from rfm.utils.setup_utils import setup_model_and_processor, setup_batch_collator
-from rfm.models.utils import ModelOutput
+from rfm.models.utils import ModelOutput, convert_bins_to_continuous, convert_bins_to_continuous_hard
 from rfm.utils.config_utils import display_config, convert_hydra_to_dataclass
 from rfm.utils.logger import get_logger, setup_loguru_logging
 
@@ -108,6 +108,8 @@ def process_batch_helper(
     device: torch.device,
     batch_data: List[Dict[str, Any]],
     job_id: int = 0,
+    is_discrete_mode: bool = False,
+    num_bins: int = 10,
 ) -> Dict[str, Any]:
     """Synchronous batch processing on specific GPU."""
     if not batch_data:
@@ -148,6 +150,7 @@ def process_batch_helper(
     outputs_preference = None
     outputs_progress = None
     outputs_similarity = None
+    outputs_success = None
 
     num_preferences = batch_inputs.get("num_preferences", 0)
     num_progress = batch_inputs.get("num_progress", 0)
@@ -171,6 +174,8 @@ def process_batch_helper(
                 tokenizer,
                 batch_inputs["preference_inputs"],
                 sample_type="preference",
+                is_discrete_mode=is_discrete_mode,
+                num_bins=num_bins,
             )
     else:
         outputs_preference = None
@@ -186,7 +191,12 @@ def process_batch_helper(
                 tokenizer,
                 batch_inputs["progress_inputs"],
                 sample_type="progress",
+                is_discrete_mode=is_discrete_mode,
+                num_bins=num_bins,
             )
+
+        if "outputs_success" in outputs_progress:
+            outputs_success = outputs_progress.pop("outputs_success")
 
     if num_similarities > 0:
         if model_type == "vqa":
@@ -196,11 +206,14 @@ def process_batch_helper(
             tokenizer,
             batch_inputs["similarity_inputs"],
             sample_type="similarity",
+            is_discrete_mode=is_discrete_mode,
+            num_bins=num_bins,
         )
 
     return {
         "outputs_preference": outputs_preference,
         "outputs_progress": outputs_progress,
+        "outputs_success": outputs_success,
         "outputs_similarity": outputs_similarity,
     }
 
@@ -227,6 +240,7 @@ class MultiGPUEvalServer:
             model_path=self.model_path,
             device=torch.device("cpu"),
         )
+
         self.exp_config: ExperimentConfig = exp_config
         self.base_tokenizer = tokenizer
         self.base_processor = processor
@@ -312,6 +326,15 @@ class MultiGPUEvalServer:
         self.gpu_stats[gpu_info["gpu_id"]]["last_used"] = start_time
 
         try:
+            # Determine if discrete mode is enabled
+            progress_loss_type = getattr(self.exp_config.loss, "progress_loss_type", "l2")
+            is_discrete_mode = progress_loss_type.lower() == "discrete"
+            num_bins = getattr(
+                self.exp_config.loss,
+                "progress_discrete_bins",
+                getattr(self.exp_config.model, "progress_discrete_bins", 10),
+            )
+
             # Process batch in thread pool
             result = await loop.run_in_executor(
                 self.executor,
@@ -323,6 +346,8 @@ class MultiGPUEvalServer:
                 gpu_info["device"],
                 batch_data,
                 job_id,
+                is_discrete_mode,
+                num_bins,
             )
 
             # Update stats
@@ -370,7 +395,12 @@ class MultiGPUEvalServer:
 
 
 def compute_batch_outputs(
-    model: Any, tokenizer: Any, batch_inputs: Dict[str, torch.Tensor], sample_type: str
+    model: Any,
+    tokenizer: Any,
+    batch_inputs: Dict[str, torch.Tensor],
+    sample_type: str,
+    is_discrete_mode: bool = False,
+    num_bins: int = 10,
 ) -> Dict[str, Any]:
     """
     Run a forward pass for non-VQA models and return the raw head outputs we
@@ -406,49 +436,40 @@ def compute_batch_outputs(
         logger.debug(f"prediction_probs: {results['prediction_probs']}")
         logger.debug(f"preference_labels: {results['preference_labels']}")
 
-    # Progress predictions (used by both preference + progress sample types)
+    # Progress predictions (only for progress sample type)
     progress_logits = model_output.progress_logits
-    if progress_logits is not None and isinstance(progress_logits, dict):
-        if sample_type == "preference":
-            progress_pred_chosen: List[List[float]] = []
-            progress_pred_rejected: List[List[float]] = []
-            preference_labels = results.get("preference_labels", batch_inputs["preference_labels"].cpu().tolist())
-            seq_A = progress_logits.get("A")
-            seq_B = progress_logits.get("B")
+    if progress_logits is not None and isinstance(progress_logits, dict) and sample_type == "progress":
+        progress_pred = []
+        seq_A = progress_logits.get("A")
 
-            # Convert tensors to lists
-            seq_A_list = [seq_A[i] for i in range(seq_A.shape[0])] if seq_A is not None else []
-            seq_B_list = [seq_B[i] for i in range(seq_B.shape[0])] if seq_B is not None else []
+        # Convert tensor to list
+        seq_A_list = [seq_A[i] for i in range(seq_A.shape[0])] if seq_A is not None else []
 
-            for label, seq_A_item, seq_B_item in zip(preference_labels, seq_A_list, seq_B_list, strict=False):
-                if label == 1.0:
-                    chosen_seq, rejected_seq = seq_A_item, seq_B_item
-                else:
-                    chosen_seq, rejected_seq = seq_B_item, seq_A_item
-                progress_pred_chosen.append([] if chosen_seq is None else chosen_seq.detach().cpu().flatten().tolist())
-                progress_pred_rejected.append(
-                    [] if rejected_seq is None else rejected_seq.detach().cpu().flatten().tolist()
-                )
-            results.update({
-                "progress_pred_chosen": progress_pred_chosen,
-                "progress_pred_rejected": progress_pred_rejected,
-            })
-            logger.debug(f"progress_pred_chosen: {progress_pred_chosen}")
-            logger.debug(f"progress_pred_rejected: {progress_pred_rejected}")
-        elif sample_type == "progress":
-            progress_pred = []
-            seq_A = progress_logits.get("A")
+        # Process seq_A
+        for seq_A_item in seq_A_list:
+            if seq_A_item is None:
+                progress_pred.append([])
+            elif is_discrete_mode:
+                # seq_A_item is [seq_len, num_bins] logits, convert entire sequence to continuous
+                continuous_pred = convert_bins_to_continuous(seq_A_item.detach().cpu().float())
+                # continuous_pred = convert_bins_to_continuous_hard(seq_A_item.detach().cpu().float())
+                progress_pred.append(continuous_pred.numpy().flatten().tolist())
+            else:
+                progress_pred.append(seq_A_item.detach().cpu().flatten().tolist())
 
-            # Convert tensor to list
-            seq_A_list = [seq_A[i] for i in range(seq_A.shape[0])] if seq_A is not None else []
+        if not progress_pred:
+            batch_size = len(batch_inputs.get("task", []))
+            progress_pred = [[] for _ in range(batch_size)]
 
-            for seq_A_item in seq_A_list:
-                progress_pred.append([] if seq_A_item is None else seq_A_item.detach().cpu().flatten().tolist())
-            if not progress_pred:
-                batch_size = len(batch_inputs.get("task", []))
-                progress_pred = [[] for _ in range(batch_size)]
-            results["progress_pred"] = progress_pred
-            logger.debug(f"progress_pred: {progress_pred}")
+        results["progress_pred"] = progress_pred
+        logger.debug(f"progress_pred: {progress_pred}")
+        if model_output.success_logits is not None:
+            success_pred = model_output.success_logits["A"]
+            success_probs = torch.sigmoid(success_pred)
+            results["outputs_success"] = {
+                "success_probs": success_probs.detach().cpu().tolist(),
+            }
+            logger.debug(f"success_probs: {success_probs}")
 
     # Similarity logits
     if sample_type == "similarity" and model_output.sim_logits is not None:
@@ -465,20 +486,31 @@ def compute_batch_outputs(
             sim_scores_list = sim_tensor.detach().cpu().flatten().tolist()
 
         num_samples = len(batch_inputs.get("task", []))
-        if num_samples == 0 and sim_scores_list:
-            num_samples = len(sim_scores_list) // 2
+
+        # Eval server is always in inference mode (only ref_sim, no ref_diff)
+        # In inference mode, batch structure is [ref_sim_0, ref_sim_1, ...]
+        # Assert that we have one score per sample (inference mode)
+        if num_samples > 0:
+            assert len(sim_scores_list) == num_samples, (
+                f"Expected {num_samples} similarity scores (inference mode: one per sample), "
+                f"but got {len(sim_scores_list)} scores. This suggests the collator is not in inference mode."
+            )
+        elif sim_scores_list:
+            # Infer num_samples from list length (should be 1:1 ratio in inference mode)
+            num_samples = len(sim_scores_list)
+            assert num_samples % 2 != 0 or num_samples == 0, (
+                f"Got {num_samples} scores which is even - this suggests training mode structure. "
+                f"Eval server should always be in inference mode (one score per sample)."
+            )
 
         sim_score_ref_sim: List[Optional[float]] = []
-        sim_score_ref_diff: List[Optional[float]] = []
+
+        # Inference mode: one score per sample (only ref_sim)
         for i in range(num_samples):
-            idx_sim = i * 2
-            idx_diff = idx_sim + 1
-            sim_score_ref_sim.append(sim_scores_list[idx_sim] if idx_sim < len(sim_scores_list) else None)
-            sim_score_ref_diff.append(sim_scores_list[idx_diff] if idx_diff < len(sim_scores_list) else None)
+            sim_score_ref_sim.append(sim_scores_list[i] if i < len(sim_scores_list) else None)
 
         results.update({
             "sim_score_ref_sim": sim_score_ref_sim,
-            "sim_score_ref_diff": sim_score_ref_diff,
             "task": batch_inputs.get("task", []),
             "data_source": batch_inputs.get("data_source", []),
             "data_gen_strategy": batch_inputs.get("data_gen_strategy", []),
@@ -486,7 +518,6 @@ def compute_batch_outputs(
         })
 
         logger.debug(f"sim_score_ref_sim: {sim_score_ref_sim}")
-        logger.debug(f"sim_score_ref_diff: {sim_score_ref_diff}")
         logger.debug(f"task: {batch_inputs.get('task', [])}")
         logger.debug(f"data_source: {batch_inputs.get('data_source', [])}")
         logger.debug(f"data_gen_strategy: {batch_inputs.get('data_gen_strategy', [])}")

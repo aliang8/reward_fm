@@ -157,6 +157,9 @@ class ProgressSampler(RFMBaseSampler):
             progress_traj.target_progress = [0.0] * len(progress_traj.target_progress)
             if self.config.progress_loss_type.lower() == "discrete":
                 progress_traj.target_progress = convert_continuous_to_discrete_bins(progress_traj.target_progress, self.config.progress_discrete_bins)
+            # Also set success labels to 0.0 (predict 0 success for different task trajectories)
+            if progress_traj.success_label is not None:
+                progress_traj.success_label = [0.0] * len(progress_traj.success_label)
 
         strategy_value = strategy_used.value if isinstance(strategy_used, DataGenStrat) else strategy_used
         sample = ProgressSample(

@@ -394,36 +394,28 @@ class StrategyFirstDataset(BaseDataset):
         if strategy is None:
             return indices
 
-        # For REWIND strategy, only use successful trajectories (don't rewind suboptimal trajectories)
-        if strategy == DataGenStrat.REWIND:
+        # For strategies that require successful trajectories only
+        # REWIND: all sample types
+        # REVERSE_PROGRESS: preference and progress samples
+        # FORWARD_PROGRESS: progress samples only
+        requires_successful = (
+            strategy == DataGenStrat.REWIND
+            or (strategy == DataGenStrat.REVERSE_PROGRESS and sample_type in ["pref", "progress"])
+            or (strategy == DataGenStrat.FORWARD_PROGRESS and sample_type == "progress")
+        )
+        
+        if requires_successful:
             indices_set = set(indices)
             filtered = indices_set & self.successful_indices
 
             if not filtered:
                 logger.trace(
-                    f"[StrategyFirstDataset] No successful trajectories available for REWIND strategy in source {data_source}"
+                    f"[StrategyFirstDataset] No successful trajectories available for {strategy.value} strategy in source {data_source}"
                 )
                 return []
 
             logger.trace(
-                f"[StrategyFirstDataset] Filtered {len(filtered)}/{len(indices)} indices for REWIND strategy "
-                f"(keeping only successful trajectories)"
-            )
-            return list(filtered)
-
-        # For REVERSE_PROGRESS strategy in preference samples, only use successful trajectories
-        if strategy == DataGenStrat.REVERSE_PROGRESS and sample_type == "pref":
-            indices_set = set(indices)
-            filtered = indices_set & self.successful_indices
-
-            if not filtered:
-                logger.trace(
-                    f"[StrategyFirstDataset] No successful trajectories available for REVERSE_PROGRESS strategy in source {data_source}"
-                )
-                return []
-
-            logger.trace(
-                f"[StrategyFirstDataset] Filtered {len(filtered)}/{len(indices)} indices for REVERSE_PROGRESS strategy "
+                f"[StrategyFirstDataset] Filtered {len(filtered)}/{len(indices)} indices for {strategy.value} strategy "
                 f"(keeping only successful trajectories)"
             )
             return list(filtered)

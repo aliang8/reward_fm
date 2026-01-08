@@ -458,7 +458,10 @@ class RFMHeadsTrainer(Trainer):
 
         # Log custom losses at specified intervals (using our custom logger only)
         if self.state.global_step % self.args.logging_steps == 0:
-            self._log_metadata()
+            try:
+                self._log_metadata()
+            except Exception as e:
+                logger.warning(f"Error logging metadata: {e}")
 
         # Log GPU memory usage at every training step for diagnostics
         log_memory_usage(f"Step {self.state.global_step}")

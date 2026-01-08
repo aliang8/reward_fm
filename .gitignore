@@ -16,7 +16,7 @@ visualizations/*
 rfm/rfm_dataset/*
 .DS_Store
 rfm_dataset/*
-processed_datasets/*
+processed_datasets
 wandb/*
 LIBERO/*
 core

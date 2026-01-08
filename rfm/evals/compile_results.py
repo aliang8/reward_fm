@@ -21,20 +21,9 @@ from rfm.evals.eval_metrics_utils import compute_pearson, compute_spearman
 from rfm.evals.eval_viz_utils import create_combined_progress_success_plot
 from rfm.models.utils import convert_bins_to_continuous, convert_discrete_target_to_continuous
 
-def convert_continuous_to_discrete_bin_roboreward(value: float, num_bins: int) -> int:
-    """Convert a single continuous progress value in [0, 1] to a discrete bin [1, num_bins].
-
-    Args:
-        value: Single continuous progress value in [0, 1]
-        num_bins: Number of discrete bins to use
-
-    Returns:
-        Discrete bin index in [1, num_bins]
-    """
-    value -= 1e-10 # so that the right interval is inclusive.
+def convert_continuous_to_discrete_bin(value: float, num_bins: int) -> int:
     value = min(max(value, 0.0), 1.0)
-    bin_idx = int(value * num_bins)
-    return min(bin_idx, num_bins - 1) + 1
+    return round(value * (num_bins - 1))
 
 def compute_eval_metrics(
     eval_type: str,

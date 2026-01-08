@@ -19,7 +19,19 @@ from sklearn.metrics import average_precision_score
 from rfm.data.datasets.helpers import load_frames_from_npz
 from rfm.evals.eval_metrics_utils import compute_pearson, compute_spearman
 from rfm.evals.eval_viz_utils import create_combined_progress_success_plot
-from rfm.models.utils import convert_bins_to_continuous, convert_discrete_target_to_continuous 
+from rfm.models.utils import convert_bins_to_continuous, convert_discrete_target_to_continuous
+
+def convert_continuous_to_discrete_bin_roboreward(value: float, num_bins: int) -> int:
+    """Convert a single continuous progress value in [0, 1] to a discrete bin [1, num_bins].
+
+    Args:
+        value: Single continuous progress value in [0, 1]
+        num_bins: Number of discrete bins to use
+
+    Returns:
+        Discrete bin index in [1, num_bins]
+    """
+    return int(round(min(max(value, 0.0), 1.0) * (num_bins - 1)) + 1)
 
 
 def compute_eval_metrics(
@@ -533,10 +545,10 @@ def run_reward_alignment_eval_per_trajectory(
             final_predicted_reward = float(last_preds[-1])
 
             # Convert predicted reward to bin (1-5)
-            pred_bin = _convert_reward_to_bin(final_predicted_reward)
+            pred_bin = convert_continuous_to_discrete_bin_roboreward(final_predicted_reward, num_bins=5)
 
             # Convert partial_success to bin (0->1, 1->5)
-            gt_bin = _convert_partial_success_to_bin(partial_success)
+            gt_bin = convert_continuous_to_discrete_bin_roboreward(partial_success, num_bins=5)
 
             pred_bins_mae.append(pred_bin)
             gt_bins_mae.append(gt_bin)
@@ -680,53 +692,6 @@ def run_reward_alignment_eval_per_trajectory(
         metrics["mae"] = mae
 
     return metrics, plots, video_frames_list, trajectory_progress_data
-
-
-def _convert_reward_to_bin(reward: float, min_bin: int = 1, max_bin: int = 5) -> int:
-    """Convert a continuous reward value (0-1) to a discrete bin (1-5).
-
-    Args:
-        reward: Continuous reward value in [0, 1]
-        min_bin: Minimum bin value (default: 1)
-        max_bin: Maximum bin value (default: 5)
-
-    Returns:
-        Discrete bin value in [min_bin, max_bin]
-    """
-    # Clamp reward to [0, 1]
-    reward = np.clip(reward, 0.0, 1.0)
-
-    # Map [0, 1] to [min_bin, max_bin]
-    # Linear mapping: 0 -> min_bin, 1 -> max_bin
-    bin_value = int(np.round(reward * (max_bin - min_bin) + min_bin))
-
-    # Ensure bin is within valid range
-    return int(np.clip(bin_value, min_bin, max_bin))
-
-
-def _convert_partial_success_to_bin(partial_success: float, min_bin: int = 1, max_bin: int = 5) -> int:
-    """Convert partial_success value (0-1) to a discrete bin (1-5).
-
-    Maps 0 -> 1 and 1 -> 5.
-
-    Args:
-        partial_success: Partial success value in [0, 1]
-        min_bin: Minimum bin value (default: 1)
-        max_bin: Maximum bin value (default: 5)
-
-    Returns:
-        Discrete bin value in [min_bin, max_bin]
-    """
-    # Clamp partial_success to [0, 1]
-    partial_success = np.clip(partial_success, 0.0, 1.0)
-
-    # Map [0, 1] to [min_bin, max_bin]
-    # Linear mapping: 0 -> min_bin, 1 -> max_bin
-    bin_value = int(np.round(partial_success * (max_bin - min_bin) + min_bin))
-
-    # Ensure bin is within valid range
-    return int(np.clip(bin_value, min_bin, max_bin))
-
 
 def _compute_mae_between_bins(pred_bins: List[int], gt_bins: List[int]) -> float:
     """Compute Mean Absolute Error (MAE) between predicted bins and ground truth bins.

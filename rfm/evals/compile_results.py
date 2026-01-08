@@ -21,7 +21,7 @@ from rfm.evals.eval_metrics_utils import compute_pearson, compute_spearman
 from rfm.evals.eval_viz_utils import create_combined_progress_success_plot
 from rfm.models.utils import convert_bins_to_continuous, convert_discrete_target_to_continuous
 
-def convert_continuous_to_discrete_bin(value: float, num_bins: int) -> int:
+def convert_continuous_to_discrete_bin_roboreward(value: float, num_bins: int) -> int:
     value = min(max(value, 0.0), 1.0)
     return round(value * (num_bins - 1))
 

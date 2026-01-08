@@ -991,17 +991,20 @@ class RFMBatchCollator(BaseCollator):
         target_progress_sim_A = []
         target_progress_sim_A_mask = []
         trajectory_A_data_source_sim = []  # Data source for trajectory A in ref_sim comparison
+        trajectory_A_quality_label_sim = []  # Quality label for trajectory A in ref_sim comparison
         for i, sample in enumerate(similarity_samples):
             if ref_sim_order[i]:
                 # Ref is A (first)
                 traj_a_progress = sample.ref_trajectory.target_progress
                 traj_a_partial_success = sample.ref_trajectory.partial_success
                 trajectory_A_data_source_sim.append(sample.ref_trajectory.data_source)
+                trajectory_A_quality_label_sim.append(sample.ref_trajectory.quality_label)
             else:
                 # Sim is A (first)
                 traj_a_progress = sample.sim_trajectory.target_progress
                 traj_a_partial_success = sample.sim_trajectory.partial_success
                 trajectory_A_data_source_sim.append(sample.sim_trajectory.data_source)
+                trajectory_A_quality_label_sim.append(sample.sim_trajectory.quality_label)
 
             target_progress_sim_A.append(traj_a_progress if traj_a_progress is not None else [])
             target_progress_sim_A_mask.append(
@@ -1020,22 +1023,26 @@ class RFMBatchCollator(BaseCollator):
         target_progress_diff_A = []
         target_progress_diff_A_mask = []
         trajectory_A_data_source_diff = []  # Data source for trajectory A in ref_diff comparison
+        trajectory_A_quality_label_diff = []  # Quality label for trajectory A in ref_diff comparison
         for i, sample in enumerate(similarity_samples):
             if sample.diff_trajectory is None:
                 # Inference mode: skip diff-related metadata
                 target_progress_diff_A.append([])
                 target_progress_diff_A_mask.append(0.0)
                 trajectory_A_data_source_diff.append(None)
+                trajectory_A_quality_label_diff.append(None)
             elif ref_diff_order[i]:
                 # Ref is A (first)
                 traj_a_progress = sample.ref_trajectory.target_progress
                 traj_a_partial_success = sample.ref_trajectory.partial_success
                 trajectory_A_data_source_diff.append(sample.ref_trajectory.data_source)
+                trajectory_A_quality_label_diff.append(sample.ref_trajectory.quality_label)
             else:
                 # Diff is A (first)
                 traj_a_progress = sample.diff_trajectory.target_progress
                 traj_a_partial_success = sample.diff_trajectory.partial_success
                 trajectory_A_data_source_diff.append(sample.diff_trajectory.data_source)
+                trajectory_A_quality_label_diff.append(sample.diff_trajectory.quality_label)
 
             if sample.diff_trajectory is not None:
                 target_progress_diff_A.append(traj_a_progress if traj_a_progress is not None else [])
@@ -1091,6 +1098,8 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["predict_last_frame_mask_diff_A"] = pad_list_to_max(predict_last_frame_mask_diff_A_list)
 
         batch_inputs["trajectory_A_data_source"] = trajectory_A_data_source_sim
+        batch_inputs["trajectory_A_quality_label_sim"] = trajectory_A_quality_label_sim
+        batch_inputs["trajectory_A_quality_label_diff"] = trajectory_A_quality_label_diff
 
         batch_inputs["ref_frames_shape"] = torch.tensor(ref_frames_shape_list, dtype=torch.int32)
         batch_inputs["traj_sim_frames_shape"] = torch.tensor(traj_sim_frames_shape_list, dtype=torch.int32)

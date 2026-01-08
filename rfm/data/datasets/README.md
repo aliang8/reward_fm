@@ -106,14 +106,49 @@ The `PrefSampler` handles strategy selection and trajectory pairing:
 2. **Partial success trajectories**: Handled via `_get_different_partial_success_traj()` with swapping logic
 3. **Strategy execution**: Handled via `_execute_strategy()` which returns rejected trajectory and subsample strategy
 
+## Progress Sampling Details
+
+### Strategy Requirements
+
+#### 1. FORWARD_PROGRESS (Subsequence)
+- **Requirement**: Only uses **successful trajectories** (`quality_label == "successful"`)
+- **Enforced by**: `StrategyFirstDataset._filter_indices_by_strategy()` filters FORWARD_PROGRESS (for progress samples) to only use successful indices
+- **Progress prediction**: ✅ Yes
+- **Success prediction**: ✅ Yes
+
+#### 2. REWIND
+- **Requirement**: Only uses **successful trajectories** (`quality_label == "successful"`)
+- **Enforced by**: `StrategyFirstDataset._filter_indices_by_strategy()` filters REWIND (for all sample types) to only use successful indices
+- **Progress prediction**: ✅ Yes
+- **Success prediction**: ✅ Yes
+
+#### 3. DIFFERENT_TASK_INSTRUCTION
+- **Requirement**: Can use any trajectory
+- **Progress prediction**: ✅ Yes (but progress is set to `[0.0]` for all timesteps)
+- **Success prediction**: ✅ Yes (but success labels are set to `[0.0]` for all timesteps)
+  - Implementation: `target_progress = [0.0]` → `success_label = [0.0]` (explicitly set in `progress.py`)
+
+#### 4. REVERSE_PROGRESS
+- **Requirement**: Only uses **successful trajectories** (`quality_label == "successful"`)
+- **Enforced by**: `StrategyFirstDataset._filter_indices_by_strategy()` filters REVERSE_PROGRESS (for progress samples) to only use successful indices
+- **Progress prediction**: ✅ Yes (progress computed in reverse order)
+- **Success prediction**: ✅ Yes
+
 ## Verification Checklist
 
+### Preference Sampling
 - ✅ REWIND strategy only uses successful trajectories (enforced in `StrategyFirstDataset`)
+- ✅ REVERSE_PROGRESS strategy only uses successful trajectories for preference samples (enforced in `StrategyFirstDataset`)
 - ✅ DIFFERENT_TASK sets rejected progress to `[0.0]` (line 351 in `pref.py`)
-- ✅ DIFFERENT_TASK success labels are `[0.0]` (computed from progress=0.0)
+- ✅ DIFFERENT_TASK success labels are correctly set to `[0.0]` after setting progress to 0.0
 - ✅ SUBOPTIMAL progress is masked out (`should_compute_progress` returns 0.0)
 - ✅ Chosen trajectory always predicts progress (unless preference-only dataset)
 - ✅ Chosen trajectory with `partial_success < 1.0` does NOT predict success
-- ✅ REVERSE_PROGRESS chosen trajectory requirement enforced in filtering for preference samples
-- ✅ DIFFERENT_TASK success labels are correctly set to `[0.0]` after setting progress to 0.0
+
+### Progress Sampling
+- ✅ FORWARD_PROGRESS strategy only uses successful trajectories (enforced in `StrategyFirstDataset` for progress samples)
+- ✅ REWIND strategy only uses successful trajectories (enforced in `StrategyFirstDataset` for all sample types)
+- ✅ REVERSE_PROGRESS strategy only uses successful trajectories (enforced in `StrategyFirstDataset` for progress samples)
+- ✅ DIFFERENT_TASK_INSTRUCTION sets progress to `[0.0]` (line 157 in `progress.py`)
+- ✅ DIFFERENT_TASK_INSTRUCTION success labels are correctly set to `[0.0]` after setting progress to 0.0
 

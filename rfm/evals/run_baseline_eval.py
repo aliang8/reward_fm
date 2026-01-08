@@ -17,11 +17,14 @@ Usage:
         custom_eval.reward_alignment=[aliangdw_metaworld_metaworld_eval]
     
     # Run VLAC progress evaluation (requires separate dependency set due to trl conflict)
-    PYTHONPATH=.venv-vlac/bin/python rfm/evals/run_baseline_eval.py \
+    uv run --extra vlac --python .venv-vlac/bin/python rfm/evals/run_baseline_eval.py \
         reward_model=vlac \
         vlac_model_path=InternRobotics/VLAC \
         custom_eval.eval_types=[reward_alignment] \
-        custom_eval.reward_alignment=[aliangdw_metaworld_metaworld_eval]
+        custom_eval.reward_alignment=[jesbu1_roboreward_rfm_roboreward_test] \
+        custom_eval.use_frame_steps=false \
+        gvl_max_frames=8 \
+        custom_eval.reward_alignment_max_trajectories=null
     
     # Run RoboReward-8B progress evaluation
     uv run python rfm/evals/run_baseline_eval.py \
@@ -87,7 +90,10 @@ from rfm.data.collators.utils import convert_frames_to_pil_images, frames_to_num
 from rfm.evals.baselines.rlvlmf import RLVLMF
 from rfm.evals.baselines.gvl import GVL
 from rfm.evals.baselines.vlac import VLAC
-from rfm.evals.baselines.roboreward import RoboReward
+try: 
+    from rfm.evals.baselines.roboreward import RoboReward
+except ImportError:
+    RoboReward = None
 from rfm.evals.baselines.rfm_model import RFMModel
 from rfm.evals.compile_results import compute_eval_metrics
 

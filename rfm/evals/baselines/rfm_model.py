@@ -17,6 +17,7 @@ from rfm.data.dataset_types import ProgressSample, PreferenceSample, SimilarityS
 from rfm.data.datasets.helpers import create_trajectory_from_dict
 from rfm.evals.eval_server import forward_model
 from rfm.utils.logger import get_logger, setup_loguru_logging
+from rfm.models.utils import convert_bins_to_continuous
 
 logger = get_logger()
 
@@ -350,6 +351,9 @@ class RFMModel:
                 else:
                     # Multiple values per sample
                     progress_values = progress_tensor[i].cpu().tolist()
+            elif progress_tensor.ndim == 3:
+                # Multiple values per sample, discrete multiple bins, convert to continuous 
+                progress_values = convert_bins_to_continuous(progress_tensor[i]).cpu().tolist()
             else:
                 # Unexpected shape
                 raise ValueError(f"Unexpected progress_tensor shape: {progress_tensor.shape}")

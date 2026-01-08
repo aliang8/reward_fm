@@ -83,13 +83,16 @@ class BaseDataset(torch.utils.data.Dataset):
 
         dataset_type = "evaluation" if is_evaluation else "training"
         logger.info(f"Filtering {dataset_type} dataset with {len(self.dataset)} total trajectories")
-        self.dataset, self._combined_indices = self._filter_dataset(
-            excluded_keywords=excluded_keywords,
-            min_frames=min_frames,
-            dataset=self.dataset,
-            combined_indices=self._combined_indices,
-            filter_successful_only=filter_successful_only,
-        )
+        if self.is_evaluation:
+            logger.info(f"SKIPPING FILTERING for {dataset_type} dataset BECAUSE IT'S EVALUATION")
+        else:
+            self.dataset, self._combined_indices = self._filter_dataset(
+                    excluded_keywords=excluded_keywords,
+                    min_frames=min_frames,
+                    dataset=self.dataset,
+                    combined_indices=self._combined_indices,
+                    filter_successful_only=filter_successful_only,
+                )
         if filter_successful_only:
             logger.info(
                 f"{dataset_type.capitalize()} dataset filtered with {len(self.dataset)} total trajectories (filtered for successful trajectories only)"

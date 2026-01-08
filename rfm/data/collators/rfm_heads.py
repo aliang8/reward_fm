@@ -592,6 +592,9 @@ class RFMBatchCollator(BaseCollator):
 
         # Add target progress for both trajectories using list comprehensions
         target_progress_A = [traj.target_progress for traj in trajectory_A_list]
+        # Check if any of the progresses in target_progress_A is None
+        if any(p is None for p in target_progress_A):
+            return batch_inputs
         target_progress_B = [traj.target_progress for traj in trajectory_B_list]
         target_progress_A_mask = [
             should_compute_progress(

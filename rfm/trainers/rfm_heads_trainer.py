@@ -2042,7 +2042,7 @@ class RFMHeadsTrainer(Trainer):
         
         # Incorporate quality mask: always include all frames for suboptimal/failure trajectories
         if quality_mask is not None:
-            combined_mask = combined_mask | quality_mask
+            combined_mask = torch.maximum(combined_mask, quality_mask)
 
         if progress_loss_mask is not None:
             combined_mask = combined_mask * progress_loss_mask

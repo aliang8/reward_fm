@@ -107,7 +107,7 @@ class PrefSampler(RFMBaseSampler):
         rejected_traj = None
 
         if strategy == DataGenStrat.REWIND:
-            rejected_traj = chosen_traj
+            rejected_traj = chosen_traj.copy()
             rejected_subsample_strategy = "subsample_rewind"
         elif strategy == DataGenStrat.SUBOPTIMAL:
             for _ in range(max_retries):
@@ -133,7 +133,7 @@ class PrefSampler(RFMBaseSampler):
                     break
             rejected_subsample_strategy = "subsample_forward"
         elif strategy == DataGenStrat.REVERSE_PROGRESS:
-            rejected_traj = chosen_traj
+            rejected_traj = chosen_traj.copy()
             rejected_subsample_strategy = "subsample_reverse"
         else:
             return None

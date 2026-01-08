@@ -1971,7 +1971,7 @@ class RFMHeadsTrainer(Trainer):
         return total_loss
 
     def _compute_success_loss_helper(
-        self, success_logits, target_progress, success_labels, progress_loss_mask=None
+        self, success_logits, target_progress, success_labels, progress_loss_mask=None, quality_labels=None
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Helper function to compute success prediction loss.
@@ -1990,6 +1990,9 @@ class RFMHeadsTrainer(Trainer):
             success_labels: Success labels from batch (computed in collator) (can be tensor or list of tensors)
             progress_loss_mask: Per-sample mask tensor of shape (batch_size,) with 1.0 for samples
                 where we should compute progress/success loss (e.g., successful, rewound, different_task)
+            quality_labels: Optional list of quality labels (e.g., "successful", "suboptimal", "failure") for each sample.
+                If a trajectory has quality_label in ["suboptimal", "failure", "failed"], we always predict success=0
+                and verify that success_labels are all 0s.
 
         Returns:
             tuple: (success_loss, success_accuracy, success_auprc, metrics)
@@ -2008,10 +2011,35 @@ class RFMHeadsTrainer(Trainer):
             target_progress = target_progress[:, ::2]
             success_labels = success_labels[:, ::2]
 
+        # Handle suboptimal/failure trajectories: always predict success=0 and verify labels are all 0s
+        # Create a mask for suboptimal/failure trajectories: always include all frames for these trajectories
+        quality_mask = None
+        if quality_labels is not None:
+            batch_size = success_logits.shape[0]
+            seq_len = success_logits.shape[1]
+            quality_mask = torch.zeros(batch_size, seq_len, device=success_logits.device, dtype=torch.float32)
+            
+            for i in range(batch_size):
+                quality_label = quality_labels[i]
+                if quality_label is not None and quality_label.lower() in ("suboptimal", "failure", "failed"):
+                    # Verify that success_labels are all 0s for this trajectory
+                    sample_success_labels = success_labels[i]
+                    if not (sample_success_labels == 0.0).all():
+                        logger.warning(
+                            f"Trajectory {i} has quality_label='{quality_label}' but success_labels are not all 0s. "
+                            f"Found non-zero labels: {(sample_success_labels != 0.0).sum().item()} out of {len(sample_success_labels)}"
+                        )
+                    # Include all frames for this trajectory in the mask
+                    quality_mask[i, :] = 1.0
+
         if self.config.loss.progress_loss_type.lower() == "discrete":
             target_progress = convert_discrete_target_to_continuous(target_progress, num_bins=self.config.loss.progress_discrete_bins)
 
         combined_mask = ((target_progress < min_success) | (success_labels > 0.5)).float()
+        
+        # Incorporate quality mask: always include all frames for suboptimal/failure trajectories
+        if quality_mask is not None:
+            combined_mask = combined_mask | quality_mask
 
         if progress_loss_mask is not None:
             combined_mask = combined_mask * progress_loss_mask
@@ -2435,11 +2463,13 @@ class RFMHeadsTrainer(Trainer):
             success_pred = success_logits["A"]
             success_labels = inputs["success_labels"]
 
+            quality_labels = inputs.get("quality_labels", None)
             success_loss, success_accuracy, success_auprc, success_metrics = self._compute_success_loss_helper(
                 success_pred,
                 progress_target,
                 success_labels,
                 progress_loss_mask=progress_target_mask,
+                quality_labels=quality_labels,
             )
             # success_loss is already balanced via per-sample weighting of minority class
             if not torch.isnan(success_loss).any():
@@ -2575,11 +2605,13 @@ class RFMHeadsTrainer(Trainer):
             success_logits = success_logits["A"]
             success_labels_A = inputs["success_labels_A"]
 
+            quality_labels_A = inputs.get("trajectory_A_quality_label", None)
             success_loss, success_accuracy, success_auprc, success_metrics_A = self._compute_success_loss_helper(
                 success_logits,
                 target_progress_A,
                 success_labels_A,
                 progress_loss_mask=target_progress_A_mask,
+                quality_labels=quality_labels_A,
             )
             # success_loss is already balanced via per-sample weighting of minority class
             if not torch.isnan(success_loss).any():
@@ -2848,6 +2880,10 @@ class RFMHeadsTrainer(Trainer):
             success_pred_ref_sim = success_logits_ref_sim["A"]  # [batch_size, seq_len]
             success_pred_ref_diff = success_logits_ref_diff["A"]  # [batch_size, seq_len]
 
+            # Get quality labels for trajectory A in each comparison
+            quality_labels_sim_A = inputs.get("trajectory_A_quality_label_sim", None)
+            quality_labels_diff_A = inputs.get("trajectory_A_quality_label_diff", None)
+
             # Compute success loss for ref_sim (using trajectory A)
             success_loss_ref_sim, success_accuracy_ref_sim, success_auprc_ref_sim, success_metrics_ref_sim = (
                 self._compute_success_loss_helper(
@@ -2855,6 +2891,7 @@ class RFMHeadsTrainer(Trainer):
                     target_progress_sim_A,
                     success_labels_sim_A,
                     progress_loss_mask=target_progress_sim_A_mask,
+                    quality_labels=quality_labels_sim_A,
                 )
             )
 
@@ -2865,6 +2902,7 @@ class RFMHeadsTrainer(Trainer):
                     target_progress_diff_A,
                     success_labels_diff_A,
                     progress_loss_mask=target_progress_diff_A_mask,
+                    quality_labels=quality_labels_diff_A,
                 )
             )
 

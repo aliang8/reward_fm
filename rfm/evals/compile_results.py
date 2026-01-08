@@ -31,8 +31,10 @@ def convert_continuous_to_discrete_bin_roboreward(value: float, num_bins: int) -
     Returns:
         Discrete bin index in [1, num_bins]
     """
-    return int(round(min(max(value, 0.0), 1.0) * (num_bins - 1)) + 1)
-
+    value -= 1e-10 # so that the right interval is inclusive.
+    value = min(max(value, 0.0), 1.0)
+    bin_idx = int(value * num_bins)
+    return min(bin_idx, num_bins - 1) + 1
 
 def compute_eval_metrics(
     eval_type: str,

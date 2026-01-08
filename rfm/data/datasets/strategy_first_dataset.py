@@ -100,6 +100,10 @@ class StrategyFirstDataset(BaseDataset):
             if task in task_indices:
                 self.tasks_with_both_indices.update(task_indices[task])
 
+        # Build set of successful trajectory indices for REWIND strategy filtering
+        quality_indices = self._combined_indices.get("quality_indices", {})
+        self.successful_indices = set(quality_indices.get("successful", []))
+
         logger.info(f"StrategyFirstDataset initialized with {len(self.dataset)} trajectories")
         logger.info(
             f"Sample type ratios: pref={self.sample_type_ratio[0]}, progress={self.sample_type_ratio[1]}, sim={self.sample_type_ratio[2]}"
@@ -389,6 +393,40 @@ class StrategyFirstDataset(BaseDataset):
         """
         if strategy is None:
             return indices
+
+        # For REWIND strategy, only use successful trajectories (don't rewind suboptimal trajectories)
+        if strategy == DataGenStrat.REWIND:
+            indices_set = set(indices)
+            filtered = indices_set & self.successful_indices
+
+            if not filtered:
+                logger.trace(
+                    f"[StrategyFirstDataset] No successful trajectories available for REWIND strategy in source {data_source}"
+                )
+                return []
+
+            logger.trace(
+                f"[StrategyFirstDataset] Filtered {len(filtered)}/{len(indices)} indices for REWIND strategy "
+                f"(keeping only successful trajectories)"
+            )
+            return list(filtered)
+
+        # For REVERSE_PROGRESS strategy in preference samples, only use successful trajectories
+        if strategy == DataGenStrat.REVERSE_PROGRESS and sample_type == "pref":
+            indices_set = set(indices)
+            filtered = indices_set & self.successful_indices
+
+            if not filtered:
+                logger.trace(
+                    f"[StrategyFirstDataset] No successful trajectories available for REVERSE_PROGRESS strategy in source {data_source}"
+                )
+                return []
+
+            logger.trace(
+                f"[StrategyFirstDataset] Filtered {len(filtered)}/{len(indices)} indices for REVERSE_PROGRESS strategy "
+                f"(keeping only successful trajectories)"
+            )
+            return list(filtered)
 
         # Check if this is RoboArena or RoboReward (skip task filtering for these datasets)
         is_roboarena = data_source and "roboarena" in str(data_source).lower()

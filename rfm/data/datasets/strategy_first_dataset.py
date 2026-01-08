@@ -543,6 +543,9 @@ class StrategyFirstDataset(BaseDataset):
                 filtered_indices = source_indices
 
             # Select a trajectory from filtered indices
+            # For progress: this is the trajectory for progress prediction
+            # For preference: this is the chosen trajectory
+            # For similarity: this is the reference trajectory
             selected_traj_idx = self._local_random.choice(filtered_indices)
             item = self.dataset[selected_traj_idx]
 

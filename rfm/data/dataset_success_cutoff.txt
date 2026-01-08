@@ -46,7 +46,6 @@ roboreward_kaist_nonprehensile_converted_externally_to_rlds,1.0
 roboreward_utokyo_pr2_tabletop_manipulation_converted_externally_to_rlds,0.78
 roboreward_utokyo_xarm_bimanual_converted_externally_to_rlds,1.0
 roboreward_cmu_play_fusion,0.97
-
 roboreward_toto,1.0
 metaworld_train,1.0
 molmoact_dataset_household,0.94

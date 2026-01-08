@@ -2028,10 +2028,12 @@ class RFMHeadsTrainer(Trainer):
                     # Verify that success_labels are all 0s for this trajectory
                     sample_success_labels = success_labels[i]
                     if not (sample_success_labels == 0.0).all():
-                        logger.warning(
+                        logger.debug(
                             f"Trajectory {i} has quality_label='{quality_label}' but success_labels are not all 0s. "
                             f"Found non-zero labels: {(sample_success_labels != 0.0).sum().item()} out of {len(sample_success_labels)}"
                         )
+                        import ipdb; ipdb.set_trace()
+
                     # Include all frames for this trajectory in the mask
                     quality_mask[i, :] = 1.0
 

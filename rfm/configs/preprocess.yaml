@@ -2,7 +2,7 @@ train_datasets:
   - "aliangdw/metaworld"
   - "jesbu1/molmoact_rfm" 
   - "abraranwar/libero_rfm"
-  - "abraranwar/agibotworld_alpha_rfm"
+  - "abraranwar/agibotworld_alpha_headcam_rfm"
   - "ykorkmaz/libero_failure_rfm"
   - "jesbu1/ph2d_rfm"
   - "jesbu1/h2r_rfm"

@@ -208,7 +208,7 @@ DATASET_MAP = {
     },
     "suboptimal_fail": {
         "train": [
-            "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
+            # "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
             "jesbu1_fino_net_rfm_fino_net",
             "jesbu1_failsafe_rfm_failsafe",
             "jesbu1_soar_rfm_soar_rfm",
@@ -279,8 +279,7 @@ DATA_SOURCE_CATEGORY = {
     "preference_only": [
         "oxe_bc_z",
         "oxe_dlr_edan_shared_control_converted_externally_to_rlds",
-        "roboreward_dlr_edan_shared_control_converted_externally_to_rlds"
-        "roboarena",
+        "roboreward_dlr_edan_shared_control_converted_externally_to_rldsroboarena",
         "auto_eval_rfm",
         # "humanoid_everyday_rfm",
         "galaxea_part1_r1_lite",

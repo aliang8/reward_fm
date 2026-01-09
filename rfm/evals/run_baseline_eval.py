@@ -90,7 +90,8 @@ from rfm.data.collators.utils import convert_frames_to_pil_images, frames_to_num
 from rfm.evals.baselines.rlvlmf import RLVLMF
 from rfm.evals.baselines.gvl import GVL
 from rfm.evals.baselines.vlac import VLAC
-try: 
+
+try:
     from rfm.evals.baselines.roboreward import RoboReward
 except ImportError:
     RoboReward = None

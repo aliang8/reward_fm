@@ -15,11 +15,7 @@ logger = get_logger()
 class SimSampler(RFMBaseSampler):
     """Data generator for producing batches for similarity scoring."""
 
-    def __init__(
-        self,
-        is_evaluation=False,
-        **kwargs,
-    ):
+    def __init__(self, is_evaluation=False, **kwargs):
         super().__init__(**kwargs)
         self.similarity_strategy_ratio: List[float] = self.config.similarity_strategy_ratio
         self._has_paired_human_robot = (
@@ -248,18 +244,9 @@ class SimSampler(RFMBaseSampler):
         diff_trajectory = self._get_traj_from_data(traj_diff)
 
         # Handle different task trajectories: set progress=0 and success=0
-        # For SUBOPTIMAL strategy, diff is always from different task
+        # For SUBOPTIMAL strategy, diff is suboptimal same task (progress masked, success=0 handled automatically)
         # For PAIRED_HUMAN_ROBOT strategy, diff could be suboptimal same task or different task
-        if strategy_used == DataGenStrat.SUBOPTIMAL:
-            # diff is always from different task
-            diff_trajectory.target_progress = [0.0] * len(diff_trajectory.target_progress)
-            if self.config.progress_loss_type.lower() == "discrete":
-                diff_trajectory.target_progress = convert_continuous_to_discrete_bins(
-                    diff_trajectory.target_progress, self.config.progress_discrete_bins
-                )
-            if diff_trajectory.success_label is not None:
-                diff_trajectory.success_label = [0.0] * len(diff_trajectory.success_label)
-        elif strategy_used == DataGenStrat.PAIRED_HUMAN_ROBOT:
+        if strategy_used == DataGenStrat.PAIRED_HUMAN_ROBOT:
             # Check if diff is from different task (compare task names)
             if diff_trajectory.task != ref_traj["task"]:
                 # Different task: set progress=0 and success=0
@@ -324,19 +311,18 @@ class SimSampler(RFMBaseSampler):
         """
         task_name = ref_traj["task"]
         same_task_suboptimal_indices = self.suboptimal_by_task.get(task_name, [])
-        
+
         if not same_task_suboptimal_indices:
             logger.trace(f"[SIM SAMPLER] _get_robot_suboptimal_same_task: No suboptimal indices for task '{task_name}'")
             return None
 
         # Filter to only robot trajectories
-        robot_suboptimal_indices = [
-            idx for idx in same_task_suboptimal_indices
-            if self._cached_is_robot[idx]
-        ]
+        robot_suboptimal_indices = [idx for idx in same_task_suboptimal_indices if self._cached_is_robot[idx]]
 
         if not robot_suboptimal_indices:
-            logger.trace(f"[SIM SAMPLER] _get_robot_suboptimal_same_task: No robot suboptimal indices for task '{task_name}'")
+            logger.trace(
+                f"[SIM SAMPLER] _get_robot_suboptimal_same_task: No robot suboptimal indices for task '{task_name}'"
+            )
             return None
 
         chosen_id = ref_traj["id"]
@@ -390,7 +376,7 @@ class SimSampler(RFMBaseSampler):
             else:
                 # Try different task
                 traj_diff = self._get_different_video_traj(ref_traj)
-            
+
             if traj_diff is not None:
                 break
 
@@ -409,22 +395,22 @@ class SimSampler(RFMBaseSampler):
 
         Returns:
             Tuple of (traj_sim, traj_diff) or None if not available. Both can be dict or Trajectory objects.
-            traj_sim is a suboptimal trajectory from same task (progress masked, success=0)
-            traj_diff is a trajectory from different task (progress=0, success=0)
+            traj_sim is an optimal trajectory from same task (progress: yes, success: yes)
+            traj_diff is a suboptimal trajectory from same task (progress masked, success=0)
         """
         max_retries = 3  # Number of retry attempts for sampling
 
-        # Get suboptimal trajectory from same task for sim
+        # Get optimal trajectory from same task for sim
         traj_sim = None
         for _ in range(max_retries):
-            traj_sim = self._get_same_task_suboptimal(ref_traj)
+            traj_sim = self._get_same_task_optimal(ref_traj)
             if traj_sim is not None:
                 break
 
-        # Get trajectory from different task for diff
+        # Get suboptimal trajectory from same task for diff
         traj_diff = None
         for _ in range(max_retries):
-            traj_diff = self._get_different_video_traj(ref_traj)
+            traj_diff = self._get_same_task_suboptimal(ref_traj)
             if traj_diff is not None:
                 break
 

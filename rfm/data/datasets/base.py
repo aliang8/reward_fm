@@ -68,7 +68,7 @@ class BaseDataset(torch.utils.data.Dataset):
         self.dataset, self._combined_indices = self._load_all_datasets()
 
         # Apply all filters simultaneously
-        #excluded_keywords = ["rings", "flick"]
+        # excluded_keywords = ["rings", "flick"]
         excluded_keywords = []
         min_frames = config.min_frames_per_trajectory
 
@@ -87,12 +87,12 @@ class BaseDataset(torch.utils.data.Dataset):
             logger.info(f"SKIPPING FILTERING for {dataset_type} dataset BECAUSE IT'S EVALUATION")
         else:
             self.dataset, self._combined_indices = self._filter_dataset(
-                    excluded_keywords=excluded_keywords,
-                    min_frames=min_frames,
-                    dataset=self.dataset,
-                    combined_indices=self._combined_indices,
-                    filter_successful_only=filter_successful_only,
-                )
+                excluded_keywords=excluded_keywords,
+                min_frames=min_frames,
+                dataset=self.dataset,
+                combined_indices=self._combined_indices,
+                filter_successful_only=filter_successful_only,
+            )
         if filter_successful_only:
             logger.info(
                 f"{dataset_type.capitalize()} dataset filtered with {len(self.dataset)} total trajectories (filtered for successful trajectories only)"
@@ -433,7 +433,9 @@ class BaseDataset(torch.utils.data.Dataset):
             drop_quality = []
             drop_roboarena = []
 
-            for idx, (task, fs, quality_label, data_source, partial_success) in enumerate(zip(tasks, frames_shapes, quality_labels, data_sources_batch, batch_partial_success)):
+            for idx, (task, fs, quality_label, data_source, partial_success) in enumerate(
+                zip(tasks, frames_shapes, quality_labels, data_sources_batch, batch_partial_success)
+            ):
                 dkw = False
                 dfr = False
                 dq = False
@@ -496,7 +498,7 @@ class BaseDataset(torch.utils.data.Dataset):
         filtered_by_frames = int(sum(drop_frames_list))
         filtered_by_quality = int(sum(drop_quality_list))
         # filtered_by_roboarena = int(sum(drop_roboarena_list))
-        total_filtered = filtered_by_keywords + filtered_by_frames + filtered_by_quality # + filtered_by_roboarena
+        total_filtered = filtered_by_keywords + filtered_by_frames + filtered_by_quality  # + filtered_by_roboarena
 
         # 3) Filter using precomputed flags (efficient)
         if total_filtered > 0:
@@ -518,9 +520,9 @@ class BaseDataset(torch.utils.data.Dataset):
             keep_indices = [
                 i
                 for i, (dkw, dfr, dq) in enumerate(
-                    zip(drop_kw_list, drop_frames_list, drop_quality_list) #, drop_roboarena_list)
+                    zip(drop_kw_list, drop_frames_list, drop_quality_list)  # , drop_roboarena_list)
                 )
-                if not (dkw or dfr or dq) # or dr)
+                if not (dkw or dfr or dq)  # or dr)
             ]
 
             removed_indices = set(range(len(dataset))) - set(keep_indices)

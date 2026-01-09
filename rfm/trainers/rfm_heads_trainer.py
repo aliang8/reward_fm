@@ -2021,7 +2021,7 @@ class RFMHeadsTrainer(Trainer):
             batch_size = success_logits.shape[0]
             seq_len = success_logits.shape[1]
             quality_mask = torch.zeros(batch_size, seq_len, device=success_logits.device, dtype=torch.float32)
-            
+
             for i in range(batch_size):
                 quality_label = quality_labels[i]
                 if quality_label is not None and quality_label.lower() in ("suboptimal", "failure", "failed"):
@@ -2032,16 +2032,20 @@ class RFMHeadsTrainer(Trainer):
                             f"Trajectory {i} has quality_label='{quality_label}' but success_labels are not all 0s. "
                             f"Found non-zero labels: {(sample_success_labels != 0.0).sum().item()} out of {len(sample_success_labels)}"
                         )
-                        import ipdb; ipdb.set_trace()
+                        import ipdb
+
+                        ipdb.set_trace()
 
                     # Include all frames for this trajectory in the mask
                     quality_mask[i, :] = 1.0
 
         if self.config.loss.progress_loss_type.lower() == "discrete":
-            target_progress = convert_discrete_target_to_continuous(target_progress, num_bins=self.config.loss.progress_discrete_bins)
+            target_progress = convert_discrete_target_to_continuous(
+                target_progress, num_bins=self.config.loss.progress_discrete_bins
+            )
 
         combined_mask = ((target_progress < min_success) | (success_labels > 0.5)).float()
-        
+
         # Incorporate quality mask: always include all frames for suboptimal/failure trajectories
         if quality_mask is not None:
             combined_mask = torch.maximum(combined_mask, quality_mask)
@@ -2232,7 +2236,7 @@ class RFMHeadsTrainer(Trainer):
             else:
                 target_bins = target_progress
                 # if we're using C51-style soft bins
-                batch_size, seq_len, num_bins = target_bins.shape 
+                batch_size, seq_len, num_bins = target_bins.shape
                 target_bins_flat = target_bins.view(batch_size * seq_len, num_bins)
 
             # Check if progress_pred has the correct shape for discrete mode
@@ -2297,7 +2301,7 @@ class RFMHeadsTrainer(Trainer):
         else:
             progress_pred_for_corr = progress_pred
             target_progress_for_corr = target_progress
-        
+
         if mask.shape[1] != target_progress_for_corr.shape[1]:
             repeated_mask = mask.repeat(1, target_progress_for_corr.shape[1])
         else:

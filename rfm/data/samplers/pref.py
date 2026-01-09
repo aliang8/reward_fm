@@ -350,7 +350,9 @@ class PrefSampler(RFMBaseSampler):
         ]:
             rejected_trajectory.target_progress = [0.0] * len(rejected_trajectory.target_progress)
             if self.config.progress_loss_type.lower() == "discrete":
-                rejected_trajectory.target_progress = convert_continuous_to_discrete_bins(rejected_trajectory.target_progress, self.config.progress_discrete_bins)
+                rejected_trajectory.target_progress = convert_continuous_to_discrete_bins(
+                    rejected_trajectory.target_progress, self.config.progress_discrete_bins
+                )
             # Also set success labels to 0.0 (predict 0 success for different task trajectories)
             if rejected_trajectory.success_label is not None:
                 rejected_trajectory.success_label = [0.0] * len(rejected_trajectory.success_label)

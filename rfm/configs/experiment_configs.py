@@ -526,7 +526,7 @@ class ExperimentConfig:
             self.peft = PEFTConfig(**self.peft)
 
         if isinstance(self.data, dict):
-            self.data.pop('roboarena_partial_success_threshold', None)
+            self.data.pop("roboarena_partial_success_threshold", None)
             self.data = DataConfig(**self.data)
 
         if isinstance(self.training, dict):

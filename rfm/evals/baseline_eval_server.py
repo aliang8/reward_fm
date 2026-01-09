@@ -13,16 +13,17 @@ Usage examples:
     uv run python rfm/evals/baseline_eval_server.py \
         reward_model=vlac \
         vlac_model_path=InternRobotics/VLAC \
-        server_port=8001
+        server_port=8003
     
     # RoboReward baseline server
     uv run python rfm/evals/baseline_eval_server.py \
         reward_model=roboreward \
         roboreward_model_path=teetone/RoboReward-8B \
-        server_port=8001
+        server_port=8003
 
 Endpoints:
   POST /evaluate_batch        - JSON payload with samples
+  POST /evaluate_batch_npy    - multipart payload with .npy blobs for numpy arrays
   GET /health                 - Health check
   GET /model_info             - Model information
 
@@ -59,6 +60,7 @@ from rfm.evals.baselines.gvl import GVL
 from rfm.evals.baselines.vlac import VLAC
 from rfm.evals.baselines.roboreward import RoboReward
 from rfm.evals.run_baseline_eval import process_preference_sample, process_progress_sample
+from rfm.evals.eval_utils import parse_npy_form_data, reconstruct_payload_from_npy
 from rfm.utils.config_utils import display_config, convert_hydra_to_dataclass
 from rfm.utils.logger import get_logger, setup_loguru_logging
 
@@ -245,6 +247,35 @@ def create_app(cfg: BaselineEvalConfig, baseline_server: BaselineEvalServer | No
             # Assume it's a single sample wrapped in a dict
             batch_data = [batch]
 
+        return await baseline_server.process_batch(batch_data)
+
+    @app.post("/evaluate_batch_npy")
+    async def evaluate_batch_npy(request: Request) -> Dict[str, Any]:
+        """Evaluate a batch with .npy file support for numpy arrays.
+
+        This endpoint handles multipart form data where:
+        - numpy arrays are sent as .npy files
+        - other data is sent as form fields
+        """
+        # Parse form data
+        form_data = await request.form()
+
+        # Extract numpy arrays and other data using shared utility
+        numpy_arrays, other_data = parse_npy_form_data(form_data)
+
+        # Reconstruct the original payload structure (baselines don't need torch tensor conversion)
+        batch_data = reconstruct_payload_from_npy(
+            numpy_arrays,
+            other_data,
+            trajectory_keys=["chosen_trajectory", "rejected_trajectory", "trajectory"],
+            convert_embeddings_to_torch=False,
+        )
+
+        # Process the batch
+        logger.debug(
+            f"Received /evaluate_batch_npy request with {len(numpy_arrays)} numpy arrays "
+            f"and {len(other_data)} other fields"
+        )
         return await baseline_server.process_batch(batch_data)
 
     @app.get("/health")

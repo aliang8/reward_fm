@@ -2805,6 +2805,13 @@ class RFMHeadsTrainer(Trainer):
             success_logits_ref_sim = {"A": success_A_ref_sim, "B": None}
             success_logits_ref_diff = {"A": success_A_ref_diff, "B": None}
 
+        # Handle preference_logits - extract from ref_diff pairs (odd indices) if predict_pref_sim is enabled
+        preference_logits_ref_diff = None
+        if self.config.model.train_preference_head and self.config.training.predict_pref_sim:
+            if batched_outputs.pref_logits is not None:
+                # Extract preference logits for ref_diff pairs (odd indices)
+                preference_logits_ref_diff = batched_outputs.pref_logits[1::2]  # Odd indices
+
         model_outputs_ref_sim = ModelOutput(
             sim_logits=sim_logits_ref_sim,
             progress_logits=progress_logits_ref_sim,
@@ -2921,6 +2928,33 @@ class RFMHeadsTrainer(Trainer):
             success_auprc = (success_auprc_ref_sim + success_auprc_ref_diff) / 2.0
             if not torch.isnan(total_success_loss).any():
                 final_loss = final_loss + total_success_loss
+
+        # =========================================================================================
+        # Compute preference loss for ref/diff pair if predict_pref_sim is enabled
+        # =========================================================================================
+        # Ref is always preferred over diff, so we compute preference loss for the ref_diff pairs
+        preference_loss_ref_diff = None
+        if self.config.model.train_preference_head and self.config.training.predict_pref_sim:
+            if preference_logits_ref_diff is not None:
+                preference_labels_ref_diff = inputs.get("preference_labels_ref_diff")
+                if preference_labels_ref_diff is not None:
+                    # Clamp logits to prevent extreme values and gradient issues
+                    preference_scores_ref_diff = torch.clamp(preference_logits_ref_diff.squeeze(-1), min=-50.0, max=50.0)
+
+                    # Binary cross entropy loss for preference prediction
+                    preference_loss_ref_diff_all = F.binary_cross_entropy_with_logits(
+                        preference_scores_ref_diff, preference_labels_ref_diff.float(), reduction="none"
+                    )
+                    preference_loss_ref_diff = preference_loss_ref_diff_all.mean()
+
+                    if not torch.isnan(preference_loss_ref_diff).any():
+                        final_loss += preference_loss_ref_diff
+                    else:
+                        logger.warning(f"NaN detected in similarity preference loss")
+                else:
+                    logger.warning("predict_pref_sim is enabled but preference_labels_ref_diff not found in inputs")
+            else:
+                logger.warning("predict_pref_sim is enabled but pref_logits not found in batched_outputs")
 
         if return_outputs:
             outputs_dict = {}
@@ -3080,6 +3114,21 @@ class RFMHeadsTrainer(Trainer):
                     stratified_success_metrics,
                     target_progress_sim_A_mask,
                 )
+
+            # Add preference loss metrics if computed
+            if self.config.model.train_preference_head and self.config.training.predict_pref_sim:
+                if preference_loss_ref_diff is not None and preference_logits_ref_diff is not None:
+                    preference_labels_ref_diff = inputs.get("preference_labels_ref_diff")
+                    if preference_labels_ref_diff is not None:
+                        preference_scores_ref_diff = torch.clamp(preference_logits_ref_diff, min=-50.0, max=50.0)
+                        preference_probs_ref_diff = torch.sigmoid(preference_scores_ref_diff)
+                        preference_predictions_ref_diff = (preference_probs_ref_diff > 0.5).float()
+                        preference_accuracy_ref_diff = (preference_predictions_ref_diff == preference_labels_ref_diff).float()
+
+                        outputs_dict.update({
+                            f"{prefix}/sim_pref_loss": preference_loss_ref_diff.item(),
+                            f"{prefix}/sim_pref_accuracy": preference_accuracy_ref_diff.mean().item(),
+                        })
 
             return final_loss, outputs_dict
 

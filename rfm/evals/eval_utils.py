@@ -217,6 +217,110 @@ async def post_batch_npy_async(
         return await resp.json()
 
 
+def parse_npy_form_data(form_data: Any) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
+    """Parse multipart form data to extract numpy arrays and other data.
+    
+    Args:
+        form_data: FastAPI form data from request.form()
+        
+    Returns:
+        Tuple of (numpy_arrays dict, other_data dict)
+    """
+    numpy_arrays = {}
+    other_data = {}
+
+    for key, value in form_data.items():
+        # Check if this is a file upload (UploadFile object)
+        if hasattr(value, "filename") and value.filename:
+            # This is a file upload
+            if value.filename.endswith(".npy"):
+                # Load .npy file
+                content = value.read()
+                buf = io.BytesIO(content)
+                array = np.load(buf)
+                numpy_arrays[key] = array
+            else:
+                # Non-.npy file, skip for now
+                continue
+        else:
+            # This is a string value (form field)
+            try:
+                # Try to parse as JSON
+                other_data[key] = json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                # Keep as string if not JSON
+                other_data[key] = value
+
+    return numpy_arrays, other_data
+
+
+def reconstruct_payload_from_npy(
+    numpy_arrays: Dict[str, np.ndarray],
+    other_data: Dict[str, Any],
+    trajectory_keys: Optional[List[str]] = None,
+    convert_embeddings_to_torch: bool = False,
+) -> List[Dict[str, Any]]:
+    """Reconstruct the original payload structure from .npy files and form data.
+
+    The client sends data in this format:
+    - Files: sample_0_chosen_trajectory_frames.npy, sample_0_trajectory_frames.npy, etc.
+    - Data: sample_0, sample_1, etc. (each containing the full sample JSON with numpy file references)
+
+    Args:
+        numpy_arrays: Dictionary of numpy arrays loaded from .npy files
+        other_data: Dictionary of other form data
+        trajectory_keys: List of trajectory keys to process (default: common keys)
+        convert_embeddings_to_torch: Whether to convert embeddings to torch tensors
+        
+    Returns:
+        List of reconstructed sample dictionaries
+    """
+    if trajectory_keys is None:
+        trajectory_keys = [
+            "chosen_trajectory",
+            "rejected_trajectory",
+            "reference_trajectory",
+            "traj_sim_trajectory",
+            "traj_diff_trajectory",
+            "trajectory",
+        ]
+    
+    samples = []
+
+    # Process each sample
+    for i in range(len(other_data)):
+        sample_key = f"sample_{i}"
+        if sample_key in other_data:
+            # Get the sample data - might already be parsed or might be a string
+            sample_data = other_data[sample_key]
+            if isinstance(sample_data, str):
+                # Parse the sample JSON if it's a string
+                sample_data = json.loads(sample_data)
+
+            # Replace numpy file references with actual arrays
+            for key, value in sample_data.items():
+                if key in trajectory_keys:
+                    if isinstance(value, dict):
+                        for traj_key, traj_value in value.items():
+                            if isinstance(traj_value, dict) and traj_value.get("__numpy_file__"):
+                                # Replace with actual numpy array
+                                file_key = traj_value["__numpy_file__"]
+                                if file_key in numpy_arrays:
+                                    value[traj_key] = numpy_arrays[file_key]
+
+                            # Convert embeddings to torch if requested
+                            if convert_embeddings_to_torch and traj_key in ["video_embeddings", "text_embedding"]:
+                                if traj_key in value and value[traj_key] is not None:
+                                    if isinstance(value[traj_key], np.ndarray):
+                                        value[traj_key] = torch.tensor(value[traj_key])
+                                    elif isinstance(value[traj_key], list):
+                                        value[traj_key] = torch.tensor(value[traj_key])
+
+            samples.append(sample_data)
+
+    return samples
+
+
 def find_video_files(directory: str) -> list[str]:
     """Find all video files in a directory.
 

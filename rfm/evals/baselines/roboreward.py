@@ -130,18 +130,6 @@ ANSWER:""".format(task=task_description)
 
         return None
 
-    def _score_to_continuous(self, score: int) -> float:
-        """Convert discrete score (1-5) to continuous value [0, 1].
-
-        Args:
-            score: Discrete score (1-5)
-
-        Returns:
-            Continuous value in [0, 1]
-        """
-        # Linear mapping: 1 -> 0.0, 5 -> 1.0
-        return (score - 1) / 4.0
-
     def compute_progress(self, frames_array: np.ndarray, task_description: str = "") -> List[Optional[float]]:
         """
         Compute progress prediction for a frame sequence using RoboReward baseline.
@@ -155,8 +143,8 @@ ANSWER:""".format(task=task_description)
             task_description: Task description text
 
         Returns:
-            List of task completion percentages (0-1) for each frame.
-            All frames get the same score (end-of-episode score for this subsequence).
+            List of discrete scores (1.0-5.0) for each frame.
+            All frames get the same discrete score (end-of-episode score for this subsequence).
         """
         if frames_array is None or frames_array.size == 0:
             return []
@@ -270,15 +258,12 @@ ANSWER:""".format(task=task_description)
 
             if discrete_score is None:
                 print(f"[!] Failed to parse score from output: {output_text}")
-                continuous_score = 0.0
-            else:
-                # Convert to continuous value
-                continuous_score = self._score_to_continuous(discrete_score)
+                discrete_score = 1  # Default to minimum score if parsing fails
 
-            # Return same score for all frames in this subsequence
+            # Return same discrete score for all frames in this subsequence
             # Use original num_frames from frames_array (before duplication)
             original_num_frames = len(convert_frames_to_pil_images(frames_array))
-            result = [continuous_score] * original_num_frames
+            result = [float(discrete_score)] * original_num_frames
         finally:
             # Clean up temporary directory and files after all processing is complete
             # This ensures the video file exists during process_vision_info and processor calls

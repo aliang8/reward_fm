@@ -35,6 +35,10 @@ vlac_use_images: true  # If true, use image mode; if false, use video mode
 rfm_checkpoint_path: null  # Path to RFM/ReWiND model checkpoint (HuggingFace repo ID or local path, required for rfm/rewind)
 rfm_batch_size: 32  # Batch size for RFM/ReWiND model inference
 
+# RoboReward settings (only used if reward_model is "roboreward")
+roboreward_model_path: "teetone/RoboReward-4B"  # Path to RoboReward model (HuggingFace repo ID, e.g., 'teetone/RoboReward-8B' or 'teetone/RoboReward-4B')
+roboreward_max_new_tokens: 128  # Maximum number of tokens to generate for RoboReward
+
 # Custom evaluation configuration
 # This specifies which evaluation types and datasets to run
 custom_eval:
@@ -55,3 +59,6 @@ custom_eval:
 # Output directory for evaluation results
 output_dir: null  # Defaults to ./baseline_eval_output/<reward_model>_<timestamp>
 
+# Server settings (for baseline_eval_server.py)
+server_url: "0.0.0.0"  # Evaluation server URL
+server_port: 8001  # Evaluation server port

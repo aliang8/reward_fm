@@ -151,11 +151,26 @@ class StrategyFirstDataset(BaseDataset):
             return self._generate_without_specific_strategy(sample_type)
 
         # Step 4-6: Sample and generate using helper method
+        # First try with preferred strategy
         sample = self._try_generate_sample(
             sample_type=sample_type,
             filtered_sources=filtered_sources,
             strategy=strategy,
             preferred_strategy=strategy,
+        )
+        if sample is not None:
+            return sample
+
+        # If preferred strategy failed, try without strategy (let sampler choose its own)
+        logger.trace(
+            f"[StrategyFirstDataset] Failed to generate {sample_type} sample with preferred strategy {strategy.value if hasattr(strategy, 'value') else strategy}, "
+            f"trying without strategy..."
+        )
+        sample = self._try_generate_sample(
+            sample_type=sample_type,
+            filtered_sources=filtered_sources,
+            strategy=strategy,  # Keep strategy for filtering, but let sampler choose
+            preferred_strategy=None,  # Let sampler select its own strategy
         )
         if sample is not None:
             return sample

@@ -21,9 +21,11 @@ from rfm.evals.eval_metrics_utils import compute_pearson, compute_spearman
 from rfm.evals.eval_viz_utils import create_combined_progress_success_plot
 from rfm.models.utils import convert_bins_to_continuous, convert_discrete_target_to_continuous
 
+
 def convert_continuous_to_discrete_bin_roboreward(value: float, num_bins: int) -> int:
     value = min(max(value, 0.0), 1.0)
     return round(value * (num_bins - 1))
+
 
 def compute_eval_metrics(
     eval_type: str,
@@ -61,7 +63,9 @@ def run_quality_preference_eval(results: List[Dict[str, Any]], data_source: Opti
         first_result = results[0]
         chosen_meta = first_result.get("metadata", {}).get("chosen_metadata", {})
         rejected_meta = first_result.get("metadata", {}).get("rejected_metadata", {})
-        use_partial_success = chosen_meta.get("partial_success") is not None or rejected_meta.get("partial_success") is not None
+        use_partial_success = (
+            chosen_meta.get("partial_success") is not None or rejected_meta.get("partial_success") is not None
+        )
 
     # First, gather all predictions and labels, convert to arrays
     # Note: preference_pred is already binary (0/1) from the trainer
@@ -282,7 +286,9 @@ def run_reward_alignment_eval_per_trajectory(
         if is_discrete_mode and partial_success is not None:
             if isinstance(partial_success, torch.Tensor):
                 # [num_bins] -> [1, 1, num_bins]
-                partial_success_tensor = partial_success[None, None] # to make it 3-dim for convert_discrete_target_to_continuous
+                partial_success_tensor = partial_success[
+                    None, None
+                ]  # to make it 3-dim for convert_discrete_target_to_continuous
             else:
                 # number -> [1, 1]
                 partial_success_tensor = torch.tensor([partial_success], dtype=torch.float32).unsqueeze(0)
@@ -332,11 +338,15 @@ def run_reward_alignment_eval_per_trajectory(
                             all_pred_logits = pred_array.tolist()
                         else:
                             # Already continuous (shouldn't happen in discrete mode, but handle it)
-                            #all_preds = pred_array.tolist()
-                            print("Warning: Pred array should not be continuous in discrete mode, breakpointing to debug")
+                            # all_preds = pred_array.tolist()
+                            print(
+                                "Warning: Pred array should not be continuous in discrete mode, breakpointing to debug"
+                            )
                             breakpoint()
                         if tgt is not None and len(tgt) > 0:
-                            all_targets = convert_discrete_target_to_continuous(torch.tensor(tgt[None]), num_bins=num_bins)[0].tolist()
+                            all_targets = convert_discrete_target_to_continuous(
+                                torch.tensor(tgt[None]), num_bins=num_bins
+                            )[0].tolist()
                 else:
                     # Continuous mode: use all predictions directly
                     if last_frame_only:
@@ -463,11 +473,15 @@ def run_reward_alignment_eval_per_trajectory(
                         # convert target_bin to tensor of shape (1, ...)
                         if isinstance(target_bin, torch.Tensor):
                             # [num_bins] -> [1, 1, num_bins]
-                            target_bin_tensor = target_bin[None, None] # to make it 3-dim for convert_discrete_target_to_continuous
+                            target_bin_tensor = target_bin[
+                                None, None
+                            ]  # to make it 3-dim for convert_discrete_target_to_continuous
                         else:
                             # number -> [1, 1]
                             target_bin_tensor = torch.tensor([target_bin]).unsqueeze(0)
-                        continuous_target = convert_discrete_target_to_continuous(target_bin_tensor, num_bins=num_bins).item()
+                        continuous_target = convert_discrete_target_to_continuous(
+                            target_bin_tensor, num_bins=num_bins
+                        ).item()
                         all_targets.append(continuous_target)
                     else:
                         all_targets.append(float(tgt[-1]))
@@ -678,6 +692,7 @@ def run_reward_alignment_eval_per_trajectory(
         metrics["mae"] = mae
 
     return metrics, plots, video_frames_list, trajectory_progress_data
+
 
 def _compute_mae_between_bins(pred_bins: List[int], gt_bins: List[int]) -> float:
     """Compute Mean Absolute Error (MAE) between predicted bins and ground truth bins.
@@ -1161,7 +1176,9 @@ def run_policy_ranking_eval(
         first_result = results[0]
         chosen_meta = first_result.get("metadata", {}).get("chosen_metadata", {})
         rejected_meta = first_result.get("metadata", {}).get("rejected_metadata", {})
-        use_partial_success = chosen_meta.get("partial_success") is not None or rejected_meta.get("partial_success") is not None
+        use_partial_success = (
+            chosen_meta.get("partial_success") is not None or rejected_meta.get("partial_success") is not None
+        )
 
     # Group results by trajectory_id
     unique_trajectory_ids = set()
@@ -1281,11 +1298,17 @@ def run_policy_ranking_eval(
             if is_discrete_mode:
                 if isinstance(metadata["partial_success"], torch.Tensor):
                     # [num_bins] -> [1, 1, num_bins]
-                    partial_success_tensor = metadata["partial_success"][None, None] # to make it 3-dim for convert_discrete_target_to_continuous
+                    partial_success_tensor = metadata["partial_success"][
+                        None, None
+                    ]  # to make it 3-dim for convert_discrete_target_to_continuous
                 else:
                     # number -> [1, 1]
-                    partial_success_tensor = torch.tensor([metadata["partial_success"]], dtype=torch.float32).unsqueeze(0)
-                metadata["partial_success"] = convert_discrete_target_to_continuous(partial_success_tensor, num_bins=num_bins).item()
+                    partial_success_tensor = torch.tensor([metadata["partial_success"]], dtype=torch.float32).unsqueeze(
+                        0
+                    )
+                metadata["partial_success"] = convert_discrete_target_to_continuous(
+                    partial_success_tensor, num_bins=num_bins
+                ).item()
             all_partial_successes.append(metadata["partial_success"])
         else:
             all_quality_labels.append(metadata["quality_label"])

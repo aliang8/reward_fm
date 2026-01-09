@@ -178,13 +178,12 @@ Similarity samples compare three trajectories: a reference trajectory (`ref`), a
 - **Reference**: Successful trajectory
   - Progress: ✅ Yes
   - Success: ✅ Yes
-- **Sim**: Suboptimal trajectory from same task
+- **Sim**: Optimal trajectory from same task
+  - Progress: ✅ Yes
+  - Success: ✅ Yes
+- **Diff**: Suboptimal trajectory from same task
   - Progress: ❌ **No** (progress is **masked out** during training)
   - Success: ✅ Yes (predict 0 - all success labels are 0.0 for suboptimal trajectories)
-- **Diff**: Trajectory from different task
-  - Progress: ✅ Yes (but progress is set to `[0.0]` for all timesteps)
-  - Success: ✅ Yes (but success labels are `[0.0]` for all timesteps)
-  - Implementation: `target_progress = [0.0]` → `success_label = [0.0]` (explicitly set in `sim.py`)
 
 #### 3. PAIRED_HUMAN_ROBOT Strategy
 - **Reference**: Human successful trajectory
@@ -208,11 +207,12 @@ Progress prediction for similarity samples is controlled by the `should_compute_
 
 - **Reference trajectory**: Always computes progress (`returns 1.0`)
 - **Sim trajectory**: 
+  - If optimal/successful: Progress is computed (`returns 1.0`)
   - If suboptimal: Progress is masked out (`returns 0.0`)
-  - If successful: Progress is computed (`returns 1.0`)
 - **Diff trajectory**:
   - If suboptimal same task: Progress is masked out (`returns 0.0`)
   - If different task: Progress is computed (even though it's 0.0) (`returns 1.0`)
+  - If rewound: Progress is computed (`returns 1.0`)
 
 The mask is applied in the trainer via `target_progress_sim_mask` and `target_progress_diff_mask` tensors.
 
@@ -222,11 +222,12 @@ Success labels for similarity samples are computed from `target_progress` using 
 
 - **Reference trajectory**: Success labels computed from progress (1.0 if `progress >= threshold`, else 0.0)
 - **Sim trajectory**: 
+  - If optimal/successful: Success labels computed from progress
   - If suboptimal: All success labels are `[0.0]` (via `compute_success_labels` for suboptimal trajectories)
-  - If successful: Success labels computed from progress
 - **Diff trajectory**:
   - If suboptimal same task: All success labels are `[0.0]` (via `compute_success_labels` for suboptimal trajectories)
   - If different task: All success labels are `[0.0]` (since `target_progress = [0.0]`)
+  - If rewound: Success labels computed from progress
 
 ## Verification Checklist
 
@@ -248,7 +249,7 @@ Success labels for similarity samples are computed from `target_progress` using 
 
 ### Similarity Sampling
 - ✅ REWIND strategy: Reference is successful, sim is successful same task, diff is rewound
-- ✅ SUBOPTIMAL strategy: Reference is successful, sim is suboptimal same task (progress masked, success=0), diff is different task (progress=0, success=0)
+- ✅ SUBOPTIMAL strategy: Reference is successful, sim is optimal same task, diff is suboptimal same task (progress masked, success=0)
 - ✅ PAIRED_HUMAN_ROBOT strategy: Reference is human successful, sim is robot successful same task, diff is robot suboptimal same task OR different task
 - ✅ Different task trajectories have progress=0 and success=0 explicitly set (in `sim.py`)
 - ✅ Suboptimal trajectories have progress masked out (`should_compute_progress` returns 0.0)

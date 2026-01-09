@@ -403,7 +403,7 @@ class StrategyFirstDataset(BaseDataset):
             or (strategy == DataGenStrat.REVERSE_PROGRESS and sample_type in ["pref", "progress"])
             or (strategy == DataGenStrat.FORWARD_PROGRESS and sample_type == "progress")
         )
-        
+
         if requires_successful:
             indices_set = set(indices)
             filtered = indices_set & self.successful_indices

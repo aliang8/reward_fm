@@ -732,7 +732,9 @@ class RFMBaseSampler:
         # Convert partial_success and target_progress to discrete bins if in discrete mode
         if self.config.progress_loss_type.lower() == "discrete":
             if partial_success is not None:
-                partial_success = convert_continuous_to_discrete_bins([partial_success], self.config.progress_discrete_bins)[0]
+                partial_success = convert_continuous_to_discrete_bins(
+                    [partial_success], self.config.progress_discrete_bins
+                )[0]
             target_progress = convert_continuous_to_discrete_bins(target_progress, self.config.progress_discrete_bins)
 
         trajectory = create_trajectory_from_dict(

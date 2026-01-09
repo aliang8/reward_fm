@@ -126,9 +126,16 @@ def create_predict_last_frame_mask(
 
     # Only mask if partial_success < 1.0 (not full success)
     if partial_success is not None:
-        if isinstance(partial_success, torch.Tensor) or partial_success > 1: # discrete mode for both C51 and single index discrete targets
-            partial_success = convert_discrete_target_to_continuous(partial_success[None, None], num_bins=partial_success.shape[-1]).item()
-            target_progress = [convert_discrete_target_to_continuous(p[None, None], num_bins=p.shape[-1]).item() for p in target_progress]
+        if (
+            isinstance(partial_success, torch.Tensor) or partial_success > 1
+        ):  # discrete mode for both C51 and single index discrete targets
+            partial_success = convert_discrete_target_to_continuous(
+                partial_success[None, None], num_bins=partial_success.shape[-1]
+            ).item()
+            target_progress = [
+                convert_discrete_target_to_continuous(p[None, None], num_bins=p.shape[-1]).item()
+                for p in target_progress
+            ]
         if abs(partial_success - 1.0) < 1e-6:
             # Full success: return all-ones mask (don't mask anything)
             return [1.0] * len(target_progress)

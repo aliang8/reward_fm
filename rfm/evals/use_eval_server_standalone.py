@@ -23,6 +23,7 @@ import requests
 
 import matplotlib.pyplot as plt
 
+
 def create_combined_progress_success_plot(
     progress_pred: np.ndarray,
     num_frames: int,
@@ -212,13 +213,13 @@ def load_frames_input(
       - a .npy/.npz file containing frames as (T,H,W,C) or (T,C,H,W)
     """
     # If path ends with .npy or .npz, load the numpy array directly
-    if video_or_array_path.endswith('.npy'):
+    if video_or_array_path.endswith(".npy"):
         frames_array = np.load(video_or_array_path)
-    elif video_or_array_path.endswith('.npz'):
+    elif video_or_array_path.endswith(".npz"):
         npz = np.load(video_or_array_path)
         # By convention, try to use 'arr_0' or the first array in the file
-        if 'arr_0' in npz:
-            frames_array = npz['arr_0']
+        if "arr_0" in npz:
+            frames_array = npz["arr_0"]
         else:
             # Fallback: get the first item in the npz archive
             frames_array = next(iter(npz.values()))
@@ -380,7 +381,9 @@ def compute_rewards_per_frame(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Compute per-frame rewards from an eval_server.")
-    parser.add_argument("--eval-server-url", type=str, default="http://40.119.56.66:8000", help="Base URL, e.g. http://localhost:8000")
+    parser.add_argument(
+        "--eval-server-url", type=str, default="http://40.119.56.66:8000", help="Base URL, e.g. http://localhost:8000"
+    )
     parser.add_argument(
         "--video",
         type=str,
@@ -454,5 +457,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

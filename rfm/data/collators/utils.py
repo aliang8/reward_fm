@@ -26,10 +26,10 @@ def write_mp4(frames, out_path, fps=4):
 
 def pad_list_to_max(progress_list):
     """Helper function to pad lists of sequences to max length.
-    
+
     Args:
         progress_list: List of sequences (each sequence is list of floats or tensors)
-    
+
     Returns:
         - Continuous mode: tensor of shape (batch, seq_len)
         - Discrete C51 mode: tensor of shape (batch, seq_len, num_bins)
@@ -38,19 +38,19 @@ def pad_list_to_max(progress_list):
         return None
 
     max_length = max(len(progress) for progress in progress_list)
-    
+
     # Check first non-empty sequence's first element to determine mode
     first_elem = None
     for seq in progress_list:
         if len(seq) > 0:
             first_elem = seq[0]
             break
-    
+
     if first_elem is None:
         return None
-    
+
     is_discrete = isinstance(first_elem, torch.Tensor) and first_elem.dim() > 0
-    
+
     if is_discrete:
         # Discrete C51 mode: each element is a tensor of shape (num_bins,)
         num_bins = first_elem.shape[0]

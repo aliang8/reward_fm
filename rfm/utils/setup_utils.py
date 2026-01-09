@@ -848,6 +848,7 @@ def setup_batch_collator(
         "use_multi_image": cfg.data.use_multi_image,
         "prog_pref": cfg.training.predict_pref_progress,
         "prog_sim": cfg.training.predict_sim_progress,
+        "pref_sim": cfg.training.predict_pref_sim,
         "use_progress_token": cfg.model.use_progress_token,
         "shuffle_progress_frames": cfg.data.shuffle_progress_frames,
         "inference": is_eval,

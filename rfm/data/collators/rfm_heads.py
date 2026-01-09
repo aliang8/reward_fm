@@ -167,6 +167,7 @@ class RFMBatchCollator(BaseCollator):
         use_multi_image: bool = False,
         prog_pref: bool = False,
         prog_sim: bool = False,
+        pref_sim: bool = False,
         use_progress_token: bool = False,
         shuffle_progress_frames: bool = False,
         inference: bool = False,
@@ -185,6 +186,7 @@ class RFMBatchCollator(BaseCollator):
         self.use_multi_image = use_multi_image
         self.prog_pref = prog_pref
         self.prog_sim = prog_sim
+        self.pref_sim = pref_sim
 
         # Molmo2 only supports multi-image mode, not video
         if "Molmo" in self.base_model_id and not self.use_multi_image:
@@ -1161,6 +1163,21 @@ class RFMBatchCollator(BaseCollator):
 
         batch_inputs["success_labels_sim_A"] = pad_list_to_max(success_labels_sim_A)
         batch_inputs["success_labels_diff_A"] = pad_list_to_max(success_labels_diff_A)
+
+        # Add preference labels for ref/diff pair if predict_pref_sim is enabled
+        # Ref is always preferred over diff, so label = 1.0 if ref is first (A), else 0.0
+        if self.pref_sim:
+            preference_labels_ref_diff = []
+            for i, sample in enumerate(similarity_samples):
+                if sample.diff_trajectory is None:
+                    # Inference mode: skip preference labels
+                    preference_labels_ref_diff.append(0.0)  # Placeholder, won't be used
+                else:
+                    # Label = 1.0 if ref is first (A), 0.0 if diff is first (A)
+                    # Since ref is always preferred, we want label = 1.0 when ref is A
+                    preference_label = 1.0 if ref_diff_order[i] else 0.0
+                    preference_labels_ref_diff.append(preference_label)
+            batch_inputs["preference_labels_ref_diff"] = torch.tensor(preference_labels_ref_diff, dtype=torch.float32)
 
         batch_inputs["metadata"] = [
             sample.ref_trajectory.metadata if sample.ref_trajectory.metadata else {} for sample in similarity_samples

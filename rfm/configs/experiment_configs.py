@@ -399,6 +399,9 @@ class TrainingConfig:
     predict_sim_progress: bool = field(
         default=False, metadata={"help": "Whether to predict progress for similarity samples"}
     )
+    predict_pref_sim: bool = field(
+        default=False, metadata={"help": "Whether to predict preference for ref/diff pair in similarity samples (ref is always preferred)"}
+    )
 
 
 @dataclass

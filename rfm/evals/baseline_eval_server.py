@@ -260,8 +260,8 @@ def create_app(cfg: BaselineEvalConfig, baseline_server: BaselineEvalServer | No
         # Parse form data
         form_data = await request.form()
 
-        # Extract numpy arrays and other data using shared utility
-        numpy_arrays, other_data = parse_npy_form_data(form_data)
+        # Extract numpy arrays and other data using shared utility (await async function)
+        numpy_arrays, other_data = await parse_npy_form_data(form_data)
 
         # Reconstruct the original payload structure (baselines don't need torch tensor conversion)
         batch_data = reconstruct_payload_from_npy(

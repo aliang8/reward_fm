@@ -217,7 +217,7 @@ async def post_batch_npy_async(
         return await resp.json()
 
 
-def parse_npy_form_data(form_data: Any) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
+async def parse_npy_form_data(form_data: Any) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
     """Parse multipart form data to extract numpy arrays and other data.
     
     Args:
@@ -234,8 +234,8 @@ def parse_npy_form_data(form_data: Any) -> Tuple[Dict[str, np.ndarray], Dict[str
         if hasattr(value, "filename") and value.filename:
             # This is a file upload
             if value.filename.endswith(".npy"):
-                # Load .npy file
-                content = value.read()
+                # Load .npy file (await async read)
+                content = await value.read()
                 buf = io.BytesIO(content)
                 array = np.load(buf)
                 numpy_arrays[key] = array

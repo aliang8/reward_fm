@@ -33,7 +33,9 @@ except ImportError:
     HAS_UNSLOTH = False
 
 from rfm.data.collators.utils import convert_frames_to_pil_images, write_mp4
+from rfm.utils.logger import get_logger
 
+logger = get_logger()
 
 class RoboReward:
     """RoboReward baseline for discrete end-of-episode progress reward prediction."""
@@ -52,7 +54,7 @@ class RoboReward:
             max_new_tokens: Maximum number of tokens to generate
             use_unsloth: Whether to use unsloth for faster inference (default: True)
         """
-        print(f"Loading RoboReward model: {model_path}")
+        logger.info(f"Loading RoboReward model: {model_path}")
 
         # Use unsloth for faster inference if available and requested
         if use_unsloth and HAS_UNSLOTH:
@@ -74,7 +76,7 @@ class RoboReward:
                 device_map="auto",  # Auto device placement is best practice
             )
 
-        self.processor = AutoProcessor.from_pretrained(model_path)
+        self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True, do_sample_frames=False, fps=1)
         self.max_new_tokens = max_new_tokens
         self.model_path = model_path
 
@@ -152,6 +154,8 @@ ANSWER:""".format(task=task_description)
         # Convert frames to PIL Images
         frames_pil = convert_frames_to_pil_images(frames_array)
 
+        logger.info(f"RoboReward: Converted {len(frames_pil)} frames to PIL Images")
+
         if not frames_pil:
             return []
 
@@ -166,74 +170,64 @@ ANSWER:""".format(task=task_description)
         # Build prompt
         prompt = self._build_prompt(task_description)
 
-        # Create temporary video file for this sequence
+        # Create temporary directory for frame files
+        # Use individual frame files instead of video to avoid torchcodec memory issues
+        # According to qwen-vl-utils docs, we can pass frames as a list of file paths
         tmpdir = tempfile.mkdtemp()
         try:
             unique_id = uuid.uuid4().hex
-            video_path = Path(tmpdir) / f"roboreward_{unique_id}.mp4"
-            write_mp4(frames_pil, video_path, fps=1)
+            
+            # Save frames as individual JPEG files (much smaller than video, avoids torchcodec overhead)
+            frame_paths = []
+            for i, frame_pil in enumerate(frames_pil):
+                frame_path = Path(tmpdir) / f"roboreward_{unique_id}_frame_{i:04d}.jpg"
+                # Save as JPEG with reasonable quality to reduce file size
+                frame_pil.save(frame_path, "JPEG", quality=85, optimize=True)
+                frame_paths.append(f"file://{frame_path}")
+            
+            logger.info(f"RoboReward: Saved {len(frame_paths)} frames as JPEG files in {tmpdir}")
 
-            # Build message with video
+            # Build message with frames as list of file paths (following Qwen3-VL pattern)
             message = [
                 {
                     "role": "user",
                     "content": [
                         {"type": "text", "text": prompt},
-                        {"type": "video", "video": str(video_path)},
+                        {"type": "video", "video": frame_paths, "sample_fps": 1.0},
                     ],
                 }
             ]
 
-            # Apply chat template with fps=1 to match video FPS
-            text = self.processor.apply_chat_template(message, tokenize=False, add_generation_prompt=True, fps=1)
+            # Apply chat template
+            text = self.processor.apply_chat_template(message, tokenize=False, add_generation_prompt=True)
 
-            # Process vision info - need return_video_kwargs=True to get 3 return values
-            is_qwen3 = "Qwen3" in self.model_path or "qwen3" in self.model_path.lower()
+            # Process vision info (qwen-vl-utils handles resizing)
             image_inputs, video_inputs, video_kwargs = process_vision_info(
                 [message],
+                image_patch_size=16,
                 return_video_kwargs=True,
-                return_video_metadata=is_qwen3,
+                return_video_metadata=True,
             )
 
-            # Ensure video file still exists - process_vision_info may have created its own processing
-            # but we need to keep our file until after processor() is called
-            assert video_path.exists(), f"Video file was deleted before processing: {video_path}"
-
-            # Handle Qwen3 video format (video_inputs may be list of tuples)
-            if is_qwen3 and video_inputs is not None and len(video_inputs) > 0:
-                if isinstance(video_inputs[0], tuple) and len(video_inputs[0]) == 2:
-                    videos, video_metadatas = zip(*video_inputs)
-                    videos, video_metadatas = list(videos), list(video_metadatas)
-                    # Ensure video_metadata has video_fps if missing
-                    if video_metadatas and len(video_metadatas) > 0:
-                        for metadata in video_metadatas:
-                            if metadata is not None and "video_fps" not in metadata:
-                                metadata["video_fps"] = 1.0  # Match the FPS we used when writing the video
-                else:
-                    videos = video_inputs
-                    video_metadatas = None
+            # Split videos and metadata (video_inputs is list of (video, video_metadata) tuples)
+            if video_inputs is not None:
+                videos, video_metadatas = zip(*video_inputs)
+                videos, video_metadatas = list(videos), list(video_metadatas)
             else:
-                videos = video_inputs if video_inputs else None
+                videos = None
                 video_metadatas = None
 
-            # Process inputs
-            processor_kwargs = {
-                "text": [text],
-                "images": image_inputs,
-                "padding": True,
-                "return_tensors": "pt",
-            }
-
-            if videos is not None:
-                processor_kwargs["videos"] = videos
-
-            if is_qwen3 and video_metadatas is not None:
-                processor_kwargs["video_metadata"] = video_metadatas
-
-            if video_kwargs:
-                processor_kwargs.update(video_kwargs)
-
-            inputs = self.processor(**processor_kwargs)
+            # Process inputs (do_resize=False since qwen-vl-utils already resized)
+            inputs = self.processor(
+                text=[text],
+                images=image_inputs,
+                videos=videos,
+                video_metadata=video_metadatas,
+                padding=True,
+                return_tensors="pt",
+                do_resize=False,  # qwen-vl-utils already resized
+                **video_kwargs,
+            )
             inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
 
             # Generate
@@ -255,6 +249,7 @@ ANSWER:""".format(task=task_description)
             # Parse score
             output_text = output_texts[0]
             discrete_score = self._parse_score(output_text)
+            logger.info(f"RoboReward: Discrete score: {discrete_score}")
 
             if discrete_score is None:
                 print(f"[!] Failed to parse score from output: {output_text}")
@@ -263,7 +258,9 @@ ANSWER:""".format(task=task_description)
             # Return same discrete score for all frames in this subsequence
             # Use original num_frames from frames_array (before duplication)
             original_num_frames = len(convert_frames_to_pil_images(frames_array))
-            result = [float(discrete_score)] * original_num_frames
+
+            # because RoboReward returns a score between 1 and 5, we need to normalize it to 0-1
+            result = [float(discrete_score) / 5.0] * original_num_frames
         finally:
             # Clean up temporary directory and files after all processing is complete
             # This ensures the video file exists during process_vision_info and processor calls

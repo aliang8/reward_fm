@@ -212,16 +212,24 @@ class RFMBatchCollator(BaseCollator):
         """
         if self.use_multi_image:
             # Use images directly - return list of PIL Images
-            return frames, {
-                "resized_height": self.resized_height,
-                "resized_width": self.resized_width,
-            }
+            if self.resized_height is not None and self.resized_width is not None:
+                content_extras = {
+                    "resized_height": self.resized_height,
+                    "resized_width": self.resized_width,
+                }
+            else:
+                content_extras = {}
+            return frames, content_extras
         elif "Qwen" in self.base_model_id or "Molmo" in self.base_model_id:
             # Qwen and Molmo accept list of PIL Images directly
-            return frames, {
-                "resized_height": self.resized_height,
-                "resized_width": self.resized_width,
-            }
+            if self.resized_height is not None and self.resized_width is not None:
+                content_extras = {
+                    "resized_height": self.resized_height,
+                    "resized_width": self.resized_width,
+                }
+            else:
+                content_extras = {}
+            return frames, content_extras
         elif "SmolVLM" in self.base_model_id:
             # Convert to video file for SmolVLM
             unique_id = uuid.uuid4().hex

@@ -170,22 +170,30 @@ ANSWER:""".format(task=task_description)
         # Build prompt
         prompt = self._build_prompt(task_description)
 
-        # Create temporary video file for this sequence
+        # Create temporary directory for frame files
+        # Use individual frame files instead of video to avoid torchcodec memory issues
+        # According to qwen-vl-utils docs, we can pass frames as a list of file paths
         tmpdir = tempfile.mkdtemp()
         try:
             unique_id = uuid.uuid4().hex
-            video_path = Path(tmpdir) / f"roboreward_{unique_id}.mp4"
-            logger.info(f"RoboReward: Writing video to {video_path}")
-            write_mp4(frames_pil, video_path, fps=1)
-            logger.info(f"RoboReward: Wrote video to {video_path}")
+            
+            # Save frames as individual JPEG files (much smaller than video, avoids torchcodec overhead)
+            frame_paths = []
+            for i, frame_pil in enumerate(frames_pil):
+                frame_path = Path(tmpdir) / f"roboreward_{unique_id}_frame_{i:04d}.jpg"
+                # Save as JPEG with reasonable quality to reduce file size
+                frame_pil.save(frame_path, "JPEG", quality=85, optimize=True)
+                frame_paths.append(f"file://{frame_path}")
+            
+            logger.info(f"RoboReward: Saved {len(frame_paths)} frames as JPEG files in {tmpdir}")
 
-            # Build message with video
+            # Build message with frames as list of file paths (avoids video decoding overhead)
             message = [
                 {
                     "role": "user",
                     "content": [
                         {"type": "text", "text": prompt},
-                        {"type": "video", "video": str(video_path)},
+                        {"type": "video", "video": frame_paths},
                     ],
                 }
             ]
@@ -201,9 +209,11 @@ ANSWER:""".format(task=task_description)
                 return_video_metadata=is_qwen3,
             )
 
-            # Ensure video file still exists - process_vision_info may have created its own processing
-            # but we need to keep our file until after processor() is called
-            assert video_path.exists(), f"Video file was deleted before processing: {video_path}"
+            # Ensure frame files still exist - process_vision_info may have created its own processing
+            # but we need to keep our files until after processor() is called
+            for frame_path_str in frame_paths:
+                frame_path = Path(frame_path_str.replace("file://", ""))
+                assert frame_path.exists(), f"Frame file was deleted before processing: {frame_path}"
 
             # Handle Qwen3 video format (video_inputs may be list of tuples)
             if is_qwen3 and video_inputs is not None and len(video_inputs) > 0:

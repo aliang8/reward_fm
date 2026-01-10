@@ -96,7 +96,7 @@ DATASET_MAP = {
             # "jesbu1_egodex_rfm_egodex_part3",
             # "jesbu1_egodex_rfm_egodex_part4",
             # "jesbu1_egodex_rfm_egodex_part5",
-            "abraranwar_agibotworld_alpha_rfm_agibotworld",
+            "abraranwar_agibotworld_alpha_headcam_rfm_agibotworld",
             "jesbu1_humanoid_everyday_rfm_humanoid_everyday_rfm",
             "jesbu1_epic_rfm_epic",
             "jesbu1_galaxea_rfm_galaxea_part1_r1_lite",

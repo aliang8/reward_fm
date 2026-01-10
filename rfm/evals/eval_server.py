@@ -45,7 +45,11 @@ from hydra import main as hydra_main
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from rfm.evals.eval_utils import extract_answer_from_text
+from rfm.evals.eval_utils import (
+    extract_answer_from_text,
+    parse_npy_form_data,
+    reconstruct_payload_from_npy,
+)
 from rfm.utils.save import load_model_from_hf
 from rfm.configs.eval_configs import EvalServerConfig
 from rfm.configs.experiment_configs import ExperimentConfig
@@ -638,34 +642,23 @@ def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | Non
         # Parse form data
         form_data = await request.form()
 
-        # Extract numpy arrays from files
-        numpy_arrays = {}
-        other_data = {}
+        # Extract numpy arrays and other data using shared utility (await async function)
+        numpy_arrays, other_data = await parse_npy_form_data(form_data)
 
-        for key, value in form_data.items():
-            # Check if this is a file upload (UploadFile object)
-            if hasattr(value, "filename") and value.filename:
-                # This is a file upload
-                if value.filename.endswith(".npy"):
-                    # Load .npy file
-                    content = await value.read()
-                    buf = io.BytesIO(content)
-                    array = np.load(buf)
-                    numpy_arrays[key] = array
-                else:
-                    # Non-.npy file, skip for now
-                    continue
-            else:
-                # This is a string value (form field)
-                try:
-                    # Try to parse as JSON
-                    other_data[key] = json.loads(value)
-                except (json.JSONDecodeError, TypeError):
-                    # Keep as string if not JSON
-                    other_data[key] = value
-
-        # Reconstruct the original payload structure
-        batch_data = reconstruct_payload_from_npy(numpy_arrays, other_data)
+        # Reconstruct the original payload structure (RFM needs torch tensor conversion for embeddings)
+        batch_data = reconstruct_payload_from_npy(
+            numpy_arrays,
+            other_data,
+            trajectory_keys=[
+                "chosen_trajectory",
+                "rejected_trajectory",
+                "reference_trajectory",
+                "traj_sim_trajectory",
+                "traj_diff_trajectory",
+                "trajectory",
+            ],
+            convert_embeddings_to_torch=True,
+        )
 
         # Process the batch
         logger.debug(
@@ -673,58 +666,6 @@ def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | Non
             f"and {len(other_data)} other fields"
         )
         return await multi_gpu_server.process_batch(batch_data)
-
-    def reconstruct_payload_from_npy(
-        numpy_arrays: Dict[str, np.ndarray], other_data: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
-        """Reconstruct the original payload structure from .npy files and form data.
-
-        The client sends data in this format:
-        - Files: sample_0_chosen_trajectory_frames.npy, sample_0_chosen_trajectory_lang_vector.npy, etc.
-        - Data: sample_0, sample_1, etc. (each containing the full sample JSON with numpy file references)
-
-        We need to reconstruct the original list of sample dictionaries.
-        """
-        samples = []
-
-        # Process each sample
-        for i in range(len(other_data)):
-            sample_key = f"sample_{i}"
-            if sample_key in other_data:
-                # Get the sample data - might already be parsed or might be a string
-                sample_data = other_data[sample_key]
-                if isinstance(sample_data, str):
-                    # Parse the sample JSON if it's a string
-                    sample_data = json.loads(sample_data)
-
-                # Replace numpy file references with actual arrays
-                for key, value in sample_data.items():
-                    if key in [
-                        "chosen_trajectory",
-                        "rejected_trajectory",
-                        "reference_trajectory",
-                        "traj_sim_trajectory",
-                        "traj_diff_trajectory",
-                        "trajectory",
-                    ]:
-                        if isinstance(value, dict):
-                            for traj_key, traj_value in value.items():
-                                if isinstance(traj_value, dict) and traj_value.get("__numpy_file__"):
-                                    # Replace with actual numpy array
-                                    file_key = traj_value["__numpy_file__"]
-                                    if file_key in numpy_arrays:
-                                        value[traj_key] = numpy_arrays[file_key]
-
-                                if traj_key in ["video_embeddings", "text_embedding"]:
-                                    if traj_key in value and value[traj_key] is not None:
-                                        if isinstance(value[traj_key], np.ndarray):
-                                            value[traj_key] = torch.tensor(value[traj_key])
-                                        elif isinstance(value[traj_key], list):
-                                            value[traj_key] = torch.tensor(value[traj_key])
-
-                samples.append(sample_data)
-
-        return samples
 
     @app.get("/gpu_status")
     def get_gpu_status() -> Dict[str, Any]:

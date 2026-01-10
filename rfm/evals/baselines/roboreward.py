@@ -274,6 +274,7 @@ ANSWER:""".format(task=task_description)
             # Parse score
             output_text = output_texts[0]
             discrete_score = self._parse_score(output_text)
+            logger.info(f"RoboReward: Discrete score: {discrete_score}")
 
             if discrete_score is None:
                 print(f"[!] Failed to parse score from output: {output_text}")
@@ -282,7 +283,9 @@ ANSWER:""".format(task=task_description)
             # Return same discrete score for all frames in this subsequence
             # Use original num_frames from frames_array (before duplication)
             original_num_frames = len(convert_frames_to_pil_images(frames_array))
-            result = [float(discrete_score)] * original_num_frames
+
+            # because RoboReward returns a score between 1 and 5, we need to normalize it to 0-1
+            result = [float(discrete_score) / 5.0] * original_num_frames
         finally:
             # Clean up temporary directory and files after all processing is complete
             # This ensures the video file exists during process_vision_info and processor calls

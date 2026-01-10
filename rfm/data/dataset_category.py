@@ -261,6 +261,24 @@ DATASET_MAP = {
             # "ykorkmaz_libero_failure_rfm_libero_10_failure",
         ],
     },
+    "libero_pi0": {
+        "train": [
+            "abraranwar_libero_rfm_libero256_10",
+            "abraranwar_libero_rfm_libero256_object",
+            "abraranwar_libero_rfm_libero256_spatial",
+            "abraranwar_libero_rfm_libero256_goal",
+            "ykorkmaz_libero_failure_rfm_libero_10_failure",
+            "ykorkmaz_libero_failure_rfm_libero_object_failure",
+            "ykorkmaz_libero_failure_rfm_libero_spatial_failure",
+            "ykorkmaz_libero_failure_rfm_libero_goal_failure",  
+        ],
+        "eval": [
+            "abraranwar_libero_rfm_libero256_10",
+            "abraranwar_libero_rfm_libero256_object",
+            "ykorkmaz_libero_failure_rfm_libero_10_failure",
+            "ykorkmaz_libero_failure_rfm_libero_object_failure",
+        ],
+    },
 }
 
 

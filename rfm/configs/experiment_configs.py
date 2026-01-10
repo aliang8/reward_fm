@@ -135,8 +135,8 @@ class DataConfig:
             "help": "Minimum number of frames required per trajectory (trajectories with fewer frames will be filtered out)"
         },
     )
-    resized_height: int = field(default=224, metadata={"help": "Height to resize video frames to"})
-    resized_width: int = field(default=224, metadata={"help": "Width to resize video frames to"})
+    resized_height: Optional[int] = field(default=None, metadata={"help": "Height to resize video frames to"})
+    resized_width: Optional[int] = field(default=None, metadata={"help": "Width to resize video frames to"})
 
     # Video/image processing mode
     use_multi_image: bool = field(

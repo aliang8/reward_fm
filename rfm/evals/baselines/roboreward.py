@@ -188,12 +188,13 @@ ANSWER:""".format(task=task_description)
             logger.info(f"RoboReward: Saved {len(frame_paths)} frames as JPEG files in {tmpdir}")
 
             # Build message with frames as list of file paths (avoids video decoding overhead)
+            # Note: when passing frames as a list, use "sample_fps" not "fps" (see vision_process.py line 434)
             message = [
                 {
                     "role": "user",
                     "content": [
                         {"type": "text", "text": prompt},
-                        {"type": "video", "video": frame_paths, "fps": 1},
+                        {"type": "video", "video": frame_paths, "sample_fps": 1.0},
                     ],
                 }
             ]
@@ -255,7 +256,6 @@ ANSWER:""".format(task=task_description)
 
             logger.info(f"RoboReward: Processing inputs")
             inputs = self.processor(**processor_kwargs)
-            import ipdb; ipdb.set_trace()
             inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
 
             # Generate

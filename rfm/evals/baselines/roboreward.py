@@ -231,6 +231,8 @@ ANSWER:""".format(task=task_description)
             else:
                 videos = video_inputs if video_inputs else None
                 video_metadatas = None
+            
+            logger.info(f"video metadata: {video_metadatas}")
 
             # Process inputs
             processor_kwargs = {

@@ -511,9 +511,13 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
         if not eval_datasets:
             logger.warning(f"No datasets specified for {eval_type}, skipping")
             continue
-
+        
         # Resolve dataset keys
-        resolved_datasets = resolve_dataset_keys(eval_datasets, split="eval")
+        if isinstance(eval_datasets, list):
+            resolved_datasets = eval_datasets
+        else:
+            resolved_datasets = resolve_dataset_keys(eval_datasets, split="eval")
+        
         logger.info(f"Resolved datasets for {eval_type}: {resolved_datasets}")
 
         eval_type_metrics = {}
@@ -524,7 +528,10 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
             # Create data config for this dataset (similar to trainer)
             eval_data_cfg = copy.deepcopy(base_data_cfg)
             eval_data_cfg.dataset_type = "rfm"
-            eval_data_cfg.eval_datasets = [dataset_name]
+            if isinstance(dataset_name, list):
+                eval_data_cfg.eval_datasets = dataset_name
+            else:
+                eval_data_cfg.eval_datasets = [dataset_name]
 
             # Setup dataset
             sampler_kwargs = {

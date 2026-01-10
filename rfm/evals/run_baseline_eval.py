@@ -52,6 +52,22 @@ Usage:
         custom_eval.reward_alignment_max_trajectories=null \
         gvl_max_frames=4 \
         rfm_batch_size=32
+
+    uv run python rfm/evals/run_baseline_eval.py \
+        reward_model=rfm \
+        rfm_checkpoint_path=rewardfm/rfm_qwen_pref_prog_4frames_all_strategy \
+        custom_eval.eval_types=[confusion_matrix] \
+        custom_eval.confusion_matrix=[jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top] \
+        gvl_max_frames=4 \
+        rfm_batch_size=32
+
+    uv run python rfm/evals/run_baseline_eval.py \
+        reward_model=roboreward \
+        roboreward_model_path=teetone/RoboReward-8B \
+        custom_eval.eval_types=[confusion_matrix] \
+        custom_eval.confusion_matrix=[jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top] \
+        roboreward_max_new_tokens=128 \
+        gvl_max_frames=32
     
     # Run ReWiND model progress evaluation (policy ranking)
     uv run python rfm/evals/run_baseline_eval.py \
@@ -293,10 +309,7 @@ def process_progress_sample(
     if traj.id is not None:
         metadata["id"] = traj.id
     if traj.metadata is not None:
-        metadata["video_path"] = traj.metadata.get("video_path")
-        frame_step = traj.metadata.get("frame_step")
-        if frame_step is not None:
-            metadata["frame_step"] = frame_step
+        metadata.update(traj.metadata)
 
     # Build result dict
     result = {
@@ -364,10 +377,7 @@ def process_batched_rfm_samples(
                 if traj.id is not None:
                     metadata["id"] = traj.id
                 if traj.metadata is not None:
-                    metadata["video_path"] = traj.metadata.get("video_path")
-                    frame_step = traj.metadata.get("frame_step")
-                    if frame_step is not None:
-                        metadata["frame_step"] = frame_step
+                    metadata.update(traj.metadata)
 
                 # Build result dict
                 result = {
@@ -529,6 +539,9 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                 sampler_kwargs["num_partial_successes"] = cfg.custom_eval.num_partial_successes
                 sampler_kwargs["max_tasks"] = cfg.custom_eval.policy_ranking_max_tasks
                 sampler_kwargs["use_frame_steps"] = cfg.custom_eval.use_frame_steps
+            elif eval_type == "confusion_matrix":
+                # Confusion matrix sampler doesn't need special kwargs
+                pass
             elif "quality_preference" in eval_type:
                 sampler_kwargs["comparisons_per_task"] = cfg.custom_eval.comparisons_per_task
                 sampler_kwargs["max_comparisons"] = cfg.custom_eval.max_comparisons
@@ -554,6 +567,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                         if result:
                             eval_results.append(result)
                     elif cfg.reward_model in ["gvl", "vlac", "roboreward"] and isinstance(sample, ProgressSample):
+                        # Handle ProgressSamples for gvl/vlac/roboreward (including confusion_matrix)
                         result = process_progress_sample(sample, model)
                         if result:
                             eval_results.append(result)
@@ -609,6 +623,52 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                         metrics_dict = eval_metrics_result
 
                     # Extract metrics from the returned dict
+                    for key, value in metrics_dict.items():
+                        if isinstance(value, (int, float)):
+                            eval_type_metrics[f"{dataset_name}/{key}"] = float(value)
+
+                    # Write metrics incrementally after each dataset
+                    if cfg.output_dir:
+                        _write_metrics_incremental(cfg.output_dir, eval_type, eval_type_metrics)
+
+                elif eval_type == "confusion_matrix":
+                    # Confusion matrix evaluation for gvl, vlac, roboreward, rfm, rewind
+                    if cfg.reward_model not in ["gvl", "vlac", "roboreward", "rfm", "rewind"]:
+                        raise ValueError(
+                            f"confusion_matrix evaluation only supported for gvl, vlac, roboreward, rfm, rewind, got {cfg.reward_model}"
+                        )
+
+                    eval_metrics_result = compute_eval_metrics(
+                        eval_type="confusion_matrix",
+                        results=eval_results,
+                        progress_pred_type="absolute_wrt_total_frames",  # Baselines use absolute progress
+                        is_discrete_mode=False,  # Baselines output continuous values
+                        num_bins=None,
+                        data_source=data_source,
+                    )
+
+                    if isinstance(eval_metrics_result, tuple):
+                        # run_confusion_matrix_eval returns (fig, confusion_matrix)
+                        fig, confusion_matrix = eval_metrics_result
+                        metrics_dict = {}  # Confusion matrix doesn't return standard metrics dict
+
+                        # Save confusion matrix plot
+                        if fig and cfg.output_dir:
+                            plots_dir = os.path.join(cfg.output_dir, f"{eval_type}_{dataset_name}_plots")
+                            os.makedirs(plots_dir, exist_ok=True)
+                            plot_path = os.path.join(plots_dir, "confusion_matrix.png")
+                            fig.savefig(plot_path, dpi=150, bbox_inches="tight")
+                            plt.close(fig)
+                            logger.info(f"Saved confusion matrix plot to {plot_path}")
+
+                            # Save confusion matrix as numpy array
+                            matrix_path = os.path.join(plots_dir, "confusion_matrix.npy")
+                            np.save(matrix_path, confusion_matrix)
+                            logger.info(f"Saved confusion matrix array to {matrix_path}")
+                    else:
+                        metrics_dict = eval_metrics_result if isinstance(eval_metrics_result, dict) else {}
+
+                    # Extract metrics from the returned dict (if any)
                     for key, value in metrics_dict.items():
                         if isinstance(value, (int, float)):
                             eval_type_metrics[f"{dataset_name}/{key}"] = float(value)

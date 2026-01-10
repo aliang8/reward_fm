@@ -2939,7 +2939,9 @@ class RFMHeadsTrainer(Trainer):
                 preference_labels_ref_diff = inputs.get("preference_labels_ref_diff")
                 if preference_labels_ref_diff is not None:
                     # Clamp logits to prevent extreme values and gradient issues
-                    preference_scores_ref_diff = torch.clamp(preference_logits_ref_diff.squeeze(-1), min=-50.0, max=50.0)
+                    preference_scores_ref_diff = torch.clamp(
+                        preference_logits_ref_diff.squeeze(-1), min=-50.0, max=50.0
+                    )
 
                     # Binary cross entropy loss for preference prediction
                     preference_loss_ref_diff_all = F.binary_cross_entropy_with_logits(
@@ -3123,7 +3125,9 @@ class RFMHeadsTrainer(Trainer):
                         preference_scores_ref_diff = torch.clamp(preference_logits_ref_diff, min=-50.0, max=50.0)
                         preference_probs_ref_diff = torch.sigmoid(preference_scores_ref_diff)
                         preference_predictions_ref_diff = (preference_probs_ref_diff > 0.5).float()
-                        preference_accuracy_ref_diff = (preference_predictions_ref_diff == preference_labels_ref_diff).float()
+                        preference_accuracy_ref_diff = (
+                            preference_predictions_ref_diff == preference_labels_ref_diff
+                        ).float()
 
                         outputs_dict.update({
                             f"{prefix}/sim_pref_loss": preference_loss_ref_diff.item(),

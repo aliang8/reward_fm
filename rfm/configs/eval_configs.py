@@ -174,6 +174,16 @@ class BaselineEvalConfig:
         metadata={"help": "Output directory for evaluation results"},
     )
 
+    # Server settings (for baseline_eval_server.py)
+    server_url: str = field(
+        default="0.0.0.0",
+        metadata={"help": "Evaluation server URL"},
+    )
+    server_port: int = field(
+        default=8001,
+        metadata={"help": "Evaluation server port"},
+    )
+
     def __post_init__(self):
         """Convert nested dict configs to dataclass instances."""
         if isinstance(self.custom_eval, dict):

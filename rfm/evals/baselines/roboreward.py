@@ -76,7 +76,7 @@ class RoboReward:
                 device_map="auto",  # Auto device placement is best practice
             )
 
-        self.processor = AutoProcessor.from_pretrained(model_path)
+        self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True, do_sample_frames=False, fps=1)
         self.max_new_tokens = max_new_tokens
         self.model_path = model_path
 
@@ -203,7 +203,7 @@ ANSWER:""".format(task=task_description)
             text = self.processor.apply_chat_template(message, tokenize=False, add_generation_prompt=True, fps=1)
 
             # Process vision info - need return_video_kwargs=True to get 3 return values
-            is_qwen3 = "Qwen3" in self.model_path or "qwen3" in self.model_path.lower()
+            is_qwen3 = True
             image_inputs, video_inputs, video_kwargs = process_vision_info(
                 [message],
                 return_video_kwargs=True,
@@ -216,24 +216,33 @@ ANSWER:""".format(task=task_description)
                 frame_path = Path(frame_path_str.replace("file://", ""))
                 assert frame_path.exists(), f"Frame file was deleted before processing: {frame_path}"
 
-            # Handle Qwen3 video format (video_inputs may be list of tuples)
+            # Handle Qwen3 video format (video_inputs may be list of tuples when return_video_metadata=True)
             if is_qwen3 and video_inputs is not None and len(video_inputs) > 0:
+                # When return_video_metadata=True, video_inputs is a list of (video, video_metadata) tuples
+                logger.info(f"video_inputs type: {type(video_inputs[0])}, length: {len(video_inputs)}")
                 if isinstance(video_inputs[0], tuple) and len(video_inputs[0]) == 2:
                     videos, video_metadatas = zip(*video_inputs)
                     videos, video_metadatas = list(videos), list(video_metadatas)
-                    # Ensure video_metadata has video_fps if missing
+                    logger.info(f"Unpacked videos: {len(videos)} videos, {len(video_metadatas)} metadatas")
+                    # Ensure video_metadata has video_fps if missing (needed for Qwen3)
                     if video_metadatas and len(video_metadatas) > 0:
                         for metadata in video_metadatas:
-                            if metadata is not None and "video_fps" not in metadata:
-                                metadata["video_fps"] = 1.0  # Match the FPS we used when writing the video
+                            if metadata is not None:
+                                # When frames are passed as list, metadata has 'fps' not 'video_fps'
+                                if "video_fps" not in metadata and "fps" in metadata:
+                                    metadata["video_fps"] = metadata["fps"]
+                                elif "video_fps" not in metadata:
+                                    metadata["video_fps"] = 1.0  # Match the sample_fps we used
+                                logger.info(f"Video metadata: {metadata}")
                 else:
+                    logger.warning(f"video_inputs[0] is not a tuple of length 2, got: {type(video_inputs[0])}")
                     videos = video_inputs
                     video_metadatas = None
             else:
                 videos = video_inputs if video_inputs else None
                 video_metadatas = None
             
-            logger.info(f"video metadata: {video_metadatas}")
+            logger.info(f"Final video_metadatas: {video_metadatas}")
 
             # Process inputs
             processor_kwargs = {

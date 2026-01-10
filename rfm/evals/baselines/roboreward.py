@@ -230,6 +230,8 @@ ANSWER:""".format(task=task_description)
                 "return_tensors": "pt",
             }
 
+            logger.info(f"RoboReward: Processor kwargs: {processor_kwargs}")
+
             if videos is not None:
                 processor_kwargs["videos"] = videos
 
@@ -239,6 +241,7 @@ ANSWER:""".format(task=task_description)
             if video_kwargs:
                 processor_kwargs.update(video_kwargs)
 
+            logger.info(f"RoboReward: Processing inputs")
             inputs = self.processor(**processor_kwargs)
             inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
 

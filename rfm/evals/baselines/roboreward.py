@@ -193,7 +193,7 @@ ANSWER:""".format(task=task_description)
                     "role": "user",
                     "content": [
                         {"type": "text", "text": prompt},
-                        {"type": "video", "video": frame_paths},
+                        {"type": "video", "video": frame_paths, "fps": 1},
                     ],
                 }
             ]
@@ -242,7 +242,7 @@ ANSWER:""".format(task=task_description)
                 "return_tensors": "pt",
             }
 
-            logger.info(f"RoboReward: Processor kwargs: {processor_kwargs}")
+            logger.info(f"RoboReward: Processor kwargs: {d}")
 
             if videos is not None:
                 processor_kwargs["videos"] = videos
@@ -255,6 +255,7 @@ ANSWER:""".format(task=task_description)
 
             logger.info(f"RoboReward: Processing inputs")
             inputs = self.processor(**processor_kwargs)
+            import ipdb; ipdb.set_trace()
             inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
 
             # Generate

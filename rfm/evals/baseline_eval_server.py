@@ -64,7 +64,7 @@ from rfm.evals.eval_utils import parse_npy_form_data, reconstruct_payload_from_n
 from rfm.utils.config_utils import display_config, convert_hydra_to_dataclass
 from rfm.utils.logger import get_logger, setup_loguru_logging
 
-LOG_LEVEL = "INFO"
+LOG_LEVEL = "TRACE"
 setup_loguru_logging(log_level=LOG_LEVEL)
 logger = get_logger()
 logger.info(f"rfm.baseline_eval_server logger initialized at level {LOG_LEVEL}")

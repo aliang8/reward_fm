@@ -294,6 +294,8 @@ def process_progress_sample(
     # Get frames array
     frames_array = frames_to_numpy_array(traj.frames)
 
+    logger.info(f"Processing progress sample with {len(frames_array)} frames")
+
     if frames_array is None or frames_array.size == 0:
         logger.warning("No frames found in trajectory")
         return None

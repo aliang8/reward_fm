@@ -33,7 +33,9 @@ except ImportError:
     HAS_UNSLOTH = False
 
 from rfm.data.collators.utils import convert_frames_to_pil_images, write_mp4
+from rfm.utils.logger import get_logger
 
+logger = get_logger()
 
 class RoboReward:
     """RoboReward baseline for discrete end-of-episode progress reward prediction."""
@@ -52,7 +54,7 @@ class RoboReward:
             max_new_tokens: Maximum number of tokens to generate
             use_unsloth: Whether to use unsloth for faster inference (default: True)
         """
-        print(f"Loading RoboReward model: {model_path}")
+        logger.info(f"Loading RoboReward model: {model_path}")
 
         # Use unsloth for faster inference if available and requested
         if use_unsloth and HAS_UNSLOTH:
@@ -152,6 +154,8 @@ ANSWER:""".format(task=task_description)
         # Convert frames to PIL Images
         frames_pil = convert_frames_to_pil_images(frames_array)
 
+        logger.info(f"RoboReward: Converted {len(frames_pil)} frames to PIL Images")
+
         if not frames_pil:
             return []
 
@@ -171,7 +175,9 @@ ANSWER:""".format(task=task_description)
         try:
             unique_id = uuid.uuid4().hex
             video_path = Path(tmpdir) / f"roboreward_{unique_id}.mp4"
+            logger.info(f"RoboReward: Writing video to {video_path}")
             write_mp4(frames_pil, video_path, fps=1)
+            logger.info(f"RoboReward: Wrote video to {video_path}")
 
             # Build message with video
             message = [

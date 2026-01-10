@@ -98,7 +98,7 @@ def process_batch_helper(
             raise ValueError(f"Unsupported sample object type: {type(sample)}")
 
     outputs_preference = []
-    outputs_progress = []
+    outputs_progress_list = []
 
     # Process samples
     for sample in input_samples:
@@ -115,11 +115,38 @@ def process_batch_helper(
                 continue
             result = process_progress_sample(sample, model)
             if result:
-                outputs_progress.append(result)
+                outputs_progress_list.append(result)
+
+    # Format outputs to match regular eval_server format for compatibility
+    # Regular eval_server returns: {"outputs_progress": {"progress_pred": [[...], [...]], ...}}
+    # Each inner list is the progress_pred for one sample
+    if outputs_progress_list:
+        # Extract progress_pred from each result dict - each result has "progress_pred": [list of floats]
+        progress_preds = [result.get("progress_pred", []) for result in outputs_progress_list]
+        outputs_progress = {
+            "progress_pred": progress_preds,  # List of lists, one per sample
+        }
+        # Also include success_probs if available
+        success_probs_list = [result.get("success_probs") for result in outputs_progress_list if result.get("success_probs") is not None]
+        if success_probs_list:
+            outputs_progress["success_probs"] = success_probs_list
+    else:
+        outputs_progress = {"progress_pred": []}  # Empty dict with empty list, not None
+
+    # Format preference outputs to match regular eval_server format
+    if outputs_preference:
+        predictions = [r.get("preference_pred") for r in outputs_preference if r.get("preference_pred") is not None]
+        prediction_probs = [r.get("preference_pred") for r in outputs_preference if r.get("preference_pred") is not None]
+        outputs_preference_dict = {
+            "predictions": predictions,
+            "prediction_probs": prediction_probs,
+        }
+    else:
+        outputs_preference_dict = None
 
     return {
-        "outputs_preference": outputs_preference if outputs_preference else None,
-        "outputs_progress": outputs_progress if outputs_progress else None,
+        "outputs_preference": outputs_preference_dict,
+        "outputs_progress": outputs_progress,
     }
 
 

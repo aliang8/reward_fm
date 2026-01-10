@@ -242,7 +242,7 @@ ANSWER:""".format(task=task_description)
                 "return_tensors": "pt",
             }
 
-            logger.info(f"RoboReward: Processor kwargs: {d}")
+            logger.info(f"RoboReward: Processor kwargs: {processor_kwargs}")
 
             if videos is not None:
                 processor_kwargs["videos"] = videos

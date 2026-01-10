@@ -288,6 +288,8 @@ DATA_SOURCE_CATEGORY = {
         "galaxea_part4_r1_lite",
         "galaxea_part5_r1_lite",
         "epic",
+        "roboreward_roboarena",
+        "roboarena",
         "roboarena_eval_debug_nowrist",
     ],
     "paired": [

@@ -76,7 +76,7 @@ class RoboReward:
                 device_map="auto",  # Auto device placement is best practice
             )
 
-        self.processor = AutoProcessor.from_pretrained(model_path)
+        self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True, do_sample_frames=False, fps=1)
         self.max_new_tokens = max_new_tokens
         self.model_path = model_path
 
@@ -187,72 +187,47 @@ ANSWER:""".format(task=task_description)
             
             logger.info(f"RoboReward: Saved {len(frame_paths)} frames as JPEG files in {tmpdir}")
 
-            # Build message with frames as list of file paths (avoids video decoding overhead)
+            # Build message with frames as list of file paths (following Qwen3-VL pattern)
             message = [
                 {
                     "role": "user",
                     "content": [
                         {"type": "text", "text": prompt},
-                        {"type": "video", "video": frame_paths},
+                        {"type": "video", "video": frame_paths, "sample_fps": 1.0},
                     ],
                 }
             ]
 
-            # Apply chat template with fps=1 to match video FPS
-            text = self.processor.apply_chat_template(message, tokenize=False, add_generation_prompt=True, fps=1)
+            # Apply chat template
+            text = self.processor.apply_chat_template(message, tokenize=False, add_generation_prompt=True)
 
-            # Process vision info - need return_video_kwargs=True to get 3 return values
-            is_qwen3 = "Qwen3" in self.model_path or "qwen3" in self.model_path.lower()
+            # Process vision info (qwen-vl-utils handles resizing)
             image_inputs, video_inputs, video_kwargs = process_vision_info(
                 [message],
+                image_patch_size=16,
                 return_video_kwargs=True,
-                return_video_metadata=is_qwen3,
+                return_video_metadata=True,
             )
 
-            # Ensure frame files still exist - process_vision_info may have created its own processing
-            # but we need to keep our files until after processor() is called
-            for frame_path_str in frame_paths:
-                frame_path = Path(frame_path_str.replace("file://", ""))
-                assert frame_path.exists(), f"Frame file was deleted before processing: {frame_path}"
-
-            # Handle Qwen3 video format (video_inputs may be list of tuples)
-            if is_qwen3 and video_inputs is not None and len(video_inputs) > 0:
-                if isinstance(video_inputs[0], tuple) and len(video_inputs[0]) == 2:
-                    videos, video_metadatas = zip(*video_inputs)
-                    videos, video_metadatas = list(videos), list(video_metadatas)
-                    # Ensure video_metadata has video_fps if missing
-                    if video_metadatas and len(video_metadatas) > 0:
-                        for metadata in video_metadatas:
-                            if metadata is not None and "video_fps" not in metadata:
-                                metadata["video_fps"] = 1.0  # Match the FPS we used when writing the video
-                else:
-                    videos = video_inputs
-                    video_metadatas = None
+            # Split videos and metadata (video_inputs is list of (video, video_metadata) tuples)
+            if video_inputs is not None:
+                videos, video_metadatas = zip(*video_inputs)
+                videos, video_metadatas = list(videos), list(video_metadatas)
             else:
-                videos = video_inputs if video_inputs else None
+                videos = None
                 video_metadatas = None
 
-            # Process inputs
-            processor_kwargs = {
-                "text": [text],
-                "images": image_inputs,
-                "padding": True,
-                "return_tensors": "pt",
-            }
-
-            logger.info(f"RoboReward: Processor kwargs: {processor_kwargs}")
-
-            if videos is not None:
-                processor_kwargs["videos"] = videos
-
-            if is_qwen3 and video_metadatas is not None:
-                processor_kwargs["video_metadata"] = video_metadatas
-
-            if video_kwargs:
-                processor_kwargs.update(video_kwargs)
-
-            logger.info(f"RoboReward: Processing inputs")
-            inputs = self.processor(**processor_kwargs)
+            # Process inputs (do_resize=False since qwen-vl-utils already resized)
+            inputs = self.processor(
+                text=[text],
+                images=image_inputs,
+                videos=videos,
+                video_metadata=video_metadatas,
+                padding=True,
+                return_tensors="pt",
+                do_resize=False,  # qwen-vl-utils already resized
+                **video_kwargs,
+            )
             inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
 
             # Generate
@@ -274,6 +249,7 @@ ANSWER:""".format(task=task_description)
             # Parse score
             output_text = output_texts[0]
             discrete_score = self._parse_score(output_text)
+            logger.info(f"RoboReward: Discrete score: {discrete_score}")
 
             if discrete_score is None:
                 print(f"[!] Failed to parse score from output: {output_text}")
@@ -282,7 +258,9 @@ ANSWER:""".format(task=task_description)
             # Return same discrete score for all frames in this subsequence
             # Use original num_frames from frames_array (before duplication)
             original_num_frames = len(convert_frames_to_pil_images(frames_array))
-            result = [float(discrete_score)] * original_num_frames
+
+            # because RoboReward returns a score between 1 and 5, we need to normalize it to 0-1
+            result = [float(discrete_score) / 5.0] * original_num_frames
         finally:
             # Clean up temporary directory and files after all processing is complete
             # This ensures the video file exists during process_vision_info and processor calls

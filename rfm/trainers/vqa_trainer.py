@@ -413,7 +413,6 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
             if mode == "preference":
                 pred = extracted_answers[i]
-                print(f"PREFERENCE: {pred}")
                 label_map = {1: 1, 2: 0} # video 1 is A, video 2 is B
                 pred_label = label_map.get(pred, -1)
                 # Get from original batch (index within preference batch)
@@ -440,7 +439,6 @@ class RFMVQATrainer(RFMHeadsTrainer):
                     parsed = ast.literal_eval(pred)
                     pred_tensor = process_progress_pred(torch.tensor([parsed], dtype=torch.float32))
                     gt_tensor = torch.tensor([gt], dtype=torch.float32)
-                    print(f"PROGRESS: {pred_tensor}, {gt_tensor}")
                     mse = F.mse_loss(pred_tensor, gt_tensor).item()
                 except Exception:
                     mse = None

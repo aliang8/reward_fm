@@ -45,14 +45,14 @@ custom_eval:
   eval_types: ["quality_preference"]  # Options: ["quality_preference", "reward_alignment", "policy_ranking", "confusion_matrix"]
   quality_preference: ["aliangdw_metaworld_metaworld_eval"]  # Datasets for preference evaluation
   reward_alignment: ["aliangdw_metaworld_metaworld_eval"]  # Datasets for progress evaluation
-  policy_ranking: ["aliangdw_metaworld_metaworld_eval"]  # Datasets for progress evaluation
+  policy_ranking: [aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking,aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking,aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking,jesbu1_mit_franka_p-rank_rfm_mit_franka_p-rank_rfm,jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top,jesbu1_utd_so101_clean_policy_ranking_wrist_utd_so101_clean_policy_ranking_wrist,jesbu1_usc_koch_p_ranking_rfm_usc_koch_p_ranking_all]  # Datasets for progress evaluation
   confusion_matrix: ["aliangdw_metaworld_metaworld_eval"]  # Datasets for progress evaluation
-  comparisons_per_task: 3  # Limit number of comparisons per task (None = use all)
+  comparisons_per_task: null # Limit number of comparisons per task (None = use all)
   max_comparisons: 100  # Limit total number of comparisons across all tasks (None = use all)
   reward_alignment_max_trajectories: 10  # Max trajectories for reward alignment
   policy_ranking_max_tasks: 20  # Max tasks for policy ranking
   use_frame_steps: false  # Whether to use frame steps (subsequences) for reward_alignment and policy_ranking. true = generate subsequences, false = use whole trajectory.
-  num_examples_per_quality_pr: 3  # Examples per quality label for policy ranking
+  num_examples_per_quality_pr: null  # Examples per quality label for policy ranking
   num_partial_successes: 5  # For RoboArena: Total trajectories to sample via circular sampling (None = use num_examples_per_quality_pr per group)
   custom_eval_random_seed: 42
 

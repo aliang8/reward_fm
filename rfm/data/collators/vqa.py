@@ -33,6 +33,28 @@ class VQABatchCollator(RFMBatchCollator):
         self.inference = inference
         super().__init__(inference=inference, shuffle_progress_frames=shuffle_progress_frames, **kwargs)
 
+    def _mask_labels(self, labels):
+        # Mask out the prompt - only train on assistant response
+        # Locate <ans> tag positions directly in token space
+        for i in range(len(labels)):
+            seq_len = labels[i].shape[0]
+            max_window = 8  # number of tokens to decode when searching for <ans>
+            ans_token_positions: list[int] = []
+
+            for idx in range(seq_len):
+                end_idx = min(seq_len, idx + max_window)
+                window_tokens = labels[i][idx:end_idx]
+                window_text = self.processor.tokenizer.decode(window_tokens, skip_special_tokens=False)
+                if window_text.lstrip().startswith("ANSWER:"):
+                    ans_token_positions.append(idx)
+
+            if ans_token_positions:
+                start_idx = ans_token_positions[-1]
+                labels[i][:start_idx] = IGNORE_INDEX
+            else:
+                labels[i][:] = IGNORE_INDEX
+        return labels
+
     def _process_preference_batch(self, preference_samples: list[PreferenceSample]) -> dict[str, torch.Tensor]:
         """Process a batch of preference samples with VQA-style question."""
         # Collect all messages for batch processing
@@ -55,11 +77,9 @@ class VQABatchCollator(RFMBatchCollator):
                 sample.rejected_trajectory.frames, sample.rejected_trajectory.frames_shape
             )
             # prompt = f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', evaluate which one better demonstrates successful completion of the task. Compare the trajectories and determine which is preferred."
-            prompt = f"""Given these two robot or human trajectories, which one makes the most progress towards solving the task, Video 1 or 2? Format your answer as: ANSWER: <ans>A/B</ans>.
+            prompt = f"""Given these two robot and/or human trajectory videos, which one makes the most progress towards solving the task, Video 1 or 2? Format your answer as: ANSWER: 1/2
 
-Task: {sample.chosen_trajectory.task} 
-
-ANSWER:"""
+Task: {sample.chosen_trajectory.task}"""
 
             # Prepare frames for conversation (handles multi-image vs video conversion)
             chosen_video_field, content_extras = self._prepare_frames_for_conversation(
@@ -72,12 +92,12 @@ ANSWER:"""
                 # Chosen trajectory first: Trajectory A (chosen) + Trajectory B (rejected)
                 traj_a_field = chosen_video_field
                 traj_b_field = rejected_video_field
-                answer = "A"
+                answer = "1"
             else:
                 # Chosen trajectory second: Trajectory A (rejected) + Trajectory B (chosen)
                 traj_a_field = rejected_video_field
                 traj_b_field = chosen_video_field
-                answer = "B"
+                answer = "2"
 
             # Build content list
             content_list = [
@@ -86,7 +106,7 @@ ANSWER:"""
             self._add_vision_content_to_list(content_list, traj_a_field, content_extras)
             #content_list.append({"type": "text", "text": "This is Trajectory B. "})
             self._add_vision_content_to_list(content_list, traj_b_field, content_extras)
-            content_list.append({"type": "text", "text": prompt},)
+            content_list.append({"type": "text", "text": prompt})
 
             conversation = [
                 {
@@ -101,39 +121,18 @@ ANSWER:"""
                     # SmolVLM requires content as list of dicts
                     conversation.append({
                         "role": "assistant",
-                        "content": [{"type": "text", "text": f"<ans>{answer}</ans>"}],
+                        "content": [{"type": "text", "text": f"ANSWER: {answer}"}],
                     })
                 else:
                     # Qwen accepts simple string content for text-only assistant messages
-                    conversation.append({"role": "assistant", "content": f"<ans>{answer}</ans>"})
+                    conversation.append({"role": "assistant", "content": f"ANSWER: {answer}"})
 
             all_messages.append(conversation)
 
         batch_inputs = self._process_conversation(all_messages, add_generation_prompt=self.inference)
         if not self.inference:
             labels = batch_inputs["input_ids"].clone()
-
-            # Mask out the prompt - only train on assistant response
-            # Locate <ans> tag positions directly in token space
-            for i in range(len(labels)):
-                seq_len = labels[i].shape[0]
-                max_window = 8  # number of tokens to decode when searching for <ans>
-                ans_token_positions: list[int] = []
-
-                for idx in range(seq_len):
-                    end_idx = min(seq_len, idx + max_window)
-                    window_tokens = labels[i][idx:end_idx]
-                    window_text = self.processor.tokenizer.decode(window_tokens, skip_special_tokens=False)
-                    if window_text.lstrip().startswith("<ans>"):
-                        ans_token_positions.append(idx)
-
-                if ans_token_positions:
-                    start_idx = ans_token_positions[-1]
-                    labels[i][:start_idx] = IGNORE_INDEX
-                else:
-                    labels[i][:] = IGNORE_INDEX
-
-            batch_inputs["labels"] = labels
+            batch_inputs["labels"] = self._mask_labels(labels)
 
         # Use the dynamically generated preference labels based on trajectory order
         batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
@@ -167,16 +166,14 @@ ANSWER:"""
                     raise ValueError(
                         f"Target progress must be a list of at least 1 float for shuffling, got {len(target_progress)}"
                     )
-            prompt = """Given the task, assign a real-valued progress score from 0.0 to 1.0 for the robot or human in the video in the format: ANSWER: <ans>score</ans>
+            prompt = """Given the task, assign an integer-valued progress score from 0 to 100 for the robot or human in the video in the format: ANSWER: score
 End of episode progress should be judged only on the final state, without time limits.
 Rubric for end-of-episode progress (judge only the final state without time limits):
 0 - No Progress: Final state shows no goal-relevant change for the command.
-1 - Perfect Completion: Final state satisfies all requirements to solve the task.
+100 - Perfect Completion: Final state satisfies all requirements to solve the task.
 Anything in between represents partial progress towards the goal.
 
-Task: {task}
-
-ANSWER:""".format(task=sample.trajectory.task)
+Task: {task}""".format(task=sample.trajectory.task)
             #prompt = f"For the task '{sample.trajectory.task}', estimate task progress at each frame in the video trajectory."
             #if self.shuffle_progress_frames:
             #    prompt += " These frames are possibly shuffled, so pay attention to individual frames when reasoning about progress."
@@ -204,7 +201,7 @@ ANSWER:""".format(task=sample.trajectory.task)
             if not self.inference and target_progress is not None:
                 # Round target progress to 2 decimal places for the response
                 # Convert to Python list to get proper comma-separated format
-                target_progress_rounded = np.round(target_progress, 2).tolist()
+                target_progress_rounded = np.round(target_progress * 100).astype(np.uint8).tolist()
 
                 # TODO: unhardcode this: for now, just use last frame target progress
                 target_progress_rounded = target_progress_rounded[-1]
@@ -213,40 +210,18 @@ ANSWER:""".format(task=sample.trajectory.task)
                     # SmolVLM requires content as list of dicts
                     conversation.append({
                         "role": "assistant",
-                        "content": [{"type": "text", "text": f"<ans>{target_progress_rounded}</ans>"}],
+                        "content": [{"type": "text", "text": f"ANSWER: {target_progress_rounded}"}],
                     })
                 else:
                     # Qwen accepts simple string content for text-only assistant messages
-                    conversation.append({"role": "assistant", "content": f"<ans>{target_progress_rounded}</ans>"})
+                    conversation.append({"role": "assistant", "content": f"ANSWER: {target_progress_rounded}"})
 
             all_messages.append(conversation)
 
         batch_inputs = self._process_conversation(all_messages, add_generation_prompt=self.inference)
-
         if not self.inference:
             labels = batch_inputs["input_ids"].clone()
-
-            # Mask out the prompt - only train on assistant response
-            # Locate <ans> token positions directly
-            for i in range(len(labels)):
-                seq_len = labels[i].shape[0]
-                max_window = 8
-                ans_token_positions: list[int] = []
-
-                for idx in range(seq_len):
-                    end_idx = min(seq_len, idx + max_window)
-                    window_tokens = labels[i][idx:end_idx]
-                    window_text = self.processor.tokenizer.decode(window_tokens, skip_special_tokens=False)
-                    if window_text.lstrip().startswith("<ans>"):
-                        ans_token_positions.append(idx)
-
-                if ans_token_positions:
-                    start_idx = ans_token_positions[-1]
-                    labels[i][:start_idx] = IGNORE_INDEX
-                else:
-                    labels[i][:] = IGNORE_INDEX
-
-            batch_inputs["labels"] = labels
+            batch_inputs["labels"] = self._mask_labels(labels)
 
         # Add progress metadata (includes all the misc fields like target_progress, masks, frames_shape, etc.)
         # Only call if target_progress exists (matches RFM batch collator behavior)

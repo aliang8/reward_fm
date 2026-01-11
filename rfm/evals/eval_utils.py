@@ -20,10 +20,14 @@ from rfm.data.datasets.helpers import linspace_subsample_frames, pad_trajectory_
 
 
 def extract_answer_from_text(text: str) -> str:
-    """Extract answer from text using <ans> tags."""
-    m = re.search(r"<ans>(.*?)</ans>", text, re.DOTALL)
-    ans = m.group(1).strip() if m else ""
-    return ans
+    """Extract answer from text using ANSWER."""
+    # Look for "ANSWER: <number>" pattern
+    pattern = r"ANSWER:\s*(\d+)"
+    match = re.search(pattern, text, re.IGNORECASE)
+    if match:
+        return match.group(1)
+    else:
+        return ""
 
 
 def raw_dict_to_sample(

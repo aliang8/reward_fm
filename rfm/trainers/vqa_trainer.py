@@ -201,6 +201,10 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
             # Explicitly free all remaining references
             del gen_inputs, predictions
+            
+            # Clear CUDA cache after generation to free memory from generate() internals
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
         # Create ModelOutput with all expected fields to match parent class expectations
         model_output = ModelOutput(
@@ -291,6 +295,13 @@ class RFMVQATrainer(RFMHeadsTrainer):
                 training=training,
             )
 
+        # Free combined inputs dict after loss computation
+        del combined, batches_to_combine, modes_per_sample
+        
+        # Clear CUDA cache during evaluation to prevent memory accumulation
+        if not training and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         self.log_metadata = loss_dict
 
         if return_outputs:
@@ -372,9 +383,18 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
         # Compute predictions for all samples
         pred_ids = outputs["logits"].argmax(dim=-1)
+        
+        # CRITICAL: Delete the large outputs tensor immediately after extracting pred_ids
+        # The logits tensor can be huge (batch × seq_len × vocab_size, where vocab_size ~32K+)
+        del outputs
+        
         rfm_model = self.model.module if hasattr(self.model, "module") else self.model
         tokenizer = rfm_model.tokenizer
         pred_texts = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
+        
+        # Free pred_ids after decoding
+        del pred_ids
+        
         extracted_answers = [extract_answer_from_text(text) for text in pred_texts]
 
         # Aggregate metrics per mode via simple for loop
@@ -466,5 +486,8 @@ class RFMVQATrainer(RFMHeadsTrainer):
                 prog_mse = [x["mse"] for x in strat_data if x["mse"] is not None]
                 if prog_mse:
                     loss_dict[f"{prefix}_strat/prog_mse_{strategy}"] = np.mean(prog_mse)
+
+        # Clean up intermediate data structures
+        del pref_data, prog_data, extracted_answers
 
         return (loss, loss_dict) if return_outputs else loss

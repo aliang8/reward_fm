@@ -543,7 +543,6 @@ def run_reward_alignment_eval_per_trajectory(
         if is_roboreward and partial_success is not None:
             # Get last predicted reward (final reward)
             final_predicted_reward = float(last_preds[-1])
-            print(final_predicted_reward)
 
             # Convert predicted reward to bin (1-5)
             pred_bin = convert_continuous_to_discrete_bin_roboreward(final_predicted_reward, num_bins=5)

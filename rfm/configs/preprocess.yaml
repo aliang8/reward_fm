@@ -19,6 +19,7 @@ train_datasets:
   - "jesbu1/fino_net_rfm"
   - "jesbu1/racer_rfm"
   - "jesbu1/egodex_rfm"
+  - "jesbu1/roboreward_rfm"
 
 train_subsets:
   - ["metaworld_train"]
@@ -41,6 +42,7 @@ train_subsets:
   - ["fino_net"]
   - ["racer_train"]
   - ["egodex_part1", "egodex_part2", "egodex_part3", "egodex_part4", "egodex_part5"]
+  - ["roboreward_train"]
 
 eval_datasets:
   - "abraranwar/libero_rfm"
@@ -82,7 +84,7 @@ eval_subsets:
   - ["utd_so101_clean_policy_ranking_wrist"]
   - ["usc_koch_human_robot_paired_human", "usc_koch_human_robot_paired_robot"]
   - ["usc_koch_p_ranking_all"]
-  - ["roboreward_train", "roboreward_val", "roboreward_test"]
+  - ["roboreward_val", "roboreward_test"]
 
 
 max_frames_for_preprocessing: 32

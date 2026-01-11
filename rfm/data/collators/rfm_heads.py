@@ -264,6 +264,7 @@ class RFMBatchCollator(BaseCollator):
             content_list.append({
                 "type": "video",
                 "video": frames_or_video,
+                "sample_fps": 1.0,
                 **content_extras,
             })
 

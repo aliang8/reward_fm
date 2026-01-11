@@ -1017,7 +1017,7 @@ class RFMHeadsTrainer(Trainer):
 
         if eval_type == "reward_alignment":
             eval_metrics, plots, video_frames_list, trajectory_progress_data = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins, data_source
+                eval_type, eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins, data_source, is_vqa=self.config.model.model_type=="vqa",
             )
             # log_memory_usage(f"After compute_eval_metrics (reward_alignment)")
 

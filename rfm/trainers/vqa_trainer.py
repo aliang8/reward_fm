@@ -182,7 +182,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
             with torch.no_grad():
                 generated_ids = model.generate(
                     **gen_inputs,
-                    max_new_tokens=100,  # Reduced from 100 to save memory - enough for structured answers
+                    max_new_tokens=10,  # Reduced from 100 to save memory - enough for structured answers
                     do_sample=False,  # Greedy decoding for reproducibility
                     pad_token_id=model.tokenizer.pad_token_id,
                     eos_token_id=model.tokenizer.eos_token_id,
@@ -207,6 +207,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
             if sample_type == "progress":
                 progress_logits = self._aggregate_progress_logits(predictions, inputs["target_progress"])
+                progress_logits = torch.tensor(progress_logits, dtype=torch.float32)
                 progress_logits = {"A": progress_logits, "B": None}
             elif sample_type == "preference":
                 pref_logits = []
@@ -430,13 +431,15 @@ class RFMVQATrainer(RFMHeadsTrainer):
                 pred = extracted_answers[i]
                 # Get from original batch
                 prog_idx = sum(1 for j, m in enumerate(modes_per_sample[:i]) if m == "progress")
-                gt = prog_inputs["target_progress"][prog_idx]
+                gt = prog_inputs["target_progress"][prog_idx][-1]
 
                 mse = None
                 try:
                     parsed = ast.literal_eval(pred)
-                    pred_tensor = torch.tensor(parsed, dtype=torch.float32)
-                    mse = F.mse_loss(pred_tensor, gt).item()
+                    pred_tensor = torch.tensor([parsed], dtype=torch.float32)
+                    gt_tensor = torch.tensor([gt], dtype=torch.float32)
+                    print(pred_tensor, gt_tensor)
+                    mse = F.mse_loss(pred_tensor, gt_tensor).item()
                 except Exception:
                     mse = None
                 # Get metadata

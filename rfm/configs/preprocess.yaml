@@ -20,7 +20,7 @@ train_datasets:
   - "jesbu1/racer_rfm"
   - "jesbu1/egodex_rfm"
   - "jesbu1/roboreward_rfm"
-  - "jesbu1/roboreward_rfm_highres"
+  - "jesbu1/roboreward_rfm_high_res"
 
 train_subsets:
   - ["metaworld_train"]

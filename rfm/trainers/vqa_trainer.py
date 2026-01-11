@@ -210,7 +210,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
             if sample_type == "progress":
                 progress_logits = self._aggregate_progress_logits(predictions, inputs["target_progress"])
-                progress_logits = process_progress_pred(torch.tensor(progress_logits, dtype=torch.float32))
+                progress_logits = process_progress_pred(torch.tensor(progress_logits, dtype=torch.float32, device=self.accelerator.device))
                 progress_logits = {"A": progress_logits, "B": None}
             elif sample_type == "preference":
                 pref_logits = []

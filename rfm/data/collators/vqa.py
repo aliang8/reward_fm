@@ -166,7 +166,7 @@ Task: {sample.chosen_trajectory.task}"""
                     raise ValueError(
                         f"Target progress must be a list of at least 1 float for shuffling, got {len(target_progress)}"
                     )
-            prompt = """Given the task, assign an integer-valued progress score from 0 to 100 for the robot or human in the video in the format: ANSWER: score
+            prompt = """Given the task, assign a python list of integer-valued progress scores from 0 to 100 for each frame of the video in the format: ANSWER: [scores]
 End of episode progress should be judged only on the final state, without time limits.
 Rubric for end-of-episode progress (judge only the final state without time limits):
 0 - No Progress: Final state shows no goal-relevant change for the command.
@@ -201,10 +201,11 @@ Task: {task}""".format(task=sample.trajectory.task)
             if not self.inference and target_progress is not None:
                 # Round target progress to 2 decimal places for the response
                 # Convert to Python list to get proper comma-separated format
-                target_progress_rounded = np.round(target_progress * 100).astype(np.uint8).tolist()
+                target_progress_rounded = np.round(np.array(target_progress) * 100).astype(np.uint8).tolist()
 
-                # TODO: unhardcode this: for now, just use last frame target progress
-                target_progress_rounded = target_progress_rounded[-1]
+
+                ## TODO: unhardcode this: for now, just use last frame target progress
+                #target_progress_rounded = target_progress_rounded[-1]
                 # SmolVLM requires list format for all messages, Qwen accepts both but we use string for simplicity
                 if "SmolVLM" in self.base_model_id:
                     # SmolVLM requires content as list of dicts

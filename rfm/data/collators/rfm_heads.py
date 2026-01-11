@@ -17,7 +17,28 @@ from rfm.data.dataset_category import is_preference_only_ds
 from rfm.data.datasets.helpers import DataGenStrat
 from typing import List, Dict, Union
 from rfm.models.utils import convert_discrete_target_to_continuous
+from PIL import Image
 
+MAX_IMAGE_SIDE = 480 # bigger side
+MAX_IMAGE_PIXELS = 1024 * 1024 # safety cap (1.0 MP). raise to 1.5MP if stable
+
+def _resize_pil(pil: Image.Image, max_side: int = MAX_IMAGE_SIDE, max_pixels: int = MAX_IMAGE_PIXELS) -> Image.Image:
+    pil = pil.convert("RGB")
+    w, h = pil.size
+
+    # Scale down if max side too large
+    scale_side = min(1.0, max_side / float(max(w, h)))
+
+    # Scale down if too many pixels (area cap)
+    scale_area = (max_pixels / float(w * h)) ** 0.5 if (w * h) > max_pixels else 1.0
+
+    scale = min(scale_side, scale_area)
+
+    if scale < 1.0:
+        nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
+        pil = pil.resize((nw, nh), resample=Image.BICUBIC)
+
+    return pil
 
 def should_compute_progress(
     quality_label: str,
@@ -218,6 +239,7 @@ class RFMBatchCollator(BaseCollator):
                     "resized_width": self.resized_width,
                 }
             else:
+                frames = [_resize_pil(frame) for frame in frames]
                 content_extras = {}
             return frames, content_extras
         elif "Qwen" in self.base_model_id or "Molmo" in self.base_model_id:
@@ -228,9 +250,11 @@ class RFMBatchCollator(BaseCollator):
                     "resized_width": self.resized_width,
                 }
             else:
+                frames = [_resize_pil(frame) for frame in frames]
                 content_extras = {}
             return frames, content_extras
         elif "SmolVLM" in self.base_model_id:
+            frames = [_resize_pil(frame) for frame in frames]
             # Convert to video file for SmolVLM
             unique_id = uuid.uuid4().hex
             tmp = Path(tempfile.gettempdir()) / f"{prefix}_{unique_id}.mp4"

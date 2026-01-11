@@ -34,12 +34,13 @@ def compute_eval_metrics(
     is_discrete_mode: bool = False,
     num_bins: int = 10,
     data_source: Optional[str] = None,
+    is_vqa: bool = False,
 ):
     if eval_type == "quality_preference" or eval_type == "quality_preference_roboarena":
         return run_quality_preference_eval(results, data_source=data_source)
     elif eval_type == "reward_alignment":
         return run_reward_alignment_eval_per_trajectory(
-            results, progress_pred_type, is_discrete_mode, num_bins, data_source
+            results, progress_pred_type, is_discrete_mode, num_bins, data_source, last_frame_only=is_vqa
         )
     elif eval_type == "confusion_matrix":
         return run_confusion_matrix_eval(results, progress_pred_type, is_discrete_mode, num_bins)
@@ -342,7 +343,6 @@ def run_reward_alignment_eval_per_trajectory(
                             print(
                                 "Warning: Pred array should not be continuous in discrete mode, breakpointing to debug"
                             )
-                            breakpoint()
                         if tgt is not None and len(tgt) > 0:
                             all_targets = convert_discrete_target_to_continuous(
                                 torch.tensor(tgt[None]), num_bins=num_bins
@@ -541,6 +541,7 @@ def run_reward_alignment_eval_per_trajectory(
 
         # For RoboReward, collect bins for MAE computation
         if is_roboreward and partial_success is not None:
+            breakpoint()
             # Get last predicted reward (final reward)
             final_predicted_reward = float(last_preds[-1])
 

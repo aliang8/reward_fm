@@ -277,7 +277,7 @@ def _add_special_tokens_and_resize(cfg: ModelConfig, processor: AutoProcessor, b
         base_model: Base model to resize embeddings for
     """
     # Add RFM special tokens if they don't exist
-    if cfg.model_type == "default":
+    if cfg.model_type != "vqa":
         special_tokens = [
             "<|split_token|>",
             "<|reward_token|>",

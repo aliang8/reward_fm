@@ -55,7 +55,11 @@ class VQABatchCollator(RFMBatchCollator):
                 sample.rejected_trajectory.frames, sample.rejected_trajectory.frames_shape
             )
             # prompt = f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', evaluate which one better demonstrates successful completion of the task. Compare the trajectories and determine which is preferred."
-            prompt = f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', which one best corresponds to solving the task? Trajectory A or B? Format your answer enclosed by <ans> and </ans> tags."
+            prompt = f"""Given these two robot or human trajectories, which one makes the most progress towards solving the task, video A or B? Format your answer as: ANSWER: <ans>A/B</ans>.
+
+Task: {sample.chosen_trajectory.task} 
+
+ANSWER:"""
 
             # Prepare frames for conversation (handles multi-image vs video conversion)
             chosen_video_field, content_extras = self._prepare_frames_for_conversation(
@@ -143,9 +147,11 @@ class VQABatchCollator(RFMBatchCollator):
         """Process a batch of progress samples with VQA-style question."""
         # Collect all messages for batch processing
         all_messages = []
+        assert not self.shuffle_progress_frames, "Currently shuffling is not in the new prompt so not supported"
 
         for i, sample in enumerate(progress_samples):
             target_progress = sample.trajectory.target_progress
+            
 
             # Convert frames to appropriate format using stored shapes
             frames = convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
@@ -156,18 +162,28 @@ class VQABatchCollator(RFMBatchCollator):
                     shuffle_indices = np.random.permutation(range(1, len(frames)))
                     frames = [frames[0]] + [frames[idx] for idx in shuffle_indices]
                     target_progress = [target_progress[0]] + [target_progress[idx] for idx in shuffle_indices]
+
                 else:
                     raise ValueError(
                         f"Target progress must be a list of at least 1 float for shuffling, got {len(target_progress)}"
                     )
+            prompt = """Given the task, assign a real-valued progress score from 0.0 to 1.0 for the robot or human in the video in the format: ANSWER: <ans>score</ans>
+End of episode progress should be judged only on the final state, without time limits.
+Rubric for end-of-episode progress (judge only the final state without time limits):
+0 - No Progress: Final state shows no goal-relevant change for the command.
+1 - Perfect Completion: Final state satisfies all requirements to solve the task.
+Anything in between represents partial progress towards the goal.
 
-            prompt = f"For the task '{sample.trajectory.task}', estimate task progress at each frame in the video trajectory."
-            if self.shuffle_progress_frames:
-                prompt += " These frames are possibly shuffled, so pay attention to individual frames when reasoning about progress."
-            prompt += " The first frame is the starting frame, with 0 progress."
-            prompt += (
-                " Format your answer as a python list with floats between 0 and 1 enclosed by <ans> and </ans> tags."
-            )
+Task: {task}
+
+ANSWER:""".format(task=sample.trajectory.task)
+            #prompt = f"For the task '{sample.trajectory.task}', estimate task progress at each frame in the video trajectory."
+            #if self.shuffle_progress_frames:
+            #    prompt += " These frames are possibly shuffled, so pay attention to individual frames when reasoning about progress."
+            #prompt += " The first frame is the starting frame, with 0 progress."
+            #prompt += (
+            #    " Format your answer as a python list with floats between 0 and 1 enclosed by <ans> and </ans> tags."
+            #)
 
             # Prepare frames for conversation (handles multi-image vs video conversion)
             video_field, content_extras = self._prepare_frames_for_conversation(frames, prefix="tmp_progress")
@@ -188,6 +204,9 @@ class VQABatchCollator(RFMBatchCollator):
                 # Round target progress to 2 decimal places for the response
                 # Convert to Python list to get proper comma-separated format
                 target_progress_rounded = np.round(target_progress, 2).tolist()
+
+                # TODO: unhardcode this: for now, just use last frame target progress
+                target_progress_rounded = target_progress_rounded[-1]
                 # SmolVLM requires list format for all messages, Qwen accepts both but we use string for simplicity
                 if "SmolVLM" in self.base_model_id:
                     # SmolVLM requires content as list of dicts

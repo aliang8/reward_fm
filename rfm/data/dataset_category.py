@@ -183,6 +183,7 @@ DATASET_MAP = {
             "jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top",
             "jesbu1_utd_so101_clean_policy_ranking_wrist_utd_so101_clean_policy_ranking_wrist",
             "jesbu1_roboreward_rfm_roboreward_test",
+            "jesbu1_usc_koch_p_ranking_rfm_usc_koch_p_ranking_all"
             # ["abraranwar_libero_rfm_libero256_10", "ykorkmaz_libero_failure_rfm_libero_10_failure"],
         ]
     },

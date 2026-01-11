@@ -55,7 +55,7 @@ class VQABatchCollator(RFMBatchCollator):
                 sample.rejected_trajectory.frames, sample.rejected_trajectory.frames_shape
             )
             # prompt = f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', evaluate which one better demonstrates successful completion of the task. Compare the trajectories and determine which is preferred."
-            prompt = f"""Given these two robot or human trajectories, which one makes the most progress towards solving the task, video A or B? Format your answer as: ANSWER: <ans>A/B</ans>.
+            prompt = f"""Given these two robot or human trajectories, which one makes the most progress towards solving the task, Video 1 or 2? Format your answer as: ANSWER: <ans>A/B</ans>.
 
 Task: {sample.chosen_trajectory.task} 
 
@@ -81,12 +81,12 @@ ANSWER:"""
 
             # Build content list
             content_list = [
-                {"type": "text", "text": prompt},
-                {"type": "text", "text": "This is Trajectory A. "},
+                #{"type": "text", "text": "This is Trajectory A. "},
             ]
             self._add_vision_content_to_list(content_list, traj_a_field, content_extras)
-            content_list.append({"type": "text", "text": "This is Trajectory B. "})
+            #content_list.append({"type": "text", "text": "This is Trajectory B. "})
             self._add_vision_content_to_list(content_list, traj_b_field, content_extras)
+            content_list.append({"type": "text", "text": prompt},)
 
             conversation = [
                 {
@@ -189,8 +189,9 @@ ANSWER:""".format(task=sample.trajectory.task)
             video_field, content_extras = self._prepare_frames_for_conversation(frames, prefix="tmp_progress")
 
             # Build content list
-            content_list = [{"type": "text", "text": prompt}]
+            content_list = []
             self._add_vision_content_to_list(content_list, video_field, content_extras)
+            content_list.append({"type": "text", "text": prompt})
 
             # Create conversation for progress evaluation
             conversation = [

@@ -384,12 +384,16 @@ class RFMVQATrainer(RFMHeadsTrainer):
             logits=outputs["logits"],
             labels=inputs["labels"],
             vocab_size=vocab_size,
-            reduction="none",
+            ignore_index=IGNORE_INDEX,
+            reduction="mean",
         )
         # reshape
-        loss = loss.reshape(B, -1)
-        loss_per_example = loss.mean(dim=1)
-        loss = loss.mean()
+        #loss = loss.reshape(B, -1)
+
+        #loss_per_example = loss[loss != IGNORE_INDEX]
+        #loss_per_example = loss.mean(dim=1)
+        #loss = loss.mean()
+
 
         prefix = "train" if training else "eval"
         loss_dict = {f"{prefix}/combined_loss": loss.item()}
@@ -409,7 +413,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
         prog_data = []  # (loss, mse, source, strategy)
 
         for i, mode in enumerate(modes_per_sample):
-            mode_loss = loss_per_example[i].item()
+            #mode_loss = loss_per_example[i].item()
 
             if mode == "preference":
                 pred = extracted_answers[i]
@@ -425,7 +429,8 @@ class RFMVQATrainer(RFMHeadsTrainer):
                 strategy = pref_inputs.get(
                     "rejected_data_gen_strategy", [None] * len(pref_inputs["preference_labels"])
                 )[pref_idx]
-                pref_data.append(dict(loss=mode_loss, correct=correct, source=source, strategy=strategy))
+                #pref_data.append(dict(loss=mode_loss, correct=correct, source=source, strategy=strategy))
+                pref_data.append(dict(correct=correct, source=source, strategy=strategy))
 
             elif mode == "progress":
                 pred = extracted_answers[i]
@@ -445,29 +450,30 @@ class RFMVQATrainer(RFMHeadsTrainer):
                 # Get metadata
                 source = prog_inputs.get("data_source", [None] * len(prog_inputs["target_progress"]))[prog_idx]
                 strategy = prog_inputs.get("data_gen_strategy", [None] * len(prog_inputs["target_progress"]))[prog_idx]
-                prog_data.append(dict(loss=mode_loss, mse=mse, source=source, strategy=strategy))
+                #prog_data.append(dict(loss=mode_loss, mse=mse, source=source, strategy=strategy))
+                prog_data.append(dict(mse=mse, source=source, strategy=strategy))
 
         # Aggregate overall metrics
         if pref_data:
-            loss_dict[f"{prefix}/preference_loss"] = np.mean([x["loss"] for x in pref_data])
+            #loss_dict[f"{prefix}/preference_loss"] = np.mean([x["loss"] for x in pref_data])
             loss_dict[f"{prefix}/preference_acc"] = np.mean([x["correct"] for x in pref_data])
 
             # By data source
             sources = set(x["source"] for x in pref_data if x["source"] is not None)
             for source in sources:
                 source_data = [x for x in pref_data if x["source"] == source]
-                loss_dict[f"{prefix}_ds/pref_loss_{source}"] = np.mean([x["loss"] for x in source_data])
+                #loss_dict[f"{prefix}_ds/pref_loss_{source}"] = np.mean([x["loss"] for x in source_data])
                 loss_dict[f"{prefix}_ds/pref_acc_{source}"] = np.mean([x["correct"] for x in source_data])
 
             # By strategy
             strategies = set(x["strategy"] for x in pref_data if x["strategy"] is not None)
             for strategy in strategies:
                 strat_data = [x for x in pref_data if x["strategy"] == strategy]
-                loss_dict[f"{prefix}_strat/pref_loss_{strategy}"] = np.mean([x["loss"] for x in strat_data])
+                #loss_dict[f"{prefix}_strat/pref_loss_{strategy}"] = np.mean([x["loss"] for x in strat_data])
                 loss_dict[f"{prefix}_strat/pref_acc_{strategy}"] = np.mean([x["correct"] for x in strat_data])
 
         if prog_data:
-            loss_dict[f"{prefix}/progress_loss"] = np.mean([x["loss"] for x in prog_data])
+            #loss_dict[f"{prefix}/progress_loss"] = np.mean([x["loss"] for x in prog_data])
             mses = [x["mse"] for x in prog_data if x["mse"] is not None]
             if mses:
                 loss_dict[f"{prefix}/progress_mse"] = np.mean(mses)
@@ -476,7 +482,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
             sources = set(x["source"] for x in prog_data if x["source"] is not None)
             for source in sources:
                 source_data = [x for x in prog_data if x["source"] == source]
-                loss_dict[f"{prefix}_ds/prog_loss_{source}"] = np.mean([x["loss"] for x in source_data])
+                #loss_dict[f"{prefix}_ds/prog_loss_{source}"] = np.mean([x["loss"] for x in source_data])
                 prog_mse = [x["mse"] for x in source_data if x["mse"] is not None]
                 if prog_mse:
                     loss_dict[f"{prefix}_ds/prog_mse_{source}"] = np.mean(prog_mse)
@@ -485,7 +491,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
             strategies = set(x["strategy"] for x in prog_data if x["strategy"] is not None)
             for strategy in strategies:
                 strat_data = [x for x in prog_data if x["strategy"] == strategy]
-                loss_dict[f"{prefix}_strat/prog_loss_{strategy}"] = np.mean([x["loss"] for x in strat_data])
+                #loss_dict[f"{prefix}_strat/prog_loss_{strategy}"] = np.mean([x["loss"] for x in strat_data])
                 prog_mse = [x["mse"] for x in strat_data if x["mse"] is not None]
                 if prog_mse:
                     loss_dict[f"{prefix}_strat/prog_mse_{strategy}"] = np.mean(prog_mse)

@@ -58,6 +58,9 @@ def ForCausalLMLoss(
     loss = fixed_cross_entropy(logits, shift_labels, num_items_in_batch, ignore_index, **kwargs)
     return loss
 
+def process_progress_pred(progress):
+    return progress / 100
+
 
 class RFMVQATrainer(RFMHeadsTrainer):
     def __init__(self, config, *args, **kwargs):
@@ -207,14 +210,14 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
             if sample_type == "progress":
                 progress_logits = self._aggregate_progress_logits(predictions, inputs["target_progress"])
-                progress_logits = torch.tensor(progress_logits, dtype=torch.float32)
+                progress_logits = process_progress_pred(torch.tensor(progress_logits, dtype=torch.float32))
                 progress_logits = {"A": progress_logits, "B": None}
             elif sample_type == "preference":
                 pref_logits = []
                 for i, prediction in enumerate(predictions):
-                    if prediction == "A":
+                    if prediction == 1:
                         pref_logits.append(1)
-                    elif prediction == "B":
+                    elif prediction == 2:
                         pref_logits.append(0)
                     else:
                         pref_logits.append(-1)
@@ -373,17 +376,10 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
         # RFMVQA has model directly, handle DDP wrapping
         rfm_model = self.model.module if hasattr(self.model, "module") else self.model
-        # Handle different config structures for different models
-        # Qwen has text_config.vocab_size, SmolVLM has vocab_size directly
-        if hasattr(rfm_model.model.config, "text_config"):
-            vocab_size = rfm_model.model.config.text_config.vocab_size
-        else:
-            vocab_size = rfm_model.model.config.vocab_size
-
         loss = ForCausalLMLoss(
             logits=outputs["logits"],
             labels=inputs["labels"],
-            vocab_size=vocab_size,
+            vocab_size=outputs["logits"].shape[-1],
             ignore_index=IGNORE_INDEX,
             reduction="mean",
         )
@@ -417,7 +413,8 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
             if mode == "preference":
                 pred = extracted_answers[i]
-                label_map = {"A": 1, "B": 0}
+                print(f"PREFERENCE: {pred}")
+                label_map = {1: 1, 2: 0} # video 1 is A, video 2 is B
                 pred_label = label_map.get(pred, -1)
                 # Get from original batch (index within preference batch)
                 pref_idx = sum(1 for j, m in enumerate(modes_per_sample[:i]) if m == "preference")
@@ -441,9 +438,9 @@ class RFMVQATrainer(RFMHeadsTrainer):
                 mse = None
                 try:
                     parsed = ast.literal_eval(pred)
-                    pred_tensor = torch.tensor([parsed], dtype=torch.float32)
+                    pred_tensor = process_progress_pred(torch.tensor([parsed], dtype=torch.float32))
                     gt_tensor = torch.tensor([gt], dtype=torch.float32)
-                    print(pred_tensor, gt_tensor)
+                    print(f"PROGRESS: {pred_tensor}, {gt_tensor}")
                     mse = F.mse_loss(pred_tensor, gt_tensor).item()
                 except Exception:
                     mse = None

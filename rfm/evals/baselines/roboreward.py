@@ -99,9 +99,7 @@ Rubric for end-of-episode progress (judge only the final state without time limi
 4 - Near Completion: Final state is correct in region and intent but misses a single minor requirement.
 5 - Perfect Completion: Final state satisfies all requirements.
 
-Task: {task}
-
-ANSWER:""".format(task=task_description)
+Task: {task}""".format(task=task_description)
         return prompt
 
     def _parse_score(self, output_text: str) -> Optional[int]:
@@ -192,8 +190,8 @@ ANSWER:""".format(task=task_description)
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": prompt},
                         {"type": "video", "video": frame_paths, "sample_fps": 1.0},
+                        {"type": "text", "text": prompt},
                     ],
                 }
             ]

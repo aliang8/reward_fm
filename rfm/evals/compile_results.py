@@ -541,7 +541,6 @@ def run_reward_alignment_eval_per_trajectory(
 
         # For RoboReward, collect bins for MAE computation
         if is_roboreward and partial_success is not None:
-            breakpoint()
             # Get last predicted reward (final reward)
             final_predicted_reward = float(last_preds[-1])
 

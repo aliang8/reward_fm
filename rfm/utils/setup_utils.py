@@ -288,8 +288,6 @@ def _add_special_tokens_and_resize(cfg: ModelConfig, processor: AutoProcessor, b
             "<|succ_token_A|>",
             "<|succ_token_B|>",
         ]
-    else:
-        special_tokens = []
         for token in special_tokens:
             if token not in processor.tokenizer.get_vocab():
                 processor.tokenizer.add_special_tokens({"additional_special_tokens": [token]})

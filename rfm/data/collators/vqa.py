@@ -13,6 +13,7 @@ from .utils import convert_frames_to_pil_images
 from rfm.data.dataset_types import PreferenceSample, ProgressSample
 
 IGNORE_INDEX = -100
+RESPONSE_PREFIX = "ANS:"
 
 
 class VQABatchCollator(RFMBatchCollator):
@@ -45,7 +46,7 @@ class VQABatchCollator(RFMBatchCollator):
                 end_idx = min(seq_len, idx + max_window)
                 window_tokens = labels[i][idx:end_idx]
                 window_text = self.processor.tokenizer.decode(window_tokens, skip_special_tokens=False)
-                if window_text.lstrip().startswith("ANSWER:"):
+                if window_text.lstrip().startswith(RESPONSE_PREFIX):
                     ans_token_positions.append(idx)
 
             if ans_token_positions:
@@ -77,7 +78,7 @@ class VQABatchCollator(RFMBatchCollator):
                 sample.rejected_trajectory.frames, sample.rejected_trajectory.frames_shape
             )
             # prompt = f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', evaluate which one better demonstrates successful completion of the task. Compare the trajectories and determine which is preferred."
-            prompt = f"""Given these two robot and/or human trajectory videos, which one makes the most progress towards solving the task, Video 1 or 2? Format your answer as: ANSWER: 1/2
+            prompt = f"""Given these two robot and/or human trajectory videos, which one makes the most progress towards solving the task, Video 1 or 2? Format your answer as {RESPONSE_PREFIX} 1/2
 
 Task: {sample.chosen_trajectory.task}"""
 
@@ -121,11 +122,11 @@ Task: {sample.chosen_trajectory.task}"""
                     # SmolVLM requires content as list of dicts
                     conversation.append({
                         "role": "assistant",
-                        "content": [{"type": "text", "text": f"ANSWER: {answer}"}],
+                        "content": [{"type": "text", "text": f"ANS: {answer}"}],
                     })
                 else:
                     # Qwen accepts simple string content for text-only assistant messages
-                    conversation.append({"role": "assistant", "content": f"ANSWER: {answer}"})
+                    conversation.append({"role": "assistant", "content": f"ANS: {answer}"})
 
             all_messages.append(conversation)
 
@@ -166,14 +167,19 @@ Task: {sample.chosen_trajectory.task}"""
                     raise ValueError(
                         f"Target progress must be a list of at least 1 float for shuffling, got {len(target_progress)}"
                     )
-            prompt = """Given the task, assign a python list of integer-valued progress scores from 0 to 100 for each frame of the video in the format: ANSWER: [scores]
-End of episode progress should be judged only on the final state, without time limits.
-Rubric for end-of-episode progress (judge only the final state without time limits):
+#            prompt = """Given the task, assign an integer-valued progress score from 0 to 100 for each frame of the video in the format: ANSWER: score
+#End of episode progress should be judged only on the final state, without time limits.
+#Rubric for end-of-episode progress (judge only the final state without time limits):
+#0 - No Progress: Final state shows no goal-relevant change for the command.
+#100 - Perfect Completion: Final state satisfies all requirements to solve the task.
+#Anything in between represents partial progress towards the goal.
+            prompt = f"""Given the task, return a python list of integer-valued progress scores from 0 to 100 for each image in the sequence in the format: {RESPONSE_PREFIX} [scores]
+Rubric for progress of each frame:
 0 - No Progress: Final state shows no goal-relevant change for the command.
 100 - Perfect Completion: Final state satisfies all requirements to solve the task.
 Anything in between represents partial progress towards the goal.
 
-Task: {task}""".format(task=sample.trajectory.task)
+Task: {sample.trajectory.task}"""
             #prompt = f"For the task '{sample.trajectory.task}', estimate task progress at each frame in the video trajectory."
             #if self.shuffle_progress_frames:
             #    prompt += " These frames are possibly shuffled, so pay attention to individual frames when reasoning about progress."
@@ -199,7 +205,6 @@ Task: {task}""".format(task=sample.trajectory.task)
             ]
             # Add assistant response only if not in inference mode and target_progress exists
             if not self.inference and target_progress is not None:
-                # Round target progress to 2 decimal places for the response
                 # Convert to Python list to get proper comma-separated format
                 target_progress_rounded = np.round(np.array(target_progress) * 100).astype(np.uint8).tolist()
 
@@ -211,11 +216,11 @@ Task: {task}""".format(task=sample.trajectory.task)
                     # SmolVLM requires content as list of dicts
                     conversation.append({
                         "role": "assistant",
-                        "content": [{"type": "text", "text": f"ANSWER: {target_progress_rounded}"}],
+                        "content": [{"type": "text", "text": f"{RESPONSE_PREFIX} {target_progress_rounded}"}],
                     })
                 else:
                     # Qwen accepts simple string content for text-only assistant messages
-                    conversation.append({"role": "assistant", "content": f"ANSWER: {target_progress_rounded}"})
+                    conversation.append({"role": "assistant", "content": f"{RESPONSE_PREFIX} {target_progress_rounded}"})
 
             all_messages.append(conversation)
 

@@ -410,14 +410,17 @@ class RFMVQATrainer(RFMHeadsTrainer):
             #mode_loss = loss_per_example[i].item()
 
             if mode == "preference":
-                pred = extracted_answers[i]
-                label_map = {"1": 1, "2": 0} # video 1 is A, video 2 is B
-                pred_label = label_map.get(pred, -1)
-                print(pred_label)
-                # Get from original batch (index within preference batch)
-                pref_idx = sum(1 for j, m in enumerate(modes_per_sample[:i]) if m == "preference")
-                gt_label = pref_inputs["preference_labels"][pref_idx].item()
-                correct = 1.0 if pred_label == gt_label else 0.0
+                try:
+                    pred = extracted_answers[i]
+                    label_map = {1: 1, 2: 0} # video 1 is A, video 2 is B
+                    pred_label = label_map.get(int(pred), -1)
+                    print(f"PREF PRED: {pred_label}")
+                    # Get from original batch (index within preference batch)
+                    pref_idx = sum(1 for j, m in enumerate(modes_per_sample[:i]) if m == "preference")
+                    gt_label = pref_inputs["preference_labels"][pref_idx].item()
+                    correct = 1.0 if pred_label == gt_label else 0.0
+                except Exception:
+                    correct = 0.0
 
                 # Get metadata
                 source = pref_inputs.get("data_source", [None] * len(pref_inputs["preference_labels"]))[pref_idx]
@@ -438,8 +441,10 @@ class RFMVQATrainer(RFMHeadsTrainer):
                     #breakpoint()
                     parsed = ast.literal_eval(pred)
                     pred_tensor = process_progress_pred(torch.tensor(parsed, dtype=torch.float32))
-                    gt_tensor = torch.tensor([gt], dtype=torch.float32)
-                    print(pred_tensor, gt_tensor)
+                    if not isinstance(gt, list):
+                        gt = [gt]
+                    gt_tensor = torch.tensor(gt, dtype=torch.float32)
+                    print(f"PROG PRED: {pred_tensor}, {gt_tensor}")
                     mse = F.mse_loss(pred_tensor, gt_tensor).item()
                 except Exception:
                     mse = None

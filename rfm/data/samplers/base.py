@@ -538,7 +538,8 @@ class RFMBaseSampler:
             # Case 1: start < middle < end
             start_idx = frame1_idx
             middle_idx = frame2_idx
-            end_idx = frame3_idx
+            # HARDCODE
+            end_idx = num_frames_total - 1
         elif direction == "reverse":
             # Case 3: end < middle < start
             end_idx = frame1_idx

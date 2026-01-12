@@ -65,6 +65,11 @@ def should_compute_progress(
     Returns:
         1.0 if progress should be computed, 0.0 otherwise
     """
+    if quality_label == "successful" and data_gen_strategy == DataGenStrat.SUBOPTIMAL.value:
+        return 1.0
+    elif partial_success is not None and data_gen_strategy == DataGenStrat.SUBOPTIMAL.value:
+        return 1.0
+    return 0.0
 
     # Mask out progress if data_source is in preference_only ckategory
     if data_source is not None and is_preference_only_ds(data_source):

@@ -587,7 +587,6 @@ class RFMBatchCollator(BaseCollator):
         # Use the dynamically generated preference labels based on trajectory order
         batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
         batch_inputs = self._add_preference_meta(batch_inputs, preference_samples)
-        breakpoint()
         return batch_inputs
 
     def _add_preference_meta(

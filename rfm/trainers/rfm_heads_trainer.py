@@ -2194,6 +2194,15 @@ class RFMHeadsTrainer(Trainer):
             if predict_last_frame_mask is not None:
                 predict_last_frame_mask = predict_last_frame_mask[:, ::2]
 
+        if progress_pred.shape != target_progress.shape:
+            assert self.config.loss.predict_last_frame_progress, "Progress prediction and target progress shapes do not match, but predict_last_frame_progress is not enabled"
+            assert progress_pred.shape[1] == 1, "Progress prediction shape is not 1, but predict_last_frame_progress is enabled"
+            if len(progress_pred.shape) == 3:
+                progress_pred = progress_pred.repeat(1, target_progress.shape[1], 1) # [B, 1, N] -> [B, T, N]
+            else:
+                progress_pred = progress_pred.repeat(1, target_progress.shape[1]) # [B, 1] -> [B, T]
+
+
         # Apply predict_last_frame_mask if provided
         # The mask defaults to all 1s (include all frames) unless explicitly set to 0
         if predict_last_frame_mask is not None:

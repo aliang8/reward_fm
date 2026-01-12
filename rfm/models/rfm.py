@@ -765,11 +765,11 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
         # )
         progress_logits = {
             "A": torch.stack(progress_logits_A) if progress_logits_A else None,
-            "B": torch.stack(progress_logits_B) if progress_logits_B[0] is not None else None,
+            "B": torch.stack(progress_logits_B) if progress_logits_B else None,
         }
         success_logits = {
             "A": torch.stack(success_logits_A) if success_logits_A else None,
-            "B": torch.stack(success_logits_B) if success_logits_B[0] is not None else None,
+            "B": torch.stack(success_logits_B) if success_logits_B else None,
         }
         # logger.trace("RFM._forward_qwen: Completed, returning outputs")
 
@@ -1003,7 +1003,14 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
                 #success_pred_B = self.success_head(succ_token_B_hidden_states).squeeze(-1)  # [B]
                 logger.trace(f"RFM.forward: Progress/success predictions completed")
 
-                progress_logits["A"] = progress_pred_A.unsqueeze(-1)  # [B, 1]
+                if len(progress_pred_A.shape) == 1:
+                    # continuous case
+                    progress_pred_A = progress_pred_A.unsqueeze(-1) # [B] -> [B, 1]
+                elif len(progress_pred_A.shape) == 2:
+                    # discrete case
+                    progress_pred_A = progress_pred_A.unsqueeze(1) # [B, n_bins] -> [B, 1, n_bins]
+
+                progress_logits["A"] = progress_pred_A 
                 progress_logits["B"] = None  # [B, 1]
                 success_logits["A"] = success_pred_A.unsqueeze(-1)  # [B, 1]
                 success_logits["B"] = None  # [B, 1]

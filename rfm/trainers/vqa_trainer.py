@@ -161,7 +161,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
             with torch.no_grad():
                 generated_ids = model.generate(
                     **gen_inputs,
-                    max_new_tokens=32,  # Reduced from 100 to save memory - enough for structured answers
+                    max_new_tokens=100,  # Reduced from 100 to save memory - enough for structured answers
                     do_sample=False,  # Greedy decoding for reproducibility
                     pad_token_id=model.tokenizer.pad_token_id,
                     eos_token_id=model.tokenizer.eos_token_id,

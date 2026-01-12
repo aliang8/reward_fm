@@ -537,12 +537,6 @@ class RFMBatchCollator(BaseCollator):
             )
             rejected_video_field, _ = self._prepare_frames_for_conversation(rejected_frames, prefix="tmp_rejected")
 
-            prompt = f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', evaluate which one makes more progress towards the task. Return A for the first trajectory and B for the second trajectory."
-
-            if self.prog_pref:
-                # We ask the model to predict both of the task progress and preference
-                task_prompt = f" Also predict the task progress at each frame of the first trajectory, how far along the robot is towards completing the task, a float between 0 and 1, where 0 is the starting state and 1 is when the task is completed. If the robot is not performing the same task, predict 0 progress."
-                prompt += task_prompt
 
             # Determine which trajectory is A and which is B based on preference label
             if preference_labels[i] == 1.0:
@@ -555,26 +549,28 @@ class RFMBatchCollator(BaseCollator):
                 traj_b_field = chosen_video_field
 
             # Build content list
-            content_list = [
-                {"type": "text", "text": prompt},
-                {"type": "text", "text": "This is Trajectory A. "},
-            ]
+            content_list = []
             self._add_vision_content_to_list(content_list, traj_a_field, content_extras)
             # Add progress and success tokens for trajectory A if use_progress_token is enabled
+            if self.prog_pref:
+                progress_prompt = f"Given the trajectory video, predict the task progress at each frame, a float between 0 and 1, representing how far along the robot is towards completing the task. 0 is the starting state and 1 is represents the task being completed. If the robot is not performing the task described, predict 0 progress. The task for the robot is '{sample.trajectory.task}"
+                content_list.append({"type": "text", "text": progress_prompt})
+            
             if self.use_progress_token:
                 content_list.append({"type": "text", "text": "<|prog_token_A|>"})
                 content_list.append({"type": "text", "text": "<|succ_token_A|>"})
 
-            content_list.extend([
-                {"type": "text", "text": "<|split_token|>"},
-                {"type": "text", "text": "This is Trajectory B. "},
-            ])
             self._add_vision_content_to_list(content_list, traj_b_field, content_extras)
 
+            content_list.append({"type": "text", "text": "<|split_token|>"})
+            preference_prompt = f"Now, given these two trajectories for the task '{sample.chosen_trajectory.task}', evaluate which one makes more progress towards the task. Return A for the first trajectory and B for the second trajectory."
+            content_list.append({"type": "text", "text": preference_prompt})
+
+
             # Add progress and success tokens for trajectory B if use_progress_token is enabled
-            if self.use_progress_token:
-                content_list.append({"type": "text", "text": "<|prog_token_B|>"})
-                content_list.append({"type": "text", "text": "<|succ_token_B|>"})
+            #if self.use_progress_token:
+            #    content_list.append({"type": "text", "text": "<|prog_token_B|>"})
+            #    content_list.append({"type": "text", "text": "<|succ_token_B|>"})
 
             content_list.append({"type": "text", "text": "<|pref_token|>"})
 
@@ -591,6 +587,7 @@ class RFMBatchCollator(BaseCollator):
         # Use the dynamically generated preference labels based on trajectory order
         batch_inputs["preference_labels"] = torch.tensor(preference_labels, dtype=torch.float32)
         batch_inputs = self._add_preference_meta(batch_inputs, preference_samples)
+        breakpoint()
         return batch_inputs
 
     def _add_preference_meta(
@@ -828,9 +825,9 @@ class RFMBatchCollator(BaseCollator):
                     {"type": "text", "text": "This is the second trajectory. "},
                 ])
                 self._add_vision_content_to_list(content_list_sim, sim_video, content_extras)
-                if self.use_progress_token:
-                    content_list_sim.append({"type": "text", "text": "<|prog_token_B|>"})
-                    content_list_sim.append({"type": "text", "text": "<|succ_token_B|>"})
+                #if self.use_progress_token:
+                #    content_list_sim.append({"type": "text", "text": "<|prog_token_B|>"})
+                #    content_list_sim.append({"type": "text", "text": "<|succ_token_B|>"})
             else:
                 # Sim is first (A), ref is second (B)
                 content_list_sim.append({"type": "text", "text": "This is the first trajectory. "})
@@ -843,9 +840,9 @@ class RFMBatchCollator(BaseCollator):
                     {"type": "text", "text": "This is the second trajectory. "},
                 ])
                 self._add_vision_content_to_list(content_list_sim, ref_video, content_extras)
-                if self.use_progress_token:
-                    content_list_sim.append({"type": "text", "text": "<|prog_token_B|>"})
-                    content_list_sim.append({"type": "text", "text": "<|succ_token_B|>"})
+                #if self.use_progress_token:
+                #    content_list_sim.append({"type": "text", "text": "<|prog_token_B|>"})
+                #    content_list_sim.append({"type": "text", "text": "<|succ_token_B|>"})
             content_list_sim.append({"type": "text", "text": "<|sim_token|>"})
 
             conversation_ref_sim = [
@@ -879,9 +876,9 @@ class RFMBatchCollator(BaseCollator):
                         {"type": "text", "text": "This is the second trajectory. "},
                     ])
                     self._add_vision_content_to_list(content_list_diff, diff_video, content_extras)
-                    if self.use_progress_token:
-                        content_list_diff.append({"type": "text", "text": "<|prog_token_B|>"})
-                        content_list_diff.append({"type": "text", "text": "<|succ_token_B|>"})
+                    #if self.use_progress_token:
+                    #    content_list_diff.append({"type": "text", "text": "<|prog_token_B|>"})
+                    #    content_list_diff.append({"type": "text", "text": "<|succ_token_B|>"})
                 else:
                     # Diff is first (A), ref is second (B)
                     content_list_diff.append({"type": "text", "text": "This is the first trajectory. "})
@@ -894,9 +891,9 @@ class RFMBatchCollator(BaseCollator):
                         {"type": "text", "text": "This is the second trajectory. "},
                     ])
                     self._add_vision_content_to_list(content_list_diff, ref_video, content_extras)
-                    if self.use_progress_token:
-                        content_list_diff.append({"type": "text", "text": "<|prog_token_B|>"})
-                        content_list_diff.append({"type": "text", "text": "<|succ_token_B|>"})
+                    #if self.use_progress_token:
+                    #    content_list_diff.append({"type": "text", "text": "<|prog_token_B|>"})
+                    #    content_list_diff.append({"type": "text", "text": "<|succ_token_B|>"})
                 content_list_diff.append({"type": "text", "text": "<|sim_token|>"})
 
                 conversation_ref_diff = [

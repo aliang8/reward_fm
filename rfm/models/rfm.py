@@ -960,13 +960,13 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
                 )  # [B, hidden_dim]
                 logger.trace(f"RFM.forward: prog_token_A_hidden_states shape: {prog_token_A_hidden_states.shape}")
 
-                logger.trace("RFM.forward: Extracting <|prog_token_B|> hidden states")
-                prog_token_B_hidden_states = self._extract_hidden_state_from_token(
-                    hidden_state_for_token,
-                    input_ids,
-                    "<|prog_token_B|>",
-                )  # [B, hidden_dim]
-                logger.trace(f"RFM.forward: prog_token_B_hidden_states shape: {prog_token_B_hidden_states.shape}")
+                #logger.trace("RFM.forward: Extracting <|prog_token_B|> hidden states")
+                #prog_token_B_hidden_states = self._extract_hidden_state_from_token(
+                #    hidden_state_for_token,
+                #    input_ids,
+                #    "<|prog_token_B|>",
+                #)  # [B, hidden_dim]
+                #logger.trace(f"RFM.forward: prog_token_B_hidden_states shape: {prog_token_B_hidden_states.shape}")
 
                 # Extract hidden states at <|succ_token_A|> and <|succ_token_B|> positions
                 logger.trace("RFM.forward: Extracting <|succ_token_A|> hidden states")
@@ -977,36 +977,36 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
                 )  # [B, hidden_dim]
                 logger.trace(f"RFM.forward: succ_token_A_hidden_states shape: {succ_token_A_hidden_states.shape}")
 
-                logger.trace("RFM.forward: Extracting <|succ_token_B|> hidden states")
-                succ_token_B_hidden_states = self._extract_hidden_state_from_token(
-                    hidden_state_for_token,
-                    input_ids,
-                    "<|succ_token_B|>",
-                )  # [B, hidden_dim]
-                logger.trace(f"RFM.forward: succ_token_B_hidden_states shape: {succ_token_B_hidden_states.shape}")
+                #logger.trace("RFM.forward: Extracting <|succ_token_B|> hidden states")
+                #succ_token_B_hidden_states = self._extract_hidden_state_from_token(
+                #    hidden_state_for_token,
+                #    input_ids,
+                #    "<|succ_token_B|>",
+                #)  # [B, hidden_dim]
+                #logger.trace(f"RFM.forward: succ_token_B_hidden_states shape: {succ_token_B_hidden_states.shape}")
 
                 # Apply heads to get progress and success values for both trajectories
                 logger.trace("RFM.forward: Applying progress and success heads for A and B")
                 progress_pred_A_output = self.progress_head(
                     prog_token_A_hidden_states
                 )  # [B, 1] or [B, num_bins] for discrete
-                progress_pred_B_output = self.progress_head(
-                    prog_token_B_hidden_states
-                )  # [B, 1] or [B, num_bins] for discrete
+                #progress_pred_B_output = self.progress_head(
+                #    prog_token_B_hidden_states
+                #)  # [B, 1] or [B, num_bins] for discrete
                 if self.use_discrete_progress:
                     progress_pred_A = progress_pred_A_output  # [B, num_bins] - keep logits
-                    progress_pred_B = progress_pred_B_output  # [B, num_bins] - keep logits
+                    #progress_pred_B = progress_pred_B_output  # [B, num_bins] - keep logits
                 else:
                     progress_pred_A = progress_pred_A_output.squeeze(-1)  # [B]
-                    progress_pred_B = progress_pred_B_output.squeeze(-1)  # [B]
+                    #progress_pred_B = progress_pred_B_output.squeeze(-1)  # [B]
                 success_pred_A = self.success_head(succ_token_A_hidden_states).squeeze(-1)  # [B]
-                success_pred_B = self.success_head(succ_token_B_hidden_states).squeeze(-1)  # [B]
+                #success_pred_B = self.success_head(succ_token_B_hidden_states).squeeze(-1)  # [B]
                 logger.trace(f"RFM.forward: Progress/success predictions completed")
 
                 progress_logits["A"] = progress_pred_A.unsqueeze(-1)  # [B, 1]
-                progress_logits["B"] = progress_pred_B.unsqueeze(-1)  # [B, 1]
+                progress_logits["B"] = None  # [B, 1]
                 success_logits["A"] = success_pred_A.unsqueeze(-1)  # [B, 1]
-                success_logits["B"] = success_pred_B.unsqueeze(-1)  # [B, 1]
+                success_logits["B"] = None  # [B, 1]
 
                 # Also extract preference/similarity token for the main prediction
                 if sample_type == "preference":

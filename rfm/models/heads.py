@@ -25,7 +25,6 @@ class PredictionHeadsMixin(nn.Module):
         *args,
         hidden_dim: Optional[int] = None,
         model_config: Optional[object] = None,
-        dropout: float = 0.1,
         **kwargs,
     ):
         """
@@ -72,11 +71,8 @@ class PredictionHeadsMixin(nn.Module):
 
             # Progress head
             progress_layers = [
-                nn.Linear(hidden_dim, hidden_dim // 2),
-                nn.LayerNorm(hidden_dim // 2),
-                nn.GELU(),
-                nn.Dropout(dropout),
-                nn.Linear(hidden_dim // 2, progress_output_size),
+                nn.LayerNorm(hidden_dim),
+                nn.Linear(hidden_dim, progress_output_size),
             ]
             if progress_use_sigmoid:
                 progress_layers.append(nn.Sigmoid())
@@ -84,27 +80,18 @@ class PredictionHeadsMixin(nn.Module):
 
             # Preference head
             self.preference_head = nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim // 2),
-                nn.LayerNorm(hidden_dim // 2),
-                nn.GELU(),
-                nn.Dropout(dropout),
-                nn.Linear(hidden_dim // 2, 1),
+                nn.LayerNorm(hidden_dim),
+                nn.Linear(hidden_dim, 1),
             )
 
             # Similarity head
             self.similarity_head = nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim // 2),
-                nn.LayerNorm(hidden_dim // 2),
-                nn.GELU(),
-                nn.Dropout(dropout),
-                nn.Linear(hidden_dim // 2, 1),
+                nn.LayerNorm(hidden_dim),
+                nn.Linear(hidden_dim, 1),
             )
 
             # Success head
             self.success_head = nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim // 2),
-                nn.LayerNorm(hidden_dim // 2),
-                nn.GELU(),
-                nn.Dropout(dropout),
-                nn.Linear(hidden_dim // 2, 1),
+                nn.LayerNorm(hidden_dim),
+                nn.Linear(hidden_dim, 1),
             )

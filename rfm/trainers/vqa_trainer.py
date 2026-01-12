@@ -43,6 +43,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
         super().__init__(config, *args, **kwargs)
         self._ddp_static_graph_set = False
         self.model_type_checked = False
+        assert self.config.loss.predict_last_frame_progress, "only supports last frame for now"
 
     def _get_model(self):
         # Clear any existing past_key_values in model if present
@@ -435,6 +436,9 @@ class RFMVQATrainer(RFMHeadsTrainer):
                 # Get from original batch
                 prog_idx = sum(1 for j, m in enumerate(modes_per_sample[:i]) if m == "progress")
                 gt = prog_inputs["target_progress"][prog_idx]
+
+                if self.config.loss.predict_last_frame_progress:
+                    gt = gt[-1]
 
                 mse = None
                 try:

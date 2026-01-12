@@ -78,7 +78,7 @@ class VQABatchCollator(RFMBatchCollator):
                 sample.rejected_trajectory.frames, sample.rejected_trajectory.frames_shape
             )
             # prompt = f"Given these two trajectories for the task '{sample.chosen_trajectory.task}', evaluate which one better demonstrates successful completion of the task. Compare the trajectories and determine which is preferred."
-            prompt = f"""Given these two robot and/or human trajectory videos, which one makes the most progress towards solving the task, Video 1 or 2? Format your answer as {RESPONSE_PREFIX} 1/2
+            prompt = f"""Given these two robot videos, which one makes the most progress towards solving the task, Video 1 or 2? Format your answer as: {RESPONSE_PREFIX} 1/2
 
 Task: {sample.chosen_trajectory.task}"""
 
@@ -122,11 +122,11 @@ Task: {sample.chosen_trajectory.task}"""
                     # SmolVLM requires content as list of dicts
                     conversation.append({
                         "role": "assistant",
-                        "content": [{"type": "text", "text": f"ANS: {answer}"}],
+                        "content": [{"type": "text", "text": f"{RESPONSE_PREFIX} {answer}"}],
                     })
                 else:
                     # Qwen accepts simple string content for text-only assistant messages
-                    conversation.append({"role": "assistant", "content": f"ANS: {answer}"})
+                    conversation.append({"role": "assistant", "content": f"{RESPONSE_PREFIX} {answer}"})
 
             all_messages.append(conversation)
 
@@ -167,19 +167,22 @@ Task: {sample.chosen_trajectory.task}"""
                     raise ValueError(
                         f"Target progress must be a list of at least 1 float for shuffling, got {len(target_progress)}"
                     )
-#            prompt = """Given the task, assign an integer-valued progress score from 0 to 100 for each frame of the video in the format: ANSWER: score
-#End of episode progress should be judged only on the final state, without time limits.
-#Rubric for end-of-episode progress (judge only the final state without time limits):
-#0 - No Progress: Final state shows no goal-relevant change for the command.
-#100 - Perfect Completion: Final state satisfies all requirements to solve the task.
-#Anything in between represents partial progress towards the goal.
-            prompt = f"""Given the task, return a python list of integer-valued progress scores from 0 to 100 for each image in the sequence in the format: {RESPONSE_PREFIX} [scores]
-Rubric for progress of each frame:
+            prompt = f"""Given the task, assign an integer-valued progress score from 0 to 100 for the robot in the video in the format: ANS: score
+End of episode progress should be judged only on the final state, without time limits.
+Rubric for end-of-episode progress (judge only the final state without time limits):
 0 - No Progress: Final state shows no goal-relevant change for the command.
 100 - Perfect Completion: Final state satisfies all requirements to solve the task.
 Anything in between represents partial progress towards the goal.
 
 Task: {sample.trajectory.task}"""
+
+#            prompt = f"""Given the task, return a python list of integer-valued progress scores from 0 to 100 for each image in the sequence in the format: {RESPONSE_PREFIX} [scores]
+#Rubric for progress of each frame:
+#0 - No Progress: Final state shows no goal-relevant change for the command.
+#100 - Perfect Completion: Final state satisfies all requirements to solve the task.
+#Anything in between represents partial progress towards the goal.
+#
+#Task: {sample.trajectory.task}"""
             #prompt = f"For the task '{sample.trajectory.task}', estimate task progress at each frame in the video trajectory."
             #if self.shuffle_progress_frames:
             #    prompt += " These frames are possibly shuffled, so pay attention to individual frames when reasoning about progress."
@@ -209,8 +212,6 @@ Task: {sample.trajectory.task}"""
                 target_progress_rounded = np.round(np.array(target_progress) * 100).astype(np.uint8).tolist()
 
 
-                ## TODO: unhardcode this: for now, just use last frame target progress
-                #target_progress_rounded = target_progress_rounded[-1]
                 # SmolVLM requires list format for all messages, Qwen accepts both but we use string for simplicity
                 if "SmolVLM" in self.base_model_id:
                     # SmolVLM requires content as list of dicts

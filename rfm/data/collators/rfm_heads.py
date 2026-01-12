@@ -68,16 +68,16 @@ def should_compute_progress(
 
     # Mask out progress if data_source is in preference_only ckategory
     if data_source is not None and is_preference_only_ds(data_source):
-       # For preference_only datasets:
-       # - If it's the chosen trajectory, always mask out (don't compute)
-       # - If it's the rejected trajectory with DIFFERENT_TASK strategy, still compute (it will be 0.0)
-       #return 0.0
-       if is_chosen:
-           return 0.0
-       elif data_gen_strategy == DataGenStrat.DIFFERENT_TASK.value:
-           return 1.0
-       else:
-           return 0.0
+       return 0.0
+       ## For preference_only datasets:
+       ## - If it's the chosen trajectory, always mask out (don't compute)
+       ## - If it's the rejected trajectory with DIFFERENT_TASK strategy, still compute (it will be 0.0)
+       #if is_chosen:
+       #    return 0.0
+       #elif data_gen_strategy == DataGenStrat.DIFFERENT_TASK.value:
+       #    return 1.0
+       #else:
+       #    return 0.0
     # If partial_success and not is_preference_only_ds, always compute progress
     elif partial_success is not None:
         return 1.0

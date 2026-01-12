@@ -553,7 +553,7 @@ class RFMBatchCollator(BaseCollator):
             self._add_vision_content_to_list(content_list, traj_a_field, content_extras)
             # Add progress and success tokens for trajectory A if use_progress_token is enabled
             if self.prog_pref:
-                progress_prompt = f"Given the trajectory video, predict the task progress at each frame, a float between 0 and 1, representing how far along the robot is towards completing the task. 0 is the starting state and 1 is represents the task being completed. If the robot is not performing the task described, predict 0 progress. The task for the robot is '{sample.trajectory.task}"
+                progress_prompt = f"Given the trajectory video, predict the task progress at each frame, a float between 0 and 1, representing how far along the robot is towards completing the task. 0 is the starting state and 1 is represents the task being completed. If the robot is not performing the task described, predict 0 progress. The task for the robot is '{sample.chosen_trajectory.task}"
                 content_list.append({"type": "text", "text": progress_prompt})
             
             if self.use_progress_token:

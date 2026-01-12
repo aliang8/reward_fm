@@ -359,17 +359,19 @@ class RFMVQATrainer(RFMHeadsTrainer):
             second_per_grid_ts=inputs.get("second_per_grid_ts"),
             use_cache=False,  # Disable KV caching for training
             return_dict=True,
+            labels=inputs["labels"],
         )
+        loss = outputs['loss']
 
         # RFMVQA has model directly, handle DDP wrapping
         rfm_model = self.model.module if hasattr(self.model, "module") else self.model
-        loss = ForCausalLMLoss(
-            logits=outputs["logits"],
-            labels=inputs["labels"],
-            vocab_size=outputs["logits"].shape[-1],
-            ignore_index=IGNORE_INDEX,
-            #reduction="mean",
-        )
+        #loss = ForCausalLMLoss(
+        #    logits=outputs["logits"],
+        #    labels=inputs["labels"],
+        #    vocab_size=outputs["logits"].shape[-1],
+        #    ignore_index=IGNORE_INDEX,
+        #    #reduction="mean",
+        #)
         # reshape
         #loss = loss.reshape(B, -1)
 
@@ -429,10 +431,11 @@ class RFMVQATrainer(RFMHeadsTrainer):
                 pred = extracted_answers[i]
                 # Get from original batch
                 prog_idx = sum(1 for j, m in enumerate(modes_per_sample[:i]) if m == "progress")
-                gt = prog_inputs["target_progress"][prog_idx][-1]
+                gt = prog_inputs["target_progress"][prog_idx]
 
                 mse = None
                 try:
+                    #breakpoint()
                     parsed = ast.literal_eval(pred)
                     pred_tensor = process_progress_pred(torch.tensor(parsed, dtype=torch.float32))
                     gt_tensor = torch.tensor([gt], dtype=torch.float32)

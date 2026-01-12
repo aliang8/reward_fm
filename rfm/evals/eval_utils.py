@@ -17,12 +17,13 @@ import torch
 
 from rfm.data.dataset_types import PreferenceSample, SimilaritySample, ProgressSample, Trajectory
 from rfm.data.datasets.helpers import linspace_subsample_frames, pad_trajectory_to_max_frames_np
+from rfm.data.collators.vqa import RESPONSE_PREFIX
 
 
 def extract_answer_from_text(text: str) -> str:
     """Extract answer from text using ANSWER."""
     # Look for "ANSWER: <number>" pattern
-    pattern = r"ANSWER:\s*(\d+)"
+    pattern = f"{RESPONSE_PREFIX}\s*(\[[^\]]*\]|-?\d+(?:\.\d+)?)"
     match = re.search(pattern, text, re.IGNORECASE)
     if match:
         return match.group(1)

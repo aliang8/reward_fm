@@ -80,22 +80,8 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
         return metrics
 
-    def _aggregate_progress_logits(self, progress_logits, target_progress) -> list[list[float]]:
+    def _aggregate_progress_logits(self, progress_logits) -> list[list[float]]:
         # ensures all progress logits are the same length as each other
-
-        # get the mode of the target progress lengths
-        target_progress_lengths = []
-        for progress in target_progress:
-            if hasattr(progress, "shape"):
-                if progress.shape[-1] > 0:
-                    target_progress_lengths.append(progress.shape[-1])
-            else:
-                target_progress_lengths.append(len(progress))
-
-        if not target_progress_lengths:
-            return []
-
-        # target_progress_length_mode = statistics.mode(target_progress_lengths)
         max_frames = self.config.data.max_frames
 
         # aggregate by padding and truncating to the mode length
@@ -186,7 +172,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
             del generated_ids_sliced, pred_texts
 
             if sample_type == "progress":
-                progress_logits = self._aggregate_progress_logits(predictions, inputs["target_progress"])
+                progress_logits = self._aggregate_progress_logits(predictions)
                 progress_logits = process_progress_pred(torch.tensor(progress_logits, dtype=torch.float32, device=self.accelerator.device))
                 progress_logits = {"A": progress_logits, "B": None}
             elif sample_type == "preference":

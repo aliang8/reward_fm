@@ -541,7 +541,7 @@ class VQADataCollator:
             from qwen_vl_utils import process_vision_info
             
             # Extract vision information
-            vision_result = process_vision_info(all_messages)
+            vision_result = process_vision_info(all_messages, image_patch_size=16, return_video_kwargs=True, return_video_metadata=True)
             
             # Handle both Qwen2.5 (2 values) and Qwen3 (3 values)
             if len(vision_result) == 2:
@@ -552,11 +552,21 @@ class VQADataCollator:
                 # Qwen3-VL format
                 image_inputs, video_inputs, video_kwargs = vision_result
             
+            # split the videos and according metadatas
+            if video_inputs is not None:
+                video_inputs, video_metadatas = zip(*video_inputs)
+                video_inputs, video_metadatas = list(video_inputs), list(video_metadatas)
+            else:
+                video_metadatas = None
+            
             # Prepare processor kwargs
             processor_kwargs = {
                 "text": texts,
                 "padding": True,
                 "truncation": False,
+                "return_tensors": "pt",
+                "video_metadata": video_metadatas,
+                "do_resize": False,
                 "return_tensors": "pt",
             }
             
@@ -574,6 +584,7 @@ class VQADataCollator:
             
             # Process
             batch_inputs = self.processor(**processor_kwargs)
+
             
         except ImportError:
             # Fallback: use processor directly (for Qwen2.5-VL without qwen_vl_utils)
@@ -699,7 +710,7 @@ def main():
     parser.add_argument(
         "--num_train_epochs",
         type=int,
-        default=3,
+        default=1,
         help="Number of training epochs",
     )
     parser.add_argument(

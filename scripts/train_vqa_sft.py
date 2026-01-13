@@ -710,13 +710,13 @@ def main():
     parser.add_argument(
         "--per_device_eval_batch_size",
         type=int,
-        default=4,
+        default=3,
         help="Batch size per device for evaluation",
     )
     parser.add_argument(
         "--gradient_accumulation_steps",
         type=int,
-        default=4,
+        default=2,
         help="Number of gradient accumulation steps",
     )
     parser.add_argument(
@@ -824,6 +824,12 @@ def main():
         type=str,
         required=True,
         help="Run name for logging (required)",
+    )
+    parser.add_argument(
+        "--resume_from_checkpoint",
+        type=str,
+        default=None,
+        help="Path to checkpoint to resume training from (default: None). Use 'True' to auto-resume from latest checkpoint in output_dir.",
     )
     parser.add_argument(
         "--local_rank",
@@ -1118,8 +1124,18 @@ def main():
     # Train
     print_main("=" * 100)
     print_main("Starting training...")
+    if args.resume_from_checkpoint:
+        if args.resume_from_checkpoint.lower() == "true":
+            print_main("Auto-resuming from latest checkpoint in output directory...")
+            resume_path = True  # HF Trainer will find the latest checkpoint
+        else:
+            print_main(f"Resuming from checkpoint: {args.resume_from_checkpoint}")
+            resume_path = args.resume_from_checkpoint
+    else:
+        print_main("Starting training from scratch...")
+        resume_path = None
     print_main("=" * 100)
-    trainer.train()
+    trainer.train(resume_from_checkpoint=resume_path)
 
     # Save final model (only on main process)
     if is_main_process:

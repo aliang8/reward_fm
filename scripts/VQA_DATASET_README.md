@@ -239,6 +239,7 @@ bash scripts/launch_torchrun.sh
 - `--save_strategy`: Save strategy: "no", "steps", "epoch" (default: "steps")
 - `--save_steps`: Save every N steps (default: 500)
 - `--logging_steps`: Log every N steps (default: 10)
+- `--resume_from_checkpoint`: Resume from checkpoint (path or "True" for auto-resume, optional)
 
 **Evaluation:**
 - `--eval_strategy`: Eval strategy: "no", "steps", "epoch" (default: "steps")

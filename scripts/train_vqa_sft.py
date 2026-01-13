@@ -852,12 +852,20 @@ def main():
             print(*args_print, **kwargs)
 
     # Print configuration
+    save_dir = os.path.join(args.output_dir, args.run_name)
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    else:
+        print_main(f"Output directory already exists: {save_dir}")
+        print_main("Please use a different run name or delete the existing directory.")
+        return
+    
     print_main("=" * 100)
     print_main("VQA Training Configuration")
     print_main("=" * 100)
     print_main(f"Dataset path: {args.dataset_path}")
     print_main(f"Model: {args.model_name}")
-    print_main(f"Output directory: {args.output_dir}")
+    print_main(f"Output directory: {save_dir}")
     print_main(f"Batch size per device: {args.per_device_train_batch_size}")
     print_main(f"Gradient accumulation steps: {args.gradient_accumulation_steps}")
     print_main(f"Effective batch size: {args.per_device_train_batch_size * args.gradient_accumulation_steps * max(1, torch.cuda.device_count() if args.local_rank != -1 else 1)}")
@@ -1070,7 +1078,7 @@ def main():
     
     # Create training arguments
     training_args = TrainingArguments(
-        output_dir=args.output_dir,
+        output_dir=save_dir,
         run_name=run_name,
         per_device_train_batch_size=args.per_device_train_batch_size,
         per_device_eval_batch_size=args.per_device_eval_batch_size,
@@ -1140,10 +1148,10 @@ def main():
     # Save final model (only on main process)
     if is_main_process:
         print_main("=" * 100)
-        print_main(f"Saving final model to {args.output_dir}/final")
+        print_main(f"Saving final model to {save_dir}/final")
         print_main("=" * 100)
-        trainer.save_model(os.path.join(args.output_dir, "final"))
-        processor.save_pretrained(os.path.join(args.output_dir, "final"))
+        trainer.save_model(os.path.join(save_dir, "final"))
+        processor.save_pretrained(os.path.join(save_dir, "final"))
         print_main("Training complete!")
 
 

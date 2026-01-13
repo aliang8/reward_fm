@@ -11,25 +11,55 @@ python scripts/generate_vqa_dataset.py \
     --output_path ./vqa_datasets/train \
     --config_overrides data.train_datasets=[jesbu1_roboreward_rfm_roboreward_train]
 
-# 2. Train (single GPU with Unsloth)
+# 2. OR DOWNLOAD
+uv run hf download rewardfm/vqa_datasets --local-dir ./vqa_datasets
+
+# 3. Train (single GPU with Unsloth)
 python scripts/train_vqa_sft.py \
-    --dataset_path ./vqa_datasets/train \
+    --dataset_path ./vqa_datasets/rfm_train_10epochs \
+    --eval_dataset_path ./vqa_datasets/rfm_val_0.1epoch \
     --model_name Qwen/Qwen3-VL-4B-Instruct \
-    --output_dir ./outputs/qwen3_vl_4b \
+    --output_dir ./outputs/vqa_training \
     --use_unsloth \
-    --run_name qwen3_vl_4b
+    --freeze_vision_tower \
+    --lora_rank 0 \
+    --learning_rate 5e-5 \
+    --report_to wandb \
+    --wandb_project rfm \
+    --wandb_entity clvr \
+    --save_strategy steps \
+    --save_steps 500 \ # save every 500 steps
+    --eval_strategy steps \
+    --eval_steps 500 \ # eval every 500 steps
+    --run_name qwen3_vl_4b_vqa_train_rfm_10epochs 
+
+
 
 # 3. Train (multi-GPU with Accelerate)
-accelerate launch scripts/train_vqa_sft.py \
-    --dataset_path ./vqa_datasets/train \
+accelerate launch --num_processes=4 scripts/train_vqa_sft.py \
+    --dataset_path ./vqa_datasets/rfm_train_10epochs \
+    --eval_dataset_path ./vqa_datasets/rfm_val_0.1epoch \
     --model_name Qwen/Qwen3-VL-4B-Instruct \
-    --output_dir ./outputs/qwen3_vl_4b \
-    --per_device_train_batch_size 2 \
-    --learning_rate 5e-6 \
+    --output_dir ./outputs/vqa_training \
     --use_unsloth \
-    --run_name qwen3_vl_4b_multi
+    --freeze_vision_tower \
+    --lora_rank 0 \
+    --learning_rate 5e-5 \
+    --report_to wandb \
+    --wandb_project rfm \
+    --wandb_entity clvr \
+    --save_strategy steps \
+    --save_steps 500 \
+    --eval_strategy steps \
+    --eval_steps 500 \
+    --run_name qwen3_vl_4b_vqa_train_rfm_10epochs_multi_gpu
 ```
 
+For training on roboreward dataset, change:
+```bash
+    --dataset_path ./vqa_datasets/rfm_train_10epochs \
+    --eval_dataset_path ./vqa_datasets/rfm_val_0.1epoch 
+```
 ---
 
 ## Dataset Generation

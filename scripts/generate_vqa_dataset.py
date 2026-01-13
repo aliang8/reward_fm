@@ -18,6 +18,7 @@ import json
 import os
 import random
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -186,6 +187,7 @@ def extract_preference_metadata_from_dicts(
     max_frames: int,
     config: Any,
     dataset_success_cutoff_map: Dict[str, float],
+    eval_mode: bool = False,
 ) -> Dict[str, Any]:
     """
     Extract metadata from trajectory dicts WITHOUT loading frames.
@@ -225,12 +227,15 @@ def extract_preference_metadata_from_dicts(
     second_npz_path = second_traj_dict["frames"]
     
     # Compute frame indices using the same logic as samplers
-    # For now, use simple forward sampling indices
     first_frame_indices = extract_frame_indices_from_trajectory(
         first_traj_dict, max_frames, subsample_strategy="subsample_forward", config=config
     )
+    
+    # For eval mode, use forward for both (no rewind augmentation)
+    # For training mode, use rewind for second trajectory
+    second_strategy = "subsample_forward" if eval_mode else "subsample_rewind"
     second_frame_indices = extract_frame_indices_from_trajectory(
-        second_traj_dict, max_frames, subsample_strategy="subsample_rewind", config=config  # rewind for rejected
+        second_traj_dict, max_frames, subsample_strategy=second_strategy, config=config
     )
     
     # Get frame shapes from frame indices
@@ -320,10 +325,109 @@ def extract_progress_metadata_from_dict(
     return metadata
 
 
+def generate_single_sample(args_tuple):
+    """
+    Generate a single sample. This function is designed to be called in parallel.
+    
+    Args:
+        args_tuple: Tuple containing (sample_idx, dataset_item, config_dict, eval_mode_info, seed)
+        
+    Returns:
+        Dict with sample metadata or None if failed
+    """
+    try:
+        sample_idx, dataset_item, config_dict, eval_mode_info, seed_offset = args_tuple
+        
+        # Set random seed for this worker (deterministic but different per sample)
+        random.seed(seed_offset + sample_idx)
+        np.random.seed(seed_offset + sample_idx)
+        
+        # Unpack config dict
+        max_frames = config_dict['max_frames']
+        pref_prob = config_dict['pref_prob']
+        dataset_success_cutoff_map = config_dict['dataset_success_cutoff_map']
+        config_data = config_dict['config_data']
+        
+        # Unpack eval mode info
+        eval_mode = eval_mode_info['eval_mode']
+        task_to_indices = eval_mode_info.get('task_to_indices', {})
+        tasks_with_both = eval_mode_info.get('tasks_with_both', [])
+        dataset_list = eval_mode_info.get('dataset_list', [])
+        
+        # Select sample type
+        if random.random() < pref_prob:
+            sample_type = "preference"
+        else:
+            sample_type = "progress"
+        
+        # Generate sample
+        if sample_type == "preference":
+            if eval_mode and tasks_with_both:
+                # Evaluation mode: use real quality differences
+                task = random.choice(tasks_with_both)
+                
+                # Get optimal and suboptimal trajectories
+                optimal_idx = random.choice(task_to_indices[task]['optimal'])
+                suboptimal_idx = random.choice(task_to_indices[task]['suboptimal'])
+                
+                chosen_traj_dict = dataset_list[optimal_idx]
+                rejected_traj_dict = dataset_list[suboptimal_idx]
+                data_gen_strategy = "quality_preference"
+                
+                metadata = extract_preference_metadata_from_dicts(
+                    chosen_traj_dict=chosen_traj_dict,
+                    rejected_traj_dict=rejected_traj_dict,
+                    data_gen_strategy=data_gen_strategy,
+                    max_frames=max_frames,
+                    config=config_data,
+                    dataset_success_cutoff_map=dataset_success_cutoff_map,
+                    eval_mode=True,
+                )
+            else:
+                # Training mode: use augmentations (rewind)
+                chosen_traj_dict = dataset_item
+                rejected_traj_dict = dataset_item
+                data_gen_strategy = "rewind"
+                
+                metadata = extract_preference_metadata_from_dicts(
+                    chosen_traj_dict=chosen_traj_dict,
+                    rejected_traj_dict=rejected_traj_dict,
+                    data_gen_strategy=data_gen_strategy,
+                    max_frames=max_frames,
+                    config=config_data,
+                    dataset_success_cutoff_map=dataset_success_cutoff_map,
+                    eval_mode=False,
+                )
+            
+            return metadata
+            
+        elif sample_type == "progress":
+            # Generate progress sample
+            data_gen_strategy = "forward_progress"
+            
+            metadata = extract_progress_metadata_from_dict(
+                traj_dict=dataset_item,
+                data_gen_strategy=data_gen_strategy,
+                max_frames=max_frames,
+                config=config_data,
+                dataset_success_cutoff_map=dataset_success_cutoff_map,
+            )
+            
+            return metadata
+        
+        return None
+        
+    except Exception as e:
+        # Return error info
+        return {'error': str(e), 'sample_idx': sample_idx}
+
+
 def generate_dataset(
     config: ExperimentConfig,
     num_samples: int,
     seed: int = 42,
+    eval_mode: bool = False,
+    num_workers: int = 1,
 ) -> List[Dict[str, Any]]:
     """
     Generate dataset samples using RFM samplers.
@@ -342,11 +446,17 @@ def generate_dataset(
 
     rank_0_info("=" * 100)
     rank_0_info("Setting up dataset and samplers")
+    if eval_mode:
+        rank_0_info("EVALUATION MODE: No augmentations, real quality differences")
     rank_0_info("=" * 100)
 
     # Resolve dataset keys
-    config.data.train_datasets = resolve_dataset_keys(config.data.train_datasets, split="train")
-    rank_0_info(f"Resolved train datasets: {config.data.train_datasets}")
+    if eval_mode:
+        config.data.eval_datasets = resolve_dataset_keys(config.data.eval_datasets, split="eval")
+        rank_0_info(f"Resolved eval datasets: {config.data.eval_datasets}")
+    else:
+        config.data.train_datasets = resolve_dataset_keys(config.data.train_datasets, split="train")
+        rank_0_info(f"Resolved train datasets: {config.data.train_datasets}")
 
     # Create RFM dataset (this will load the HF datasets)
     dataset = RFMDataset(config=config.data, is_evaluation=False)
@@ -392,63 +502,139 @@ def generate_dataset(
     rank_0_info(f"Generating {num_samples} samples")
     rank_0_info("=" * 100)
 
+    # Build task-to-indices mapping for eval mode
+    task_to_indices = {}
+    tasks_with_both = []
+    dataset_list = []
+    
+    if eval_mode:
+        for idx, item in enumerate(dataset.dataset):
+            task = item['task']
+            quality = item.get('quality_label', 'unknown')
+            if task not in task_to_indices:
+                task_to_indices[task] = {'optimal': [], 'suboptimal': []}
+            
+            if quality == 'successful':
+                task_to_indices[task]['optimal'].append(idx)
+            else:
+                task_to_indices[task]['suboptimal'].append(idx)
+        
+        # Find tasks with both optimal and suboptimal
+        tasks_with_both = [t for t, indices in task_to_indices.items() 
+                          if len(indices['optimal']) > 0 and len(indices['suboptimal']) > 0]
+        
+        rank_0_info(f"Eval mode: Found {len(tasks_with_both)} tasks with both optimal and suboptimal trajectories")
+        
+        # Convert dataset to list for multiprocessing
+        dataset_list = list(dataset.dataset)
+    
+    # Determine number of workers
+    if num_workers == -1:
+        import multiprocessing
+        num_workers = multiprocessing.cpu_count()
+        rank_0_info(f"Auto-detected {num_workers} CPU cores")
+    
+    rank_0_info(f"Using {num_workers} worker(s) for generation")
+    
+    # Prepare config dict for workers (must be picklable)
+    config_dict = {
+        'max_frames': config.data.max_frames,
+        'pref_prob': pref_prob,
+        'dataset_success_cutoff_map': dataset.dataset_success_cutoff_map,
+        'config_data': config.data,
+    }
+    
+    # Prepare eval mode info for workers
+    eval_mode_info = {
+        'eval_mode': eval_mode,
+        'task_to_indices': task_to_indices,
+        'tasks_with_both': tasks_with_both,
+        'dataset_list': dataset_list if eval_mode else [],
+    }
+    
     # Generate samples
     generated_samples = []
     failed_samples = 0
-
-    for i in tqdm(range(num_samples), desc="Generating samples"):
-        # Select sample type
-        if random.random() < pref_prob:
-            sample_type = "preference"
-        else:
-            sample_type = "progress"
-
-        # Get a trajectory from the dataset
-        dataset_idx = i % len(dataset.dataset)
-        item = dataset.dataset[dataset_idx]
-
-        # Generate sample WITHOUT loading frames
-        try:
-            if sample_type == "preference" and pref_sampler:
-                # Generate preference sample by selecting two trajectories
-                # Use a simple strategy: rewind for now
-                # Get chosen trajectory (current item)
-                chosen_traj_dict = item
+    
+    if num_workers <= 1:
+        # Sequential generation (original behavior)
+        rank_0_info("Sequential generation (num_workers=1)")
+        for i in tqdm(range(num_samples), desc="Generating samples"):
+            # Get a trajectory from the dataset
+            dataset_idx = i % len(dataset.dataset)
+            item = dataset.dataset[dataset_idx]
+            
+            # Prepare args for generation function
+            args_tuple = (i, item, config_dict, eval_mode_info, seed)
+            
+            # Generate sample
+            try:
+                result = generate_single_sample(args_tuple)
                 
-                # Create rejected trajectory (same trajectory, will be rewound)
-                rejected_traj_dict = item
-                data_gen_strategy = "rewind"
-                
-                metadata = extract_preference_metadata_from_dicts(
-                    chosen_traj_dict=chosen_traj_dict,
-                    rejected_traj_dict=rejected_traj_dict,
-                    data_gen_strategy=data_gen_strategy,
-                    max_frames=config.data.max_frames,
-                    config=config.data,
-                    dataset_success_cutoff_map=dataset.dataset_success_cutoff_map,
-                )
-                generated_samples.append(metadata)
-                
-            elif sample_type == "progress" and progress_sampler:
-                # Generate progress sample from single trajectory
-                data_gen_strategy = "forward_progress"
-                
-                metadata = extract_progress_metadata_from_dict(
-                    traj_dict=item,
-                    data_gen_strategy=data_gen_strategy,
-                    max_frames=config.data.max_frames,
-                    config=config.data,
-                    dataset_success_cutoff_map=dataset.dataset_success_cutoff_map,
-                )
-                generated_samples.append(metadata)
-            else:
+                if result and 'error' not in result:
+                    generated_samples.append(result)
+                else:
+                    if result and 'error' in result:
+                        rank_0_info(f"Error generating sample {i}: {result['error']}")
+                    failed_samples += 1
+            except Exception as e:
+                rank_0_info(f"Error generating sample {i}: {e}")
+                import traceback
+                traceback.print_exc()
                 failed_samples += 1
-        except Exception as e:
-            rank_0_info(f"Error generating sample {i}: {e}")
-            import traceback
-            traceback.print_exc()
-            failed_samples += 1
-            continue
+    else:
+        # Parallel generation with multiprocessing
+        rank_0_info(f"Parallel generation with {num_workers} workers")
+        
+        # Prepare arguments for all samples
+        sample_args = []
+        for i in range(num_samples):
+            dataset_idx = i % len(dataset.dataset)
+            if eval_mode and dataset_list:
+                item = dataset_list[dataset_idx]
+            else:
+                item = dataset.dataset[dataset_idx]
+            
+            args_tuple = (i, item, config_dict, eval_mode_info, seed)
+            sample_args.append(args_tuple)
+        
+        # Generate samples in parallel with progress bar
+        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+            # Submit all tasks
+            futures = [executor.submit(generate_single_sample, args) for args in sample_args]
+            
+            # Process results as they complete with progress bar
+            # Use explicit file=sys.stderr to avoid stdout buffering issues
+            import sys
+            completed = 0
+            for future in tqdm(as_completed(futures), total=num_samples, 
+                             desc="Generating samples", file=sys.stderr, 
+                             ncols=100, mininterval=0.5):
+                try:
+                    result = future.result()
+                    
+                    if result and 'error' not in result:
+                        generated_samples.append(result)
+                    else:
+                        if result and 'error' in result:
+                            sample_idx = result.get('sample_idx', '?')
+                            # Don't print every error in multiprocessing to avoid spam
+                            pass
+                        failed_samples += 1
+                except Exception as e:
+                    failed_samples += 1
+                
+                completed += 1
+                # Print periodic updates to stdout as well
+                if completed % 1000 == 0:
+                    rank_0_info(f"Progress: {completed}/{num_samples} samples generated")
+    
+    # Sort samples by their original order if needed (multiprocessing may return out of order)
+    # This is optional - comment out if you don't care about order
+    if num_workers > 1 and 'sample_idx' not in generated_samples[0]:
+        # Samples don't have indices, they're already in order
+        pass
+    
 
     rank_0_info("=" * 100)
     rank_0_info(f"Successfully generated {len(generated_samples)} samples")
@@ -503,6 +689,23 @@ def main():
         default=[],
         help="Config overrides in key=value format (e.g., data.max_frames=16)",
     )
+    parser.add_argument(
+        "--eval_mode",
+        action="store_true",
+        help="Evaluation mode: no augmentations, use real quality differences for preferences",
+    )
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=8,
+        help="Number of parallel workers for generation (default: 8, set to -1 for auto)",
+    )
+    parser.add_argument(
+        "--save_batch_size",
+        type=int,
+        default=10000,
+        help="Save dataset incrementally every N samples to avoid OOM (default: 10000, set to -1 to save all at once)",
+    )
 
     args = parser.parse_args()
 
@@ -524,26 +727,114 @@ def main():
     rank_0_info(f"Random seed: {args.seed}")
     rank_0_info(f"Max frames: {config.data.max_frames}")
     rank_0_info(f"Sample type ratio: {config.data.sample_type_ratio}")
+    rank_0_info(f"Number of workers: {args.num_workers if args.num_workers > 0 else 'auto'}")
+    rank_0_info(f"Eval mode: {args.eval_mode}")
     rank_0_info("=" * 100)
 
-    # Generate samples
-    samples = generate_dataset(config, args.num_samples, args.seed)
+    # Generate and save samples (incrementally if needed to avoid OOM)
+    if args.save_batch_size > 0 and args.num_samples > args.save_batch_size:
+        # Incremental saving for large datasets
+        rank_0_info(f"Using incremental saving (batch size: {args.save_batch_size})")
+        
+        num_batches = (args.num_samples + args.save_batch_size - 1) // args.save_batch_size
+        temp_output_dir = Path(args.output_path).parent / f"{Path(args.output_path).name}_temp"
+        temp_output_dir.mkdir(parents=True, exist_ok=True)
+        
+        for batch_idx in range(num_batches):
+            start_idx = batch_idx * args.save_batch_size
+            end_idx = min((batch_idx + 1) * args.save_batch_size, args.num_samples)
+            batch_size = end_idx - start_idx
+            
+            rank_0_info(f"Generating batch {batch_idx + 1}/{num_batches} ({start_idx}-{end_idx})...")
+            
+            # Generate batch
+            batch_samples = generate_dataset(
+                config, 
+                batch_size,
+                args.seed + start_idx,  # Different seed per batch for reproducibility
+                eval_mode=args.eval_mode,
+                num_workers=args.num_workers,
+            )
+            
+            if not batch_samples:
+                rank_0_info(f"Warning: Batch {batch_idx + 1} generated 0 samples")
+                continue
+            
+            # Save batch
+            batch_dataset = Dataset.from_list(batch_samples)
+            batch_path = temp_output_dir / f"batch_{batch_idx:04d}"
+            batch_dataset.save_to_disk(str(batch_path))
+            rank_0_info(f"Saved batch {batch_idx + 1} with {len(batch_samples)} samples")
+            
+            # Clear memory
+            del batch_samples
+            del batch_dataset
+        
+        # Concatenate all batches
+        rank_0_info("Concatenating batches...")
+        from datasets import concatenate_datasets
+        all_batches = []
+        for batch_idx in range(num_batches):
+            batch_path = temp_output_dir / f"batch_{batch_idx:04d}"
+            if batch_path.exists():
+                batch_ds = Dataset.load_from_disk(str(batch_path))
+                all_batches.append(batch_ds)
+        
+        if not all_batches:
+            rank_0_info("No batches were saved. Exiting.")
+            return
+        
+        dataset = concatenate_datasets(all_batches)
+        
+        # Save final dataset
+        rank_0_info(f"Saving final dataset to {args.output_path}...")
+        os.makedirs(args.output_path, exist_ok=True)
+        dataset.save_to_disk(args.output_path)
+        
+        # Cleanup temp directory
+        rank_0_info("Cleaning up temporary files...")
+        import shutil
+        shutil.rmtree(temp_output_dir, ignore_errors=True)
+        
+        # Collect samples for statistics (sample first 1000 to avoid loading all into memory)
+        samples = dataset.select(range(min(1000, len(dataset)))).to_list()
+        dataset_len = len(dataset)
+    else:
+        # Single-shot generation for small datasets
+        rank_0_info("Generating all samples at once...")
+        samples = generate_dataset(
+            config, 
+            args.num_samples, 
+            args.seed, 
+            eval_mode=args.eval_mode,
+            num_workers=args.num_workers,
+        )
 
-    # Save as HuggingFace Dataset
-    rank_0_info(f"Saving dataset to {args.output_path}")
-    os.makedirs(args.output_path, exist_ok=True)
-    
-    dataset = Dataset.from_list(samples)
-    dataset.save_to_disk(args.output_path)
+        if not samples:
+            rank_0_info("No samples generated. Exiting.")
+            return
+
+        # Save as HuggingFace Dataset
+        rank_0_info(f"Saving dataset to {args.output_path}")
+        os.makedirs(args.output_path, exist_ok=True)
+        
+        dataset = Dataset.from_list(samples)
+        dataset.save_to_disk(args.output_path)
+        dataset_len = len(samples)
 
     # Also save config for reference
     config_path = os.path.join(args.output_path, "generation_config.json")
     config_dict = {
-        "num_samples": args.num_samples,
+        "num_samples_requested": args.num_samples,
+        "num_samples_actual": dataset_len,
         "seed": args.seed,
+        "eval_mode": args.eval_mode,
+        "num_workers": args.num_workers,
+        "save_batch_size": args.save_batch_size,
         "max_frames": config.data.max_frames,
         "sample_type_ratio": config.data.sample_type_ratio,
         "train_datasets": config.data.train_datasets,
+        "eval_datasets": config.data.eval_datasets,
         "preference_strategy_ratio": config.data.preference_strategy_ratio,
         "progress_strategy_ratio": config.data.progress_strategy_ratio,
     }
@@ -555,13 +846,14 @@ def main():
     rank_0_info(f"Config saved to {config_path}")
     rank_0_info("=" * 100)
     
-    # Print sample statistics
+    # Print sample statistics (from first 1000 samples as estimate)
+    rank_0_info(f"Total samples: {dataset_len}")
     sample_types = {}
     for sample in samples:
         sample_type = sample["sample_type"]
         sample_types[sample_type] = sample_types.get(sample_type, 0) + 1
     
-    rank_0_info("Sample statistics:")
+    rank_0_info("Sample statistics (from sample):")
     for sample_type, count in sample_types.items():
         rank_0_info(f"  {sample_type}: {count} ({100 * count / len(samples):.1f}%)")
     rank_0_info("=" * 100)

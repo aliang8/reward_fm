@@ -16,6 +16,7 @@ Usage:
 
 import argparse
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,7 +31,17 @@ from transformers import (
     Qwen2VLForConditionalGeneration,
     Trainer,
     TrainingArguments,
+    TrainerCallback,
 )
+from transformers.trainer_utils import EvalPrediction
+
+# Try to import unsloth
+try:
+    from unsloth import FastVisionModel
+    HAS_UNSLOTH = True
+except ImportError:
+    HAS_UNSLOTH = False
+    FastVisionModel = None
 
 # Add project root to path for utility imports
 project_root = Path(__file__).parent.parent
@@ -41,6 +52,197 @@ from rfm.data.datasets.helpers import load_frames_from_npz
 # Constants
 RESPONSE_PREFIX = "ANS:"
 IGNORE_INDEX = -100
+
+
+def extract_answer_from_generation(text: str) -> Optional[str]:
+    """
+    Extract the answer from generated text.
+    
+    Looks for "ANS: X" pattern and extracts X.
+    
+    Args:
+        text: Generated text
+        
+    Returns:
+        Extracted answer or None if not found
+    """
+    # Look for "ANS: X" pattern
+    match = re.search(r'ANS:\s*(\S+)', text, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    
+    # Fallback: look for the last word after "ANS:"
+    if "ANS:" in text.upper():
+        parts = text.upper().split("ANS:")
+        if len(parts) > 1:
+            answer_part = parts[-1].strip()
+            # Extract first word/number
+            tokens = answer_part.split()
+            if tokens:
+                return tokens[0].strip()
+    
+    return None
+
+
+class VQAEvaluationCallback(TrainerCallback):
+    """
+    Custom callback to perform VQA evaluation during training.
+    
+    This callback generates answers on the eval set and computes:
+    - Preference accuracy (for preference samples)
+    - Progress MAE and RMSE (for progress samples)
+    """
+    
+    def __init__(
+        self,
+        eval_dataset,
+        processor,
+        collator,
+        max_new_tokens: int = 10,
+        eval_batch_size: int = 4,
+    ):
+        self.eval_dataset = eval_dataset
+        self.processor = processor
+        self.collator = collator
+        self.max_new_tokens = max_new_tokens
+        self.eval_batch_size = eval_batch_size
+        
+    def on_evaluate(self, args, state, control, model, **kwargs):
+        """Run VQA evaluation after standard evaluation."""
+        print("\n" + "="*80)
+        print("Running VQA Evaluation (Generation-based)")
+        print("="*80)
+        
+        model.eval()
+        device = model.device
+        
+        # Separate by sample type
+        pref_samples = [s for s in self.eval_dataset if s['sample_type'] == 'preference']
+        prog_samples = [s for s in self.eval_dataset if s['sample_type'] == 'progress']
+        
+        metrics = {}
+        
+        # Evaluate preference samples
+        if pref_samples:
+            pref_correct = 0
+            pref_total = 0
+            
+            with torch.no_grad():
+                for i in range(0, len(pref_samples), self.eval_batch_size):
+                    batch = pref_samples[i:i+self.eval_batch_size]
+                    
+                    try:
+                        # Create inference collator
+                        inference_collator = VQADataCollator(
+                            processor=self.processor,
+                            use_multi_image=False,
+                            inference=True,
+                        )
+                        
+                        inputs = inference_collator(batch)
+                        inputs = {k: v.to(device) if isinstance(v, torch.Tensor) else v 
+                                 for k, v in inputs.items()}
+                        
+                        # Generate
+                        outputs = model.generate(
+                            **inputs,
+                            max_new_tokens=self.max_new_tokens,
+                            do_sample=False,
+                            temperature=None,
+                            top_p=None,
+                        )
+                        
+                        # Decode
+                        generated_texts = self.processor.batch_decode(outputs, skip_special_tokens=True)
+                        
+                        # Check correctness
+                        for sample, gen_text in zip(batch, generated_texts):
+                            predicted = extract_answer_from_generation(gen_text)
+                            ground_truth = sample['answer']
+                            
+                            if predicted == ground_truth:
+                                pref_correct += 1
+                            pref_total += 1
+                            
+                    except Exception as e:
+                        print(f"Error in preference eval batch {i}: {e}")
+                        continue
+            
+            if pref_total > 0:
+                pref_accuracy = pref_correct / pref_total
+                metrics['eval_preference_accuracy'] = pref_accuracy
+                print(f"Preference Accuracy: {pref_accuracy:.4f} ({pref_correct}/{pref_total})")
+        
+        # Evaluate progress samples
+        if prog_samples:
+            prog_errors = []
+            
+            with torch.no_grad():
+                for i in range(0, len(prog_samples), self.eval_batch_size):
+                    batch = prog_samples[i:i+self.eval_batch_size]
+                    
+                    try:
+                        # Create inference collator
+                        inference_collator = VQADataCollator(
+                            processor=self.processor,
+                            use_multi_image=False,
+                            inference=True,
+                        )
+                        
+                        inputs = inference_collator(batch)
+                        inputs = {k: v.to(device) if isinstance(v, torch.Tensor) else v 
+                                 for k, v in inputs.items()}
+                        
+                        # Generate
+                        outputs = model.generate(
+                            **inputs,
+                            max_new_tokens=self.max_new_tokens,
+                            do_sample=False,
+                            temperature=None,
+                            top_p=None,
+                        )
+                        
+                        # Decode
+                        generated_texts = self.processor.batch_decode(outputs, skip_special_tokens=True)
+                        
+                        # Compute errors
+                        for sample, gen_text in zip(batch, generated_texts):
+                            predicted_str = extract_answer_from_generation(gen_text)
+                            ground_truth_str = sample['answer']
+                            
+                            try:
+                                predicted = int(predicted_str) if predicted_str else None
+                                ground_truth = int(ground_truth_str)
+                                
+                                if predicted is not None:
+                                    error = abs(predicted - ground_truth)
+                                    prog_errors.append(error)
+                                else:
+                                    prog_errors.append(100)  # Max error
+                            except (ValueError, TypeError):
+                                prog_errors.append(100)  # Max error
+                                
+                    except Exception as e:
+                        print(f"Error in progress eval batch {i}: {e}")
+                        continue
+            
+            if prog_errors:
+                mae = np.mean(prog_errors)
+                rmse = np.sqrt(np.mean(np.array(prog_errors) ** 2))
+                metrics['eval_progress_mae'] = mae
+                metrics['eval_progress_rmse'] = rmse
+                print(f"Progress MAE: {mae:.2f}")
+                print(f"Progress RMSE: {rmse:.2f}")
+        
+        print("="*80 + "\n")
+        
+        # Log metrics
+        if hasattr(state, 'log_history'):
+            # Add to the last log entry
+            if state.log_history:
+                state.log_history[-1].update(metrics)
+        
+        return control
 
 
 def load_and_subsample_frames(npz_path: str, frame_indices: List[int]) -> np.ndarray:
@@ -410,6 +612,16 @@ def main():
         action="store_true",
         help="Use multi-image mode instead of video mode",
     )
+    parser.add_argument(
+        "--use_unsloth",
+        action="store_true",
+        help="Use unsloth for faster training (if available)",
+    )
+    parser.add_argument(
+        "--quantization",
+        action="store_true",
+        help="Use 4-bit quantization (requires unsloth)",
+    )
     
     # Training arguments
     parser.add_argument(
@@ -510,6 +722,31 @@ def main():
         default=True,
         help="Enable gradient checkpointing",
     )
+    parser.add_argument(
+        "--report_to",
+        type=str,
+        default="tensorboard",
+        choices=["tensorboard", "wandb", "none"],
+        help="Reporting tool (default: tensorboard)",
+    )
+    parser.add_argument(
+        "--wandb_project",
+        type=str,
+        default="vqa-training",
+        help="Weights & Biases project name (default: vqa-training)",
+    )
+    parser.add_argument(
+        "--wandb_entity",
+        type=str,
+        default=None,
+        help="Weights & Biases entity/team name (optional)",
+    )
+    parser.add_argument(
+        "--run_name",
+        type=str,
+        default=None,
+        help="Run name for logging (optional)",
+    )
     
     args = parser.parse_args()
 
@@ -536,28 +773,72 @@ def main():
         eval_dataset = load_from_disk(args.eval_dataset_path)
         print(f"Loaded {len(eval_dataset)} evaluation samples")
 
+    # Check unsloth availability
+    use_unsloth = args.use_unsloth and HAS_UNSLOTH and "Qwen" in args.model_name
+    
+    if args.use_unsloth and not HAS_UNSLOTH:
+        print("⚠️  Warning: unsloth requested but not installed. Using standard loading.")
+        use_unsloth = False
+    elif args.use_unsloth and "Qwen" not in args.model_name:
+        print("⚠️  Warning: unsloth only supports Qwen models. Using standard loading.")
+        use_unsloth = False
+    
     # Load model and processor
     print(f"Loading model: {args.model_name}")
-    processor = AutoProcessor.from_pretrained(
-        args.model_name,
-        trust_remote_code=True,
-        do_sample_frames=False,
-        padding_side="left",
-    )
+    print(f"Using unsloth: {use_unsloth}")
+    print(f"Using quantization: {args.quantization}")
+    
+    if use_unsloth:
+        # Load with unsloth for faster training
+        print("Loading model with unsloth...")
+        model, tokenizer = FastVisionModel.from_pretrained(
+            args.model_name,
+            load_in_4bit=args.quantization,
+            use_gradient_checkpointing="unsloth",
+            dtype=torch.bfloat16 if args.bf16 else torch.float32,
+            full_finetuning=True,
+            device_map=None,
+            attn_implementation="flash_attention_2",
+            trust_remote_code=True,
+        )
+        
+        # Load processor separately
+        processor = AutoProcessor.from_pretrained(
+            args.model_name,
+            trust_remote_code=True,
+            do_sample_frames=False,
+            padding_side="left",
+        )
+        
+        print(f"Model loaded with unsloth: {model.__class__.__name__}")
+    else:
+        # Standard loading
+        processor = AutoProcessor.from_pretrained(
+            args.model_name,
+            trust_remote_code=True,
+            do_sample_frames=False,
+            padding_side="left",
+        )
+        
+        # Set pad token if not set
+        if processor.tokenizer.pad_token is None:
+            processor.tokenizer.pad_token = processor.tokenizer.eos_token
+        
+        # Load model
+        model = Qwen2VLForConditionalGeneration.from_pretrained(
+            args.model_name,
+            torch_dtype=torch.bfloat16 if args.bf16 else torch.float32,
+            attn_implementation="flash_attention_2",
+            trust_remote_code=True,
+        )
+        
+        tokenizer = processor.tokenizer
+        print(f"Model loaded: {model.__class__.__name__}")
     
     # Set pad token if not set
     if processor.tokenizer.pad_token is None:
         processor.tokenizer.pad_token = processor.tokenizer.eos_token
     
-    # Load model
-    model = Qwen2VLForConditionalGeneration.from_pretrained(
-        args.model_name,
-        torch_dtype=torch.bfloat16 if args.bf16 else torch.float32,
-        attn_implementation="flash_attention_2",
-        trust_remote_code=True,
-    )
-    
-    print(f"Model loaded: {model.__class__.__name__}")
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()) / 1e9:.2f}B")
 
     # Create data collator
@@ -568,9 +849,49 @@ def main():
         inference=False,
     )
 
+    # Determine run name
+    run_name = args.run_name
+    if run_name is None:
+        # Auto-generate run name
+        model_short = args.model_name.split("/")[-1]
+        run_name = f"{model_short}_bs{args.per_device_train_batch_size * args.gradient_accumulation_steps}_lr{args.learning_rate}"
+        if args.use_unsloth:
+            run_name += "_unsloth"
+        if args.quantization:
+            run_name += "_4bit"
+    
+    # Setup reporting
+    report_to_list = []
+    if args.report_to != "none":
+        report_to_list = [args.report_to]
+    
+    # Initialize wandb if requested
+    if args.report_to == "wandb":
+        import wandb
+        print(f"Initializing Weights & Biases:")
+        print(f"  Project: {args.wandb_project}")
+        print(f"  Entity: {args.wandb_entity or 'default'}")
+        print(f"  Run name: {run_name}")
+        
+        wandb.init(
+            project=args.wandb_project,
+            entity=args.wandb_entity,
+            name=run_name,
+            config={
+                "model": args.model_name,
+                "batch_size": args.per_device_train_batch_size,
+                "gradient_accumulation_steps": args.gradient_accumulation_steps,
+                "learning_rate": args.learning_rate,
+                "num_epochs": args.num_train_epochs,
+                "use_unsloth": args.use_unsloth,
+                "quantization": args.quantization,
+            }
+        )
+    
     # Create training arguments
     training_args = TrainingArguments(
         output_dir=args.output_dir,
+        run_name=run_name,
         per_device_train_batch_size=args.per_device_train_batch_size,
         per_device_eval_batch_size=args.per_device_eval_batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
@@ -587,12 +908,27 @@ def main():
         bf16=args.bf16,
         gradient_checkpointing=args.gradient_checkpointing,
         remove_unused_columns=False,
-        report_to=["tensorboard"],
+        report_to=report_to_list,
         save_total_limit=3,
         dataloader_num_workers=4,
         dataloader_pin_memory=True,
     )
 
+    # Create custom callbacks
+    callbacks = []
+    
+    # Add VQA evaluation callback if eval dataset exists
+    if eval_dataset:
+        print("Adding VQA evaluation callback...")
+        vqa_eval_callback = VQAEvaluationCallback(
+            eval_dataset=eval_dataset,
+            processor=processor,
+            collator=collator,
+            max_new_tokens=10,
+            eval_batch_size=args.per_device_eval_batch_size,
+        )
+        callbacks.append(vqa_eval_callback)
+    
     # Create trainer
     print("Creating trainer...")
     trainer = Trainer(
@@ -601,6 +937,7 @@ def main():
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=collator,
+        callbacks=callbacks,
     )
 
     # Train

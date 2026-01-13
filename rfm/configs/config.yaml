@@ -104,7 +104,7 @@ data:
   dataloader_num_workers: 8
   dataloader_persistent_workers: True
 
-  progress_pred_type: "absolute_first_frame" # "absolute_first_frame", "relative_first_frame", or "absolute_wrt_total_frames"
+  progress_pred_type: "absolute_wrt_total_frames" # "absolute_first_frame", "relative_first_frame", or "absolute_wrt_total_frames"
 
   # Partial success threshold (for datasets with partial_success like RoboArena and RoboReward)
   partial_success_threshold: 0.2  # Minimum difference in partial_success between chosen and rejected trajectories

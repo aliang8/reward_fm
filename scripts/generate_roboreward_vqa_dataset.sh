@@ -1,0 +1,18 @@
+# ROBOREWARD-1M
+uv run scripts/generate_vqa_dataset.py \
+    --num_samples 500_000 \
+    --save_batch_size 100_000 \
+    --output_path vqa_datasets/roboreward_train_1m \
+    --seed 42 \
+    --num_workers 32 \
+    --config_overrides data.max_frames=32 "data.sample_type_ratio=[1.0, 1.0, 0.0]" "data.train_datasets=[jesbu1_roboreward_rfm_roboreward_train]" data.min_frames_per_trajectory=2 
+
+# ROBOREWARD-Eval
+uv run scripts/generate_vqa_dataset.py \
+    --num_samples 10_000 \
+    --save_batch_size 10_000 \
+    --output_path vqa_datasets/roboreward_val_10k \
+    --seed 42 \
+    --num_workers 32 \
+    --eval_mode true \
+    --config_overrides data.max_frames=32 "data.sample_type_ratio=[1.0, 1.0, 0.0]" "data.eval_datasets=[jesbu1_roboreward_rfm_roboreward_val]" data.min_frames_per_trajectory=2 

@@ -588,6 +588,10 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
             # Save results to JSON
             if cfg.output_dir:
                 results_file = os.path.join(cfg.output_dir, f"{eval_type}_{dataset_name}_results.json")
+                # check if file name too long
+                if len(results_file) > 249:
+                    logger.warning(f"Results file name too long: {results_file}, truncating")
+                    results_file = results_file[:249] + ".json"
                 with open(results_file, "w") as f:
                     json.dump(eval_results, f, indent=2)
                 logger.info(f"Saved results to {results_file}")

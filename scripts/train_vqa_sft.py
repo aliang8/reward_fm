@@ -121,10 +121,12 @@ class VQAEvaluationCallback(TrainerCallback):
         self.eval_batch_size = eval_batch_size
         
     def on_evaluate(self, args, state, control, model, **kwargs):
-        """Run VQA evaluation after standard evaluation."""
-        print("\n" + "="*80)
-        print("Running VQA Evaluation (Generation-based)")
-        print("="*80)
+        """Run VQA evaluation after standard evaluation (distributed across all processes)."""
+        # Print only on main process
+        if args.should_save:
+            print("\n" + "="*80)
+            print("Running VQA Evaluation (Generation-based)")
+            print("="*80)
         
         model.eval()
         device = model.device
@@ -133,13 +135,15 @@ class VQAEvaluationCallback(TrainerCallback):
         pref_samples = [s for s in self.eval_dataset if s['sample_type'] == 'preference']
         prog_samples = [s for s in self.eval_dataset if s['sample_type'] == 'progress']
         
-        metrics = {}
+        # Local metrics for this process
+        local_metrics = {
+            'pref_correct': 0,
+            'pref_total': 0,
+            'prog_errors': [],
+        }
         
         # Evaluate preference samples
         if pref_samples:
-            pref_correct = 0
-            pref_total = 0
-            
             with torch.no_grad():
                 for i in range(0, len(pref_samples), self.eval_batch_size):
                     batch = pref_samples[i:i+self.eval_batch_size]
@@ -174,22 +178,16 @@ class VQAEvaluationCallback(TrainerCallback):
                             ground_truth = sample['answer']
 
                             if predicted == ground_truth:
-                                pref_correct += 1
-                            pref_total += 1
+                                local_metrics['pref_correct'] += 1
+                            local_metrics['pref_total'] += 1
                             
                     except Exception as e:
-                        print(f"Error in preference eval batch {i}: {e}")
+                        if args.should_save:
+                            print(f"Error in preference eval batch {i}: {e}")
                         continue
-            
-            if pref_total > 0:
-                pref_accuracy = pref_correct / pref_total
-                metrics['eval_preference_accuracy'] = pref_accuracy
-                print(f"Preference Accuracy: {pref_accuracy:.4f} ({pref_correct}/{pref_total})")
         
         # Evaluate progress samples
         if prog_samples:
-            prog_errors = []
-            
             with torch.no_grad():
                 for i in range(0, len(prog_samples), self.eval_batch_size):
                     batch = prog_samples[i:i+self.eval_batch_size]
@@ -228,28 +226,86 @@ class VQAEvaluationCallback(TrainerCallback):
                                 ground_truth = process_progress_answer(ground_truth_str)
                                 if predicted is not None:
                                     error = abs(predicted - ground_truth)
-                                    prog_errors.append(error)
+                                    local_metrics['prog_errors'].append(error)
                                 else:
-                                    prog_errors.append(1.0)  # Max error
+                                    local_metrics['prog_errors'].append(1.0)  # Max error
                             except (ValueError, TypeError):
-                                prog_errors.append(1.0)  # Max error
+                                local_metrics['prog_errors'].append(1.0)  # Max error
                         
                     except Exception as e:
-                        print(f"Error in progress eval batch {i}: {e}")
+                        if args.should_save:
+                            print(f"Error in progress eval batch {i}: {e}")
                         continue
+        
+        # Gather metrics from all processes
+        import torch.distributed as dist
+        
+        metrics = {}
+        
+        if args.local_rank != -1:
+            # Distributed training - gather metrics from all processes
+            world_size = dist.get_world_size()
             
-            if prog_errors:
-                mae = np.mean(prog_errors)
-                rmse = np.sqrt(np.mean(np.array(prog_errors) ** 2))
+            # Gather preference metrics
+            pref_correct_tensor = torch.tensor([local_metrics['pref_correct']], dtype=torch.long, device=device)
+            pref_total_tensor = torch.tensor([local_metrics['pref_total']], dtype=torch.long, device=device)
+            
+            dist.all_reduce(pref_correct_tensor, op=dist.ReduceOp.SUM)
+            dist.all_reduce(pref_total_tensor, op=dist.ReduceOp.SUM)
+            
+            if pref_total_tensor.item() > 0:
+                pref_accuracy = pref_correct_tensor.item() / pref_total_tensor.item()
+                metrics['eval_preference_accuracy'] = pref_accuracy
+                if args.should_save:
+                    print(f"Preference Accuracy: {pref_accuracy:.4f} ({pref_correct_tensor.item()}/{pref_total_tensor.item()})")
+            
+            # Gather progress metrics
+            # Instead of gathering all errors, compute sum and count locally, then aggregate
+            if local_metrics['prog_errors']:
+                local_error_sum = sum(local_metrics['prog_errors'])
+                local_error_sq_sum = sum(e ** 2 for e in local_metrics['prog_errors'])
+                local_error_count = len(local_metrics['prog_errors'])
+            else:
+                local_error_sum = 0.0
+                local_error_sq_sum = 0.0
+                local_error_count = 0
+            
+            error_sum_tensor = torch.tensor([local_error_sum], dtype=torch.float32, device=device)
+            error_sq_sum_tensor = torch.tensor([local_error_sq_sum], dtype=torch.float32, device=device)
+            error_count_tensor = torch.tensor([local_error_count], dtype=torch.long, device=device)
+            
+            dist.all_reduce(error_sum_tensor, op=dist.ReduceOp.SUM)
+            dist.all_reduce(error_sq_sum_tensor, op=dist.ReduceOp.SUM)
+            dist.all_reduce(error_count_tensor, op=dist.ReduceOp.SUM)
+            
+            if error_count_tensor.item() > 0:
+                mae = error_sum_tensor.item() / error_count_tensor.item()
+                rmse = np.sqrt(error_sq_sum_tensor.item() / error_count_tensor.item())
                 metrics['eval_progress_mae'] = mae
                 metrics['eval_progress_rmse'] = rmse
-                print(f"Progress MAE: {mae:.2f}")
-                print(f"Progress RMSE: {rmse:.2f}")
+                if args.should_save:
+                    print(f"Progress MAE: {mae:.4f}")
+                    print(f"Progress RMSE: {rmse:.4f}")
+        else:
+            # Single process - use local metrics directly
+            if local_metrics['pref_total'] > 0:
+                pref_accuracy = local_metrics['pref_correct'] / local_metrics['pref_total']
+                metrics['eval_preference_accuracy'] = pref_accuracy
+                print(f"Preference Accuracy: {pref_accuracy:.4f} ({local_metrics['pref_correct']}/{local_metrics['pref_total']})")
+            
+            if local_metrics['prog_errors']:
+                mae = np.mean(local_metrics['prog_errors'])
+                rmse = np.sqrt(np.mean(np.array(local_metrics['prog_errors']) ** 2))
+                metrics['eval_progress_mae'] = mae
+                metrics['eval_progress_rmse'] = rmse
+                print(f"Progress MAE: {mae:.4f}")
+                print(f"Progress RMSE: {rmse:.4f}")
         
-        print("="*80 + "\n")
+        if args.should_save:
+            print("="*80 + "\n")
         
-        # Log metrics
-        if hasattr(state, 'log_history'):
+        # Log metrics (only on main process)
+        if args.should_save and hasattr(state, 'log_history'):
             # Add to the last log entry
             if state.log_history:
                 state.log_history[-1].update(metrics)
@@ -831,14 +887,23 @@ def main():
         if is_main_process:
             print(*args_print, **kwargs)
 
-    # Print configuration
+    # Create output directory (only on main process)
     save_dir = os.path.join(args.output_dir, args.run_name)
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-    else:
-        print_main(f"Output directory already exists: {save_dir}")
-        print_main("Please use a different run name or delete the existing directory.")
-        return
+    if is_main_process:
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+            print_main(f"Created output directory: {save_dir}")
+        else:
+            print_main(f"ERROR: Output directory already exists: {save_dir}")
+            print_main("Please use a different run name or delete the existing directory.")
+            # Exit all processes (not just main)
+            if args.local_rank != -1:
+                torch.distributed.destroy_process_group()
+            sys.exit(1)
+    
+    # Synchronize all processes - wait for main process to create directory
+    if args.local_rank != -1:
+        torch.distributed.barrier()
     
     print_main("=" * 100)
     print_main("VQA Training Configuration")
@@ -1029,8 +1094,9 @@ def main():
     if args.report_to != "none":
         report_to_list = [args.report_to]
     
-    # Initialize wandb if requested
-    if args.report_to == "wandb":
+    # Initialize wandb if requested (only on main process)
+    # Note: HF Trainer will handle W&B logging on all processes, but we only init once
+    if args.report_to == "wandb" and is_main_process:
         import wandb
         print_main(f"Initializing Weights & Biases:")
         print_main(f"  Project: {args.wandb_project}")

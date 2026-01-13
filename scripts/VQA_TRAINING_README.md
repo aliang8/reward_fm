@@ -12,10 +12,10 @@ python scripts/generate_vqa_dataset.py \
     --config_overrides data.train_datasets=[jesbu1_roboreward_rfm_roboreward_train]
 
 # 2. OR DOWNLOAD
-uv run hf download rewardfm/vqa_datasets --local-dir ./vqa_datasets
+uv run hf download rewardfm/vqa_datasets --local-dir ./vqa_datasets --repo-type dataset
 
 # 3. Train (single GPU with Unsloth)
-python scripts/train_vqa_sft.py \
+uv run scripts/train_vqa_sft.py \
     --dataset_path ./vqa_datasets/rfm_train_10epochs \
     --eval_dataset_path ./vqa_datasets/rfm_val_0.1epoch \
     --model_name Qwen/Qwen3-VL-4B-Instruct \
@@ -28,9 +28,9 @@ python scripts/train_vqa_sft.py \
     --wandb_project rfm \
     --wandb_entity clvr \
     --save_strategy steps \
-    --save_steps 500 \ # save every 500 steps
+    --save_steps 500 \
     --eval_strategy steps \
-    --eval_steps 500 \ # eval every 500 steps
+    --eval_steps 500 \
     --per_device_train_batch_size 32 \
     --per_device_eval_batch_size 8 \
     --gradient_accumulation_steps 1 \
@@ -41,7 +41,7 @@ python scripts/train_vqa_sft.py \
 
 
 # 3. Train (multi-GPU with Accelerate)
-accelerate launch --num_processes=4 scripts/train_vqa_sft.py \
+uv run accelerate launch --num_processes=4 scripts/train_vqa_sft.py \
     --dataset_path ./vqa_datasets/rfm_train_10epochs \
     --eval_dataset_path ./vqa_datasets/rfm_val_0.1epoch \
     --model_name Qwen/Qwen3-VL-4B-Instruct \

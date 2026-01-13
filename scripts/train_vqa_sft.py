@@ -287,6 +287,10 @@ def load_and_subsample_frames(npz_path: str, frame_indices: List[int], max_frame
         last_frame = subsampled[-1:]
         subsampled = np.concatenate([subsampled, np.repeat(last_frame, max_frames - subsampled.shape[0], axis=0)])
     
+    # Ensure we always return exactly max_frames
+    assert subsampled.shape[0] == max_frames, \
+        f"Expected exactly {max_frames} frames, got {subsampled.shape[0]}. This should not happen after padding."
+    
     return subsampled
 
 
@@ -394,7 +398,10 @@ class VQADataCollator:
             # Video mode: add as video with proper metadata
             # Qwen3VL needs video_metadata to avoid FPS warnings
             num_frames = len(frames_or_video)
-            fps = 1.0  # We're using pre-sampled frames, so effective FPS is 1
+            fps = 1.0  # Set a reasonable FPS (2 fps for robotics videos)
+            
+            # Validate frame count
+            assert num_frames > 0, f"Video must have at least 1 frame, got {num_frames}"
             
             content_list.append({
                 "type": "video",
@@ -449,6 +456,7 @@ class VQADataCollator:
                     sample["second_frame_indices"],
                     max_frames=self.max_frames // 2,
                 )
+                
                 # Convert to PIL
                 first_pil = convert_frames_to_pil(first_frames)
                 second_pil = convert_frames_to_pil(second_frames)
@@ -478,7 +486,7 @@ class VQADataCollator:
                     sample["frame_indices"],
                     max_frames=self.max_frames,
                 )
-                print(f"Progress Frames: {frames.shape[0]}, max_frames: {self.max_frames}")
+                
                 # Convert to PIL
                 pil_frames = convert_frames_to_pil(frames)
                 
@@ -565,7 +573,6 @@ class VQADataCollator:
             "truncation": False,
             "return_tensors": "pt",
             "video_metadata": video_metadatas,
-            "do_resize": False,
             "return_tensors": "pt",
         }
         
@@ -580,6 +587,17 @@ class VQADataCollator:
         # Add video_kwargs if present
         if video_kwargs:
             processor_kwargs.update(video_kwargs)
+        
+        # Debug: Log what we're passing to processor
+        if video_inputs:
+            print(f"\n[DEBUG] Processing batch with {len(video_inputs)} video(s)")
+            for i, video in enumerate(video_inputs):
+                if isinstance(video, list):
+                    print(f"  Video {i}: {len(video)} frames, first frame shape: {video[0].size if hasattr(video[0], 'size') else 'N/A'}")
+                else:
+                    print(f"  Video {i}: type={type(video)}")
+            if video_metadatas:
+                print(f"  Video metadatas: {video_metadatas}")
         
         # Process
         batch_inputs = self.processor(**processor_kwargs)
@@ -992,6 +1010,7 @@ def main():
         processor=processor,
         use_multi_image=args.use_multi_image,
         inference=False,
+        max_frames=args.max_frames,
     )
 
     # Determine run name
@@ -1049,8 +1068,8 @@ def main():
         gradient_checkpointing=args.gradient_checkpointing,
         remove_unused_columns=False,
         report_to=report_to_list,
-        save_total_limit=3,
-        dataloader_num_workers=4,
+        save_total_limit=5,
+        dataloader_num_workers=8,
         dataloader_pin_memory=True,
     )
 

@@ -589,15 +589,15 @@ class VQADataCollator:
             processor_kwargs.update(video_kwargs)
         
         # Debug: Log what we're passing to processor
-        if video_inputs:
-            print(f"\n[DEBUG] Processing batch with {len(video_inputs)} video(s)")
-            for i, video in enumerate(video_inputs):
-                if isinstance(video, list):
-                    print(f"  Video {i}: {len(video)} frames, first frame shape: {video[0].size if hasattr(video[0], 'size') else 'N/A'}")
-                else:
-                    print(f"  Video {i}: type={type(video)}")
-            if video_metadatas:
-                print(f"  Video metadatas: {video_metadatas}")
+        #if video_inputs:
+        #    print(f"\n[DEBUG] Processing batch with {len(video_inputs)} video(s)")
+        #    for i, video in enumerate(video_inputs):
+        #        if isinstance(video, list):
+        #            print(f"  Video {i}: {len(video)} frames, first frame shape: {video[0].size if hasattr(video[0], 'size') else 'N/A'}")
+        #        else:
+        #            print(f"  Video {i}: type={type(video)}")
+        #    if video_metadatas:
+        #        print(f"  Video metadatas: {video_metadatas}")
         
         # Process
         batch_inputs = self.processor(**processor_kwargs)

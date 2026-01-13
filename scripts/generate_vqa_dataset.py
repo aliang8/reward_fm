@@ -246,17 +246,24 @@ def extract_preference_metadata_from_dicts(
         "sample_type": "preference",
         "prompt": prompt,
         "answer": answer,
+        # Preference-specific fields
         "first_npz_path": first_npz_path,
         "second_npz_path": second_npz_path,
         "first_frame_indices": first_frame_indices,
         "second_frame_indices": second_frame_indices,
         "first_frames_shape": first_frames_shape,
         "second_frames_shape": second_frames_shape,
+        "chosen_is_first": chosen_is_first,
+        # Progress-specific fields (set to None for preference samples)
+        "npz_path": None,
+        "frame_indices": None,
+        "frames_shape": None,
+        "target_progress": None,
+        # Common fields
         "task": chosen_traj_dict["task"],
         "data_source": chosen_traj_dict["data_source"],
         "data_gen_strategy": data_gen_strategy,
         "resample_attempts": 1,
-        "chosen_is_first": chosen_is_first,
     }
 
     return metadata
@@ -312,10 +319,20 @@ def extract_progress_metadata_from_dict(
         "sample_type": "progress",
         "prompt": prompt,
         "answer": answer,
+        # Progress-specific fields
         "npz_path": npz_path,
         "frame_indices": frame_indices,
         "frames_shape": frames_shape,
         "target_progress": target_progress,
+        # Preference-specific fields (set to None for progress samples)
+        "first_npz_path": None,
+        "second_npz_path": None,
+        "first_frame_indices": None,
+        "second_frame_indices": None,
+        "first_frames_shape": None,
+        "second_frames_shape": None,
+        "chosen_is_first": None,
+        # Common fields
         "task": traj_dict["task"],
         "data_source": traj_dict["data_source"],
         "data_gen_strategy": data_gen_strategy,
@@ -453,8 +470,10 @@ def generate_dataset(
     # Resolve dataset keys
     if eval_mode:
         config.data.eval_datasets = resolve_dataset_keys(config.data.eval_datasets, split="eval")
+        config.data.train_datasets = resolve_dataset_keys(config.data.eval_datasets, split="train")
         rank_0_info(f"Resolved eval datasets: {config.data.eval_datasets}")
     else:
+        config.data.eval_datasets = resolve_dataset_keys(config.data.train_datasets, split="eval")
         config.data.train_datasets = resolve_dataset_keys(config.data.train_datasets, split="train")
         rank_0_info(f"Resolved train datasets: {config.data.train_datasets}")
 

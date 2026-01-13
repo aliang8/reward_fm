@@ -119,13 +119,15 @@ The script generates:
 ### Usage
 
 ```bash
-python scripts/train_vqa_sft.py \
-    --dataset_path /path/to/generated/dataset \
+uv run scripts/train_vqa_sft.py \
+    --dataset_path vqa_datasets/roboreward_train_500k \
+    --eval_dataset_path vqa_datasets/roboreward_val_10k \
     --model_name Qwen/Qwen3-VL-4B-Instruct \
-    --output_dir ./outputs/vqa_training \
-    --per_device_train_batch_size 4 \
-    --num_train_epochs 3 \
-    --learning_rate 2e-5
+    --output_dir ./outputs \
+    --eval_strategy steps \
+    --eval_steps 100 \
+    --use_unsloth \
+    --run_name qwen3_vl_4b_vqa_training_roboreward_500k
 ```
 
 ### Arguments
@@ -398,6 +400,12 @@ cat ./outputs/qwen3_vl_4b_vqa/eval_results.json | python -m json.tool
 
 **Error: "Frames are loaded as numpy array"**
 - This should not happen with the fixed script
+
+**Error: "npz_filepath is None or empty" during training**
+- This happens with datasets generated before the schema fix
+- **Solution**: Regenerate your dataset with the updated script
+- **Cause**: HuggingFace `Dataset.from_list()` infers schema from first sample only
+- **Fix**: All samples now include all fields (preference + progress), with unused fields set to None
 - The script now works directly with trajectory dicts without calling samplers
 
 ### Training Issues

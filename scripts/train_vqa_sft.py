@@ -432,13 +432,27 @@ class VQADataCollator:
             answer = sample["answer"]
             
             if sample_type == "preference":
+                # Debug: Check what we're getting
+                first_npz = sample.get("first_npz_path")
+                second_npz = sample.get("second_npz_path")
+                if first_npz is None or first_npz == "":
+                    print(f"ERROR: first_npz_path is None or empty!")
+                    print(f"Sample keys: {sample.keys()}")
+                    print(f"Sample: {sample}")
+                    raise ValueError(f"first_npz_path is None or empty. Sample type: {sample_type}")
+                if second_npz is None or second_npz == "":
+                    print(f"ERROR: second_npz_path is None or empty!")
+                    print(f"Sample keys: {sample.keys()}")
+                    print(f"Sample: {sample}")
+                    raise ValueError(f"second_npz_path is None or empty. Sample type: {sample_type}")
+                
                 # Load frames for both trajectories
                 first_frames = load_and_subsample_frames(
-                    sample["first_npz_path"],
+                    first_npz,
                     sample["first_frame_indices"]
                 )
                 second_frames = load_and_subsample_frames(
-                    sample["second_npz_path"],
+                    second_npz,
                     sample["second_frame_indices"]
                 )
                 
@@ -457,9 +471,17 @@ class VQADataCollator:
                 content_list.append({"type": "text", "text": prompt})
                 
             elif sample_type == "progress":
+                # Debug: Check what we're getting
+                npz = sample.get("npz_path")
+                if npz is None or npz == "":
+                    print(f"ERROR: npz_path is None or empty for progress sample!")
+                    print(f"Sample keys: {sample.keys()}")
+                    print(f"Sample: {sample}")
+                    raise ValueError(f"npz_path is None or empty. Sample type: {sample_type}")
+                
                 # Load frames
                 frames = load_and_subsample_frames(
-                    sample["npz_path"],
+                    npz,
                     sample["frame_indices"]
                 )
                 
@@ -633,7 +655,7 @@ def main():
     parser.add_argument(
         "--per_device_train_batch_size",
         type=int,
-        default=4,
+        default=16,
         help="Batch size per device for training",
     )
     parser.add_argument(
@@ -701,13 +723,13 @@ def main():
     parser.add_argument(
         "--max_grad_norm",
         type=float,
-        default=1.0,
+        default=10.0,
         help="Max gradient norm for clipping",
     )
     parser.add_argument(
         "--weight_decay",
         type=float,
-        default=0.01,
+        default=0.05,
         help="Weight decay",
     )
     parser.add_argument(
@@ -725,27 +747,27 @@ def main():
     parser.add_argument(
         "--report_to",
         type=str,
-        default="tensorboard",
+        default="wandb",
         choices=["tensorboard", "wandb", "none"],
         help="Reporting tool (default: tensorboard)",
     )
     parser.add_argument(
         "--wandb_project",
         type=str,
-        default="vqa-training",
+        default="rfm",
         help="Weights & Biases project name (default: vqa-training)",
     )
     parser.add_argument(
         "--wandb_entity",
         type=str,
-        default=None,
+        default="clvr",
         help="Weights & Biases entity/team name (optional)",
     )
     parser.add_argument(
         "--run_name",
         type=str,
-        default=None,
-        help="Run name for logging (optional)",
+        required=True,
+        help="Run name for logging (required)",
     )
     
     args = parser.parse_args()

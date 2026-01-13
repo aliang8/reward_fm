@@ -306,7 +306,6 @@ def run_reward_alignment_eval_per_trajectory(
         all_success_preds = []
         all_success_labels_list = []
         all_success_probs_list = []
-
         if is_whole_trajectory_mode:
             # Whole trajectory mode: one result with full progress prediction
             r = results_for_trajectory[0]
@@ -330,11 +329,21 @@ def run_reward_alignment_eval_per_trajectory(
                     else:
                         # Use all predictions: convert logits to continuous values
                         if pred_array.ndim > 1:
+                            if pred_array.shape[-1] == 1: # [num_bins, 1] -> [num_bins]
+                                pred_array = pred_array.squeeze(-1)
+
                             # pred_array is [seq_len, num_bins], convert to continuous
                             continuous_preds = convert_bins_to_continuous(
                                 torch.tensor(pred_array, dtype=torch.float32)
                             ).numpy()
-                            all_preds = continuous_preds.tolist()
+
+                            if continuous_preds.ndim == 0:
+                                all_target_bins.append(tgt[-1])
+                                continuous_preds = continuous_preds[None]
+                                pred_array = pred_array[None]
+                            else:
+                                all_target_bins.append(tgt)
+                            all_preds = [continuous_preds.tolist()]
                             # Store logits as list of lists (one per timestep) - same format as frame_steps mode
                             all_pred_logits = pred_array.tolist()
                         else:
@@ -358,7 +367,6 @@ def run_reward_alignment_eval_per_trajectory(
                             all_preds = [float(pred_array)]
             else:
                 all_preds = [0.0]
-
             if tgt is not None and len(tgt) > 0 and not is_discrete_mode:
                 tgt_array = np.array(tgt)
                 if last_frame_only:

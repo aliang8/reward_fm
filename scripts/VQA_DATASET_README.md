@@ -1,6 +1,6 @@
 # VQA Dataset Generation & Training Scripts
 
-This directory contains two scripts for generating VQA-style datasets from RFM trajectories and training Qwen3-VL models on them.
+This directory contains scripts for generating VQA-style datasets from RFM trajectories and training Qwen3-VL models on them.
 
 ## Overview
 
@@ -13,6 +13,7 @@ This approach offers several advantages over the original dynamic sampling:
 - **Debugging**: Inspect generated samples before training
 - **Flexibility**: Use the dataset with any training framework
 - **Simplicity**: Standard HF code without custom complexity
+- **Consistency**: Uses the same RFMDataset and samplers as training, ensuring no logic divergence
 
 ## Files
 
@@ -23,34 +24,56 @@ This approach offers several advantages over the original dynamic sampling:
 
 ## 1. Dataset Generation
 
+The dataset generation script uses `RFMDataset` with PyTorch `DataLoader` to generate VQA samples efficiently in parallel.
+
 ### Usage
 
 ```bash
-# Single-process generation
+# Basic generation (1 epoch through the dataset)
 python scripts/generate_vqa_dataset.py \
-    --num_samples 10000 \
+    --num_epochs 1.0 \
     --output_path /path/to/output/dataset \
     --seed 42 \
-    --config_overrides data.max_frames=16 data.sample_type_ratio=[0.7,0.3,0.0]
+    --config_overrides data.train_datasets=[jesbu1_roboreward_rfm_roboreward_train]
 
-# Multi-process generation (faster, recommended for large datasets)
+# Parallel generation with multiple workers (faster, recommended for large datasets)
 python scripts/generate_vqa_dataset.py \
-    --num_samples 10000 \
+    --num_epochs 2.0 \
     --output_path /path/to/output/dataset \
     --seed 42 \
-    --num_workers -1  # Auto-detect CPU count, or specify number (e.g., 8)
+    --num_workers 4 \
+    --batch_size 100 \
+    --config_overrides data.sample_type_ratio=[0.7,0.3,0.0]
+
+# Fractional epochs (e.g., 0.5 for half the dataset, 0.1 for 10%)
+python scripts/generate_vqa_dataset.py \
+    --num_epochs 0.5 \
+    --output_path /path/to/output/dataset \
+    --seed 42 \
+    --num_workers 4
 ```
 
 ### Arguments
 
-- `--num_samples`: Number of samples to generate (default: 10000)
+- `--num_epochs`: Number of epochs to iterate through the dataset (required). Can be fractional (e.g., 0.5, 1.5, 2.0). Total samples = dataset_size × num_epochs
 - `--output_path`: Path to save the generated HuggingFace dataset (required)
 - `--seed`: Random seed for reproducibility (default: 42)
-- `--num_workers`: Number of parallel workers for generation (default: 8, set to -1 for auto-detect)
-- `--save_batch_size`: Save incrementally every N samples to avoid OOM (default: 10000, set to -1 to save all at once)
+- `--batch_size`: DataLoader batch size for processing (default: 100)
+- `--num_workers`: Number of DataLoader workers for parallel processing (default: 4)
+- `--save_batch_size`: Save incrementally every N samples to avoid OOM (default: 50000)
 - `--config_name`: Hydra config to use (default: "config")
-- `--config_overrides`: Config overrides in key=value format (optional)
+- `--config_overrides`: Config overrides in Hydra format (optional, e.g., `data.max_frames=16`)
 - `--eval_mode`: Use real quality differences instead of augmentations (for evaluation datasets)
+
+### How It Works
+
+The script creates an `RFMDataset` instance with `return_npz_paths=True`, which:
+1. **Avoids loading frames**: Instead of loading actual video frames into memory, stores only .npz paths and frame indices
+2. **Uses same samplers**: Leverages the exact same `PrefSampler` and `ProgressSampler` as training
+3. **PyTorch DataLoader**: Wraps the dataset in a DataLoader for parallel processing with multiple workers
+4. **On-the-fly conversion**: A custom collate function converts RFM samples to VQA format during iteration
+
+This ensures that dataset generation uses the **exact same logic** as the training samplers, preventing any divergence in sample generation strategies.
 
 ### Configuration
 
@@ -116,7 +139,7 @@ The script generates:
 
 ## 2. Training
 
-### Usage
+### Single GPU Usage
 
 ```bash
 uv run scripts/train_vqa_sft.py \
@@ -134,6 +157,53 @@ uv run scripts/train_vqa_sft.py \
     --use_unsloth \
     --run_name qwen3_vl_4b_vqa_training_roboreward_500k
 ```
+
+### Multi-GPU Usage
+
+**Method 1: HuggingFace Accelerate (Recommended)**
+```bash
+# Auto-detect all GPUs
+accelerate launch scripts/train_vqa_sft.py \
+    --dataset_path vqa_datasets/roboreward_train_500k \
+    --eval_dataset_path vqa_datasets/roboreward_val_10k \
+    --model_name Qwen/Qwen3-VL-4B-Instruct \
+    --output_dir ./outputs/multi_gpu \
+    --per_device_train_batch_size 2 \
+    --gradient_accumulation_steps 2 \
+    --learning_rate 5e-6 \
+    --use_unsloth \
+    --run_name qwen3_vl_4b_multi_gpu
+
+# Or use provided script
+bash scripts/launch_multi_gpu.sh
+```
+
+**Method 2: Torchrun (PyTorch Native DDP)**
+```bash
+# Specify number of GPUs
+NUM_GPUS=4
+torchrun --nproc_per_node=$NUM_GPUS scripts/train_vqa_sft.py \
+    --dataset_path vqa_datasets/roboreward_train_500k \
+    --eval_dataset_path vqa_datasets/roboreward_val_10k \
+    --model_name Qwen/Qwen3-VL-4B-Instruct \
+    --output_dir ./outputs/multi_gpu \
+    --per_device_train_batch_size 2 \
+    --gradient_accumulation_steps 2 \
+    --learning_rate 5e-6 \
+    --use_unsloth \
+    --run_name qwen3_vl_4b_multi_gpu
+
+# Or use provided script
+bash scripts/launch_torchrun.sh
+```
+
+**Multi-GPU Training Tips:**
+- **Effective Batch Size** = `per_device_batch_size × gradient_accum_steps × num_gpus`
+  - Example: 2 × 2 × 4 = 16 effective batch size
+- **Learning Rate Scaling**: Reduce LR when using more GPUs (e.g., 2e-5 → 5e-6 for 4 GPUs)
+- **Data Sharding**: Data is automatically distributed across GPUs by HuggingFace Trainer
+- **Gradient Synchronization**: Happens automatically every `gradient_accumulation_steps`
+- **Model Saving**: Only main process (rank 0) saves checkpoints
 
 ### Arguments
 

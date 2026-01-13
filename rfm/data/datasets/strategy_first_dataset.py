@@ -31,7 +31,7 @@ class StrategyFirstDataset(BaseDataset):
     4. Sample trajectory from selected data source and generate sample
     """
 
-    def __init__(self, config, is_evaluation=False, max_samples=None, sampler_kwargs=None, random_seed=42, **kwargs):
+    def __init__(self, config, is_evaluation=False, max_samples=None, sampler_kwargs=None, return_npz_paths=False, random_seed=42, **kwargs):
         super().__init__(config, is_evaluation, **kwargs)
 
         # Initialize local random instance for deterministic sampling
@@ -50,6 +50,7 @@ class StrategyFirstDataset(BaseDataset):
             "combined_indices": self._combined_indices,
             "dataset_success_cutoff_map": self.dataset_success_cutoff_map,
             "verbose": False,
+            "return_npz_paths": return_npz_paths,
             **sampler_kwargs,
         }
 

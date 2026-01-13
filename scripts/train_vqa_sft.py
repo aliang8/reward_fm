@@ -813,47 +813,68 @@ def main():
         required=True,
         help="Run name for logging (required)",
     )
+    parser.add_argument(
+        "--local_rank",
+        type=int,
+        default=-1,
+        help="Local rank for distributed training (set automatically by torchrun/accelerate)",
+    )
     
     args = parser.parse_args()
+    
+    # Set up distributed training
+    is_main_process = args.local_rank in [-1, 0]
+    if args.local_rank != -1:
+        torch.cuda.set_device(args.local_rank)
+        # Trainer handles all the distributed setup automatically
+    
+    # Helper function to print only on main process
+    def print_main(*args_print, **kwargs):
+        if is_main_process:
+            print(*args_print, **kwargs)
 
     # Print configuration
-    print("=" * 100)
-    print("VQA Training Configuration")
-    print("=" * 100)
-    print(f"Dataset path: {args.dataset_path}")
-    print(f"Model: {args.model_name}")
-    print(f"Output directory: {args.output_dir}")
-    print(f"Batch size: {args.per_device_train_batch_size}")
-    print(f"Epochs: {args.num_train_epochs}")
-    print(f"Learning rate: {args.learning_rate}")
-    print(f"Use multi-image: {args.use_multi_image}")
-    print("=" * 100)
+    print_main("=" * 100)
+    print_main("VQA Training Configuration")
+    print_main("=" * 100)
+    print_main(f"Dataset path: {args.dataset_path}")
+    print_main(f"Model: {args.model_name}")
+    print_main(f"Output directory: {args.output_dir}")
+    print_main(f"Batch size per device: {args.per_device_train_batch_size}")
+    print_main(f"Gradient accumulation steps: {args.gradient_accumulation_steps}")
+    print_main(f"Effective batch size: {args.per_device_train_batch_size * args.gradient_accumulation_steps * max(1, torch.cuda.device_count() if args.local_rank != -1 else 1)}")
+    print_main(f"Epochs: {args.num_train_epochs}")
+    print_main(f"Learning rate: {args.learning_rate}")
+    print_main(f"Use multi-image: {args.use_multi_image}")
+    if args.local_rank != -1:
+        print_main(f"Distributed training: {torch.cuda.device_count()} GPUs")
+    print_main("=" * 100)
 
     # Load dataset
-    print("Loading dataset...")
+    print_main("Loading dataset...")
     train_dataset = load_from_disk(args.dataset_path)
-    print(f"Loaded {len(train_dataset)} training samples")
+    print_main(f"Loaded {len(train_dataset)} training samples")
     
     eval_dataset = None
     if args.eval_dataset_path:
         eval_dataset = load_from_disk(args.eval_dataset_path)
-        print(f"Loaded {len(eval_dataset)} evaluation samples")
+        print_main(f"Loaded {len(eval_dataset)} evaluation samples")
 
     # Check unsloth availability
     use_unsloth = args.use_unsloth and HAS_UNSLOTH and "Qwen" in args.model_name
     
     if args.use_unsloth and not HAS_UNSLOTH:
-        print("⚠️  Warning: unsloth requested but not installed. Using standard loading.")
+        print_main("⚠️  Warning: unsloth requested but not installed. Using standard loading.")
         use_unsloth = False
     elif args.use_unsloth and "Qwen" not in args.model_name:
-        print("⚠️  Warning: unsloth only supports Qwen models. Using standard loading.")
+        print_main("⚠️  Warning: unsloth only supports Qwen models. Using standard loading.")
         use_unsloth = False
     
     # Load model and processor
-    print(f"Loading model: {args.model_name}")
-    print(f"Using unsloth: {use_unsloth}")
-    print(f"Using quantization: {args.quantization}")
-    print(f"Freeze vision tower: {args.freeze_vision_tower}")
+    print_main(f"Loading model: {args.model_name}")
+    print_main(f"Using unsloth: {use_unsloth}")
+    print_main(f"Using quantization: {args.quantization}")
+    print_main(f"Freeze vision tower: {args.freeze_vision_tower}")
     
     if use_unsloth:
         # Load with unsloth for faster training
@@ -864,7 +885,7 @@ def main():
         use_lora = args.lora_rank > 0
         
         if use_lora:
-            print(f"Using LoRA with rank={args.lora_rank}, alpha={args.lora_alpha}")
+            print_main(f"Using LoRA with rank={args.lora_rank}, alpha={args.lora_alpha}")
             # Load model for LoRA training
             model, tokenizer = FastVisionModel.from_pretrained(
                 args.model_name,
@@ -885,7 +906,7 @@ def main():
             
             # Add vision tower modules if not freezing
             if not args.freeze_vision_tower:
-                print("Applying LoRA to vision tower as well...")
+                print_main("Applying LoRA to vision tower as well...")
                 target_modules.extend([
                     "visual.transformer.resblocks.*.attn.in_proj_weight",
                     "visual.transformer.resblocks.*.attn.out_proj",
@@ -903,7 +924,7 @@ def main():
                 random_state=42,
             )
         else:
-            print("Using full finetuning (no LoRA)")
+            print_main("Using full finetuning (no LoRA)")
             # Full finetuning
             model, tokenizer = FastVisionModel.from_pretrained(
                 args.model_name,
@@ -924,7 +945,7 @@ def main():
             padding_side="left",
         )
         
-        print(f"Model loaded with unsloth: {model.__class__.__name__}")
+        print_main(f"Model loaded with unsloth: {model.__class__.__name__}")
     else:
         # Standard loading
         processor = AutoProcessor.from_pretrained(
@@ -947,17 +968,17 @@ def main():
         )
         
         tokenizer = processor.tokenizer
-        print(f"Model loaded: {model.__class__.__name__}")
+        print_main(f"Model loaded: {model.__class__.__name__}")
     
     # Set pad token if not set
     if processor.tokenizer.pad_token is None:
         processor.tokenizer.pad_token = processor.tokenizer.eos_token
     
-    print(f"Model parameters: {sum(p.numel() for p in model.parameters()) / 1e9:.2f}B")
+    print_main(f"Model parameters: {sum(p.numel() for p in model.parameters()) / 1e9:.2f}B")
     
     # Optionally freeze vision tower
     if args.freeze_vision_tower:
-        print("Freezing vision tower (visual encoder)...")
+        print_main("Freezing vision tower (visual encoder)...")
         frozen_params = 0
         total_params = 0
         
@@ -969,16 +990,16 @@ def main():
                 frozen_params += param.numel()
         
         trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        print(f"Frozen {frozen_params / 1e9:.2f}B parameters in vision tower")
-        print(f"Trainable parameters: {trainable_params / 1e9:.2f}B ({100 * trainable_params / total_params:.1f}%)")
+        print_main(f"Frozen {frozen_params / 1e9:.2f}B parameters in vision tower")
+        print_main(f"Trainable parameters: {trainable_params / 1e9:.2f}B ({100 * trainable_params / total_params:.1f}%)")
     else:
         trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         total_params = sum(p.numel() for p in model.parameters())
-        print(f"Training all layers (vision + LLM)")
-        print(f"Trainable parameters: {trainable_params / 1e9:.2f}B ({100 * trainable_params / total_params:.1f}%)")
+        print_main(f"Training all layers (vision + LLM)")
+        print_main(f"Trainable parameters: {trainable_params / 1e9:.2f}B ({100 * trainable_params / total_params:.1f}%)")
 
     # Create data collator
-    print("Creating data collator...")
+    print_main("Creating data collator...")
     collator = VQADataCollator(
         processor=processor,
         use_multi_image=args.use_multi_image,
@@ -1004,10 +1025,10 @@ def main():
     # Initialize wandb if requested
     if args.report_to == "wandb":
         import wandb
-        print(f"Initializing Weights & Biases:")
-        print(f"  Project: {args.wandb_project}")
-        print(f"  Entity: {args.wandb_entity or 'default'}")
-        print(f"  Run name: {run_name}")
+        print_main(f"Initializing Weights & Biases:")
+        print_main(f"  Project: {args.wandb_project}")
+        print_main(f"  Entity: {args.wandb_entity or 'default'}")
+        print_main(f"  Run name: {run_name}")
         
         wandb.init(
             project=args.wandb_project,
@@ -1061,7 +1082,7 @@ def main():
     
     # Add VQA evaluation callback if eval dataset exists
     if eval_dataset:
-        print("Adding VQA evaluation callback...")
+        print_main("Adding VQA evaluation callback...")
         vqa_eval_callback = VQAEvaluationCallback(
             eval_dataset=eval_dataset,
             processor=processor,
@@ -1072,7 +1093,7 @@ def main():
         callbacks.append(vqa_eval_callback)
     
     # Create trainer
-    print("Creating trainer...")
+    print_main("Creating trainer...")
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -1083,19 +1104,19 @@ def main():
     )
 
     # Train
-    print("=" * 100)
-    print("Starting training...")
-    print("=" * 100)
+    print_main("=" * 100)
+    print_main("Starting training...")
+    print_main("=" * 100)
     trainer.train()
 
-    # Save final model
-    print("=" * 100)
-    print(f"Saving final model to {args.output_dir}/final")
-    print("=" * 100)
-    trainer.save_model(os.path.join(args.output_dir, "final"))
-    processor.save_pretrained(os.path.join(args.output_dir, "final"))
-
-    print("Training complete!")
+    # Save final model (only on main process)
+    if is_main_process:
+        print_main("=" * 100)
+        print_main(f"Saving final model to {args.output_dir}/final")
+        print_main("=" * 100)
+        trainer.save_model(os.path.join(args.output_dir, "final"))
+        processor.save_pretrained(os.path.join(args.output_dir, "final"))
+        print_main("Training complete!")
 
 
 if __name__ == "__main__":

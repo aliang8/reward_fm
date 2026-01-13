@@ -13,12 +13,13 @@ logger = get_logger()
 class RFMDataset(BaseDataset):
     """Dataset that combines preference, similarity, and progress generation."""
 
-    def __init__(self, config, is_evaluation=False, max_samples=None, sampler_kwargs=None, **kwargs):
+    def __init__(self, config, is_evaluation=False, max_samples=None, sampler_kwargs=None, return_npz_paths=False, **kwargs):
         super().__init__(config, is_evaluation, **kwargs)
 
         self.pref_sampler = None
         self.progress_sampler = None
         self.similarity_sampler = None
+        self.return_npz_paths = return_npz_paths
 
         if sampler_kwargs is None:
             sampler_kwargs = {}
@@ -29,6 +30,7 @@ class RFMDataset(BaseDataset):
             "combined_indices": self._combined_indices,
             "dataset_success_cutoff_map": self.dataset_success_cutoff_map,
             "verbose": False,
+            "return_npz_paths": return_npz_paths,
             **sampler_kwargs,
         }
 

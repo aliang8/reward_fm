@@ -37,6 +37,7 @@ class RFMBaseSampler:
         dataset_success_cutoff_map: Optional[Dict[str, float]] = None,
         verbose: bool = True,
         random_seed: int = 42,
+        return_npz_paths: bool = False,
     ):
         """Initialize sampler with dataset and indices.
 
@@ -47,12 +48,14 @@ class RFMBaseSampler:
             dataset_success_cutoff_map: Dictionary mapping dataset names to success cutoff percentages
             verbose: Verbose flag
             random_seed: Random seed for deterministic sampling. Creates a local Random instance to avoid affecting global random state.
+            return_npz_paths: If True, return npz paths and frame indices instead of loading actual frames
         """
         self.config = config
         self.dataset = dataset
         self.verbose = verbose
         self.dataset_success_cutoff_map = dataset_success_cutoff_map or {}
         self._local_random = Random(random_seed)
+        self.return_npz_paths = return_npz_paths
 
         self._cached_ids = self.dataset["id"]
         self._cached_is_robot = self.dataset["is_robot"]
@@ -612,17 +615,36 @@ class RFMBaseSampler:
                 text_embedding = embeddings["text_embedding"]
             data = video_embeddings
         else:
-            if isinstance(traj["frames"], str):
-                frames = load_frames_from_npz(traj["frames"])
+            # Handle return_npz_paths mode: don't load frames, just store path
+            if self.return_npz_paths and isinstance(traj["frames"], str):
+                npz_path = traj["frames"]
+                # Get frame count from npz metadata without loading full array
+                try:
+                    with np.load(npz_path) as npz_data:
+                        if "num_frames" in npz_data:
+                            num_frames_total = int(npz_data["num_frames"])
+                        else:
+                            num_frames_total = len(npz_data["frames"])
+                except Exception as e:
+                    logger.warning(f"Failed to read frame count from {npz_path}: {e}, defaulting to max_frames")
+                    num_frames_total = self.config.max_frames
+                data = None  # Don't load actual frames
             else:
-                frames = traj["frames"]
-            data = frames
+                if isinstance(traj["frames"], str):
+                    frames = load_frames_from_npz(traj["frames"])
+                else:
+                    frames = traj["frames"]
+                data = frames
 
         # Get total frames for progress computation
-        if hasattr(data, "shape"):
-            num_frames_total = data.shape[0]
+        if data is not None:
+            if hasattr(data, "shape"):
+                num_frames_total = data.shape[0]
+            else:
+                num_frames_total = len(data)
         else:
-            num_frames_total = len(data)
+            data = [0] * num_frames_total # dummy data for get_subsample_indices
+        # else: num_frames_total was already set in return_npz_paths mode
 
         ds_key = traj["data_source"]
         success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
@@ -651,9 +673,9 @@ class RFMBaseSampler:
                     data, direction="bidirectional", max_frames=self.config.max_frames
                 )
 
-            if strategy_indices is None:
-                logger.trace("[BASE SAMPLER] _get_traj_from_data: Failed to get uniform sample indices")
-                return None
+                if strategy_indices is None:
+                    logger.trace("[BASE SAMPLER] _get_traj_from_data: Failed to get uniform sample indices")
+                    return None
 
             start_idx, middle_idx, end_idx = strategy_indices
 
@@ -676,9 +698,6 @@ class RFMBaseSampler:
             # No subsampling strategy or indices provided - use all frames
             indices = list(range(num_frames_total))
 
-        # Extract data using indices
-        subsampled = data[indices]
-
         # Get partial_success early to pass to compute_progress_from_segment
         partial_success = traj.get("partial_success")
 
@@ -691,34 +710,63 @@ class RFMBaseSampler:
             partial_success=partial_success,
         )
 
-        # Subsample uniformly if needed (if we have more frames than max_frames)
-        current_frame_count = len(subsampled) if hasattr(subsampled, "__len__") else subsampled.shape[0]
-        if current_frame_count > self.config.max_frames:
-            subsampled, frame_indices_subsample = linspace_subsample_frames(subsampled, self.config.max_frames)
-            # Update indices and target_progress
-            if target_progress and len(target_progress) == current_frame_count:
-                target_progress = [target_progress[idx] for idx in frame_indices_subsample]
-            indices = [indices[idx] for idx in frame_indices_subsample] if isinstance(indices, list) else indices
-
-        # Pad if needed
-        if target_progress:
-            if self.config.load_embeddings:
-                subsampled, target_progress = pad_trajectory_to_max_frames_torch(
-                    subsampled, target_progress, self.config.max_frames
-                )
+        # Handle return_npz_paths mode: skip actual data loading
+        if self.return_npz_paths:
+            # Subsample uniformly if needed (update indices only, no actual data)
+            current_frame_count = len(indices)
+            if current_frame_count > self.config.max_frames:
+                # Compute subsample indices without loading data
+                subsample_indices = np.linspace(0, current_frame_count - 1, self.config.max_frames, dtype=int).tolist()
+                # Update indices and target_progress
+                if target_progress and len(target_progress) == current_frame_count:
+                    target_progress = [target_progress[idx] for idx in subsample_indices]
+                indices = [indices[idx] for idx in subsample_indices]
+            
+            # Compute frames_shape based on indices (without loading data)
+            # Assume standard frame shape from config or estimate
+            if hasattr(self.config, 'image_size'):
+                # Estimate shape: (num_frames, height, width, channels)
+                img_size = self.config.image_size if isinstance(self.config.image_size, (list, tuple)) else (self.config.image_size, self.config.image_size)
+                frames_shape = (len(indices), img_size[0], img_size[1], 3)
             else:
-                subsampled, target_progress = pad_trajectory_to_max_frames_np(
-                    subsampled, target_progress, self.config.max_frames
-                )
-
-        # Update frames_shape
-        frames_shape = subsampled.shape if hasattr(subsampled, "shape") else tuple()
-
-        # Set frames or video_embeddings
-        if self.config.load_embeddings:
-            video_embeddings = subsampled
+                # Default shape estimation
+                frames_shape = (len(indices), 224, 224, 3)
+            
+            # Don't load actual frames
+            frames = None
+            video_embeddings = None
         else:
-            frames = subsampled
+            # Extract data using indices (normal mode)
+            subsampled = data[indices]
+
+            # Subsample uniformly if needed (if we have more frames than max_frames)
+            current_frame_count = len(subsampled) if hasattr(subsampled, "__len__") else subsampled.shape[0]
+            if current_frame_count > self.config.max_frames:
+                subsampled, frame_indices_subsample = linspace_subsample_frames(subsampled, self.config.max_frames)
+                # Update indices and target_progress
+                if target_progress and len(target_progress) == current_frame_count:
+                    target_progress = [target_progress[idx] for idx in frame_indices_subsample]
+                indices = [indices[idx] for idx in frame_indices_subsample] if isinstance(indices, list) else indices
+
+            # Pad if needed
+            if target_progress:
+                if self.config.load_embeddings:
+                    subsampled, target_progress = pad_trajectory_to_max_frames_torch(
+                        subsampled, target_progress, self.config.max_frames
+                    )
+                else:
+                    subsampled, target_progress = pad_trajectory_to_max_frames_np(
+                        subsampled, target_progress, self.config.max_frames
+                    )
+
+            # Update frames_shape
+            frames_shape = subsampled.shape if hasattr(subsampled, "shape") else tuple()
+
+            # Set frames or video_embeddings
+            if self.config.load_embeddings:
+                video_embeddings = subsampled
+            else:
+                frames = subsampled
 
         # Compute success labels
         success_label = compute_success_labels(
@@ -737,17 +785,25 @@ class RFMBaseSampler:
                 )[0]
             target_progress = convert_continuous_to_discrete_bins(target_progress, self.config.progress_discrete_bins)
 
+        # Prepare overrides dict
+        overrides = {
+            "frames": frames,
+            "frames_shape": frames_shape,
+            "video_embeddings": video_embeddings,
+            "text_embedding": text_embedding,
+            "target_progress": target_progress,
+            "success_label": success_label,
+            "partial_success": partial_success,
+            "metadata": metadata,
+        }
+        
+        # Add npz_path and frame_indices when in return_npz_paths mode
+        if self.return_npz_paths:
+            overrides["npz_path"] = npz_path if 'npz_path' in locals() else traj.get("frames")
+            overrides["frame_indices"] = indices
+
         trajectory = create_trajectory_from_dict(
             traj,
-            overrides={
-                "frames": frames,
-                "frames_shape": frames_shape,
-                "video_embeddings": video_embeddings,
-                "text_embedding": text_embedding,
-                "target_progress": target_progress,
-                "success_label": success_label,
-                "partial_success": partial_success,
-                "metadata": metadata,
-            },
+            overrides=overrides,
         )
         return trajectory

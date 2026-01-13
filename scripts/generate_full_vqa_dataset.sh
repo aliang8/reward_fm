@@ -9,9 +9,9 @@ uv run scripts/generate_vqa_dataset.py \
 
 
 uv run scripts/generate_vqa_dataset.py \
-    --num_samples 50_000 \
-    --save_batch_size 50_000 \
-    --output_path vqa_datasets/rfm_val_50k \
+    --num_samples 10_000 \
+    --save_batch_size 10_000 \
+    --output_path vqa_datasets/rfm_val_10k \
     --seed 42 \
     --num_workers 32 \
     --eval_mode \

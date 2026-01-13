@@ -17,6 +17,10 @@ class Trajectory(BaseModel):
     # Core trajectory fields
     frames: Union[List[str], np.ndarray, None] = None
     frames_shape: Optional[Tuple] = None
+    
+    # For lazy loading mode (when return_npz_paths=True)
+    npz_path: Optional[str] = None  # Path to npz file (when return_npz_paths=True)
+    frame_indices: Optional[List[int]] = None  # Indices to extract (when return_npz_paths=True)
 
     # If embeddings are precomputed
     embeddings_path: Optional[str] = None

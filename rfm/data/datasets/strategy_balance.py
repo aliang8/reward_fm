@@ -20,12 +20,13 @@ class StrategyBalancedDataset(BaseDataset):
     This is different from RFMDataset which selects a trajectory first, then selects a sample type.
     """
 
-    def __init__(self, config, is_evaluation=False, max_samples=None, **kwargs):
+    def __init__(self, config, is_evaluation=False, max_samples=None, sampler_kwargs=None, return_npz_paths=False, **kwargs):
         super().__init__(config, is_evaluation, **kwargs)
 
         self.pref_sampler = None
         self.progress_sampler = None
         self.similarity_sampler = None
+        self.return_npz_paths = return_npz_paths
 
         if self.config.sample_type_ratio[0] > 0:
             self.pref_sampler = PrefSampler(
@@ -35,6 +36,7 @@ class StrategyBalancedDataset(BaseDataset):
                 self.dataset_success_cutoff_map,
                 is_evaluation,
                 verbose=False,
+                return_npz_paths=return_npz_paths,
                 **kwargs,
             )
         if self.config.sample_type_ratio[1] > 0:
@@ -45,6 +47,7 @@ class StrategyBalancedDataset(BaseDataset):
                 self.dataset_success_cutoff_map,
                 is_evaluation,
                 verbose=False,
+                return_npz_paths=return_npz_paths,
                 **kwargs,
             )
         if self.config.sample_type_ratio[2] > 0:
@@ -55,6 +58,7 @@ class StrategyBalancedDataset(BaseDataset):
                 self.dataset_success_cutoff_map,
                 is_evaluation,
                 verbose=False,
+                return_npz_paths=return_npz_paths,
                 **kwargs,
             )
 

@@ -91,7 +91,7 @@ data:
   seed: 42
 
   dataset_type: rfm
-  use_data_source_balance: false  # Enable data source balancing wrapper
+  use_data_source_balance: false # Enable data source balancing wrapper
   data_source_weights:
     metaworld_train: 1
     roboarena: 1

@@ -31,6 +31,11 @@ python scripts/train_vqa_sft.py \
     --save_steps 500 \ # save every 500 steps
     --eval_strategy steps \
     --eval_steps 500 \ # eval every 500 steps
+    --per_device_train_batch_size 32 \
+    --per_device_eval_batch_size 8 \
+    --gradient_accumulation_steps 1 \
+    --num_train_epochs 1 \
+    --max_frames 32 \
     --run_name qwen3_vl_4b_vqa_train_rfm_10epochs 
 
 
@@ -52,6 +57,11 @@ accelerate launch --num_processes=4 scripts/train_vqa_sft.py \
     --save_steps 500 \
     --eval_strategy steps \
     --eval_steps 500 \
+    --per_device_train_batch_size 32 \
+    --per_device_eval_batch_size 8 \
+    --gradient_accumulation_steps 1 \
+    --num_train_epochs 1 \
+    --max_frames 32 \
     --run_name qwen3_vl_4b_vqa_train_rfm_10epochs_multi_gpu
 ```
 

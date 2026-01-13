@@ -47,7 +47,7 @@ except ImportError:
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from rfm.data.datasets.helpers import load_frames_from_npz
+from rfm.data.datasets.helpers import load_frames_from_npz, linspace_subsample_frames
 
 # Constants
 RESPONSE_PREFIX = "ANS:"
@@ -257,14 +257,14 @@ class VQAEvaluationCallback(TrainerCallback):
         return control
 
 
-def load_and_subsample_frames(npz_path: str, frame_indices: List[int]) -> np.ndarray:
+def load_and_subsample_frames(npz_path: str, frame_indices: List[int], max_frames: int = 32) -> np.ndarray:
     """
     Load frames from npz file and subsample based on frame indices.
     
     Args:
         npz_path: Path to .npz file containing frames
         frame_indices: List of frame indices to extract
-        
+        max_frames: Maximum number of frames to return
     Returns:
         Numpy array of shape (T, H, W, C) with selected frames
     """
@@ -279,6 +279,13 @@ def load_and_subsample_frames(npz_path: str, frame_indices: List[int]) -> np.nda
         subsampled = frames[valid_indices]
     else:
         subsampled = frames
+    
+    subsampled, _ = linspace_subsample_frames(subsampled, num_frames=max_frames)
+
+    # pad to max frames
+    if subsampled.shape[0] < max_frames:
+        last_frame = subsampled[-1:]
+        subsampled = np.concatenate([subsampled, np.repeat(last_frame, max_frames - subsampled.shape[0], axis=0)])
     
     return subsampled
 
@@ -330,6 +337,7 @@ class VQADataCollator:
         processor: AutoProcessor,
         use_multi_image: bool = False,
         inference: bool = False,
+        max_frames: int = 32,
     ):
         """
         Initialize VQA data collator.
@@ -343,44 +351,8 @@ class VQADataCollator:
         self.use_multi_image = use_multi_image
         self.inference = inference
         self.base_model_id = "Qwen"  # For compatibility checks
-
-    def _mask_labels(self, labels: List[torch.Tensor]) -> List[torch.Tensor]:
-        """
-        Mask out the prompt - only train on assistant response after 'ANS:'.
+        self.max_frames = max_frames
         
-        Args:
-            labels: List of label tensors for each sample in batch
-            
-        Returns:
-            List of masked label tensors
-        """
-        masked_labels = []
-        
-        for label_tensor in labels:
-            seq_len = label_tensor.shape[0]
-            max_window = 8  # Number of tokens to decode when searching for ANS:
-            ans_token_positions = []
-
-            # Find positions where "ANS:" appears
-            for idx in range(seq_len):
-                end_idx = min(seq_len, idx + max_window)
-                window_tokens = label_tensor[idx:end_idx]
-                window_text = self.processor.tokenizer.decode(window_tokens, skip_special_tokens=False)
-                if window_text.lstrip().startswith(RESPONSE_PREFIX):
-                    ans_token_positions.append(idx)
-
-            # Mask everything before the last occurrence of "ANS:"
-            if ans_token_positions:
-                start_idx = ans_token_positions[-1]
-                label_tensor[:start_idx] = IGNORE_INDEX
-            else:
-                # If "ANS:" not found, mask everything (shouldn't happen in training)
-                label_tensor[:] = IGNORE_INDEX
-            
-            masked_labels.append(label_tensor)
-        
-        return masked_labels
-
     def _prepare_frames_for_conversation(
         self, frames: List[Image.Image], prefix: str = "video"
     ) -> tuple[Any, Dict[str, Any]]:
@@ -466,16 +438,17 @@ class VQADataCollator:
                     print(f"Sample: {sample}")
                     raise ValueError(f"second_npz_path is None or empty. Sample type: {sample_type}")
                 
-                # Load frames for both trajectories
+                # Load frames for both trajectories, half for preference prediction
                 first_frames = load_and_subsample_frames(
                     first_npz,
-                    sample["first_frame_indices"]
+                    sample["first_frame_indices"],
+                    max_frames=self.max_frames // 2,
                 )
                 second_frames = load_and_subsample_frames(
                     second_npz,
-                    sample["second_frame_indices"]
+                    sample["second_frame_indices"],
+                    max_frames=self.max_frames // 2,
                 )
-                
                 # Convert to PIL
                 first_pil = convert_frames_to_pil(first_frames)
                 second_pil = convert_frames_to_pil(second_frames)
@@ -502,9 +475,10 @@ class VQADataCollator:
                 # Load frames
                 frames = load_and_subsample_frames(
                     npz,
-                    sample["frame_indices"]
+                    sample["frame_indices"],
+                    max_frames=self.max_frames,
                 )
-                
+                print(f"Progress Frames: {frames.shape[0]}, max_frames: {self.max_frames}")
                 # Convert to PIL
                 pil_frames = convert_frames_to_pil(frames)
                 
@@ -545,94 +519,76 @@ class VQADataCollator:
             )
             for msg in all_messages
         ]
-        
+
+        prompt_texts = [
+                self.processor.apply_chat_template(
+                    conversation[:-1], # up until assistant response
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+            for conversation in all_messages
+        ]
+            # 5) Compute prompt lengths with TEXT-ONLY tokenization (much cheaper than text+images)
+        prompt_ids = self.processor.tokenizer(
+            prompt_texts,
+            return_tensors="pt",
+            padding=True,
+            add_special_tokens=False,  # chat template already includes special tokens
+        )["input_ids"]
         # Prepare processor inputs
         # Note: Qwen processor handles both multi-image and video modes
-        try:
-            # Try to import Qwen3's process_vision_info
-            from qwen_vl_utils import process_vision_info
-            
-            # Extract vision information
-            vision_result = process_vision_info(all_messages, image_patch_size=16, return_video_kwargs=True, return_video_metadata=True)
-            
-            # Handle both Qwen2.5 (2 values) and Qwen3 (3 values)
-            if len(vision_result) == 2:
-                # Qwen2.5-VL format
-                image_inputs, video_inputs = vision_result
-                video_kwargs = {}
-            else:
-                # Qwen3-VL format
-                image_inputs, video_inputs, video_kwargs = vision_result
-            
-            # split the videos and according metadatas
-            if video_inputs is not None:
-                video_inputs, video_metadatas = zip(*video_inputs)
-                video_inputs, video_metadatas = list(video_inputs), list(video_metadatas)
-            else:
-                video_metadatas = None
-            
-            # Prepare processor kwargs
-            processor_kwargs = {
-                "text": texts,
-                "padding": True,
-                "truncation": False,
-                "return_tensors": "pt",
-                "video_metadata": video_metadatas,
-                "do_resize": False,
-                "return_tensors": "pt",
-            }
-            
-            # Add images if present
-            if image_inputs:
-                processor_kwargs["images"] = image_inputs
-            
-            # Add videos if present
-            if video_inputs:
-                processor_kwargs["videos"] = video_inputs
-            
-            # Add video_kwargs if present
-            if video_kwargs:
-                processor_kwargs.update(video_kwargs)
-            
-            # Process
-            batch_inputs = self.processor(**processor_kwargs)
-
-            
-        except ImportError:
-            # Fallback: use processor directly (for Qwen2.5-VL without qwen_vl_utils)
-            # Extract images/videos manually
-            image_inputs = []
-            video_inputs = []
-            
-            for msg in all_messages:
-                for turn in msg:
-                    if "content" in turn and isinstance(turn["content"], list):
-                        for content_item in turn["content"]:
-                            if content_item.get("type") == "image":
-                                image_inputs.append(content_item["image"])
-                            elif content_item.get("type") == "video":
-                                video_inputs.append(content_item["video"])
-            
-            processor_kwargs = {
-                "text": texts,
-                "padding": True,
-                "truncation": False,
-                "return_tensors": "pt",
-            }
-            
-            if image_inputs:
-                processor_kwargs["images"] = image_inputs
-            
-            if video_inputs:
-                processor_kwargs["videos"] = video_inputs
-            
-            batch_inputs = self.processor(**processor_kwargs)
+        from qwen_vl_utils import process_vision_info
         
+        # Extract vision information
+        vision_result = process_vision_info(all_messages, image_patch_size=16, return_video_kwargs=True, return_video_metadata=True)
+        
+        # Handle both Qwen2.5 (2 values) and Qwen3 (3 values)
+        if len(vision_result) == 2:
+            # Qwen2.5-VL format
+            image_inputs, video_inputs = vision_result
+            video_kwargs = {}
+        else:
+            # Qwen3-VL format
+            image_inputs, video_inputs, video_kwargs = vision_result
+        
+        # split the videos and according metadatas
+        if video_inputs is not None:
+            video_inputs, video_metadatas = zip(*video_inputs)
+            video_inputs, video_metadatas = list(video_inputs), list(video_metadatas)
+        else:
+            video_metadatas = None
+        
+        # Prepare processor kwargs
+        processor_kwargs = {
+            "text": texts,
+            "padding": True,
+            "truncation": False,
+            "return_tensors": "pt",
+            "video_metadata": video_metadatas,
+            "do_resize": False,
+            "return_tensors": "pt",
+        }
+        
+        # Add images if present
+        if image_inputs:
+            processor_kwargs["images"] = image_inputs
+        
+        # Add videos if present
+        if video_inputs:
+            processor_kwargs["videos"] = video_inputs
+        
+        # Add video_kwargs if present
+        if video_kwargs:
+            processor_kwargs.update(video_kwargs)
+        
+        # Process
+        batch_inputs = self.processor(**processor_kwargs)
+
         # Create labels by masking prompt tokens
         if not self.inference:
             labels = batch_inputs["input_ids"].clone()
-            masked_labels = self._mask_labels([labels[i] for i in range(labels.shape[0])])
-            batch_inputs["labels"] = torch.stack(masked_labels)
+            labels[:, :prompt_ids.shape[1]] = IGNORE_INDEX
+            batch_inputs["labels"] = labels
         
         return batch_inputs
 
@@ -693,6 +649,12 @@ def main():
         default=32,
         help="LoRA alpha for adapter layers (only used with unsloth)",
     )
+    parser.add_argument(
+        "--max_frames",
+        type=int,
+        default=32,
+        help="Maximum number of frames to use for training",
+    )
     
     # Training arguments
     parser.add_argument(
@@ -716,7 +678,7 @@ def main():
     parser.add_argument(
         "--gradient_accumulation_steps",
         type=int,
-        default=2,
+        default=1,
         help="Number of gradient accumulation steps",
     )
     parser.add_argument(
@@ -1061,18 +1023,7 @@ def main():
             entity=args.wandb_entity,
             name=run_name,
             config={
-                "model": args.model_name,
-                "batch_size": args.per_device_train_batch_size,
-                "gradient_accumulation_steps": args.gradient_accumulation_steps,
-                "learning_rate": args.learning_rate,
-                "lr_scheduler_type": args.lr_scheduler_type,
-                "warmup_ratio": args.warmup_ratio,
-                "num_epochs": args.num_train_epochs,
-                "use_unsloth": args.use_unsloth,
-                "quantization": args.quantization,
-                "freeze_vision_tower": args.freeze_vision_tower,
-                "lora_rank": args.lora_rank if args.lora_rank > 0 else None,
-                "lora_alpha": args.lora_alpha if args.lora_rank > 0 else None,
+                **vars(args),
             }
         )
     

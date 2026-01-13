@@ -126,6 +126,11 @@ uv run scripts/train_vqa_sft.py \
     --output_dir ./outputs \
     --eval_strategy steps \
     --eval_steps 100 \
+    --learning_rate 2e-5 \
+    --lr_scheduler_type cosine \
+    --freeze_vision_tower \
+    --lora_rank 0 \
+    --warmup_ratio 0.1 \
     --use_unsloth \
     --run_name qwen3_vl_4b_vqa_training_roboreward_500k
 ```
@@ -142,17 +147,21 @@ uv run scripts/train_vqa_sft.py \
 - `--use_multi_image`: Use multi-image mode instead of video mode (flag)
 - `--use_unsloth`: Use unsloth for faster training (flag, requires unsloth installed)
 - `--quantization`: Use 4-bit quantization (flag, requires unsloth)
+- `--freeze_vision_tower`: Freeze vision encoder, only train LLM + projector (flag, saves memory)
+- `--lora_rank`: LoRA rank for adapter layers (default: 16, set to 0 for full finetuning)
+- `--lora_alpha`: LoRA alpha scaling factor (default: 32)
 
 **Training:**
 - `--output_dir`: Output directory for checkpoints (default: "./outputs/vqa_training")
 - `--per_device_train_batch_size`: Batch size per device (default: 4)
 - `--per_device_eval_batch_size`: Eval batch size per device (default: 4)
-- `--gradient_accumulation_steps`: Gradient accumulation (default: 1)
-- `--num_train_epochs`: Number of epochs (default: 3)
+- `--gradient_accumulation_steps`: Gradient accumulation (default: 4)
+- `--num_train_epochs`: Number of epochs (default: 1)
 - `--learning_rate`: Learning rate (default: 2e-5)
+- `--lr_scheduler_type`: LR scheduler type: "linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup" (default: "cosine")
 - `--warmup_ratio`: Warmup ratio (default: 0.1)
-- `--max_grad_norm`: Gradient clipping (default: 1.0)
-- `--weight_decay`: Weight decay (default: 0.01)
+- `--max_grad_norm`: Gradient clipping (default: 10.0)
+- `--weight_decay`: Weight decay (default: 0.05)
 - `--bf16`: Use bfloat16 (default: True)
 - `--gradient_checkpointing`: Enable gradient checkpointing (default: True)
 
@@ -191,6 +200,73 @@ uv run scripts/train_vqa_sft.py \
 - Optional faster training with unsloth (2-5x speedup)
 - Supports 4-bit quantization for lower memory usage
 - Automatically uses optimized gradient checkpointing
+
+**Learning Rate Scheduling:**
+- **Cosine** (default): Smooth decay from peak LR to 0, best for most cases
+- **Linear**: Linear decay, stable but less smooth than cosine
+- **Cosine with restarts**: Periodic LR increases, useful for long training
+- **Constant with warmup**: Fixed LR after warmup, good for quick experiments
+- Warmup ratio of 0.1 means 10% of training steps are used for warmup
+
+**Vision Tower Training Strategies:**
+
+1. **Full Finetuning (Default)** - Trains all parameters including vision encoder
+   ```bash
+   # No special flags needed - trains everything
+   python scripts/train_vqa_sft.py \
+       --dataset_path /data/vqa_train \
+       --model_name Qwen/Qwen3-VL-4B-Instruct
+   ```
+   - **Pros**: Best performance, full adaptation to your data
+   - **Cons**: Highest memory usage (~45GB for 4B model), slower training
+   - **Use when**: You have enough GPU memory and want best results
+
+2. **Frozen Vision Tower** - Only trains LLM + multimodal projector
+   ```bash
+   python scripts/train_vqa_sft.py \
+       --dataset_path /data/vqa_train \
+       --model_name Qwen/Qwen3-VL-4B-Instruct \
+       --freeze_vision_tower
+   ```
+   - **Pros**: 30-40% less memory, faster training, prevents overfitting
+   - **Cons**: Vision encoder doesn't adapt to robotics domain
+   - **Use when**: Memory constrained, or dataset is small (<10k samples)
+
+3. **LoRA on All Layers** - Parameter-efficient training with LoRA adapters
+   ```bash
+   python scripts/train_vqa_sft.py \
+       --dataset_path /data/vqa_train \
+       --model_name Qwen/Qwen3-VL-4B-Instruct \
+       --use_unsloth \
+       --lora_rank 16 \
+       --lora_alpha 32
+   ```
+   - **Pros**: ~70% less memory than full finetuning, trains vision + LLM
+   - **Cons**: Slightly lower performance than full finetuning
+   - **Use when**: Good balance between memory and performance
+
+4. **LoRA on LLM, Frozen Vision** - Most memory efficient
+   ```bash
+   python scripts/train_vqa_sft.py \
+       --dataset_path /data/vqa_train \
+       --model_name Qwen/Qwen3-VL-4B-Instruct \
+       --use_unsloth \
+       --lora_rank 16 \
+       --freeze_vision_tower
+   ```
+   - **Pros**: Lowest memory usage (~15GB for 4B model), fastest training
+   - **Cons**: Vision encoder doesn't adapt
+   - **Use when**: Consumer GPUs (RTX 3090, 4090), quick experiments
+
+**Memory Comparison (Qwen3-VL-4B, batch_size=4):**
+
+| Strategy | Memory | Speed | Quality | Recommended For |
+|----------|--------|-------|---------|-----------------|
+| Full FT | ~45 GB | 1.0x | Best | A100 80GB, best results |
+| Full FT + Frozen Vision | ~28 GB | 1.3x | Good | A100 40GB, good balance |
+| LoRA (all) | ~20 GB | 1.5x | Good | A100 40GB, efficient |
+| LoRA + Frozen Vision | ~15 GB | 1.8x | Fair | RTX 3090/4090, experiments |
+| LoRA + Frozen + 4bit | ~12 GB | 2.0x | Fair | RTX 3090, lowest memory |
 - Only works with Qwen models
 - Install: `pip install unsloth`
 

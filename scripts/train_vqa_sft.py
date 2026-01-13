@@ -407,11 +407,19 @@ class VQADataCollator:
             for img in frames_or_video:
                 content_list.append({"type": "image", "image": img})
         else:
-            # Video mode: add as video
+            # Video mode: add as video with proper metadata
+            # Qwen3VL needs video_metadata to avoid FPS warnings
+            num_frames = len(frames_or_video)
+            fps = 1.0  # We're using pre-sampled frames, so effective FPS is 1
+            
             content_list.append({
                 "type": "video",
                 "video": frames_or_video,
-                "fps": 1.0,  # Placeholder FPS
+                "sample_fps": fps,
+                "video_metadata": {
+                    "fps": fps,
+                    "total_frames": num_frames,
+                }
             })
 
     def __call__(self, batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
@@ -520,7 +528,8 @@ class VQADataCollator:
             self.processor.apply_chat_template(
                 msg,
                 tokenize=False,
-                add_generation_prompt=self.inference
+                add_generation_prompt=self.inference,
+                fps=1,
             )
             for msg in all_messages
         ]
@@ -644,6 +653,23 @@ def main():
         action="store_true",
         help="Use 4-bit quantization (requires unsloth)",
     )
+    parser.add_argument(
+        "--freeze_vision_tower",
+        action="store_true",
+        help="Freeze vision encoder (only train LLM + projector, saves memory)",
+    )
+    parser.add_argument(
+        "--lora_rank",
+        type=int,
+        default=0,
+        help="LoRA rank for adapter layers (only used with unsloth, set to 0 for full finetuning)",
+    )
+    parser.add_argument(
+        "--lora_alpha",
+        type=int,
+        default=32,
+        help="LoRA alpha for adapter layers (only used with unsloth)",
+    )
     
     # Training arguments
     parser.add_argument(
@@ -655,7 +681,7 @@ def main():
     parser.add_argument(
         "--per_device_train_batch_size",
         type=int,
-        default=16,
+        default=4,
         help="Batch size per device for training",
     )
     parser.add_argument(
@@ -667,7 +693,7 @@ def main():
     parser.add_argument(
         "--gradient_accumulation_steps",
         type=int,
-        default=1,
+        default=4,
         help="Number of gradient accumulation steps",
     )
     parser.add_argument(
@@ -679,7 +705,7 @@ def main():
     parser.add_argument(
         "--learning_rate",
         type=float,
-        default=2e-5,
+        default=5e-6,
         help="Learning rate",
     )
     parser.add_argument(
@@ -687,6 +713,13 @@ def main():
         type=float,
         default=0.1,
         help="Warmup ratio",
+    )
+    parser.add_argument(
+        "--lr_scheduler_type",
+        type=str,
+        default="cosine",
+        choices=["linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup"],
+        help="Learning rate scheduler type",
     )
     parser.add_argument(
         "--save_strategy",
@@ -809,20 +842,68 @@ def main():
     print(f"Loading model: {args.model_name}")
     print(f"Using unsloth: {use_unsloth}")
     print(f"Using quantization: {args.quantization}")
+    print(f"Freeze vision tower: {args.freeze_vision_tower}")
     
     if use_unsloth:
         # Load with unsloth for faster training
         print("Loading model with unsloth...")
-        model, tokenizer = FastVisionModel.from_pretrained(
-            args.model_name,
-            load_in_4bit=args.quantization,
-            use_gradient_checkpointing="unsloth",
-            dtype=torch.bfloat16 if args.bf16 else torch.float32,
-            full_finetuning=True,
-            device_map=None,
-            attn_implementation="flash_attention_2",
-            trust_remote_code=True,
-        )
+        
+        # Determine if we're doing full finetuning or LoRA
+        # If lora_rank is set and not freezing vision, we can use LoRA on vision tower
+        use_lora = args.lora_rank > 0
+        
+        if use_lora:
+            print(f"Using LoRA with rank={args.lora_rank}, alpha={args.lora_alpha}")
+            # Load model for LoRA training
+            model, tokenizer = FastVisionModel.from_pretrained(
+                args.model_name,
+                load_in_4bit=args.quantization,
+                use_gradient_checkpointing="unsloth",
+                dtype=torch.bfloat16 if args.bf16 else torch.float32,
+                device_map=None,
+                attn_implementation="flash_attention_2",
+                trust_remote_code=True,
+            )
+            
+            # Apply LoRA to model
+            # Target modules: LLM layers + optionally vision tower
+            target_modules = [
+                "q_proj", "k_proj", "v_proj", "o_proj",
+                "gate_proj", "up_proj", "down_proj",
+            ]
+            
+            # Add vision tower modules if not freezing
+            if not args.freeze_vision_tower:
+                print("Applying LoRA to vision tower as well...")
+                target_modules.extend([
+                    "visual.transformer.resblocks.*.attn.in_proj_weight",
+                    "visual.transformer.resblocks.*.attn.out_proj",
+                    "visual.transformer.resblocks.*.mlp.c_fc",
+                    "visual.transformer.resblocks.*.mlp.c_proj",
+                ])
+            
+            model = FastVisionModel.get_peft_model(
+                model,
+                r=args.lora_rank,
+                lora_alpha=args.lora_alpha,
+                lora_dropout=0.0,
+                target_modules=target_modules,
+                use_gradient_checkpointing="unsloth",
+                random_state=42,
+            )
+        else:
+            print("Using full finetuning (no LoRA)")
+            # Full finetuning
+            model, tokenizer = FastVisionModel.from_pretrained(
+                args.model_name,
+                load_in_4bit=args.quantization,
+                use_gradient_checkpointing="unsloth",
+                dtype=torch.bfloat16 if args.bf16 else torch.float32,
+                full_finetuning=True,
+                device_map=None,
+                attn_implementation="flash_attention_2",
+                trust_remote_code=True,
+            )
         
         # Load processor separately
         processor = AutoProcessor.from_pretrained(
@@ -862,6 +943,28 @@ def main():
         processor.tokenizer.pad_token = processor.tokenizer.eos_token
     
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()) / 1e9:.2f}B")
+    
+    # Optionally freeze vision tower
+    if args.freeze_vision_tower:
+        print("Freezing vision tower (visual encoder)...")
+        frozen_params = 0
+        total_params = 0
+        
+        for name, param in model.named_parameters():
+            total_params += param.numel()
+            # Freeze visual/vision tower parameters
+            if any(keyword in name.lower() for keyword in ['visual', 'vision', 'image', 'vit']):
+                param.requires_grad = False
+                frozen_params += param.numel()
+        
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"Frozen {frozen_params / 1e9:.2f}B parameters in vision tower")
+        print(f"Trainable parameters: {trainable_params / 1e9:.2f}B ({100 * trainable_params / total_params:.1f}%)")
+    else:
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        total_params = sum(p.numel() for p in model.parameters())
+        print(f"Training all layers (vision + LLM)")
+        print(f"Trainable parameters: {trainable_params / 1e9:.2f}B ({100 * trainable_params / total_params:.1f}%)")
 
     # Create data collator
     print("Creating data collator...")
@@ -904,9 +1007,14 @@ def main():
                 "batch_size": args.per_device_train_batch_size,
                 "gradient_accumulation_steps": args.gradient_accumulation_steps,
                 "learning_rate": args.learning_rate,
+                "lr_scheduler_type": args.lr_scheduler_type,
+                "warmup_ratio": args.warmup_ratio,
                 "num_epochs": args.num_train_epochs,
                 "use_unsloth": args.use_unsloth,
                 "quantization": args.quantization,
+                "freeze_vision_tower": args.freeze_vision_tower,
+                "lora_rank": args.lora_rank if args.lora_rank > 0 else None,
+                "lora_alpha": args.lora_alpha if args.lora_rank > 0 else None,
             }
         )
     
@@ -919,6 +1027,7 @@ def main():
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         num_train_epochs=args.num_train_epochs,
         learning_rate=args.learning_rate,
+        lr_scheduler_type=args.lr_scheduler_type,
         warmup_ratio=args.warmup_ratio,
         save_strategy=args.save_strategy,
         save_steps=args.save_steps if args.save_strategy == "steps" else None,

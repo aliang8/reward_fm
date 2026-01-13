@@ -1,7 +1,7 @@
 # ROBOREWARD-1M
 uv run scripts/generate_vqa_dataset.py \
-    --num_samples 500_000 \
-    --save_batch_size 100_000 \
+    --num_samples 10_000 \
+    --save_batch_size 10_000 \
     --output_path vqa_datasets/roboreward_train_500k \
     --seed 42 \
     --num_workers 32 \

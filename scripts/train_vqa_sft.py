@@ -53,6 +53,18 @@ from rfm.data.datasets.helpers import load_frames_from_npz
 RESPONSE_PREFIX = "ANS:"
 IGNORE_INDEX = -100
 
+def process_progress_answer(text: str) -> Optional[str]:
+    """
+    Process the progress answer from generated text.
+    
+    Args:
+        text: Generated text
+        
+    Returns:
+        Processed answer or None if not found
+    """
+    return float(text) / 100
+
 
 def extract_answer_from_generation(text: str) -> Optional[str]:
     """
@@ -66,12 +78,13 @@ def extract_answer_from_generation(text: str) -> Optional[str]:
     Returns:
         Extracted answer or None if not found
     """
-    # Look for "ANS: X" pattern
-    match = re.search(r'ANS:\s*(\S+)', text, re.IGNORECASE)
+    # Look for "ANS: X" pattern after "assistant" role marker
+    # Use flexible whitespace matching and DOTALL to handle newlines
+    match = re.search(r'assistant\s+ANS:\s*(\S+)', text, re.IGNORECASE | re.DOTALL)
     if match:
         return match.group(1).strip()
     
-    # Fallback: look for the last word after "ANS:"
+    # Fallback: look for the last word after "ANS:" anywhere in text
     if "ANS:" in text.upper():
         parts = text.upper().split("ANS:")
         if len(parts) > 1:
@@ -154,12 +167,12 @@ class VQAEvaluationCallback(TrainerCallback):
                         
                         # Decode
                         generated_texts = self.processor.batch_decode(outputs, skip_special_tokens=True)
-                        
+
                         # Check correctness
                         for sample, gen_text in zip(batch, generated_texts):
                             predicted = extract_answer_from_generation(gen_text)
                             ground_truth = sample['answer']
-                            
+
                             if predicted == ground_truth:
                                 pref_correct += 1
                             pref_total += 1
@@ -211,17 +224,16 @@ class VQAEvaluationCallback(TrainerCallback):
                             ground_truth_str = sample['answer']
                             
                             try:
-                                predicted = int(predicted_str) if predicted_str else None
-                                ground_truth = int(ground_truth_str)
-                                
+                                predicted = process_progress_answer(predicted_str) if predicted_str else None
+                                ground_truth = process_progress_answer(ground_truth_str)
                                 if predicted is not None:
                                     error = abs(predicted - ground_truth)
                                     prog_errors.append(error)
                                 else:
-                                    prog_errors.append(100)  # Max error
+                                    prog_errors.append(1.0)  # Max error
                             except (ValueError, TypeError):
-                                prog_errors.append(100)  # Max error
-                                
+                                prog_errors.append(1.0)  # Max error
+                        
                     except Exception as e:
                         print(f"Error in progress eval batch {i}: {e}")
                         continue

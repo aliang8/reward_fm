@@ -37,6 +37,7 @@ from hydra import compose, initialize_config_dir
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
+from rfm.data.datasets.base import resolve_dataset_keys
 from tqdm import tqdm
 
 # Add project root to path
@@ -320,9 +321,20 @@ def main():
     config = convert_hydra_to_dataclass(hydra_config, ExperimentConfig)
     
     print(f"Loaded config: {args.config_name}")
-    print(f"Train datasets: {config.data.train_datasets}")
     print(f"Sample type ratio: {config.data.sample_type_ratio}")
     print(f"Max frames: {config.data.max_frames}")
+
+    print("Resolving dataset keys")
+    config.data.train_datasets = resolve_dataset_keys(config.data.train_datasets, split="train")
+    print(f"Resolved train datasets: {config.data.train_datasets}")
+
+    if args.eval_mode:
+        config.data.eval_datasets = resolve_dataset_keys(config.data.train_datasets, split="eval")
+        config.data.train_datasets = config.data.eval_datasets
+        print(f"Resolved eval datasets: {config.data.eval_datasets}")
+    
+    print(f"Train datasets: {config.data.train_datasets}")
+    print(f"Eval datasets: {config.data.eval_datasets}")
 
     # Create RFMDataset with return_npz_paths=True
     print("\nCreating RFMDataset...")
@@ -362,20 +374,29 @@ def main():
         )
         
         samples_generated = 0
-        for batch in dataloader:
-            all_samples.extend(batch)
-            samples_generated += len(batch)
-            progress_bar.update(len(batch))
+        epoch = 0
+        
+        # Loop over multiple epochs if needed
+        while samples_generated < num_samples:
+            for batch in dataloader:
+                all_samples.extend(batch)
+                samples_generated += len(batch)
+                progress_bar.update(len(batch))
+                
+                # Incremental save
+                if len(all_samples) >= args.save_batch_size:
+                    print(f"\nSaving batch {batch_counter} ({len(all_samples)} samples)...")
+                    temp_path = save_batch_to_temp(all_samples, temp_dir, batch_counter)
+                    temp_files.append(temp_path)
+                    all_samples = []
+                    batch_counter += 1
+                
+                # Stop if we've reached the target number
+                if samples_generated >= num_samples:
+                    break
             
-            # Incremental save
-            if len(all_samples) >= args.save_batch_size:
-                print(f"\nSaving batch {batch_counter} ({len(all_samples)} samples)...")
-                temp_path = save_batch_to_temp(all_samples, temp_dir, batch_counter)
-                temp_files.append(temp_path)
-                all_samples = []
-                batch_counter += 1
-            
-            # Stop if we've reached the target number
+            epoch += 1
+            # Break outer loop if we've reached target
             if samples_generated >= num_samples:
                 break
         

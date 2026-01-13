@@ -673,9 +673,9 @@ class RFMBaseSampler:
                     data, direction="bidirectional", max_frames=self.config.max_frames
                 )
 
-                if strategy_indices is None:
-                    logger.trace("[BASE SAMPLER] _get_traj_from_data: Failed to get uniform sample indices")
-                    return None
+            if strategy_indices is None:
+                logger.trace("[BASE SAMPLER] _get_traj_from_data: Failed to get uniform sample indices")
+                return None
 
             start_idx, middle_idx, end_idx = strategy_indices
 

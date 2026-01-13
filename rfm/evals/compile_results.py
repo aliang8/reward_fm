@@ -17,7 +17,7 @@ import torch
 import torch.nn.functional as F
 from sklearn.metrics import average_precision_score
 from rfm.data.datasets.helpers import load_frames_from_npz
-from rfm.evals.eval_metrics_utils import compute_pearson, compute_spearman
+from rfm.evals.eval_metrics_utils import compute_pearson, compute_spearman, compute_kendall
 from rfm.evals.eval_viz_utils import create_combined_progress_success_plot
 from rfm.models.utils import convert_bins_to_continuous, convert_discrete_target_to_continuous
 
@@ -34,6 +34,7 @@ def compute_eval_metrics(
     is_discrete_mode: bool = False,
     num_bins: int = 10,
     data_source: Optional[str] = None,
+    correlation_method: str = "kendall",
 ):
     if eval_type == "quality_preference" or eval_type == "quality_preference_roboarena":
         return run_quality_preference_eval(results, data_source=data_source)
@@ -44,7 +45,7 @@ def compute_eval_metrics(
     elif eval_type == "confusion_matrix":
         return run_confusion_matrix_eval(results, progress_pred_type, is_discrete_mode, num_bins)
     elif eval_type == "policy_ranking":
-        return run_policy_ranking_eval(results, progress_pred_type, is_discrete_mode, num_bins, data_source)
+        return run_policy_ranking_eval(results, progress_pred_type, is_discrete_mode, num_bins, data_source, correlation_method)
     elif eval_type == "similarity_score":
         return run_similarity_score_eval(results)
 
@@ -769,6 +770,7 @@ def _compute_policy_ranking_metrics_partial_success(
     all_rewards: np.ndarray,
     all_partial_successes: np.ndarray,
     all_tasks: List[str],
+    correlation_method: str = "kendall",
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Compute policy ranking metrics for datasets with partial_success.
 
@@ -852,11 +854,14 @@ def _compute_policy_ranking_metrics_partial_success(
                 bin_ranks.append(bin_idx)
                 avg_reward_values.append(avg_reward)
 
-        spearman_rewind = None
+        correlation_rewind = None
         if len(bin_ranks) >= 2:
-            spearman_rewind = compute_spearman(bin_ranks, avg_reward_values)
-            if not np.isnan(spearman_rewind):
-                all_spearman_rewind.append(spearman_rewind)
+            if correlation_method == "kendall":
+                correlation_rewind = compute_kendall(bin_ranks, avg_reward_values)
+            else:  # spearman
+                correlation_rewind = compute_spearman(bin_ranks, avg_reward_values)
+            if not np.isnan(correlation_rewind):
+                all_spearman_rewind.append(correlation_rewind)
 
         if total_pairs > 0:
             all_correct_pairs.append(correct_pairs)
@@ -864,7 +869,7 @@ def _compute_policy_ranking_metrics_partial_success(
             task_ranking_acc = correct_pairs / total_pairs
             task_details[task] = {
                 "ranking_acc": float(task_ranking_acc),
-                "spearman_rewind": float(spearman_rewind) if spearman_rewind is not None else None,
+                f"{correlation_method}_rewind": float(correlation_rewind) if correlation_rewind is not None else None,
             }
 
     if not all_total_pairs:
@@ -878,7 +883,7 @@ def _compute_policy_ranking_metrics_partial_success(
 
     metrics = {
         "ranking_acc_rba": ranking_acc,
-        "spearman_rewind_rba": np.mean(all_spearman_rewind).item() if all_spearman_rewind else None,
+        f"{correlation_method}_rewind_rba": np.mean(all_spearman_rewind).item() if all_spearman_rewind else None,
     }
 
     return metrics, task_details
@@ -888,6 +893,7 @@ def _compute_policy_ranking_metrics_quality_label(
     all_rewards: np.ndarray,
     all_quality_labels: list[str],
     all_tasks: list[str],
+    correlation_method: str = "kendall",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Compute policy ranking metrics for datasets using quality_label.
 
@@ -908,13 +914,17 @@ def _compute_policy_ranking_metrics_quality_label(
         return {}, {}
 
     task_details = {}
-    all_spearman = []
-    all_spearman_rewind = []
+    all_correlations = []
+    all_correlations_rewind = []
     all_succ_subopt_diffs = []
     all_subopt_fail_diffs = []
     all_succ_fail_diffs = []
     all_correct_pairs = []
     all_total_pairs = []
+    
+    # Track global ranking accuracy for all quality pairs
+    global_pair_correct = {}  # (quality1, quality2) -> correct_count
+    global_pair_total = {}    # (quality1, quality2) -> total_count
 
     # Non-RoboArena: Use quality_label
     quality_order = {"failure": 1, "suboptimal": 2, "successful": 3}
@@ -934,16 +944,19 @@ def _compute_policy_ranking_metrics_quality_label(
             continue
 
         k = len(present_labels)
-        spearman = []
+        correlation_scores = []
 
         for labels_combo in combinations(present_labels, k):
             gold_ranks = [quality_order[q] for q in labels_combo]
             for rewards_tuple in product(*(quality_to_rewards[q] for q in labels_combo)):
-                spearman_corr = compute_spearman(gold_ranks, list(rewards_tuple))
-                if not np.isnan(spearman_corr):
-                    spearman.append(spearman_corr)
+                if correlation_method == "kendall":
+                    corr = compute_kendall(gold_ranks, list(rewards_tuple))
+                else:  # spearman
+                    corr = compute_spearman(gold_ranks, list(rewards_tuple))
+                if not np.isnan(corr):
+                    correlation_scores.append(corr)
 
-        avg_spearman_corr = float(np.mean(spearman)) if spearman else 0.0
+        avg_correlation = float(np.mean(correlation_scores)) if correlation_scores else 0.0
 
         avg_rewards_per_quality = {}
         quality_ranks = []
@@ -958,25 +971,46 @@ def _compute_policy_ranking_metrics_quality_label(
 
         correct_pairs = 0
         total_pairs = 0
-        for i, quality1 in enumerate(present_labels):
-            for quality2 in present_labels[i + 1 :]:
-                avg_reward1 = avg_rewards_per_quality[quality1]
-                avg_reward2 = avg_rewards_per_quality[quality2]
+
+        # Compare every pair of trajectories within this task
+        for i in range(len(task_quality_labels)):
+            for j in range(i + 1, len(task_quality_labels)):
+                quality1 = task_quality_labels[i]
+                quality2 = task_quality_labels[j]
+                reward1 = task_rewards[i]
+                reward2 = task_rewards[j]
+                
+                # Skip if same quality label
+                if quality1 == quality2:
+                    continue
+                
                 expected_order = quality_order[quality1] > quality_order[quality2]
-                actual_order = avg_reward1 > avg_reward2
+                actual_order = reward1 > reward2
                 total_pairs += 1
                 if expected_order == actual_order:
                     correct_pairs += 1
+                
+                # Track global pairs by quality label combination
+                pair_key = tuple(sorted([quality1, quality2]))
+                if pair_key not in global_pair_total:
+                    global_pair_total[pair_key] = 0
+                    global_pair_correct[pair_key] = 0
+                global_pair_total[pair_key] += 1
+                if expected_order == actual_order:
+                    global_pair_correct[pair_key] += 1
 
         if total_pairs > 0:
             all_correct_pairs.append(correct_pairs)
             all_total_pairs.append(total_pairs)
 
-        spearman_rewind = None
+        correlation_rewind = None
         if len(quality_ranks) >= 2:
-            spearman_rewind = compute_spearman(quality_ranks, avg_reward_values)
-            if not np.isnan(spearman_rewind):
-                all_spearman_rewind.append(spearman_rewind)
+            if correlation_method == "kendall":
+                correlation_rewind = compute_kendall(quality_ranks, avg_reward_values)
+            else:  # spearman
+                correlation_rewind = compute_spearman(quality_ranks, avg_reward_values)
+            if not np.isnan(correlation_rewind):
+                all_correlations_rewind.append(correlation_rewind)
 
         succ_subopt_diff = None
         subopt_fail_diff = None
@@ -995,15 +1029,15 @@ def _compute_policy_ranking_metrics_quality_label(
             all_succ_fail_diffs.append(succ_fail_diff)
 
         task_details[task] = {
-            "spearman": avg_spearman_corr,
-            "spearman_rewind": spearman_rewind,
+            correlation_method: avg_correlation,
+            f"{correlation_method}_rewind": correlation_rewind,
             "succ_subopt_diff": succ_subopt_diff,
             "subopt_fail_diff": subopt_fail_diff,
             "succ_fail_diff": succ_fail_diff,
         }
-        all_spearman.append(avg_spearman_corr)
+        all_correlations.append(avg_correlation)
 
-    if len(all_spearman) == 0:
+    if len(all_correlations) == 0:
         return {}, {}
 
     ranking_acc = None
@@ -1011,10 +1045,25 @@ def _compute_policy_ranking_metrics_quality_label(
         total_correct = sum(all_correct_pairs)
         total_pairs = sum(all_total_pairs)
         ranking_acc = total_correct / total_pairs if total_pairs > 0 else 0.0
+    
+    # Compute ranking accuracy for all pairs by quality label combination
+    ranking_acc_all_pairs = {}
+    for pair_key in global_pair_total:
+        if global_pair_total[pair_key] > 0:
+            pair_acc = global_pair_correct[pair_key] / global_pair_total[pair_key]
+            pair_name = f"ranking_acc_{pair_key[0]}_vs_{pair_key[1]}"
+            ranking_acc_all_pairs[pair_name] = pair_acc
+    
+    # Compute overall ranking accuracy across all pairs
+    overall_ranking_acc_all_pairs = None
+    if global_pair_total:
+        total_correct_all = sum(global_pair_correct.values())
+        total_pairs_all = sum(global_pair_total.values())
+        overall_ranking_acc_all_pairs = total_correct_all / total_pairs_all if total_pairs_all > 0 else 0.0
 
     metrics = {
-        "spearman": np.mean(all_spearman).item(),
-        "spearman_rewind": np.mean(all_spearman_rewind).item() if all_spearman_rewind else None,
+        correlation_method: np.mean(all_correlations).item(),
+        f"{correlation_method}_rewind": np.mean(all_correlations_rewind).item() if all_correlations_rewind else None,
         "avg_succ_subopt_diff": np.mean(all_succ_subopt_diffs).item() if all_succ_subopt_diffs else None,
         "min_succ_subopt_diff": np.min(all_succ_subopt_diffs).item() if all_succ_subopt_diffs else None,
         "max_succ_subopt_diff": np.max(all_succ_subopt_diffs).item() if all_succ_subopt_diffs else None,
@@ -1025,6 +1074,8 @@ def _compute_policy_ranking_metrics_quality_label(
         "min_succ_fail_diff": np.min(all_succ_fail_diffs).item() if all_succ_fail_diffs else None,
         "max_succ_fail_diff": np.max(all_succ_fail_diffs).item() if all_succ_fail_diffs else None,
         "ranking_acc": ranking_acc,
+        "ranking_acc_all_pairs": overall_ranking_acc_all_pairs,
+        **ranking_acc_all_pairs,  # Add individual pair accuracies
     }
 
     return metrics, task_details
@@ -1036,6 +1087,7 @@ def _compute_policy_ranking_metrics_from_rewards(
     all_partial_successes: Optional[np.ndarray],
     all_quality_labels: Optional[List[str]],
     all_tasks: List[str],
+    correlation_method: str = "kendall",
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Compute policy ranking metrics from pre-computed trajectory rewards.
 
@@ -1050,9 +1102,9 @@ def _compute_policy_ranking_metrics_from_rewards(
         Tuple of (metrics dictionary, task_details dictionary)
     """
     if use_partial_success and all_partial_successes is not None:
-        return _compute_policy_ranking_metrics_partial_success(all_rewards, all_partial_successes, all_tasks)
+        return _compute_policy_ranking_metrics_partial_success(all_rewards, all_partial_successes, all_tasks, correlation_method)
     else:
-        return _compute_policy_ranking_metrics_quality_label(all_rewards, all_quality_labels, all_tasks)
+        return _compute_policy_ranking_metrics_quality_label(all_rewards, all_quality_labels, all_tasks, correlation_method)
 
 
 def run_confusion_matrix_eval(
@@ -1160,6 +1212,7 @@ def run_policy_ranking_eval(
     is_discrete_mode: bool,
     num_bins: int,
     data_source: Optional[str] = None,
+    correlation_method: str = "kendall",
 ) -> Dict[str, Any]:
     """Run policy_ranking evaluation analysis.
 
@@ -1366,6 +1419,7 @@ def run_policy_ranking_eval(
             np.array(all_partial_successes) if use_partial_success and all_partial_successes else None,
             all_quality_labels if not use_partial_success else None,
             all_tasks,
+            correlation_method,
         )
 
         if metrics:

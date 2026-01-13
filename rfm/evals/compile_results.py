@@ -416,7 +416,10 @@ def run_reward_alignment_eval_per_trajectory(
                         # Convert to continuous values using weighted sum of bin centers
                         if last_frame_only:
                             # Use last frame's logits
-                            all_pred_logits.append(pred_array[-1])
+                            if pred_array.ndim == 2 and pred_array.shape[1] == 1: # this is [num_bins, 1]
+                                all_pred_logits.append(pred_array.squeeze(-1))
+                            else:
+                                all_pred_logits.append(pred_array[-1])
                             if tgt is not None and len(tgt) > 0:
                                 all_target_bins.append(tgt[-1])
                         else:
@@ -425,7 +428,12 @@ def run_reward_alignment_eval_per_trajectory(
                                 indx = -1
                             else:
                                 indx = timestep
-                            all_pred_logits.append(pred_array[indx])
+
+                            # Use last frame's logits
+                            if pred_array.ndim == 2 and pred_array.shape[1] == 1: # this is [num_bins, 1 ]
+                                all_pred_logits.append(pred_array.squeeze(-1))
+                            else:
+                                all_pred_logits.append(pred_array[indx])
                             if tgt is not None and len(tgt) > 0:
                                 # Target is already a discrete bin index
                                 if timestep >= len(tgt) - 1:

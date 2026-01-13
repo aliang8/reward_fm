@@ -436,9 +436,9 @@ def compute_batch_outputs(
             "preference_labels": batch_inputs["preference_labels"].cpu().tolist(),
         })
 
-        logger.debug(f"predictions: {results['predictions']}")
-        logger.debug(f"prediction_probs: {results['prediction_probs']}")
-        logger.debug(f"preference_labels: {results['preference_labels']}")
+        # logger.debug(f"predictions: {results['predictions']}")
+        # logger.debug(f"prediction_probs: {results['prediction_probs']}")
+        # logger.debug(f"preference_labels: {results['preference_labels']}")
 
     # Progress predictions (only for progress sample type)
     progress_logits = model_output.progress_logits
@@ -466,14 +466,14 @@ def compute_batch_outputs(
             progress_pred = [[] for _ in range(batch_size)]
 
         results["progress_pred"] = progress_pred
-        logger.debug(f"progress_pred: {progress_pred}")
+        # logger.debug(f"progress_pred: {progress_pred}")
         if model_output.success_logits is not None:
             success_pred = model_output.success_logits["A"]
             success_probs = torch.sigmoid(success_pred)
             results["outputs_success"] = {
                 "success_probs": success_probs.detach().cpu().tolist(),
             }
-            logger.debug(f"success_probs: {success_probs}")
+            # logger.debug(f"success_probs: {success_probs}")
 
     # Similarity logits
     if sample_type == "similarity" and model_output.sim_logits is not None:
@@ -521,10 +521,10 @@ def compute_batch_outputs(
             "metadata": batch_inputs.get("metadata", []),
         })
 
-        logger.debug(f"sim_score_ref_sim: {sim_score_ref_sim}")
-        logger.debug(f"task: {batch_inputs.get('task', [])}")
-        logger.debug(f"data_source: {batch_inputs.get('data_source', [])}")
-        logger.debug(f"data_gen_strategy: {batch_inputs.get('data_gen_strategy', [])}")
+        # logger.debug(f"sim_score_ref_sim: {sim_score_ref_sim}")
+        # logger.debug(f"task: {batch_inputs.get('task', [])}")
+        # logger.debug(f"data_source: {batch_inputs.get('data_source', [])}")
+        # logger.debug(f"data_gen_strategy: {batch_inputs.get('data_gen_strategy', [])}")
 
     return results
 

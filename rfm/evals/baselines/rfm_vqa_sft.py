@@ -45,7 +45,7 @@ def prepare_frames_for_conversation(
         Tuple of (frames_or_video, content_extras)
     """
     content_extras = {"nframes": len(frames)}
-    return frames
+    return frames, content_extras
     
 
 def add_vision_content_to_list(

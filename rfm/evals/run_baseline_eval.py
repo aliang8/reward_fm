@@ -48,7 +48,7 @@ Usage:
         reward_model=rfm_vqa_sft \
         rfm_checkpoint_path=ADD_PATH \
         custom_eval.eval_types=[reward_alignment] \
-        custom_eval.reward_alignment=[jesbu1_roboreward_rfm_roboreward_test] 
+        custom_eval.reward_alignment=[jesbu1_roboreward_rfm_roboreward_test] \
         gvl_max_frames=32  \
         custom_eval.use_frame_steps=false \
         custom_eval.reward_alignment_max_trajectories=null \
@@ -508,7 +508,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
             raise ValueError("rfm_checkpoint_path is required for RFM/ReWiND reward model")
 
         model = RFMModel(checkpoint_path=cfg.rfm_checkpoint_path)
-    elif cfg.reward_model == ["rfm_vqa_sft"]:
+    elif cfg.reward_model == "rfm_vqa_sft":
         if not cfg.rfm_checkpoint_path:
             model = RFMVQASFT(model_path=cfg.rfm_checkpoint_path, batch_size=cfg.rfm_batch_size, max_frames=cfg.gvl_max_frames)
     else:

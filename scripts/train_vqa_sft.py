@@ -114,7 +114,7 @@ class VQAEvaluationCallback(TrainerCallback):
         collator,
         max_new_tokens: int = 10,
         eval_batch_size: int = 4,
-        eval_generate: bool = True,
+        eval_generate: bool = False,
     ):
         self.eval_dataset = eval_dataset
         self.processor = processor

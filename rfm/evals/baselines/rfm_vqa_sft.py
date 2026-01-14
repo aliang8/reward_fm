@@ -220,7 +220,7 @@ class RFMVQASFT:
             }
         ]
         # Apply chat template
-        processed_conversation = self.processor.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True, fps=1)
+        processed_conversation = self.processor.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True, fps=1, enable_thinking=False)
 
         # Process vision info (qwen-vl-utils handles resizing)
         image_inputs, video_inputs, video_kwargs = process_vision_info(

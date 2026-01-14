@@ -169,14 +169,14 @@ class RFMVQASFT:
         else:
             raise ValueError(f"Prompt type {type} not supported")
 
-    def compute_batched_progress(self, batch: List[Dict[str, Any]]) -> List[List[Optional[float]]]:
+    def compute_batched_progress(self, batch: List[Any]) -> List[List[Optional[float]]]:
         """
         Compute progress predictions for multiple frame sequences in batch.
 
         Args:
-            batch: List of dicts, each containing:
-                - 'frames': (N, H, W, 3) uint8 array from trajectory frames
-                - 'task_description': Task description text (optional)
+            batch: List of ProgressSample objects or dicts, each containing:
+                - trajectory.frames or 'frames': (N, H, W, 3) uint8 array from trajectory frames
+                - trajectory.task or 'task_description': Task description text (optional)
 
         Returns:
             List of lists, where each inner list contains progress scores for each frame
@@ -190,10 +190,22 @@ class RFMVQASFT:
         valid_indices = []
         
         for idx, sample in enumerate(batch):
-            frames_array = sample.get('frames')
+            # Handle both ProgressSample objects and dicts
+            if hasattr(sample, 'trajectory'):
+                # ProgressSample object
+                frames_array = sample.trajectory.frames
+                task_description = sample.trajectory.task or ''
+            else:
+                # Dictionary
+                frames_array = sample.get('frames')
+                task_description = sample.get('task_description', '')
+            
             if frames_array is None or frames_array.size == 0:
                 continue
                 
+            # Store original length before padding
+            original_length = len(frames_array)
+            
             # Ensure we have at least max_frames frames
             if self.max_frames and len(frames_array) < self.max_frames:
                 # Pad via concatenating the last frame
@@ -204,8 +216,8 @@ class RFMVQASFT:
             
             valid_samples.append({
                 'frames': frames_array,
-                'task_description': sample.get('task_description', ''),
-                'original_length': len(sample.get('frames'))
+                'task_description': task_description,
+                'original_length': original_length
             })
             valid_indices.append(idx)
         

@@ -325,10 +325,17 @@ class VQAEvaluationCallback(TrainerCallback):
         if args.should_save:
             print("="*80 + "\n")
         
-        # Log metrics (only on main process)
-        if args.should_save and hasattr(state, 'log_history'):
-            # Add to the last log entry
-            if state.log_history:
+        # Log metrics to wandb (only on main process)
+        if args.should_save and metrics:
+            try:
+                import wandb
+                if wandb.run is not None:
+                    wandb.log(metrics, step=state.global_step)
+            except ImportError:
+                pass
+            
+            # Also add to log_history for Trainer's internal tracking
+            if hasattr(state, 'log_history') and state.log_history:
                 state.log_history[-1].update(metrics)
         
         return control

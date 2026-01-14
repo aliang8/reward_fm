@@ -9,7 +9,7 @@ uv run scripts/generate_vqa_dataset.py \
 # ROBOREWARD-Eval
 uv run scripts/generate_vqa_dataset.py \
     --num_epochs 1 \
-    --output_path vqa_datasets/roboreward_val_1epoch \
+    --output_path vqa_datasets/roboreward_val_0.1epoch \
     --seed 42 \
     --num_workers 32 \
     --eval_mode \

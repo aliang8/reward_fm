@@ -605,21 +605,23 @@ class VQADataCollator:
             for msg in all_messages
         ]
 
-        prompt_texts = [
-                self.processor.apply_chat_template(
-                    conversation[:-1], # up until assistant response
-                    tokenize=False,
-                    add_generation_prompt=True,
-                )
-            for conversation in all_messages
-        ]
-            # 5) Compute prompt lengths with TEXT-ONLY tokenization (much cheaper than text+images)
-        prompt_ids = self.processor.tokenizer(
-            prompt_texts,
-            return_tensors="pt",
-            padding=True,
-            add_special_tokens=False,  # chat template already includes special tokens
-        )["input_ids"]
+        # Compute prompt lengths for label masking (only needed in training mode)
+        if not self.inference:
+            prompt_texts = [
+                    self.processor.apply_chat_template(
+                        conversation[:-1], # up until assistant response
+                        tokenize=False,
+                        add_generation_prompt=True,
+                    )
+                for conversation in all_messages
+            ]
+            # Compute prompt lengths with TEXT-ONLY tokenization (much cheaper than text+images)
+            prompt_ids = self.processor.tokenizer(
+                prompt_texts,
+                return_tensors="pt",
+                padding=True,
+                add_special_tokens=False,  # chat template already includes special tokens
+            )["input_ids"]
         # Prepare processor inputs
         # Note: Qwen processor handles both multi-image and video modes
         from qwen_vl_utils import process_vision_info

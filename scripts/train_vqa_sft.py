@@ -873,11 +873,33 @@ def main():
         default=-1,
         help="Local rank for distributed training (set automatically by torchrun/accelerate)",
     )
+    parser.add_argument(
+        "--overwrite_output_dir",
+        action="store_true",
+        help="Overwrite the output directory if it already exists",
+    )
     
     args = parser.parse_args()
     
     # Set up distributed training
+    # Handle different ways local_rank can be set (torchrun, accelerate, deepspeed, SLURM)
+    if args.local_rank == -1:
+        # Check environment variables in order of preference
+        if 'LOCAL_RANK' in os.environ:
+            args.local_rank = int(os.environ['LOCAL_RANK'])
+        elif 'SLURM_LOCALID' in os.environ:
+            args.local_rank = int(os.environ['SLURM_LOCALID'])
+        elif 'OMPI_COMM_WORLD_LOCAL_RANK' in os.environ:
+            args.local_rank = int(os.environ['OMPI_COMM_WORLD_LOCAL_RANK'])
+    
+    # Determine if this is the main process (rank 0)
+    # For single process training, local_rank will be -1
     is_main_process = args.local_rank in [-1, 0]
+    
+    # Also check RANK environment variable for global rank (in case of multi-node)
+    global_rank = int(os.environ.get('RANK', args.local_rank if args.local_rank != -1 else 0))
+    is_main_process = global_rank == 0  # Use global rank for main process detection
+    
     if args.local_rank != -1:
         # Set environment variables for better NCCL stability
         if 'NCCL_TIMEOUT' not in os.environ:
@@ -898,20 +920,35 @@ def main():
     def print_main(*args_print, **kwargs):
         if is_main_process:
             print(*args_print, **kwargs)
+    
+    # Debug: Print rank info from all processes
+    if args.local_rank != -1:
+        print(f"[Global Rank {global_rank} | Local Rank {args.local_rank}] Process started, is_main_process={is_main_process}")
 
     # Create output directory (only on main process)
     save_dir = os.path.join(args.output_dir, args.run_name)
     if is_main_process:
-        if not os.path.exists(save_dir):
+        if os.path.exists(save_dir):
+            if args.overwrite_output_dir:
+                print_main(f"⚠️  WARNING: Output directory already exists: {save_dir}")
+                print_main("    Overwriting due to --overwrite_output_dir flag")
+            elif args.resume_from_checkpoint:
+                print_main(f"Output directory exists: {save_dir}")
+                print_main("Resuming from checkpoint...")
+            else:
+                print_main(f"ERROR: Output directory already exists: {save_dir}")
+                print_main("Please either:")
+                print_main("  1. Use a different --run_name")
+                print_main("  2. Delete the existing directory")
+                print_main("  3. Add --overwrite_output_dir flag to overwrite")
+                print_main("  4. Add --resume_from_checkpoint to resume training")
+                # Exit all processes gracefully
+                if args.local_rank != -1 and torch.distributed.is_initialized():
+                    torch.distributed.destroy_process_group()
+                sys.exit(1)
+        else:
             os.makedirs(save_dir)
             print_main(f"Created output directory: {save_dir}")
-        else:
-            print_main(f"ERROR: Output directory already exists: {save_dir}")
-            print_main("Please use a different run name or delete the existing directory.")
-            # Exit all processes gracefully
-            if args.local_rank != -1 and torch.distributed.is_initialized():
-                torch.distributed.destroy_process_group()
-            sys.exit(1)
     
     # Synchronize all processes - wait for main process to create directory
     if args.local_rank != -1 and torch.distributed.is_initialized():

@@ -183,6 +183,10 @@ class RFMVQASFT:
         """
         if frames_array is None or frames_array.size == 0:
             return []
+        # ensure we have at least self.max_frames frames
+        if len(frames_array) < self.max_frames:
+            # pad via concatenating the last frame
+            frames_array = np.concatenate([frames_array, np.repeat(frames_array[-1:], self.max_frames - len(frames_array), axis=0)], axis=0)
 
         # Convert frames to PIL Images
         frames_pil = convert_frames_to_pil(frames_array)
@@ -191,14 +195,6 @@ class RFMVQASFT:
 
         if not frames_pil:
             return []
-
-        num_frames = len(frames_pil)
-
-        # Ensure at least 2 frames for video processing (qwen_vl_utils requires minimum 2 frames)
-        if num_frames == 1:
-            # Duplicate the single frame to make it 2 frames
-            frames_pil = [frames_pil[0], frames_pil[0]]
-            num_frames = 2
 
         # Build prompt
         prompt = self._build_prompt(task_description, type="progress")

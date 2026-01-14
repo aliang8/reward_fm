@@ -230,7 +230,7 @@ class RFMVQASFT:
 
         # Process vision info (qwen-vl-utils handles resizing)
         image_inputs, video_inputs, video_kwargs = process_vision_info(
-            texts,
+            processed_conversation,
             image_patch_size=16,
             return_video_kwargs=True,
             return_video_metadata=True,

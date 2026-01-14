@@ -288,6 +288,7 @@ class RFMVQASFT:
         try:
             progress = process_progress_answer(extract_answer_from_generation(output_text))
             result = [float(progress)] * len(frames_array)
+            print(progress)
         except Exception as e:
             print(f"ERROR PROCESSING PROGRESS: {e}")
             print(output_text)

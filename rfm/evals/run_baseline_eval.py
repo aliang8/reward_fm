@@ -42,6 +42,17 @@ Usage:
         custom_eval.eval_types=[quality_preference] \
         custom_eval.quality_preference=[aliangdw_metaworld_metaworld_eval] \
         rfm_batch_size=32
+
+    # Run RFM VQA SFT Model on Roboreward
+    uv run python rfm/evals/run_baseline_eval.py \
+        reward_model=rfm_vqa_sft \
+        rfm_checkpoint_path=ADD_PATH \
+        custom_eval.eval_types=[reward_alignment] \
+        custom_eval.reward_alignment=[jesbu1_roboreward_rfm_roboreward_test] 
+        gvl_max_frames=32  \
+        custom_eval.use_frame_steps=false \
+        custom_eval.reward_alignment_max_trajectories=null \
+        rfm_batch_size=8
     
     # Run RFM model progress evaluation (reward alignment)
     uv run python rfm/evals/run_baseline_eval.py \
@@ -109,8 +120,10 @@ from rfm.evals.baselines.vlac import VLAC
 
 try:
     from rfm.evals.baselines.roboreward import RoboReward
+    from rfm.evals.baselines.rfm_vqa_sft import RFMVQASFT
 except ImportError:
     RoboReward = None
+    RFMVQASFT = none
 from rfm.evals.baselines.rfm_model import RFMModel
 from rfm.evals.compile_results import compute_eval_metrics
 
@@ -495,6 +508,9 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
             raise ValueError("rfm_checkpoint_path is required for RFM/ReWiND reward model")
 
         model = RFMModel(checkpoint_path=cfg.rfm_checkpoint_path)
+    elif cfg.reward_model == ["rfm_vqa_sft"]:
+        if not cfg.rfm_checkpoint_path:
+            model = RFMVQASFT(model_path=cfg.rfm_checkpoint_path, batch_size=cfg.rfm_batch_size, max_frames=cfg.gvl_max_frames)
     else:
         raise ValueError(
             f"Unknown reward_model: {cfg.reward_model}. Must be 'rlvlmf', 'gvl', 'vlac', 'roboreward', 'rfm', or 'rewind'"

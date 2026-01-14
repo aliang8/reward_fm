@@ -29,7 +29,7 @@ from datasets import load_from_disk
 from PIL import Image
 from transformers import (
     AutoProcessor,
-    Qwen2VLForConditionalGeneration,
+    Qwen3VLForConditionalGeneration,
     Trainer,
     TrainingArguments,
     TrainerCallback,
@@ -1129,7 +1129,7 @@ def main():
             processor.tokenizer.pad_token = processor.tokenizer.eos_token
         
         # Load model
-        model = Qwen2VLForConditionalGeneration.from_pretrained(
+        model = Qwen3VLForConditionalGeneration.from_pretrained(
             args.model_name,
             torch_dtype=torch.bfloat16 if args.bf16 else torch.float32,
             attn_implementation="flash_attention_2",

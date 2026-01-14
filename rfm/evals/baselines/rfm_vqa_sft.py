@@ -123,7 +123,6 @@ class RFMVQASFT:
                 self.model = Qwen3VLForConditionalGeneration.from_pretrained(
                     model_path,
                     torch_dtype=torch.bfloat16,
-                    attn_implementation="flash_attention_2",
                     trust_remote_code=True,
                     device_map="auto"
                 )

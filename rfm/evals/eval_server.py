@@ -4,10 +4,10 @@ FastAPI server to evaluate RFM model batches with a multi-GPU service layer.
 
 Usage example:
     uv run python rfm/evals/eval_server.py \
-        model_path=rewardfm/pref_prog_2frames_all \
-        batch_size=32 \
+        model_path=rewardfm/rfm_qwen_pref_prog_4frames_all_strategy \
+        batch_size=16 \
         num_gpus=1 \
-        server_port=8000
+        server_port=8001
 
 Endpoints:
   POST /evaluate_batch        - JSON payload
@@ -213,74 +213,140 @@ def process_batch_helper(
         else:
             raise ValueError(f"Unsupported sample object type: {type(sample)}")
 
-    # Handle frame steps for progress samples
+    # Handle frame steps for progress samples - process each sub-sample individually
+    # to avoid tensor size mismatch when batching different sequence lengths
     if use_frame_steps:
-        expanded_samples = []
-        sample_frame_counts = []  # Track how many sub-samples each original sample generates
+        # Separate progress samples from non-progress samples
+        progress_samples = []
+        non_progress_samples = []
+        sample_frame_counts = []
         
         for sample in input_samples:
             if isinstance(sample, ProgressSample):
-                # Get the frames from the trajectory
+                progress_samples.append(sample)
                 frames = sample.trajectory.frames
                 num_frames = frames.shape[0] if hasattr(frames, 'shape') else len(frames)
-                
-                # Create sub-samples with increasing frame counts: 0:1, 0:2, 0:3, ..., 0:T
-                for i in range(1, num_frames + 1):
-                    # Create a copy of the trajectory with only frames 0:i
-                    sub_frames = frames[:i]
-                    sub_trajectory = copy.deepcopy(sample.trajectory)
-                    sub_trajectory.frames = sub_frames
-                    sub_trajectory.frames_shape = sub_frames.shape if hasattr(sub_frames, 'shape') else (len(sub_frames),)
-                    
-                    # Adjust target_progress and success_label if they exist
-                    if hasattr(sub_trajectory, 'target_progress') and sub_trajectory.target_progress is not None:
-                        sub_trajectory.target_progress = sub_trajectory.target_progress[:i]
-                    if hasattr(sub_trajectory, 'success_label') and sub_trajectory.success_label is not None:
-                        sub_trajectory.success_label = sub_trajectory.success_label[:i]
-                    
-                    # Create sub-sample
-                    sub_sample = ProgressSample(
-                        trajectory=sub_trajectory,
-                        data_gen_strategy=sample.data_gen_strategy,
-                    )
-                    expanded_samples.append(sub_sample)
-                
                 sample_frame_counts.append(num_frames)
             else:
-                # Non-progress samples are passed through unchanged
-                expanded_samples.append(sample)
-                sample_frame_counts.append(1)
+                non_progress_samples.append(sample)
         
-        input_samples = expanded_samples
-        logger.debug(f"[job {job_id}] Expanded {len(sample_frame_counts)} samples into {len(input_samples)} sub-samples with frame steps")
+        # Process each progress sample's frame steps individually
+        all_progress_preds = []
+        all_success_probs = []
+        
+        for sample_idx, sample in enumerate(progress_samples):
+            frames = sample.trajectory.frames
+            num_frames = frames.shape[0] if hasattr(frames, 'shape') else len(frames)
+            
+            sample_preds = []
+            sample_success = []
+            
+            # Process each frame step: 0:1, 0:2, 0:3, ..., 0:T
+            for i in range(1, num_frames + 1):
+                # Create a copy of the trajectory with only frames 0:i
+                sub_frames = frames[:i]
+                sub_trajectory = copy.deepcopy(sample.trajectory)
+                sub_trajectory.frames = sub_frames
+                sub_trajectory.frames_shape = sub_frames.shape if hasattr(sub_frames, 'shape') else (len(sub_frames),)
+                
+                # Adjust target_progress and success_label if they exist
+                if hasattr(sub_trajectory, 'target_progress') and sub_trajectory.target_progress is not None:
+                    sub_trajectory.target_progress = sub_trajectory.target_progress[:i]
+                if hasattr(sub_trajectory, 'success_label') and sub_trajectory.success_label is not None:
+                    sub_trajectory.success_label = sub_trajectory.success_label[:i]
+                
+                # Create sub-sample
+                sub_sample = ProgressSample(
+                    trajectory=sub_trajectory,
+                    data_gen_strategy=sample.data_gen_strategy,
+                )
+                
+                # Process this single sub-sample
+                sub_batch_inputs = batch_collator([sub_sample])
+                
+                # Move to GPU
+                for key, value in sub_batch_inputs["progress_inputs"].items():
+                    if isinstance(value, torch.Tensor):
+                        sub_batch_inputs["progress_inputs"][key] = value.to(device)
+                
+                # Compute outputs for this sub-sample
+                if model_type == "vqa":
+                    sub_outputs = compute_batch_outputs_vqa(
+                        model, tokenizer, sub_batch_inputs["progress_inputs"], mode="progress"
+                    )
+                else:
+                    sub_outputs = compute_batch_outputs(
+                        model,
+                        tokenizer,
+                        sub_batch_inputs["progress_inputs"],
+                        sample_type="progress",
+                        is_discrete_mode=is_discrete_mode,
+                        num_bins=num_bins,
+                    )
+                
+                # Extract the last prediction from this sub-sample
+                if "progress_pred" in sub_outputs and sub_outputs["progress_pred"]:
+                    pred_seq = sub_outputs["progress_pred"][0]  # First (and only) sample
+                    if isinstance(pred_seq, list) and len(pred_seq) > 0:
+                        sample_preds.append(pred_seq[-1])  # Last prediction
+                
+                # Extract success prediction if present
+                if "outputs_success" in sub_outputs:
+                    success_probs = sub_outputs["outputs_success"].get("success_probs", [])
+                    if success_probs and len(success_probs) > 0:
+                        success_seq = success_probs[0]
+                        if isinstance(success_seq, list) and len(success_seq) > 0:
+                            sample_success.append(success_seq[-1])
+            
+            all_progress_preds.append(sample_preds)
+            if sample_success:
+                all_success_probs.append(sample_success)
+        
+        logger.debug(f"[job {job_id}] Processed {len(progress_samples)} progress samples with frame steps")
+        
+        # Build outputs_progress from aggregated predictions
+        outputs_progress = {"progress_pred": all_progress_preds} if all_progress_preds else None
+        outputs_success = {"success_probs": all_success_probs} if all_success_probs else None
+        
+        # Now process non-progress samples normally (if any)
+        input_samples = non_progress_samples
+        sample_frame_counts = None  # Already handled frame steps above
     else:
         sample_frame_counts = None
 
-    batch_inputs = batch_collator(input_samples)
+    # Process remaining samples (non-progress when use_frame_steps, or all samples otherwise)
+    if input_samples:
+        batch_inputs = batch_collator(input_samples)
 
-    # Move inputs to the correct GPU
-    for key, value in batch_inputs["preference_inputs"].items():
-        if isinstance(value, torch.Tensor):
-            batch_inputs["preference_inputs"][key] = value.to(device)
-    for key, value in batch_inputs["progress_inputs"].items():
-        if isinstance(value, torch.Tensor):
-            batch_inputs["progress_inputs"][key] = value.to(device)
-    for key, value in batch_inputs["similarity_inputs"].items():
-        if isinstance(value, torch.Tensor):
-            batch_inputs["similarity_inputs"][key] = value.to(device)
+        # Move inputs to the correct GPU
+        for key, value in batch_inputs["preference_inputs"].items():
+            if isinstance(value, torch.Tensor):
+                batch_inputs["preference_inputs"][key] = value.to(device)
+        for key, value in batch_inputs["progress_inputs"].items():
+            if isinstance(value, torch.Tensor):
+                batch_inputs["progress_inputs"][key] = value.to(device)
+        for key, value in batch_inputs["similarity_inputs"].items():
+            if isinstance(value, torch.Tensor):
+                batch_inputs["similarity_inputs"][key] = value.to(device)
+
+        num_preferences = batch_inputs.get("num_preferences", 0)
+        num_progress = batch_inputs.get("num_progress", 0)
+        num_similarities = batch_inputs.get("num_similarities", 0)
+        logger.debug(
+            f"[job {job_id}] Batch counts — preference: {num_preferences} "
+            f"progress: {num_progress} similarity: {num_similarities}"
+        )
+    else:
+        num_preferences = 0
+        num_progress = 0
+        num_similarities = 0
 
     outputs_preference = None
-    outputs_progress = None
+    # Only set outputs_progress/outputs_success if not already set by frame_steps processing
+    if not use_frame_steps:
+        outputs_progress = None
+        outputs_success = None
     outputs_similarity = None
-    outputs_success = None
-
-    num_preferences = batch_inputs.get("num_preferences", 0)
-    num_progress = batch_inputs.get("num_progress", 0)
-    num_similarities = batch_inputs.get("num_similarities", 0)
-    logger.debug(
-        f"[job {job_id}] Batch counts — preference: {num_preferences} "
-        f"progress: {num_progress} similarity: {num_similarities}"
-    )
 
     if num_preferences > 0:
         if model_type == "vqa":
@@ -299,10 +365,9 @@ def process_batch_helper(
                 is_discrete_mode=is_discrete_mode,
                 num_bins=num_bins,
             )
-    else:
-        outputs_preference = None
 
-    if num_progress > 0:
+    if num_progress > 0 and not use_frame_steps:
+        # Only process progress here if NOT using frame steps (frame steps handled above)
         if model_type == "vqa":
             outputs_progress = compute_batch_outputs_vqa(
                 model, tokenizer, batch_inputs["progress_inputs"], mode="progress"
@@ -319,15 +384,6 @@ def process_batch_helper(
 
         if "outputs_success" in outputs_progress:
             outputs_success = outputs_progress.pop("outputs_success")
-        
-        # Aggregate frame-step predictions back into full sequences
-        if use_frame_steps and sample_frame_counts is not None:
-            outputs_progress = aggregate_frame_step_predictions(
-                outputs_progress, sample_frame_counts, outputs_success
-            )
-            if outputs_success is not None:
-                # Success outputs are also aggregated in the function above
-                outputs_success = outputs_progress.pop("outputs_success", None)
 
     if num_similarities > 0:
         if model_type == "vqa":

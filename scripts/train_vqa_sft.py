@@ -629,23 +629,6 @@ class VQADataCollator:
             for msg in all_messages
         ]
 
-        # Compute prompt lengths for label masking (only needed in training mode)
-        if not self.inference:
-            prompt_texts = [
-                    self.processor.apply_chat_template(
-                        conversation[:-1], # up until assistant response
-                        tokenize=False,
-                        add_generation_prompt=True,
-                    )
-                for conversation in all_messages
-            ]
-            # Compute prompt lengths with TEXT-ONLY tokenization (much cheaper than text+images)
-            prompt_ids = self.processor.tokenizer(
-                prompt_texts,
-                return_tensors="pt",
-                padding=True,
-                add_special_tokens=False,  # chat template already includes special tokens
-            )["input_ids"]
         # Prepare processor inputs
         # Note: Qwen processor handles both multi-image and video modes
         from qwen_vl_utils import process_vision_info
@@ -706,9 +689,38 @@ class VQADataCollator:
         batch_inputs = self.processor(**processor_kwargs)
 
         # Create labels by masking prompt tokens
+        # CRITICAL: We must search for the assistant response marker in the actual
+        # tokenized sequence because vision tokens are NOT in the text-only prompt_ids.
+        # Using prompt_ids.shape[1] would only mask text tokens, not the thousands
+        # of vision tokens that appear before the assistant response.
         if not self.inference:
             labels = batch_inputs["input_ids"].clone()
-            labels[:, :prompt_ids.shape[1]] = IGNORE_INDEX
+            tokenizer = self.processor.tokenizer
+            
+            # Get the response prefix token IDs (e.g., "ANS:")
+            # We search for this to find where the actual answer starts
+            response_prefix_ids = tokenizer.encode(RESPONSE_PREFIX, add_special_tokens=False)
+            
+            for i in range(labels.shape[0]):
+                seq = batch_inputs["input_ids"][i].tolist()
+                seq_len = len(seq)
+                
+                # Find the LAST occurrence of response prefix (in case prompt mentions it)
+                found_pos = -1
+                for pos in range(seq_len - len(response_prefix_ids), -1, -1):
+                    if seq[pos:pos + len(response_prefix_ids)] == response_prefix_ids:
+                        found_pos = pos
+                        break
+                
+                if found_pos >= 0:
+                    # Mask everything BEFORE the response prefix
+                    # The model will train on "ANS: <answer>" including the prefix
+                    labels[i, :found_pos] = IGNORE_INDEX
+                else:
+                    # Fallback: couldn't find response prefix, mask entire sequence
+                    print(f"Warning: Could not find '{RESPONSE_PREFIX}' in sequence {i}, masking all tokens")
+                    labels[i, :] = IGNORE_INDEX
+            
             batch_inputs["labels"] = labels
         
         return batch_inputs

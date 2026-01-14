@@ -41,7 +41,7 @@ uv run scripts/train_vqa_sft.py \
 
 
 # 3. Train (multi-GPU with Accelerate)
-uv run accelerate launch --num_processes=4 scripts/train_vqa_sft.py \
+uv run torchrun --nproc_per_node=2 scripts/train_vqa_sft.py \
     --dataset_path ./vqa_datasets/rfm_train_10epochs \
     --eval_dataset_path ./vqa_datasets/rfm_val_0.1epoch \
     --model_name Qwen/Qwen3-VL-4B-Instruct \

@@ -18,6 +18,7 @@ import argparse
 import os
 import re
 import sys
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -173,6 +174,15 @@ class VQAEvaluationCallback(TrainerCallback):
                         generated_texts = self.processor.batch_decode(outputs, skip_special_tokens=True)
 
                         # Check correctness
+                        # Ensure lengths match (in case of generation issues)
+                        if len(generated_texts) != len(batch):
+                            if args.should_save:
+                                print(f"Warning: Generated {len(generated_texts)} texts for {len(batch)} samples in batch {i}")
+                            # Process only up to the minimum length
+                            min_len = min(len(generated_texts), len(batch))
+                            batch = batch[:min_len]
+                            generated_texts = generated_texts[:min_len]
+                        
                         for sample, gen_text in zip(batch, generated_texts):
                             predicted = extract_answer_from_generation(gen_text)
                             ground_truth = sample['answer']
@@ -184,6 +194,7 @@ class VQAEvaluationCallback(TrainerCallback):
                     except Exception as e:
                         if args.should_save:
                             print(f"Error in preference eval batch {i}: {e}")
+                            print(f"Traceback: {traceback.format_exc()}")
                         continue
         
         # Evaluate progress samples
@@ -216,6 +227,15 @@ class VQAEvaluationCallback(TrainerCallback):
                         # Decode
                         generated_texts = self.processor.batch_decode(outputs, skip_special_tokens=True)
                         
+                        # Ensure lengths match (in case of generation issues)
+                        if len(generated_texts) != len(batch):
+                            if args.should_save:
+                                print(f"Warning: Generated {len(generated_texts)} texts for {len(batch)} samples in batch {i}")
+                            # Process only up to the minimum length
+                            min_len = min(len(generated_texts), len(batch))
+                            batch = batch[:min_len]
+                            generated_texts = generated_texts[:min_len]
+                        
                         # Compute errors
                         for sample, gen_text in zip(batch, generated_texts):
                             predicted_str = extract_answer_from_generation(gen_text)
@@ -235,6 +255,7 @@ class VQAEvaluationCallback(TrainerCallback):
                     except Exception as e:
                         if args.should_save:
                             print(f"Error in progress eval batch {i}: {e}")
+                            print(f"Traceback: {traceback.format_exc()}")
                         continue
         
         # Gather metrics from all processes

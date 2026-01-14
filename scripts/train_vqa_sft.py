@@ -98,6 +98,28 @@ def extract_answer_from_generation(text: str) -> Optional[str]:
     return None
 
 
+class ProcessorSaveCallback(TrainerCallback):
+    """
+    Callback to save processor/tokenizer with each checkpoint.
+    
+    HuggingFace Trainer only saves the model at checkpoints, not the processor.
+    This callback ensures the processor is saved alongside each checkpoint.
+    """
+    
+    def __init__(self, processor):
+        self.processor = processor
+    
+    def on_save(self, args, state, control, **kwargs):
+        """Save processor whenever a checkpoint is saved."""
+        if args.should_save:
+            checkpoint_folder = os.path.join(
+                args.output_dir,
+                f"checkpoint-{state.global_step}",
+            )
+            if os.path.exists(checkpoint_folder):
+                self.processor.save_pretrained(checkpoint_folder)
+
+
 class VQAEvaluationCallback(TrainerCallback):
     """
     Custom callback to perform VQA evaluation during training.
@@ -1245,6 +1267,11 @@ def main():
 
     # Create custom callbacks
     callbacks = []
+    
+    # Add processor save callback (saves processor with each checkpoint)
+    print_main("Adding processor save callback...")
+    processor_save_callback = ProcessorSaveCallback(processor=processor)
+    callbacks.append(processor_save_callback)
     
     # Add VQA evaluation callback if eval dataset exists
     if eval_dataset:

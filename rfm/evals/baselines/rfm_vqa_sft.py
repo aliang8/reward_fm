@@ -95,16 +95,16 @@ class RFMVQASFT:
         max_frames=None,
     ):
         """
-        Initialize RoboReward model.
+        Initialize RFM VQA SFT model.
 
         Args:
-            model_path: HuggingFace model path (e.g., "teetone/RoboReward-8B" or "teetone/RoboReward-4B")
+            model_path: HuggingFace model path (e.g., "./outputs/vqa_training/checkpoint-1000")
             max_new_tokens: Maximum number of tokens to generate
             use_unsloth: Whether to use unsloth for faster inference (default: True)
             use_multi_image: Whether to pass multiple images instead of video
             batch_size: max batch size
         """
-        logger.info(f"Loading RoboReward model: {model_path}")
+        logger.info(f"Loading RFM VQA SFT model: {model_path}")
 
         # Use unsloth for faster inference if available and requested
         if use_unsloth and HAS_UNSLOTH:
@@ -150,10 +150,10 @@ class RFMVQASFT:
         self.batch_size=batch_size
         self.max_frames = max_frames
 
-        print(f"RoboReward model loaded on device: {self.model.device}")
+        print(f"RFM VQA SFT model loaded on device: {self.model.device}")
 
     def _build_prompt(self, task_description: str, type: str) -> str:
-        """Build the prompt for RoboReward inference.
+        """Build the prompt for RFM VQA SFT inference.
 
         Args:
             task_description: Task instruction text
@@ -191,7 +191,7 @@ class RFMVQASFT:
         # Convert frames to PIL Images
         frames_pil = convert_frames_to_pil(frames_array)
 
-        logger.info(f"RoboReward: Converted {len(frames_pil)} frames to PIL Images")
+        logger.info(f"RFM VQA SFT: Converted {len(frames_pil)} frames to PIL Images")
 
         if not frames_pil:
             return []

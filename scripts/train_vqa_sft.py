@@ -872,12 +872,6 @@ def main():
         help="Weight decay",
     )
     parser.add_argument(
-        "--bf16",
-        action="store_true",
-        default=True,
-        help="Use bfloat16 training",
-    )
-    parser.add_argument(
         "--gradient_checkpointing",
         action="store_true",
         default=True,
@@ -1060,7 +1054,7 @@ def main():
                 args.model_name,
                 load_in_4bit=args.quantization,
                 use_gradient_checkpointing="unsloth",
-                dtype=torch.bfloat16 if args.bf16 else torch.float32,
+                dtype=torch.bfloat16,
                 device_map=None,
                 attn_implementation="flash_attention_2",
                 trust_remote_code=True,
@@ -1099,7 +1093,7 @@ def main():
                 args.model_name,
                 load_in_4bit=args.quantization,
                 use_gradient_checkpointing="unsloth",
-                dtype=torch.bfloat16 if args.bf16 else torch.float32,
+                dtype=torch.bfloat16,
                 full_finetuning=True,
                 device_map=None,
                 attn_implementation="flash_attention_2",
@@ -1131,7 +1125,7 @@ def main():
         # Load model
         model = Qwen3VLForConditionalGeneration.from_pretrained(
             args.model_name,
-            torch_dtype=torch.bfloat16 if args.bf16 else torch.float32,
+            torch_dtype=torch.bfloat16,
             #attn_implementation="flash_attention_2",
             trust_remote_code=True,
         )
@@ -1228,7 +1222,6 @@ def main():
         eval_steps=args.eval_steps if args.eval_strategy == "steps" else None,
         max_grad_norm=args.max_grad_norm,
         weight_decay=args.weight_decay,
-        bf16=args.bf16,
         gradient_checkpointing=args.gradient_checkpointing,
         remove_unused_columns=False,
         report_to=report_to_list,

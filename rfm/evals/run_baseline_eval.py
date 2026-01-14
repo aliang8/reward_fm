@@ -664,9 +664,9 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
 
                 elif eval_type == "confusion_matrix":
                     # Confusion matrix evaluation for gvl, vlac, roboreward, rfm, rewind
-                    if cfg.reward_model not in ["gvl", "vlac", "roboreward", "rfm", "rewind"]:
+                    if cfg.reward_model not in ["gvl", "vlac", "roboreward", "rfm", "rewind", "rfm_vqa_sft"]:
                         raise ValueError(
-                            f"confusion_matrix evaluation only supported for gvl, vlac, roboreward, rfm, rewind, got {cfg.reward_model}"
+                            f"confusion_matrix evaluation only supported for gvl, vlac, roboreward, rfm, rewind, rfm_vqa_sft, got {cfg.reward_model}"
                         )
 
                     eval_metrics_result = compute_eval_metrics(
@@ -710,9 +710,9 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
 
                 else:
                     # Progress evaluation (reward_alignment, policy_ranking) for gvl, vlac, roboreward, rfm, rewind
-                    if cfg.reward_model not in ["gvl", "vlac", "roboreward", "rfm", "rewind"]:
+                    if cfg.reward_model not in ["gvl", "vlac", "roboreward", "rfm", "rewind", "rfm_vqa_sft"]:
                         raise ValueError(
-                            f"Progress evaluation only supported for gvl, vlac, roboreward, rfm, rewind, got {cfg.reward_model}"
+                            f"Progress evaluation only supported for gvl, vlac, roboreward, rfm, rewind, rfm_vqa_sft, got {cfg.reward_model}"
                         )
 
                     eval_metrics_result = compute_eval_metrics(

@@ -206,7 +206,7 @@ class RFMVQASFT:
 
 
         # Prepare frames for conversation
-        video, extras = prepare_frames_for_conversation(frames_pil, prefix="video")
+        video, extras = prepare_frames_for_conversation(frames_pil)
         
         # Build content list
         content_list = []

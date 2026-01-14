@@ -580,9 +580,9 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
             # Process samples
             eval_results = []
 
-            if cfg.reward_model in ["rfm", "rewind"]:
+            if cfg.reward_model in ["rfm", "rewind", "rfm_vqa_sft"]:
                 # For RFM/ReWiND, process dataset using indices to avoid materializing entire dataset
-                logger.info(f"Processing {len(dataset)} samples in batches for RFM/ReWiND")
+                logger.info(f"Processing {len(dataset)} samples in batches for RFM/ReWiND/RFM VQA SFT")
 
                 batch_results = process_batched_rfm_samples(dataset, model, batch_size=cfg.rfm_batch_size)
                 eval_results.extend(batch_results)

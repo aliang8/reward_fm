@@ -169,6 +169,194 @@ class RFMVQASFT:
         else:
             raise ValueError(f"Prompt type {type} not supported")
 
+    def compute_batched_progress(self, batch: List[Dict[str, Any]]) -> List[List[Optional[float]]]:
+        """
+        Compute progress predictions for multiple frame sequences in batch.
+
+        Args:
+            batch: List of dicts, each containing:
+                - 'frames': (N, H, W, 3) uint8 array from trajectory frames
+                - 'task_description': Task description text (optional)
+
+        Returns:
+            List of lists, where each inner list contains progress scores for each frame
+            in the corresponding trajectory. Returns empty list for invalid inputs.
+        """
+        if not batch:
+            return []
+
+        # Filter out invalid samples and prepare data
+        valid_samples = []
+        valid_indices = []
+        
+        for idx, sample in enumerate(batch):
+            frames_array = sample.get('frames')
+            if frames_array is None or frames_array.size == 0:
+                continue
+                
+            # Ensure we have at least max_frames frames
+            if self.max_frames and len(frames_array) < self.max_frames:
+                # Pad via concatenating the last frame
+                frames_array = np.concatenate(
+                    [frames_array, np.repeat(frames_array[-1:], self.max_frames - len(frames_array), axis=0)], 
+                    axis=0
+                )
+            
+            valid_samples.append({
+                'frames': frames_array,
+                'task_description': sample.get('task_description', ''),
+                'original_length': len(sample.get('frames'))
+            })
+            valid_indices.append(idx)
+        
+        if not valid_samples:
+            return [[] for _ in batch]
+        
+        # Process in batches
+        all_results = [[] for _ in batch]  # Initialize results for all samples
+        
+        for batch_start in range(0, len(valid_samples), self.batch_size):
+            batch_end = min(batch_start + self.batch_size, len(valid_samples))
+            current_batch = valid_samples[batch_start:batch_end]
+            
+            # Prepare conversations for all samples in current batch
+            all_conversations = []
+            
+            for sample in current_batch:
+                frames_array = sample['frames']
+                task_description = sample['task_description']
+                
+                # Convert frames to PIL Images
+                frames_pil = convert_frames_to_pil(frames_array)
+                
+                if not frames_pil:
+                    all_conversations.append(None)
+                    continue
+                
+                # Build prompt
+                prompt = self._build_prompt(task_description, type="progress")
+                
+                # Prepare frames for conversation
+                video, extras = prepare_frames_for_conversation(frames_pil)
+                
+                # Build content list
+                content_list = []
+                add_vision_content_to_list(content_list, video, self.use_multi_image)
+                content_list.append({"type": "text", "text": prompt})
+                
+                conversation = [
+                    {
+                        "role": "user",
+                        "content": content_list,
+                    }
+                ]
+                all_conversations.append(conversation)
+            
+            # Filter out None conversations
+            valid_conversations = [c for c in all_conversations if c is not None]
+            valid_conversation_indices = [i for i, c in enumerate(all_conversations) if c is not None]
+            
+            if not valid_conversations:
+                continue
+            
+            # Apply chat template to all conversations
+            processed_conversations = [
+                self.processor.apply_chat_template(
+                    conv, 
+                    tokenize=False, 
+                    add_generation_prompt=True, 
+                    fps=1
+                )
+                for conv in valid_conversations
+            ]
+            
+            # Process vision info for all conversations
+            vision_result = process_vision_info(
+                valid_conversations,
+                image_patch_size=16,
+                return_video_kwargs=True,
+                return_video_metadata=True,
+            )
+            
+            # Handle both Qwen2.5 (2 values) and Qwen3 (3 values)
+            if len(vision_result) == 2:
+                image_inputs, video_inputs = vision_result
+                video_kwargs = {}
+            else:
+                image_inputs, video_inputs, video_kwargs = vision_result
+            
+            # Split videos and metadata
+            if video_inputs is not None:
+                video_inputs_list, video_metadatas = zip(*video_inputs)
+                video_inputs_list, video_metadatas = list(video_inputs_list), list(video_metadatas)
+            else:
+                video_inputs_list = None
+                video_metadatas = None
+            
+            # Prepare processor kwargs
+            processor_kwargs = {
+                "text": processed_conversations,
+                "padding": True,
+                "truncation": False,
+                "return_tensors": "pt",
+                "video_metadata": video_metadatas,
+            }
+            
+            # Add images if present
+            if image_inputs:
+                processor_kwargs["images"] = image_inputs
+            
+            # Add videos if present
+            if video_inputs_list:
+                processor_kwargs["videos"] = video_inputs_list
+            
+            # Add video_kwargs if present
+            if video_kwargs:
+                processor_kwargs.update(video_kwargs)
+            
+            # Process inputs
+            inputs = self.processor(**processor_kwargs)
+            inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+            
+            # Generate in batch
+            with torch.no_grad():
+                generated_ids = self.model.generate(
+                    **inputs,
+                    max_new_tokens=self.max_new_tokens,
+                    do_sample=False,  # Deterministic
+                )
+            
+            # Decode outputs
+            generated_ids_trimmed = [
+                out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs["input_ids"], generated_ids)
+            ]
+            output_texts = self.processor.batch_decode(
+                generated_ids_trimmed, 
+                skip_special_tokens=True, 
+                clean_up_tokenization_spaces=False
+            )
+            
+            # Process each output
+            for conv_idx, output_text in enumerate(output_texts):
+                batch_idx = batch_start + valid_conversation_indices[conv_idx]
+                original_idx = valid_indices[batch_idx]
+                original_length = valid_samples[batch_idx]['original_length']
+                
+                try:
+                    # Extract and process answer
+                    answer_str = extract_answer_from_generation(output_text)
+                    progress = process_progress_answer(answer_str)
+                    # Return same progress value for all frames in the trajectory
+                    result = [float(progress)] * original_length
+                except Exception as e:
+                    logger.warning(f"Error processing progress for sample {original_idx}: {e}")
+                    logger.warning(f"Output text: {output_text}")
+                    result = [0.0] * original_length
+                
+                all_results[original_idx] = result
+        
+        return all_results
+
     def compute_progress(self, frames_array: np.ndarray, task_description: str = "") -> List[Optional[float]]:
         """
         Compute progress prediction for a frame sequence using RFMVQASFT.
@@ -184,7 +372,7 @@ class RFMVQASFT:
         if frames_array is None or frames_array.size == 0:
             return []
         # ensure we have at least self.max_frames frames
-        if len(frames_array) < self.max_frames:
+        if self.max_frames and len(frames_array) < self.max_frames:
             # pad via concatenating the last frame
             frames_array = np.concatenate([frames_array, np.repeat(frames_array[-1:], self.max_frames - len(frames_array), axis=0)], axis=0)
 
@@ -206,7 +394,7 @@ class RFMVQASFT:
         
         # Build content list
         content_list = []
-        add_vision_content_to_list(content_list, video, extras)
+        add_vision_content_to_list(content_list, video, self.use_multi_image)
         content_list.append({"type": "text", "text": prompt})
 
         conversation = [

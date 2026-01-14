@@ -110,13 +110,23 @@ class RFMVQASFT:
         if use_unsloth and HAS_UNSLOTH:
             print("Using Unsloth for faster inference")
             # Load model with unsloth's FastVisionModel
-            self.model, _ = FastVisionModel.from_pretrained(
-                model_path,
-                dtype=torch.bfloat16,
-                device_map="auto",
-                full_finetuning=False,  # Inference only
-                trust_remote_code=True,
-            )
+            try:
+                self.model, _ = FastVisionModel.from_pretrained(
+                    model_path,
+                    dtype=torch.bfloat16,
+                    device_map="auto",
+                    full_finetuning=False,  # Inference only
+                    trust_remote_code=True,
+                )
+            except Exception as e:
+                print(f"FAILED TO LOAD UNSLOTH: {e}")
+                self.model = Qwen3VLForConditionalGeneration.from_pretrained(
+                    model_path,
+                    torch_dtype=torch.bfloat16,
+                    attn_implementation="flash_attention_2",
+                    trust_remote_code=True,
+                    device_map="auto"
+                )
         else:
             # Standard loading
             if use_unsloth and not HAS_UNSLOTH:

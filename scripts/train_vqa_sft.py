@@ -114,15 +114,22 @@ class VQAEvaluationCallback(TrainerCallback):
         collator,
         max_new_tokens: int = 10,
         eval_batch_size: int = 4,
+        eval_generate: bool = False,
     ):
         self.eval_dataset = eval_dataset
         self.processor = processor
         self.collator = collator
         self.max_new_tokens = max_new_tokens
         self.eval_batch_size = eval_batch_size
+        self.eval_generate = eval_generate
         
     def on_evaluate(self, args, state, control, model, **kwargs):
         """Run VQA evaluation after standard evaluation (distributed across all processes)."""
+
+        # generate causes issues with using too much gpu ram
+        if not self.eval_generate:
+            return control
+
         # Print only on main process
         if args.should_save:
             print("\n" + "="*80)
@@ -172,6 +179,9 @@ class VQAEvaluationCallback(TrainerCallback):
                         
                         # Decode
                         generated_texts = self.processor.batch_decode(outputs, skip_special_tokens=True)
+
+                        # delete outputs to save memory
+                        del outputs
 
                         # Check correctness
                         # Ensure lengths match (in case of generation issues)
@@ -226,6 +236,9 @@ class VQAEvaluationCallback(TrainerCallback):
                         
                         # Decode
                         generated_texts = self.processor.batch_decode(outputs, skip_special_tokens=True)
+
+                        # delete outputs to save memory
+                        del outputs
                         
                         # Ensure lengths match (in case of generation issues)
                         if len(generated_texts) != len(batch):
@@ -337,6 +350,10 @@ class VQAEvaluationCallback(TrainerCallback):
             # Also add to log_history for Trainer's internal tracking
             if hasattr(state, 'log_history') and state.log_history:
                 state.log_history[-1].update(metrics)
+        
+        # Clear CUDA cache after generation to free memory from generate() internals
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         
         return control
 

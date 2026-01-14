@@ -242,7 +242,7 @@ class VQAEvaluationCallback(TrainerCallback):
         
         metrics = {}
         
-        if args.local_rank != -1:
+        if dist.is_initialized() and dist.get_world_size() > 1:
             # Distributed training - gather metrics from all processes
             world_size = dist.get_world_size()
             
@@ -879,8 +879,20 @@ def main():
     # Set up distributed training
     is_main_process = args.local_rank in [-1, 0]
     if args.local_rank != -1:
+        # Set environment variables for better NCCL stability
+        if 'NCCL_TIMEOUT' not in os.environ:
+            os.environ['NCCL_TIMEOUT'] = '1800'  # 30 minutes
+        if 'NCCL_DEBUG' not in os.environ:
+            os.environ['NCCL_DEBUG'] = 'WARN'
+        
         torch.cuda.set_device(args.local_rank)
-        # Trainer handles all the distributed setup automatically
+        # Initialize process group if using torchrun (Accelerate initializes it automatically)
+        if not torch.distributed.is_initialized():
+            if is_main_process:
+                print(f"Initializing process group (backend=nccl, local_rank={args.local_rank})...")
+            torch.distributed.init_process_group(backend="nccl")
+            if is_main_process:
+                print(f"Process group initialized. World size: {torch.distributed.get_world_size()}")
     
     # Helper function to print only on main process
     def print_main(*args_print, **kwargs):
@@ -896,13 +908,13 @@ def main():
         else:
             print_main(f"ERROR: Output directory already exists: {save_dir}")
             print_main("Please use a different run name or delete the existing directory.")
-            # Exit all processes (not just main)
-            if args.local_rank != -1:
+            # Exit all processes gracefully
+            if args.local_rank != -1 and torch.distributed.is_initialized():
                 torch.distributed.destroy_process_group()
             sys.exit(1)
     
     # Synchronize all processes - wait for main process to create directory
-    if args.local_rank != -1:
+    if args.local_rank != -1 and torch.distributed.is_initialized():
         torch.distributed.barrier()
     
     print_main("=" * 100)
@@ -949,7 +961,9 @@ def main():
     
     if use_unsloth:
         # Load with unsloth for faster training
-        print("Loading model with unsloth...")
+        print_main("Loading model with unsloth...")
+        print_main(f"  Distributed: {args.local_rank != -1}")
+        print_main(f"  Device: cuda:{args.local_rank if args.local_rank != -1 else 0}")
         
         # Determine if we're doing full finetuning or LoRA
         # If lora_rank is set and not freezing vision, we can use LoRA on vision tower
@@ -1137,6 +1151,7 @@ def main():
         save_total_limit=5,
         dataloader_num_workers=8,
         dataloader_pin_memory=True,
+        ddp_find_unused_parameters=False,  # Set to False for better performance
     )
 
     # Create custom callbacks

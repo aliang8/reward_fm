@@ -509,8 +509,10 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
 
         model = RFMModel(checkpoint_path=cfg.rfm_checkpoint_path)
     elif cfg.reward_model == "rfm_vqa_sft":
-        if not cfg.rfm_checkpoint_path:
+        if cfg.rfm_checkpoint_path:
             model = RFMVQASFT(model_path=cfg.rfm_checkpoint_path, batch_size=cfg.rfm_batch_size, max_frames=cfg.gvl_max_frames)
+        else:
+            raise ValueError("need rfm_checkpoint_path for RFMVQASFT")
     else:
         raise ValueError(
             f"Unknown reward_model: {cfg.reward_model}. Must be 'rlvlmf', 'gvl', 'vlac', 'roboreward', 'rfm', 'rewind', 'rfm_vqa_sft'"

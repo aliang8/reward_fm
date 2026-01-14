@@ -220,17 +220,11 @@ class RFMVQASFT:
             }
         ]
         # Apply chat template
-        processed_conversation = self.processor.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True)
-
-        texts = []
-        text = self.processor.apply_chat_template(
-            processed_conversation, tokenize=False, add_generation_prompt=True, fps=1
-        )
-        texts.append(text)
+        processed_conversation = self.processor.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True, fps=1)
 
         # Process vision info (qwen-vl-utils handles resizing)
         image_inputs, video_inputs, video_kwargs = process_vision_info(
-            [processed_conversation],
+            [conversation],
             image_patch_size=16,
             return_video_kwargs=True,
             return_video_metadata=True,
@@ -246,7 +240,7 @@ class RFMVQASFT:
 
         # Prepare processor kwargs
         processor_kwargs = {
-            "text": texts,
+            "text": [processed_conversation],
             "padding": True,
             "truncation": False,
             "return_tensors": "pt",

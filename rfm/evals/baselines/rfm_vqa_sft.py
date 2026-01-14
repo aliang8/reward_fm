@@ -290,6 +290,7 @@ class RFMVQASFT:
             result = [float(progress)] * len(frames_array)
         except Exception as e:
             print(f"ERROR PROCESSING PROGRESS: {e}")
+            print(output_text)
             result = [0] * len(frames_array)
 
         return result

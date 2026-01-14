@@ -197,7 +197,7 @@ Task: {task}""".format(task=task_description)
             ]
 
             # Apply chat template
-            text = self.processor.apply_chat_template(message, tokenize=False, add_generation_prompt=True)
+            text = self.processor.apply_chat_template(message, tokenize=False, add_generation_prompt=True, enable_thinking=False) 
 
             # Process vision info (qwen-vl-utils handles resizing)
             image_inputs, video_inputs, video_kwargs = process_vision_info(

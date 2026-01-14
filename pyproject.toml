@@ -7,7 +7,7 @@ name = "reward-fm"
 version = "0.0.1" # You can update this as you release new versions
 description = "PyTorch implementation of a Reward Foundation Model (RFM)"
 readme = "README.md"
-requires-python = ">=3.10.*" # Based on your GitHub repo's setup
+requires-python = ">=3.10"
 authors = [
     { name = "Anthony Liang", email = "aliang80@usc.edu" }
 ]

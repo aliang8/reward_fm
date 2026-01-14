@@ -53,9 +53,6 @@ from hydra import main as hydra_main
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-# Constants for frame step processing
-NUM_SUBSAMPLED_FRAMES = 4
-
 from rfm.configs.eval_configs import BaselineEvalConfig
 from rfm.data.dataset_types import PreferenceSample, ProgressSample
 from rfm.evals.baselines.rlvlmf import RLVLMF
@@ -141,7 +138,8 @@ def process_batch_helper(
         else:
             raise ValueError(f"Unsupported sample object type: {type(sample)}")
 
-    # Handle frame steps for progress samples - expand into sub-samples, each subsampled to 4 frames
+    # Handle frame steps for progress samples - expand into sub-samples with increasing frame counts
+    # For RoboReward, we use all frames (no subsampling) since it handles variable-length inputs
     sample_frame_counts = None
     if use_frame_steps and reward_model == "roboreward":
         expanded_samples = []
@@ -154,11 +152,9 @@ def process_batch_helper(
                 num_frames = frames.shape[0] if hasattr(frames, 'shape') else len(frames)
                 
                 # Create sub-samples with increasing frame counts: 0:1, 0:2, 0:3, ..., 0:T
-                # Each sub-sample is subsampled to NUM_SUBSAMPLED_FRAMES frames using linspace
+                # Use all frames in each sub-sample (no subsampling)
                 for i in range(1, num_frames + 1):
-                    # Use linspace to select frame indices from 0 to i-1
-                    indices = np.linspace(0, i - 1, NUM_SUBSAMPLED_FRAMES, dtype=int)
-                    sub_frames = frames[indices]
+                    sub_frames = frames[:i]
                     
                     sub_trajectory = copy.deepcopy(sample.trajectory)
                     sub_trajectory.frames = sub_frames

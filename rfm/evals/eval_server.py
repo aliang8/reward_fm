@@ -786,8 +786,12 @@ def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | Non
         # Extract numpy arrays and other data using shared utility (await async function)
         numpy_arrays, other_data = await parse_npy_form_data(form_data)
 
-        # Extract use_frame_steps flag from other_data
-        use_frame_steps = other_data.pop("use_frame_steps", "false").lower() == "true"
+        # Extract use_frame_steps flag from other_data (handle both bool and string)
+        use_frame_steps_value = other_data.pop("use_frame_steps", False)
+        if isinstance(use_frame_steps_value, bool):
+            use_frame_steps = use_frame_steps_value
+        else:
+            use_frame_steps = str(use_frame_steps_value).lower() == "true"
         
         # Reconstruct the original payload structure (RFM needs torch tensor conversion for embeddings)
         batch_data = reconstruct_payload_from_npy(

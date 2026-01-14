@@ -513,7 +513,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
             model = RFMVQASFT(model_path=cfg.rfm_checkpoint_path, batch_size=cfg.rfm_batch_size, max_frames=cfg.gvl_max_frames)
     else:
         raise ValueError(
-            f"Unknown reward_model: {cfg.reward_model}. Must be 'rlvlmf', 'gvl', 'vlac', 'roboreward', 'rfm', or 'rewind'"
+            f"Unknown reward_model: {cfg.reward_model}. Must be 'rlvlmf', 'gvl', 'vlac', 'roboreward', 'rfm', 'rewind', 'rfm_vqa_sft'"
         )
 
     all_metrics = {}
@@ -811,9 +811,9 @@ def main(cfg: DictConfig):
     display_config(baseline_cfg)
 
     # Validate reward model
-    if baseline_cfg.reward_model not in ["gvl", "vlac", "rlvlmf", "roboreward", "rfm", "rewind"]:
+    if baseline_cfg.reward_model not in ["gvl", "vlac", "rlvlmf", "roboreward", "rfm", "rewind", "rfm_vqa_sft"]:
         raise ValueError(
-            f"reward_model must be 'gvl', 'vlac', 'rlvlmf', 'roboreward', 'rfm', or 'rewind', got {baseline_cfg.reward_model}"
+            f"reward_model must be 'gvl', 'vlac', 'rlvlmf', 'roboreward', 'rfm', 'rewind', 'rfm_vqa_sft', got {baseline_cfg.reward_model}"
         )
 
     # Setup output directory

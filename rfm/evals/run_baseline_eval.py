@@ -591,7 +591,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                         result = process_preference_sample(sample, model)
                         if result:
                             eval_results.append(result)
-                    elif cfg.reward_model in ["gvl", "vlac", "roboreward"] and isinstance(sample, ProgressSample):
+                    elif cfg.reward_model in ["gvl", "vlac", "roboreward", "rfm_vqa_sft"] and isinstance(sample, ProgressSample):
                         # Handle ProgressSamples for gvl/vlac/roboreward (including confusion_matrix)
                         result = process_progress_sample(sample, model)
                         if result:

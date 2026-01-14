@@ -264,6 +264,7 @@ class RFMVQASFT:
         inputs = self.processor(
             **processor_kwargs
         )
+        inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
 
 
         # Generate

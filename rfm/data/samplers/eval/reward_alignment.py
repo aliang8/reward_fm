@@ -15,6 +15,9 @@ from tqdm import tqdm
 from rfm.data.dataset_types import ProgressSample, Trajectory
 from rfm.data.samplers.base import RFMBaseSampler
 from rfm.utils.distributed import rank_0_print
+from rfm.utils.utils import get_logger
+
+logger = get_logger(__name__)
 
 
 class RewardAlignmentSampler(RFMBaseSampler):
@@ -59,10 +62,14 @@ class RewardAlignmentSampler(RFMBaseSampler):
             f"Generating subsequence samples for {len(trajectories_to_process)} trajectories", verbose=self.verbose
         )
 
+        all_num_frames = []
         for traj_idx in trajectories_to_process:
             traj = self.dataset[traj_idx]
+            num_frames  = traj["num_frames"]
+            all_num_frames.append(num_frames)
             sample_indices.extend(self._generate_indices_for_trajectory(traj_idx, traj))
 
+        logger.info(f"All num frames: {all_num_frames}")
         return sample_indices
 
     def _generate_indices_for_trajectory(self, traj_idx: int, traj: Dict[str, Any]) -> List[Dict[str, Any]]:

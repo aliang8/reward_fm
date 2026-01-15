@@ -159,12 +159,14 @@ def sample_to_vqa_dict(sample: Union[PreferenceSample, ProgressSample], discrete
         else:
             progress_score = 0
         
-        # Build prompt
-        prompt = PROGRESS_PROMPT_TEMPLATE.format(task=traj.task)
 
         # convert to discrete progress score
         if discrete_progress:
+            prompt = DISCRETE_PROGRESS_PROMPT_TEMPLATE.format(task=traj.task)
             progress_score = convert_continuous_to_discrete_bin_roboreward(progress_score/100, num_bins=5)
+        else:
+            # Build prompt
+            prompt = PROGRESS_PROMPT_TEMPLATE.format(task=traj.task)
 
         # Return VQA dict with all fields (some will be None)
         return {

@@ -24,7 +24,7 @@ from rfm.models.utils import convert_bins_to_continuous, convert_discrete_target
 
 def convert_continuous_to_discrete_bin_roboreward(value: float, num_bins: int) -> int:
     value = min(max(value, 0.0), 1.0)
-    return round(value * (num_bins - 1))
+    return round(value * (num_bins - 1)) + 1
 
 
 def compute_eval_metrics(

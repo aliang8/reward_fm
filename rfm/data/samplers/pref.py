@@ -343,6 +343,9 @@ class PrefSampler(RFMBaseSampler):
 
         rejected_trajectory = self._get_traj_from_data(rejected_traj, subsample_strategy=rejected_subsample_strategy)
 
+        if rejected_trajectory is None or chosen_trajectory is None:
+            return None
+
         # If our strategy is different task, make sure the rejected trajectory has 0 progress and 0 success labels
         if strategy_used in [
             DataGenStrat.DIFFERENT_TASK,

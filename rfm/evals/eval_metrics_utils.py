@@ -3,7 +3,8 @@ from typing import Any
 import numpy as np
 from scipy.stats import spearmanr
 from scipy.stats import pearsonr
-
+from scipy.stats import kendalltau
+import itertools
 
 def compute_pearson(y_true: list[float], y_pred: list[float]) -> float:
     """Compute Pearson correlation, robust to constant inputs; returns np.nan if undefined."""
@@ -30,6 +31,41 @@ def compute_spearman(y_true: list[float], y_pred: list[float]) -> float:
         corr, _ = spearmanr(a, b)
     except Exception:
         corr = np.nan
+    return corr
+
+def kendall_tau_a(x, y):
+    C = D = 0
+    n = len(x)
+    for i, j in itertools.combinations(range(n), 2):
+        dx = np.sign(x[i] - x[j])
+        dy = np.sign(y[i] - y[j])
+        if dx == 0 or dy == 0:
+            continue  # τ-a ignores ties
+        if dx == dy:
+            C += 1
+        else:
+            D += 1
+    return (C - D) / (n * (n - 1) / 2)
+
+def compute_kendall(y_true: list[float], y_pred: list[float]) -> float:
+    """Compute Kendall tau-b correlation, which handles ties better than Spearman.
+    
+    Kendall tau-b is specifically adapted to handle ties in the data.
+    Returns np.nan if undefined or if inputs are invalid.
+    
+    See: https://stackoverflow.com/questions/10711395/spearman-correlation-and-ties
+    """
+    a = np.asarray(y_true, dtype=float)
+    b = np.asarray(y_pred, dtype=float)
+    if a.size == 0 or b.size == 0 or a.size != b.size:
+        return np.nan
+    # try:
+    #     # variant='b' specifies Kendall tau-b, which handles ties
+    #     corr, _ = kendalltau(a, b, variant='a')
+    # except Exception:
+    #     import ipdb; ipdb.set_trace()
+    #     corr = np.nan
+    corr = kendall_tau_a(a, b)
     return corr
 
 

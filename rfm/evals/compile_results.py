@@ -35,6 +35,7 @@ def compute_eval_metrics(
     num_bins: int = 10,
     data_source: Optional[str] = None,
     correlation_method: str = "kendall",
+    is_vqa: bool = False,
 ):
     if eval_type == "quality_preference" or eval_type == "quality_preference_roboarena":
         return run_quality_preference_eval(results, data_source=data_source)

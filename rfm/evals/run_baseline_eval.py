@@ -541,6 +541,9 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
             if eval_type == "reward_alignment":
                 sampler_kwargs["max_trajectories"] = cfg.custom_eval.reward_alignment_max_trajectories
                 sampler_kwargs["use_frame_steps"] = cfg.custom_eval.use_frame_steps
+                if cfg.reward_model == "roboreward":
+                    sampler_kwargs["pad_frames"] = False
+                    sampler_kwargs["subsample_n_frames"] = 5
             elif eval_type == "policy_ranking":
                 sampler_kwargs["num_examples_per_quality_pr"] = cfg.custom_eval.num_examples_per_quality_pr
                 sampler_kwargs["num_partial_successes"] = cfg.custom_eval.num_partial_successes

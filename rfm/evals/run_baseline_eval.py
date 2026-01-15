@@ -590,7 +590,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
 
             # Save results to JSON
             if cfg.output_dir:
-                results_file = os.path.join(cfg.output_dir, f"{eval_type}_{dataset_name}_results.json")
+                results_file = os.path.join(cfg.output_dir, f"{eval_type}_results.json")
                 with open(results_file, "w") as f:
                     json.dump(eval_results, f, indent=2)
                 logger.info(f"Saved results to {results_file}")
@@ -620,10 +620,10 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                         # Save task_groups and task_details if available
                         if cfg.output_dir:
                             task_groups_file = os.path.join(
-                                cfg.output_dir, f"{eval_type}_{dataset_name}_task_groups.json"
+                                cfg.output_dir, f"{eval_type}_task_groups.json"
                             )
                             task_details_file = os.path.join(
-                                cfg.output_dir, f"{eval_type}_{dataset_name}_task_details.json"
+                                cfg.output_dir, f"{eval_type}_task_details.json"
                             )
                             with open(task_groups_file, "w") as f:
                                 json.dump(_make_json_serializable(task_groups), f, indent=2)
@@ -708,11 +708,11 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                             metrics_dict, plots, video_frames_list, _ = eval_metrics_result
                             # Save plots with videos as GIFs if available
                             if plots and cfg.output_dir:
-                                plots_dir = os.path.join(cfg.output_dir, f"{eval_type}_{dataset_name}_plots")
+                                plots_dir = os.path.join(cfg.output_dir, f"{eval_type}_plots")
                                 os.makedirs(plots_dir, exist_ok=True)
                                 for i, fig in enumerate(plots[:10]):
                                     video_frames = video_frames_list[i] if i < len(video_frames_list) else None
-                                    gif_path = os.path.join(plots_dir, f"trajectory_{i:04d}.gif")
+                                    gif_path = os.path.join(cfg.output_dir, f"{eval_type}_{i:04d}.gif")
                                     _create_plot_with_video_gif(fig, video_frames, gif_path)
                                 logger.info(f"Saved {len(plots)} plot+video GIFs to {plots_dir}")
                         elif eval_type == "policy_ranking":
@@ -720,10 +720,10 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                             # Save task_groups and task_details if available
                             if cfg.output_dir:
                                 task_groups_file = os.path.join(
-                                    cfg.output_dir, f"{eval_type}_{dataset_name}_task_groups.json"
+                                    cfg.output_dir, f"{eval_type}_task_groups.json"
                                 )
                                 task_details_file = os.path.join(
-                                    cfg.output_dir, f"{eval_type}_{dataset_name}_task_details.json"
+                                    cfg.output_dir, f"{eval_type}_task_details.json"
                                 )
                                 with open(task_groups_file, "w") as f:
                                     json.dump(_make_json_serializable(task_groups), f, indent=2)

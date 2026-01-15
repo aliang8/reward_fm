@@ -513,27 +513,25 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
         if not eval_datasets:
             logger.warning(f"No datasets specified for {eval_type}, skipping")
             continue
-        
-        # Resolve dataset keys
-        if isinstance(eval_datasets, list):
-            resolved_datasets = eval_datasets
-        else:
-            resolved_datasets = resolve_dataset_keys(eval_datasets, split="eval")
-        
-        logger.info(f"Resolved datasets for {eval_type}: {resolved_datasets}")
 
         eval_type_metrics = {}
 
-        for dataset_name in resolved_datasets:
-            logger.info(f"Processing dataset: {dataset_name}")
+        logger.info(f"Eval datasets: {eval_datasets}")
+
+        for dataset_name in eval_datasets:
+            # Resolve dataset keys
+            if isinstance(dataset_name, list):
+                resolved_datasets = dataset_name
+            else:
+                resolved_datasets = resolve_dataset_keys([dataset_name], split="eval")
+            
+            logger.info(f"Resolved datasets for {eval_type}: {resolved_datasets}")
 
             # Create data config for this dataset (similar to trainer)
             eval_data_cfg = copy.deepcopy(base_data_cfg)
             eval_data_cfg.dataset_type = "rfm"
-            if isinstance(dataset_name, list):
-                eval_data_cfg.eval_datasets = dataset_name
-            else:
-                eval_data_cfg.eval_datasets = [dataset_name]
+            eval_data_cfg.eval_datasets = resolved_datasets
+
 
             # Setup dataset
             sampler_kwargs = {
@@ -587,11 +585,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
 
             # Save results to JSON
             if cfg.output_dir:
-                results_file = os.path.join(cfg.output_dir, f"{eval_type}_results.json")
-                # check if file name too long
-                if len(results_file) > 249:
-                    logger.warning(f"Results file name too long: {results_file}, truncating")
-                    results_file = results_file[:249] + ".json"
+                results_file = os.path.join(cfg.output_dir, f"{eval_type}_{dataset_name}_results.json")
                 with open(results_file, "w") as f:
                     json.dump(eval_results, f, indent=2)
                 logger.info(f"Saved results to {results_file}")
@@ -621,10 +615,10 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                         # Save task_groups and task_details if available
                         if cfg.output_dir:
                             task_groups_file = os.path.join(
-                                cfg.output_dir, f"{eval_type}_task_groups.json"
+                                cfg.output_dir, f"{eval_type}_{dataset_name}_task_groups.json"
                             )
                             task_details_file = os.path.join(
-                                cfg.output_dir, f"{eval_type}_task_details.json"
+                                cfg.output_dir, f"{eval_type}_{dataset_name}_task_details.json"
                             )
                             with open(task_groups_file, "w") as f:
                                 json.dump(_make_json_serializable(task_groups), f, indent=2)
@@ -667,7 +661,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
 
                         # Save confusion matrix plot
                         if fig and cfg.output_dir:
-                            plots_dir = os.path.join(cfg.output_dir, f"{eval_type}_plots")
+                            plots_dir = os.path.join(cfg.output_dir, f"{eval_type}_{dataset_name}_plots")
                             os.makedirs(plots_dir, exist_ok=True)
                             plot_path = os.path.join(plots_dir, "confusion_matrix.png")
                             fig.savefig(plot_path, dpi=150, bbox_inches="tight")
@@ -711,7 +705,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                             metrics_dict, plots, video_frames_list, _ = eval_metrics_result
                             # Save plots with videos as GIFs if available
                             if plots and cfg.output_dir:
-                                plots_dir = os.path.join(cfg.output_dir, f"{eval_type}_plots")
+                                plots_dir = os.path.join(cfg.output_dir, f"{eval_type}_{dataset_name}_plots")
                                 os.makedirs(plots_dir, exist_ok=True)
                                 for i, fig in enumerate(plots[:10]):
                                     video_frames = video_frames_list[i] if i < len(video_frames_list) else None
@@ -723,10 +717,10 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                             # Save task_groups and task_details if available
                             if cfg.output_dir:
                                 task_groups_file = os.path.join(
-                                    cfg.output_dir, f"{eval_type}_task_groups.json"
+                                    cfg.output_dir, f"{eval_type}_{dataset_name}_task_groups.json"
                                 )
                                 task_details_file = os.path.join(
-                                    cfg.output_dir, f"{eval_type}_task_details.json"
+                                    cfg.output_dir, f"{eval_type}_{dataset_name}_task_details.json"
                                 )
                                 with open(task_groups_file, "w") as f:
                                     json.dump(_make_json_serializable(task_groups), f, indent=2)

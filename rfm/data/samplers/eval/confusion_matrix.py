@@ -25,7 +25,7 @@ class ConfusionMatrixSampler(RFMBaseSampler):
     and prioritizes different language instructions by randomizing the pairing order.
     """
 
-    def __init__(self, n_trajectories_per_source: int = 5, **kwargs):
+    def __init__(self, n_trajectories_per_source: int = None, **kwargs):
         """Initialize confusion matrix sampler.
 
         Args:

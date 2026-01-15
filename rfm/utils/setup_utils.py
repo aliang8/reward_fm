@@ -277,7 +277,7 @@ def _add_special_tokens_and_resize(cfg: ModelConfig, processor: AutoProcessor, b
         base_model: Base model to resize embeddings for
     """
     # Add RFM special tokens if they don't exist
-    if cfg.model_type == "default":
+    if cfg.model_type != "vqa":
         special_tokens = [
             "<|split_token|>",
             "<|reward_token|>",
@@ -288,101 +288,96 @@ def _add_special_tokens_and_resize(cfg: ModelConfig, processor: AutoProcessor, b
             "<|succ_token_A|>",
             "<|succ_token_B|>",
         ]
-    else:
-        special_tokens = []
-
-    # Add special tokens to the tokenizer
-    if cfg.model_type != "vqa":
         for token in special_tokens:
             if token not in processor.tokenizer.get_vocab():
                 processor.tokenizer.add_special_tokens({"additional_special_tokens": [token]})
                 logger.info(f"Added special token: {token}")
 
-    # Resize token embeddings if new tokens were added
-    vocab_size = (
-        base_model.config.text_config.vocab_size
-        if ("Qwen3" in cfg.base_model_id or "Molmo" in cfg.base_model_id)
-        else base_model.config.vocab_size
-    )
+        # Resize token embeddings if new tokens were added
+        vocab_size = (
+            base_model.config.text_config.vocab_size
+            if ("Qwen3" in cfg.base_model_id or "Molmo" in cfg.base_model_id)
+            else base_model.config.vocab_size
+        )
 
-    if len(processor.tokenizer) != vocab_size:
-        logger.info(f"Resizing token embeddings from {vocab_size} to {len(processor.tokenizer)}")
+        if len(processor.tokenizer) != vocab_size:
+            logger.info(f"Resizing token embeddings from {vocab_size} to {len(processor.tokenizer)}")
 
-        is_molmo = "Molmo" in cfg.base_model_id
-        if is_molmo:
-            # Custom resize for Molmo2 - its Molmo2Embedding stores embedding as a Parameter directly
-            new_vocab_size = len(processor.tokenizer)
-            _embed_layer = base_model.get_input_embeddings()
+            is_molmo = "Molmo" in cfg.base_model_id
+            if is_molmo:
+                # Custom resize for Molmo2 - its Molmo2Embedding stores embedding as a Parameter directly
+                new_vocab_size = len(processor.tokenizer)
+                _embed_layer = base_model.get_input_embeddings()
 
-            # Check if embedding is a Parameter (tensor) directly, or an nn.Embedding
-            if hasattr(_embed_layer, "embedding"):
-                old_embed_attr = _embed_layer.embedding
+                # Check if embedding is a Parameter (tensor) directly, or an nn.Embedding
+                if hasattr(_embed_layer, "embedding"):
+                    old_embed_attr = _embed_layer.embedding
 
-                # Case 1: embedding is a Parameter (raw tensor)
-                if isinstance(old_embed_attr, torch.nn.Parameter):
-                    old_num_tokens, embedding_dim = old_embed_attr.shape
+                    # Case 1: embedding is a Parameter (raw tensor)
+                    if isinstance(old_embed_attr, torch.nn.Parameter):
+                        old_num_tokens, embedding_dim = old_embed_attr.shape
 
-                    # Create new parameter with expanded vocab
-                    new_embed_data = torch.zeros(
-                        new_vocab_size, embedding_dim, device=old_embed_attr.device, dtype=old_embed_attr.dtype
-                    )
+                        # Create new parameter with expanded vocab
+                        new_embed_data = torch.zeros(
+                            new_vocab_size, embedding_dim, device=old_embed_attr.device, dtype=old_embed_attr.dtype
+                        )
 
-                    # Copy existing weights
-                    new_embed_data[:old_num_tokens] = old_embed_attr.data
+                        # Copy existing weights
+                        new_embed_data[:old_num_tokens] = old_embed_attr.data
 
-                    # Initialize new token embeddings using mean of existing embeddings
-                    mean_embedding = old_embed_attr.data.mean(dim=0)
-                    new_embed_data[old_num_tokens:] = mean_embedding.unsqueeze(0).expand(
-                        new_vocab_size - old_num_tokens, -1
-                    )
+                        # Initialize new token embeddings using mean of existing embeddings
+                        mean_embedding = old_embed_attr.data.mean(dim=0)
+                        new_embed_data[old_num_tokens:] = mean_embedding.unsqueeze(0).expand(
+                            new_vocab_size - old_num_tokens, -1
+                        )
 
-                    # Replace the embedding Parameter
-                    _embed_layer.embedding = torch.nn.Parameter(new_embed_data)
+                        # Replace the embedding Parameter
+                        _embed_layer.embedding = torch.nn.Parameter(new_embed_data)
 
-                    # Also update config to reflect new vocab size
-                    base_model.config.text_config.vocab_size = new_vocab_size
+                        # Also update config to reflect new vocab size
+                        base_model.config.text_config.vocab_size = new_vocab_size
 
-                    logger.info(
-                        f"Custom resized Molmo2 embeddings (Parameter) from {old_num_tokens} to {new_vocab_size}"
-                    )
+                        logger.info(
+                            f"Custom resized Molmo2 embeddings (Parameter) from {old_num_tokens} to {new_vocab_size}"
+                        )
 
-                # Case 2: embedding is an nn.Embedding with .weight
-                elif hasattr(old_embed_attr, "weight"):
-                    old_num_tokens, embedding_dim = old_embed_attr.weight.shape
+                    # Case 2: embedding is an nn.Embedding with .weight
+                    elif hasattr(old_embed_attr, "weight"):
+                        old_num_tokens, embedding_dim = old_embed_attr.weight.shape
 
-                    # Create new embedding layer with expanded vocab
-                    new_embedding = torch.nn.Embedding(
-                        new_vocab_size,
-                        embedding_dim,
-                        device=old_embed_attr.weight.device,
-                        dtype=old_embed_attr.weight.dtype,
-                    )
+                        # Create new embedding layer with expanded vocab
+                        new_embedding = torch.nn.Embedding(
+                            new_vocab_size,
+                            embedding_dim,
+                            device=old_embed_attr.weight.device,
+                            dtype=old_embed_attr.weight.dtype,
+                        )
 
-                    # Copy existing weights
-                    new_embedding.weight.data[:old_num_tokens] = old_embed_attr.weight.data
+                        # Copy existing weights
+                        new_embedding.weight.data[:old_num_tokens] = old_embed_attr.weight.data
 
-                    # Initialize new token embeddings using mean of existing embeddings
-                    mean_embedding = old_embed_attr.weight.data.mean(dim=0)
-                    new_embedding.weight.data[old_num_tokens:] = mean_embedding.unsqueeze(0).expand(
-                        new_vocab_size - old_num_tokens, -1
-                    )
+                        # Initialize new token embeddings using mean of existing embeddings
+                        mean_embedding = old_embed_attr.weight.data.mean(dim=0)
+                        new_embedding.weight.data[old_num_tokens:] = mean_embedding.unsqueeze(0).expand(
+                            new_vocab_size - old_num_tokens, -1
+                        )
 
-                    # Replace the nested embedding
-                    _embed_layer.embedding = new_embedding
+                        # Replace the nested embedding
+                        _embed_layer.embedding = new_embedding
 
-                    # Also update config to reflect new vocab size
-                    base_model.config.text_config.vocab_size = new_vocab_size
+                        # Also update config to reflect new vocab size
+                        base_model.config.text_config.vocab_size = new_vocab_size
 
-                    logger.info(
-                        f"Custom resized Molmo2 embeddings (Embedding) from {old_num_tokens} to {new_vocab_size}"
-                    )
+                        logger.info(
+                            f"Custom resized Molmo2 embeddings (Embedding) from {old_num_tokens} to {new_vocab_size}"
+                        )
+                    else:
+                        logger.warning(f"Cannot resize Molmo2 embeddings - unknown embedding type: {type(old_embed_attr)}")
                 else:
-                    logger.warning(f"Cannot resize Molmo2 embeddings - unknown embedding type: {type(old_embed_attr)}")
+                    logger.warning(f"Cannot resize Molmo2 embeddings - no embedding attribute found")
             else:
-                logger.warning(f"Cannot resize Molmo2 embeddings - no embedding attribute found")
-        else:
-            base_model.resize_token_embeddings(len(processor.tokenizer))
-            logger.info(f"Resized token embeddings to {len(processor.tokenizer)}")
+                base_model.resize_token_embeddings(len(processor.tokenizer))
+                logger.info(f"Resized token embeddings to {len(processor.tokenizer)}")
 
 
 def _verify_checkpoint_loading(cfg: ModelConfig, model: Any, before_weights: dict) -> None:
@@ -848,6 +843,7 @@ def setup_batch_collator(
         "use_multi_image": cfg.data.use_multi_image,
         "prog_pref": cfg.training.predict_pref_progress,
         "prog_sim": cfg.training.predict_sim_progress,
+        "pref_sim": cfg.training.predict_pref_sim,
         "use_progress_token": cfg.model.use_progress_token,
         "shuffle_progress_frames": cfg.data.shuffle_progress_frames,
         "inference": is_eval,

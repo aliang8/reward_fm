@@ -135,8 +135,8 @@ class DataConfig:
             "help": "Minimum number of frames required per trajectory (trajectories with fewer frames will be filtered out)"
         },
     )
-    resized_height: int = field(default=224, metadata={"help": "Height to resize video frames to"})
-    resized_width: int = field(default=224, metadata={"help": "Width to resize video frames to"})
+    resized_height: Optional[int] = field(default=None, metadata={"help": "Height to resize video frames to"})
+    resized_width: Optional[int] = field(default=None, metadata={"help": "Width to resize video frames to"})
 
     # Video/image processing mode
     use_multi_image: bool = field(
@@ -237,11 +237,11 @@ class DataConfig:
         metadata={"help": "Path to dataset-specific success cutoff file (CSV format: dataset_name,success_percentage)"},
     )
 
-    # RoboArena partial success threshold
-    roboarena_partial_success_threshold: float = field(
+    # Partial success threshold (for datasets with partial_success like RoboArena and RoboReward)
+    partial_success_threshold: float = field(
         default=0.2,
         metadata={
-            "help": "Minimum difference in partial_success required between chosen and rejected trajectories for RoboArena preference sampling"
+            "help": "Minimum difference in partial_success required between chosen and rejected trajectories for preference sampling"
         },
     )
 
@@ -278,10 +278,10 @@ class CustomEvaluationConfig:
             "help": "Limit total number of quality preference comparisons across all tasks. None = use all comparisons. Uniformly samples if limit is set."
         },
     )
-    num_examples_per_quality_pr: int = field(
-        default=5,
+    num_examples_per_quality_pr: Optional[int] = field(
+        default=None,
         metadata={
-            "help": "Number of trajectories to sample per quality label for policy ranking evaluation. Only tasks with multiple quality labels are used."
+            "help": "Number of trajectories to sample per quality label for policy ranking evaluation. Only tasks with multiple quality labels are used. If None = use all."
         },
     )
     num_partial_successes: Optional[int] = field(
@@ -398,6 +398,12 @@ class TrainingConfig:
     )
     predict_sim_progress: bool = field(
         default=False, metadata={"help": "Whether to predict progress for similarity samples"}
+    )
+    predict_pref_sim: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to predict preference for ref/diff pair in similarity samples (ref is always preferred)"
+        },
     )
 
 
@@ -526,6 +532,7 @@ class ExperimentConfig:
             self.peft = PEFTConfig(**self.peft)
 
         if isinstance(self.data, dict):
+            self.data.pop("roboarena_partial_success_threshold", None)
             self.data = DataConfig(**self.data)
 
         if isinstance(self.training, dict):

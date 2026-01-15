@@ -181,7 +181,7 @@ def convert_soar_dataset_to_hf(
             valid_img_key: str | None = None
             valid_img_key = "image_0"
 
-            # Determine quality label 
+            # Determine quality label
             quality_label = "successful" if split_name.lower().startswith("success") else "failure"
 
             # Build entry for this view

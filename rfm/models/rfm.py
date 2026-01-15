@@ -35,7 +35,7 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
     - Qwen2.5-VL (Qwen2_5_VLModel)
     - SmolVLM (AutoModelForImageTextToText)
     """
-
+    # unused param i think
     config_class = Qwen2_5_VLModel.config_class
 
     # Declare support for SDPA and Flash Attention (will delegate to underlying model), needed for Qwen3

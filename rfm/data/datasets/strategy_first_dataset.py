@@ -100,6 +100,10 @@ class StrategyFirstDataset(BaseDataset):
             if task in task_indices:
                 self.tasks_with_both_indices.update(task_indices[task])
 
+        # Build set of successful trajectory indices for REWIND strategy filtering
+        quality_indices = self._combined_indices.get("quality_indices", {})
+        self.successful_indices = set(quality_indices.get("successful", []))
+
         logger.info(f"StrategyFirstDataset initialized with {len(self.dataset)} trajectories")
         logger.info(
             f"Sample type ratios: pref={self.sample_type_ratio[0]}, progress={self.sample_type_ratio[1]}, sim={self.sample_type_ratio[2]}"
@@ -147,11 +151,26 @@ class StrategyFirstDataset(BaseDataset):
             return self._generate_without_specific_strategy(sample_type)
 
         # Step 4-6: Sample and generate using helper method
+        # First try with preferred strategy
         sample = self._try_generate_sample(
             sample_type=sample_type,
             filtered_sources=filtered_sources,
             strategy=strategy,
             preferred_strategy=strategy,
+        )
+        if sample is not None:
+            return sample
+
+        # If preferred strategy failed, try without strategy (let sampler choose its own)
+        logger.trace(
+            f"[StrategyFirstDataset] Failed to generate {sample_type} sample with preferred strategy {strategy.value if hasattr(strategy, 'value') else strategy}, "
+            f"trying without strategy..."
+        )
+        sample = self._try_generate_sample(
+            sample_type=sample_type,
+            filtered_sources=filtered_sources,
+            strategy=strategy,  # Keep strategy for filtering, but let sampler choose
+            preferred_strategy=None,  # Let sampler select its own strategy
         )
         if sample is not None:
             return sample
@@ -390,13 +409,40 @@ class StrategyFirstDataset(BaseDataset):
         if strategy is None:
             return indices
 
-        # Check if this is RoboArena (skip task filtering for RoboArena)
+        # For strategies that require successful trajectories only
+        # REWIND: all sample types
+        # REVERSE_PROGRESS: preference and progress samples
+        # FORWARD_PROGRESS: progress samples only
+        requires_successful = (
+            strategy == DataGenStrat.REWIND
+            or (strategy == DataGenStrat.REVERSE_PROGRESS and sample_type in ["pref", "progress"])
+            or (strategy == DataGenStrat.FORWARD_PROGRESS and sample_type == "progress")
+        )
+
+        if requires_successful:
+            indices_set = set(indices)
+            filtered = indices_set & self.successful_indices
+
+            if not filtered:
+                logger.trace(
+                    f"[StrategyFirstDataset] No successful trajectories available for {strategy.value} strategy in source {data_source}"
+                )
+                return []
+
+            logger.trace(
+                f"[StrategyFirstDataset] Filtered {len(filtered)}/{len(indices)} indices for {strategy.value} strategy "
+                f"(keeping only successful trajectories)"
+            )
+            return list(filtered)
+
+        # Check if this is RoboArena or RoboReward (skip task filtering for these datasets)
         is_roboarena = data_source and "roboarena" in str(data_source).lower()
+        is_roboreward = data_source and "roboreward" in str(data_source).lower()
 
         # For SUBOPTIMAL strategy (preference or similarity), filter to tasks with both optimal and suboptimal trajectories
         if strategy == DataGenStrat.SUBOPTIMAL and sample_type in ["pref", "similarity"]:
-            if is_roboarena:
-                # RoboArena uses partial_success logic, don't filter by task requirements
+            # Skip task filtering for RoboArena and RoboReward (they use partial_success logic)
+            if is_roboarena or is_roboreward:
                 return indices
 
             if not self.tasks_with_both:
@@ -512,6 +558,9 @@ class StrategyFirstDataset(BaseDataset):
                 filtered_indices = source_indices
 
             # Select a trajectory from filtered indices
+            # For progress: this is the trajectory for progress prediction
+            # For preference: this is the chosen trajectory
+            # For similarity: this is the reference trajectory
             selected_traj_idx = self._local_random.choice(filtered_indices)
             item = self.dataset[selected_traj_idx]
 

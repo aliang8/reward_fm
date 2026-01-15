@@ -524,7 +524,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
             if isinstance(eval_dataset, list):
                 resolved_datasets.append(eval_dataset)
             else:
-                resolved_datasets.append(resolve_dataset_keys([eval_dataset], split="eval"))
+                resolved_datasets.extend(resolve_dataset_keys([eval_dataset], split="eval"))
             
             logger.info(f"Resolved datasets for {eval_type}: {resolved_datasets}")
 

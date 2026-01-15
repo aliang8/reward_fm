@@ -80,7 +80,10 @@ class RewardAlignmentSampler(RFMBaseSampler):
 
         if self.use_frame_steps:
             if self.subsample_n_frames:
-                end_indices = np.linspace(0, num_frames - 1, self.subsample_n_frames)
+                if self.subsample_n_frames <= num_frames:
+                    end_indices = list(range(num_frames))
+                else:
+                    end_indices = np.linspace(0, num_frames - 1, self.subsample_n_frames)
                 for end_idx in end_indices:
                     frame_indices = list(range(int(end_idx) + 1))
                     indices.append({

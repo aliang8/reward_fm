@@ -314,6 +314,12 @@ class CustomEvaluationConfig:
             "help": "Whether to use frame steps (subsequences) for reward_alignment and policy_ranking evaluations. True = generate subsequences (0:frame_step, 0:2*frame_step, etc.), False = use whole trajectory."
         },
     )
+    subsample_n_frames: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Number of frames to subsample for reward alignment evaluation. null = use all frames."
+        },
+    )
 
 
 @dataclass

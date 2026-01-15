@@ -357,6 +357,9 @@ class PrefSampler(RFMBaseSampler):
             if rejected_trajectory.success_label is not None:
                 rejected_trajectory.success_label = [0.0] * len(rejected_trajectory.success_label)
 
+        if rejected_trajectory is None or chosen_trajectory is None:
+            return None
+
         # Create preference sample structure
         sample = PreferenceSample(
             chosen_trajectory=chosen_trajectory,

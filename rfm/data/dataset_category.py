@@ -156,6 +156,7 @@ DATASET_MAP = {
         "eval": [
             # "aliangdw_metaworld_metaworld_eval",
             "abraranwar_usc_koch_rewind_rfm_usc_koch_rewind",
+            "jesbu1_roboarena_0825_rfm_roboarena",
             "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
             "jesbu1_soar_rfm_soar_rfm",
             # "jesbu1_egodex_rfm_egodex_test",
@@ -164,6 +165,7 @@ DATASET_MAP = {
     "quality_preference": {
         "eval": [
             # "aliangdw_metaworld_metaworld_eval",
+            "jesbu1_roboarena_0825_rfm_roboarena",
             "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
             # "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",
             # "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
@@ -174,6 +176,7 @@ DATASET_MAP = {
     "policy_ranking": {
         "eval": [
             # "aliangdw_metaworld_metaworld_eval",
+            "jesbu1_roboarena_0825_rfm_roboarena",
             "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
             "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",
             "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",

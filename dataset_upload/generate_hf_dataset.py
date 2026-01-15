@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial
 from multiprocessing import Pool, cpu_count
-from typing import Any
+from typing import Any, Optional
 
 from pyrallis import wrap
 from tqdm import tqdm
@@ -116,7 +116,7 @@ class OutputConfig:
         default=64, metadata={"help": "Maximum number of frames per trajectory (-1 for no downsampling)"}
     )
     use_video: bool = field(default=True, metadata={"help": "Use MP4 videos instead of individual frame images"})
-    shortest_edge_size: int = field(default=240, metadata={"help": "Shortest edge size for video resizing"})
+    shortest_edge_size: Optional[int] = field(default=240, metadata={"help": "Shortest edge size for video resizing"})
     center_crop: bool = field(
         default=False,
         metadata={"help": "Center crop the video to the target size. Defaults to False, which means no cropping."},

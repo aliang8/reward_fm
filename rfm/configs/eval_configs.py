@@ -68,11 +68,11 @@ class OfflineEvalConfig:
 class BaselineEvalConfig:
     """Configuration for baseline evaluation runs (run_baseline_eval.py)."""
 
-    # Reward model: "gvl", "vlac", "rlvlmf", "rfm", or "rewind"
+    # Reward model: "gvl", "vlac", "rlvlmf", "rfm", "rewind", or "roboreward"
     reward_model: str = field(
         default="rlvlmf",
         metadata={
-            "help": "Reward model: 'gvl' or 'vlac' for progress, 'rlvlmf' for preference, 'rfm' or 'rewind' for trained models"
+            "help": "Reward model: 'gvl' or 'vlac' for progress, 'rlvlmf' for preference, 'rfm' or 'rewind' for trained models, 'roboreward' for RoboReward baseline"
         },
     )
 
@@ -150,6 +150,18 @@ class BaselineEvalConfig:
         metadata={"help": "Batch size for RFM/ReWiND model inference"},
     )
 
+    # RoboReward settings (only used if reward_model is "roboreward")
+    roboreward_model_path: Optional[str] = field(
+        default="teetone/RoboReward-4B",
+        metadata={
+            "help": "Path to RoboReward model (HuggingFace repo ID, e.g., 'teetone/RoboReward-8B' or 'teetone/RoboReward-4B')"
+        },
+    )
+    roboreward_max_new_tokens: int = field(
+        default=128,
+        metadata={"help": "Maximum number of tokens to generate for RoboReward"},
+    )
+
     # Custom evaluation configuration
     custom_eval: CustomEvaluationConfig = field(
         default_factory=CustomEvaluationConfig,
@@ -160,6 +172,16 @@ class BaselineEvalConfig:
     output_dir: Optional[str] = field(
         default=None,
         metadata={"help": "Output directory for evaluation results"},
+    )
+
+    # Server settings (for baseline_eval_server.py)
+    server_url: str = field(
+        default="0.0.0.0",
+        metadata={"help": "Evaluation server URL"},
+    )
+    server_port: int = field(
+        default=8001,
+        metadata={"help": "Evaluation server port"},
     )
 
     def __post_init__(self):

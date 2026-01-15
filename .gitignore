@@ -16,7 +16,7 @@ visualizations/*
 rfm/rfm_dataset/*
 .DS_Store
 rfm_dataset/*
-processed_datasets/*
+processed_datasets
 wandb/*
 LIBERO/*
 core
@@ -59,3 +59,7 @@ rewardfm_eval_ui/*
 rewardfm_eval_ui
 run_scripts/*
 *.parquet
+processed_datasets/*
+baseline_eval_output/*
+confusion_matrix_output/*
+*.npy

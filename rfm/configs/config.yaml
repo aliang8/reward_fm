@@ -71,8 +71,8 @@ data:
   # Video processing settings
   max_frames_after_preprocessing: 64
   max_frames: 16  # Maximum frames per trajectory
-  resized_height: 196  # Height to resize images/videos to
-  resized_width: 196   # Width to resize images/videos to
+  resized_height: null # Height to resize images/videos to
+  resized_width: null   # Width to resize images/videos to
   load_embeddings: false
   min_frames_per_trajectory: 5 # Minimum number of frames required per trajectory (trajectories with fewer frames will be filtered out)
   use_multi_image: false  # If True, feed frames as a list of images instead of converting to video (avoids encoding overhead)
@@ -106,11 +106,11 @@ data:
 
   progress_pred_type: "absolute_first_frame" # "absolute_first_frame", "relative_first_frame", or "absolute_wrt_total_frames"
 
-  # RoboArena partial success threshold
-  roboarena_partial_success_threshold: 0.2  # Minimum difference in partial_success between chosen and rejected trajectories for RoboArena
+  # Partial success threshold (for datasets with partial_success like RoboArena and RoboReward)
+  partial_success_threshold: 0.2  # Minimum difference in partial_success between chosen and rejected trajectories
 
   # Success label parameters
-  min_success: 0.8  # Progress threshold below which success label pred is applied, anything in between min and max is not used for success pred loss unless succ = 1 for those frames.
+  min_success: 0.5  # Progress threshold below which success label pred is applied, anything in between min and max is not used for success pred loss unless succ = 1 for those frames.
   max_success: 1.0  # Progress threshold above which success label is 1. Most sim datasets don't have a special cutoff number so we use 1.0 as default as sims will succeed at 1.0 progress.
   # Dataset-specific success thresholds (CSV format: dataset_name,success_percentage)
   dataset_success_cutoff_file: "rfm/data/dataset_success_cutoff.txt"

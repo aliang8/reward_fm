@@ -435,7 +435,7 @@ Task: {task}""".format(task=task_description)
                 discrete_score = valid_results[valid_result_idx]
                 valid_result_idx += 1
                 # Normalize to 0-1 and repeat for all frames
-                results.append([float(discrete_score) / 5.0] * original_frame_counts[i])
+                results.append([float(discrete_score) / 4.0 - 0.25] * original_frame_counts[i])
             else:
                 results.append([])
 

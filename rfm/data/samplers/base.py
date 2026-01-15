@@ -577,6 +577,7 @@ class RFMBaseSampler:
         subsample_strategy: str | None = None,
         frame_indices: List[int] | None = None,
         metadata: Dict[str, Any] | None = None,
+        pad_frames: bool = False,
     ) -> Trajectory:
         """Load, subsample, and optionally pad trajectory data and create a Trajectory object.
 
@@ -585,6 +586,7 @@ class RFMBaseSampler:
             subsample_strategy: Optional strategy for subsampling ("subsample_forward", "subsample_reverse", "subsample_rewind", or None for default/bidirectional). Ignored if frame_indices is provided.
             frame_indices: Optional list of specific frame indices to use. If provided, subsample_strategy is ignored.
             metadata: Optional metadata dict to merge into trajectory metadata.
+            pad_frames: Whether to pad the trajectory data to max_frames.
 
         Returns:
             Trajectory object with loaded and subsampled data (padded)
@@ -701,7 +703,7 @@ class RFMBaseSampler:
             indices = [indices[idx] for idx in frame_indices_subsample] if isinstance(indices, list) else indices
 
         # Pad if needed
-        if target_progress:
+        if target_progress and pad_frames:
             if self.config.load_embeddings:
                 subsampled, target_progress = pad_trajectory_to_max_frames_torch(
                     subsampled, target_progress, self.config.max_frames

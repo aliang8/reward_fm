@@ -307,13 +307,13 @@ DATASET_MAP = {
             "aliangdw_metaworld_metaworld_eval"
         ]
     },
-    "rfm-1m-ood": {
+    "rfm-1m-ood_cm": {
         "eval": [
-            "jesbu1_mit_franka_p-rank_rfm_mit_franka_p-rank_rfm",
+            ["jesbu1_mit_franka_p-rank_rfm_mit_franka_p-rank_rfm",
             "jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top",
             "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",
             "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
-            "jesbu1_usc_koch_p_ranking_rfm_usc_koch_p_ranking_all",
+            "jesbu1_usc_koch_p_ranking_rfm_usc_koch_p_ranking_all"]
         ]
     }
 }

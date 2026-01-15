@@ -518,19 +518,29 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
 
         logger.info(f"Eval datasets: {eval_datasets}")
 
-        for dataset_name in eval_datasets:
+        resolved_datasets = []
+
+        for eval_dataset in eval_datasets:
+            if isinstance(eval_dataset, list):
+                resolved_datasets.append(eval_dataset)
+            else:
+                resolved_datasets.append(resolve_dataset_keys([eval_dataset], split="eval"))
+            
+            logger.info(f"Resolved datasets for {eval_type}: {resolved_datasets}")
+
+        for dataset_name in resolved_datasets:
             # Resolve dataset keys
             if isinstance(dataset_name, list):
-                resolved_datasets = dataset_name
+                resolved_dataset_name = dataset_name
             else:
-                resolved_datasets = resolve_dataset_keys([dataset_name], split="eval")
+                resolved_dataset_name = resolve_dataset_keys([dataset_name], split="eval")
             
             logger.info(f"Resolved datasets for {eval_type}: {resolved_datasets}")
 
             # Create data config for this dataset (similar to trainer)
             eval_data_cfg = copy.deepcopy(base_data_cfg)
             eval_data_cfg.dataset_type = "rfm"
-            eval_data_cfg.eval_datasets = resolved_datasets
+            eval_data_cfg.eval_datasets = resolved_dataset_name
 
 
             # Setup dataset

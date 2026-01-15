@@ -37,6 +37,7 @@ class RFMBaseSampler:
         dataset_success_cutoff_map: Optional[Dict[str, float]] = None,
         verbose: bool = True,
         random_seed: int = 42,
+        pad_frames: bool = True,
     ):
         """Initialize sampler with dataset and indices.
 
@@ -53,7 +54,7 @@ class RFMBaseSampler:
         self.verbose = verbose
         self.dataset_success_cutoff_map = dataset_success_cutoff_map or {}
         self._local_random = Random(random_seed)
-
+        self.pad_frames = pad_frames
         self._cached_ids = self.dataset["id"]
         self._cached_is_robot = self.dataset["is_robot"]
 

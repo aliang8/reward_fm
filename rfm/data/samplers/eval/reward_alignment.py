@@ -30,7 +30,6 @@ class RewardAlignmentSampler(RFMBaseSampler):
         max_trajectories: int | None = None,
         frame_step: int = 1,
         use_frame_steps: bool = True,
-        pad_frames: bool = True,
         subsample_n_frames: int = None,
         **kwargs,
     ):
@@ -39,7 +38,6 @@ class RewardAlignmentSampler(RFMBaseSampler):
         self.max_trajectories = max_trajectories
         self.frame_step = frame_step
         self.use_frame_steps = use_frame_steps
-        self.pad_frames = pad_frames
         self.subsample_n_frames = subsample_n_frames
         self.sample_indices = self._generate_all_sample_indices()
 

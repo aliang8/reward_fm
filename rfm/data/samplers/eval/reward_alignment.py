@@ -15,7 +15,7 @@ from tqdm import tqdm
 from rfm.data.dataset_types import ProgressSample, Trajectory
 from rfm.data.samplers.base import RFMBaseSampler
 from rfm.utils.distributed import rank_0_print
-from rfm.utils.utils import get_logger
+from rfm.utils.logger import get_logger
 
 logger = get_logger(__name__)
 

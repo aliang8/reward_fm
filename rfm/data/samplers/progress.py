@@ -147,6 +147,9 @@ class ProgressSampler(RFMBaseSampler):
 
         progress_traj = self._get_traj_from_data(processed_traj, subsample_strategy=subsample_strategy)
 
+        if progress_traj is None:
+            return None
+
         # Handle special cases
         if strategy_used in [DataGenStrat.DIFFERENT_TASK, DataGenStrat.DIFFERENT_TASK_INSTRUCTION]:
             # We need to use the original task embeddings instead of the different task embeddings

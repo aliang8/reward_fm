@@ -661,15 +661,13 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
 
                         # Save confusion matrix plot
                         if fig and cfg.output_dir:
-                            plots_dir = os.path.join(cfg.output_dir, f"{eval_type}_{dataset_name}_plots")
-                            os.makedirs(plots_dir, exist_ok=True)
-                            plot_path = os.path.join(plots_dir, "confusion_matrix.png")
+                            plot_path = os.path.join(cfg.output_dir, "confusion_matrix.png")
                             fig.savefig(plot_path, dpi=150, bbox_inches="tight")
                             plt.close(fig)
                             logger.info(f"Saved confusion matrix plot to {plot_path}")
 
                             # Save confusion matrix as numpy array
-                            matrix_path = os.path.join(plots_dir, "confusion_matrix.npy")
+                            matrix_path = os.path.join(cfg.output_dir, "confusion_matrix.npy")
                             np.save(matrix_path, confusion_matrix)
                             logger.info(f"Saved confusion matrix array to {matrix_path}")
                     else:

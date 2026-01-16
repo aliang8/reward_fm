@@ -43,7 +43,7 @@ from tqdm import tqdm
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
-
+from rfm.evals.compile_results import convert_continuous_to_discrete_bin_roboreward
 from rfm.configs.experiment_configs import (
     ExperimentConfig,
     ModelConfig,
@@ -75,8 +75,18 @@ Anything in between represents partial progress towards the goal.
 
 Task: {task}"""
 
+DISCRETE_PROGRESS_PROMPT_TEMPLATE = """Given the task, assign a discrete progress score reward (1,2,3,4,5) for the robot in the video in the format: ANS: <score>
+Rubric for end-of-episode progress (judge only the final state without time limits):
+1 - No Success: Final state shows no goal-relevant change for the command.
+2 - Minimal Progress: Final state shows a small but insufficient change toward the goal.
+3 - Partial Completion: The final state shows good progress toward the goal but violates more than one requirement or a major requirement.
+4 - Near Completion: Final state is correct in region and intent but misses a single minor requirement.
+5 - Perfect Completion: Final state satisfies all requirements.
 
-def sample_to_vqa_dict(sample: Union[PreferenceSample, ProgressSample]) -> Dict[str, Any]:
+Task: {task}"""
+
+
+def sample_to_vqa_dict(sample: Union[PreferenceSample, ProgressSample], discrete_progress: bool = False) -> Dict[str, Any]:
     """
     Convert RFM sample (PreferenceSample or ProgressSample) to VQA training format.
     
@@ -149,9 +159,15 @@ def sample_to_vqa_dict(sample: Union[PreferenceSample, ProgressSample]) -> Dict[
         else:
             progress_score = 0
         
-        # Build prompt
-        prompt = PROGRESS_PROMPT_TEMPLATE.format(task=traj.task)
-        
+
+        # convert to discrete progress score
+        if discrete_progress:
+            prompt = DISCRETE_PROGRESS_PROMPT_TEMPLATE.format(task=traj.task)
+            progress_score = convert_continuous_to_discrete_bin_roboreward(progress_score/100, num_bins=5)
+        else:
+            # Build prompt
+            prompt = PROGRESS_PROMPT_TEMPLATE.format(task=traj.task)
+
         # Return VQA dict with all fields (some will be None)
         return {
             "sample_type": "progress",
@@ -178,7 +194,7 @@ def sample_to_vqa_dict(sample: Union[PreferenceSample, ProgressSample]) -> Dict[
         raise ValueError(f"Unknown sample type: {sample.sample_type}")
 
 
-def vqa_collate_fn(batch: List[Union[PreferenceSample, ProgressSample]]) -> List[Dict[str, Any]]:
+def vqa_collate_fn(batch: List[Union[PreferenceSample, ProgressSample]], discrete_progress: bool = False) -> List[Dict[str, Any]]:
     """
     Collate function to convert RFM samples to VQA format.
     
@@ -188,7 +204,7 @@ def vqa_collate_fn(batch: List[Union[PreferenceSample, ProgressSample]]) -> List
     Returns:
         List of VQA dictionaries
     """
-    return [sample_to_vqa_dict(sample) for sample in batch]
+    return [sample_to_vqa_dict(sample, discrete_progress=discrete_progress) for sample in batch]
 
 
 def save_batch_to_temp(samples: List[Dict[str, Any]], temp_dir: str, batch_idx: int) -> str:
@@ -266,6 +282,11 @@ def main():
         type=int,
         default=4,
         help="Number of DataLoader workers for parallel processing",
+    )
+    parser.add_argument(
+        "--discrete_progress",
+        action="store_true",
+        help="Use discrete progress scores (1,2,3,4,5) instead of continuous (0-100)",
     )
     
     # Incremental saving
@@ -354,7 +375,7 @@ def main():
         dataset,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
-        collate_fn=vqa_collate_fn,
+        collate_fn=lambda batch: vqa_collate_fn(batch, discrete_progress=args.discrete_progress),
         shuffle=False,
         pin_memory=False,  # Not needed since we're not loading tensors
     )

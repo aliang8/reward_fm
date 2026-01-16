@@ -187,6 +187,7 @@ DATASET_MAP = {
             "jesbu1_utd_so101_clean_policy_ranking_wrist_utd_so101_clean_policy_ranking_wrist",
             "jesbu1_roboreward_rfm_roboreward_test",
             # ["abraranwar_libero_rfm_libero256_10", "ykorkmaz_libero_failure_rfm_libero_10_failure"],
+            
         ]
     },
     "paired": {
@@ -276,12 +277,23 @@ DATASET_MAP = {
             "ykorkmaz_libero_failure_rfm_libero_goal_failure",  
         ],
         "eval": [
-            "abraranwar_libero_rfm_libero256_10",
-            "abraranwar_libero_rfm_libero256_object",
-            "ykorkmaz_libero_failure_rfm_libero_10_failure",
-            "ykorkmaz_libero_failure_rfm_libero_object_failure",
+            "abraranwar_libero_rfm_libero256_90",
+            "ykorkmaz_libero_failure_rfm_libero_90_failure",
         ],
     },
+    "libero_pi0_no_fail": {
+        "train": [
+            "abraranwar_libero_rfm_libero256_10",
+            "abraranwar_libero_rfm_libero256_object",
+            "abraranwar_libero_rfm_libero256_spatial",
+            "abraranwar_libero_rfm_libero256_goal",
+        ],
+        "eval": [
+            "abraranwar_libero_rfm_libero256_90",
+            "ykorkmaz_libero_failure_rfm_libero_90_failure",
+        ],
+
+    }
 }
 
 

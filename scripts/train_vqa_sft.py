@@ -743,6 +743,28 @@ class VQADataCollator:
                     print(f"Warning: Could not find '{RESPONSE_PREFIX}' in sequence {i}, masking all tokens")
                     labels[i, :] = IGNORE_INDEX
             
+            # Mask padding tokens (for right padding, these appear at the end)
+            # BUT keep the first EOS token so model learns when to stop
+            pad_token_id = tokenizer.pad_token_id
+            eos_token_id = tokenizer.eos_token_id
+            
+            if pad_token_id is not None:
+                for i in range(labels.shape[0]):
+                    seq = batch_inputs["input_ids"][i]
+                    
+                    # Find positions of pad tokens
+                    pad_mask = (seq == pad_token_id)
+                    
+                    if pad_token_id == eos_token_id:
+                        # If pad == eos, keep the FIRST occurrence (real EOS), mask the rest
+                        pad_positions = pad_mask.nonzero(as_tuple=True)[0]
+                        if len(pad_positions) > 1:
+                            # Mask all pad tokens AFTER the first one
+                            labels[i, pad_positions[1:]] = IGNORE_INDEX
+                    else:
+                        # If pad != eos, mask all pad tokens
+                        labels[i, pad_mask] = IGNORE_INDEX
+            
             batch_inputs["labels"] = labels
         
         return batch_inputs

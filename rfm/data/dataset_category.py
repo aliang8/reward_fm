@@ -280,8 +280,10 @@ DATASET_MAP = {
             "ykorkmaz_libero_failure_rfm_libero_goal_failure",  
         ],
         "eval": [
+            [
             "abraranwar_libero_rfm_libero256_90",
             "ykorkmaz_libero_failure_rfm_libero_90_failure",
+            ]
         ],
     },
     "rfm-1m-id": {
@@ -329,9 +331,12 @@ DATASET_MAP = {
             "abraranwar_libero_rfm_libero256_goal",
         ],
         "eval": [
+            [
             "abraranwar_libero_rfm_libero256_90",
             "ykorkmaz_libero_failure_rfm_libero_90_failure",
+            ]
         ],
+
     }
 }
 

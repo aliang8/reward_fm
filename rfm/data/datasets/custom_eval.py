@@ -26,7 +26,10 @@ class CustomEvalDataset(BaseDataset):
             verbose: Verbose flag
             sampler_kwargs: Additional keyword arguments for the sampler
         """
-        super().__init__(config=config, is_evaluation=is_evaluation)
+        filter_successful_only = False 
+        if sampler_type == "reward_alignment":
+            filter_successful_only = True
+        super().__init__(config=config, is_evaluation=is_evaluation, filter_successful_only=filter_successful_only)
 
         sampler_cls = {
             "confusion_matrix": ConfusionMatrixSampler,

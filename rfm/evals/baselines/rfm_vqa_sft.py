@@ -136,14 +136,15 @@ class RFMVQASFT:
                 device_map="auto",  # Auto device placement is best practice
                 trust_remote_code=True,
             )
-        print("HARDCODED PROCESSOR FOR QWEN VL RN, PLEASE MODIFY TRAIN_VQA_SFT TO SAVE PROCESSOR")
-        if "4b" in model_path:
-            processor_model_path = "Qwen/Qwen3-VL-4B-Instruct"
-        elif "8b" in model_path:
-            processor_model_path = "Qwen/Qwen3-VL-8B-Instruct"
-        else:
-            raise ValueError(f"COULDN'T FIND HARDCODED PROCESSOR MAP FROM {model_path}")
-        self.processor = AutoProcessor.from_pretrained(processor_model_path, trust_remote_code=True, do_sample_frames=False, fps=1, padding_side="left")
+        #print("HARDCODED PROCESSOR FOR QWEN VL RN, PLEASE MODIFY TRAIN_VQA_SFT TO SAVE PROCESSOR")
+        #if "4b" in model_path:
+        #    processor_model_path = "Qwen/Qwen3-VL-4B-Instruct"
+        #elif "8b" in model_path:
+        #    processor_model_path = "Qwen/Qwen3-VL-8B-Instruct"
+        #else:
+        #    raise ValueError(f"COULDN'T FIND HARDCODED PROCESSOR MAP FROM {model_path}")
+        #self.processor = AutoProcessor.from_pretrained(processor_model_path, trust_remote_code=True, do_sample_frames=False, fps=1, padding_side="left")
+        self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True, do_sample_frames=False, fps=1, padding_side="left")
         self.max_new_tokens = max_new_tokens
         self.model_path = model_path
         self.use_multi_image=use_multi_image

@@ -50,7 +50,7 @@ def resolve_dataset_keys(
 
 
 class BaseDataset(torch.utils.data.Dataset):
-    def __init__(self, config: DataConfig, is_evaluation: bool = False):
+    def __init__(self, config: DataConfig, is_evaluation: bool = False, filter_successful_only: bool = False):
         self.config = config
         self.is_evaluation = is_evaluation
 
@@ -74,7 +74,6 @@ class BaseDataset(torch.utils.data.Dataset):
 
         # Check if we're in progress_only mode (sample_type_ratio == [0, 1, 0])
         # In progress_only mode, filter to only include successful trajectories
-        filter_successful_only = False
         if config.sample_type_ratio == [0, 1, 0] and not is_evaluation:
             filter_successful_only = True
             logger.info(
@@ -83,7 +82,7 @@ class BaseDataset(torch.utils.data.Dataset):
 
         dataset_type = "evaluation" if is_evaluation else "training"
         logger.info(f"Filtering {dataset_type} dataset with {len(self.dataset)} total trajectories")
-        if self.is_evaluation:
+        if self.is_evaluation and not filter_successful_only:
             logger.info(f"SKIPPING FILTERING for {dataset_type} dataset BECAUSE IT'S EVALUATION")
         else:
             self.dataset, self._combined_indices = self._filter_dataset(

@@ -257,7 +257,7 @@ Task: {task}""".format(task=task_description)
         original_num_frames = len(convert_frames_to_pil_images(frames_array))
 
         # because RoboReward returns a score between 1 and 5, we need to normalize it to 0-1
-        result = [float(discrete_score) / 5.0] * original_num_frames
+        result = [float(discrete_score) / 4.0 - 0.25] * original_num_frames
 
         # Clean up temporary directory
         shutil.rmtree(tmpdir, ignore_errors=True)

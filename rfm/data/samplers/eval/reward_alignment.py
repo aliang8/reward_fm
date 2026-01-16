@@ -17,7 +17,7 @@ from rfm.data.samplers.base import RFMBaseSampler
 from rfm.utils.distributed import rank_0_print
 from rfm.utils.logger import get_logger
 
-logger = get_logger(__name__)
+logger = get_logger()
 
 
 class RewardAlignmentSampler(RFMBaseSampler):
@@ -76,7 +76,7 @@ class RewardAlignmentSampler(RFMBaseSampler):
         """Generate sample indices for a single trajectory.
 
         Args:
-            traj_idx: Index of the trajectory in the dataset
+            traj_idx: Index of the trajectory in the dataseqt
             traj: Trajectory dictionary
 
         Returns:
@@ -87,7 +87,7 @@ class RewardAlignmentSampler(RFMBaseSampler):
 
         if self.use_frame_steps:
             if self.subsample_n_frames:
-                if self.subsample_n_frames <= num_frames:
+                if self.subsample_n_frames > num_frames:
                     end_indices = list(range(num_frames))
                 else:
                     end_indices = np.linspace(0, num_frames - 1, self.subsample_n_frames)

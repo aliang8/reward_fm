@@ -189,6 +189,7 @@ DATASET_MAP = {
             #"jesbu1_roboreward_rfm_roboreward_test",
             "jesbu1_roboreward_rfm_roboreward_high_res_test",
             # ["abraranwar_libero_rfm_libero256_10", "ykorkmaz_libero_failure_rfm_libero_10_failure"],
+            
         ]
     },
     "paired": {
@@ -279,10 +280,8 @@ DATASET_MAP = {
             "ykorkmaz_libero_failure_rfm_libero_goal_failure",  
         ],
         "eval": [
-            "abraranwar_libero_rfm_libero256_10",
-            "abraranwar_libero_rfm_libero256_object",
-            "ykorkmaz_libero_failure_rfm_libero_10_failure",
-            "ykorkmaz_libero_failure_rfm_libero_object_failure",
+            "abraranwar_libero_rfm_libero256_90",
+            "ykorkmaz_libero_failure_rfm_libero_90_failure",
         ],
     },
     "rfm-1m-id": {
@@ -321,6 +320,18 @@ DATASET_MAP = {
             "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
             "jesbu1_usc_koch_p_ranking_rfm_usc_koch_p_ranking_all"
         ]
+    },
+    "libero_pi0_no_fail": {
+        "train": [
+            "abraranwar_libero_rfm_libero256_10",
+            "abraranwar_libero_rfm_libero256_object",
+            "abraranwar_libero_rfm_libero256_spatial",
+            "abraranwar_libero_rfm_libero256_goal",
+        ],
+        "eval": [
+            "abraranwar_libero_rfm_libero256_90",
+            "ykorkmaz_libero_failure_rfm_libero_90_failure",
+        ],
     }
 }
 

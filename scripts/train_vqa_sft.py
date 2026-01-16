@@ -1139,7 +1139,7 @@ def main():
             args.model_name,
             trust_remote_code=True,
             do_sample_frames=False,
-            padding_side="left",
+            padding_side="right",
         )
         
         print_main(f"Model loaded with unsloth: {model.__class__.__name__}")
@@ -1149,7 +1149,7 @@ def main():
             args.model_name,
             trust_remote_code=True,
             do_sample_frames=False,
-            padding_side="left",
+            padding_side="right",
         )
         
         # Set pad token if not set

@@ -188,9 +188,9 @@ def run_reward_alignment_eval_per_trajectory(
             unique_trajectory_ids.add(trajectory_id)
 
         # Collect success probabilities and labels for AUPRC
-        success_probs = r["success_probs"]
-        success_labels = r["success_labels"]
         if train_success_head:
+            success_probs = r["success_probs"]
+            success_labels = r["success_labels"]
             all_success_probs.append(success_probs)
             all_success_labels.append(success_labels)
 

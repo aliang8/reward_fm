@@ -311,7 +311,7 @@ def run_reward_alignment_eval_per_trajectory(
 
             tgt_array = raw_targets[0]
             if is_discrete_mode:
-                traj_target_bins = tgt_array.flatten().astype(int).tolist()
+                traj_target_bins = tgt_array
                 # Convert to continuous
                 continuous_targets = convert_discrete_target_to_continuous(
                     torch.tensor(tgt_array[None]), num_bins=num_bins

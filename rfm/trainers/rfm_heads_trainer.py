@@ -749,7 +749,9 @@ class RFMHeadsTrainer(Trainer):
             sampler_kwargs["frame_step"] = (
                 2 if (self.config.trainer_cls == "rfm_heads" and not self.config.data.use_multi_image) else 1
             )
-            sampler_kwargs["use_frame_steps"] = self.config.custom_eval.use_frame_steps
+            # sampler_kwargs["use_frame_steps"] = self.config.custom_eval.use_frame_steps
+            # we only care about the final predicted progress for ranking
+            sampler_kwargs["use_frame_steps"] = False
         elif eval_type == "quality_preference":
             sampler_kwargs["comparisons_per_task"] = self.config.custom_eval.comparisons_per_task
             sampler_kwargs["max_comparisons"] = self.config.custom_eval.max_comparisons

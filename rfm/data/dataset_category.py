@@ -379,6 +379,8 @@ DATASET_MAP = {
     },
     "rfm-1m-ood": {
         "eval": [
+            "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist", # putting this here for now
+            "jesbu1_roboreward_rfm_roboreward_test",
             "jesbu1_mit_franka_p-rank_rfm_mit_franka_p-rank_rfm",
             "jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top",
             "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",

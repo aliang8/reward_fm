@@ -578,7 +578,7 @@ class RFMBaseSampler:
         subsample_strategy: str | None = None,
         frame_indices: List[int] | None = None,
         metadata: Dict[str, Any] | None = None,
-        pad_frames: bool = False,
+        pad_frames: bool = True,
     ) -> Trajectory:
         """Load, subsample, and optionally pad trajectory data and create a Trajectory object.
 

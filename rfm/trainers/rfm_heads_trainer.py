@@ -18,7 +18,13 @@ from tqdm import tqdm
 from transformers import Trainer
 
 from rfm.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
-from rfm.evals.compile_results import compute_eval_metrics
+from rfm.evals.compile_results import (
+    run_quality_preference_eval,
+    run_reward_alignment_eval_per_trajectory,
+    run_confusion_matrix_eval,
+    run_policy_ranking_eval,
+    run_similarity_score_eval,
+)
 from rfm.models.utils import ModelOutput, convert_bins_to_continuous, convert_discrete_target_to_continuous
 from rfm.utils.distributed import banner, get_rank, is_rank_0, log_fsdp_diagnostics
 from rfm.utils.logger import Logger, get_logger, log_memory_usage
@@ -1018,14 +1024,15 @@ class RFMHeadsTrainer(Trainer):
             data_source = eval_results[0]["data_source"]
 
         if eval_type == "reward_alignment":
-            eval_metrics, plots, video_frames_list, trajectory_progress_data = compute_eval_metrics(
-                eval_type,
+            eval_metrics, plots, video_frames_list, trajectory_progress_data = run_reward_alignment_eval_per_trajectory(
                 eval_results,
                 self.config.data.progress_pred_type,
                 is_discrete_mode,
                 num_bins,
                 data_source,
-                is_vqa=self.config.model.model_type == "vqa",
+                use_frame_steps=self.config.custom_eval.use_frame_steps,
+                train_success_head=self.config.model.train_success_head,
+                last_frame_only=self.config.model.model_type == "vqa",
             )
             # log_memory_usage(f"After compute_eval_metrics (reward_alignment)")
 
@@ -1186,8 +1193,13 @@ class RFMHeadsTrainer(Trainer):
             trajectory_progress_data = None
             # log_memory_usage(f"After deleting plots/videos")
         elif eval_type == "policy_ranking":
-            eval_metrics, task_groups, task_details = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins, data_source
+            eval_metrics, task_groups, task_details = run_policy_ranking_eval(
+                eval_results,
+                self.config.data.progress_pred_type,
+                is_discrete_mode,
+                num_bins,
+                data_source,
+                correlation_method="kendall",
             )
             # log_memory_usage(f"After compute_eval_metrics (policy_ranking)")
 
@@ -1336,8 +1348,8 @@ class RFMHeadsTrainer(Trainer):
             task_details = None
             # log_memory_usage(f"After deleting policy_ranking data")
         elif eval_type == "confusion_matrix":
-            confusion_plot, confusion_matrix = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins
+            confusion_plot, confusion_matrix = run_confusion_matrix_eval(
+                eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins
             )
             eval_metrics = {}  # no eval metrics
             # log_memory_usage(f"After compute_eval_metrics (confusion_matrix)")
@@ -1356,9 +1368,7 @@ class RFMHeadsTrainer(Trainer):
             confusion_matrix = None
             # log_memory_usage(f"After deleting confusion_matrix data")
         elif "quality_preference" in eval_type:
-            eval_metrics, task_groups, task_details = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type
-            )
+            eval_metrics, task_groups, task_details = run_quality_preference_eval(eval_results, data_source=data_source)
             # log_memory_usage(f"After compute_eval_metrics (quality_preference)")
 
             banner(
@@ -1418,9 +1428,7 @@ class RFMHeadsTrainer(Trainer):
             task_details = None
             # log_memory_usage(f"After deleting quality_preference data")
         elif eval_type == "similarity_score":
-            eval_metrics, task_groups, task_details = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type
-            )
+            eval_metrics, task_groups, task_details = run_similarity_score_eval(eval_results)
             # log_memory_usage(f"After compute_eval_metrics (similarity_score)")
 
             banner(
@@ -2029,7 +2037,7 @@ class RFMHeadsTrainer(Trainer):
             batch_size = success_logits.shape[0]
             seq_len = success_logits.shape[1]
             quality_mask = torch.zeros(batch_size, seq_len, device=success_logits.device, dtype=torch.float32)
-            
+
             for i in range(batch_size):
                 quality_label = quality_labels[i]
                 if quality_label is not None and quality_label.lower() in ("suboptimal", "failure", "failed"):
@@ -2046,7 +2054,7 @@ class RFMHeadsTrainer(Trainer):
 
                     # Include all frames for this trajectory in the mask
                     quality_mask[i, :] = 1.0
-        
+
         if self.config.loss.progress_loss_type.lower() == "discrete":
             target_progress = convert_discrete_target_to_continuous(
                 target_progress, num_bins=self.config.loss.progress_discrete_bins

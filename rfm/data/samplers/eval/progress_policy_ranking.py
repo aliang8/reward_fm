@@ -23,7 +23,7 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
         **kwargs,
     ):
         super().__init__(**kwargs)
-        
+
         if num_examples_per_quality_pr is None:
             num_examples_per_quality_pr = float("inf")
         self.num_examples_per_quality_pr = num_examples_per_quality_pr

@@ -83,21 +83,21 @@ def aggregate_frame_step_predictions(
 ) -> Dict[str, Any]:
     """
     Aggregate frame-step predictions back into full sequences.
-    
+
     Args:
         outputs: Dict containing progress predictions from sub-samples
         sample_frame_counts: List indicating how many frames each original sample had
         outputs_success: Optional dict containing success predictions
-    
+
     Returns:
         Aggregated outputs with full sequences per original sample
     """
     progress_pred = outputs.get("progress_pred", [])
-    
+
     # Aggregate progress predictions
     aggregated_progress = []
     current_idx = 0
-    
+
     for num_frames in sample_frame_counts:
         if num_frames == 1:
             # Non-progress sample or single-frame sample, pass through
@@ -117,15 +117,15 @@ def aggregate_frame_step_predictions(
                         sample_predictions.append(sub_pred[-1])
                     current_idx += 1
             aggregated_progress.append(sample_predictions)
-    
+
     aggregated_outputs = {"progress_pred": aggregated_progress}
-    
+
     # Aggregate success predictions if present
     if outputs_success is not None:
         success_probs = outputs_success.get("success_probs", [])
         aggregated_success = []
         current_idx = 0
-        
+
         for num_frames in sample_frame_counts:
             if num_frames == 1:
                 if current_idx < len(success_probs):
@@ -144,9 +144,9 @@ def aggregate_frame_step_predictions(
                             sample_success.append(sub_success[-1])
                         current_idx += 1
                 aggregated_success.append(sample_success)
-        
+
         aggregated_outputs["outputs_success"] = {"success_probs": aggregated_success}
-    
+
     return aggregated_outputs
 
 
@@ -216,17 +216,17 @@ def process_batch_helper(
     # Handle frame steps for progress samples - expand into sub-samples, each subsampled to 4 frames
     # so they can be batched together (all same size)
     NUM_SUBSAMPLED_FRAMES = 4
-    
+
     if use_frame_steps:
         expanded_samples = []
         sample_frame_counts = []  # Track how many sub-samples each original sample generates
-        
+
         for sample in input_samples:
             if isinstance(sample, ProgressSample):
                 # Get the frames from the trajectory
                 frames = sample.trajectory.frames
-                num_frames = frames.shape[0] if hasattr(frames, 'shape') else len(frames)
-                
+                num_frames = frames.shape[0] if hasattr(frames, "shape") else len(frames)
+
                 # Create sub-samples with increasing frame counts: 0:1, 0:2, 0:3, ..., 0:T
                 # Each sub-sample is subsampled to NUM_SUBSAMPLED_FRAMES frames using linspace
                 for i in range(1, num_frames + 1):
@@ -234,36 +234,48 @@ def process_batch_helper(
                     # This ensures all sub-samples have the same number of frames for batching
                     indices = np.linspace(0, i - 1, NUM_SUBSAMPLED_FRAMES, dtype=int)
                     sub_frames = frames[indices]
-                    
+
                     sub_trajectory = copy.deepcopy(sample.trajectory)
                     sub_trajectory.frames = sub_frames
-                    sub_trajectory.frames_shape = sub_frames.shape if hasattr(sub_frames, 'shape') else (len(sub_frames),)
-                    
+                    sub_trajectory.frames_shape = (
+                        sub_frames.shape if hasattr(sub_frames, "shape") else (len(sub_frames),)
+                    )
+
                     # Adjust target_progress and success_label if they exist (also subsample)
-                    if hasattr(sub_trajectory, 'target_progress') and sub_trajectory.target_progress is not None:
+                    if hasattr(sub_trajectory, "target_progress") and sub_trajectory.target_progress is not None:
                         orig_progress = sub_trajectory.target_progress[:i]
                         if len(orig_progress) > 0:
-                            sub_trajectory.target_progress = np.array(orig_progress)[indices].tolist() if hasattr(orig_progress, '__len__') else orig_progress
-                    if hasattr(sub_trajectory, 'success_label') and sub_trajectory.success_label is not None:
+                            sub_trajectory.target_progress = (
+                                np.array(orig_progress)[indices].tolist()
+                                if hasattr(orig_progress, "__len__")
+                                else orig_progress
+                            )
+                    if hasattr(sub_trajectory, "success_label") and sub_trajectory.success_label is not None:
                         orig_success = sub_trajectory.success_label[:i]
                         if len(orig_success) > 0:
-                            sub_trajectory.success_label = np.array(orig_success)[indices].tolist() if hasattr(orig_success, '__len__') else orig_success
-                    
+                            sub_trajectory.success_label = (
+                                np.array(orig_success)[indices].tolist()
+                                if hasattr(orig_success, "__len__")
+                                else orig_success
+                            )
+
                     # Create sub-sample
                     sub_sample = ProgressSample(
                         trajectory=sub_trajectory,
                         data_gen_strategy=sample.data_gen_strategy,
                     )
                     expanded_samples.append(sub_sample)
-                
+
                 sample_frame_counts.append(num_frames)
             else:
                 # Non-progress samples are passed through unchanged
                 expanded_samples.append(sample)
                 sample_frame_counts.append(1)
-        
+
         input_samples = expanded_samples
-        logger.debug(f"[job {job_id}] Expanded {len(sample_frame_counts)} samples into {len(input_samples)} sub-samples with frame steps (each subsampled to {NUM_SUBSAMPLED_FRAMES} frames)")
+        logger.debug(
+            f"[job {job_id}] Expanded {len(sample_frame_counts)} samples into {len(input_samples)} sub-samples with frame steps (each subsampled to {NUM_SUBSAMPLED_FRAMES} frames)"
+        )
     else:
         sample_frame_counts = None
 
@@ -328,12 +340,10 @@ def process_batch_helper(
 
         if "outputs_success" in outputs_progress:
             outputs_success = outputs_progress.pop("outputs_success")
-        
+
         # Aggregate frame-step predictions back into full sequences
         if use_frame_steps and sample_frame_counts is not None:
-            outputs_progress = aggregate_frame_step_predictions(
-                outputs_progress, sample_frame_counts, outputs_success
-            )
+            outputs_progress = aggregate_frame_step_predictions(outputs_progress, sample_frame_counts, outputs_success)
             if outputs_success is not None:
                 outputs_success = outputs_progress.pop("outputs_success", None)
 
@@ -800,7 +810,7 @@ def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | Non
             use_frame_steps = use_frame_steps_value
         else:
             use_frame_steps = str(use_frame_steps_value).lower() == "true"
-        
+
         # Reconstruct the original payload structure (RFM needs torch tensor conversion for embeddings)
         batch_data = reconstruct_payload_from_npy(
             numpy_arrays,

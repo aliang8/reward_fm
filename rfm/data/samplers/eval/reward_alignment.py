@@ -65,7 +65,7 @@ class RewardAlignmentSampler(RFMBaseSampler):
         all_num_frames = []
         for traj_idx in trajectories_to_process:
             traj = self.dataset[traj_idx]
-            num_frames  = traj["num_frames"]
+            num_frames = traj["num_frames"]
             all_num_frames.append(num_frames)
             sample_indices.extend(self._generate_indices_for_trajectory(traj_idx, traj))
 

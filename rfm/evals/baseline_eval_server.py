@@ -76,17 +76,17 @@ def aggregate_frame_step_predictions_baseline(
 ) -> List[List[float]]:
     """
     Aggregate frame-step predictions back into full sequences for baseline models.
-    
+
     Args:
         progress_preds: List of progress predictions from sub-samples (each is a list of floats)
         sample_frame_counts: List indicating how many frames each original sample had
-    
+
     Returns:
         Aggregated progress predictions, one list per original sample
     """
     aggregated_progress = []
     current_idx = 0
-    
+
     for num_frames in sample_frame_counts:
         if num_frames == 1:
             # Single-frame sample, pass through
@@ -106,7 +106,7 @@ def aggregate_frame_step_predictions_baseline(
                         sample_predictions.append(sub_pred[-1])
                     current_idx += 1
             aggregated_progress.append(sample_predictions)
-    
+
     return aggregated_progress
 
 
@@ -144,35 +144,37 @@ def process_batch_helper(
     if use_frame_steps and reward_model == "roboreward":
         expanded_samples = []
         sample_frame_counts = []
-        
+
         for sample in input_samples:
             if isinstance(sample, ProgressSample):
                 # Get the frames from the trajectory
                 frames = sample.trajectory.frames
-                num_frames = frames.shape[0] if hasattr(frames, 'shape') else len(frames)
-                
+                num_frames = frames.shape[0] if hasattr(frames, "shape") else len(frames)
+
                 # Create sub-samples with increasing frame counts: 0:1, 0:2, 0:3, ..., 0:T
                 # Use all frames in each sub-sample (no subsampling)
                 for i in range(1, num_frames + 1):
                     sub_frames = frames[:i]
-                    
+
                     sub_trajectory = copy.deepcopy(sample.trajectory)
                     sub_trajectory.frames = sub_frames
-                    sub_trajectory.frames_shape = sub_frames.shape if hasattr(sub_frames, 'shape') else (len(sub_frames),)
-                    
+                    sub_trajectory.frames_shape = (
+                        sub_frames.shape if hasattr(sub_frames, "shape") else (len(sub_frames),)
+                    )
+
                     # Create sub-sample
                     sub_sample = ProgressSample(
                         trajectory=sub_trajectory,
                         data_gen_strategy=sample.data_gen_strategy,
                     )
                     expanded_samples.append(sub_sample)
-                
+
                 sample_frame_counts.append(num_frames)
             else:
                 # Non-progress samples are passed through unchanged
                 expanded_samples.append(sample)
                 sample_frame_counts.append(1)
-        
+
         input_samples = expanded_samples
         logger.debug(f"[job {job_id}] Expanded samples into {len(input_samples)} sub-samples with frame steps")
 
@@ -180,24 +182,24 @@ def process_batch_helper(
     outputs_progress_list = []
 
     # Check if we can use batched processing for RoboReward
-    if reward_model == "roboreward" and hasattr(model, 'compute_progress_batched'):
+    if reward_model == "roboreward" and hasattr(model, "compute_progress_batched"):
         # Collect all progress samples for batched processing
         progress_samples = [s for s in input_samples if isinstance(s, ProgressSample)]
         preference_samples = [s for s in input_samples if isinstance(s, PreferenceSample)]
-        
+
         if progress_samples:
             # Prepare batched inputs
             frames_list = [s.trajectory.frames for s in progress_samples]
             task_descriptions = [s.trajectory.task for s in progress_samples]
-            
+
             # Process in batch
             logger.debug(f"[job {job_id}] Processing {len(progress_samples)} progress samples in batch with RoboReward")
             batched_results = model.compute_progress_batched(frames_list, task_descriptions)
-            
+
             # Convert to expected format
             for result in batched_results:
                 outputs_progress_list.append({"progress_pred": result})
-        
+
         # Process preference samples (if any, though RoboReward doesn't support them)
         for sample in preference_samples:
             logger.warning(f"Preference samples not supported for roboreward")
@@ -225,16 +227,18 @@ def process_batch_helper(
     if outputs_progress_list:
         # Extract progress_pred from each result dict - each result has "progress_pred": [list of floats]
         progress_preds = [result.get("progress_pred", []) for result in outputs_progress_list]
-        
+
         # Aggregate frame-step predictions if needed
         if use_frame_steps and sample_frame_counts is not None:
             progress_preds = aggregate_frame_step_predictions_baseline(progress_preds, sample_frame_counts)
-        
+
         outputs_progress = {
             "progress_pred": progress_preds,  # List of lists, one per sample
         }
         # Also include success_probs if available
-        success_probs_list = [result.get("success_probs") for result in outputs_progress_list if result.get("success_probs") is not None]
+        success_probs_list = [
+            result.get("success_probs") for result in outputs_progress_list if result.get("success_probs") is not None
+        ]
         if success_probs_list:
             outputs_progress["success_probs"] = success_probs_list
     else:
@@ -243,7 +247,9 @@ def process_batch_helper(
     # Format preference outputs to match regular eval_server format
     if outputs_preference:
         predictions = [r.get("preference_pred") for r in outputs_preference if r.get("preference_pred") is not None]
-        prediction_probs = [r.get("preference_pred") for r in outputs_preference if r.get("preference_pred") is not None]
+        prediction_probs = [
+            r.get("preference_pred") for r in outputs_preference if r.get("preference_pred") is not None
+        ]
         outputs_preference_dict = {
             "predictions": predictions,
             "prediction_probs": prediction_probs,
@@ -314,7 +320,9 @@ class BaselineEvalServer:
             self._job_counter += 1
             job_id = self._job_counter
 
-        logger.debug(f"[job {job_id}] Processing batch with {len(batch_data)} samples (use_frame_steps={use_frame_steps})")
+        logger.debug(
+            f"[job {job_id}] Processing batch with {len(batch_data)} samples (use_frame_steps={use_frame_steps})"
+        )
 
         start_time = time.time()
 

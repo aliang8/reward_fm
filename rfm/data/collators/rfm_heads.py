@@ -19,8 +19,9 @@ from typing import List, Dict, Union
 from rfm.models.utils import convert_discrete_target_to_continuous
 from PIL import Image
 
-MAX_IMAGE_SIDE = 480 # bigger side
-MAX_IMAGE_PIXELS = 1024 * 1024 # safety cap (1.0 MP). raise to 1.5MP if stable
+MAX_IMAGE_SIDE = 480  # bigger side
+MAX_IMAGE_PIXELS = 1024 * 1024  # safety cap (1.0 MP). raise to 1.5MP if stable
+
 
 def _resize_pil(pil: Image.Image, max_side: int = MAX_IMAGE_SIDE, max_pixels: int = MAX_IMAGE_PIXELS) -> Image.Image:
     pil = pil.convert("RGB")
@@ -39,6 +40,7 @@ def _resize_pil(pil: Image.Image, max_side: int = MAX_IMAGE_SIDE, max_pixels: in
         pil = pil.resize((nw, nh), resample=Image.BICUBIC)
 
     return pil
+
 
 def should_compute_progress(
     quality_label: str,
@@ -68,19 +70,19 @@ def should_compute_progress(
 
     # Mask out progress if data_source is in preference_only ckategory
     if data_source is not None and is_preference_only_ds(data_source):
-       # For preference_only datasets:
-       # - If it's the chosen trajectory, always mask out (don't compute)
-       # - If it's the rejected trajectory with DIFFERENT_TASK strategy, still compute (it will be 0.0)
-       return 0.0
-       #if is_chosen:
-       #    return 0.0
-       #elif data_gen_strategy == DataGenStrat.DIFFERENT_TASK.value:
-       #    return 1.0
-       #else:
-       #    return 0.0
+        # For preference_only datasets:
+        # - If it's the chosen trajectory, always mask out (don't compute)
+        # - If it's the rejected trajectory with DIFFERENT_TASK strategy, still compute (it will be 0.0)
+        return 0.0
+        # if is_chosen:
+        #    return 0.0
+        # elif data_gen_strategy == DataGenStrat.DIFFERENT_TASK.value:
+        #    return 1.0
+        # else:
+        #    return 0.0
     # If partial_success and not is_preference_only_ds, always compute progress
-    elif partial_success is not None:
-        return 1.0
+    # elif partial_success is not None:
+    #     return 1.0
     elif quality_label in ["suboptimal", "failure", "failed"]:
         return 0.0
     elif quality_label == "successful" or data_gen_strategy == DataGenStrat.REWIND.value:
@@ -188,7 +190,7 @@ class RFMBatchCollator(BaseCollator):
         prog_pref: bool = False,
         prog_sim: bool = False,
         pref_sim: bool = False,
-        use_progress_token: bool = False,
+        use_per_frame_progress_token: bool = False,
         shuffle_progress_frames: bool = False,
         inference: bool = False,
         **kwargs,
@@ -214,7 +216,13 @@ class RFMBatchCollator(BaseCollator):
                 "Molmo2 does not support video mode (use_multi_image=False). "
                 "Please set data.use_multi_image=True to use Molmo2 with multi-image input."
             )
-        self.use_progress_token = use_progress_token
+        self.use_per_frame_progress_token = use_per_frame_progress_token
+        # Validate that use_per_frame_progress_token requires use_multi_image
+        if self.use_per_frame_progress_token and not self.use_multi_image:
+            raise ValueError(
+                "use_per_frame_progress_token=True requires use_multi_image=True. "
+                "Per-frame progress tokens can only be added in multi-image mode."
+            )
         self.shuffle_progress_frames = shuffle_progress_frames
         self.inference = inference
 
@@ -232,15 +240,16 @@ class RFMBatchCollator(BaseCollator):
                 - content_extras: Dictionary with resized_height/width or empty dict
         """
         if self.use_multi_image:
-            # Use images directly - return list of PIL Images
-            if self.resized_height is not None and self.resized_width is not None:
-                content_extras = {
-                    "resized_height": self.resized_height,
-                    "resized_width": self.resized_width,
-                }
-            else:
-                frames = [_resize_pil(frame) for frame in frames]
-                content_extras = {}
+            # # Use images directly - return list of PIL Images
+            # if self.resized_height is not None and self.resized_width is not None:
+            #     content_extras = {
+            #         "resized_height": self.resized_height,
+            #         "resized_width": self.resized_width,
+            #     }
+            # else:
+            #     frames = [_resize_pil(frame) for frame in frames]
+            #     content_extras = {}
+            content_extras = {}
             return frames, content_extras
         elif "Qwen" in self.base_model_id or "Molmo" in self.base_model_id:
             # Qwen and Molmo accept list of PIL Images directly
@@ -283,6 +292,9 @@ class RFMBatchCollator(BaseCollator):
                     "image": img,
                     **content_extras,
                 })
+                # Add per-frame progress token after each frame if enabled
+                if self.use_per_frame_progress_token:
+                    content_list.append({"type": "text", "text": "<|prog_token|>"})
         else:
             # Add video entry
             content_list.append({
@@ -427,12 +439,6 @@ class RFMBatchCollator(BaseCollator):
             content_list = [{"type": "text", "text": prompt}]
             self._add_vision_content_to_list(content_list, video_field, content_extras)
 
-            # Add progress and success tokens if use_progress_token is enabled
-            # For progress samples, we only use prog_token_A and succ_token_A (single trajectory)
-            if self.use_progress_token:
-                content_list.append({"type": "text", "text": "<|prog_token_A|>"})
-                content_list.append({"type": "text", "text": "<|succ_token_A|>"})
-
             conversation = [
                 {
                     "role": "user",
@@ -560,10 +566,6 @@ class RFMBatchCollator(BaseCollator):
                 {"type": "text", "text": "This is Trajectory A. "},
             ]
             self._add_vision_content_to_list(content_list, traj_a_field, content_extras)
-            # Add progress and success tokens for trajectory A if use_progress_token is enabled
-            if self.use_progress_token:
-                content_list.append({"type": "text", "text": "<|prog_token_A|>"})
-                content_list.append({"type": "text", "text": "<|succ_token_A|>"})
 
             content_list.extend([
                 {"type": "text", "text": "<|split_token|>"},
@@ -571,11 +573,7 @@ class RFMBatchCollator(BaseCollator):
             ])
             self._add_vision_content_to_list(content_list, traj_b_field, content_extras)
 
-            # Add progress and success tokens for trajectory B if use_progress_token is enabled
-            if self.use_progress_token:
-                content_list.append({"type": "text", "text": "<|prog_token_B|>"})
-                content_list.append({"type": "text", "text": "<|succ_token_B|>"})
-
+            content_list.append({"type": "text", "text": "Now predict the preference between the two trajectories."})
             content_list.append({"type": "text", "text": "<|pref_token|>"})
 
             conversation = [
@@ -820,32 +818,20 @@ class RFMBatchCollator(BaseCollator):
                 # Ref is first (A), sim is second (B)
                 content_list_sim.append({"type": "text", "text": "This is the first trajectory. "})
                 self._add_vision_content_to_list(content_list_sim, ref_video, content_extras)
-                if self.use_progress_token:
-                    content_list_sim.append({"type": "text", "text": "<|prog_token_A|>"})
-                    content_list_sim.append({"type": "text", "text": "<|succ_token_A|>"})
                 content_list_sim.extend([
                     {"type": "text", "text": "<|split_token|>"},
                     {"type": "text", "text": "This is the second trajectory. "},
                 ])
                 self._add_vision_content_to_list(content_list_sim, sim_video, content_extras)
-                if self.use_progress_token:
-                    content_list_sim.append({"type": "text", "text": "<|prog_token_B|>"})
-                    content_list_sim.append({"type": "text", "text": "<|succ_token_B|>"})
             else:
                 # Sim is first (A), ref is second (B)
                 content_list_sim.append({"type": "text", "text": "This is the first trajectory. "})
                 self._add_vision_content_to_list(content_list_sim, sim_video, content_extras)
-                if self.use_progress_token:
-                    content_list_sim.append({"type": "text", "text": "<|prog_token_A|>"})
-                    content_list_sim.append({"type": "text", "text": "<|succ_token_A|>"})
                 content_list_sim.extend([
                     {"type": "text", "text": "<|split_token|>"},
                     {"type": "text", "text": "This is the second trajectory. "},
                 ])
                 self._add_vision_content_to_list(content_list_sim, ref_video, content_extras)
-                if self.use_progress_token:
-                    content_list_sim.append({"type": "text", "text": "<|prog_token_B|>"})
-                    content_list_sim.append({"type": "text", "text": "<|succ_token_B|>"})
             content_list_sim.append({"type": "text", "text": "<|sim_token|>"})
 
             conversation_ref_sim = [
@@ -871,32 +857,20 @@ class RFMBatchCollator(BaseCollator):
                     # Ref is first (A), diff is second (B)
                     content_list_diff.append({"type": "text", "text": "This is the first trajectory. "})
                     self._add_vision_content_to_list(content_list_diff, ref_video, content_extras)
-                    if self.use_progress_token:
-                        content_list_diff.append({"type": "text", "text": "<|prog_token_A|>"})
-                        content_list_diff.append({"type": "text", "text": "<|succ_token_A|>"})
                     content_list_diff.extend([
                         {"type": "text", "text": "<|split_token|>"},
                         {"type": "text", "text": "This is the second trajectory. "},
                     ])
                     self._add_vision_content_to_list(content_list_diff, diff_video, content_extras)
-                    if self.use_progress_token:
-                        content_list_diff.append({"type": "text", "text": "<|prog_token_B|>"})
-                        content_list_diff.append({"type": "text", "text": "<|succ_token_B|>"})
                 else:
                     # Diff is first (A), ref is second (B)
                     content_list_diff.append({"type": "text", "text": "This is the first trajectory. "})
                     self._add_vision_content_to_list(content_list_diff, diff_video, content_extras)
-                    if self.use_progress_token:
-                        content_list_diff.append({"type": "text", "text": "<|prog_token_A|>"})
-                        content_list_diff.append({"type": "text", "text": "<|succ_token_A|>"})
                     content_list_diff.extend([
                         {"type": "text", "text": "<|split_token|>"},
                         {"type": "text", "text": "This is the second trajectory. "},
                     ])
                     self._add_vision_content_to_list(content_list_diff, ref_video, content_extras)
-                    if self.use_progress_token:
-                        content_list_diff.append({"type": "text", "text": "<|prog_token_B|>"})
-                        content_list_diff.append({"type": "text", "text": "<|succ_token_B|>"})
                 content_list_diff.append({"type": "text", "text": "<|sim_token|>"})
 
                 conversation_ref_diff = [

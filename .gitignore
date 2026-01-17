@@ -63,3 +63,5 @@ processed_datasets/*
 baseline_eval_output/*
 confusion_matrix_output/*
 *.npy
+vqa_dataests/*
+eval_commands/*

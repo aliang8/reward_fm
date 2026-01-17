@@ -531,7 +531,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                 resolved_datasets.append(eval_dataset)
             else:
                 resolved_datasets.extend(resolve_dataset_keys([eval_dataset], split="eval"))
-            
+
             logger.info(f"Resolved datasets for {eval_type}: {resolved_datasets}")
 
         for dataset_name in resolved_datasets:
@@ -540,14 +540,13 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                 resolved_dataset_name = dataset_name
             else:
                 resolved_dataset_name = resolve_dataset_keys([dataset_name], split="eval")
-            
+
             logger.info(f"Resolved datasets for {eval_type}: {resolved_datasets}")
 
             # Create data config for this dataset (similar to trainer)
             eval_data_cfg = copy.deepcopy(base_data_cfg)
             eval_data_cfg.dataset_type = "rfm"
             eval_data_cfg.eval_datasets = resolved_dataset_name
-
 
             # Setup dataset
             sampler_kwargs = {
@@ -777,45 +776,45 @@ def _write_metrics_incremental(eval_type_dir: str, eval_type_metrics: Dict[str, 
 
 def _normalize_model_path(model_path: Optional[str]) -> str:
     """Normalize model path for use in directory names.
-    
+
     Handles HuggingFace paths like 'rewardfm/rfm-base' or local paths.
     Replaces slashes, special characters with underscores.
-    
+
     Args:
         model_path: Model path string (e.g., 'rewardfm/rfm-base', '/path/to/model')
-        
+
     Returns:
         Normalized string safe for directory names
     """
     if not model_path:
         return ""
-    
+
     # Get the basename if it's an absolute path
     if model_path.startswith("/"):
         # For absolute paths, use the last two components (parent/name)
         parts = model_path.rstrip("/").split("/")
         model_path = "_".join(parts[-2:]) if len(parts) >= 2 else parts[-1]
-    
+
     # Replace slashes with underscores
     normalized = model_path.replace("/", "_")
-    
+
     # Replace other special characters that might cause issues
     for char in [":", "\\", " ", ".", ","]:
         normalized = normalized.replace(char, "_")
-    
+
     # Remove leading/trailing underscores and collapse multiple underscores
     normalized = re.sub(r"_+", "_", normalized)
     normalized = normalized.strip("_")
-    
+
     return normalized
 
 
 def _get_model_path_for_reward_model(cfg: "BaselineEvalConfig") -> Optional[str]:
     """Get the model path based on the reward model type.
-    
+
     Args:
         cfg: Baseline eval config
-        
+
     Returns:
         Model path string or None if not applicable
     """
@@ -849,12 +848,12 @@ def main(cfg: DictConfig):
     if baseline_cfg.output_dir is None:
         model_path = _get_model_path_for_reward_model(baseline_cfg)
         normalized_path = _normalize_model_path(model_path)
-        
+
         if normalized_path:
             dir_name = f"{baseline_cfg.reward_model}_{normalized_path}"
         else:
             dir_name = baseline_cfg.reward_model
-        
+
         baseline_cfg.output_dir = os.path.join("./baseline_eval_output", dir_name)
 
     os.makedirs(baseline_cfg.output_dir, exist_ok=True)

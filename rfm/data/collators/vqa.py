@@ -102,10 +102,10 @@ Task: {sample.chosen_trajectory.task}"""
 
             # Build content list
             content_list = [
-                #{"type": "text", "text": "This is Trajectory A. "},
+                # {"type": "text", "text": "This is Trajectory A. "},
             ]
             self._add_vision_content_to_list(content_list, traj_a_field, content_extras)
-            #content_list.append({"type": "text", "text": "This is Trajectory B. "})
+            # content_list.append({"type": "text", "text": "This is Trajectory B. "})
             self._add_vision_content_to_list(content_list, traj_b_field, content_extras)
             content_list.append({"type": "text", "text": prompt})
 
@@ -151,7 +151,6 @@ Task: {sample.chosen_trajectory.task}"""
 
         for i, sample in enumerate(progress_samples):
             target_progress = sample.trajectory.target_progress
-            
 
             # Convert frames to appropriate format using stored shapes
             frames = convert_frames_to_pil_images(sample.trajectory.frames, sample.trajectory.frames_shape)
@@ -176,20 +175,20 @@ Anything in between represents partial progress towards the goal.
 
 Task: {sample.trajectory.task}"""
 
-#            prompt = f"""Given the task, return a python list of integer-valued progress scores from 0 to 100 for each image in the sequence in the format: {RESPONSE_PREFIX} [scores]
-#Rubric for progress of each frame:
-#0 - No Progress: Final state shows no goal-relevant change for the command.
-#100 - Perfect Completion: Final state satisfies all requirements to solve the task.
-#Anything in between represents partial progress towards the goal.
-#
-#Task: {sample.trajectory.task}"""
-            #prompt = f"For the task '{sample.trajectory.task}', estimate task progress at each frame in the video trajectory."
-            #if self.shuffle_progress_frames:
+            #            prompt = f"""Given the task, return a python list of integer-valued progress scores from 0 to 100 for each image in the sequence in the format: {RESPONSE_PREFIX} [scores]
+            # Rubric for progress of each frame:
+            # 0 - No Progress: Final state shows no goal-relevant change for the command.
+            # 100 - Perfect Completion: Final state satisfies all requirements to solve the task.
+            # Anything in between represents partial progress towards the goal.
+            #
+            # Task: {sample.trajectory.task}"""
+            # prompt = f"For the task '{sample.trajectory.task}', estimate task progress at each frame in the video trajectory."
+            # if self.shuffle_progress_frames:
             #    prompt += " These frames are possibly shuffled, so pay attention to individual frames when reasoning about progress."
-            #prompt += " The first frame is the starting frame, with 0 progress."
-            #prompt += (
+            # prompt += " The first frame is the starting frame, with 0 progress."
+            # prompt += (
             #    " Format your answer as a python list with floats between 0 and 1 enclosed by <ans> and </ans> tags."
-            #)
+            # )
 
             # Prepare frames for conversation (handles multi-image vs video conversion)
             video_field, content_extras = self._prepare_frames_for_conversation(frames, prefix="tmp_progress")
@@ -211,7 +210,6 @@ Task: {sample.trajectory.task}"""
                 # Convert to Python list to get proper comma-separated format
                 target_progress_rounded = np.round(np.array(target_progress) * 100).astype(np.uint8).tolist()
 
-
                 # SmolVLM requires list format for all messages, Qwen accepts both but we use string for simplicity
                 if "SmolVLM" in self.base_model_id:
                     # SmolVLM requires content as list of dicts
@@ -221,7 +219,10 @@ Task: {sample.trajectory.task}"""
                     })
                 else:
                     # Qwen accepts simple string content for text-only assistant messages
-                    conversation.append({"role": "assistant", "content": f"{RESPONSE_PREFIX} {target_progress_rounded}"})
+                    conversation.append({
+                        "role": "assistant",
+                        "content": f"{RESPONSE_PREFIX} {target_progress_rounded}",
+                    })
 
             all_messages.append(conversation)
 

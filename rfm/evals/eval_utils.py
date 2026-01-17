@@ -224,10 +224,10 @@ async def post_batch_npy_async(
 
 async def parse_npy_form_data(form_data: Any) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
     """Parse multipart form data to extract numpy arrays and other data.
-    
+
     Args:
         form_data: FastAPI form data from request.form()
-        
+
     Returns:
         Tuple of (numpy_arrays dict, other_data dict)
     """
@@ -276,7 +276,7 @@ def reconstruct_payload_from_npy(
         other_data: Dictionary of other form data
         trajectory_keys: List of trajectory keys to process (default: common keys)
         convert_embeddings_to_torch: Whether to convert embeddings to torch tensors
-        
+
     Returns:
         List of reconstructed sample dictionaries
     """
@@ -289,7 +289,7 @@ def reconstruct_payload_from_npy(
             "traj_diff_trajectory",
             "trajectory",
         ]
-    
+
     samples = []
 
     # Process each sample

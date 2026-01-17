@@ -38,11 +38,11 @@ class ModelConfig(PretrainedConfig):
         },
     )
 
-    use_progress_token: bool = field(
+    use_per_frame_progress_token: bool = field(
         default=False,
         metadata={
-            "help": "If True, use <|prog_token|> to predict progress from hidden state at that token. "
-            "Otherwise, use average pooling of frame embeddings."
+            "help": "If True, add a <|prog_token|> after each frame and use those token embeddings "
+            "for per-frame progress prediction. Requires use_multi_image=True."
         },
     )
 
@@ -79,6 +79,13 @@ class ModelConfig(PretrainedConfig):
     progress_discrete_bins: Optional[int] = field(
         default=None,
         metadata={"help": "Number of discrete bins for progress when using discrete loss (None for continuous)"},
+    )
+    use_per_frame_progress_token: bool = field(
+        default=False,
+        metadata={
+            "help": "If True, add a <|prog_token|> after each frame for per-frame progress prediction. "
+            "Requires use_multi_image=True."
+        },
     )
     # rewind sub-config
     rewind: Optional[Dict[str, Any]] = field(default=None)
@@ -158,6 +165,14 @@ class DataConfig:
         metadata={
             "help": "If True, shuffle progress trajectory frames (except the first frame) "
             "and their corresponding target progress labels during training for RFM heads."
+        },
+    )
+
+    use_per_frame_progress_token: bool = field(
+        default=False,
+        metadata={
+            "help": "If True, add a <|prog_token|> after each frame for per-frame progress prediction. "
+            "Requires use_multi_image=True."
         },
     )
 
@@ -316,9 +331,7 @@ class CustomEvaluationConfig:
     )
     subsample_n_frames: Optional[int] = field(
         default=None,
-        metadata={
-            "help": "Number of frames to subsample for reward alignment evaluation. null = use all frames."
-        },
+        metadata={"help": "Number of frames to subsample for reward alignment evaluation. null = use all frames."},
     )
 
 

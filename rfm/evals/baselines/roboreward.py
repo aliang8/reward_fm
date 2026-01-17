@@ -37,6 +37,7 @@ from rfm.utils.logger import get_logger
 
 logger = get_logger()
 
+
 class RoboReward:
     """RoboReward baseline for discrete end-of-episode progress reward prediction."""
 
@@ -76,7 +77,9 @@ class RoboReward:
                 device_map="auto",  # Auto device placement is best practice
             )
 
-        self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True, do_sample_frames=False, fps=1)
+        self.processor = AutoProcessor.from_pretrained(
+            model_path, trust_remote_code=True, do_sample_frames=False, fps=1
+        )
         self.max_new_tokens = max_new_tokens
         self.model_path = model_path
 
@@ -173,7 +176,7 @@ Task: {task}""".format(task=task_description)
         # According to qwen-vl-utils docs, we can pass frames as a list of file paths
         tmpdir = tempfile.mkdtemp()
         unique_id = uuid.uuid4().hex
-        
+
         # Save frames as individual JPEG files (much smaller than video, avoids torchcodec overhead)
         frame_paths = []
         for i, frame_pil in enumerate(frames_pil):
@@ -181,7 +184,7 @@ Task: {task}""".format(task=task_description)
             # Save as JPEG with reasonable quality to reduce file size
             frame_pil.save(frame_path, "JPEG", quality=85, optimize=True)
             frame_paths.append(f"file://{frame_path}")
-        
+
         logger.info(f"RoboReward: Saved {len(frame_paths)} frames as JPEG files in {tmpdir}")
 
         # Build message with frames as list of file paths (following Qwen3-VL pattern)
@@ -236,9 +239,7 @@ Task: {task}""".format(task=task_description)
             )
 
         # Decode output
-        generated_ids_trimmed = [
-            out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs["input_ids"], generated_ids)
-        ]
+        generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs["input_ids"], generated_ids)]
         output_texts = self.processor.batch_decode(
             generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
         )
@@ -265,9 +266,7 @@ Task: {task}""".format(task=task_description)
         return result
 
     def compute_progress_batched(
-        self, 
-        frames_list: List[np.ndarray], 
-        task_descriptions: List[str]
+        self, frames_list: List[np.ndarray], task_descriptions: List[str]
     ) -> List[List[Optional[float]]]:
         """
         Compute progress predictions for a batch of frame sequences.
@@ -412,7 +411,7 @@ Task: {task}""".format(task=task_description)
 
             # Decode output
             generated_ids_trimmed = [
-                out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs["input_ids"], generated_ids)
+                out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs["input_ids"], generated_ids)
             ]
             output_texts = self.processor.batch_decode(
                 generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False

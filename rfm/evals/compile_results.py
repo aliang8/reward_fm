@@ -46,7 +46,9 @@ def compute_eval_metrics(
     elif eval_type == "confusion_matrix":
         return run_confusion_matrix_eval(results, progress_pred_type, is_discrete_mode, num_bins)
     elif eval_type == "policy_ranking":
-        return run_policy_ranking_eval(results, progress_pred_type, is_discrete_mode, num_bins, data_source, correlation_method)
+        return run_policy_ranking_eval(
+            results, progress_pred_type, is_discrete_mode, num_bins, data_source, correlation_method
+        )
     elif eval_type == "similarity_score":
         return run_similarity_score_eval(results)
 
@@ -921,10 +923,10 @@ def _compute_policy_ranking_metrics_quality_label(
     all_succ_fail_diffs = []
     all_correct_pairs = []
     all_total_pairs = []
-    
+
     # Track global ranking accuracy for all quality pairs
     global_pair_correct = {}  # (quality1, quality2) -> correct_count
-    global_pair_total = {}    # (quality1, quality2) -> total_count
+    global_pair_total = {}  # (quality1, quality2) -> total_count
 
     # Non-RoboArena: Use quality_label
     quality_order = {"failure": 1, "suboptimal": 2, "successful": 3}
@@ -979,17 +981,17 @@ def _compute_policy_ranking_metrics_quality_label(
                 quality2 = task_quality_labels[j]
                 reward1 = task_rewards[i]
                 reward2 = task_rewards[j]
-                
+
                 # Skip if same quality label
                 if quality1 == quality2:
                     continue
-                
+
                 expected_order = quality_order[quality1] > quality_order[quality2]
                 actual_order = reward1 > reward2
                 total_pairs += 1
                 if expected_order == actual_order:
                     correct_pairs += 1
-                
+
                 # Track global pairs by quality label combination
                 pair_key = tuple(sorted([quality1, quality2]))
                 if pair_key not in global_pair_total:
@@ -1045,7 +1047,7 @@ def _compute_policy_ranking_metrics_quality_label(
         total_correct = sum(all_correct_pairs)
         total_pairs = sum(all_total_pairs)
         ranking_acc = total_correct / total_pairs if total_pairs > 0 else 0.0
-    
+
     # Compute ranking accuracy for all pairs by quality label combination
     ranking_acc_all_pairs = {}
     for pair_key in global_pair_total:
@@ -1053,7 +1055,7 @@ def _compute_policy_ranking_metrics_quality_label(
             pair_acc = global_pair_correct[pair_key] / global_pair_total[pair_key]
             pair_name = f"ranking_acc_{pair_key[0]}_vs_{pair_key[1]}"
             ranking_acc_all_pairs[pair_name] = pair_acc
-    
+
     # Compute overall ranking accuracy across all pairs
     overall_ranking_acc_all_pairs = None
     if global_pair_total:
@@ -1102,9 +1104,13 @@ def _compute_policy_ranking_metrics_from_rewards(
         Tuple of (metrics dictionary, task_details dictionary)
     """
     if use_partial_success and all_partial_successes is not None:
-        return _compute_policy_ranking_metrics_partial_success(all_rewards, all_partial_successes, all_tasks, correlation_method)
+        return _compute_policy_ranking_metrics_partial_success(
+            all_rewards, all_partial_successes, all_tasks, correlation_method
+        )
     else:
-        return _compute_policy_ranking_metrics_quality_label(all_rewards, all_quality_labels, all_tasks, correlation_method)
+        return _compute_policy_ranking_metrics_quality_label(
+            all_rewards, all_quality_labels, all_tasks, correlation_method
+        )
 
 
 def run_confusion_matrix_eval(

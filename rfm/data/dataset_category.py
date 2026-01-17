@@ -176,8 +176,8 @@ DATASET_MAP = {
     "policy_ranking": {
         "eval": [
             # "aliangdw_metaworld_metaworld_eval",
-            #"jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
-            #"jesbu1_roboarena_0825_rfm_roboarena",
+            # "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
+            # "jesbu1_roboarena_0825_rfm_roboarena",
             "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",
             "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
             "aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking",
@@ -186,10 +186,9 @@ DATASET_MAP = {
             "jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top",
             "jesbu1_utd_so101_clean_policy_ranking_wrist_utd_so101_clean_policy_ranking_wrist",
             "jesbu1_usc_koch_p_ranking_rfm_usc_koch_p_ranking_all"
-            #"jesbu1_roboreward_rfm_roboreward_test",
+            # "jesbu1_roboreward_rfm_roboreward_test",
             "jesbu1_roboreward_rfm_roboreward_high_res_test",
             # ["abraranwar_libero_rfm_libero256_10", "ykorkmaz_libero_failure_rfm_libero_10_failure"],
-            
         ]
     },
     "paired": {
@@ -222,7 +221,7 @@ DATASET_MAP = {
             "jesbu1_racer_rfm_racer_train",
             "jesbu1_roboarena_0825_rfm_roboarena",
             "jesbu1_roboreward_rfm_roboreward_high_res_train",
-            #"jesbu1_roboreward_rfm_roboreward_train",
+            # "jesbu1_roboreward_rfm_roboreward_train",
         ],
         "eval": [
             "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
@@ -277,12 +276,12 @@ DATASET_MAP = {
             "ykorkmaz_libero_failure_rfm_libero_10_failure",
             "ykorkmaz_libero_failure_rfm_libero_object_failure",
             "ykorkmaz_libero_failure_rfm_libero_spatial_failure",
-            "ykorkmaz_libero_failure_rfm_libero_goal_failure",  
+            "ykorkmaz_libero_failure_rfm_libero_goal_failure",
         ],
         "eval": [
             [
-            "abraranwar_libero_rfm_libero256_90",
-            "ykorkmaz_libero_failure_rfm_libero_90_failure",
+                "abraranwar_libero_rfm_libero256_90",
+                "ykorkmaz_libero_failure_rfm_libero_90_failure",
             ]
         ],
     },
@@ -296,10 +295,8 @@ DATASET_MAP = {
             # "ykorkmaz_libero_failure_rfm_libero_object_failure",
             # "ykorkmaz_libero_failure_rfm_libero_spatial_failure",
             # "ykorkmaz_libero_failure_rfm_libero_goal_failure",
-
             # "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",
             # "jesbu1_roboarena_0825_rfm_roboarena",
-            
             "jesbu1_racer_rfm_racer_val",
             # "jesbu1_soar_rfm_soar_rfm",
             # "jesbu1_auto_eval_rfm_auto_eval_rfm",
@@ -320,7 +317,7 @@ DATASET_MAP = {
             "jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top",
             "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",
             "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
-            "jesbu1_usc_koch_p_ranking_rfm_usc_koch_p_ranking_all"
+            "jesbu1_usc_koch_p_ranking_rfm_usc_koch_p_ranking_all",
         ]
     },
     "libero_pi0_no_fail": {
@@ -332,12 +329,11 @@ DATASET_MAP = {
         ],
         "eval": [
             [
-            "abraranwar_libero_rfm_libero256_90",
-            "ykorkmaz_libero_failure_rfm_libero_90_failure",
+                "abraranwar_libero_rfm_libero256_90",
+                "ykorkmaz_libero_failure_rfm_libero_90_failure",
             ]
         ],
-
-    }
+    },
 }
 
 

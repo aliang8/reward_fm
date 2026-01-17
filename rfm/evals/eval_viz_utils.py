@@ -180,7 +180,7 @@ def extract_frames(video_path: str, fps: float = 1.0, max_frames: int = 64) -> n
 
         # Clamp to [1, total_frames]
         desired_frames = max(1, min(desired_frames, total_frames))
-        
+
         # IMPORTANT: Cap at max_frames to prevent memory issues
         # This is critical when fps is high or videos are long
         if desired_frames > max_frames:

@@ -1017,7 +1017,13 @@ class RFMHeadsTrainer(Trainer):
 
         if eval_type == "reward_alignment":
             eval_metrics, plots, video_frames_list, trajectory_progress_data = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins, data_source, is_vqa=self.config.model.model_type=="vqa",
+                eval_type,
+                eval_results,
+                self.config.data.progress_pred_type,
+                is_discrete_mode,
+                num_bins,
+                data_source,
+                is_vqa=self.config.model.model_type == "vqa",
             )
             # log_memory_usage(f"After compute_eval_metrics (reward_alignment)")
 
@@ -2021,7 +2027,7 @@ class RFMHeadsTrainer(Trainer):
             batch_size = success_logits.shape[0]
             seq_len = success_logits.shape[1]
             quality_mask = torch.zeros(batch_size, seq_len, device=success_logits.device, dtype=torch.float32)
-
+            
             for i in range(batch_size):
                 quality_label = quality_labels[i]
                 if quality_label is not None and quality_label.lower() in ("suboptimal", "failure", "failed"):
@@ -2038,20 +2044,21 @@ class RFMHeadsTrainer(Trainer):
 
                     # Include all frames for this trajectory in the mask
                     quality_mask[i, :] = 1.0
-
+        
         if self.config.loss.progress_loss_type.lower() == "discrete":
             target_progress = convert_discrete_target_to_continuous(
                 target_progress, num_bins=self.config.loss.progress_discrete_bins
             )
 
+        # We predict success for frames where progress < min_success or the frame is a success
         combined_mask = ((target_progress < min_success) | (success_labels > 0.5)).float()
 
         # Incorporate quality mask: always include all frames for suboptimal/failure trajectories
         if quality_mask is not None:
             combined_mask = torch.maximum(combined_mask, quality_mask)
 
-        if progress_loss_mask is not None:
-            combined_mask = combined_mask * progress_loss_mask
+        # if progress_loss_mask is not None:
+        #     combined_mask = combined_mask * progress_loss_mask
 
         # Clamp logits to prevent extreme values and gradient issues
         success_logits = torch.clamp(success_logits, min=-50.0, max=50.0)
@@ -2459,7 +2466,8 @@ class RFMHeadsTrainer(Trainer):
         progress_pred = progress_logits["A"]
         progress_target = inputs["target_progress"]
         progress_target_mask = inputs["target_progress_mask"].unsqueeze(-1)
-        predict_last_frame_mask = inputs.get("predict_last_frame_mask", None)
+        # predict_last_frame_mask = inputs.get("predict_last_frame_mask", None)
+        predict_last_frame_mask = None
 
         progress_loss, spearman_corr, progress_metrics = self._compute_progress_loss_helper(
             progress_pred, progress_target, progress_target_mask, predict_last_frame_mask=predict_last_frame_mask
@@ -2600,7 +2608,8 @@ class RFMHeadsTrainer(Trainer):
 
         if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
             progress_pred_A = progress_logits["A"]
-            predict_last_frame_mask_A = inputs.get("predict_last_frame_mask_A", None)
+            # predict_last_frame_mask_A = inputs.get("predict_last_frame_mask_A", None)
+            predict_last_frame_mask_A = None
             progress_loss_A, spearman_corr_A, progress_metrics_A = self._compute_progress_loss_helper(
                 progress_pred_A,
                 target_progress_A,

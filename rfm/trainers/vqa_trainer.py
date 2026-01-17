@@ -15,7 +15,6 @@ from rfm.data.collators.vqa import IGNORE_INDEX
 import numpy as np
 
 
-
 def ForCausalLMLoss(logits, labels, vocab_size, ignore_index=IGNORE_INDEX):
     logits = logits.float()
 
@@ -33,6 +32,7 @@ def ForCausalLMLoss(logits, labels, vocab_size, ignore_index=IGNORE_INDEX):
         ignore_index=ignore_index,
         reduction="mean",
     )
+
 
 def process_progress_pred(progress):
     return progress / 100
@@ -173,7 +173,9 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
             if sample_type == "progress":
                 progress_logits = self._aggregate_progress_logits(predictions)
-                progress_logits = process_progress_pred(torch.tensor(progress_logits, dtype=torch.float32, device=self.accelerator.device))
+                progress_logits = process_progress_pred(
+                    torch.tensor(progress_logits, dtype=torch.float32, device=self.accelerator.device)
+                )
                 progress_logits = {"A": progress_logits, "B": None}
             elif sample_type == "preference":
                 pref_logits = []
@@ -188,7 +190,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
             # Explicitly free all remaining references
             del gen_inputs, predictions
-            
+
             # Clear CUDA cache after generation to free memory from generate() internals
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
@@ -284,7 +286,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
         # Free combined inputs dict after loss computation
         del combined, batches_to_combine, modes_per_sample
-        
+
         # Clear CUDA cache during evaluation to prevent memory accumulation
         if not training and torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -348,42 +350,41 @@ class RFMVQATrainer(RFMHeadsTrainer):
             return_dict=True,
             labels=inputs["labels"],
         )
-        loss = outputs['loss']
+        loss = outputs["loss"]
 
         # RFMVQA has model directly, handle DDP wrapping
         rfm_model = self.model.module if hasattr(self.model, "module") else self.model
-        #loss = ForCausalLMLoss(
+        # loss = ForCausalLMLoss(
         #    logits=outputs["logits"],
         #    labels=inputs["labels"],
         #    vocab_size=outputs["logits"].shape[-1],
         #    ignore_index=IGNORE_INDEX,
         #    #reduction="mean",
-        #)
+        # )
         # reshape
-        #loss = loss.reshape(B, -1)
+        # loss = loss.reshape(B, -1)
 
-        #loss_per_example = loss[loss != IGNORE_INDEX]
-        #loss_per_example = loss.mean(dim=1)
-        #loss = loss.mean()
-
+        # loss_per_example = loss[loss != IGNORE_INDEX]
+        # loss_per_example = loss.mean(dim=1)
+        # loss = loss.mean()
 
         prefix = "train" if training else "eval"
         loss_dict = {f"{prefix}/combined_loss": loss.item()}
 
         # Compute predictions for all samples
         pred_ids = outputs["logits"].argmax(dim=-1)
-        
+
         # CRITICAL: Delete the large outputs tensor immediately after extracting pred_ids
         # The logits tensor can be huge (batch × seq_len × vocab_size, where vocab_size ~32K+)
         del outputs
-        
+
         rfm_model = self.model.module if hasattr(self.model, "module") else self.model
         tokenizer = rfm_model.tokenizer
         pred_texts = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
-        
+
         # Free pred_ids after decoding
         del pred_ids
-        
+
         extracted_answers = [extract_answer_from_text(text) for text in pred_texts]
 
         # Aggregate metrics per mode via simple for loop
@@ -394,12 +395,12 @@ class RFMVQATrainer(RFMHeadsTrainer):
         prog_data = []  # (loss, mse, source, strategy)
 
         for i, mode in enumerate(modes_per_sample):
-            #mode_loss = loss_per_example[i].item()
+            # mode_loss = loss_per_example[i].item()
 
             if mode == "preference":
                 try:
                     pred = extracted_answers[i]
-                    label_map = {1: 1, 2: 0} # video 1 is A, video 2 is B
+                    label_map = {1: 1, 2: 0}  # video 1 is A, video 2 is B
                     pred_label = label_map.get(int(pred), -1)
                     print(f"PREF PRED: {pred_label}")
                     # Get from original batch (index within preference batch)
@@ -414,7 +415,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
                 strategy = pref_inputs.get(
                     "rejected_data_gen_strategy", [None] * len(pref_inputs["preference_labels"])
                 )[pref_idx]
-                #pref_data.append(dict(loss=mode_loss, correct=correct, source=source, strategy=strategy))
+                # pref_data.append(dict(loss=mode_loss, correct=correct, source=source, strategy=strategy))
                 pref_data.append(dict(correct=correct, source=source, strategy=strategy))
 
             elif mode == "progress":
@@ -428,7 +429,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
                 mse = None
                 try:
-                    #breakpoint()
+                    # breakpoint()
                     parsed = ast.literal_eval(pred)
                     pred_tensor = process_progress_pred(torch.tensor(parsed, dtype=torch.float32))
                     if not isinstance(gt, list):
@@ -441,30 +442,30 @@ class RFMVQATrainer(RFMHeadsTrainer):
                 # Get metadata
                 source = prog_inputs.get("data_source", [None] * len(prog_inputs["target_progress"]))[prog_idx]
                 strategy = prog_inputs.get("data_gen_strategy", [None] * len(prog_inputs["target_progress"]))[prog_idx]
-                #prog_data.append(dict(loss=mode_loss, mse=mse, source=source, strategy=strategy))
+                # prog_data.append(dict(loss=mode_loss, mse=mse, source=source, strategy=strategy))
                 prog_data.append(dict(mse=mse, source=source, strategy=strategy))
 
         # Aggregate overall metrics
         if pref_data:
-            #loss_dict[f"{prefix}/preference_loss"] = np.mean([x["loss"] for x in pref_data])
+            # loss_dict[f"{prefix}/preference_loss"] = np.mean([x["loss"] for x in pref_data])
             loss_dict[f"{prefix}/preference_acc"] = np.mean([x["correct"] for x in pref_data])
 
             # By data source
             sources = set(x["source"] for x in pref_data if x["source"] is not None)
             for source in sources:
                 source_data = [x for x in pref_data if x["source"] == source]
-                #loss_dict[f"{prefix}_ds/pref_loss_{source}"] = np.mean([x["loss"] for x in source_data])
+                # loss_dict[f"{prefix}_ds/pref_loss_{source}"] = np.mean([x["loss"] for x in source_data])
                 loss_dict[f"{prefix}_ds/pref_acc_{source}"] = np.mean([x["correct"] for x in source_data])
 
             # By strategy
             strategies = set(x["strategy"] for x in pref_data if x["strategy"] is not None)
             for strategy in strategies:
                 strat_data = [x for x in pref_data if x["strategy"] == strategy]
-                #loss_dict[f"{prefix}_strat/pref_loss_{strategy}"] = np.mean([x["loss"] for x in strat_data])
+                # loss_dict[f"{prefix}_strat/pref_loss_{strategy}"] = np.mean([x["loss"] for x in strat_data])
                 loss_dict[f"{prefix}_strat/pref_acc_{strategy}"] = np.mean([x["correct"] for x in strat_data])
 
         if prog_data:
-            #loss_dict[f"{prefix}/progress_loss"] = np.mean([x["loss"] for x in prog_data])
+            # loss_dict[f"{prefix}/progress_loss"] = np.mean([x["loss"] for x in prog_data])
             mses = [x["mse"] for x in prog_data if x["mse"] is not None]
             if mses:
                 loss_dict[f"{prefix}/progress_mse"] = np.mean(mses)
@@ -473,7 +474,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
             sources = set(x["source"] for x in prog_data if x["source"] is not None)
             for source in sources:
                 source_data = [x for x in prog_data if x["source"] == source]
-                #loss_dict[f"{prefix}_ds/prog_loss_{source}"] = np.mean([x["loss"] for x in source_data])
+                # loss_dict[f"{prefix}_ds/prog_loss_{source}"] = np.mean([x["loss"] for x in source_data])
                 prog_mse = [x["mse"] for x in source_data if x["mse"] is not None]
                 if prog_mse:
                     loss_dict[f"{prefix}_ds/prog_mse_{source}"] = np.mean(prog_mse)
@@ -482,7 +483,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
             strategies = set(x["strategy"] for x in prog_data if x["strategy"] is not None)
             for strategy in strategies:
                 strat_data = [x for x in prog_data if x["strategy"] == strategy]
-                #loss_dict[f"{prefix}_strat/prog_loss_{strategy}"] = np.mean([x["loss"] for x in strat_data])
+                # loss_dict[f"{prefix}_strat/prog_loss_{strategy}"] = np.mean([x["loss"] for x in strat_data])
                 prog_mse = [x["mse"] for x in strat_data if x["mse"] is not None]
                 if prog_mse:
                     loss_dict[f"{prefix}_strat/prog_mse_{strategy}"] = np.mean(prog_mse)

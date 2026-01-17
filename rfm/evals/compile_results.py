@@ -443,7 +443,7 @@ def run_reward_alignment_eval_per_trajectory(
         # Only compute metrics for successful trajectories
         if quality_label == "successful":
             # Compute loss based on mode
-            if is_discrete_mode and traj_pred_logits and traj_target_bins:
+            if is_discrete_mode and traj_pred_logits is not None and traj_target_bins is not None:
                 # Discrete mode: compute cross-entropy loss between logits and target bins
                 pred_logits_tensor = torch.tensor(
                     np.array(traj_pred_logits), dtype=torch.float32

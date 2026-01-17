@@ -323,7 +323,7 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
         hidden_state: torch.Tensor,
         input_ids: torch.Tensor,
         token_name: str,
-    ) -> torch.Tensor:
+    ) -> torch.Tensor | list[torch.Tensor]:
         """
         Extract hidden states at specific token positions.
 
@@ -334,8 +334,7 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
 
         Returns:
             If exactly one token per sequence: tensor [B, hidden_dim]
-            If multiple tokens per sequence: tensor [B, num_tokens, hidden_dim]
-                (assumes all sequences have the same number of tokens)
+            If multiple tokens per sequence (variable counts): list of tensors, one per batch item [num_tokens_i, hidden_dim]
         """
         # Handle both batched and unbatched inputs
         is_batched = hidden_state.dim() == 3
@@ -372,14 +371,8 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
             # Return as [B, hidden_dim] tensor
             return all_hidden.reshape(B, -1)
         else:
-            # All sequences should have the same number of tokens
-            num_tokens = token_counts[0].item()
-            if not (token_counts == num_tokens).all():
-                raise ValueError(
-                    f"Inconsistent number of {token_name} tokens across batch: {token_counts.tolist()}"
-                )
-            # Return as [B, num_tokens, hidden_dim] tensor
-            return all_hidden.reshape(B, num_tokens, -1)
+            # Split by batch index into list of tensors (variable token counts)
+            return list(torch.split(all_hidden, token_counts.tolist()))
 
     def _forward_smolvlm(
         self,
@@ -815,37 +808,35 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
         return progress_logits, success_logits
 
     def _apply_heads_to_hidden_states(
-        self, hidden_states: torch.Tensor
+        self, hidden_states_list: list[torch.Tensor]
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
-        Apply progress and success heads to hidden states tensor.
+        Apply progress and success heads to a list of hidden states.
 
         Args:
-            hidden_states: Tensor [B, num_tokens, hidden_dim]
+            hidden_states_list: List of tensors, one per batch item [num_tokens_i, hidden_dim]
 
         Returns:
             tuple: (progress_logits, success_logits)
-                - progress_logits: [B, num_tokens] or [B, num_tokens, num_bins] for discrete
-                - success_logits: [B, num_tokens]
+                - progress_logits: [B, max_tokens] or [B, max_tokens, num_bins] for discrete (padded)
+                - success_logits: [B, max_tokens] (padded)
         """
-        B, num_tokens, hidden_dim = hidden_states.shape
-        
-        # Reshape to [B * num_tokens, hidden_dim] for batch processing
-        hidden_flat = hidden_states.reshape(B * num_tokens, hidden_dim)
-        
-        # Apply heads
-        progress_output = self.progress_head(hidden_flat)  # [B * num_tokens, 1] or [B * num_tokens, num_bins]
-        success_output = self.success_head(hidden_flat).squeeze(-1)  # [B * num_tokens]
-        
-        if self.use_discrete_progress:
-            # Reshape back to [B, num_tokens, num_bins]
-            progress = progress_output.reshape(B, num_tokens, -1)
-        else:
-            # Reshape back to [B, num_tokens]
-            progress = progress_output.squeeze(-1).reshape(B, num_tokens)
-        
-        success = success_output.reshape(B, num_tokens)
-        
+        progress_list = []
+        success_list = []
+        for hidden in hidden_states_list:
+            if hidden.shape[0] > 0:
+                progress_output = self.progress_head(hidden)
+                if self.use_discrete_progress:
+                    progress_list.append(progress_output)
+                else:
+                    progress_list.append(progress_output.squeeze(-1))
+                success_list.append(self.success_head(hidden).squeeze(-1))
+            else:
+                progress_list.append(torch.empty(0, device=hidden.device))
+                success_list.append(torch.empty(0, device=hidden.device))
+
+        progress = torch.stack(progress_list) if progress_list else None
+        success = torch.stack(success_list) if success_list else None
         return progress, success
 
     def _process_token_extraction(
@@ -867,21 +858,25 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
         success_logits = {"A": None, "B": None}
         pref_or_sim_logits = None
 
-        # Extract all <|prog_token|> hidden states (returns [B, num_tokens, hidden_dim] tensor)
+        # Extract all <|prog_token|> hidden states (returns list of tensors when multiple tokens)
         all_prog_token_hidden = self._extract_hidden_state_from_token(hidden_state, input_ids, "<|prog_token|>")
 
         if sample_type == "progress":
             # For progress samples, all tokens belong to trajectory A
-            progress_logits["A"], success_logits["A"] = self._apply_heads_to_hidden_states(all_prog_token_hidden)
+            hidden_states_A = all_prog_token_hidden
+            progress_logits["A"], success_logits["A"] = self._apply_heads_to_hidden_states(hidden_states_A)
         elif sample_type in ["preference", "similarity"]:
             # For preference/similarity, assume equal number of tokens for A and B
-            # Split along token dimension (dim=1): [B, num_tokens, hidden_dim] -> [B, num_tokens//2, hidden_dim] each
-            num_tokens = all_prog_token_hidden.shape[1]
-            if num_tokens % 2 != 0:
-                raise ValueError(f"Expected even number of <|prog_token|> tokens, got {num_tokens}")
-            mid = num_tokens // 2
-            hidden_states_A = all_prog_token_hidden[:, :mid, :]  # [B, mid, hidden_dim]
-            hidden_states_B = all_prog_token_hidden[:, mid:, :]  # [B, mid, hidden_dim]
+            # Split each batch item's tokens in half
+            hidden_states_A = []
+            hidden_states_B = []
+            for tokens in all_prog_token_hidden:
+                num_tokens = tokens.shape[0]
+                if num_tokens % 2 != 0:
+                    raise ValueError(f"Expected even number of <|prog_token|> tokens, got {num_tokens}")
+                mid = num_tokens // 2
+                hidden_states_A.append(tokens[:mid])
+                hidden_states_B.append(tokens[mid:])
 
             progress_logits["A"], success_logits["A"] = self._apply_heads_to_hidden_states(hidden_states_A)
             progress_logits["B"], success_logits["B"] = self._apply_heads_to_hidden_states(hidden_states_B)

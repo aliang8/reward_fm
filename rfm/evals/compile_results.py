@@ -372,7 +372,6 @@ def run_reward_alignment_eval_per_trajectory(
                 traj_preds.append(pred_val)
                 traj_targets.append(tgt_val)
 
-        import ipdb; ipdb.set_trace()
         # Step 4: Collect success predictions, labels, and probabilities separately
         traj_success_preds = []
         traj_success_labels = []

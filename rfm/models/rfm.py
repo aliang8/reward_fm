@@ -28,6 +28,12 @@ from rfm.utils.logger import get_logger
 logger = get_logger()
 
 
+def squeeze_last_safe(x: torch.Tensor) -> torch.Tensor:
+    if x.ndim > 1 and x.shape[-1] == 1:
+        return x.squeeze(-1)
+    return x
+
+
 class RFM(PredictionHeadsMixin, PreTrainedModel):
     """Reward Foundation Model with three prediction heads for different objectives.
 
@@ -313,8 +319,8 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
         if self.use_discrete_progress:
             progress = progress_output  # [T, num_bins] - keep logits
         else:
-            progress = progress_output.squeeze(-1)  # [T]
-        success = self.success_head(boundary_hidden_states).squeeze(-1)  # [T]
+            progress = squeeze_last_safe(progress_output)  # [T]
+        success = squeeze_last_safe(self.success_head(boundary_hidden_states))  # [T]
 
         return progress, success
 
@@ -449,14 +455,14 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
 
             # Trajectory A
             prog_A = self.progress_head(traj_A)
-            progress_logits_A.append(prog_A if self.use_discrete_progress else prog_A.squeeze(-1))
-            success_logits_A.append(self.success_head(traj_A).squeeze(-1))
+            progress_logits_A.append(prog_A if self.use_discrete_progress else squeeze_last_safe(prog_A))
+            success_logits_A.append(squeeze_last_safe(self.success_head(traj_A)))
 
             # Trajectory B
             if traj_B is not None:
                 prog_B = self.progress_head(traj_B)
-                progress_logits_B.append(prog_B if self.use_discrete_progress else prog_B.squeeze(-1))
-                success_logits_B.append(self.success_head(traj_B).squeeze(-1))
+                progress_logits_B.append(prog_B if self.use_discrete_progress else squeeze_last_safe(prog_B))
+                success_logits_B.append(squeeze_last_safe(self.success_head(traj_B)))
             else:
                 progress_logits_B.append(None)
                 success_logits_B.append(None)
@@ -695,12 +701,12 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
             if all_trajectory_A_frames:
                 batched_A = torch.cat(all_trajectory_A_frames, dim=0)
                 progress_A_out = self.progress_head(batched_A)
-                success_A_out = self.success_head(batched_A).squeeze(-1)
+                success_A_out = squeeze_last_safe(self.success_head(batched_A))
 
                 if self.use_discrete_progress:
                     progress_A_split = torch.split(progress_A_out, trajectory_A_lengths, dim=0)
                 else:
-                    progress_A_split = torch.split(progress_A_out.squeeze(-1), trajectory_A_lengths, dim=0)
+                    progress_A_split = torch.split(squeeze_last_safe(progress_A_out), trajectory_A_lengths, dim=0)
                 success_A_split = torch.split(success_A_out, trajectory_A_lengths, dim=0)
 
                 for prog, succ in zip(progress_A_split, success_A_split):
@@ -714,12 +720,12 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
                     valid_B_frames, valid_B_lengths = zip(*valid_B)
                     batched_B = torch.cat(valid_B_frames, dim=0)
                     progress_B_out = self.progress_head(batched_B)
-                    success_B_out = self.success_head(batched_B).squeeze(-1)
+                    success_B_out = squeeze_last_safe(self.success_head(batched_B))
 
                     if self.use_discrete_progress:
                         progress_B_split = torch.split(progress_B_out, list(valid_B_lengths), dim=0)
                     else:
-                        progress_B_split = torch.split(progress_B_out.squeeze(-1), list(valid_B_lengths), dim=0)
+                        progress_B_split = torch.split(squeeze_last_safe(progress_B_out), list(valid_B_lengths), dim=0)
                     success_B_split = torch.split(success_B_out, list(valid_B_lengths), dim=0)
 
                     valid_idx = 0
@@ -829,8 +835,8 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
                 if self.use_discrete_progress:
                     progress_list.append(progress_output)
                 else:
-                    progress_list.append(progress_output.squeeze(-1))
-                success_list.append(self.success_head(hidden).squeeze(-1))
+                    progress_list.append(squeeze_last_safe(progress_output))
+                success_list.append(squeeze_last_safe(self.success_head(hidden)))
             else:
                 progress_list.append(torch.empty(0, device=hidden.device))
                 success_list.append(torch.empty(0, device=hidden.device))

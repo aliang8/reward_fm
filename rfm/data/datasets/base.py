@@ -337,7 +337,7 @@ class BaseDataset(torch.utils.data.Dataset):
         logger.info(f"✅ Loaded {len(dataset)} total trajectories from preprocessed {dataset_type} datasets")
         logger.debug(f"Available datasets: {len(available_datasets)}/{len(missing_datasets) + len(available_datasets)}")
         logger.debug(f"Missing datasets: {len(missing_datasets)}")
-        banner(f"{dataset_type.capitalize()} dataset statistics")
+        banner(f"{dataset_type.capitalize()} dataset statistics", inner_padding=1)
         logger.debug(f"[{dataset_type.upper()}] Robot trajectories: {len(combined_indices['robot_trajectories'])}")
         logger.debug(f"[{dataset_type.upper()}] Human trajectories: {len(combined_indices['human_trajectories'])}")
         logger.debug(f"[{dataset_type.upper()}] Number of different tasks: {len(combined_indices['task_indices'])}")

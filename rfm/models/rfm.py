@@ -96,6 +96,17 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
         self.use_per_frame_progress_token = self.model_config.use_per_frame_progress_token
         self.use_multi_image = self.model_config.use_multi_image
 
+        # Frame pooling strategy for multi-image mode (used when NOT using per-frame progress tokens).
+        # - mean: average pool patch tokens in the frame span
+        # - boundary: use the last patch token in the frame span
+        # - attention: learned attention pooling over patch tokens in the frame span
+        self.frame_pooling = getattr(self.model_config, "frame_pooling", "mean")
+        self.frame_pooling_attn_temperature = float(getattr(self.model_config, "frame_pooling_attn_temperature", 1.0))
+        if self.frame_pooling_attn_temperature <= 0:
+            raise ValueError("frame_pooling_attn_temperature must be > 0")
+        # Always create the attention pooling projection so checkpoints can be loaded across pooling modes.
+        self.frame_pool_attn = nn.Linear(hidden_size, 1, bias=False).to(dtype=self.model_dtype)
+
         # Validate that use_per_frame_progress_token requires use_multi_image
         if self.use_per_frame_progress_token and not self.use_multi_image:
             raise ValueError(
@@ -252,8 +263,19 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
                 # This shouldn't happen normally, but handle it gracefully
                 frame_embedding = (hidden_state[start_pos] + hidden_state[end_pos]) / 2.0
             else:
-                # Mean pool all tokens between the pair
-                frame_embedding = frame_tokens.mean(dim=0)  # [hidden_dim]
+                if self.frame_pooling == "mean":
+                    frame_embedding = frame_tokens.mean(dim=0)  # [hidden_dim]
+                elif self.frame_pooling == "boundary":
+                    # Use the last patch token as a boundary summary of the frame span.
+                    frame_embedding = frame_tokens[-1]
+                elif self.frame_pooling == "attention":
+                    # Learned attention pooling over patch tokens in this frame span.
+                    # scores: [num_tokens]
+                    scores = self.frame_pool_attn(frame_tokens).squeeze(-1) / self.frame_pooling_attn_temperature
+                    weights = torch.softmax(scores, dim=0).unsqueeze(-1)  # [num_tokens, 1]
+                    frame_embedding = (weights * frame_tokens).sum(dim=0)
+                else:
+                    raise ValueError(f"Unsupported frame_pooling: {self.frame_pooling}")
 
             frame_embeddings.append(frame_embedding)
 

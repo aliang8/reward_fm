@@ -6,19 +6,19 @@ Usage examples:
     # RL-VLM-F baseline server
     uv run python rfm/evals/baseline_eval_server.py \
         reward_model=rlvlmf \
-        vlm_provider=gemini \
+        reward_model.model_config.vlm_provider=gemini \
         server_port=8001
     
     # VLAC baseline server
-    uv run python rfm/evals/baseline_eval_server.py \
+    uv run --extra vlac --python .venv-vlac/bin/python rfm/evals/baseline_eval_server.py \
         reward_model=vlac \
-        vlac_model_path=InternRobotics/VLAC \
+        model_path=InternRobotics/VLAC \
         server_port=8003
     
     # RoboReward baseline server
     uv run python rfm/evals/baseline_eval_server.py \
         reward_model=roboreward \
-        roboreward_model_path=teetone/RoboReward-8B \
+        model_path=teetone/RoboReward-8B \
         server_port=8003
 
 Endpoints:
@@ -58,7 +58,12 @@ from rfm.data.dataset_types import PreferenceSample, ProgressSample
 from rfm.evals.baselines.rlvlmf import RLVLMF
 from rfm.evals.baselines.gvl import GVL
 from rfm.evals.baselines.vlac import VLAC
-from rfm.evals.baselines.roboreward import RoboReward
+
+try:
+    from rfm.evals.baselines.roboreward import RoboReward
+except ImportError:
+    RoboReward = None
+    
 from rfm.evals.run_baseline_eval import process_preference_sample, process_progress_sample
 from rfm.evals.eval_utils import parse_npy_form_data, reconstruct_payload_from_npy
 from rfm.utils.config_utils import display_config, convert_hydra_to_dataclass
@@ -283,28 +288,18 @@ class BaselineEvalServer:
 
     def _initialize_model(self):
         """Initialize the baseline model based on config."""
+        model_config_dict = asdict(self.cfg.model_config) if hasattr(self.cfg.model_config, "__dataclass_fields__") else self.cfg.model_config.__dict__
+        
         if self.reward_model == "rlvlmf":
-            self.model = RLVLMF(vlm_provider=self.cfg.vlm_provider, temperature=self.cfg.temperature)
+            self.model = RLVLMF(**model_config_dict)
         elif self.reward_model == "gvl":
-            self.model = GVL(max_frames=self.cfg.gvl_max_frames, offset=self.cfg.gvl_offset)
+            self.model = GVL(max_frames=self.cfg.max_frames, **model_config_dict)
         elif self.reward_model == "vlac":
-            if not self.cfg.vlac_model_path:
-                raise ValueError("vlac_model_path is required for VLAC baseline")
-            self.model = VLAC(
-                model_path=self.cfg.vlac_model_path,
-                device=self.cfg.vlac_device,
-                model_type=self.cfg.vlac_model_type,
-                temperature=self.cfg.vlac_temperature,
-                batch_num=self.cfg.vlac_batch_num,
-                skip=self.cfg.vlac_skip,
-                frame_skip=self.cfg.vlac_frame_skip,
-                use_images=self.cfg.vlac_use_images,
-            )
+            if not self.cfg.model_path:
+                raise ValueError("model_path is required for VLAC baseline")
+            self.model = VLAC(model_path=self.cfg.model_path, **model_config_dict)
         elif self.reward_model == "roboreward":
-            self.model = RoboReward(
-                model_path=self.cfg.roboreward_model_path,
-                max_new_tokens=self.cfg.roboreward_max_new_tokens,
-            )
+            self.model = RoboReward(model_path=self.cfg.model_path or "teetone/RoboReward-4B", **model_config_dict)
         else:
             raise ValueError(
                 f"Unknown reward_model: {self.reward_model}. Must be 'rlvlmf', 'gvl', 'vlac', or 'roboreward'"

@@ -287,6 +287,7 @@ class ConfusionMatrixSampler(RFMBaseSampler):
         sample_trajectory = self._get_traj_from_data(
             traj=video_traj_with_task,
             metadata=metadata,
+            pad_frames=self.pad_frames,
         )
 
         sample = ProgressSample(trajectory=sample_trajectory)

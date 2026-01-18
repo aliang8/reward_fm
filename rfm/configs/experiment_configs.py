@@ -333,7 +333,12 @@ class CustomEvaluationConfig:
         default=None,
         metadata={"help": "Number of frames to subsample for reward alignment evaluation. null = use all frames."},
     )
-
+    pad_frames: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to pad frames for reward alignment and policy ranking evaluations. True = pad frames, False = use original frames."
+        },
+    )
 
 @dataclass
 class TrainingConfig:

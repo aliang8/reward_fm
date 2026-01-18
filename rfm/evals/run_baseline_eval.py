@@ -508,14 +508,15 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                 sampler_kwargs["max_trajectories"] = cfg.custom_eval.reward_alignment_max_trajectories
                 sampler_kwargs["use_frame_steps"] = cfg.custom_eval.use_frame_steps
                 sampler_kwargs["subsample_n_frames"] = cfg.custom_eval.subsample_n_frames
+                sampler_kwargs["pad_frames"] = cfg.custom_eval.pad_frames
             elif eval_type == "policy_ranking":
                 sampler_kwargs["num_examples_per_quality_pr"] = cfg.custom_eval.num_examples_per_quality_pr
                 sampler_kwargs["num_partial_successes"] = cfg.custom_eval.num_partial_successes
                 sampler_kwargs["max_tasks"] = cfg.custom_eval.policy_ranking_max_tasks
                 sampler_kwargs["use_frame_steps"] = cfg.custom_eval.use_frame_steps
+                sampler_kwargs["pad_frames"] = cfg.custom_eval.pad_frames
             elif eval_type == "confusion_matrix":
-                # Confusion matrix sampler doesn't need special kwargs
-                pass
+                sampler_kwargs["pad_frames"] = cfg.custom_eval.pad_frames
             elif "quality_preference" in eval_type:
                 sampler_kwargs["comparisons_per_task"] = cfg.custom_eval.comparisons_per_task
                 sampler_kwargs["max_comparisons"] = cfg.custom_eval.max_comparisons

@@ -13,7 +13,7 @@ Usage examples:
     uv run --extra vlac --python .venv-vlac/bin/python rfm/evals/baseline_eval_server.py \
         reward_model=vlac \
         model_path=InternRobotics/VLAC \
-        server_port=8003
+        server_port=8010
     
     # RoboReward baseline server
     uv run python rfm/evals/baseline_eval_server.py \
@@ -63,7 +63,7 @@ try:
     from rfm.evals.baselines.roboreward import RoboReward
 except ImportError:
     RoboReward = None
-    
+
 from rfm.evals.run_baseline_eval import process_preference_sample, process_progress_sample
 from rfm.evals.eval_utils import parse_npy_form_data, reconstruct_payload_from_npy
 from rfm.utils.config_utils import display_config, convert_hydra_to_dataclass

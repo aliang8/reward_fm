@@ -313,10 +313,10 @@ class VLAC:
                     # Truncate to match frame count
                     progress_list = progress_list[:num_frames]
 
-                return progress_list
+                return np.array(progress_list)
             else:
                 # Return zeros for all frames if no predictions
-                return [0.0] * frames_array.shape[0]
+                return np.array([0.0] * frames_array.shape[0])
 
     def _frames_to_video(self, frames_array: np.ndarray, output_path: str, fps: float = 5.0):
         """Convert frames array to video file."""

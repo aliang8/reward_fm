@@ -276,7 +276,7 @@ def process_progress_sample(
 
     # Build result dict
     result = {
-        "progress_pred": progress_array.tolist(),
+        "progress_pred": progress_array,
         "task": traj.task,
         "data_source": traj.data_source,
         "data_gen_strategy": traj.data_gen_strategy,
@@ -284,7 +284,7 @@ def process_progress_sample(
         "id": traj.id,
         "video_path": metadata.get("video_path"),
         "partial_success": traj.partial_success,
-        "target_progress": traj.target_progress,
+        "target_progress": np.array(traj.target_progress),
         "quality_label": traj.quality_label,
     }
 
@@ -344,7 +344,7 @@ def process_batched_rfm_samples(
 
                 # Build result dict
                 result = {
-                    "progress_pred": progress_pred,
+                    "progress_pred": np.array(progress_pred),
                     "task": traj.task,
                     "data_source": traj.data_source,
                     "data_gen_strategy": traj.data_gen_strategy,
@@ -352,7 +352,7 @@ def process_batched_rfm_samples(
                     "id": traj.id,
                     "video_path": metadata.get("video_path"),
                     "partial_success": traj.partial_success,
-                    "target_progress": traj.target_progress,
+                    "target_progress": np.array(traj.target_progress),
                     "quality_label": traj.quality_label,
                 }
                 results.append(result)
@@ -555,7 +555,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
             if eval_type_dir:
                 results_file = os.path.join(eval_type_dir, f"{dataset_name}_results.json")
                 with open(results_file, "w") as f:
-                    json.dump(eval_results, f, indent=2)
+                    json.dump(_make_json_serializable(eval_results), f, indent=2)
                 logger.info(f"Saved results to {results_file}")
 
             # Compute metrics using the same functions as the trainer
@@ -706,7 +706,7 @@ def _write_metrics_incremental(eval_type_dir: str, eval_type_metrics: Dict[str, 
     # Write metrics to file (overwrite since we're accumulating in eval_type_metrics)
     try:
         with open(metrics_file, "w") as f:
-            json.dump(eval_type_metrics, f, indent=2)
+            json.dump(_make_json_serializable(eval_type_metrics), f, indent=2)
         logger.info(f"Updated metrics file: {metrics_file}")
     except IOError as e:
         logger.error(f"Could not write metrics file: {e}")

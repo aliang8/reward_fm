@@ -6,7 +6,7 @@ This file contains evaluation configuration classes:
 - OfflineEvalConfig: For standalone evaluation runs (run_eval_only.py)
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import Optional, Dict, Any
 
 from hydra.core.config_store import ConfigStore
@@ -64,102 +64,113 @@ class OfflineEvalConfig:
             self.custom_eval = CustomEvaluationConfig(**self.custom_eval)
 
 
+# Model-specific configuration classes
 @dataclass
-class BaselineEvalConfig:
-    """Configuration for baseline evaluation runs (run_baseline_eval.py)."""
-
-    # Reward model: "gvl", "vlac", "rlvlmf", "rfm", "rewind", or "roboreward"
-    reward_model: str = field(
-        default="rlvlmf",
-        metadata={
-            "help": "Reward model: 'gvl' or 'vlac' for progress, 'rlvlmf' for preference, 'rfm' or 'rewind' for trained models, 'roboreward' for RoboReward baseline"
-        },
-    )
-
-    # VLM provider for RL-VLM-F
+class RLVLMFConfig:
+    """Configuration for RL-VLM-F baseline model."""
     vlm_provider: str = field(
         default="gemini",
         metadata={"help": "VLM provider for RL-VLM-F: 'gemini' or 'openai'"},
     )
-
-    # RL-VLM-F settings
     temperature: float = field(
         default=0.0,
         metadata={"help": "Temperature for RL-VLM-F"},
     )
 
-    # GVL settings
-    gvl_api_key: Optional[str] = field(
+
+@dataclass
+class GVLConfig:
+    """Configuration for GVL baseline model."""
+    api_key: Optional[str] = field(
         default=None,
         metadata={"help": "GVL API key (defaults to GEMINI_API_KEY env var)"},
     )
-    gvl_max_frames: int = field(
-        default=15,
-        metadata={"help": "Maximum frames for GVL"},
-    )
-    gvl_offset: float = field(
+    offset: float = field(
         default=0.5,
         metadata={"help": "Frame offset for GVL"},
     )
 
-    # VLAC settings
-    vlac_model_path: Optional[str] = field(
-        default=None,
-        metadata={"help": "Path to VLAC model checkpoint (required for vlac baseline)"},
-    )
-    vlac_device: str = field(
+
+@dataclass
+class VLACConfig:
+    """Configuration for VLAC baseline model."""
+    device: str = field(
         default="cuda:0",
         metadata={"help": "Device for VLAC model"},
     )
-    vlac_model_type: str = field(
+    model_type: str = field(
         default="internvl2",
         metadata={"help": "VLAC model type"},
     )
-    vlac_temperature: float = field(
+    temperature: float = field(
         default=0.5,
         metadata={"help": "Temperature for VLAC"},
     )
-    vlac_batch_num: int = field(
+    batch_num: int = field(
         default=5,
         metadata={"help": "Batch number for VLAC processing"},
     )
-    vlac_skip: int = field(
+    skip: int = field(
         default=5,
         metadata={"help": "Pair-wise step size for VLAC"},
     )
-    vlac_frame_skip: bool = field(
+    frame_skip: bool = field(
         default=True,
         metadata={"help": "Whether to skip frames for VLAC efficiency"},
     )
-    vlac_use_images: bool = field(
+    use_images: bool = field(
         default=False,
         metadata={
             "help": "If True, use image mode (get_trajectory_critic). If False, use video mode (web_trajectory_critic)"
         },
     )
 
-    # RFM/ReWiND settings (only used if reward_model is "rfm" or "rewind")
-    rfm_checkpoint_path: Optional[str] = field(
-        default=None,
-        metadata={
-            "help": "Path to RFM/ReWiND model checkpoint (HuggingFace repo ID or local path, required for rfm/rewind)"
-        },
-    )
-    rfm_batch_size: int = field(
+
+@dataclass
+class RFMConfig:
+    """Configuration for RFM/ReWiND baseline model."""
+    batch_size: int = field(
         default=32,
         metadata={"help": "Batch size for RFM/ReWiND model inference"},
     )
 
-    # RoboReward settings (only used if reward_model is "roboreward")
-    roboreward_model_path: Optional[str] = field(
-        default="teetone/RoboReward-4B",
-        metadata={
-            "help": "Path to RoboReward model (HuggingFace repo ID, e.g., 'teetone/RoboReward-8B' or 'teetone/RoboReward-4B')"
-        },
-    )
-    roboreward_max_new_tokens: int = field(
+
+@dataclass
+class RoboRewardConfig:
+    """Configuration for RoboReward baseline model."""
+    max_new_tokens: int = field(
         default=128,
         metadata={"help": "Maximum number of tokens to generate for RoboReward"},
+    )
+
+
+@dataclass
+class BaselineEvalConfig:
+    """Configuration for baseline evaluation runs (run_baseline_eval.py)."""
+
+    # Reward model discriminator: "gvl", "vlac", "rlvlmf", "rfm", "rewind", or "roboreward"
+    reward_model: str = field(
+        default="rlvlmf",
+        metadata={
+            "help": "Reward model: 'gvl' or 'vlac' for progress, 'rlvlmf' for preference, 'rfm' or 'rewind' for trained models, 'roboreward' for RoboReward baseline"
+        },
+    )
+    
+    model_config: Any = field(
+        default=None,
+        metadata={"help": "Model-specific configuration (automatically selected based on reward_model)"},
+    )
+
+    # Shared configuration
+    model_path: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Path to model checkpoint (HuggingFace repo ID or local path). Used by vlac, rfm, rewind, and roboreward models."
+        },
+    )
+    max_frames: int = field(
+        default=15,
+        metadata={"help": "Maximum frames for models (used by GVL and potentially others)"},
     )
 
     # Custom evaluation configuration
@@ -185,9 +196,29 @@ class BaselineEvalConfig:
     )
 
     def __post_init__(self):
-        """Convert nested dict configs to dataclass instances."""
+        """Convert nested dict configs to dataclass instances and initialize model_config."""
+        # Handle custom_eval conversion
         if isinstance(self.custom_eval, dict):
             self.custom_eval = CustomEvaluationConfig(**self.custom_eval)
+
+        # Handle model_config conversion based on reward_model
+        # If model_config is None or a dict, convert to appropriate dataclass
+        if self.model_config is None or isinstance(self.model_config, dict):
+            if self.reward_model == "rlvlmf":
+                self.model_config = RLVLMFConfig(**(self.model_config or {}))
+            elif self.reward_model == "gvl":
+                self.model_config = GVLConfig(**(self.model_config or {}))
+            elif self.reward_model == "vlac":
+                self.model_config = VLACConfig(**(self.model_config or {}))
+            elif self.reward_model in ["rfm", "rewind"]:
+                self.model_config = RFMConfig(**(self.model_config or {}))
+            elif self.reward_model == "roboreward":
+                self.model_config = RoboRewardConfig(**(self.model_config or {}))
+            else:
+                raise ValueError(
+                    f"Unknown reward_model: {self.reward_model}. "
+                    f"Must be 'rlvlmf', 'gvl', 'vlac', 'rfm', 'rewind', or 'roboreward'"
+                )
 
 
 # Register structured configs with Hydra

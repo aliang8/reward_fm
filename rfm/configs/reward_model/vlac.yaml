@@ -9,8 +9,8 @@ model_config:
   device: "cuda:0"
   model_type: "internvl2"
   temperature: 0.5
-  batch_num: 5
-  skip: 5
+  # top_k: 1
+  batch_num: 32
+  skip: 5 # doesn't matter 
   frame_skip: true
   use_images: false  # If true, use image mode; if false, use video mode
-

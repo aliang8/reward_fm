@@ -29,6 +29,8 @@ from typing import List, Dict, Optional
 import numpy as np
 import cv2
 
+from rfm.utils.logger import get_logger
+
 # Disable tqdm globally before importing evo_vlac to prevent progress bars
 try:
     import tqdm
@@ -59,6 +61,7 @@ try:
 except ImportError:
     HF_AVAILABLE = False
 
+logger = get_logger()
 
 def download_vlac_model(
     repo_id: str = "InternRobotics/VLAC", cache_dir: Optional[str] = None, local_dir: Optional[str] = None
@@ -193,7 +196,6 @@ class VLAC:
         if frames_array is None or frames_array.size == 0:
             return []
 
-        import ipdb; ipdb.set_trace()
         # Create temporary directory for intermediate files
         with tempfile.TemporaryDirectory() as tmpdir:
             if self.use_images:
@@ -264,16 +266,16 @@ class VLAC:
                 assert compressed_frames_array.shape[0] == frames_array.shape[0], (
                     f"Shape mismatch: original {frames_array.shape} vs compressed {compressed_frames_array.shape}"
                 )
-
+                
                 # Run VLAC trajectory critic with video
                 # Note: web_trajectory_critic returns (result_path, value_list, critic_list, done_list)
                 # where value_list contains progress values in [0, 1] if rich=True, or [0, 100] if rich=False
                 result_path, value_list, critic_list, done_list = self.critic.web_trajectory_critic(
                     task_description=task_description,
                     main_video_path=compressed_video,
-                    reference_video_path=reference_video_path,
+                    reference_video_path=None,
                     batch_num=self.batch_num,
-                    ref_num=6 if reference_video_path else 0,  # Number of reference images from reference video
+                    ref_num=0,  # Number of reference images from reference video
                     think=False,  # Whether to use Chain-of-Thought reasoning
                     skip=self.skip,  # Pair-wise step size (default: 5)
                     rich=True,  # Output decimal values (True for [0,1] range, False for integer percentage)
@@ -286,6 +288,8 @@ class VLAC:
                     done_threshold=0.9,  # Threshold for task completion
                     video_output=False,  # Whether to output annotated video
                 )
+
+            logger.info(f"value_list: {value_list}")
 
             # Extract progress values from value_list
             # value_list contains progress predictions for each frame

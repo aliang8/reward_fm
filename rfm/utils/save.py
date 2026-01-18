@@ -401,6 +401,9 @@ class SaveBestCallback(TrainerCallback):
                 f"💾 Saving ckpt: {ckpt_dir} | avg_score: {score_for_filename:.6f} | {metrics_str} (rank {len(self._saved) + 1}/{self.keep_top_k})"
             )
 
+            # Create checkpoint directory
+            os.makedirs(ckpt_dir, exist_ok=True)
+
             # Save model, trainer state, and metrics
             self._save_checkpoint_files(args, ckpt_dir, metrics, step)
             self._cleanup_memory()

@@ -38,11 +38,11 @@ class ModelConfig(PretrainedConfig):
         },
     )
 
-    use_progress_token: bool = field(
+    use_per_frame_progress_token: bool = field(
         default=False,
         metadata={
-            "help": "If True, use <|prog_token|> to predict progress from hidden state at that token. "
-            "Otherwise, use average pooling of frame embeddings."
+            "help": "If True, add a <|prog_token|> after each frame and use those token embeddings "
+            "for per-frame progress prediction. Requires use_multi_image=True."
         },
     )
 
@@ -79,6 +79,13 @@ class ModelConfig(PretrainedConfig):
     progress_discrete_bins: Optional[int] = field(
         default=None,
         metadata={"help": "Number of discrete bins for progress when using discrete loss (None for continuous)"},
+    )
+    use_per_frame_progress_token: bool = field(
+        default=False,
+        metadata={
+            "help": "If True, add a <|prog_token|> after each frame for per-frame progress prediction. "
+            "Requires use_multi_image=True."
+        },
     )
     # rewind sub-config
     rewind: Optional[Dict[str, Any]] = field(default=None)
@@ -135,8 +142,8 @@ class DataConfig:
             "help": "Minimum number of frames required per trajectory (trajectories with fewer frames will be filtered out)"
         },
     )
-    resized_height: int = field(default=224, metadata={"help": "Height to resize video frames to"})
-    resized_width: int = field(default=224, metadata={"help": "Width to resize video frames to"})
+    resized_height: Optional[int] = field(default=None, metadata={"help": "Height to resize video frames to"})
+    resized_width: Optional[int] = field(default=None, metadata={"help": "Width to resize video frames to"})
 
     # Video/image processing mode
     use_multi_image: bool = field(
@@ -158,6 +165,14 @@ class DataConfig:
         metadata={
             "help": "If True, shuffle progress trajectory frames (except the first frame) "
             "and their corresponding target progress labels during training for RFM heads."
+        },
+    )
+
+    use_per_frame_progress_token: bool = field(
+        default=False,
+        metadata={
+            "help": "If True, add a <|prog_token|> after each frame for per-frame progress prediction. "
+            "Requires use_multi_image=True."
         },
     )
 
@@ -278,10 +293,10 @@ class CustomEvaluationConfig:
             "help": "Limit total number of quality preference comparisons across all tasks. None = use all comparisons. Uniformly samples if limit is set."
         },
     )
-    num_examples_per_quality_pr: int = field(
-        default=5,
+    num_examples_per_quality_pr: Optional[int] = field(
+        default=None,
         metadata={
-            "help": "Number of trajectories to sample per quality label for policy ranking evaluation. Only tasks with multiple quality labels are used."
+            "help": "Number of trajectories to sample per quality label for policy ranking evaluation. Only tasks with multiple quality labels are used. If None = use all."
         },
     )
     num_partial_successes: Optional[int] = field(
@@ -313,6 +328,10 @@ class CustomEvaluationConfig:
         metadata={
             "help": "Whether to use frame steps (subsequences) for reward_alignment and policy_ranking evaluations. True = generate subsequences (0:frame_step, 0:2*frame_step, etc.), False = use whole trajectory."
         },
+    )
+    subsample_n_frames: Optional[int] = field(
+        default=None,
+        metadata={"help": "Number of frames to subsample for reward alignment evaluation. null = use all frames."},
     )
 
 
@@ -398,6 +417,12 @@ class TrainingConfig:
     )
     predict_sim_progress: bool = field(
         default=False, metadata={"help": "Whether to predict progress for similarity samples"}
+    )
+    predict_pref_sim: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to predict preference for ref/diff pair in similarity samples (ref is always preferred)"
+        },
     )
 
 
@@ -526,7 +551,7 @@ class ExperimentConfig:
             self.peft = PEFTConfig(**self.peft)
 
         if isinstance(self.data, dict):
-            self.data.pop('roboarena_partial_success_threshold', None)
+            self.data.pop("roboarena_partial_success_threshold", None)
             self.data = DataConfig(**self.data)
 
         if isinstance(self.training, dict):

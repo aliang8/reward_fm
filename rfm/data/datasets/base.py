@@ -50,7 +50,7 @@ def resolve_dataset_keys(
 
 
 class BaseDataset(torch.utils.data.Dataset):
-    def __init__(self, config: DataConfig, is_evaluation: bool = False):
+    def __init__(self, config: DataConfig, is_evaluation: bool = False, filter_successful_only: bool = False):
         self.config = config
         self.is_evaluation = is_evaluation
 
@@ -68,13 +68,12 @@ class BaseDataset(torch.utils.data.Dataset):
         self.dataset, self._combined_indices = self._load_all_datasets()
 
         # Apply all filters simultaneously
-        #excluded_keywords = ["rings", "flick"]
+        # excluded_keywords = ["rings", "flick"]
         excluded_keywords = []
         min_frames = config.min_frames_per_trajectory
 
         # Check if we're in progress_only mode (sample_type_ratio == [0, 1, 0])
         # In progress_only mode, filter to only include successful trajectories
-        filter_successful_only = False
         if config.sample_type_ratio == [0, 1, 0] and not is_evaluation:
             filter_successful_only = True
             logger.info(
@@ -83,16 +82,16 @@ class BaseDataset(torch.utils.data.Dataset):
 
         dataset_type = "evaluation" if is_evaluation else "training"
         logger.info(f"Filtering {dataset_type} dataset with {len(self.dataset)} total trajectories")
-        if self.is_evaluation:
+        if self.is_evaluation and not filter_successful_only:
             logger.info(f"SKIPPING FILTERING for {dataset_type} dataset BECAUSE IT'S EVALUATION")
         else:
             self.dataset, self._combined_indices = self._filter_dataset(
-                    excluded_keywords=excluded_keywords,
-                    min_frames=min_frames,
-                    dataset=self.dataset,
-                    combined_indices=self._combined_indices,
-                    filter_successful_only=filter_successful_only,
-                )
+                excluded_keywords=excluded_keywords,
+                min_frames=min_frames,
+                dataset=self.dataset,
+                combined_indices=self._combined_indices,
+                filter_successful_only=filter_successful_only,
+            )
         if filter_successful_only:
             logger.info(
                 f"{dataset_type.capitalize()} dataset filtered with {len(self.dataset)} total trajectories (filtered for successful trajectories only)"
@@ -338,7 +337,7 @@ class BaseDataset(torch.utils.data.Dataset):
         logger.info(f"✅ Loaded {len(dataset)} total trajectories from preprocessed {dataset_type} datasets")
         logger.debug(f"Available datasets: {len(available_datasets)}/{len(missing_datasets) + len(available_datasets)}")
         logger.debug(f"Missing datasets: {len(missing_datasets)}")
-        banner(f"{dataset_type.capitalize()} dataset statistics")
+        banner(f"{dataset_type.capitalize()} dataset statistics", inner_padding=1)
         logger.debug(f"[{dataset_type.upper()}] Robot trajectories: {len(combined_indices['robot_trajectories'])}")
         logger.debug(f"[{dataset_type.upper()}] Human trajectories: {len(combined_indices['human_trajectories'])}")
         logger.debug(f"[{dataset_type.upper()}] Number of different tasks: {len(combined_indices['task_indices'])}")
@@ -412,12 +411,12 @@ class BaseDataset(torch.utils.data.Dataset):
             if partial_success is not None:
                 tasks_to_partial_success[task].add(partial_success)
 
-        # Find tasks with only one unique partial_success category
-        tasks_with_single_partial_success = {
-            task
-            for task, partial_success_set in tasks_to_partial_success.items()
-            if len(partial_success_set) == 1
-        }
+        # # Find tasks with only one unique partial_success category
+        # tasks_with_single_partial_success = {
+        #     task
+        #     for task, partial_success_set in tasks_to_partial_success.items()
+        #     if len(partial_success_set) == 1
+        # }
 
         def add_filter_flags(batch):
             """Add filter flags to batch for efficient filtering."""
@@ -433,7 +432,9 @@ class BaseDataset(torch.utils.data.Dataset):
             drop_quality = []
             drop_roboarena = []
 
-            for idx, (task, fs, quality_label, data_source, partial_success) in enumerate(zip(tasks, frames_shapes, quality_labels, data_sources_batch, batch_partial_success)):
+            for idx, (task, fs, quality_label, data_source, partial_success) in enumerate(
+                zip(tasks, frames_shapes, quality_labels, data_sources_batch, batch_partial_success)
+            ):
                 dkw = False
                 dfr = False
                 dq = False
@@ -459,23 +460,23 @@ class BaseDataset(torch.utils.data.Dataset):
                     if quality_label != "successful":
                         dq = True
 
-                # Check tasks with single partial_success (only if not dropped by other filters)
-                if not dkw and not dfr and not dq:
-                    if task is not None and task in tasks_with_single_partial_success:
-                        # Check if this trajectory has partial_success
-                        if partial_success is not None:
-                            dr = True
+                # # Check tasks with single partial_success (only if not dropped by other filters)
+                # if not dkw and not dfr and not dq:
+                #     if task is not None and task in tasks_with_single_partial_success:
+                #         # Check if this trajectory has partial_success
+                #         if partial_success is not None:
+                #             dr = True
 
                 drop_kw.append(dkw)
                 drop_frames.append(dfr)
                 drop_quality.append(dq)
-                drop_roboarena.append(dr)
+                # drop_roboarena.append(dr)
 
             return {
                 "drop_by_keywords": drop_kw,
                 "drop_by_frames": drop_frames,
                 "drop_by_quality": drop_quality,
-                "drop_by_roboarena": drop_roboarena,
+                # "drop_by_roboarena": drop_roboarena,
             }
 
         # 1) Compute flags in a single batched pass
@@ -490,13 +491,13 @@ class BaseDataset(torch.utils.data.Dataset):
         drop_kw_list = dataset_with_flags["drop_by_keywords"]
         drop_frames_list = dataset_with_flags["drop_by_frames"]
         drop_quality_list = dataset_with_flags["drop_by_quality"]
-        drop_roboarena_list = dataset_with_flags["drop_by_roboarena"]
+        # drop_roboarena_list = dataset_with_flags["drop_by_roboarena"]
 
         filtered_by_keywords = int(sum(drop_kw_list))
         filtered_by_frames = int(sum(drop_frames_list))
         filtered_by_quality = int(sum(drop_quality_list))
-        filtered_by_roboarena = int(sum(drop_roboarena_list))
-        total_filtered = filtered_by_keywords + filtered_by_frames + filtered_by_quality + filtered_by_roboarena
+        # filtered_by_roboarena = int(sum(drop_roboarena_list))
+        total_filtered = filtered_by_keywords + filtered_by_frames + filtered_by_quality  # + filtered_by_roboarena
 
         # 3) Filter using precomputed flags (efficient)
         if total_filtered > 0:
@@ -507,20 +508,20 @@ class BaseDataset(torch.utils.data.Dataset):
                 filter_messages.append(f"{filtered_by_frames} with <= {min_frames} frames")
             if filtered_by_quality > 0:
                 filter_messages.append(f"{filtered_by_quality} with quality_label != 'successful'")
-            if filtered_by_roboarena > 0:
-                filter_messages.append(
-                    f"{filtered_by_roboarena} trajectories with partial_success from {len(tasks_with_single_partial_success)} tasks with only one partial_success category"
-                )
+            # if filtered_by_roboarena > 0:
+            #     filter_messages.append(
+            #         f"{filtered_by_roboarena} trajectories with partial_success from {len(tasks_with_single_partial_success)} tasks with only one partial_success category"
+            #     )
 
             logger.info(f"Filtering out {total_filtered} trajectories ({', '.join(filter_messages)})")
 
             # Build keep_indices from flags (before filtering)
             keep_indices = [
                 i
-                for i, (dkw, dfr, dq, dr) in enumerate(
-                    zip(drop_kw_list, drop_frames_list, drop_quality_list, drop_roboarena_list)
+                for i, (dkw, dfr, dq) in enumerate(
+                    zip(drop_kw_list, drop_frames_list, drop_quality_list)  # , drop_roboarena_list)
                 )
-                if not (dkw or dfr or dq or dr)
+                if not (dkw or dfr or dq)  # or dr)
             ]
 
             removed_indices = set(range(len(dataset))) - set(keep_indices)

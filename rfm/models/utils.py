@@ -20,7 +20,9 @@ def convert_bins_to_continuous(bin_logits: torch.Tensor | np.ndarray) -> torch.T
         bin_probs = bin_logits
     else:
         bin_probs = (
-            torch.softmax(bin_logits, dim=-1) if isinstance(bin_logits, torch.Tensor) else np.softmax(bin_logits, axis=-1)
+            torch.softmax(bin_logits, dim=-1)
+            if isinstance(bin_logits, torch.Tensor)
+            else np.softmax(bin_logits, axis=-1)
         )
     bin_centers = (
         torch.linspace(0.0, 1.0, num_bins, device=bin_logits.device, dtype=bin_logits.dtype)
@@ -32,6 +34,7 @@ def convert_bins_to_continuous(bin_logits: torch.Tensor | np.ndarray) -> torch.T
         if isinstance(bin_logits, torch.Tensor)
         else (bin_probs * bin_centers).sum(axis=-1)
     )
+
 
 def convert_bins_to_continuous_hard(
     bin_logits: torch.Tensor | np.ndarray,
@@ -64,7 +67,10 @@ def convert_bin_index_to_continuous(bin_index: torch.Tensor | np.ndarray, num_bi
     bin_centers = torch.linspace(0.0, 1.0, num_bins, device=bin_index.device, dtype=bin_index.dtype)
     return bin_centers[bin_index.long()]
 
-def convert_discrete_target_to_continuous(target: torch.Tensor | np.ndarray, num_bins: int) -> torch.Tensor | np.ndarray:
+
+def convert_discrete_target_to_continuous(
+    target: torch.Tensor | np.ndarray, num_bins: int
+) -> torch.Tensor | np.ndarray:
     """Convert discrete target to continuous progress value in [0, 1] by selecting the argmax bin and returning its center."""
     if len(target.shape) == 2:
         return convert_bin_index_to_continuous(target, num_bins)

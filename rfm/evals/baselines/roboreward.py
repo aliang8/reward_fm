@@ -33,6 +33,9 @@ except ImportError:
     HAS_UNSLOTH = False
 
 from rfm.data.collators.utils import convert_frames_to_pil_images, write_mp4
+from rfm.utils.logger import get_logger
+
+logger = get_logger()
 
 
 class RoboReward:
@@ -52,7 +55,7 @@ class RoboReward:
             max_new_tokens: Maximum number of tokens to generate
             use_unsloth: Whether to use unsloth for faster inference (default: True)
         """
-        print(f"Loading RoboReward model: {model_path}")
+        logger.info(f"Loading RoboReward model: {model_path}")
 
         # Use unsloth for faster inference if available and requested
         if use_unsloth and HAS_UNSLOTH:
@@ -74,7 +77,9 @@ class RoboReward:
                 device_map="auto",  # Auto device placement is best practice
             )
 
-        self.processor = AutoProcessor.from_pretrained(model_path)
+        self.processor = AutoProcessor.from_pretrained(
+            model_path, trust_remote_code=True, do_sample_frames=False, fps=1
+        )
         self.max_new_tokens = max_new_tokens
         self.model_path = model_path
 
@@ -97,9 +102,7 @@ Rubric for end-of-episode progress (judge only the final state without time limi
 4 - Near Completion: Final state is correct in region and intent but misses a single minor requirement.
 5 - Perfect Completion: Final state satisfies all requirements.
 
-Task: {task}
-
-ANSWER:""".format(task=task_description)
+Task: {task}""".format(task=task_description)
         return prompt
 
     def _parse_score(self, output_text: str) -> Optional[int]:
@@ -130,18 +133,6 @@ ANSWER:""".format(task=task_description)
 
         return None
 
-    def _score_to_continuous(self, score: int) -> float:
-        """Convert discrete score (1-5) to continuous value [0, 1].
-
-        Args:
-            score: Discrete score (1-5)
-
-        Returns:
-            Continuous value in [0, 1]
-        """
-        # Linear mapping: 1 -> 0.0, 5 -> 1.0
-        return (score - 1) / 4.0
-
     def compute_progress(self, frames_array: np.ndarray, task_description: str = "") -> List[Optional[float]]:
         """
         Compute progress prediction for a frame sequence using RoboReward baseline.
@@ -155,14 +146,16 @@ ANSWER:""".format(task=task_description)
             task_description: Task description text
 
         Returns:
-            List of task completion percentages (0-1) for each frame.
-            All frames get the same score (end-of-episode score for this subsequence).
+            List of discrete scores (1.0-5.0) for each frame.
+            All frames get the same discrete score (end-of-episode score for this subsequence).
         """
         if frames_array is None or frames_array.size == 0:
             return []
 
         # Convert frames to PIL Images
         frames_pil = convert_frames_to_pil_images(frames_array)
+
+        logger.info(f"RoboReward: Converted {len(frames_pil)} frames to PIL Images")
 
         if not frames_pil:
             return []
@@ -178,74 +171,234 @@ ANSWER:""".format(task=task_description)
         # Build prompt
         prompt = self._build_prompt(task_description)
 
-        # Create temporary video file for this sequence
+        # Create temporary directory for frame files
+        # Use individual frame files instead of video to avoid torchcodec memory issues
+        # According to qwen-vl-utils docs, we can pass frames as a list of file paths
         tmpdir = tempfile.mkdtemp()
-        try:
-            unique_id = uuid.uuid4().hex
-            video_path = Path(tmpdir) / f"roboreward_{unique_id}.mp4"
-            write_mp4(frames_pil, video_path, fps=1)
+        unique_id = uuid.uuid4().hex
 
-            # Build message with video
+        # Save frames as individual JPEG files (much smaller than video, avoids torchcodec overhead)
+        frame_paths = []
+        for i, frame_pil in enumerate(frames_pil):
+            frame_path = Path(tmpdir) / f"roboreward_{unique_id}_frame_{i:04d}.jpg"
+            # Save as JPEG with reasonable quality to reduce file size
+            frame_pil.save(frame_path, "JPEG", quality=85, optimize=True)
+            frame_paths.append(f"file://{frame_path}")
+
+        logger.info(f"RoboReward: Saved {len(frame_paths)} frames as JPEG files in {tmpdir}")
+
+        # Build message with frames as list of file paths (following Qwen3-VL pattern)
+        message = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "video", "video": frame_paths, "sample_fps": 1.0},
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ]
+
+        # Apply chat template
+        text = self.processor.apply_chat_template(message, tokenize=False, add_generation_prompt=True)
+
+        # Process vision info (qwen-vl-utils handles resizing)
+        image_inputs, video_inputs, video_kwargs = process_vision_info(
+            [message],
+            image_patch_size=16,
+            return_video_kwargs=True,
+            return_video_metadata=True,
+        )
+
+        # Split videos and metadata (video_inputs is list of (video, video_metadata) tuples)
+        if video_inputs is not None:
+            videos, video_metadatas = zip(*video_inputs)
+            videos, video_metadatas = list(videos), list(video_metadatas)
+        else:
+            videos = None
+            video_metadatas = None
+
+        # Process inputs (do_resize=False since qwen-vl-utils already resized)
+        inputs = self.processor(
+            text=[text],
+            images=image_inputs,
+            videos=videos,
+            video_metadata=video_metadatas,
+            padding=True,
+            return_tensors="pt",
+            do_resize=False,  # qwen-vl-utils already resized
+            **video_kwargs,
+        )
+        inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+
+        # Generate
+        with torch.no_grad():
+            generated_ids = self.model.generate(
+                **inputs,
+                max_new_tokens=self.max_new_tokens,
+                do_sample=False,  # Deterministic
+            )
+
+        # Decode output
+        generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs["input_ids"], generated_ids)]
+        output_texts = self.processor.batch_decode(
+            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )
+
+        # Parse score
+        output_text = output_texts[0]
+        discrete_score = self._parse_score(output_text)
+        logger.info(f"RoboReward: Discrete score: {discrete_score}")
+
+        if discrete_score is None:
+            print(f"[!] Failed to parse score from output: {output_text}")
+            discrete_score = 1  # Default to minimum score if parsing fails
+
+        # Return same discrete score for all frames in this subsequence
+        # Use original num_frames from frames_array (before duplication)
+        original_num_frames = len(convert_frames_to_pil_images(frames_array))
+
+        # because RoboReward returns a score between 1 and 5, we need to normalize it to 0-1
+        result = [float(discrete_score) / 4.0 - 0.25] * original_num_frames
+
+        # Clean up temporary directory
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+        return result
+
+    def compute_progress_batched(
+        self, frames_list: List[np.ndarray], task_descriptions: List[str]
+    ) -> List[List[Optional[float]]]:
+        """
+        Compute progress predictions for a batch of frame sequences.
+
+        This processes multiple sequences in a single batch for efficiency.
+        Each sequence can have different lengths but will be processed together.
+
+        Args:
+            frames_list: List of (N, H, W, 3) uint8 arrays, one per sample
+            task_descriptions: List of task description strings, one per sample
+
+        Returns:
+            List of progress predictions, one list per sample.
+            Each inner list contains discrete scores (normalized 0-1) for each frame.
+        """
+        if not frames_list:
+            return []
+
+        batch_size = len(frames_list)
+        if len(task_descriptions) != batch_size:
+            raise ValueError(f"Mismatch: {batch_size} frame arrays but {len(task_descriptions)} task descriptions")
+
+        # Prepare all messages and track original frame counts
+        all_messages = []
+        original_frame_counts = []
+        temp_dirs = []
+
+        for idx, (frames_array, task_desc) in enumerate(zip(frames_list, task_descriptions)):
+            if frames_array is None or frames_array.size == 0:
+                all_messages.append(None)
+                original_frame_counts.append(0)
+                temp_dirs.append(None)
+                continue
+
+            # Convert frames to PIL Images
+            frames_pil = convert_frames_to_pil_images(frames_array)
+            if not frames_pil:
+                all_messages.append(None)
+                original_frame_counts.append(0)
+                temp_dirs.append(None)
+                continue
+
+            original_num_frames = len(frames_pil)
+            original_frame_counts.append(original_num_frames)
+
+            # Ensure at least 2 frames for video processing
+            if len(frames_pil) == 1:
+                frames_pil = [frames_pil[0], frames_pil[0]]
+
+            # Build prompt
+            prompt = self._build_prompt(task_desc)
+
+            # Create temporary directory for frame files
+            tmpdir = tempfile.mkdtemp()
+            temp_dirs.append(tmpdir)
+
+            unique_id = uuid.uuid4().hex
+            frame_paths = []
+            for i, frame_pil in enumerate(frames_pil):
+                frame_path = Path(tmpdir) / f"roboreward_{unique_id}_frame_{i:04d}.jpg"
+                frame_pil.save(frame_path, "JPEG", quality=85, optimize=True)
+                frame_paths.append(f"file://{frame_path}")
+
+            # Build message
             message = [
                 {
                     "role": "user",
                     "content": [
+                        {"type": "video", "video": frame_paths, "sample_fps": 1.0},
                         {"type": "text", "text": prompt},
-                        {"type": "video", "video": str(video_path)},
                     ],
                 }
             ]
+            all_messages.append(message)
 
-            # Apply chat template with fps=1 to match video FPS
-            text = self.processor.apply_chat_template(message, tokenize=False, add_generation_prompt=True, fps=1)
+        # Filter out None messages for batched processing
+        valid_indices = [i for i, msg in enumerate(all_messages) if msg is not None]
+        valid_messages = [all_messages[i] for i in valid_indices]
 
-            # Process vision info - need return_video_kwargs=True to get 3 return values
-            is_qwen3 = "Qwen3" in self.model_path or "qwen3" in self.model_path.lower()
+        if not valid_messages:
+            # Clean up temp dirs before returning
+            for tmpdir in temp_dirs:
+                if tmpdir is not None:
+                    shutil.rmtree(tmpdir, ignore_errors=True)
+            return [[] for _ in range(batch_size)]
+
+        # Process all valid messages
+        all_texts = []
+        all_image_inputs = []
+        all_video_inputs = []
+        all_video_kwargs_list = []
+
+        for message in valid_messages:
+            text = self.processor.apply_chat_template(message, tokenize=False, add_generation_prompt=True)
+            all_texts.append(text)
+
+            # Process vision info
             image_inputs, video_inputs, video_kwargs = process_vision_info(
                 [message],
+                image_patch_size=16,
                 return_video_kwargs=True,
-                return_video_metadata=is_qwen3,
+                return_video_metadata=True,
             )
+            all_image_inputs.append(image_inputs)
+            all_video_inputs.append(video_inputs)
+            all_video_kwargs_list.append(video_kwargs)
 
-            # Ensure video file still exists - process_vision_info may have created its own processing
-            # but we need to keep our file until after processor() is called
-            assert video_path.exists(), f"Video file was deleted before processing: {video_path}"
-
-            # Handle Qwen3 video format (video_inputs may be list of tuples)
-            if is_qwen3 and video_inputs is not None and len(video_inputs) > 0:
-                if isinstance(video_inputs[0], tuple) and len(video_inputs[0]) == 2:
-                    videos, video_metadatas = zip(*video_inputs)
-                    videos, video_metadatas = list(videos), list(video_metadatas)
-                    # Ensure video_metadata has video_fps if missing
-                    if video_metadatas and len(video_metadatas) > 0:
-                        for metadata in video_metadatas:
-                            if metadata is not None and "video_fps" not in metadata:
-                                metadata["video_fps"] = 1.0  # Match the FPS we used when writing the video
-                else:
-                    videos = video_inputs
-                    video_metadatas = None
+        # Process each sample individually (batching videos with different sizes is complex)
+        # but do it efficiently by reusing the prepared data
+        valid_results = []
+        for i, (text, image_inputs, video_inputs, video_kwargs) in enumerate(
+            zip(all_texts, all_image_inputs, all_video_inputs, all_video_kwargs_list)
+        ):
+            # Split videos and metadata
+            if video_inputs is not None:
+                videos, video_metadatas = zip(*video_inputs)
+                videos, video_metadatas = list(videos), list(video_metadatas)
             else:
-                videos = video_inputs if video_inputs else None
+                videos = None
                 video_metadatas = None
 
             # Process inputs
-            processor_kwargs = {
-                "text": [text],
-                "images": image_inputs,
-                "padding": True,
-                "return_tensors": "pt",
-            }
-
-            if videos is not None:
-                processor_kwargs["videos"] = videos
-
-            if is_qwen3 and video_metadatas is not None:
-                processor_kwargs["video_metadata"] = video_metadatas
-
-            if video_kwargs:
-                processor_kwargs.update(video_kwargs)
-
-            inputs = self.processor(**processor_kwargs)
+            inputs = self.processor(
+                text=[text],
+                images=image_inputs,
+                videos=videos,
+                video_metadata=video_metadatas,
+                padding=True,
+                return_tensors="pt",
+                do_resize=False,
+                **video_kwargs,
+            )
             inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
 
             # Generate
@@ -253,7 +406,7 @@ ANSWER:""".format(task=task_description)
                 generated_ids = self.model.generate(
                     **inputs,
                     max_new_tokens=self.max_new_tokens,
-                    do_sample=False,  # Deterministic
+                    do_sample=False,
                 )
 
             # Decode output
@@ -267,21 +420,27 @@ ANSWER:""".format(task=task_description)
             # Parse score
             output_text = output_texts[0]
             discrete_score = self._parse_score(output_text)
-
             if discrete_score is None:
-                print(f"[!] Failed to parse score from output: {output_text}")
-                continuous_score = 0.0
+                logger.warning(f"Failed to parse score from output: {output_text}")
+                discrete_score = 1
+
+            valid_results.append(discrete_score)
+
+        # Map results back to original indices
+        results = []
+        valid_result_idx = 0
+        for i in range(batch_size):
+            if i in valid_indices:
+                discrete_score = valid_results[valid_result_idx]
+                valid_result_idx += 1
+                # Normalize to 0-1 and repeat for all frames
+                results.append([float(discrete_score) / 4.0 - 0.25] * original_frame_counts[i])
             else:
-                # Convert to continuous value
-                continuous_score = self._score_to_continuous(discrete_score)
+                results.append([])
 
-            # Return same score for all frames in this subsequence
-            # Use original num_frames from frames_array (before duplication)
-            original_num_frames = len(convert_frames_to_pil_images(frames_array))
-            result = [continuous_score] * original_num_frames
-        finally:
-            # Clean up temporary directory and files after all processing is complete
-            # This ensures the video file exists during process_vision_info and processor calls
-            shutil.rmtree(tmpdir, ignore_errors=True)
+        # Clean up all temporary directories
+        for tmpdir in temp_dirs:
+            if tmpdir is not None:
+                shutil.rmtree(tmpdir, ignore_errors=True)
 
-        return result
+        return results

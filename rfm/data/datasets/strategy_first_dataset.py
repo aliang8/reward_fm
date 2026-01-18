@@ -151,11 +151,26 @@ class StrategyFirstDataset(BaseDataset):
             return self._generate_without_specific_strategy(sample_type)
 
         # Step 4-6: Sample and generate using helper method
+        # First try with preferred strategy
         sample = self._try_generate_sample(
             sample_type=sample_type,
             filtered_sources=filtered_sources,
             strategy=strategy,
             preferred_strategy=strategy,
+        )
+        if sample is not None:
+            return sample
+
+        # If preferred strategy failed, try without strategy (let sampler choose its own)
+        logger.trace(
+            f"[StrategyFirstDataset] Failed to generate {sample_type} sample with preferred strategy {strategy.value if hasattr(strategy, 'value') else strategy}, "
+            f"trying without strategy..."
+        )
+        sample = self._try_generate_sample(
+            sample_type=sample_type,
+            filtered_sources=filtered_sources,
+            strategy=strategy,  # Keep strategy for filtering, but let sampler choose
+            preferred_strategy=None,  # Let sampler select its own strategy
         )
         if sample is not None:
             return sample
@@ -403,7 +418,7 @@ class StrategyFirstDataset(BaseDataset):
             or (strategy == DataGenStrat.REVERSE_PROGRESS and sample_type in ["pref", "progress"])
             or (strategy == DataGenStrat.FORWARD_PROGRESS and sample_type == "progress")
         )
-        
+
         if requires_successful:
             indices_set = set(indices)
             filtered = indices_set & self.successful_indices
@@ -543,6 +558,9 @@ class StrategyFirstDataset(BaseDataset):
                 filtered_indices = source_indices
 
             # Select a trajectory from filtered indices
+            # For progress: this is the trajectory for progress prediction
+            # For preference: this is the chosen trajectory
+            # For similarity: this is the reference trajectory
             selected_traj_idx = self._local_random.choice(filtered_indices)
             item = self.dataset[selected_traj_idx]
 

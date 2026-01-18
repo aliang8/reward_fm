@@ -58,8 +58,7 @@ rh20t_human,0.92
 rh20t_robot,0.94
 galaxea_rfm,0.8
 fino_net_rfm,0.75
-h2r_rfm_human,0.85
-h2r_rfm_robot,0.93
+h2r,0.9
 humanoid_everyday_rfm,0.80
 motif_rfm,0.95
 roboarena_eval_debug_nowrist,0.90

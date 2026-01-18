@@ -57,14 +57,14 @@ def convert_continuous_to_discrete_bin_c51(x, num_bins):
     x: (...,) tensor with values in [0, 1]
     returns: (..., num_bins) probability distribution
     """
-    b = x * (num_bins - 1)          # fractional bin index
-    l = floor(b) # left bin
-    u = ceil(b) # right bin
+    b = x * (num_bins - 1)  # fractional bin index
+    l = floor(b)  # left bin
+    u = ceil(b)  # right bin
 
     probs = torch.zeros((num_bins,), dtype=torch.float32)
 
-    probs[l] += (u - b)
-    probs[u] += (b - l)
+    probs[l] += u - b
+    probs[u] += b - l
 
     # special case: l == u then assign all probability to the left bin
     if l == u:
@@ -72,7 +72,10 @@ def convert_continuous_to_discrete_bin_c51(x, num_bins):
 
     return probs
 
-def convert_continuous_to_discrete_bins(progress_values: Union[List[float], np.ndarray], num_bins: int) -> List[torch.Tensor]:
+
+def convert_continuous_to_discrete_bins(
+    progress_values: Union[List[float], np.ndarray], num_bins: int
+) -> List[torch.Tensor]:
     """Convert continuous progress values in [0, 1] to C51-style discrete probability distributions.
 
     Args:
@@ -587,9 +590,7 @@ def _compute_relative_first_frame_progress(
         progress[i] = (subsampled_indices[i] - subsampled_indices[i-1]) / (num_frames_total - start_idx).
     """
     # First compute absolute_first_frame progress
-    absolute_progress = _compute_absolute_first_frame_progress(
-        num_frames_total, subsampled_indices, success_cutoff
-    )
+    absolute_progress = _compute_absolute_first_frame_progress(num_frames_total, subsampled_indices, success_cutoff)
     # Convert to relative deltas
     return convert_absolute_to_relative_progress(absolute_progress)
 
@@ -618,26 +619,26 @@ def compute_progress_from_segment(
         List of progress values based on the specified progress_pred_type.
     """
     if progress_pred_type == "absolute_wrt_total_frames":
-        progress = _compute_absolute_wrt_total_frames_progress(
-            num_frames_total, frame_indices, success_cutoff
-        )
+        progress = _compute_absolute_wrt_total_frames_progress(num_frames_total, frame_indices, success_cutoff)
     elif progress_pred_type == "relative_first_frame":
         progress = _compute_relative_first_frame_progress(num_frames_total, frame_indices, success_cutoff)
     else:  # default: "absolute_first_frame"
         progress = _compute_absolute_first_frame_progress(num_frames_total, frame_indices, success_cutoff)
-    
+
     # If partial_success is present and not 1.0, find whichever frame corresponds to the last frame of the original trajectory
     if partial_success is not None and abs(partial_success - 1.0) > 1e-6 and progress and len(frame_indices) > 0:
         # Find the index in frame_indices that corresponds to num_frames_total - 1 (last frame of original trajectory)
         last_frame_idx = num_frames_total - 1
-        frame_idx_in_subsampled = next((i for i, abs_idx in enumerate(frame_indices) if abs_idx == last_frame_idx), None)
-        
+        frame_idx_in_subsampled = next(
+            (i for i, abs_idx in enumerate(frame_indices) if abs_idx == last_frame_idx), None
+        )
+
         # If we found the last frame in the subsampled indices, set it to partial_success and others to 0.0
         if frame_idx_in_subsampled is not None:
             modified_progress = [0.0] * len(progress)
             modified_progress[frame_idx_in_subsampled] = partial_success
             return modified_progress
-    
+
     return progress
 
 

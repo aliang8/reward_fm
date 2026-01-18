@@ -18,7 +18,13 @@ from tqdm import tqdm
 from transformers import Trainer
 
 from rfm.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
-from rfm.evals.compile_results import compute_eval_metrics
+from rfm.evals.compile_results import (
+    run_quality_preference_eval,
+    run_reward_alignment_eval_per_trajectory,
+    run_confusion_matrix_eval,
+    run_policy_ranking_eval,
+    run_similarity_score_eval,
+)
 from rfm.models.utils import ModelOutput, convert_bins_to_continuous, convert_discrete_target_to_continuous
 from rfm.utils.distributed import banner, get_rank, is_rank_0, log_fsdp_diagnostics
 from rfm.utils.logger import Logger, get_logger, log_memory_usage
@@ -749,7 +755,9 @@ class RFMHeadsTrainer(Trainer):
             sampler_kwargs["frame_step"] = (
                 2 if (self.config.trainer_cls == "rfm_heads" and not self.config.data.use_multi_image) else 1
             )
-            sampler_kwargs["use_frame_steps"] = self.config.custom_eval.use_frame_steps
+            # sampler_kwargs["use_frame_steps"] = self.config.custom_eval.use_frame_steps
+            # we only care about the final predicted progress for ranking
+            sampler_kwargs["use_frame_steps"] = False
         elif eval_type == "quality_preference":
             sampler_kwargs["comparisons_per_task"] = self.config.custom_eval.comparisons_per_task
             sampler_kwargs["max_comparisons"] = self.config.custom_eval.max_comparisons
@@ -1016,8 +1024,15 @@ class RFMHeadsTrainer(Trainer):
             data_source = eval_results[0]["data_source"]
 
         if eval_type == "reward_alignment":
-            eval_metrics, plots, video_frames_list, trajectory_progress_data = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins, data_source
+            eval_metrics, plots, video_frames_list, trajectory_progress_data = run_reward_alignment_eval_per_trajectory(
+                eval_results,
+                self.config.data.progress_pred_type,
+                is_discrete_mode,
+                num_bins,
+                data_source,
+                use_frame_steps=self.config.custom_eval.use_frame_steps,
+                train_success_head=self.config.model.train_success_head,
+                last_frame_only=self.config.model.model_type == "vqa",
             )
             # log_memory_usage(f"After compute_eval_metrics (reward_alignment)")
 
@@ -1178,8 +1193,13 @@ class RFMHeadsTrainer(Trainer):
             trajectory_progress_data = None
             # log_memory_usage(f"After deleting plots/videos")
         elif eval_type == "policy_ranking":
-            eval_metrics, task_groups, task_details = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins, data_source
+            eval_metrics, task_groups, task_details = run_policy_ranking_eval(
+                eval_results,
+                self.config.data.progress_pred_type,
+                is_discrete_mode,
+                num_bins,
+                data_source,
+                correlation_method="kendall",
             )
             # log_memory_usage(f"After compute_eval_metrics (policy_ranking)")
 
@@ -1328,8 +1348,8 @@ class RFMHeadsTrainer(Trainer):
             task_details = None
             # log_memory_usage(f"After deleting policy_ranking data")
         elif eval_type == "confusion_matrix":
-            confusion_plot, confusion_matrix = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins
+            confusion_plot, confusion_matrix = run_confusion_matrix_eval(
+                eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins
             )
             eval_metrics = {}  # no eval metrics
             # log_memory_usage(f"After compute_eval_metrics (confusion_matrix)")
@@ -1348,9 +1368,7 @@ class RFMHeadsTrainer(Trainer):
             confusion_matrix = None
             # log_memory_usage(f"After deleting confusion_matrix data")
         elif "quality_preference" in eval_type:
-            eval_metrics, task_groups, task_details = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type
-            )
+            eval_metrics, task_groups, task_details = run_quality_preference_eval(eval_results, data_source=data_source)
             # log_memory_usage(f"After compute_eval_metrics (quality_preference)")
 
             banner(
@@ -1410,9 +1428,7 @@ class RFMHeadsTrainer(Trainer):
             task_details = None
             # log_memory_usage(f"After deleting quality_preference data")
         elif eval_type == "similarity_score":
-            eval_metrics, task_groups, task_details = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type
-            )
+            eval_metrics, task_groups, task_details = run_similarity_score_eval(eval_results)
             # log_memory_usage(f"After compute_eval_metrics (similarity_score)")
 
             banner(
@@ -2021,7 +2037,7 @@ class RFMHeadsTrainer(Trainer):
             batch_size = success_logits.shape[0]
             seq_len = success_logits.shape[1]
             quality_mask = torch.zeros(batch_size, seq_len, device=success_logits.device, dtype=torch.float32)
-            
+
             for i in range(batch_size):
                 quality_label = quality_labels[i]
                 if quality_label is not None and quality_label.lower() in ("suboptimal", "failure", "failed"):
@@ -2032,22 +2048,27 @@ class RFMHeadsTrainer(Trainer):
                             f"Trajectory {i} has quality_label='{quality_label}' but success_labels are not all 0s. "
                             f"Found non-zero labels: {(sample_success_labels != 0.0).sum().item()} out of {len(sample_success_labels)}"
                         )
-                        import ipdb; ipdb.set_trace()
+                        import ipdb
+
+                        ipdb.set_trace()
 
                     # Include all frames for this trajectory in the mask
                     quality_mask[i, :] = 1.0
 
         if self.config.loss.progress_loss_type.lower() == "discrete":
-            target_progress = convert_discrete_target_to_continuous(target_progress, num_bins=self.config.loss.progress_discrete_bins)
+            target_progress = convert_discrete_target_to_continuous(
+                target_progress, num_bins=self.config.loss.progress_discrete_bins
+            )
 
+        # We predict success for frames where progress < min_success or the frame is a success
         combined_mask = ((target_progress < min_success) | (success_labels > 0.5)).float()
-        
+
         # Incorporate quality mask: always include all frames for suboptimal/failure trajectories
         if quality_mask is not None:
             combined_mask = torch.maximum(combined_mask, quality_mask)
 
-        if progress_loss_mask is not None:
-            combined_mask = combined_mask * progress_loss_mask
+        # if progress_loss_mask is not None:
+        #     combined_mask = combined_mask * progress_loss_mask
 
         # Clamp logits to prevent extreme values and gradient issues
         success_logits = torch.clamp(success_logits, min=-50.0, max=50.0)
@@ -2232,7 +2253,7 @@ class RFMHeadsTrainer(Trainer):
             else:
                 target_bins = target_progress
                 # if we're using C51-style soft bins
-                batch_size, seq_len, num_bins = target_bins.shape 
+                batch_size, seq_len, num_bins = target_bins.shape
                 target_bins_flat = target_bins.view(batch_size * seq_len, num_bins)
 
             # Check if progress_pred has the correct shape for discrete mode
@@ -2297,7 +2318,7 @@ class RFMHeadsTrainer(Trainer):
         else:
             progress_pred_for_corr = progress_pred
             target_progress_for_corr = target_progress
-        
+
         if mask.shape[1] != target_progress_for_corr.shape[1]:
             repeated_mask = mask.repeat(1, target_progress_for_corr.shape[1])
         else:
@@ -2455,7 +2476,8 @@ class RFMHeadsTrainer(Trainer):
         progress_pred = progress_logits["A"]
         progress_target = inputs["target_progress"]
         progress_target_mask = inputs["target_progress_mask"].unsqueeze(-1)
-        predict_last_frame_mask = inputs.get("predict_last_frame_mask", None)
+        # predict_last_frame_mask = inputs.get("predict_last_frame_mask", None)
+        predict_last_frame_mask = None
 
         progress_loss, spearman_corr, progress_metrics = self._compute_progress_loss_helper(
             progress_pred, progress_target, progress_target_mask, predict_last_frame_mask=predict_last_frame_mask
@@ -2596,7 +2618,8 @@ class RFMHeadsTrainer(Trainer):
 
         if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
             progress_pred_A = progress_logits["A"]
-            predict_last_frame_mask_A = inputs.get("predict_last_frame_mask_A", None)
+            # predict_last_frame_mask_A = inputs.get("predict_last_frame_mask_A", None)
+            predict_last_frame_mask_A = None
             progress_loss_A, spearman_corr_A, progress_metrics_A = self._compute_progress_loss_helper(
                 progress_pred_A,
                 target_progress_A,
@@ -2801,6 +2824,13 @@ class RFMHeadsTrainer(Trainer):
             success_logits_ref_sim = {"A": success_A_ref_sim, "B": None}
             success_logits_ref_diff = {"A": success_A_ref_diff, "B": None}
 
+        # Handle preference_logits - extract from ref_diff pairs (odd indices) if predict_pref_sim is enabled
+        preference_logits_ref_diff = None
+        if self.config.model.train_preference_head and self.config.training.predict_pref_sim:
+            if batched_outputs.pref_logits is not None:
+                # Extract preference logits for ref_diff pairs (odd indices)
+                preference_logits_ref_diff = batched_outputs.pref_logits[1::2]  # Odd indices
+
         model_outputs_ref_sim = ModelOutput(
             sim_logits=sim_logits_ref_sim,
             progress_logits=progress_logits_ref_sim,
@@ -2917,6 +2947,35 @@ class RFMHeadsTrainer(Trainer):
             success_auprc = (success_auprc_ref_sim + success_auprc_ref_diff) / 2.0
             if not torch.isnan(total_success_loss).any():
                 final_loss = final_loss + total_success_loss
+
+        # =========================================================================================
+        # Compute preference loss for ref/diff pair if predict_pref_sim is enabled
+        # =========================================================================================
+        # Ref is always preferred over diff, so we compute preference loss for the ref_diff pairs
+        preference_loss_ref_diff = None
+        if self.config.model.train_preference_head and self.config.training.predict_pref_sim:
+            if preference_logits_ref_diff is not None:
+                preference_labels_ref_diff = inputs.get("preference_labels_ref_diff")
+                if preference_labels_ref_diff is not None:
+                    # Clamp logits to prevent extreme values and gradient issues
+                    preference_scores_ref_diff = torch.clamp(
+                        preference_logits_ref_diff.squeeze(-1), min=-50.0, max=50.0
+                    )
+
+                    # Binary cross entropy loss for preference prediction
+                    preference_loss_ref_diff_all = F.binary_cross_entropy_with_logits(
+                        preference_scores_ref_diff, preference_labels_ref_diff.float(), reduction="none"
+                    )
+                    preference_loss_ref_diff = preference_loss_ref_diff_all.mean()
+
+                    if not torch.isnan(preference_loss_ref_diff).any():
+                        final_loss += preference_loss_ref_diff
+                    else:
+                        logger.warning(f"NaN detected in similarity preference loss")
+                else:
+                    logger.warning("predict_pref_sim is enabled but preference_labels_ref_diff not found in inputs")
+            else:
+                logger.warning("predict_pref_sim is enabled but pref_logits not found in batched_outputs")
 
         if return_outputs:
             outputs_dict = {}
@@ -3076,6 +3135,23 @@ class RFMHeadsTrainer(Trainer):
                     stratified_success_metrics,
                     target_progress_sim_A_mask,
                 )
+
+            # Add preference loss metrics if computed
+            if self.config.model.train_preference_head and self.config.training.predict_pref_sim:
+                if preference_loss_ref_diff is not None and preference_logits_ref_diff is not None:
+                    preference_labels_ref_diff = inputs.get("preference_labels_ref_diff")
+                    if preference_labels_ref_diff is not None:
+                        preference_scores_ref_diff = torch.clamp(preference_logits_ref_diff, min=-50.0, max=50.0)
+                        preference_probs_ref_diff = torch.sigmoid(preference_scores_ref_diff)
+                        preference_predictions_ref_diff = (preference_probs_ref_diff > 0.5).float()
+                        preference_accuracy_ref_diff = (
+                            preference_predictions_ref_diff == preference_labels_ref_diff
+                        ).float()
+
+                        outputs_dict.update({
+                            f"{prefix}/sim_pref_loss": preference_loss_ref_diff.item(),
+                            f"{prefix}/sim_pref_accuracy": preference_accuracy_ref_diff.mean().item(),
+                        })
 
             return final_loss, outputs_dict
 

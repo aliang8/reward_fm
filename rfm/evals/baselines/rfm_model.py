@@ -352,7 +352,7 @@ class RFMModel:
                     # Multiple values per sample
                     progress_values = progress_tensor[i].cpu().tolist()
             elif progress_tensor.ndim == 3:
-                # Multiple values per sample, discrete multiple bins, convert to continuous 
+                # Multiple values per sample, discrete multiple bins, convert to continuous
                 progress_values = convert_bins_to_continuous(progress_tensor[i]).cpu().tolist()
             else:
                 # Unexpected shape

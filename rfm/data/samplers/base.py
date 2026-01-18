@@ -37,6 +37,7 @@ class RFMBaseSampler:
         dataset_success_cutoff_map: Optional[Dict[str, float]] = None,
         verbose: bool = True,
         random_seed: int = 42,
+        pad_frames: bool = True,
     ):
         """Initialize sampler with dataset and indices.
 
@@ -53,7 +54,7 @@ class RFMBaseSampler:
         self.verbose = verbose
         self.dataset_success_cutoff_map = dataset_success_cutoff_map or {}
         self._local_random = Random(random_seed)
-
+        self.pad_frames = pad_frames
         self._cached_ids = self.dataset["id"]
         self._cached_is_robot = self.dataset["is_robot"]
 
@@ -577,6 +578,7 @@ class RFMBaseSampler:
         subsample_strategy: str | None = None,
         frame_indices: List[int] | None = None,
         metadata: Dict[str, Any] | None = None,
+        pad_frames: bool = True,
     ) -> Trajectory:
         """Load, subsample, and optionally pad trajectory data and create a Trajectory object.
 
@@ -585,6 +587,7 @@ class RFMBaseSampler:
             subsample_strategy: Optional strategy for subsampling ("subsample_forward", "subsample_reverse", "subsample_rewind", or None for default/bidirectional). Ignored if frame_indices is provided.
             frame_indices: Optional list of specific frame indices to use. If provided, subsample_strategy is ignored.
             metadata: Optional metadata dict to merge into trajectory metadata.
+            pad_frames: Whether to pad the trajectory data to max_frames.
 
         Returns:
             Trajectory object with loaded and subsampled data (padded)
@@ -701,7 +704,7 @@ class RFMBaseSampler:
             indices = [indices[idx] for idx in frame_indices_subsample] if isinstance(indices, list) else indices
 
         # Pad if needed
-        if target_progress:
+        if target_progress and pad_frames:
             if self.config.load_embeddings:
                 subsampled, target_progress = pad_trajectory_to_max_frames_torch(
                     subsampled, target_progress, self.config.max_frames
@@ -732,7 +735,9 @@ class RFMBaseSampler:
         # Convert partial_success and target_progress to discrete bins if in discrete mode
         if self.config.progress_loss_type.lower() == "discrete":
             if partial_success is not None:
-                partial_success = convert_continuous_to_discrete_bins([partial_success], self.config.progress_discrete_bins)[0]
+                partial_success = convert_continuous_to_discrete_bins(
+                    [partial_success], self.config.progress_discrete_bins
+                )[0]
             target_progress = convert_continuous_to_discrete_bins(target_progress, self.config.progress_discrete_bins)
 
         trajectory = create_trajectory_from_dict(

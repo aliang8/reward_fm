@@ -152,3 +152,105 @@ The `PrefSampler` handles strategy selection and trajectory pairing:
 - ✅ DIFFERENT_TASK_INSTRUCTION sets progress to `[0.0]` (line 157 in `progress.py`)
 - ✅ DIFFERENT_TASK_INSTRUCTION success labels are correctly set to `[0.0]` after setting progress to 0.0
 
+## Similarity Sampling Details
+
+Similarity samples compare three trajectories: a reference trajectory (`ref`), a similar trajectory (`sim`), and a different trajectory (`diff`). The model learns to rank `sim` as more similar to `ref` than `diff`.
+
+### Reference Trajectory
+- **Always successful**: Must have `quality_label == "successful"` or `partial_success` present
+- **Progress prediction**: ✅ Yes (always computed)
+- **Success prediction**: ✅ Yes (always computed)
+
+### Strategy Details
+
+#### 1. REWIND Strategy
+- **Reference**: Successful trajectory
+  - Progress: ✅ Yes
+  - Success: ✅ Yes
+- **Sim**: Successful trajectory from same task
+  - Progress: ✅ Yes
+  - Success: ✅ Yes
+- **Diff**: Rewound version of reference trajectory
+  - Progress: ✅ Yes (progress computed for rewound trajectory)
+  - Success: ✅ Yes (success labels computed from progress)
+
+#### 2. SUBOPTIMAL Strategy
+- **Reference**: Successful trajectory
+  - Progress: ✅ Yes
+  - Success: ✅ Yes
+- **Sim**: Optimal trajectory from same task
+  - Progress: ✅ Yes
+  - Success: ✅ Yes
+- **Diff**: Suboptimal trajectory from same task
+  - Progress: ❌ **No** (progress is **masked out** during training)
+  - Success: ✅ Yes (predict 0 - all success labels are 0.0 for suboptimal trajectories)
+
+#### 3. PAIRED_HUMAN_ROBOT Strategy
+- **Reference**: Human successful trajectory
+  - Progress: ✅ Yes
+  - Success: ✅ Yes
+- **Sim**: Robot successful trajectory from same task
+  - Progress: ✅ Yes
+  - Success: ✅ Yes
+- **Diff**: Robot trajectory (either suboptimal same task OR different task)
+  - **If suboptimal same task**:
+    - Progress: ❌ **No** (progress is **masked out** during training)
+    - Success: ✅ Yes (predict 0 - all success labels are 0.0 for suboptimal trajectories)
+  - **If different task**:
+    - Progress: ✅ Yes (but progress is set to `[0.0]` for all timesteps)
+    - Success: ✅ Yes (but success labels are `[0.0]` for all timesteps)
+    - Implementation: `target_progress = [0.0]` → `success_label = [0.0]` (explicitly set in `sim.py`)
+
+### Similarity Progress Masking
+
+Progress prediction for similarity samples is controlled by the `should_compute_progress()` function in `rfm/data/collators/rfm_heads.py`:
+
+- **Reference trajectory**: Always computes progress (`returns 1.0`)
+- **Sim trajectory**: 
+  - If optimal/successful: Progress is computed (`returns 1.0`)
+  - If suboptimal: Progress is masked out (`returns 0.0`)
+- **Diff trajectory**:
+  - If suboptimal same task: Progress is masked out (`returns 0.0`)
+  - If different task: Progress is computed (even though it's 0.0) (`returns 1.0`)
+  - If rewound: Progress is computed (`returns 1.0`)
+
+The mask is applied in the trainer via `target_progress_sim_mask` and `target_progress_diff_mask` tensors.
+
+### Similarity Success Label Computation
+
+Success labels for similarity samples are computed from `target_progress` using `compute_success_labels()`:
+
+- **Reference trajectory**: Success labels computed from progress (1.0 if `progress >= threshold`, else 0.0)
+- **Sim trajectory**: 
+  - If optimal/successful: Success labels computed from progress
+  - If suboptimal: All success labels are `[0.0]` (via `compute_success_labels` for suboptimal trajectories)
+- **Diff trajectory**:
+  - If suboptimal same task: All success labels are `[0.0]` (via `compute_success_labels` for suboptimal trajectories)
+  - If different task: All success labels are `[0.0]` (since `target_progress = [0.0]`)
+  - If rewound: Success labels computed from progress
+
+## Verification Checklist
+
+### Preference Sampling
+- ✅ REWIND strategy only uses successful trajectories (enforced in `StrategyFirstDataset`)
+- ✅ REVERSE_PROGRESS strategy only uses successful trajectories for preference samples (enforced in `StrategyFirstDataset`)
+- ✅ DIFFERENT_TASK sets rejected progress to `[0.0]` (line 351 in `pref.py`)
+- ✅ DIFFERENT_TASK success labels are correctly set to `[0.0]` after setting progress to 0.0
+- ✅ SUBOPTIMAL progress is masked out (`should_compute_progress` returns 0.0)
+- ✅ Chosen trajectory always predicts progress (unless preference-only dataset)
+- ✅ Chosen trajectory with `partial_success < 1.0` does NOT predict success
+
+### Progress Sampling
+- ✅ FORWARD_PROGRESS strategy only uses successful trajectories (enforced in `StrategyFirstDataset` for progress samples)
+- ✅ REWIND strategy only uses successful trajectories (enforced in `StrategyFirstDataset` for all sample types)
+- ✅ REVERSE_PROGRESS strategy only uses successful trajectories (enforced in `StrategyFirstDataset` for progress samples)
+- ✅ DIFFERENT_TASK_INSTRUCTION sets progress to `[0.0]` (line 157 in `progress.py`)
+- ✅ DIFFERENT_TASK_INSTRUCTION success labels are correctly set to `[0.0]` after setting progress to 0.0
+
+### Similarity Sampling
+- ✅ REWIND strategy: Reference is successful, sim is successful same task, diff is rewound
+- ✅ SUBOPTIMAL strategy: Reference is successful, sim is optimal same task, diff is suboptimal same task (progress masked, success=0)
+- ✅ PAIRED_HUMAN_ROBOT strategy: Reference is human successful, sim is robot successful same task, diff is robot suboptimal same task OR different task
+- ✅ Different task trajectories have progress=0 and success=0 explicitly set (in `sim.py`)
+- ✅ Suboptimal trajectories have progress masked out (`should_compute_progress` returns 0.0)
+

@@ -17,6 +17,29 @@ from rfm.data.dataset_category import is_preference_only_ds
 from rfm.data.datasets.helpers import DataGenStrat
 from typing import List, Dict, Union
 from rfm.models.utils import convert_discrete_target_to_continuous
+from PIL import Image
+
+MAX_IMAGE_SIDE = 480  # bigger side
+MAX_IMAGE_PIXELS = 1024 * 1024  # safety cap (1.0 MP). raise to 1.5MP if stable
+
+
+def _resize_pil(pil: Image.Image, max_side: int = MAX_IMAGE_SIDE, max_pixels: int = MAX_IMAGE_PIXELS) -> Image.Image:
+    pil = pil.convert("RGB")
+    w, h = pil.size
+
+    # Scale down if max side too large
+    scale_side = min(1.0, max_side / float(max(w, h)))
+
+    # Scale down if too many pixels (area cap)
+    scale_area = (max_pixels / float(w * h)) ** 0.5 if (w * h) > max_pixels else 1.0
+
+    scale = min(scale_side, scale_area)
+
+    if scale < 1.0:
+        nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
+        pil = pil.resize((nw, nh), resample=Image.BICUBIC)
+
+    return pil
 
 
 def should_compute_progress(
@@ -44,26 +67,25 @@ def should_compute_progress(
     Returns:
         1.0 if progress should be computed, 0.0 otherwise
     """
-    # If partial_success is present, always compute progress
-    if partial_success is not None:
-        return 1.0
 
-    # Mask out progress if data_source is in preference_only category
+    # Mask out progress if data_source is in preference_only ckategory
     if data_source is not None and is_preference_only_ds(data_source):
         # For preference_only datasets:
         # - If it's the chosen trajectory, always mask out (don't compute)
         # - If it's the rejected trajectory with DIFFERENT_TASK strategy, still compute (it will be 0.0)
-        if is_chosen:
-            return 0.0
-        elif data_gen_strategy == DataGenStrat.DIFFERENT_TASK.value:
-            return 1.0
-        else:
-            return 0.0
-
-    if quality_label in ["suboptimal", "failure", "failed"]:
         return 0.0
-
-    if quality_label == "successful" or data_gen_strategy == DataGenStrat.REWIND.value:
+        # if is_chosen:
+        #    return 0.0
+        # elif data_gen_strategy == DataGenStrat.DIFFERENT_TASK.value:
+        #    return 1.0
+        # else:
+        #    return 0.0
+    # If partial_success and not is_preference_only_ds, always compute progress
+    # elif partial_success is not None:
+    #     return 1.0
+    elif quality_label in ["suboptimal", "failure", "failed"]:
+        return 0.0
+    elif quality_label == "successful" or data_gen_strategy == DataGenStrat.REWIND.value:
         return 1.0
 
     return 0.0
@@ -126,9 +148,16 @@ def create_predict_last_frame_mask(
 
     # Only mask if partial_success < 1.0 (not full success)
     if partial_success is not None:
-        if isinstance(partial_success, torch.Tensor) or partial_success > 1: # discrete mode for both C51 and single index discrete targets
-            partial_success = convert_discrete_target_to_continuous(partial_success[None, None], num_bins=partial_success.shape[-1]).item()
-            target_progress = [convert_discrete_target_to_continuous(p[None, None], num_bins=p.shape[-1]).item() for p in target_progress]
+        if (
+            isinstance(partial_success, torch.Tensor) or partial_success > 1
+        ):  # discrete mode for both C51 and single index discrete targets
+            partial_success = convert_discrete_target_to_continuous(
+                partial_success[None, None], num_bins=partial_success.shape[-1]
+            ).item()
+            target_progress = [
+                convert_discrete_target_to_continuous(p[None, None], num_bins=p.shape[-1]).item()
+                for p in target_progress
+            ]
         if abs(partial_success - 1.0) < 1e-6:
             # Full success: return all-ones mask (don't mask anything)
             return [1.0] * len(target_progress)
@@ -160,7 +189,8 @@ class RFMBatchCollator(BaseCollator):
         use_multi_image: bool = False,
         prog_pref: bool = False,
         prog_sim: bool = False,
-        use_progress_token: bool = False,
+        pref_sim: bool = False,
+        use_per_frame_progress_token: bool = False,
         shuffle_progress_frames: bool = False,
         inference: bool = False,
         **kwargs,
@@ -178,6 +208,7 @@ class RFMBatchCollator(BaseCollator):
         self.use_multi_image = use_multi_image
         self.prog_pref = prog_pref
         self.prog_sim = prog_sim
+        self.pref_sim = pref_sim
 
         # Molmo2 only supports multi-image mode, not video
         if "Molmo" in self.base_model_id and not self.use_multi_image:
@@ -185,7 +216,13 @@ class RFMBatchCollator(BaseCollator):
                 "Molmo2 does not support video mode (use_multi_image=False). "
                 "Please set data.use_multi_image=True to use Molmo2 with multi-image input."
             )
-        self.use_progress_token = use_progress_token
+        self.use_per_frame_progress_token = use_per_frame_progress_token
+        # Validate that use_per_frame_progress_token requires use_multi_image
+        if self.use_per_frame_progress_token and not self.use_multi_image:
+            raise ValueError(
+                "use_per_frame_progress_token=True requires use_multi_image=True. "
+                "Per-frame progress tokens can only be added in multi-image mode."
+            )
         self.shuffle_progress_frames = shuffle_progress_frames
         self.inference = inference
 
@@ -203,18 +240,30 @@ class RFMBatchCollator(BaseCollator):
                 - content_extras: Dictionary with resized_height/width or empty dict
         """
         if self.use_multi_image:
-            # Use images directly - return list of PIL Images
-            return frames, {
-                "resized_height": self.resized_height,
-                "resized_width": self.resized_width,
-            }
+            # # Use images directly - return list of PIL Images
+            # if self.resized_height is not None and self.resized_width is not None:
+            #     content_extras = {
+            #         "resized_height": self.resized_height,
+            #         "resized_width": self.resized_width,
+            #     }
+            # else:
+            #     frames = [_resize_pil(frame) for frame in frames]
+            #     content_extras = {}
+            content_extras = {}
+            return frames, content_extras
         elif "Qwen" in self.base_model_id or "Molmo" in self.base_model_id:
             # Qwen and Molmo accept list of PIL Images directly
-            return frames, {
-                "resized_height": self.resized_height,
-                "resized_width": self.resized_width,
-            }
+            if self.resized_height is not None and self.resized_width is not None:
+                content_extras = {
+                    "resized_height": self.resized_height,
+                    "resized_width": self.resized_width,
+                }
+            else:
+                frames = [_resize_pil(frame) for frame in frames]
+                content_extras = {}
+            return frames, content_extras
         elif "SmolVLM" in self.base_model_id:
+            frames = [_resize_pil(frame) for frame in frames]
             # Convert to video file for SmolVLM
             unique_id = uuid.uuid4().hex
             tmp = Path(tempfile.gettempdir()) / f"{prefix}_{unique_id}.mp4"
@@ -243,11 +292,15 @@ class RFMBatchCollator(BaseCollator):
                     "image": img,
                     **content_extras,
                 })
+                # Add per-frame progress token after each frame if enabled
+                if self.use_per_frame_progress_token:
+                    content_list.append({"type": "text", "text": "<|prog_token|>"})
         else:
             # Add video entry
             content_list.append({
                 "type": "video",
                 "video": frames_or_video,
+                "sample_fps": 1.0,
                 **content_extras,
             })
 
@@ -386,12 +439,6 @@ class RFMBatchCollator(BaseCollator):
             content_list = [{"type": "text", "text": prompt}]
             self._add_vision_content_to_list(content_list, video_field, content_extras)
 
-            # Add progress and success tokens if use_progress_token is enabled
-            # For progress samples, we only use prog_token_A and succ_token_A (single trajectory)
-            if self.use_progress_token:
-                content_list.append({"type": "text", "text": "<|prog_token_A|>"})
-                content_list.append({"type": "text", "text": "<|succ_token_A|>"})
-
             conversation = [
                 {
                     "role": "user",
@@ -519,10 +566,6 @@ class RFMBatchCollator(BaseCollator):
                 {"type": "text", "text": "This is Trajectory A. "},
             ]
             self._add_vision_content_to_list(content_list, traj_a_field, content_extras)
-            # Add progress and success tokens for trajectory A if use_progress_token is enabled
-            if self.use_progress_token:
-                content_list.append({"type": "text", "text": "<|prog_token_A|>"})
-                content_list.append({"type": "text", "text": "<|succ_token_A|>"})
 
             content_list.extend([
                 {"type": "text", "text": "<|split_token|>"},
@@ -530,11 +573,7 @@ class RFMBatchCollator(BaseCollator):
             ])
             self._add_vision_content_to_list(content_list, traj_b_field, content_extras)
 
-            # Add progress and success tokens for trajectory B if use_progress_token is enabled
-            if self.use_progress_token:
-                content_list.append({"type": "text", "text": "<|prog_token_B|>"})
-                content_list.append({"type": "text", "text": "<|succ_token_B|>"})
-
+            content_list.append({"type": "text", "text": "Now predict the preference between the two trajectories."})
             content_list.append({"type": "text", "text": "<|pref_token|>"})
 
             conversation = [
@@ -592,6 +631,9 @@ class RFMBatchCollator(BaseCollator):
 
         # Add target progress for both trajectories using list comprehensions
         target_progress_A = [traj.target_progress for traj in trajectory_A_list]
+        # Check if any of the progresses in target_progress_A is None
+        if any(p is None for p in target_progress_A):
+            return batch_inputs
         target_progress_B = [traj.target_progress for traj in trajectory_B_list]
         target_progress_A_mask = [
             should_compute_progress(
@@ -776,32 +818,20 @@ class RFMBatchCollator(BaseCollator):
                 # Ref is first (A), sim is second (B)
                 content_list_sim.append({"type": "text", "text": "This is the first trajectory. "})
                 self._add_vision_content_to_list(content_list_sim, ref_video, content_extras)
-                if self.use_progress_token:
-                    content_list_sim.append({"type": "text", "text": "<|prog_token_A|>"})
-                    content_list_sim.append({"type": "text", "text": "<|succ_token_A|>"})
                 content_list_sim.extend([
                     {"type": "text", "text": "<|split_token|>"},
                     {"type": "text", "text": "This is the second trajectory. "},
                 ])
                 self._add_vision_content_to_list(content_list_sim, sim_video, content_extras)
-                if self.use_progress_token:
-                    content_list_sim.append({"type": "text", "text": "<|prog_token_B|>"})
-                    content_list_sim.append({"type": "text", "text": "<|succ_token_B|>"})
             else:
                 # Sim is first (A), ref is second (B)
                 content_list_sim.append({"type": "text", "text": "This is the first trajectory. "})
                 self._add_vision_content_to_list(content_list_sim, sim_video, content_extras)
-                if self.use_progress_token:
-                    content_list_sim.append({"type": "text", "text": "<|prog_token_A|>"})
-                    content_list_sim.append({"type": "text", "text": "<|succ_token_A|>"})
                 content_list_sim.extend([
                     {"type": "text", "text": "<|split_token|>"},
                     {"type": "text", "text": "This is the second trajectory. "},
                 ])
                 self._add_vision_content_to_list(content_list_sim, ref_video, content_extras)
-                if self.use_progress_token:
-                    content_list_sim.append({"type": "text", "text": "<|prog_token_B|>"})
-                    content_list_sim.append({"type": "text", "text": "<|succ_token_B|>"})
             content_list_sim.append({"type": "text", "text": "<|sim_token|>"})
 
             conversation_ref_sim = [
@@ -827,32 +857,20 @@ class RFMBatchCollator(BaseCollator):
                     # Ref is first (A), diff is second (B)
                     content_list_diff.append({"type": "text", "text": "This is the first trajectory. "})
                     self._add_vision_content_to_list(content_list_diff, ref_video, content_extras)
-                    if self.use_progress_token:
-                        content_list_diff.append({"type": "text", "text": "<|prog_token_A|>"})
-                        content_list_diff.append({"type": "text", "text": "<|succ_token_A|>"})
                     content_list_diff.extend([
                         {"type": "text", "text": "<|split_token|>"},
                         {"type": "text", "text": "This is the second trajectory. "},
                     ])
                     self._add_vision_content_to_list(content_list_diff, diff_video, content_extras)
-                    if self.use_progress_token:
-                        content_list_diff.append({"type": "text", "text": "<|prog_token_B|>"})
-                        content_list_diff.append({"type": "text", "text": "<|succ_token_B|>"})
                 else:
                     # Diff is first (A), ref is second (B)
                     content_list_diff.append({"type": "text", "text": "This is the first trajectory. "})
                     self._add_vision_content_to_list(content_list_diff, diff_video, content_extras)
-                    if self.use_progress_token:
-                        content_list_diff.append({"type": "text", "text": "<|prog_token_A|>"})
-                        content_list_diff.append({"type": "text", "text": "<|succ_token_A|>"})
                     content_list_diff.extend([
                         {"type": "text", "text": "<|split_token|>"},
                         {"type": "text", "text": "This is the second trajectory. "},
                     ])
                     self._add_vision_content_to_list(content_list_diff, ref_video, content_extras)
-                    if self.use_progress_token:
-                        content_list_diff.append({"type": "text", "text": "<|prog_token_B|>"})
-                        content_list_diff.append({"type": "text", "text": "<|succ_token_B|>"})
                 content_list_diff.append({"type": "text", "text": "<|sim_token|>"})
 
                 conversation_ref_diff = [
@@ -1151,6 +1169,21 @@ class RFMBatchCollator(BaseCollator):
 
         batch_inputs["success_labels_sim_A"] = pad_list_to_max(success_labels_sim_A)
         batch_inputs["success_labels_diff_A"] = pad_list_to_max(success_labels_diff_A)
+
+        # Add preference labels for ref/diff pair if predict_pref_sim is enabled
+        # Ref is always preferred over diff, so label = 1.0 if ref is first (A), else 0.0
+        if self.pref_sim:
+            preference_labels_ref_diff = []
+            for i, sample in enumerate(similarity_samples):
+                if sample.diff_trajectory is None:
+                    # Inference mode: skip preference labels
+                    preference_labels_ref_diff.append(0.0)  # Placeholder, won't be used
+                else:
+                    # Label = 1.0 if ref is first (A), 0.0 if diff is first (A)
+                    # Since ref is always preferred, we want label = 1.0 when ref is A
+                    preference_label = 1.0 if ref_diff_order[i] else 0.0
+                    preference_labels_ref_diff.append(preference_label)
+            batch_inputs["preference_labels_ref_diff"] = torch.tensor(preference_labels_ref_diff, dtype=torch.float32)
 
         batch_inputs["metadata"] = [
             sample.ref_trajectory.metadata if sample.ref_trajectory.metadata else {} for sample in similarity_samples

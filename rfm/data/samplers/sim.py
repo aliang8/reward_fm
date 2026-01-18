@@ -5,7 +5,7 @@ import torch
 
 from rfm.data.dataset_types import SimilaritySample, Trajectory
 from rfm.data.samplers.base import RFMBaseSampler
-from rfm.data.datasets.helpers import DataGenStrat
+from rfm.data.datasets.helpers import DataGenStrat, convert_continuous_to_discrete_bins
 from rfm.data.dataset_category import is_failure_ds, is_paired_ds
 from rfm.utils.logger import get_logger, rank_0_info
 
@@ -15,11 +15,7 @@ logger = get_logger()
 class SimSampler(RFMBaseSampler):
     """Data generator for producing batches for similarity scoring."""
 
-    def __init__(
-        self,
-        is_evaluation=False,
-        **kwargs,
-    ):
+    def __init__(self, is_evaluation=False, **kwargs):
         super().__init__(**kwargs)
         self.similarity_strategy_ratio: List[float] = self.config.similarity_strategy_ratio
         self._has_paired_human_robot = (
@@ -129,6 +125,7 @@ class SimSampler(RFMBaseSampler):
 
         traj_sim, traj_diff = None, None
         strategy_used = None
+        data_source = ref_traj.get("data_source")
         is_failure_source = is_failure_ds(data_source) if data_source else False
         is_paired_source = is_paired_ds(data_source) if data_source else False
 
@@ -241,10 +238,31 @@ class SimSampler(RFMBaseSampler):
                 )
                 return None
 
+        # Create trajectories
+        ref_trajectory = self._get_traj_from_data(ref_traj)
+        sim_trajectory = self._get_traj_from_data(traj_sim)
+        diff_trajectory = self._get_traj_from_data(traj_diff)
+
+        # Handle different task trajectories: set progress=0 and success=0
+        # For SUBOPTIMAL strategy, diff is suboptimal same task (progress masked, success=0 handled automatically)
+        # For PAIRED_HUMAN_ROBOT strategy, diff could be suboptimal same task or different task
+        if strategy_used == DataGenStrat.PAIRED_HUMAN_ROBOT:
+            # Check if diff is from different task (compare task names)
+            if diff_trajectory.task != ref_traj["task"]:
+                # Different task: set progress=0 and success=0
+                diff_trajectory.target_progress = [0.0] * len(diff_trajectory.target_progress)
+                if self.config.progress_loss_type.lower() == "discrete":
+                    diff_trajectory.target_progress = convert_continuous_to_discrete_bins(
+                        diff_trajectory.target_progress, self.config.progress_discrete_bins
+                    )
+                if diff_trajectory.success_label is not None:
+                    diff_trajectory.success_label = [0.0] * len(diff_trajectory.success_label)
+            # If same task, it's suboptimal - progress will be masked by should_compute_progress, success=0 already set
+
         sample = SimilaritySample(
-            ref_trajectory=self._get_traj_from_data(ref_traj),
-            sim_trajectory=self._get_traj_from_data(traj_sim),
-            diff_trajectory=self._get_traj_from_data(traj_diff),
+            ref_trajectory=ref_trajectory,
+            sim_trajectory=sim_trajectory,
+            diff_trajectory=diff_trajectory,
             data_gen_strategy=strategy_used.value,
         )
         sample.resample_attempts = attempt
@@ -282,32 +300,83 @@ class SimSampler(RFMBaseSampler):
 
         return None
 
+    def _get_robot_suboptimal_same_task(self, ref_traj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Get robot suboptimal trajectory from same task.
+
+        Args:
+            ref_traj: Reference trajectory (should be human)
+
+        Returns:
+            Robot suboptimal trajectory dict from same task or None if not available
+        """
+        task_name = ref_traj["task"]
+        same_task_suboptimal_indices = self.suboptimal_by_task.get(task_name, [])
+
+        if not same_task_suboptimal_indices:
+            logger.trace(f"[SIM SAMPLER] _get_robot_suboptimal_same_task: No suboptimal indices for task '{task_name}'")
+            return None
+
+        # Filter to only robot trajectories
+        robot_suboptimal_indices = [idx for idx in same_task_suboptimal_indices if self._cached_is_robot[idx]]
+
+        if not robot_suboptimal_indices:
+            logger.trace(
+                f"[SIM SAMPLER] _get_robot_suboptimal_same_task: No robot suboptimal indices for task '{task_name}'"
+            )
+            return None
+
+        chosen_id = ref_traj["id"]
+        # Filter out the reference trajectory if it somehow appears
+        filtered_indices = [idx for idx in robot_suboptimal_indices if self._cached_ids[idx] != chosen_id]
+
+        if not filtered_indices:
+            logger.trace(
+                f"[SIM SAMPLER] _get_robot_suboptimal_same_task: All robot suboptimal trajectories have same ID '{chosen_id}' for task '{task_name}'"
+            )
+            return None
+
+        selected_idx = self._local_random.choice(filtered_indices)
+        result = self.dataset[selected_idx]
+        logger.trace(
+            f"[SIM SAMPLER] _get_robot_suboptimal_same_task: Found robot suboptimal trajectory {result.get('id', 'unknown')} for task '{task_name}'"
+        )
+        return result
+
     def _get_traj_dicts_for_paired_human_robot(
         self, ref_traj: Dict[str, Any]
     ) -> Optional[Tuple[Dict[str, Any], Union[Dict[str, Any], Trajectory]]]:
         """Get traj_sim and traj_diff for paired human/robot strategy.
 
         Args:
-            ref_traj: Reference trajectory
+            ref_traj: Reference trajectory (should be human successful)
 
         Returns:
             Tuple of (traj_sim, traj_diff) or None if not available. Both can be dict or Trajectory objects.
-            traj_sim is the paired human/robot trajectory (opposite type, same task)
-            traj_diff is a trajectory from a different task
+            traj_sim is robot successful same task (progress: yes, success: yes)
+            traj_diff is robot suboptimal same task OR different task
+                - If suboptimal same task: progress masked, success=0
+                - If different task: progress=0, success=0
         """
         max_retries = 3  # Number of retry attempts for sampling
 
-        # Retry traj_sim separately
+        # Get robot successful trajectory from same task for sim
         traj_sim = None
         for _ in range(max_retries):
             traj_sim = self._get_paired_human_robot_traj(ref_traj)
             if traj_sim is not None:
                 break
 
-        # Retry traj_diff separately
+        # 50/50 random choice between robot suboptimal same task and different task
         traj_diff = None
         for _ in range(max_retries):
-            traj_diff = self._get_different_video_traj(ref_traj)
+            # Randomly choose between robot suboptimal same task and different task
+            if self._local_random.random() < 0.5:
+                # Try robot suboptimal same task
+                traj_diff = self._get_robot_suboptimal_same_task(ref_traj)
+            else:
+                # Try different task
+                traj_diff = self._get_different_video_traj(ref_traj)
+
             if traj_diff is not None:
                 break
 
@@ -322,12 +391,12 @@ class SimSampler(RFMBaseSampler):
         """Get traj_sim and traj_diff for suboptimal strategy.
 
         Args:
-            ref_traj: Reference trajectory
+            ref_traj: Reference trajectory (must be successful)
 
         Returns:
             Tuple of (traj_sim, traj_diff) or None if not available. Both can be dict or Trajectory objects.
-            traj_sim is an optimal trajectory from same task
-            traj_diff is a suboptimal trajectory from same task
+            traj_sim is an optimal trajectory from same task (progress: yes, success: yes)
+            traj_diff is a suboptimal trajectory from same task (progress masked, success=0)
         """
         max_retries = 3  # Number of retry attempts for sampling
 

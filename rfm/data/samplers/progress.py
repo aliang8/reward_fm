@@ -147,6 +147,9 @@ class ProgressSampler(RFMBaseSampler):
 
         progress_traj = self._get_traj_from_data(processed_traj, subsample_strategy=subsample_strategy)
 
+        if progress_traj is None:
+            return None
+
         # Handle special cases
         if strategy_used in [DataGenStrat.DIFFERENT_TASK, DataGenStrat.DIFFERENT_TASK_INSTRUCTION]:
             # We need to use the original task embeddings instead of the different task embeddings
@@ -156,7 +159,9 @@ class ProgressSampler(RFMBaseSampler):
             progress_traj.task = traj["task"]
             progress_traj.target_progress = [0.0] * len(progress_traj.target_progress)
             if self.config.progress_loss_type.lower() == "discrete":
-                progress_traj.target_progress = convert_continuous_to_discrete_bins(progress_traj.target_progress, self.config.progress_discrete_bins)
+                progress_traj.target_progress = convert_continuous_to_discrete_bins(
+                    progress_traj.target_progress, self.config.progress_discrete_bins
+                )
             # Also set success labels to 0.0 (predict 0 success for different task trajectories)
             if progress_traj.success_label is not None:
                 progress_traj.success_label = [0.0] * len(progress_traj.success_label)

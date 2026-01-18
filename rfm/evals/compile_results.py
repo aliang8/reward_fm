@@ -17,34 +17,14 @@ import torch
 import torch.nn.functional as F
 from sklearn.metrics import average_precision_score
 from rfm.data.datasets.helpers import load_frames_from_npz
-from rfm.evals.eval_metrics_utils import compute_pearson, compute_spearman
+from rfm.evals.eval_metrics_utils import compute_pearson, compute_spearman, compute_kendall
 from rfm.evals.eval_viz_utils import create_combined_progress_success_plot
 from rfm.models.utils import convert_bins_to_continuous, convert_discrete_target_to_continuous
+
 
 def convert_continuous_to_discrete_bin_roboreward(value: float, num_bins: int) -> int:
     value = min(max(value, 0.0), 1.0)
     return round(value * (num_bins - 1))
-
-def compute_eval_metrics(
-    eval_type: str,
-    results: List[Dict[str, Any]],
-    progress_pred_type: str,
-    is_discrete_mode: bool = False,
-    num_bins: int = 10,
-    data_source: Optional[str] = None,
-):
-    if eval_type == "quality_preference" or eval_type == "quality_preference_roboarena":
-        return run_quality_preference_eval(results, data_source=data_source)
-    elif eval_type == "reward_alignment":
-        return run_reward_alignment_eval_per_trajectory(
-            results, progress_pred_type, is_discrete_mode, num_bins, data_source
-        )
-    elif eval_type == "confusion_matrix":
-        return run_confusion_matrix_eval(results, progress_pred_type, is_discrete_mode, num_bins)
-    elif eval_type == "policy_ranking":
-        return run_policy_ranking_eval(results, progress_pred_type, is_discrete_mode, num_bins, data_source)
-    elif eval_type == "similarity_score":
-        return run_similarity_score_eval(results)
 
 
 def run_quality_preference_eval(results: List[Dict[str, Any]], data_source: Optional[str] = None) -> Dict[str, Any]:
@@ -54,14 +34,8 @@ def run_quality_preference_eval(results: List[Dict[str, Any]], data_source: Opti
     computes preference accuracy per group and aggregate.
     Returns metrics, task_groups, and task_details similar to policy_ranking.
     """
-    # Check if any trajectory in results has partial_success to determine if we should use partial_success logic
-    use_partial_success = False
-    if results and len(results) > 0:
-        # Check first result's metadata for partial_success
-        first_result = results[0]
-        chosen_meta = first_result.get("metadata", {}).get("chosen_metadata", {})
-        rejected_meta = first_result.get("metadata", {}).get("rejected_metadata", {})
-        use_partial_success = chosen_meta.get("partial_success") is not None or rejected_meta.get("partial_success") is not None
+    # Check if data_source contains roboreward or roboarena to determine if we should use partial_success logic
+    use_partial_success = "roboreward" in str(data_source).lower() or "roboarena" in str(data_source).lower()
 
     # First, gather all predictions and labels, convert to arrays
     # Note: preference_pred is already binary (0/1) from the trainer
@@ -75,15 +49,8 @@ def run_quality_preference_eval(results: List[Dict[str, Any]], data_source: Opti
         pred = r.get("preference_pred")
         label = r.get("preference_labels")
         if pred is not None and label is not None:
-            if isinstance(pred, np.ndarray):
-                pred = float(pred.item()) if pred.size == 1 else float(pred[0])
-            else:
-                pred = float(pred)
-
-            if isinstance(label, np.ndarray):
-                label = float(label.item()) if label.size == 1 else float(label[0])
-            else:
-                label = float(label)
+            pred = float(pred.item()) if pred.size == 1 else float(pred[0])
+            label = float(label.item()) if label.size == 1 else float(label[0])
 
             # For datasets without partial_success, extract quality combo; for datasets with partial_success, just validate metadata exists
             chosen_meta = r.get("metadata", {}).get("chosen_metadata", {})
@@ -184,447 +151,50 @@ def run_reward_alignment_eval_per_trajectory(
     is_discrete_mode: bool,
     num_bins: int,
     data_source: Optional[str],
+    use_frame_steps: bool,
+    train_success_head: bool,
     last_frame_only: bool = False,
 ) -> Tuple[Dict[str, Any], List, List, List]:
     """Run reward_alignment evaluation analysis and create plots for each trajectory.
 
     For failure datasets, we visualize predictions but skip metric computation.
 
+    Args:
+        use_frame_steps: If True, expects multiple results per trajectory (frame_steps mode).
+                         If False, expects exactly one result per trajectory (whole trajectory mode).
+        train_success_head: Whether the success head is being trained (determines if success predictions exist).
+
     Returns:
         Tuple of (metrics, plots, video_frames_list, trajectory_progress_data)
         where trajectory_progress_data is a list of progress_pred values
         for each trajectory (one per video in video_frames_list)
     """
-    # Check if any trajectory in results has partial_success to determine if we should use partial_success logic
-    use_partial_success = False
-    if results and len(results) > 0:
-        # Check if any result has partial_success (could be in result directly or in metadata)
-        for r in results:
-            if r.get("partial_success") is not None:
-                use_partial_success = True
-                break
-            # Also check metadata for preference samples
-            chosen_meta = r.get("metadata", {}).get("chosen_metadata", {})
-            rejected_meta = r.get("metadata", {}).get("rejected_metadata", {})
-            if chosen_meta.get("partial_success") is not None or rejected_meta.get("partial_success") is not None:
-                use_partial_success = True
-                break
+    # Check if data_source contains roboreward or roboarena to determine if we should use partial_success logic
+    use_partial_success = "roboreward" in str(data_source).lower() or "roboarena" in str(data_source).lower()
 
     # Check if this is RoboReward (needs MAE metric)
     is_roboreward = data_source and "roboreward" in str(data_source).lower()
 
-    # Determine success availability once at the beginning
-    have_success = False
-    have_success_labels = False
-    have_success_probs = False
-    if results and len(results) > 0:
-        first_result = results[0]
-        have_success = first_result.get("success_pred", None) is not None
-        have_success_labels = first_result.get("success_labels", None) is not None
-        have_success_probs = first_result.get("success_probs", None) is not None
-
     unique_trajectory_ids = set()
-    loss_per_trajectory = np.zeros(1)
-    loss_trajectories = []
-    pearson_trajectories = []
-    plots = []
-    video_frames_list = []
-    trajectory_progress_data = []
+
+    metrics = {}
 
     # Collect all success_probs and success_labels for AUPRC computation
     all_success_probs = []
     all_success_labels = []
-
-    # Collect absolute deltas between final reward and partial_success for trajectories with partial_success
-    partial_success_deltas = []
-
-    # Collect success_acc for binary success accuracy
-    success_acc_list = []
-
-    # Collect bins for MAE computation (RoboReward)
-    pred_bins_mae = []
-    gt_bins_mae = []
-
     for r in results:
         trajectory_id = r.get("id")
         if trajectory_id:
             unique_trajectory_ids.add(trajectory_id)
 
         # Collect success probabilities and labels for AUPRC
-        success_probs = r.get("success_probs", None)
-        success_labels = r.get("success_labels", None)
-        if success_probs is not None and success_labels is not None:
-            # Convert to numpy arrays if needed
-            if isinstance(success_probs, np.ndarray):
-                all_success_probs.append(success_probs.flatten())
-            else:
-                all_success_probs.append(np.array(success_probs).flatten())
-
-            if isinstance(success_labels, np.ndarray):
-                all_success_labels.append(success_labels.flatten())
-            else:
-                all_success_labels.append(np.array(success_labels).flatten())
-
-    for trajectory_id in unique_trajectory_ids:
-        results_for_trajectory = [r for r in results if r.get("id") == trajectory_id]
-        # Sort by frame_step if available (for frame_steps mode)
-        # This orders subsequences from shortest to longest (e.g., [0], [0,1], [0,1,2], ...)
-        # Only sort if there are multiple results (indicating frame_steps mode)
-        if len(results_for_trajectory) > 1:
-            results_for_trajectory.sort(key=lambda r: r.get("metadata", {}).get("frame_step", 0))
-
-        # Get task and quality label from first result
-        task = results_for_trajectory[0]["task"]
-        quality_label = results_for_trajectory[0]["quality_label"]
-        video_path = results_for_trajectory[0]["video_path"]
-        partial_success = results_for_trajectory[0].get("partial_success")
-
-        if is_discrete_mode and partial_success is not None:
-            if isinstance(partial_success, torch.Tensor):
-                # [num_bins] -> [1, 1, num_bins]
-                partial_success_tensor = partial_success[None, None] # to make it 3-dim for convert_discrete_target_to_continuous
-            else:
-                # number -> [1, 1]
-                partial_success_tensor = torch.tensor([partial_success], dtype=torch.float32).unsqueeze(0)
-            partial_success = convert_discrete_target_to_continuous(partial_success_tensor, num_bins=num_bins).item()
-
-        # Detect if we're in whole trajectory mode (use_frame_steps=False) or frame_steps mode
-        is_whole_trajectory_mode = len(results_for_trajectory) == 1
-
-        # First, gather all predictions and targets for this trajectory
-        all_preds = []
-        all_targets = []
-        all_pred_logits = []  # For discrete mode: collect full logits
-        all_target_bins = []  # For discrete mode: collect bin indices
-        all_success_preds = []
-        all_success_labels_list = []
-        all_success_probs_list = []
-
-        if is_whole_trajectory_mode:
-            # Whole trajectory mode: one result with full progress prediction
-            r = results_for_trajectory[0]
-            pred = r.get("progress_pred")
-            tgt = r.get("target_progress")
-
-            if pred is not None:
-                pred_array = np.array(pred)
-                if is_discrete_mode:
-                    # Discrete mode: pred is logits [seq_len, num_bins]
-                    # Convert to continuous values using weighted sum of bin centers
-                    if last_frame_only:
-                        # Use last frame's logits
-                        all_pred_logits.append(pred_array[-1])
-                        if tgt is not None and len(tgt) > 0:
-                            all_target_bins.append(int(tgt[-1]))
-                        continuous_pred = convert_bins_to_continuous(
-                            torch.tensor(pred_array[-1], dtype=torch.float32)
-                        ).item()
-                        all_preds.append(float(continuous_pred))
-                    else:
-                        # Use all predictions: convert logits to continuous values
-                        if pred_array.ndim > 1:
-                            # pred_array is [seq_len, num_bins], convert to continuous
-                            continuous_preds = convert_bins_to_continuous(
-                                torch.tensor(pred_array, dtype=torch.float32)
-                            ).numpy()
-                            all_preds = continuous_preds.tolist()
-                            # Store logits as list of lists (one per timestep) - same format as frame_steps mode
-                            all_pred_logits = pred_array.tolist()
-                        else:
-                            # Already continuous (shouldn't happen in discrete mode, but handle it)
-                            #all_preds = pred_array.tolist()
-                            print("Warning: Pred array should not be continuous in discrete mode, breakpointing to debug")
-                            breakpoint()
-                        if tgt is not None and len(tgt) > 0:
-                            tgt_array = np.array(tgt)
-                            all_target_bins = [int(t) for t in tgt_array]
-                            # Convert target bins to continuous values for comparison
-                            all_targets = [(float(t) / (num_bins - 1)) for t in tgt_array]
-                else:
-                    # Continuous mode: use all predictions directly
-                    if last_frame_only:
-                        all_preds = [float(pred_array[-1])]
-                    else:
-                        if pred_array.ndim > 0:
-                            all_preds = [float(p) for p in pred_array]
-                        else:
-                            all_preds = [float(pred_array)]
-            else:
-                all_preds = [0.0]
-
-            if tgt is not None and len(tgt) > 0 and not is_discrete_mode:
-                tgt_array = np.array(tgt)
-                if last_frame_only:
-                    all_targets = [float(tgt_array[-1])]
-                else:
-                    if tgt_array.ndim > 0:
-                        all_targets = [float(t) for t in tgt_array]
-                    else:
-                        all_targets = [float(tgt_array)]
-
-            # Optional success predictions (whole arrays)
-            succ = r.get("success_pred", None)
-            if succ is not None:
-                if isinstance(succ, (list, np.ndarray)):
-                    succ_array = np.array(succ)
-                    if succ_array.ndim > 0:
-                        all_success_preds = [float(s) for s in succ_array]
-                    else:
-                        all_success_preds = [float(succ_array)]
-                else:
-                    all_success_preds = [float(succ)]
-
-            succ_labels = r.get("success_labels", None)
-            if succ_labels is not None:
-                if isinstance(succ_labels, (list, np.ndarray)):
-                    succ_labels_array = np.array(succ_labels)
-                    if succ_labels_array.ndim > 0:
-                        all_success_labels_list = [float(s) for s in succ_labels_array]
-                    else:
-                        all_success_labels_list = [float(succ_labels_array)]
-                else:
-                    all_success_labels_list = [float(succ_labels)]
-
-            succ_probs = r.get("success_probs", None)
-            if succ_probs is not None:
-                if isinstance(succ_probs, (list, np.ndarray)):
-                    succ_probs_array = np.array(succ_probs)
-                    if succ_probs_array.ndim > 0:
-                        all_success_probs_list = [float(s) for s in succ_probs_array]
-                    else:
-                        all_success_probs_list = [float(succ_probs_array)]
-                else:
-                    all_success_probs_list = [float(succ_probs)]
-
-        else:
-            # Frame steps mode: multiple results, one per subsequence
-            for timestep, r in enumerate(results_for_trajectory):
-                pred = r.get("progress_pred")
-                tgt = r.get("target_progress")
-
-                if pred is not None:
-                    pred_array = np.array(pred)
-                    if is_discrete_mode:
-                        # Discrete mode: pred is logits [seq_len, num_bins]
-                        # Convert to continuous values using weighted sum of bin centers
-                        if last_frame_only:
-                            # Use last frame's logits
-                            all_pred_logits.append(pred_array[-1])
-                            if tgt is not None and len(tgt) > 0:
-                                all_target_bins.append(int(tgt[-1]))
-                        else:
-                            # Use prediction at current timestep
-                            if timestep >= len(pred_array) - 1:
-                                indx = -1
-                            else:
-                                indx = timestep
-                            all_pred_logits.append(pred_array[indx])
-                            if tgt is not None and len(tgt) > 0:
-                                # Target is already a discrete bin index
-                                if timestep >= len(tgt) - 1:
-                                    all_target_bins.append(tgt[-1])
-                                else:
-                                    all_target_bins.append(tgt[indx])
-                        # For visualization: convert logits to continuous value
-                        if last_frame_only:
-                            continuous_pred = convert_bins_to_continuous(
-                                torch.tensor(pred_array[-1], dtype=torch.float32)
-                            ).item()
-                        else:
-                            if timestep >= len(pred_array) - 1:
-                                continuous_pred = convert_bins_to_continuous(
-                                    torch.tensor(pred_array[-1], dtype=torch.float32)
-                                ).item()
-                            else:
-                                continuous_pred = convert_bins_to_continuous(
-                                    torch.tensor(pred_array[timestep], dtype=torch.float32)
-                                ).item()
-                        all_preds.append(float(continuous_pred))
-                    else:
-                        # Continuous mode: original logic
-                        if last_frame_only:
-                            all_preds.append(float(pred[-1]))
-                        else:
-                            if timestep >= len(pred) - 1:
-                                indx = -1
-                            else:
-                                indx = timestep
-                            all_preds.append(float(pred[indx]))
-                else:
-                    all_preds.append(0.0)
-
-                if tgt is not None and len(tgt) > 0:
-                    if is_discrete_mode:
-                        # Target is a discrete bin index, convert to continuous value
-                        # Convert discrete bin target to a continuous value for logging/metrics
-                        if last_frame_only:
-                            target_bin = tgt[-1]
-                        else:
-                            if timestep >= len(tgt) - 1:
-                                target_bin = tgt[-1]
-                            else:
-                                target_bin = tgt[timestep]
-                        # convert target_bin to tensor of shape (1, ...)
-                        if isinstance(target_bin, torch.Tensor):
-                            # [num_bins] -> [1, 1, num_bins]
-                            target_bin_tensor = target_bin[None, None] # to make it 3-dim for convert_discrete_target_to_continuous
-                        else:
-                            # number -> [1, 1]
-                            target_bin_tensor = torch.tensor([target_bin]).unsqueeze(0)
-                        continuous_target = convert_discrete_target_to_continuous(target_bin_tensor, num_bins=num_bins).item()
-                        all_targets.append(continuous_target)
-                    else:
-                        all_targets.append(float(tgt[-1]))
-                else:
-                    all_targets.append(0.0)
-
-                # Optional success prediction (binary) from trainer outputs
-                succ = r.get("success_pred", None)
-                if succ is not None and len(succ) > 0:
-                    all_success_preds.append(float(succ[-1]))
-
-                # Optional success labels (ground truth) from trainer outputs
-                succ_labels = r.get("success_labels", None)
-                if succ_labels is not None and len(succ_labels) > 0:
-                    all_success_labels_list.append(float(succ_labels[-1]))
-
-                # Optional success probabilities from trainer outputs
-                succ_probs = r.get("success_probs", None)
-                if succ_probs is not None and len(succ_probs) > 0:
-                    all_success_probs_list.append(float(succ_probs[-1]))
-
-        if len(all_preds) == 0 or len(all_targets) == 0:
-            print("No valid predictions or targets found for trajectory: ", trajectory_id)
-            continue
-
-        last_preds = np.array(all_preds)
-        last_targets = np.array(all_targets)
-        last_success = np.array(all_success_preds) if all_success_preds else None
-        last_success_labels = np.array(all_success_labels_list) if all_success_labels_list else None
-        last_success_probs = np.array(all_success_probs_list) if all_success_probs_list else None
-
-        # Load video frames if video path exists
-        frames = None
-        if video_path:
-            frames = load_frames_from_npz(video_path)
-            frames = frames.transpose(0, 3, 1, 2)
-
-            # Resize frames to make them smaller for wandb table display
-            resized_frames = []
-            for frame in frames:
-                frame_resized = cv2.resize(frame.transpose(1, 2, 0), (64, 64))
-                resized_frames.append(frame_resized.transpose(2, 0, 1))
-            frames = np.array(resized_frames)
-
-        video_frames_list.append(frames)
-
-        if progress_pred_type == "relative":
-            last_preds = np.cumsum(last_preds)
-            last_targets = np.cumsum(last_targets)
-
-        trajectory_progress_data.append(last_preds.tolist())
-
-        # For trajectories with partial_success, compute absolute delta between final reward and partial_success
-        if use_partial_success and partial_success is not None:
-            final_reward = float(last_preds[-1])
-            delta = abs(final_reward - partial_success)
-            partial_success_deltas.append(delta)
-
-        # For RoboReward, collect bins for MAE computation
-        if is_roboreward and partial_success is not None:
-            # Get last predicted reward (final reward)
-            final_predicted_reward = float(last_preds[-1])
-
-            # Convert predicted reward to bin (1-5)
-            pred_bin = convert_continuous_to_discrete_bin_roboreward(final_predicted_reward, num_bins=5)
-
-            # Convert partial_success to bin (0->1, 1->5)
-            gt_bin = convert_continuous_to_discrete_bin_roboreward(partial_success, num_bins=5)
-
-            pred_bins_mae.append(pred_bin)
-            gt_bins_mae.append(gt_bin)
-
-        # Only compute metrics for successful trajectories
-        if quality_label == "successful":
-            # Compute loss based on mode
-            if is_discrete_mode and all_pred_logits and all_target_bins:
-                # Discrete mode: compute cross-entropy loss between logits and target bins
-                pred_logits_tensor = torch.tensor(np.array(all_pred_logits), dtype=torch.float32)  # [seq_len, num_bins]
-                target_bins_tensor = torch.tensor(all_target_bins)  # [seq_len, num_bins] or [seq_len]
-                if len(target_bins_tensor.shape) == 1:
-                    target_bins_tensor = target_bins_tensor.long()
-                loss_per_timestep = F.cross_entropy(pred_logits_tensor, target_bins_tensor, reduction="none")
-                traj_loss = float(loss_per_timestep.mean().item())
-            else:
-                # Continuous mode: compute MSE loss
-                traj_loss = float(np.mean((last_targets - last_preds) ** 2))
-
-            # Compute Pearson correlation
-            traj_pearson = compute_pearson(last_targets.tolist(), last_preds.tolist())
-            # Handle NaN values
-            traj_pearson = float(traj_pearson) if not np.isnan(traj_pearson) else 0.0
-        else:
-            traj_loss = 0.0
-            traj_pearson = 0.0
-
-        # Create a wandb plot for progress predictions and, if available, success predictions
-        # Use the shared helper function from eval_viz_utils
-        # Limit to 10 plots to avoid creating too many
-        if len(plots) < 10:
-            has_success_binary = have_success and last_success is not None and len(last_success) == len(last_preds)
-
-            title = f"Task: {task} - {quality_label}\nLoss: {traj_loss:.3f}, pearson: {traj_pearson:.2f}"
-            if partial_success is not None:
-                title += f", partial_success: {partial_success:.3f}"
-
-            fig = create_combined_progress_success_plot(
-                progress_pred=last_preds,
-                num_frames=len(last_preds),
-                success_binary=last_success if has_success_binary else None,
-                success_probs=last_success_probs if have_success_probs and last_success_probs is not None else None,
-                success_labels=last_success_labels if have_success_labels and last_success_labels is not None else None,
-                is_discrete_mode=is_discrete_mode,
-                title=title,
-                loss=traj_loss,
-                pearson=traj_pearson,
-            )
-
-            plots.append(fig)
-
-        # Compute binary success accuracy
-        # For successful trajectories: True if anywhere success_prob > 0.5
-        # For non-successful trajectories: True if everywhere success_prob <= 0.5
-        is_successful_trajectory = quality_label == "successful"
-        if last_success_probs is not None and len(last_success_probs) > 0:
-            max_success_prob = float(np.max(last_success_probs))
-            if is_successful_trajectory:
-                # For successful: True if max > 0.5 (we correctly predict success somewhere)
-                traj_success_acc = max_success_prob > 0.5
-            else:
-                # For non-successful: True if max <= 0.5 (we correctly don't predict success)
-                traj_success_acc = max_success_prob <= 0.5
-            success_acc_list.append(float(traj_success_acc))
-        elif have_success_probs:
-            # If we have success_probs available but not for this trajectory, skip
-            pass
-
-        # Accumulate metrics only for successful trajectories
-        if quality_label == "successful":
-            loss_trajectories.append(traj_loss)
-            if not np.isnan(traj_pearson):
-                pearson_trajectories.append(traj_pearson)
-
-    if len(unique_trajectory_ids) == 0:
-        loss_per_trajectory = np.nan
-        pearson_per_trajectory = np.nan
-    else:
-        loss_per_trajectory = np.mean(loss_trajectories).item() if loss_trajectories else np.nan
-        pearson_per_trajectory = np.mean(pearson_trajectories).item() if pearson_trajectories else np.nan
+        if train_success_head:
+            success_probs = r["success_probs"]
+            success_labels = r["success_labels"]
+            all_success_probs.append(success_probs)
+            all_success_labels.append(success_labels)
 
     # Compute success_auprc across all collected success predictions and labels
-    success_auprc = None
-    positive_success_acc = None
-    negative_success_acc = None
     if all_success_probs and all_success_labels:
         # Flatten all collected probabilities and labels
         success_probs_flat = np.concatenate(all_success_probs)
@@ -655,23 +225,287 @@ def run_reward_alignment_eval_per_trajectory(
                 negative_correct = ((success_preds_flat == success_labels_flat) & negative_mask).sum()
                 negative_success_acc = float(negative_correct / num_negatives)
 
-    metrics = {
-        "loss": loss_per_trajectory,
-        "pearson": pearson_per_trajectory,
-    }
-
-    if success_auprc is not None:
         metrics["success_auprc"] = success_auprc
-
-    # Add binary success accuracy if available
-    if success_acc_list:
-        metrics["success_acc"] = float(np.mean(success_acc_list))
-
-    # Add positive and negative success accuracy if available
-    if positive_success_acc is not None:
         metrics["positive_success_acc"] = positive_success_acc
-    if negative_success_acc is not None:
         metrics["negative_success_acc"] = negative_success_acc
+
+    loss_per_trajectory = np.zeros(1)
+    loss_trajectories = []
+    pearson_trajectories = []
+    plots = []
+    video_frames_list = []
+    trajectory_progress_data = []
+
+    # Collect absolute deltas between final reward and partial_success for trajectories with partial_success
+    partial_success_deltas = []
+
+    # Collect bins for MAE computation (RoboReward)
+    pred_bins_mae = []
+    gt_bins_mae = []
+
+    for trajectory_id in unique_trajectory_ids:
+        results_for_trajectory = [r for r in results if r.get("id") == trajectory_id]
+
+        # Assert that if use_frame_steps=False, each trajectory should have exactly 1 result
+        if not use_frame_steps:
+            assert len(results_for_trajectory) == 1, (
+                f"Expected exactly 1 result per trajectory when use_frame_steps=False, "
+                f"but found {len(results_for_trajectory)} results for trajectory_id={trajectory_id}"
+            )
+
+        # Sort by frame_step if available (for frame_steps mode)
+        # This orders subsequences from shortest to longest (e.g., [0], [0,1], [0,1,2], ...)
+        # Only sort if there are multiple results (indicating frame_steps mode)
+        if len(results_for_trajectory) > 1:
+            results_for_trajectory.sort(key=lambda r: r.get("metadata", {}).get("frame_step", 0))
+
+        # Get task and quality label from first result
+        task = results_for_trajectory[0]["task"]
+        quality_label = results_for_trajectory[0]["quality_label"]
+        video_path = results_for_trajectory[0]["video_path"]
+        partial_success = results_for_trajectory[0].get("partial_success")
+
+        if is_discrete_mode and partial_success is not None:
+            if isinstance(partial_success, torch.Tensor):
+                # [num_bins] -> [1, 1, num_bins]
+                partial_success_tensor = partial_success[
+                    None, None
+                ]  # to make it 3-dim for convert_discrete_target_to_continuous
+            else:
+                # number -> [1, 1]
+                partial_success_tensor = torch.tensor([partial_success], dtype=torch.float32).unsqueeze(0)
+            partial_success = convert_discrete_target_to_continuous(partial_success_tensor, num_bins=num_bins).item()
+
+        # Step 1: Collect all progress predictions and targets
+        raw_preds = []
+        raw_targets = []
+        traj_pred_logits = []  # For discrete mode: collect full logits
+        traj_target_bins = []  # For discrete mode: collect bin indices
+
+        if not use_frame_steps:
+            # Whole trajectory mode: one result with full progress prediction
+            r = results_for_trajectory[0]
+            raw_preds.append(r["progress_pred"])
+            raw_targets.append(r["target_progress"])
+        else:
+            # Frame steps mode: multiple results, one per subsequence
+            for timestep, r in enumerate(results_for_trajectory):
+                raw_preds.append(r["progress_pred"])
+                raw_targets.append(r["target_progress"])
+
+        # Step 2: Convert all progress predictions and targets to continuous (if discrete mode)
+        # Store logits/bins for loss computation before conversion
+        traj_preds_continuous = []
+        traj_targets_continuous = []
+
+        if not use_frame_steps:
+            # Process single prediction/target
+            pred_array = raw_preds[0]
+            if is_discrete_mode:
+                traj_pred_logits = pred_array
+                # Convert to continuous
+                continuous_preds = convert_bins_to_continuous(torch.tensor(pred_array, dtype=torch.float32)).numpy()
+                traj_preds_continuous.append(continuous_preds)
+            else:
+                traj_preds_continuous.append(pred_array)
+
+            tgt_array = raw_targets[0]
+            if is_discrete_mode:
+                traj_target_bins = tgt_array
+                # Convert to continuous
+                continuous_targets = convert_discrete_target_to_continuous(
+                    torch.tensor(tgt_array[None]), num_bins=num_bins
+                )[0].numpy()
+                traj_targets_continuous.append(continuous_targets)
+            else:
+                traj_targets_continuous.append(tgt_array)
+        else:
+            # Frame steps mode: process each timestep
+            for timestep, (pred_array, tgt_array) in enumerate(zip(raw_preds, raw_targets)):
+                # Process prediction
+                if is_discrete_mode:
+                    # Store logits for loss computation (store all logits from this timestep)
+                    traj_pred_logits.append(pred_array)
+                    # Convert to continuous
+                    continuous_preds = convert_bins_to_continuous(torch.tensor(pred_array, dtype=torch.float32)).numpy()
+                    traj_preds_continuous.append(continuous_preds)
+                else:
+                    traj_preds_continuous.append(pred_array)
+
+                # Process target
+                if is_discrete_mode:
+                    # Store target bins for loss computation (store all bins from this timestep)
+                    traj_target_bins.append(tgt_array)
+                    # Convert to continuous
+                    continuous_targets = convert_discrete_target_to_continuous(
+                        torch.tensor(tgt_array[None]), num_bins=num_bins
+                    )[0].numpy()
+                    traj_targets_continuous.append(continuous_targets)
+                else:
+                    traj_targets_continuous.append(tgt_array)
+
+        # Step 3: Apply last_frame_only logic to continuous predictions/targets
+        traj_preds = []
+        traj_targets = []
+
+        if not use_frame_steps:
+            pred_array = traj_preds_continuous[0]
+            traj_preds = pred_array.flatten()
+            if last_frame_only:
+                traj_preds = pred_array[-1:]
+
+            tgt_array = traj_targets_continuous[0]
+            traj_targets = tgt_array.flatten()
+            if last_frame_only:
+                traj_targets = tgt_array[-1:]
+        else:
+            # Frame steps mode
+            for timestep, (pred_array, tgt_array) in enumerate(zip(traj_preds_continuous, traj_targets_continuous)):
+                if last_frame_only:
+                    pred_val = pred_array[-1]
+                    tgt_val = tgt_array[-1]
+                else:
+                    indx = min(timestep, len(pred_array) - 1)
+                    pred_val = pred_array[indx]
+                    indx = min(timestep, len(tgt_array) - 1)
+                    tgt_val = tgt_array[indx]
+                traj_preds.append(pred_val)
+                traj_targets.append(tgt_val)
+
+        # Step 4: Collect success predictions, labels, and probabilities separately
+        traj_success_preds = []
+        traj_success_labels = []
+        traj_success_probs = []
+
+        if not use_frame_steps:
+            # Whole trajectory mode: process single result
+            r = results_for_trajectory[0]
+            if train_success_head:
+                traj_success_preds = r["success_pred"].flatten()
+                traj_success_labels = r["success_labels"].flatten()
+                traj_success_probs = r["success_probs"].flatten()
+        else:
+            # Frame steps mode: process each result
+            for r in results_for_trajectory:
+                if train_success_head:
+                    traj_success_preds.append(r["success_pred"][-1])
+                    traj_success_labels.append(r["success_labels"][-1])
+                    traj_success_probs.append(r["success_probs"][-1])
+
+        # Convert to numpy arrays
+        traj_preds = np.array(traj_preds)
+        traj_targets = np.array(traj_targets)
+        traj_success = np.array(traj_success_preds)
+        traj_success_labels = np.array(traj_success_labels)
+        traj_success_probs = np.array(traj_success_probs)
+
+        # Load video frames if video path exists
+        frames = None
+        if video_path:
+            frames = load_frames_from_npz(video_path)
+            frames = frames.transpose(0, 3, 1, 2)
+
+            # Resize frames to make them smaller for wandb table display
+            resized_frames = []
+            for frame in frames:
+                frame_resized = cv2.resize(frame.transpose(1, 2, 0), (64, 64))
+                resized_frames.append(frame_resized.transpose(2, 0, 1))
+            frames = np.array(resized_frames)
+
+        video_frames_list.append(frames)
+
+        if progress_pred_type == "relative":
+            traj_preds = np.cumsum(traj_preds)
+            traj_targets = np.cumsum(traj_targets)
+
+        trajectory_progress_data.append(traj_preds.tolist())
+
+        # For trajectories with partial_success, compute absolute delta between final reward and partial_success
+        if use_partial_success and partial_success is not None:
+            final_reward = float(traj_preds[-1])
+            delta = abs(final_reward - partial_success)
+            partial_success_deltas.append(delta)
+
+        # For RoboReward, collect bins for MAE computation
+        if is_roboreward and partial_success is not None:
+            # Get last predicted reward (final reward)
+            final_predicted_reward = float(traj_preds[-1])
+
+            # Convert predicted reward to bin (1-5)
+            pred_bin = convert_continuous_to_discrete_bin_roboreward(final_predicted_reward, num_bins=5)
+
+            # Convert partial_success to bin (0->1, 1->5)
+            gt_bin = convert_continuous_to_discrete_bin_roboreward(partial_success, num_bins=5)
+
+            pred_bins_mae.append(pred_bin)
+            gt_bins_mae.append(gt_bin)
+
+        # Only compute metrics for successful trajectories
+        if quality_label == "successful":
+            # Compute loss based on mode
+            if is_discrete_mode and traj_pred_logits is not None and traj_target_bins is not None:
+                # Discrete mode: compute cross-entropy loss between logits and target bins
+                pred_logits_tensor = torch.tensor(
+                    np.array(traj_pred_logits), dtype=torch.float32
+                )  # [seq_len, num_bins]
+                target_bins_tensor = torch.tensor(traj_target_bins)  # [seq_len, num_bins] or [seq_len]
+                if len(target_bins_tensor.shape) == 1:
+                    target_bins_tensor = target_bins_tensor.long()
+                loss_per_timestep = F.cross_entropy(pred_logits_tensor, target_bins_tensor, reduction="none")
+                traj_loss = float(loss_per_timestep.mean().item())
+            else:
+                # Continuous mode: compute MSE loss
+                traj_loss = float(np.mean((traj_targets - traj_preds) ** 2))
+
+            # Compute Pearson correlation
+            traj_pearson = compute_pearson(traj_targets.tolist(), traj_preds.tolist())
+            # Handle NaN values
+            traj_pearson = float(traj_pearson) if not np.isnan(traj_pearson) else 0.0
+        else:
+            traj_loss = 0.0
+            traj_pearson = 0.0
+
+        # Create a wandb plot for progress predictions and, if available, success predictions
+        # Use the shared helper function from eval_viz_utils
+        # Limit to 10 plots to avoid creating too many
+        if len(plots) < 10:
+            has_success_binary = (
+                train_success_head and traj_success is not None and len(traj_success) == len(traj_preds)
+            )
+
+            title = f"Task: {task} - {quality_label}\nLoss: {traj_loss:.3f}, pearson: {traj_pearson:.2f}"
+            if partial_success is not None:
+                title += f", partial_success: {partial_success:.3f}"
+
+            fig = create_combined_progress_success_plot(
+                progress_pred=traj_preds,
+                num_frames=len(traj_preds),
+                success_binary=traj_success if has_success_binary else None,
+                success_probs=traj_success_probs if train_success_head else None,
+                success_labels=traj_success_labels if train_success_head else None,
+                is_discrete_mode=is_discrete_mode,
+                title=title,
+                loss=traj_loss,
+                pearson=traj_pearson,
+            )
+
+            plots.append(fig)
+
+        # Accumulate metrics only for successful trajectories
+        if quality_label == "successful":
+            loss_trajectories.append(traj_loss)
+            if not np.isnan(traj_pearson):
+                pearson_trajectories.append(traj_pearson)
+
+    if len(unique_trajectory_ids) == 0:
+        loss_per_trajectory = np.nan
+        pearson_per_trajectory = np.nan
+    else:
+        loss_per_trajectory = np.mean(loss_trajectories).item()
+        pearson_per_trajectory = np.mean(pearson_trajectories).item()
+
+    metrics["loss"] = loss_per_trajectory
+    metrics["pearson"] = pearson_per_trajectory
 
     # Add partial_success delta metric if available
     if use_partial_success and partial_success_deltas:
@@ -683,6 +517,7 @@ def run_reward_alignment_eval_per_trajectory(
         metrics["mae"] = mae
 
     return metrics, plots, video_frames_list, trajectory_progress_data
+
 
 def _compute_mae_between_bins(pred_bins: List[int], gt_bins: List[int]) -> float:
     """Compute Mean Absolute Error (MAE) between predicted bins and ground truth bins.
@@ -759,6 +594,7 @@ def _compute_policy_ranking_metrics_partial_success(
     all_rewards: np.ndarray,
     all_partial_successes: np.ndarray,
     all_tasks: List[str],
+    correlation_method: str = "kendall",
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Compute policy ranking metrics for datasets with partial_success.
 
@@ -842,11 +678,14 @@ def _compute_policy_ranking_metrics_partial_success(
                 bin_ranks.append(bin_idx)
                 avg_reward_values.append(avg_reward)
 
-        spearman_rewind = None
+        correlation_rewind = None
         if len(bin_ranks) >= 2:
-            spearman_rewind = compute_spearman(bin_ranks, avg_reward_values)
-            if not np.isnan(spearman_rewind):
-                all_spearman_rewind.append(spearman_rewind)
+            if correlation_method == "kendall":
+                correlation_rewind = compute_kendall(bin_ranks, avg_reward_values)
+            else:  # spearman
+                correlation_rewind = compute_spearman(bin_ranks, avg_reward_values)
+            if not np.isnan(correlation_rewind):
+                all_spearman_rewind.append(correlation_rewind)
 
         if total_pairs > 0:
             all_correct_pairs.append(correct_pairs)
@@ -854,7 +693,7 @@ def _compute_policy_ranking_metrics_partial_success(
             task_ranking_acc = correct_pairs / total_pairs
             task_details[task] = {
                 "ranking_acc": float(task_ranking_acc),
-                "spearman_rewind": float(spearman_rewind) if spearman_rewind is not None else None,
+                f"{correlation_method}_rewind": float(correlation_rewind) if correlation_rewind is not None else None,
             }
 
     if not all_total_pairs:
@@ -868,7 +707,7 @@ def _compute_policy_ranking_metrics_partial_success(
 
     metrics = {
         "ranking_acc_rba": ranking_acc,
-        "spearman_rewind_rba": np.mean(all_spearman_rewind).item() if all_spearman_rewind else None,
+        f"{correlation_method}_rewind_rba": np.mean(all_spearman_rewind).item() if all_spearman_rewind else None,
     }
 
     return metrics, task_details
@@ -878,6 +717,7 @@ def _compute_policy_ranking_metrics_quality_label(
     all_rewards: np.ndarray,
     all_quality_labels: list[str],
     all_tasks: list[str],
+    correlation_method: str = "kendall",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Compute policy ranking metrics for datasets using quality_label.
 
@@ -898,13 +738,17 @@ def _compute_policy_ranking_metrics_quality_label(
         return {}, {}
 
     task_details = {}
-    all_spearman = []
-    all_spearman_rewind = []
+    all_correlations = []
+    all_correlations_rewind = []
     all_succ_subopt_diffs = []
     all_subopt_fail_diffs = []
     all_succ_fail_diffs = []
     all_correct_pairs = []
     all_total_pairs = []
+
+    # Track global ranking accuracy for all quality pairs
+    global_pair_correct = {}  # (quality1, quality2) -> correct_count
+    global_pair_total = {}  # (quality1, quality2) -> total_count
 
     # Non-RoboArena: Use quality_label
     quality_order = {"failure": 1, "suboptimal": 2, "successful": 3}
@@ -924,16 +768,19 @@ def _compute_policy_ranking_metrics_quality_label(
             continue
 
         k = len(present_labels)
-        spearman = []
+        correlation_scores = []
 
         for labels_combo in combinations(present_labels, k):
             gold_ranks = [quality_order[q] for q in labels_combo]
             for rewards_tuple in product(*(quality_to_rewards[q] for q in labels_combo)):
-                spearman_corr = compute_spearman(gold_ranks, list(rewards_tuple))
-                if not np.isnan(spearman_corr):
-                    spearman.append(spearman_corr)
+                if correlation_method == "kendall":
+                    corr = compute_kendall(gold_ranks, list(rewards_tuple))
+                else:  # spearman
+                    corr = compute_spearman(gold_ranks, list(rewards_tuple))
+                if not np.isnan(corr):
+                    correlation_scores.append(corr)
 
-        avg_spearman_corr = float(np.mean(spearman)) if spearman else 0.0
+        avg_correlation = float(np.mean(correlation_scores)) if correlation_scores else 0.0
 
         avg_rewards_per_quality = {}
         quality_ranks = []
@@ -948,25 +795,46 @@ def _compute_policy_ranking_metrics_quality_label(
 
         correct_pairs = 0
         total_pairs = 0
-        for i, quality1 in enumerate(present_labels):
-            for quality2 in present_labels[i + 1 :]:
-                avg_reward1 = avg_rewards_per_quality[quality1]
-                avg_reward2 = avg_rewards_per_quality[quality2]
+
+        # Compare every pair of trajectories within this task
+        for i in range(len(task_quality_labels)):
+            for j in range(i + 1, len(task_quality_labels)):
+                quality1 = task_quality_labels[i]
+                quality2 = task_quality_labels[j]
+                reward1 = task_rewards[i]
+                reward2 = task_rewards[j]
+
+                # Skip if same quality label
+                if quality1 == quality2:
+                    continue
+
                 expected_order = quality_order[quality1] > quality_order[quality2]
-                actual_order = avg_reward1 > avg_reward2
+                actual_order = reward1 > reward2
                 total_pairs += 1
                 if expected_order == actual_order:
                     correct_pairs += 1
+
+                # Track global pairs by quality label combination
+                pair_key = tuple(sorted([quality1, quality2]))
+                if pair_key not in global_pair_total:
+                    global_pair_total[pair_key] = 0
+                    global_pair_correct[pair_key] = 0
+                global_pair_total[pair_key] += 1
+                if expected_order == actual_order:
+                    global_pair_correct[pair_key] += 1
 
         if total_pairs > 0:
             all_correct_pairs.append(correct_pairs)
             all_total_pairs.append(total_pairs)
 
-        spearman_rewind = None
+        correlation_rewind = None
         if len(quality_ranks) >= 2:
-            spearman_rewind = compute_spearman(quality_ranks, avg_reward_values)
-            if not np.isnan(spearman_rewind):
-                all_spearman_rewind.append(spearman_rewind)
+            if correlation_method == "kendall":
+                correlation_rewind = compute_kendall(quality_ranks, avg_reward_values)
+            else:  # spearman
+                correlation_rewind = compute_spearman(quality_ranks, avg_reward_values)
+            if not np.isnan(correlation_rewind):
+                all_correlations_rewind.append(correlation_rewind)
 
         succ_subopt_diff = None
         subopt_fail_diff = None
@@ -985,15 +853,15 @@ def _compute_policy_ranking_metrics_quality_label(
             all_succ_fail_diffs.append(succ_fail_diff)
 
         task_details[task] = {
-            "spearman": avg_spearman_corr,
-            "spearman_rewind": spearman_rewind,
+            correlation_method: avg_correlation,
+            f"{correlation_method}_rewind": correlation_rewind,
             "succ_subopt_diff": succ_subopt_diff,
             "subopt_fail_diff": subopt_fail_diff,
             "succ_fail_diff": succ_fail_diff,
         }
-        all_spearman.append(avg_spearman_corr)
+        all_correlations.append(avg_correlation)
 
-    if len(all_spearman) == 0:
+    if len(all_correlations) == 0:
         return {}, {}
 
     ranking_acc = None
@@ -1002,9 +870,24 @@ def _compute_policy_ranking_metrics_quality_label(
         total_pairs = sum(all_total_pairs)
         ranking_acc = total_correct / total_pairs if total_pairs > 0 else 0.0
 
+    # Compute ranking accuracy for all pairs by quality label combination
+    ranking_acc_all_pairs = {}
+    for pair_key in global_pair_total:
+        if global_pair_total[pair_key] > 0:
+            pair_acc = global_pair_correct[pair_key] / global_pair_total[pair_key]
+            pair_name = f"ranking_acc_{pair_key[0]}_vs_{pair_key[1]}"
+            ranking_acc_all_pairs[pair_name] = pair_acc
+
+    # Compute overall ranking accuracy across all pairs
+    overall_ranking_acc_all_pairs = None
+    if global_pair_total:
+        total_correct_all = sum(global_pair_correct.values())
+        total_pairs_all = sum(global_pair_total.values())
+        overall_ranking_acc_all_pairs = total_correct_all / total_pairs_all if total_pairs_all > 0 else 0.0
+
     metrics = {
-        "spearman": np.mean(all_spearman).item(),
-        "spearman_rewind": np.mean(all_spearman_rewind).item() if all_spearman_rewind else None,
+        correlation_method: np.mean(all_correlations).item(),
+        f"{correlation_method}_rewind": np.mean(all_correlations_rewind).item() if all_correlations_rewind else None,
         "avg_succ_subopt_diff": np.mean(all_succ_subopt_diffs).item() if all_succ_subopt_diffs else None,
         "min_succ_subopt_diff": np.min(all_succ_subopt_diffs).item() if all_succ_subopt_diffs else None,
         "max_succ_subopt_diff": np.max(all_succ_subopt_diffs).item() if all_succ_subopt_diffs else None,
@@ -1015,6 +898,8 @@ def _compute_policy_ranking_metrics_quality_label(
         "min_succ_fail_diff": np.min(all_succ_fail_diffs).item() if all_succ_fail_diffs else None,
         "max_succ_fail_diff": np.max(all_succ_fail_diffs).item() if all_succ_fail_diffs else None,
         "ranking_acc": ranking_acc,
+        "ranking_acc_all_pairs": overall_ranking_acc_all_pairs,
+        **ranking_acc_all_pairs,  # Add individual pair accuracies
     }
 
     return metrics, task_details
@@ -1026,6 +911,7 @@ def _compute_policy_ranking_metrics_from_rewards(
     all_partial_successes: Optional[np.ndarray],
     all_quality_labels: Optional[List[str]],
     all_tasks: List[str],
+    correlation_method: str = "kendall",
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Compute policy ranking metrics from pre-computed trajectory rewards.
 
@@ -1040,9 +926,13 @@ def _compute_policy_ranking_metrics_from_rewards(
         Tuple of (metrics dictionary, task_details dictionary)
     """
     if use_partial_success and all_partial_successes is not None:
-        return _compute_policy_ranking_metrics_partial_success(all_rewards, all_partial_successes, all_tasks)
+        return _compute_policy_ranking_metrics_partial_success(
+            all_rewards, all_partial_successes, all_tasks, correlation_method
+        )
     else:
-        return _compute_policy_ranking_metrics_quality_label(all_rewards, all_quality_labels, all_tasks)
+        return _compute_policy_ranking_metrics_quality_label(
+            all_rewards, all_quality_labels, all_tasks, correlation_method
+        )
 
 
 def run_confusion_matrix_eval(
@@ -1150,6 +1040,7 @@ def run_policy_ranking_eval(
     is_discrete_mode: bool,
     num_bins: int,
     data_source: Optional[str] = None,
+    correlation_method: str = "kendall",
 ) -> Dict[str, Any]:
     """Run policy_ranking evaluation analysis.
 
@@ -1159,14 +1050,8 @@ def run_policy_ranking_eval(
     For datasets without partial_success: Uses quality_label and quality_order for ranking.
     For datasets with partial_success: Uses partial_success for ranking (no quality_order computation).
     """
-    # Check if any trajectory in results has partial_success to determine if we should use partial_success logic
-    use_partial_success = False
-    if results and len(results) > 0:
-        # Check first result's metadata for partial_success
-        first_result = results[0]
-        chosen_meta = first_result.get("metadata", {}).get("chosen_metadata", {})
-        rejected_meta = first_result.get("metadata", {}).get("rejected_metadata", {})
-        use_partial_success = chosen_meta.get("partial_success") is not None or rejected_meta.get("partial_success") is not None
+    # Check if data_source contains roboreward or roboarena to determine if we should use partial_success logic
+    use_partial_success = "roboreward" in str(data_source).lower() or "roboarena" in str(data_source).lower()
 
     # Group results by trajectory_id
     unique_trajectory_ids = set()
@@ -1286,11 +1171,17 @@ def run_policy_ranking_eval(
             if is_discrete_mode:
                 if isinstance(metadata["partial_success"], torch.Tensor):
                     # [num_bins] -> [1, 1, num_bins]
-                    partial_success_tensor = metadata["partial_success"][None, None] # to make it 3-dim for convert_discrete_target_to_continuous
+                    partial_success_tensor = metadata["partial_success"][
+                        None, None
+                    ]  # to make it 3-dim for convert_discrete_target_to_continuous
                 else:
                     # number -> [1, 1]
-                    partial_success_tensor = torch.tensor([metadata["partial_success"]], dtype=torch.float32).unsqueeze(0)
-                metadata["partial_success"] = convert_discrete_target_to_continuous(partial_success_tensor, num_bins=num_bins).item()
+                    partial_success_tensor = torch.tensor([metadata["partial_success"]], dtype=torch.float32).unsqueeze(
+                        0
+                    )
+                metadata["partial_success"] = convert_discrete_target_to_continuous(
+                    partial_success_tensor, num_bins=num_bins
+                ).item()
             all_partial_successes.append(metadata["partial_success"])
         else:
             all_quality_labels.append(metadata["quality_label"])
@@ -1348,6 +1239,7 @@ def run_policy_ranking_eval(
             np.array(all_partial_successes) if use_partial_success and all_partial_successes else None,
             all_quality_labels if not use_partial_success else None,
             all_tasks,
+            correlation_method,
         )
 
         if metrics:
@@ -1412,18 +1304,12 @@ def run_similarity_score_eval(results: list[dict[str, Any]]) -> dict[str, Any]:
 
         # Convert scores to float
         if sim_score_ref_sim is not None:
-            if isinstance(sim_score_ref_sim, np.ndarray):
-                sim_score_ref_sim = float(sim_score_ref_sim.item())
-            else:
-                sim_score_ref_sim = float(sim_score_ref_sim)
+            sim_score_ref_sim = float(sim_score_ref_sim.item())
         else:
             continue
 
         if sim_score_ref_diff is not None:
-            if isinstance(sim_score_ref_diff, np.ndarray):
-                sim_score_ref_diff = float(sim_score_ref_diff.item())
-            else:
-                sim_score_ref_diff = float(sim_score_ref_diff)
+            sim_score_ref_diff = float(sim_score_ref_diff.item())
         else:
             continue
 

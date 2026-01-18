@@ -217,12 +217,6 @@ class RFMBatchCollator(BaseCollator):
                 "Please set data.use_multi_image=True to use Molmo2 with multi-image input."
             )
         self.use_per_frame_progress_token = use_per_frame_progress_token
-        # Validate that use_per_frame_progress_token requires use_multi_image
-        if self.use_per_frame_progress_token and not self.use_multi_image:
-            raise ValueError(
-                "use_per_frame_progress_token=True requires use_multi_image=True. "
-                "Per-frame progress tokens can only be added in multi-image mode."
-            )
         self.shuffle_progress_frames = shuffle_progress_frames
         self.inference = inference
 
@@ -292,9 +286,10 @@ class RFMBatchCollator(BaseCollator):
                     "image": img,
                     **content_extras,
                 })
-                # Add per-frame progress token after each frame if enabled
-                if self.use_per_frame_progress_token:
-                    content_list.append({"type": "text", "text": "<|prog_token|>"})
+            # Add per-frame progress token after each frame if enabled
+            if self.use_per_frame_progress_token:
+                prog_tokens = "<|prog_token|>" * len(frames_or_video)
+                content_list.append({"type": "text", "text": prog_tokens})
         else:
             # Add video entry
             content_list.append({
@@ -303,6 +298,10 @@ class RFMBatchCollator(BaseCollator):
                 "sample_fps": 1.0,
                 **content_extras,
             })
+            # Add per-frame progress token after each frame if enabled
+            if self.use_per_frame_progress_token:
+                prog_tokens = "<|prog_token|>" * len(frames_or_video)
+                content_list.append({"type": "text", "text": prog_tokens})
 
     def _process_conversation(
         self, conversations: List[List[Dict]], add_generation_prompt: bool = False

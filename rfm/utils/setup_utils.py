@@ -623,7 +623,10 @@ def setup_model_and_processor(
 
             rewind_config = cfg.rewind if cfg.rewind is not None else ReWINDTransformerConfig()
             if cfg.rewind_scale_model:
-                rewind_config = ReWINDScaleTransformerConfig(causal_mask=cfg.causal_mask)
+                rewind_config = ReWINDScaleTransformerConfig(causal_mask=cfg.rewind.causal_mask, 
+                                                            hidden_dim=cfg.rewind.hidden_dim,
+                                                            num_layers=cfg.rewind.num_layers,
+                                                            num_attention_heads=cfg.rewind.num_attention_heads)
                 model = ReWiNDScaleTransformer(
                     config=rewind_config,
                     processor=processor,

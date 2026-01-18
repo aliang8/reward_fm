@@ -17,10 +17,6 @@ from .upload_to_hub import upload_model_to_hub
 from rfm.utils.distributed import is_rank_0
 from rfm.utils.logger import loguru_logger as logger
 from rfm.configs.experiment_configs import ExperimentConfig
-<<<<<<< HEAD
-# from rfm.utils.setup_utils import setup_model_and_processor
-=======
->>>>>>> refs/remotes/origin/anthony
 from pathlib import Path
 from dataclasses import fields
 from typing import Any, Optional, Tuple

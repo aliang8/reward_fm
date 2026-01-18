@@ -85,6 +85,7 @@ class ReWiNDScaleTransformer(PredictionHeadsMixin, PreTrainedModel):
             dropout=config.dropout,
             batch_first=True,
         )
+
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=config.num_layers)
 
         # postion embeddings for video and prediction tokens

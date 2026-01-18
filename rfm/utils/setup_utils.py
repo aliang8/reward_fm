@@ -284,6 +284,10 @@ def _add_special_tokens_and_resize(cfg: ModelConfig, processor: AutoProcessor, b
             "<|reward_token|>",
             "<|pref_token|>",
             "<|sim_token|>",
+            # "<|prog_token_A|>",
+            # "<|prog_token_B|>",
+            # "<|success_token_A|>",
+            # "<|success_token_B|>",
             "<|prog_token|>",  # Per-frame progress token
         ]
         logger.info(f"Before adding special tokens: {len(processor.tokenizer.get_vocab())}")

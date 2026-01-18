@@ -6,38 +6,12 @@
 
 defaults:
   - _self_
+  - reward_model: rlvlmf  # Options: rlvlmf, gvl, vlac, rfm, rewind, roboreward
 
-# Reward model: "gvl", "vlac", "rlvlmf", "rfm", or "rewind"
-reward_model: "rlvlmf"  # Options: "gvl", "vlac", "rlvlmf", "rfm", "rewind"
-
-# VLM provider for RL-VLM-F (only used if reward_model is "rlvlmf")
-vlm_provider: "gemini"  # Options: "gemini", "openai"
-
-# RL-VLM-F settings (only used if reward_model is "rlvlmf")
-temperature: 0.0
-
-# GVL settings (only used if reward_model is "gvl")
-gvl_api_key: null  # Will use GEMINI_API_KEY env var if not set
-gvl_max_frames: 32
-gvl_offset: 0.5
-
-# VLAC settings (only used if reward_model is "vlac")
-vlac_model_path: null  # Path to VLAC model checkpoint (required for vlac)
-vlac_device: "cuda:0"
-vlac_model_type: "internvl2"
-vlac_temperature: 0.5
-vlac_batch_num: 5
-vlac_skip: 5
-vlac_frame_skip: false
-vlac_use_images: true  # If true, use image mode; if false, use video mode
-
-# RFM/ReWiND settings (only used if reward_model is "rfm" or "rewind")
-rfm_checkpoint_path: null  # Path to RFM/ReWiND model checkpoint (HuggingFace repo ID or local path, required for rfm/rewind)
-rfm_batch_size: 32  # Batch size for RFM/ReWiND model inference
-
-# RoboReward settings (only used if reward_model is "roboreward")
-roboreward_model_path: "teetone/RoboReward-4B"  # Path to RoboReward model (HuggingFace repo ID, e.g., 'teetone/RoboReward-8B' or 'teetone/RoboReward-4B')
-roboreward_max_new_tokens: 128  # Maximum number of tokens to generate for RoboReward
+# Shared configuration
+# model_path is set in reward_model/*.yaml files, but can be overridden here
+# model_path: null  # Override model path if needed (HuggingFace repo ID or local path)
+max_frames: 32  # Maximum frames for models (used by GVL and potentially others)
 
 # Custom evaluation configuration
 # This specifies which evaluation types and datasets to run

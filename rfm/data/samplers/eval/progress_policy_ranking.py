@@ -207,6 +207,7 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
                 traj=traj,
                 frame_indices=frame_indices,
                 metadata=metadata,
+                pad_frames=self.pad_frames,
             )
         else:
             # Whole trajectory mode
@@ -221,6 +222,7 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
             trajectory = self._get_traj_from_data(
                 traj=traj,
                 metadata=metadata,
+                pad_frames=self.pad_frames,
             )
 
         sample = ProgressSample(trajectory=trajectory)

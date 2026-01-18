@@ -38,6 +38,18 @@ class ModelConfig(PretrainedConfig):
         },
     )
 
+    frame_pooling: str = field(
+        default="mean",
+        metadata={
+            "help": "How to pool vision tokens into a per-frame embedding for progress/success heads in multi-image mode. "
+            "Options: 'mean' (average over patch tokens), 'boundary' (use last patch token), 'attention' (learned attention pooling)."
+        },
+    )
+    frame_pooling_attn_temperature: float = field(
+        default=1.0,
+        metadata={"help": "Softmax temperature for attention pooling over patch tokens (only used when frame_pooling='attention')."},
+    )
+
     use_per_frame_progress_token: bool = field(
         default=False,
         metadata={
@@ -79,13 +91,6 @@ class ModelConfig(PretrainedConfig):
     progress_discrete_bins: Optional[int] = field(
         default=None,
         metadata={"help": "Number of discrete bins for progress when using discrete loss (None for continuous)"},
-    )
-    use_per_frame_progress_token: bool = field(
-        default=False,
-        metadata={
-            "help": "If True, add a <|prog_token|> after each frame for per-frame progress prediction. "
-            "Requires use_multi_image=True."
-        },
     )
     # rewind sub-config
     rewind: Optional[Dict[str, Any]] = field(default=None)
@@ -333,7 +338,12 @@ class CustomEvaluationConfig:
         default=None,
         metadata={"help": "Number of frames to subsample for reward alignment evaluation. null = use all frames."},
     )
-
+    pad_frames: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to pad frames for reward alignment and policy ranking evaluations. True = pad frames, False = use original frames."
+        },
+    )
 
 @dataclass
 class TrainingConfig:

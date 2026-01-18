@@ -106,9 +106,9 @@ class VLACConfig:
         default=0.5,
         metadata={"help": "Temperature for VLAC"},
     )
-    batch_num: int = field(
+    batch_size: int = field(
         default=5,
-        metadata={"help": "Batch number for VLAC processing"},
+        metadata={"help": "Batch size for VLAC processing"},
     )
     skip: int = field(
         default=5,

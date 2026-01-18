@@ -10,7 +10,8 @@ model_config:
   model_type: "internvl2"
   temperature: 0.5
   # top_k: 1
-  batch_num: 32
-  skip: 5 # doesn't matter 
+  batch_size: 32
+  skip: 1 
   frame_skip: true
   use_images: false  # If true, use image mode; if false, use video mode
+

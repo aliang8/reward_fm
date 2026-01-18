@@ -110,7 +110,7 @@ class VLAC:
         model_type: str = "internvl2",
         temperature: float = 0.5,
         top_k: int = 1,
-        batch_num: int = 5,
+        batch_size: int = 5,
         skip: int = 5,
         frame_skip: bool = True,
         auto_download: bool = True,
@@ -127,7 +127,7 @@ class VLAC:
             model_type: Model type (default: "internvl2")
             temperature: Temperature for generation
             top_k: Top-k sampling
-            batch_num: Batch number for processing
+            batch_size: Batch size for processing
             skip: Pair-wise step size
             frame_skip: Whether to skip frames for efficiency
             auto_download: If True and model_path is a Hugging Face repo ID, automatically
@@ -164,7 +164,7 @@ class VLAC:
         self.model_type = model_type
         self.temperature = temperature
         self.top_k = top_k
-        self.batch_num = batch_num
+        self.batch_size = batch_size
         self.skip = skip
         self.frame_skip = frame_skip
         self.use_images = use_images
@@ -235,7 +235,7 @@ class VLAC:
                     task=task_description,
                     image_list=image_list,
                     ref_image_list=ref_image_list if ref_image_list else None,
-                    batch_num=self.batch_num,
+                    batch_num=self.batch_size,
                     ref_num=len(ref_image_list) if ref_image_list else 0,
                     rich=True,  # Output decimal values (True for [0,1] range, False for integer percentage)
                     reverse_eval=False,
@@ -274,10 +274,10 @@ class VLAC:
                     task_description=task_description,
                     main_video_path=compressed_video,
                     reference_video_path=None,
-                    batch_num=self.batch_num,
+                    batch_num=self.batch_size,
                     ref_num=0,  # Number of reference images from reference video
                     think=False,  # Whether to use Chain-of-Thought reasoning
-                    skip=self.skip,  # Pair-wise step size (default: 5)
+                    skip=1,  # predict per frame
                     rich=True,  # Output decimal values (True for [0,1] range, False for integer percentage)
                     reverse_eval=False,  # Whether to reverse evaluation (for VROC evaluation)
                     output_path=tmpdir,

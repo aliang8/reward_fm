@@ -265,6 +265,15 @@ class DataConfig:
         },
     )
 
+    # Predict last frame partial progress mask
+    predict_last_frame_partial_progress: bool = field(
+        default=False,
+        metadata={
+            "help": "If True, create a mask that marks the last frame for partial_success trajectories (< 1.0). "
+            "If False, the mask is all 1.0s (no masking)."
+        },
+    )
+
     # Progress loss configuration
     progress_loss_type: str = field(
         default="l2",

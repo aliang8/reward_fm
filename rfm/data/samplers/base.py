@@ -22,6 +22,7 @@ from rfm.data.datasets.helpers import (
 )
 from rfm.data.dataset_types import Trajectory
 from rfm.utils.logger import get_logger
+from rfm.data.dataset_category import is_preference_only_ds
 
 logger = get_logger()
 
@@ -720,16 +721,21 @@ class RFMBaseSampler:
         final_frame_count = len(subsampled)
         predict_last_frame_mask = [1.0] * final_frame_count  # Default: all 1.0s (no masking)
         
-        if self.config.predict_last_frame_partial_progress and partial_success is not None and abs(partial_success - 1.0) > 1e-6:
-            last_original_frame_idx = num_frames_total - 1
-            if isinstance(indices, list) and last_original_frame_idx in indices:
-                # Find all positions where the last frame index appears
-                last_frame_positions = [i for i, idx in enumerate(indices) if idx == last_original_frame_idx and i < final_frame_count]
-                if last_frame_positions:
-                    # Mark all positions where the last frame appears with 1.0, all others 0.0
+        if self.config.predict_last_frame_partial_progress and partial_success is not None:
+            if partial_success == 1.0 and not is_preference_only_ds(traj["data_source"]):
+                pass 
+            else:
+                last_original_frame_idx = num_frames_total - 1
+                if isinstance(indices, list) and last_original_frame_idx in indices:
+                    # Find all positions where the last frame index appears
+                    last_frame_positions = [i for i, idx in enumerate(indices) if idx == last_original_frame_idx and i < final_frame_count]
+                    if last_frame_positions:
+                        # Mark all positions where the last frame appears with 1.0, all others 0.0
+                        predict_last_frame_mask = [0.0] * final_frame_count
+                        for pos in last_frame_positions:
+                            predict_last_frame_mask[pos] = 1.0
+                else:
                     predict_last_frame_mask = [0.0] * final_frame_count
-                    for pos in last_frame_positions:
-                        predict_last_frame_mask[pos] = 1.0
 
         # Update frames_shape
         frames_shape = subsampled.shape if hasattr(subsampled, "shape") else tuple()

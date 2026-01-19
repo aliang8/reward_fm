@@ -126,7 +126,8 @@ data:
   progress_discrete_bins: ${loss.progress_discrete_bins}  # Number of discrete bins for progress when using discrete loss
 
   use_per_frame_progress_token: ${model.use_per_frame_progress_token}
-
+  predict_last_frame_partial_progress: False 
+  
 # =====================================================================================
 # Custom Evaluation Configuration
 # =====================================================================================

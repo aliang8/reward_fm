@@ -2222,7 +2222,8 @@ class RFMHeadsTrainer(Trainer):
                     mask = mask.expand_as(predict_last_frame_mask)
                 elif predict_last_frame_mask.shape[1] == 1 and mask.shape[1] > 1:
                     predict_last_frame_mask = predict_last_frame_mask.expand_as(mask)
-                
+            
+            import ipdb; ipdb.set_trace()
             mask = mask * predict_last_frame_mask
         elif self.config.loss.predict_last_frame_progress:
             # Fallback to config-based logic: create a mask that only selects the last frame for each sequence

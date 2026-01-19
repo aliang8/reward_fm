@@ -1,4 +1,5 @@
-#!/bin/bash
+export RFM_PROCESSED_DATASETS_PATH="/mnt/data/jiahui/rfm/processed_datasets"
+
 if [ -z "$RFM_PROCESSED_DATASETS_PATH" ]; then
     echo "RFM_PROCESSED_DATASETS_PATH is not set"
     exit 1
@@ -23,6 +24,7 @@ for file in *.tar.partaa; do
         # remove the parts if successfully extracted
         if [ $? -eq 0 ]; then
             rm "${base_name}.part"*
+            echo "Successfully extracted and removed $base_name"
         else
             echo "Failed to extract $base_name, will need to retry and remove the failed parts"
             continue
@@ -46,6 +48,7 @@ for file in *.tar.part-aa; do
         # remove the parts if successfully extracted
         if [ $? -eq 0 ]; then
             rm "${base_name}.part"*
+            echo "Successfully extracted and removed $base_name"
         else
             echo "Failed to extract $base_name, will need to retry and remove the failed parts"
             continue
@@ -68,6 +71,7 @@ for file in *.tar; do
             if [ $? -eq 0 ]; then
                 processed_archives["$file"]=1
                 rm "$file"
+                echo "Successfully extracted and removed $file"
             else
                 echo "Failed to extract $file, will need to retry and remove the failed tar file"
                 continue

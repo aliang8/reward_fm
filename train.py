@@ -234,7 +234,7 @@ def train(cfg: ExperimentConfig):
         "rfm_vqa": RFMVQATrainer,
         "rewind_scale_transformer": ReWiNDTrainer,
     }[cfg.trainer_cls]
-
+    exit()
     # Add SaveBestCallback to automatically save and upload best models
     save_best_cfg = cfg.logging.save_best
     save_callback = SaveBestCallback(

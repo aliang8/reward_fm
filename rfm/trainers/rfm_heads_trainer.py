@@ -763,7 +763,7 @@ class RFMHeadsTrainer(Trainer):
             sampler_kwargs["max_comparisons"] = self.config.custom_eval.max_comparisons
 
         dataset = setup_custom_eval_dataset(
-            eval_cfg, sampler_type=eval_type, is_eval=True, verbose=False, sampler_kwargs=sampler_kwargs
+            eval_cfg, sampler_type=eval_type, verbose=False, sampler_kwargs=sampler_kwargs
         )
         # Explicitly delete eval_cfg after dataset creation to free memory
         del eval_cfg

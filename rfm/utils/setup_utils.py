@@ -831,11 +831,11 @@ def setup_dataset(cfg: DataConfig, is_eval: bool = False, sampler_kwargs=None, *
 
 
 def setup_custom_eval_dataset(
-    cfg: DataConfig, sampler_type: str, is_eval: bool = False, verbose=True, sampler_kwargs=None
+    cfg: DataConfig, sampler_type: str, verbose=True, sampler_kwargs=None
 ):
     """Setup a custom evaluation dataset with a specific sampler."""
     custom_eval_dataset = CustomEvalDataset(
-        sampler_type, cfg, is_evaluation=is_eval, verbose=verbose, sampler_kwargs=sampler_kwargs
+        sampler_type, cfg, verbose=verbose, sampler_kwargs=sampler_kwargs
     )
 
     return custom_eval_dataset

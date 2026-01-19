@@ -1,3 +1,13 @@
+# ReWIND
+uv run python rfm/evals/run_baseline_eval.py \
+    reward_model=rewind \
+    model_path=rewardfm/rewind-scale-rfm1M-32layers-8frame-20260118-180522 \
+    custom_eval.eval_types=[confusion_matrix] \
+    custom_eval.confusion_matrix=[[aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking,jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top,aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking]] \
+    custom_eval.use_frame_steps=false \
+    max_frames=8 \
+    model_config.batch_size=64
+
 # VLAC
 uv run --extra vlac --python .venv-vlac/bin/python python rfm/evals/run_baseline_eval.py \
     reward_model=vlac \

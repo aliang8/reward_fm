@@ -25,7 +25,7 @@ class CustomEvalDataset(BaseDataset):
             sampler_kwargs: Additional keyword arguments for the sampler
         """
         filter_successful_only = False
-        if sampler_type == "reward_alignment":
+        if sampler_type == "reward_alignment" or sampler_type == "confusion_matrix":
             filter_successful_only = True
         
         if len(config.eval_datasets) == 1 and "roboreward" in config.eval_datasets[0]:

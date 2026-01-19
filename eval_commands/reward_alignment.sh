@@ -8,7 +8,7 @@ uv run python rfm/evals/run_baseline_eval.py \
     custom_eval.subsample_n_frames=5 \
     custom_eval.reward_alignment_max_trajectories=30 \
     max_frames=8 \
-    model_config.batch_size=32
+    model_config.batch_size=64
 
 # VLAC
 uv run --extra vlac --python .venv-vlac/bin/python  rfm/evals/run_baseline_eval.py \

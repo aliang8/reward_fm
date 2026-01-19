@@ -64,3 +64,4 @@ baseline_eval_output/*
 confusion_matrix_output/*
 *.npy
 vqa_dataests/*
+rfm/configs/rewind_jh_cfg.yaml

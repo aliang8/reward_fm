@@ -421,7 +421,6 @@ DATA_SOURCE_CATEGORY = {
     "preference_only": [
         "oxe_bc_z",
         "oxe_dlr_edan_shared_control_converted_externally_to_rlds",
-        "roboreward_dlr_edan_shared_control_converted_externally_to_rldsroboarena",
         "auto_eval_rfm",
         # "humanoid_everyday_rfm",
         "galaxea_part1_r1_lite",
@@ -431,6 +430,7 @@ DATA_SOURCE_CATEGORY = {
         "galaxea_part5_r1_lite",
         "epic",
         "roboreward_roboarena",
+        "roboreward_dlr_edan_shared_control_converted_externally_to_rldsroboarena",
         "roboarena",
         "roboarena_eval_debug_nowrist",
     ],

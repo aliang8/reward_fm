@@ -54,9 +54,7 @@ from rfm.data.datasets import (
 )
 from rfm.data.datasets.custom_eval import CustomEvalDataset
 from rfm.data.datasets.data_source_balance import DataSourceBalancedWrapper
-from rfm.models import RFM, RFMVQA, ReWiNDTransformer
-from rfm.models.rewind_transformer import ReWINDTransformerConfig
-from rfm.models.rewind_transformer_scale import ReWINDScaleTransformerConfig, ReWiNDScaleTransformer
+from rfm.models import RFM, RFMVQA, ReWiNDTransformer, ReWiNDScaleTransformer, ReWINDTransformerConfig, ReWINDScaleTransformerConfig
 from rfm.utils.logger import get_logger
 
 logger = get_logger()
@@ -605,8 +603,9 @@ def setup_model_and_processor(
 
         if hf_model_id:
             repo_id, revision_to_load = parse_hf_model_id_and_revision(hf_model_id, model_name="ReWiND model")
-
-            model = ReWiNDTransformer.from_pretrained(
+            
+            rewind_model_cls = ReWiNDScaleTransformer if cfg.rewind_scale_model else ReWiNDTransformer
+            model = rewind_model_cls.from_pretrained(
                 repo_id,
                 processor=processor,
                 image_encoder=image_encoder,
@@ -627,24 +626,17 @@ def setup_model_and_processor(
             logger.info("Initializing ReWiND model...")
 
             rewind_config = cfg.rewind if cfg.rewind is not None else ReWINDTransformerConfig()
+            rewind_model_cls = ReWiNDScaleTransformer if cfg.rewind_scale_model else ReWiNDTransformer
             if cfg.rewind_scale_model:
                 rewind_config = ReWINDScaleTransformerConfig(causal_mask=cfg.causal_mask)
-                model = ReWiNDScaleTransformer(
-                    config=rewind_config,
-                    processor=processor,
-                    tokenizer=tokenizer,
-                    image_encoder=image_encoder,
-                    text_encoder=text_encoder,
-                )
-            else:
-                model = ReWiNDTransformer(
-                    config=rewind_config,
-                    processor=processor,
-                    tokenizer=tokenizer,
-                    image_encoder=image_encoder,
-                    text_encoder=text_encoder,
-                )
-
+            model = rewind_model_cls(
+                config=rewind_config,
+                processor=processor,
+                tokenizer=tokenizer,
+                image_encoder=image_encoder,
+                text_encoder=text_encoder,
+            )
+          
     logger.info("Model architecture initialized")
     logger.info(f"Model architecture: {model}")
 

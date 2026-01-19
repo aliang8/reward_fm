@@ -781,6 +781,7 @@ def main(cfg: DictConfig):
     # Datasets will be set per eval type during processing
     data_cfg = DataConfig(
         max_frames=baseline_cfg.max_frames,
+        load_embeddings=True if "rewind" in baseline_cfg.reward_model else False,
     )
 
     display_config(data_cfg)

@@ -68,7 +68,7 @@ def should_compute_progress(
         1.0 if progress should be computed, 0.0 otherwise
     """
 
-    # Mask out progress if data_source is in preference_only ckategory
+    # Mask out progress if data_source is in preference_only category
     if data_source is not None and is_preference_only_ds(data_source):
         # For preference_only datasets:
         # - If it's the chosen trajectory, always mask out (don't compute)
@@ -81,8 +81,9 @@ def should_compute_progress(
         # else:
         #    return 0.0
     # If partial_success and not is_preference_only_ds, always compute progress
-    # elif partial_success is not None:
-    #     return 1.0
+    # predict partial success for roboreward trajectories not preference only
+    elif partial_success is not None and "roboreward" in data_source:
+        return 1.0
     elif quality_label in ["suboptimal", "failure", "failed"]:
         return 0.0
     elif quality_label == "successful" or data_gen_strategy == DataGenStrat.REWIND.value:
@@ -119,61 +120,6 @@ def create_padding_mask(frames_shapes: torch.Tensor, max_length: int = None) -> 
     masks = (range_tensor.unsqueeze(0) < num_frames.unsqueeze(1)).float()
 
     return masks
-
-
-def create_predict_last_frame_mask(
-    partial_success: float | None | list[float], target_progress: list[float] | None
-) -> list[float]:
-    """
-    Create predict_last_frame mask for trajectories with partial_success.
-
-    For trajectories with partial_success < 1.0:
-    - Create a mask that is 1.0 for all frames that have partial_success as their target_progress value
-    - This mask is used to compute loss only on frames with partial_success (frames past the cutoff)
-    - The target_progress is already modified in the sampler to set frames past cutoff to partial_success
-
-    For trajectories with partial_success == 1.0 or None:
-    - Return all-ones mask (don't mask anything, use normal progress computation)
-
-    Args:
-        partial_success: Partial success value (0-1) or None
-        target_progress: List of target progress values (already modified by sampler)
-
-    Returns:
-        List of mask values: 1.0 for frames with partial_success, 0.0 otherwise (or all 1s if partial_success >= 1.0 or None)
-    """
-    if partial_success is None or target_progress is None or len(target_progress) == 0:
-        # No partial_success or no progress: return all-ones mask (don't mask anything)
-        return [1.0] * len(target_progress) if target_progress else []
-
-    # Only mask if partial_success < 1.0 (not full success)
-    if partial_success is not None:
-        if (
-            isinstance(partial_success, torch.Tensor) or partial_success > 1
-        ):  # discrete mode for both C51 and single index discrete targets
-            partial_success = convert_discrete_target_to_continuous(
-                partial_success[None, None], num_bins=partial_success.shape[-1]
-            ).item()
-            target_progress = [
-                convert_discrete_target_to_continuous(p[None, None], num_bins=p.shape[-1]).item()
-                for p in target_progress
-            ]
-        if abs(partial_success - 1.0) < 1e-6:
-            # Full success: return all-ones mask (don't mask anything)
-            return [1.0] * len(target_progress)
-
-        # Check which frames have partial_success as their target_progress value
-        # Use approximate equality to handle floating point precision issues
-        mask = []
-        for progress_val in target_progress:
-            # Check if this frame's progress equals partial_success (within tolerance)
-            # This handles both continuous and discrete (binned) values
-            if abs(progress_val - partial_success) < 1e-6:
-                mask.append(1.0)
-            else:
-                mask.append(0.0)
-
-    return mask
 
 
 class RFMBatchCollator(BaseCollator):
@@ -499,13 +445,9 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["target_progress_mask"] = torch.tensor(target_progress_mask, dtype=torch.float32)
 
         # Create predict_last_frame masks for trajectories with partial_success
-        predict_last_frame_mask_list = []
-        for i, sample in enumerate(progress_samples):
-            mask = create_predict_last_frame_mask(
-                sample.trajectory.partial_success,
-                target_progress_list[i],
-            )
-            predict_last_frame_mask_list.append(mask)
+        predict_last_frame_mask_list = [
+            sample.trajectory.predict_last_frame_mask for sample in progress_samples
+        ]
 
         # Add predict_last_frame_mask (padded to max_length)
         batch_inputs["predict_last_frame_mask"] = pad_list_to_max(predict_last_frame_mask_list)
@@ -660,14 +602,8 @@ class RFMBatchCollator(BaseCollator):
         batch_inputs["frames_shape_B"] = torch.tensor(frames_shape_B, dtype=torch.int32)
 
         # Create predict_last_frame masks for trajectories with partial_success
-        predict_last_frame_mask_A_list = []
-        predict_last_frame_mask_B_list = []
-        for i, (traj_a, traj_b) in enumerate(zip(trajectory_A_list, trajectory_B_list)):
-            mask_a = create_predict_last_frame_mask(traj_a.partial_success, target_progress_A[i])
-            mask_b = create_predict_last_frame_mask(traj_b.partial_success, target_progress_B[i])
-
-            predict_last_frame_mask_A_list.append(mask_a)
-            predict_last_frame_mask_B_list.append(mask_b)
+        predict_last_frame_mask_A_list = [traj.predict_last_frame_mask for traj in trajectory_A_list]
+        predict_last_frame_mask_B_list = [traj.predict_last_frame_mask for traj in trajectory_B_list]
 
         batch_inputs["target_progress_A"] = pad_list_to_max(target_progress_A)
         batch_inputs["target_progress_B"] = pad_list_to_max(target_progress_B)
@@ -709,20 +645,12 @@ class RFMBatchCollator(BaseCollator):
         ]
 
         # Create predict_last_frame masks for chosen/rejected trajectories with partial_success
-        predict_last_frame_mask_chosen_list = []
-        predict_last_frame_mask_rejected_list = []
-        for i, sample in enumerate(preference_samples):
-            mask_chosen = create_predict_last_frame_mask(
-                sample.chosen_trajectory.partial_success,
-                target_progress_chosen[i],
-            )
-            mask_rejected = create_predict_last_frame_mask(
-                sample.rejected_trajectory.partial_success,
-                target_progress_rejected[i],
-            )
-
-            predict_last_frame_mask_chosen_list.append(mask_chosen)
-            predict_last_frame_mask_rejected_list.append(mask_rejected)
+        predict_last_frame_mask_chosen_list = [
+            sample.chosen_trajectory.predict_last_frame_mask for sample in preference_samples
+        ]
+        predict_last_frame_mask_rejected_list = [
+            sample.rejected_trajectory.predict_last_frame_mask for sample in preference_samples
+        ]
 
         # Pad target progress tensors to max length in last dimension
         batch_inputs["target_progress_chosen"] = pad_list_to_max(target_progress_chosen)
@@ -980,21 +908,13 @@ class RFMBatchCollator(BaseCollator):
         predict_last_frame_mask_diff_list = []
 
         for i, sample in enumerate(similarity_samples):
-            mask_ref = create_predict_last_frame_mask(
-                sample.ref_trajectory.partial_success,
-                target_progress_ref[i],
+            mask_ref = sample.ref_trajectory.predict_last_frame_mask
+            mask_sim = sample.sim_trajectory.predict_last_frame_mask
+            mask_diff = (
+                sample.diff_trajectory.predict_last_frame_mask
+                if sample.diff_trajectory is not None
+                else []
             )
-            mask_sim = create_predict_last_frame_mask(
-                sample.sim_trajectory.partial_success,
-                target_progress_sim[i],
-            )
-            if sample.diff_trajectory is not None:
-                mask_diff = create_predict_last_frame_mask(
-                    sample.diff_trajectory.partial_success,
-                    target_progress_diff[i],
-                )
-            else:
-                mask_diff = []
 
             predict_last_frame_mask_ref_list.append(mask_ref)
             predict_last_frame_mask_sim_list.append(mask_sim)
@@ -1083,27 +1003,23 @@ class RFMBatchCollator(BaseCollator):
         for i, sample in enumerate(similarity_samples):
             if ref_sim_order[i]:
                 # Ref is A (first)
-                traj_a_progress = sample.ref_trajectory.target_progress
-                traj_a_partial_success = sample.ref_trajectory.partial_success
+                traj_a = sample.ref_trajectory
             else:
                 # Sim is A (first)
-                traj_a_progress = sample.sim_trajectory.target_progress
-                traj_a_partial_success = sample.sim_trajectory.partial_success
+                traj_a = sample.sim_trajectory
 
-            mask_a = create_predict_last_frame_mask(traj_a_partial_success, traj_a_progress)
+            mask_a = traj_a.predict_last_frame_mask
             predict_last_frame_mask_sim_A_list.append(mask_a)
 
             if sample.diff_trajectory is not None:
                 if ref_diff_order[i]:
                     # Ref is A (first)
-                    traj_a_progress_diff = sample.ref_trajectory.target_progress
-                    traj_a_partial_success_diff = sample.ref_trajectory.partial_success
+                    traj_a_diff = sample.ref_trajectory
                 else:
                     # Diff is A (first)
-                    traj_a_progress_diff = sample.diff_trajectory.target_progress
-                    traj_a_partial_success_diff = sample.diff_trajectory.partial_success
+                    traj_a_diff = sample.diff_trajectory
 
-                mask_a_diff = create_predict_last_frame_mask(traj_a_partial_success_diff, traj_a_progress_diff)
+                mask_a_diff = traj_a_diff.predict_last_frame_mask
                 predict_last_frame_mask_diff_A_list.append(mask_a_diff)
             else:
                 predict_last_frame_mask_diff_A_list.append([])

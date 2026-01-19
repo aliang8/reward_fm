@@ -2222,6 +2222,7 @@ class RFMHeadsTrainer(Trainer):
                     mask = mask.expand_as(predict_last_frame_mask)
                 elif predict_last_frame_mask.shape[1] == 1 and mask.shape[1] > 1:
                     predict_last_frame_mask = predict_last_frame_mask.expand_as(mask)
+                
             mask = mask * predict_last_frame_mask
         elif self.config.loss.predict_last_frame_progress:
             # Fallback to config-based logic: create a mask that only selects the last frame for each sequence
@@ -2476,8 +2477,7 @@ class RFMHeadsTrainer(Trainer):
         progress_pred = progress_logits["A"]
         progress_target = inputs["target_progress"]
         progress_target_mask = inputs["target_progress_mask"].unsqueeze(-1)
-        # predict_last_frame_mask = inputs.get("predict_last_frame_mask", None)
-        predict_last_frame_mask = None
+        predict_last_frame_mask = inputs["predict_last_frame_mask"]
 
         progress_loss, spearman_corr, progress_metrics = self._compute_progress_loss_helper(
             progress_pred, progress_target, progress_target_mask, predict_last_frame_mask=predict_last_frame_mask
@@ -2618,8 +2618,7 @@ class RFMHeadsTrainer(Trainer):
 
         if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
             progress_pred_A = progress_logits["A"]
-            # predict_last_frame_mask_A = inputs.get("predict_last_frame_mask_A", None)
-            predict_last_frame_mask_A = None
+            predict_last_frame_mask_A = inputs["predict_last_frame_mask_A"]
             progress_loss_A, spearman_corr_A, progress_metrics_A = self._compute_progress_loss_helper(
                 progress_pred_A,
                 target_progress_A,

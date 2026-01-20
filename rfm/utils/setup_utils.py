@@ -54,7 +54,7 @@ from rfm.data.datasets import (
 )
 from rfm.data.datasets.custom_eval import CustomEvalDataset
 from rfm.data.datasets.data_source_balance import DataSourceBalancedWrapper
-from rfm.models import RFM, RFMVQA, ReWiNDTransformer, ReWiNDScaleTransformer, ReWINDTransformerConfig, ReWINDScaleTransformerConfig
+from rfm.models import RFM, RFMVQA, ReWiNDTransformer, ReWINDTransformerConfig, ReWINDScaledTransformerConfig
 from rfm.utils.logger import get_logger
 
 logger = get_logger()
@@ -141,16 +141,15 @@ def _load_base_model_with_unsloth(
         load_in_4bit=cfg.quantization,  # Use 4bit if quantization is enabled
         use_gradient_checkpointing="unsloth",  # Use unsloth's optimized checkpointing
         dtype=torch_dtype,  # Set the dtype from config,
-        full_finetuning=True,
+        full_finetuning=True if not cfg.use_peft else False,
         device_map=None,
         attn_implementation=extra_kwargs["attn_implementation"],
         trust_remote_code=True,
     )
-    if cfg.model_type == "default":
-        base_model = base_model.model
 
     # Apply PEFT if enabled (only if not loading from checkpoint)
     # When loading from checkpoint, the checkpoint already contains the trained weights
+    # IMPORTANT: Apply PEFT while model is still wrapped in FastVisionModel
     if cfg.use_peft and peft_config and not loading_from_checkpoint:
         logger.info("Applying PEFT configuration to base model")
         base_model = FastVisionModel.get_peft_model(
@@ -166,6 +165,10 @@ def _load_base_model_with_unsloth(
         )
     elif loading_from_checkpoint:
         logger.info("Skipping PEFT application - loading from checkpoint which already contains trained weights")
+
+    # Extract inner model after PEFT is applied (if needed for RFM wrapper)
+    if cfg.model_type == "default":
+        base_model = base_model.model
 
     return base_model, tokenizer
 
@@ -604,8 +607,7 @@ def setup_model_and_processor(
         if hf_model_id:
             repo_id, revision_to_load = parse_hf_model_id_and_revision(hf_model_id, model_name="ReWiND model")
             
-            rewind_model_cls = ReWiNDScaleTransformer if cfg.rewind_scale_model else ReWiNDTransformer
-            model = rewind_model_cls.from_pretrained(
+            model = ReWiNDTransformer.from_pretrained(
                 repo_id,
                 processor=processor,
                 image_encoder=image_encoder,
@@ -625,11 +627,25 @@ def setup_model_and_processor(
 
             logger.info("Initializing ReWiND model...")
 
-            rewind_config = cfg.rewind if cfg.rewind is not None else ReWINDTransformerConfig()
-            rewind_model_cls = ReWiNDScaleTransformer if cfg.rewind_scale_model else ReWiNDTransformer
-            if cfg.rewind_scale_model:
-                rewind_config = ReWINDScaleTransformerConfig(causal_mask=cfg.causal_mask)
-            model = rewind_model_cls(
+            # Get config from cfg.rewind or create default based on scale_model flag
+            if cfg.rewind is not None:
+                # cfg.rewind is already a config object (converted in ModelConfig.__post_init__)
+                rewind_config = cfg.rewind
+            else:
+                # Create default config based on scale_model flag
+                config_kwargs = {
+                    "causal_mask": cfg.causal_mask,
+                    "use_per_frame_progress_token": getattr(cfg, "use_per_frame_progress_token", False),
+                    "progress_loss_type": cfg.progress_loss_type,
+                    "progress_discrete_bins": cfg.progress_discrete_bins or 10,
+                }
+                if cfg.rewind_scale_model:
+                    rewind_config = ReWINDScaledTransformerConfig(**config_kwargs)
+                else:
+                    rewind_config = ReWINDTransformerConfig(**config_kwargs)
+            
+            # Both scale and regular use the same model class now
+            model = ReWiNDTransformer(
                 config=rewind_config,
                 processor=processor,
                 tokenizer=tokenizer,
@@ -641,43 +657,59 @@ def setup_model_and_processor(
     logger.info(f"Model architecture: {model}")
 
     # Configure which parts of the model to train based on config
+    # IMPORTANT: When using PEFT (via Unsloth or standard), PEFT already handles freezing
+    # base model parameters. We should NOT override requires_grad on base model params.
+    peft_applied = cfg.use_peft and (cfg.use_unsloth or cfg.peft_vision_encoder)
+    
+    # Helper function to check if a parameter is part of the base model (vision/language)
+    def is_base_model_param(name: str) -> bool:
+        """Check if parameter belongs to base model (vision/language) that PEFT handles."""
+        base_model_patterns = [
+            "visual", "vision", "language_model", "text_encoder", "text_model", "image_encoder"
+        ]
+        return any(pattern in name for pattern in base_model_patterns)
+    
+    # Helper function to check if a parameter is a prediction head
+    def is_prediction_head(name: str) -> bool:
+        """Check if parameter belongs to a prediction head."""
+        head_patterns = ["progress_head", "success_head", "preference_head", "similarity_head"]
+        return any(pattern in name for pattern in head_patterns)
+    
     for name, param in model.named_parameters():
-        # Train prediction heads based on individual settings
-        if "progress_head" in name:
-            param.requires_grad = cfg.train_progress_head
-        elif "success_head" in name:
-            param.requires_grad = cfg.train_success_head
-        elif "preference_head" in name:
-            param.requires_grad = cfg.train_preference_head
-        elif "similarity_head" in name:
-            param.requires_grad = cfg.train_similarity_head
-        # Train vision encoder if specified
-        elif "visual" in name or "vision" in name:
-            # if PEFT enabled, we don't need to do anything
-            if cfg.use_peft and cfg.peft_vision_encoder:
-                pass
-            else:
+        # 1. Handle prediction heads - always controlled by their individual flags
+        if is_prediction_head(name):
+            if "progress_head" in name:
+                param.requires_grad = cfg.train_progress_head
+            elif "success_head" in name:
+                param.requires_grad = cfg.train_success_head
+            elif "preference_head" in name:
+                param.requires_grad = cfg.train_preference_head
+            elif "similarity_head" in name:
+                param.requires_grad = cfg.train_similarity_head
+        
+        # 2. Handle base model parameters (vision/language) - skip if PEFT is applied
+        elif is_base_model_param(name):
+            if peft_applied:
+                # PEFT handles freezing/unfreezing - don't override
+                continue
+            
+            # Set requires_grad based on config flags
+            if "visual" in name or "vision" in name or "vision_model" in name:
                 param.requires_grad = cfg.train_vision_encoder
-        elif "language_model" in name:
-            param.requires_grad = cfg.train_language_model
-        elif "text_encoder" in name:
-            param.requires_grad = cfg.train_language_model
-        elif "text_model" in name:
-            param.requires_grad = cfg.train_language_model
-        elif "image_encoder" in name:
-            param.requires_grad = cfg.train_vision_encoder
+            elif "language_model" in name or "text_encoder" in name or "text_model" in name:
+                param.requires_grad = cfg.train_language_model
+            elif "image_encoder" in name:
+                param.requires_grad = cfg.train_vision_encoder
+        
+        # 3. Handle special cases
+        elif "lm_head" in name:
+            # Language modeling head should not be trainable for RFM
+            param.requires_grad = False
+        
+        # 4. All other parameters (custom RFM parameters like frame_pool_attn, video_proj, text_proj)
+        # should always be trainable
         else:
             param.requires_grad = True
-
-        if "SmolVLM" in cfg.base_model_id:
-            if "text_model" in name:
-                param.requires_grad = cfg.train_language_model
-            if "vision_model" in name:
-                param.requires_grad = cfg.train_vision_encoder
-            # i think we want to train the connector head always
-            # we don't need the lm_head to be trainable
-            if "lm_head" in name:
-                param.requires_grad = False
 
     logger.info("Training configuration:")
     logger.info(f"  - Vision encoder: {cfg.train_vision_encoder}")

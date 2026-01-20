@@ -129,6 +129,14 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
         """Delegates gradient checkpointing disabling to the base model."""
         self.model.gradient_checkpointing_disable(**kwargs)
 
+    def generate(self, *args, **kwargs):
+        """Delegates generation to the base model."""
+        return self.model.generate(*args, **kwargs)
+
+    def prepare_inputs_for_generation(self, *args, **kwargs):
+        """Delegates input preparation for generation to the base model."""
+        return self.model.prepare_inputs_for_generation(*args, **kwargs)
+
     def _extract_hidden_states_from_token_pairs(
         self,
         hidden_state: torch.Tensor,

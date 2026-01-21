@@ -23,6 +23,10 @@ model:
     num_attention_heads: 16
     dropout: 0.1  
     max_len: 16
+    causal_mask: true
+    use_per_frame_progress_token: true
+    progress_loss_type: l2
+    progress_discrete_bins: 32
 
 training:
   gradient_checkpointing: false

@@ -96,7 +96,7 @@ class ModelConfig(PretrainedConfig):
     rewind: Optional[Dict[str, Any]] = field(default=None)
 
     def __post_init__(self):
-        from rfm.models.rewind_transformer import ReWINDTransformerConfig, ReWINDScaledTransformerConfig
+        from rfm.models.rewind_transformer import ReWINDTransformerConfig
 
         if self.rewind is not None and isinstance(self.rewind, dict):
             # Pass progress_loss_type and progress_discrete_bins from parent config if not set in rewind dict
@@ -107,10 +107,7 @@ class ModelConfig(PretrainedConfig):
             if "use_per_frame_progress_token" not in self.rewind:
                 self.rewind["use_per_frame_progress_token"] = self.use_per_frame_progress_token
             
-            if self.rewind_scale_model:
-                self.rewind = ReWINDScaledTransformerConfig(**self.rewind)
-            else:
-                self.rewind = ReWINDTransformerConfig(**self.rewind)
+            self.rewind = ReWINDTransformerConfig(**self.rewind)
 
 
 @dataclass

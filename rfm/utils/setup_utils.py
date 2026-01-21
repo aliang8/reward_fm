@@ -54,7 +54,7 @@ from rfm.data.datasets import (
 )
 from rfm.data.datasets.custom_eval import CustomEvalDataset
 from rfm.data.datasets.data_source_balance import DataSourceBalancedWrapper
-from rfm.models import RFM, RFMVQA, ReWiNDTransformer, ReWINDTransformerConfig, ReWINDScaledTransformerConfig
+from rfm.models import RFM, RFMVQA, ReWiNDTransformer, ReWINDTransformerConfig
 from rfm.utils.logger import get_logger
 
 logger = get_logger()
@@ -632,18 +632,8 @@ def setup_model_and_processor(
                 # cfg.rewind is already a config object (converted in ModelConfig.__post_init__)
                 rewind_config = cfg.rewind
             else:
-                # Create default config based on scale_model flag
-                config_kwargs = {
-                    "causal_mask": cfg.causal_mask,
-                    "use_per_frame_progress_token": getattr(cfg, "use_per_frame_progress_token", False),
-                    "progress_loss_type": cfg.progress_loss_type,
-                    "progress_discrete_bins": cfg.progress_discrete_bins or 10,
-                }
-                if cfg.rewind_scale_model:
-                    rewind_config = ReWINDScaledTransformerConfig(**config_kwargs)
-                else:
-                    rewind_config = ReWINDTransformerConfig(**config_kwargs)
-            
+                raise ValueError("rewind config is not set in config")
+
             # Both scale and regular use the same model class now
             model = ReWiNDTransformer(
                 config=rewind_config,

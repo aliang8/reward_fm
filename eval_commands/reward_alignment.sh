@@ -36,10 +36,11 @@ uv run python rfm/evals/run_baseline_eval.py \
 # RFM 
 uv run python rfm/evals/run_baseline_eval.py \
     reward_model=rfm \
-    model_path=rewardfm/rfm_qwen_pref_prog_4frames_all_strategy \
+    model_path=aliangdw/qwen4b_pref_prog_succ_8_frames_all \
     custom_eval.eval_types=[reward_alignment] \
     custom_eval.reward_alignment=[rfm-1m-id,rfm-1m-ood] \
     custom_eval.use_frame_steps=true \
+    custom_eval.subsample_n_frames=5 \
     custom_eval.reward_alignment_max_trajectories=30 \
     max_frames=4 \
     model_config.batch_size=32

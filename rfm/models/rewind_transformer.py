@@ -34,7 +34,7 @@ class ReWINDTransformerConfig(PretrainedConfig):
         num_attention_heads: int = 8,
         dropout: float = 0.1,
         max_len: int = 16,
-        causal_mask: bool = False,
+        causal_mask: bool = True,
         use_per_frame_progress_token: bool = False,
         progress_loss_type: str = "l2",
         progress_discrete_bins: int = 10,
@@ -52,43 +52,6 @@ class ReWINDTransformerConfig(PretrainedConfig):
         self.use_per_frame_progress_token = use_per_frame_progress_token
         self.progress_loss_type = progress_loss_type
         self.progress_discrete_bins = progress_discrete_bins
-
-
-class ReWINDScaledTransformerConfig(ReWINDTransformerConfig):
-    """Scaled-up version of ReWIND Transformer with more layers and larger dimensions."""
-
-    model_type = "rewind_scaled_transformer"
-
-    def __init__(
-        self,
-        video_feature_dim: int = 768,
-        text_feature_dim: int = 384,
-        hidden_dim: int = 1024,  # Increased from 512
-        num_layers: int = 32,  # Increased from 4
-        num_attention_heads: int = 16,  # Increased from 8
-        dropout: float = 0.1,
-        max_len: int = 32,  # Increased from 16
-        causal_mask: bool = False,
-        use_per_frame_progress_token: bool = False,
-        progress_loss_type: str = "l2",
-        progress_discrete_bins: int = 10,
-        **kwargs,
-    ):
-        super().__init__(
-            video_feature_dim=video_feature_dim,
-            text_feature_dim=text_feature_dim,
-            hidden_dim=hidden_dim,
-            num_layers=num_layers,
-            num_attention_heads=num_attention_heads,
-            dropout=dropout,
-            max_len=max_len,
-            causal_mask=causal_mask,
-            use_per_frame_progress_token=use_per_frame_progress_token,
-            progress_loss_type=progress_loss_type,
-            progress_discrete_bins=progress_discrete_bins,
-            **kwargs,
-        )
-
 
 class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
     """ReWiND Transformer with three prediction heads for different objectives."""
@@ -443,5 +406,4 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
 
 # Register the model and configs with transformers
 AutoConfig.register("rewind_transformer", ReWINDTransformerConfig)
-AutoConfig.register("rewind_scaled_transformer", ReWINDScaledTransformerConfig)
 AutoModel.register(ReWINDTransformerConfig, ReWiNDTransformer)

@@ -31,13 +31,13 @@ uv run python rfm/evals/run_baseline_eval.py \
     custom_eval.num_examples_per_quality_pr=1000 \
     max_frames=64
 
-# RFM
+# RFM 8 frame model DISCRETE
 uv run python rfm/evals/run_baseline_eval.py \
     reward_model=rfm \
-    model_path=rewardfm/rfm_qwen_pref_prog_4frames_all_strategy \
+    model_path=aliangdw/qwen4b_pref_prog_succ_8_frames_all_part2 \
     custom_eval.eval_types=[policy_ranking] \
     custom_eval.policy_ranking=[rfm-1m-ood] \
     custom_eval.use_frame_steps=false \
     custom_eval.num_examples_per_quality_pr=1000 \
-    max_frames=4 \
+    max_frames=8 \
     model_config.batch_size=32

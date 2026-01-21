@@ -76,14 +76,7 @@ class ModelConfig(PretrainedConfig):
     use_unsloth: bool = field(
         default=False, metadata={"help": "Whether to use unsloth for faster vision model training"}
     )
-    rewind_scale_model: bool = field(
-        default=False,
-        metadata={"help": "Use ReWINDScaleTransformer instead of standard ReWINDTransformer"},
-    )
-    causal_mask: bool = field(
-        default=False,
-        metadata={"help": "Whether to use casual masking in ReWINDTransformer"},
-    )
+
     progress_loss_type: str = field(
         default="l2",
         metadata={"help": "Type of progress loss: 'l1', 'l2', or 'discrete'"},

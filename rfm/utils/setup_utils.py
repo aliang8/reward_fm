@@ -147,11 +147,15 @@ def _load_base_model_with_unsloth(
         trust_remote_code=True,
     )
 
-    # Apply PEFT if enabled (only if not loading from checkpoint)
-    # When loading from checkpoint, the checkpoint already contains the trained weights
-    # IMPORTANT: Apply PEFT while model is still wrapped in FastVisionModel
-    if cfg.use_peft and peft_config and not loading_from_checkpoint:
-        logger.info("Applying PEFT configuration to base model")
+    # Apply PEFT if enabled
+    # IMPORTANT: We must apply PEFT configuration even when loading from checkpoint,
+    # because the checkpoint contains PEFT adapter weights that need the adapter structure to be loaded.
+    # Apply PEFT while model is still wrapped in FastVisionModel
+    if cfg.use_peft and peft_config:
+        if loading_from_checkpoint:
+            logger.info("Applying PEFT configuration to base model (needed to load adapter weights from checkpoint)")
+        else:
+            logger.info("Applying PEFT configuration to base model")
         base_model = FastVisionModel.get_peft_model(
             base_model,
             finetune_vision_layers=cfg.train_vision_encoder,
@@ -163,8 +167,6 @@ def _load_base_model_with_unsloth(
             lora_dropout=peft_config.lora_dropout,
             bias=peft_config.bias,
         )
-    elif loading_from_checkpoint:
-        logger.info("Skipping PEFT application - loading from checkpoint which already contains trained weights")
 
     # Extract inner model after PEFT is applied (if needed for RFM wrapper)
     if cfg.model_type == "default":

@@ -35,9 +35,6 @@ class ReWINDTransformerConfig(PretrainedConfig):
         dropout: float = 0.1,
         max_len: int = 16,
         causal_mask: bool = True,
-        use_per_frame_progress_token: bool = False,
-        progress_loss_type: str = "l2",
-        progress_discrete_bins: int = 10,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -49,9 +46,6 @@ class ReWINDTransformerConfig(PretrainedConfig):
         self.dropout = dropout
         self.max_len = max_len
         self.causal_mask = causal_mask
-        self.use_per_frame_progress_token = use_per_frame_progress_token
-        self.progress_loss_type = progress_loss_type
-        self.progress_discrete_bins = progress_discrete_bins
 
 class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
     """ReWiND Transformer with three prediction heads for different objectives."""
@@ -59,9 +53,10 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
     config_class = ReWINDTransformerConfig
 
     def __init__(self, config, processor=None, tokenizer=None, image_encoder=None, text_encoder=None):
-        video_feature_dim = config.video_feature_dim
-        text_feature_dim = config.text_feature_dim
-        hidden_dim = config.hidden_dim
+        rewind_config = config.rewind
+
+        video_feature_dim = rewind_config.video_feature_dim
+        text_feature_dim = rewind_config.text_feature_dim
 
         if image_encoder is not None:
             video_feature_dim = image_encoder.config.hidden_size
@@ -69,10 +64,10 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
             text_feature_dim = text_encoder.config.hidden_size
 
         super().__init__(
-            config,
-            hidden_dim=hidden_dim,
-            model_config=config,
-            dropout=config.dropout,
+            config=config.rewind, 
+            model_config=config, 
+            hidden_dim=rewind_config.hidden_dim, 
+            dropout=rewind_config.dropout
         )
 
         self.image_encoder = image_encoder
@@ -80,31 +75,29 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
         self.tokenizer = tokenizer
         self.processor = processor
 
-        self.video_proj = nn.Linear(video_feature_dim, hidden_dim)
-        self.text_proj = nn.Linear(text_feature_dim, hidden_dim)
+        self.video_proj = nn.Linear(video_feature_dim, rewind_config.hidden_dim)
+        self.text_proj = nn.Linear(text_feature_dim, rewind_config.hidden_dim)
 
-        self.first_embedding_A = nn.Parameter(torch.randn(1, 1, hidden_dim))
-        self.first_embedding_B = nn.Parameter(torch.randn(1, 1, hidden_dim))
+        self.first_embedding_A = nn.Parameter(torch.randn(1, 1, rewind_config.hidden_dim))
+        self.first_embedding_B = nn.Parameter(torch.randn(1, 1, rewind_config.hidden_dim))
 
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=hidden_dim,
-            nhead=config.num_attention_heads,
-            dim_feedforward=config.hidden_dim * 4,
-            dropout=config.dropout,
+            d_model=rewind_config.hidden_dim,
+            nhead=rewind_config.num_attention_heads,
+            dim_feedforward=rewind_config.hidden_dim * 4,
+            dropout=rewind_config.dropout,
             batch_first=True,
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=config.num_layers)
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=rewind_config.num_layers)
 
-        # Position embedding for text (used when use_per_frame_progress_token is True)
-        if config.use_per_frame_progress_token:
-            self.text_position_embedding = nn.Parameter(torch.randn(1, 1, hidden_dim))
-            # Progress tokens - max_len long, inserted between frames (contain position information)
-            self.prog_token_A = nn.Parameter(torch.randn(1, config.max_len, config.hidden_dim))
-            self.prog_token_B = nn.Parameter(torch.randn(1, config.max_len, config.hidden_dim))
+        if rewind_config.use_per_frame_progress_token:
+            self.text_position_embedding = nn.Parameter(torch.randn(1, 1, rewind_config.hidden_dim))
+            self.prog_token_A = nn.Parameter(torch.randn(1, rewind_config.max_len, rewind_config.hidden_dim))
+            self.prog_token_B = nn.Parameter(torch.randn(1, rewind_config.max_len, rewind_config.hidden_dim))
 
         # Prediction tokens
-        self.preference_token = nn.Parameter(torch.randn(1, 1, config.hidden_dim))
-        self.similarity_token = nn.Parameter(torch.randn(1, 1, config.hidden_dim))
+        self.preference_token = nn.Parameter(torch.randn(1, 1, rewind_config.hidden_dim))
+        self.similarity_token = nn.Parameter(torch.randn(1, 1, rewind_config.hidden_dim))
 
     def forward(
         self,

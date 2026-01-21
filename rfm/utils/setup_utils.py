@@ -626,17 +626,8 @@ def setup_model_and_processor(
                 p.requires_grad = train_text
 
             logger.info("Initializing ReWiND model...")
-
-            # Get config from cfg.rewind or create default based on scale_model flag
-            if cfg.rewind is not None:
-                # cfg.rewind is already a config object (converted in ModelConfig.__post_init__)
-                rewind_config = cfg.rewind
-            else:
-                raise ValueError("rewind config is not set in config")
-
-            # Both scale and regular use the same model class now
             model = ReWiNDTransformer(
-                config=rewind_config,
+                config=cfg,
                 processor=processor,
                 tokenizer=tokenizer,
                 image_encoder=image_encoder,

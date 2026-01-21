@@ -25,7 +25,7 @@ model:
     max_len: 16
     causal_mask: true
     use_per_frame_progress_token: true
-    progress_loss_type: l2
+    progress_loss_type: discrete
     progress_discrete_bins: 32
 
 training:

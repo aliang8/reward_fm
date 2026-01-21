@@ -564,38 +564,51 @@ def setup_model_and_processor(
         if hf_model_id:
             repo_id, revision_to_load = parse_hf_model_id_and_revision(hf_model_id, model_name="model")
 
-            # Capture before weights for verification
-            before_weights = {}
-            if cfg.model_type != "vqa":
-                if "Qwen2.5" in cfg.base_model_id:
-                    before_weights = {
-                        "visual": model.model.visual.blocks[0].mlp.down_proj.weight,
-                        "progress_head": model.progress_head[0].weight,
-                        "lm_embed_tokens": model.model.language_model.embed_tokens.weight,
-                        "lm_layer": model.model.language_model.layers[0].mlp.up_proj.weight,
-                    }
-                elif "Qwen3" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
-                    before_weights = {
-                        "visual": model.model.visual.blocks[0].mlp.linear_fc1.weight,
-                        "progress_head": model.progress_head[0].weight,
-                        "lm_embed_tokens": model.model.language_model.embed_tokens.weight,
-                        "lm_layer": model.model.language_model.layers[0].mlp.up_proj.weight,
-                    }
+            # IMPORTANT: When using PEFT, we should NOT use from_pretrained() because it creates a new model
+            # instance and randomly initializes missing base model weights. Instead, we manually load checkpoint
+            # weights into the existing model (which already has the correct base model weights from the pretrained model).
+            # This preserves the base model weights and only loads adapter weights and custom heads from the checkpoint.
+            if cfg.use_peft:
+                logger.info("Loading checkpoint weights manually (PEFT mode - preserving base model weights)")
+                # Convert repo_id to local path if needed (handles HuggingFace Hub paths)
+                checkpoint_path = resolve_checkpoint_path(hf_model_id)
+                if checkpoint_path is None:
+                    raise ValueError(f"Could not resolve checkpoint path: {hf_model_id}")
+                _load_checkpoint_weights_from_safetensors(model, checkpoint_path)
+            else:
+                # For non-PEFT models, we can use from_pretrained as before
+                # Capture before weights for verification
+                before_weights = {}
+                if cfg.model_type != "vqa":
+                    if "Qwen2.5" in cfg.base_model_id:
+                        before_weights = {
+                            "visual": model.model.visual.blocks[0].mlp.down_proj.weight,
+                            "progress_head": model.progress_head[0].weight,
+                            "lm_embed_tokens": model.model.language_model.embed_tokens.weight,
+                            "lm_layer": model.model.language_model.layers[0].mlp.up_proj.weight,
+                        }
+                    elif "Qwen3" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
+                        before_weights = {
+                            "visual": model.model.visual.blocks[0].mlp.linear_fc1.weight,
+                            "progress_head": model.progress_head[0].weight,
+                            "lm_embed_tokens": model.model.language_model.embed_tokens.weight,
+                            "lm_layer": model.model.language_model.layers[0].mlp.up_proj.weight,
+                        }
 
-            # Load the model from the evaluation path
-            model = model_cls.from_pretrained(
-                repo_id,
-                processor=processor,
-                tokenizer=tokenizer,
-                base_model=base_model,
-                base_model_id=cfg.base_model_id,
-                model_config=cfg,
-                revision=revision_to_load,
-            )
+                # Load the model from the evaluation path
+                model = model_cls.from_pretrained(
+                    repo_id,
+                    processor=processor,
+                    tokenizer=tokenizer,
+                    base_model=base_model,
+                    base_model_id=cfg.base_model_id,
+                    model_config=cfg,
+                    revision=revision_to_load,
+                )
 
-            # Verify weights were loaded
-            if before_weights:
-                _verify_checkpoint_loading(cfg, model, before_weights)
+                # Verify weights were loaded
+                if before_weights:
+                    _verify_checkpoint_loading(cfg, model, before_weights)
 
     # elif "rewind_transformer" in cfg.base_model_id or "rewind_scale_transformer" in cfg.base_model_id:
     elif "rewind" in cfg.base_model_id:

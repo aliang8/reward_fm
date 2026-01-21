@@ -47,7 +47,6 @@ from rfm.configs.experiment_configs import (
 from rfm.data.collators import BaseCollator, ReWiNDBatchCollator, RFMBatchCollator, VQABatchCollator
 from rfm.data.datasets import (
     RFMDataset,
-    StrategyBalancedDataset,
     StrategyFirstDataset,
     BaseDataset,
     RepeatedDataset,
@@ -1103,7 +1102,6 @@ def setup_dataset(cfg: DataConfig, is_eval: bool = False, sampler_kwargs=None, *
     """
     dataset_cls = {
         "rfm": RFMDataset,
-        "strategy_balance": StrategyBalancedDataset,
         "strategy_first": StrategyFirstDataset,
     }
 

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Tuple, Optional, Any
 import torch
 from safetensors.torch import load_file
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, get_peft_model, PeftModel
 import bitsandbytes as bnb
 from huggingface_hub import HfApi
 from transformers import (
@@ -61,7 +61,7 @@ logger = get_logger()
 from rfm.utils.save import parse_hf_model_id_and_revision, resolve_checkpoint_path
 
 
-def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: ModelConfig) -> None:
+def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: ModelConfig, load_adapters: bool = True) -> None:
     """
     Load checkpoint weights from safetensors files in a checkpoint directory.
     Includes verification for PEFT adapters and progress_head.
@@ -73,6 +73,7 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: 
         model: The model to load weights into
         checkpoint_path: Path to checkpoint directory containing safetensors files
         cfg: Model configuration for verification
+        load_adapters: If False, skip loading adapter weights (assumes already loaded via PeftModel.from_pretrained)
     """
     import pdb
     
@@ -122,9 +123,82 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: 
     logger.info(f"Found {len(checkpoint_adapter_keys)} adapter parameters in checkpoint")
     if checkpoint_adapter_keys:
         logger.debug(f"Sample checkpoint adapter keys: {checkpoint_adapter_keys[:5]}")
+    
+    # If load_adapters=False, filter out adapter keys (they were already loaded via PeftModel.from_pretrained)
+    if not load_adapters:
+        logger.info("Skipping adapter weights (already loaded via PeftModel.from_pretrained)")
+        checkpoint_state_dict = {k: v for k, v in checkpoint_state_dict.items() if "lora_A" not in k and "lora_B" not in k}
 
-    # Load state dict into model with strict=False to handle missing keys
-    missing_keys, unexpected_keys = model.load_state_dict(checkpoint_state_dict, strict=False)
+    # Get model's expected state dict keys
+    model_state_dict = model.state_dict()
+    model_keys = set(model_state_dict.keys())
+    
+    # Log sample model keys to understand structure
+    sample_model_keys = [k for k in list(model_keys)[:10]]
+    logger.info(f"Sample model keys (first 10): {sample_model_keys}")
+    
+    # Log sample checkpoint keys to understand structure
+    sample_ckpt_keys = [k for k in list(checkpoint_state_dict.keys())[:10]]
+    logger.info(f"Sample checkpoint keys (first 10): {sample_ckpt_keys}")
+    
+    # Check if model has adapter keys and what structure they use
+    model_adapter_keys = [k for k in model_keys if "lora_A" in k or "lora_B" in k]
+    if model_adapter_keys:
+        logger.info(f"Found {len(model_adapter_keys)} adapter keys in model")
+        logger.debug(f"Sample model adapter keys: {model_adapter_keys[:3]}")
+    
+    # Remap checkpoint keys to match model structure
+    # Try multiple strategies: direct match, remove "model.model." -> "model.", add "model." prefix
+    remapped_state_dict = {}
+    remapped_count = 0
+    direct_match_count = 0
+    remap_strategies = {}
+    
+    for ckpt_key, ckpt_value in checkpoint_state_dict.items():
+        if ckpt_key in model_keys:
+            # Direct match - use as is
+            remapped_state_dict[ckpt_key] = ckpt_value
+            direct_match_count += 1
+        else:
+            # Try different remapping strategies
+            potential_keys = []
+            
+            # Strategy 1: Remove "model.model." -> "model."
+            if ckpt_key.startswith("model.model."):
+                potential_keys.append(ckpt_key.replace("model.model.", "model.", 1))
+            
+            # Strategy 2: Remove "model." prefix entirely
+            if ckpt_key.startswith("model."):
+                potential_keys.append(ckpt_key.replace("model.", "", 1))
+            
+            # Strategy 3: Add "model." prefix if missing
+            if not ckpt_key.startswith("model."):
+                potential_keys.append(f"model.{ckpt_key}")
+            
+            # Try each potential key
+            matched = False
+            for potential_key in potential_keys:
+                if potential_key in model_keys:
+                    remapped_state_dict[potential_key] = ckpt_value
+                    remapped_count += 1
+                    strategy = f"{ckpt_key} -> {potential_key}"
+                    remap_strategies[strategy] = remap_strategies.get(strategy, 0) + 1
+                    if remapped_count <= 5:  # Log first 5 remappings
+                        logger.debug(f"Remapped: {strategy}")
+                    matched = True
+                    break
+            
+            if not matched:
+                # Key still doesn't match, will be in unexpected_keys
+                remapped_state_dict[ckpt_key] = ckpt_value
+    
+    if remapped_count > 0:
+        logger.info(f"Remapped {remapped_count} checkpoint keys to match model structure (direct matches: {direct_match_count})")
+        if remap_strategies:
+            logger.debug(f"Remapping strategies used: {dict(list(remap_strategies.items())[:5])}")
+
+    # Load remapped state dict into model with strict=False to handle missing keys
+    missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=False)
 
     # Filter missing keys - base model keys are expected for PEFT checkpoints
     base_model_missing = [k for k in missing_keys if any(pattern in k for pattern in ["visual.", "language_model.", "text_encoder.", "text_model.", "embed_tokens"])]
@@ -200,7 +274,17 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: 
                     adapter_loaded_correctly = False
         
         # Check how many adapter keys from checkpoint were actually loaded
-        loaded_adapter_keys = [k for k in checkpoint_adapter_keys if k in model_state_dict_after]
+        # Need to check both original and remapped keys
+        loaded_adapter_keys = []
+        for ckpt_key in checkpoint_adapter_keys:
+            # Check if original key or remapped key exists in model
+            if ckpt_key in model_state_dict_after:
+                loaded_adapter_keys.append(ckpt_key)
+            elif ckpt_key.startswith("model.model."):
+                # Check remapped version
+                remapped_key = ckpt_key.replace("model.model.", "model.", 1)
+                if remapped_key in model_state_dict_after:
+                    loaded_adapter_keys.append(ckpt_key)  # Count original key as loaded
         logger.info(f"Loaded {len(loaded_adapter_keys)}/{len(checkpoint_adapter_keys)} adapter keys from checkpoint")
         
         if len(loaded_adapter_keys) == 0:
@@ -273,8 +357,17 @@ def _load_base_model_with_unsloth(
         )
 
     # Extract inner model after PEFT is applied (if needed for RFM wrapper)
+    # IMPORTANT: After FastVisionModel.get_peft_model(), base_model.model should be a PeftModel
+    # We keep it as PeftModel so we can use PeftModel.from_pretrained() later
     if cfg.model_type == "default":
-        base_model = base_model.model
+        # Extract the inner model, which should be a PeftModel if PEFT was applied
+        inner_model = base_model.model
+        # Check if it's a PeftModel - if so, keep it as PeftModel for proper adapter loading
+        if cfg.use_peft and isinstance(inner_model, PeftModel):
+            logger.info("Base model inner model is a PeftModel - will use PeftModel.from_pretrained() for adapter loading")
+            base_model = inner_model
+        else:
+            base_model = inner_model
 
     return base_model, tokenizer
 
@@ -668,17 +761,40 @@ def setup_model_and_processor(
         if hf_model_id:
             repo_id, revision_to_load = parse_hf_model_id_and_revision(hf_model_id, model_name="model")
 
-            # IMPORTANT: When using PEFT, we should NOT use from_pretrained() because it creates a new model
-            # instance and randomly initializes missing base model weights. Instead, we manually load checkpoint
-            # weights into the existing model (which already has the correct base model weights from the pretrained model).
-            # This preserves the base model weights and only loads adapter weights and custom heads from the checkpoint.
+            # IMPORTANT: When using PEFT, use the standard PeftModel.from_pretrained() to load adapters.
+            # This is the recommended way according to PEFT documentation.
+            # However, we need to handle the RFM wrapper structure and load adapters into base_model first,
+            # then load other weights (progress_head, etc.) manually.
             if cfg.use_peft:
-                logger.info("Loading checkpoint weights manually (PEFT mode - preserving base model weights)")
+                logger.info("Loading PEFT adapters using standard PeftModel.from_pretrained() method")
                 # Convert repo_id to local path if needed (handles HuggingFace Hub paths)
                 checkpoint_path = resolve_checkpoint_path(hf_model_id)
                 if checkpoint_path is None:
                     raise ValueError(f"Could not resolve checkpoint path: {hf_model_id}")
-                _load_checkpoint_weights_from_safetensors(model, checkpoint_path, cfg)
+                
+                # Check if base_model is already a PeftModel (from Unsloth)
+                # If so, use PeftModel.from_pretrained() to load adapter weights
+                if isinstance(base_model, PeftModel):
+                    logger.info("Base model is already a PeftModel, loading adapters using PeftModel.from_pretrained()")
+                    base_model = PeftModel.from_pretrained(base_model, checkpoint_path)
+                    # Update the RFM model's base_model reference
+                    model.model = base_model
+                else:
+                    # Try to load adapters into the base_model using PeftModel.from_pretrained()
+                    # This should work if the base_model has PEFT structure
+                    try:
+                        logger.info("Attempting to load adapters into base_model using PeftModel.from_pretrained()")
+                        base_model = PeftModel.from_pretrained(base_model, checkpoint_path)
+                        model.model = base_model
+                    except Exception as e:
+                        logger.warning(f"PeftModel.from_pretrained() failed: {e}")
+                        logger.info("Falling back to manual loading")
+                        _load_checkpoint_weights_from_safetensors(model, checkpoint_path, cfg)
+                        return tokenizer, processor, model
+                
+                # After loading adapters, load other weights (progress_head, etc.) manually
+                logger.info("Loading non-adapter weights (progress_head, etc.) from checkpoint")
+                _load_checkpoint_weights_from_safetensors(model, checkpoint_path, cfg, load_adapters=False)
             else:
                 # For non-PEFT models, we can use from_pretrained as before
                 # Capture before weights for verification

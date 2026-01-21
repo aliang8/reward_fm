@@ -34,7 +34,7 @@ class ReWINDTransformerConfig(PretrainedConfig):
         num_attention_heads: int = 8,
         dropout: float = 0.1,
         max_len: int = 16,
-        causal_mask: bool = True,
+        causal_mask: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -215,23 +215,23 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
                 prog_embeddings_B = torch.stack(prog_embeddings_B, dim=1)  # [B, half, D]
 
                 # Apply heads
-                Progress_A_logits = self.progress_head(prog_embeddings_A.reshape(-1, D))
+                progress_A_logits = self.progress_head(prog_embeddings_A.reshape(-1, D))
                 if self.use_discrete_progress:
                     # Discrete: [b*t, num_bins] -> [b, t, num_bins]
-                    Progress_A_logits = einops.rearrange(Progress_A_logits, "(b t) ... -> b t ...", b=B, t=half)
+                    progress_A_logits = einops.rearrange(progress_A_logits, "(b t) ... -> b t ...", b=B, t=half)
                 else:
                     # Continuous: [b*t, 1] -> [b, t]
-                    Progress_A_logits = einops.rearrange(Progress_A_logits, "(b t) 1 -> b t", b=B, t=half)
+                    progress_A_logits = einops.rearrange(progress_A_logits, "(b t) 1 -> b t", b=B, t=half)
 
-                Progress_B_logits = self.progress_head(prog_embeddings_B.reshape(-1, D))
+                progress_B_logits = self.progress_head(prog_embeddings_B.reshape(-1, D))
                 if self.use_discrete_progress:
                     # Discrete: [b*t, num_bins] -> [b, t, num_bins]
-                    Progress_B_logits = einops.rearrange(Progress_B_logits, "(b t) ... -> b t ...", b=B, t=half)
+                    progress_B_logits = einops.rearrange(progress_B_logits, "(b t) ... -> b t ...", b=B, t=half)
                 else:
                     # Continuous: [b*t, 1] -> [b, t]
-                    Progress_B_logits = einops.rearrange(Progress_B_logits, "(b t) 1 -> b t", b=B, t=half)
+                    progress_B_logits = einops.rearrange(progress_B_logits, "(b t) 1 -> b t", b=B, t=half)
 
-                progress_logits = {"A": Progress_A_logits, "B": Progress_B_logits}
+                progress_logits = {"A": progress_A_logits, "B": progress_B_logits}
                 output.progress_logits = progress_logits
 
                 success_A_logits = self.success_head(prog_embeddings_A.reshape(-1, D))

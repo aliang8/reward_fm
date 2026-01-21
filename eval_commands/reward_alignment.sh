@@ -44,3 +44,14 @@ uv run python rfm/evals/run_baseline_eval.py \
     custom_eval.reward_alignment_max_trajectories=30 \
     max_frames=4 \
     model_config.batch_size=32
+
+# LIBERO ABLATION
+uv run python rfm/evals/run_baseline_eval.py \
+    reward_model=rfm \
+    model_path="/gpfs/home/jessezha/scrubbed_storage/reward_fm/logs/libero_ablation_prog_only_lora_ft_4frames_2000steps/ckpt-avg-3metrics\=0.6280_step\=1000" \
+    custom_eval.eval_types=[reward_alignment] \
+    custom_eval.reward_alignment=[libero_pi0] \
+    custom_eval.use_frame_steps=false \
+    custom_eval.reward_alignment_max_trajectories=100 \
+    max_frames=4 \
+    model_config.batch_size=32

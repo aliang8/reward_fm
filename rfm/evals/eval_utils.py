@@ -7,7 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Union, Optional
+from typing import Any, Dict, List, Union, Optional, Tuple
 from datetime import datetime
 
 import aiohttp
@@ -17,17 +17,22 @@ import torch
 
 from rfm.data.dataset_types import PreferenceSample, SimilaritySample, ProgressSample, Trajectory
 from rfm.data.datasets.helpers import linspace_subsample_frames, pad_trajectory_to_max_frames_np
+from rfm.data.collators.vqa import RESPONSE_PREFIX
 
 
 def extract_answer_from_text(text: str) -> str:
-    """Extract answer from text using <ans> tags."""
-    m = re.search(r"<ans>(.*?)</ans>", text, re.DOTALL)
-    ans = m.group(1).strip() if m else ""
-    return ans
+    """Extract answer from text using ANSWER."""
+    # Look for "ANSWER: <number>" pattern
+    pattern = f"{RESPONSE_PREFIX}\s*(\[[^\]]*\]|-?\d+(?:\.\d+)?)"
+    match = re.search(pattern, text, re.IGNORECASE)
+    if match:
+        return match.group(1)
+    else:
+        return ""
 
 
 def raw_dict_to_sample(
-    raw_data: Dict[str, Any],
+    raw_data: Union[Tuple[Dict[str, Any], Dict[str, Any]], Dict[str, Any]],
     max_frames: int = 16,
     sample_type: str = "progress",
 ) -> Union[ProgressSample, PreferenceSample]:
@@ -35,70 +40,78 @@ def raw_dict_to_sample(
     Convert raw data dictionary to a ProgressSample or PreferenceSample.
 
     Args:
-        raw_data: Dict with 'frames', 'task', 'id', 'metadata', 'video_embeddings', 'text_embedding'
+        raw_data: Dict with 'frames', 'task', 'id', 'metadata', 'video_embeddings', 'text_embedding' or Tuple of (Dict[str, Any], Dict[str, Any])
         max_frames: Maximum number of frames to use (default: 16)
         sample_type: Either "progress" or "preference" (default: "progress")
 
     Returns:
         ProgressSample or PreferenceSample
     """
-    num_frames = max_frames
-    processed_item: Dict[str, Any] = {}
 
-    # Process frames
-    frames_array = raw_data["frames"]
+    def _build_trajectory(raw_data: Dict[str, Any], num_frames: int) -> Trajectory:
+        processed_item: Dict[str, Any] = {}
 
-    # Ensure we have the correct shape: (T, H, W, C)
-    if len(frames_array.shape) != 4:
-        raise ValueError(f"Expected 4D array (T, H, W, C), got shape {frames_array.shape}")
+        # Process frames
+        frames_array = raw_data["frames"]
 
-    # Convert from CxHxW to HxWxC if needed
-    if frames_array.shape[1] == 3:
-        frames_array = np.transpose(frames_array, (0, 2, 3, 1))
+        # Ensure we have the correct shape: (T, H, W, C)
+        if len(frames_array.shape) != 4:
+            raise ValueError(f"Expected 4D array (T, H, W, C), got shape {frames_array.shape}")
 
-    frames_array, _ = linspace_subsample_frames(frames_array, num_frames)
-    dummy_progress = [0.0] * len(frames_array)
-    frames_array, _ = pad_trajectory_to_max_frames_np(frames_array, dummy_progress, num_frames, pad_from="right")
+        # Convert from CxHxW to HxWxC if needed
+        if frames_array.shape[1] == 3:
+            frames_array = np.transpose(frames_array, (0, 2, 3, 1))
 
-    if frames_array.size == 0:
-        raise ValueError("No frames processed for example")
+        frames_array, _ = linspace_subsample_frames(frames_array, num_frames)
+        dummy_progress = [0.0] * len(frames_array)
+        frames_array, _ = pad_trajectory_to_max_frames_np(frames_array, dummy_progress, num_frames, pad_from="right")
 
-    processed_item["frames"] = frames_array
-    processed_item["frames_shape"] = frames_array.shape
-    processed_item["task"] = raw_data["task"]
-    processed_item["lang_vector"] = None
-    processed_item["metadata"] = raw_data.get("metadata", None)
+        if frames_array.size == 0:
+            raise ValueError("No frames processed for example")
 
-    # Process video embeddings using same helper functions
-    video_embeddings = raw_data.get("video_embeddings")
-    if video_embeddings is not None:
-        video_embeddings, _ = linspace_subsample_frames(video_embeddings, num_frames)
-        dummy_progress_emb = [0.0] * len(video_embeddings)
-        video_embeddings, _ = pad_trajectory_to_max_frames_np(
-            video_embeddings, dummy_progress_emb, num_frames, pad_from="right"
-        )
+        processed_item["frames"] = frames_array
+        processed_item["frames_shape"] = frames_array.shape
+        processed_item["task"] = raw_data["task"]
+        processed_item["lang_vector"] = None
+        processed_item["metadata"] = raw_data.get("metadata", None)
 
-    text_embedding = raw_data.get("text_embedding")
+        # Process video embeddings using same helper functions
+        video_embeddings = raw_data.get("video_embeddings")
+        if video_embeddings is not None:
+            video_embeddings, _ = linspace_subsample_frames(video_embeddings, num_frames)
+            dummy_progress_emb = [0.0] * len(video_embeddings)
+            video_embeddings, _ = pad_trajectory_to_max_frames_np(
+                video_embeddings, dummy_progress_emb, num_frames, pad_from="right"
+            )
 
-    # Convert to tensors if they are numpy arrays
-    if video_embeddings is not None and isinstance(video_embeddings, np.ndarray):
-        video_embeddings = torch.tensor(video_embeddings)
-    if text_embedding is not None and isinstance(text_embedding, np.ndarray):
-        text_embedding = torch.tensor(text_embedding)
+        text_embedding = raw_data.get("text_embedding")
 
-    processed_item["video_embeddings"] = video_embeddings
-    processed_item["text_embedding"] = text_embedding
-    processed_item["video_shape"] = video_embeddings.shape if video_embeddings is not None else None
-    processed_item["text_shape"] = text_embedding.shape if text_embedding is not None else None
+        # Convert to tensors if they are numpy arrays
+        if video_embeddings is not None and isinstance(video_embeddings, np.ndarray):
+            video_embeddings = torch.tensor(video_embeddings)
+        if text_embedding is not None and isinstance(text_embedding, np.ndarray):
+            text_embedding = torch.tensor(text_embedding)
 
-    trajectory = Trajectory(**processed_item)
+        processed_item["video_embeddings"] = video_embeddings
+        processed_item["text_embedding"] = text_embedding
+        processed_item["video_shape"] = video_embeddings.shape if video_embeddings is not None else None
+        processed_item["text_shape"] = text_embedding.shape if text_embedding is not None else None
+
+        trajectory = Trajectory(**processed_item)
+        return trajectory
 
     if sample_type == "progress":
+        assert isinstance(raw_data, dict), "raw_data must be a dictionary"
+        trajectory = _build_trajectory(raw_data=raw_data, num_frames=max_frames)
         return ProgressSample(trajectory=trajectory)
     elif sample_type == "preference":
-        # For preference, we'd need two trajectories, but this function only handles one
-        # So we'll raise an error for now
-        raise ValueError("Preference samples require two trajectories. Use raw_dict_to_preference_sample instead.")
+        assert isinstance(raw_data, tuple), "raw_data must be a tuple"
+        assert len(raw_data) == 2, "raw_data must be a tuple of two dictionaries"
+        trajectories: List[Trajectory] = []
+        for trajectory_data in raw_data:
+            trajectory = _build_trajectory(raw_data=trajectory_data, num_frames=max_frames)
+            trajectories.append(trajectory)
+        return PreferenceSample(chosen_trajectory=trajectories[0], rejected_trajectory=trajectories[1])
     else:
         raise ValueError(f"Unsupported sample_type: {sample_type}")
 
@@ -207,6 +220,110 @@ async def post_batch_npy_async(
     ) as resp:
         resp.raise_for_status()
         return await resp.json()
+
+
+async def parse_npy_form_data(form_data: Any) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
+    """Parse multipart form data to extract numpy arrays and other data.
+
+    Args:
+        form_data: FastAPI form data from request.form()
+
+    Returns:
+        Tuple of (numpy_arrays dict, other_data dict)
+    """
+    numpy_arrays = {}
+    other_data = {}
+
+    for key, value in form_data.items():
+        # Check if this is a file upload (UploadFile object)
+        if hasattr(value, "filename") and value.filename:
+            # This is a file upload
+            if value.filename.endswith(".npy"):
+                # Load .npy file (await async read)
+                content = await value.read()
+                buf = io.BytesIO(content)
+                array = np.load(buf)
+                numpy_arrays[key] = array
+            else:
+                # Non-.npy file, skip for now
+                continue
+        else:
+            # This is a string value (form field)
+            try:
+                # Try to parse as JSON
+                other_data[key] = json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                # Keep as string if not JSON
+                other_data[key] = value
+
+    return numpy_arrays, other_data
+
+
+def reconstruct_payload_from_npy(
+    numpy_arrays: Dict[str, np.ndarray],
+    other_data: Dict[str, Any],
+    trajectory_keys: Optional[List[str]] = None,
+    convert_embeddings_to_torch: bool = False,
+) -> List[Dict[str, Any]]:
+    """Reconstruct the original payload structure from .npy files and form data.
+
+    The client sends data in this format:
+    - Files: sample_0_chosen_trajectory_frames.npy, sample_0_trajectory_frames.npy, etc.
+    - Data: sample_0, sample_1, etc. (each containing the full sample JSON with numpy file references)
+
+    Args:
+        numpy_arrays: Dictionary of numpy arrays loaded from .npy files
+        other_data: Dictionary of other form data
+        trajectory_keys: List of trajectory keys to process (default: common keys)
+        convert_embeddings_to_torch: Whether to convert embeddings to torch tensors
+
+    Returns:
+        List of reconstructed sample dictionaries
+    """
+    if trajectory_keys is None:
+        trajectory_keys = [
+            "chosen_trajectory",
+            "rejected_trajectory",
+            "reference_trajectory",
+            "traj_sim_trajectory",
+            "traj_diff_trajectory",
+            "trajectory",
+        ]
+
+    samples = []
+
+    # Process each sample
+    for i in range(len(other_data)):
+        sample_key = f"sample_{i}"
+        if sample_key in other_data:
+            # Get the sample data - might already be parsed or might be a string
+            sample_data = other_data[sample_key]
+            if isinstance(sample_data, str):
+                # Parse the sample JSON if it's a string
+                sample_data = json.loads(sample_data)
+
+            # Replace numpy file references with actual arrays
+            for key, value in sample_data.items():
+                if key in trajectory_keys:
+                    if isinstance(value, dict):
+                        for traj_key, traj_value in value.items():
+                            if isinstance(traj_value, dict) and traj_value.get("__numpy_file__"):
+                                # Replace with actual numpy array
+                                file_key = traj_value["__numpy_file__"]
+                                if file_key in numpy_arrays:
+                                    value[traj_key] = numpy_arrays[file_key]
+
+                            # Convert embeddings to torch if requested
+                            if convert_embeddings_to_torch and traj_key in ["video_embeddings", "text_embedding"]:
+                                if traj_key in value and value[traj_key] is not None:
+                                    if isinstance(value[traj_key], np.ndarray):
+                                        value[traj_key] = torch.tensor(value[traj_key])
+                                    elif isinstance(value[traj_key], list):
+                                        value[traj_key] = torch.tensor(value[traj_key])
+
+            samples.append(sample_data)
+
+    return samples
 
 
 def find_video_files(directory: str) -> list[str]:

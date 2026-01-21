@@ -24,6 +24,8 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
     ):
         super().__init__(**kwargs)
 
+        if num_examples_per_quality_pr is None:
+            num_examples_per_quality_pr = float("inf")
         self.num_examples_per_quality_pr = num_examples_per_quality_pr
         self.num_partial_successes = num_partial_successes
         self.frame_step = frame_step
@@ -205,6 +207,7 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
                 traj=traj,
                 frame_indices=frame_indices,
                 metadata=metadata,
+                pad_frames=self.pad_frames,
             )
         else:
             # Whole trajectory mode
@@ -219,6 +222,7 @@ class ProgressPolicyRankingSampler(RFMBaseSampler):
             trajectory = self._get_traj_from_data(
                 traj=traj,
                 metadata=metadata,
+                pad_frames=self.pad_frames,
             )
 
         sample = ProgressSample(trajectory=trajectory)

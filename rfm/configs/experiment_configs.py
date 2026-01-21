@@ -38,11 +38,23 @@ class ModelConfig(PretrainedConfig):
         },
     )
 
-    use_progress_token: bool = field(
+    frame_pooling: str = field(
+        default="mean",
+        metadata={
+            "help": "How to pool vision tokens into a per-frame embedding for progress/success heads in multi-image mode. "
+            "Options: 'mean' (average over patch tokens), 'boundary' (use last patch token), 'attention' (learned attention pooling)."
+        },
+    )
+    frame_pooling_attn_temperature: float = field(
+        default=1.0,
+        metadata={"help": "Softmax temperature for attention pooling over patch tokens (only used when frame_pooling='attention')."},
+    )
+
+    use_per_frame_progress_token: bool = field(
         default=False,
         metadata={
-            "help": "If True, use <|prog_token|> to predict progress from hidden state at that token. "
-            "Otherwise, use average pooling of frame embeddings."
+            "help": "If True, add a <|prog_token|> after each frame and use those token embeddings "
+            "for per-frame progress prediction. Requires use_multi_image=True."
         },
     )
 
@@ -64,14 +76,7 @@ class ModelConfig(PretrainedConfig):
     use_unsloth: bool = field(
         default=False, metadata={"help": "Whether to use unsloth for faster vision model training"}
     )
-    rewind_scale_model: bool = field(
-        default=False,
-        metadata={"help": "Use ReWINDScaleTransformer instead of standard ReWINDTransformer"},
-    )
-    causal_mask: bool = field(
-        default=False,
-        metadata={"help": "Whether to use casual masking in ReWINDTransformer"},
-    )
+
     progress_loss_type: str = field(
         default="l2",
         metadata={"help": "Type of progress loss: 'l1', 'l2', or 'discrete'"},
@@ -85,13 +90,17 @@ class ModelConfig(PretrainedConfig):
 
     def __post_init__(self):
         from rfm.models.rewind_transformer import ReWINDTransformerConfig
-        from rfm.models.rewind_transformer_scale import ReWINDScaleTransformerConfig
 
         if self.rewind is not None and isinstance(self.rewind, dict):
-            if self.rewind_scale_model:
-                self.rewind = ReWINDScaleTransformerConfig(**self.rewind)
-            else:
-                self.rewind = ReWINDTransformerConfig(**self.rewind)
+            # Pass progress_loss_type and progress_discrete_bins from parent config if not set in rewind dict
+            if "progress_loss_type" not in self.rewind:
+                self.rewind["progress_loss_type"] = self.progress_loss_type
+            if "progress_discrete_bins" not in self.rewind:
+                self.rewind["progress_discrete_bins"] = self.progress_discrete_bins or 10
+            if "use_per_frame_progress_token" not in self.rewind:
+                self.rewind["use_per_frame_progress_token"] = self.use_per_frame_progress_token
+            
+            self.rewind = ReWINDTransformerConfig(**self.rewind)
 
 
 @dataclass
@@ -105,6 +114,7 @@ class PEFTConfig:
     target_modules: List[str] = field(
         default_factory=lambda: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
     )
+    peft_vision_encoder: bool = field(default=False, metadata={"help": "Whether to attach LoRA to the vision encoder"})
 
 
 @dataclass
@@ -135,8 +145,8 @@ class DataConfig:
             "help": "Minimum number of frames required per trajectory (trajectories with fewer frames will be filtered out)"
         },
     )
-    resized_height: int = field(default=224, metadata={"help": "Height to resize video frames to"})
-    resized_width: int = field(default=224, metadata={"help": "Width to resize video frames to"})
+    resized_height: Optional[int] = field(default=None, metadata={"help": "Height to resize video frames to"})
+    resized_width: Optional[int] = field(default=None, metadata={"help": "Width to resize video frames to"})
 
     # Video/image processing mode
     use_multi_image: bool = field(
@@ -146,7 +156,7 @@ class DataConfig:
             "This avoids video encoding overhead and works for both SmolVLM and Qwen models."
         },
     )
-    task_instruction_same_source_prob: float = field(
+    traj_same_source_prob: float = field(
         default=0.5,
         metadata={
             "help": "Probability of sampling a different task instruction from the same data source "
@@ -158,6 +168,14 @@ class DataConfig:
         metadata={
             "help": "If True, shuffle progress trajectory frames (except the first frame) "
             "and their corresponding target progress labels during training for RFM heads."
+        },
+    )
+
+    use_per_frame_progress_token: bool = field(
+        default=False,
+        metadata={
+            "help": "If True, add a <|prog_token|> after each frame for per-frame progress prediction. "
+            "Requires use_multi_image=True."
         },
     )
 
@@ -198,14 +216,7 @@ class DataConfig:
         },
     )
 
-    # Video binned dataset specific parameters
-    num_bins: int = field(default=10, metadata={"help": "Number of bins to use for video binned dataset"})
-    fps: int = field(default=10, metadata={"help": "Frames per second to extract from videos"})
-
     max_trajectories: int = field(default=-1, metadata={"help": "Maximum number of trajectories to use for dataset"})
-    n_wrong_tasks: int = field(
-        default=5, metadata={"help": "Number of wrong tasks to use for wrong task preference dataset"}
-    )
 
     # Embedding loading parameters
     load_embeddings: bool = field(
@@ -237,11 +248,20 @@ class DataConfig:
         metadata={"help": "Path to dataset-specific success cutoff file (CSV format: dataset_name,success_percentage)"},
     )
 
-    # RoboArena partial success threshold
-    roboarena_partial_success_threshold: float = field(
+    # Partial success threshold (for datasets with partial_success like RoboArena and RoboReward)
+    partial_success_threshold: float = field(
         default=0.2,
         metadata={
-            "help": "Minimum difference in partial_success required between chosen and rejected trajectories for RoboArena preference sampling"
+            "help": "Minimum difference in partial_success required between chosen and rejected trajectories for preference sampling"
+        },
+    )
+
+    # Predict last frame partial progress mask
+    predict_last_frame_partial_progress: bool = field(
+        default=False,
+        metadata={
+            "help": "If True, create a mask that marks the last frame for partial_success trajectories (< 1.0). "
+            "If False, the mask is all 1.0s (no masking)."
         },
     )
 
@@ -278,10 +298,16 @@ class CustomEvaluationConfig:
             "help": "Limit total number of quality preference comparisons across all tasks. None = use all comparisons. Uniformly samples if limit is set."
         },
     )
-    num_examples_per_quality_pr: int = field(
-        default=5,
+    num_examples_per_quality_pr: Optional[int] = field(
+        default=None,
         metadata={
-            "help": "Number of trajectories to sample per quality label for policy ranking evaluation. Only tasks with multiple quality labels are used."
+            "help": "Number of trajectories to sample per quality label for policy ranking evaluation. Only tasks with multiple quality labels are used. If None = use all."
+        },
+    )
+    num_partial_successes: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "For RoboArena datasets: Number of total trajectories to sample using circular sampling across partial_success values. None = use num_examples_per_quality_pr per partial_success group."
         },
     )
     num_partial_successes: Optional[int] = field(
@@ -314,7 +340,16 @@ class CustomEvaluationConfig:
             "help": "Whether to use frame steps (subsequences) for reward_alignment and policy_ranking evaluations. True = generate subsequences (0:frame_step, 0:2*frame_step, etc.), False = use whole trajectory."
         },
     )
-
+    subsample_n_frames: Optional[int] = field(
+        default=None,
+        metadata={"help": "Number of frames to subsample for reward alignment evaluation. null = use all frames."},
+    )
+    pad_frames: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to pad frames for reward alignment and policy ranking evaluations. True = pad frames, False = use original frames."
+        },
+    )
 
 @dataclass
 class TrainingConfig:
@@ -398,6 +433,12 @@ class TrainingConfig:
     )
     predict_sim_progress: bool = field(
         default=False, metadata={"help": "Whether to predict progress for similarity samples"}
+    )
+    predict_pref_sim: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to predict preference for ref/diff pair in similarity samples (ref is always preferred)"
+        },
     )
 
 
@@ -526,6 +567,7 @@ class ExperimentConfig:
             self.peft = PEFTConfig(**self.peft)
 
         if isinstance(self.data, dict):
+            self.data.pop("roboarena_partial_success_threshold", None)
             self.data = DataConfig(**self.data)
 
         if isinstance(self.training, dict):

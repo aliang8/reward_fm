@@ -3,31 +3,41 @@
 Script to run baseline evaluations (GVL, RL-VLM-F, VLAC) on datasets.
 
 Usage:
-    # Run RL-VLM-F preference evaluation
-    uv run python rfm/evals/run_baseline_eval.py \
-        reward_model=rlvlmf \
-        vlm_provider=gemini \
-        custom_eval.eval_types=[quality_preference] \
-        custom_eval.quality_preference=[aliangdw_metaworld_metaworld_eval]
-    
-    # Run GVL progress evaluation
-    uv run python rfm/evals/run_baseline_eval.py \
-        reward_model=gvl \
-        custom_eval.eval_types=[reward_alignment] \
-        custom_eval.reward_alignment=[aliangdw_metaworld_metaworld_eval]
-    
     # Run VLAC progress evaluation (requires separate dependency set due to trl conflict)
-    PYTHONPATH=.venv-vlac/bin/python rfm/evals/run_baseline_eval.py \
+    uv run --extra vlac --python .venv-vlac/bin/python rfm/evals/run_baseline_eval.py \
         reward_model=vlac \
-        vlac_model_path=InternRobotics/VLAC \
         custom_eval.eval_types=[reward_alignment] \
-        custom_eval.reward_alignment=[aliangdw_metaworld_metaworld_eval]
-
+        custom_eval.reward_alignment=[jesbu1_roboreward_rfm_roboreward_test] \
+        custom_eval.use_frame_steps=false \
+        max_frames=8 \
+        custom_eval.reward_alignment_max_trajectories=null
+    
+    # Run RoboReward-8B progress evaluation
+    # reward_model=roboreward automatically loads configs/reward_model/roboreward.yaml
+    uv run python rfm/evals/run_baseline_eval.py \
+        reward_model=roboreward \
+        custom_eval.eval_types=[reward_alignment] \
+        custom_eval.reward_alignment=[franka] \
+        custom_eval.use_frame_steps=true \
+        max_frames=8
+    
+    # Run RFM model progress evaluation (reward alignment)
+    # reward_model=rfm automatically loads configs/reward_model/rfm.yaml
+    uv run python rfm/evals/run_baseline_eval.py \
+        reward_model=rfm \
+        model_path=rewardfm/rfm_qwen_pref_prog_4frames_all_strategy \
+        custom_eval.eval_types=[reward_alignment] \
+        custom_eval.reward_alignment=[jesbu1_roboreward_rfm_roboreward_test] \
+        custom_eval.reward_alignment_max_trajectories=null \
+        max_frames=4 \
+        model_config.batch_size=32
 """
 
 import copy
 import json
 import os
+import re
+from dataclasses import asdict
 from typing import Optional, Dict, Any, List, Union
 from datetime import datetime
 
@@ -52,8 +62,18 @@ from rfm.data.collators.utils import convert_frames_to_pil_images, frames_to_num
 from rfm.evals.baselines.rlvlmf import RLVLMF
 from rfm.evals.baselines.gvl import GVL
 from rfm.evals.baselines.vlac import VLAC
+
+try:
+    from rfm.evals.baselines.roboreward import RoboReward
+except ImportError:
+    RoboReward = None
 from rfm.evals.baselines.rfm_model import RFMModel
-from rfm.evals.compile_results import compute_eval_metrics
+from rfm.evals.compile_results import (
+    run_quality_preference_eval,
+    run_reward_alignment_eval_per_trajectory,
+    run_policy_ranking_eval,
+    run_confusion_matrix_eval,
+)
 
 logger = get_logger()
 
@@ -227,13 +247,15 @@ def process_preference_sample(sample: PreferenceSample, model: RLVLMF) -> Dict[s
 
 def process_progress_sample(
     sample: ProgressSample,
-    model: Union[GVL, VLAC],
+    model: Union[GVL, VLAC, RoboReward],
 ) -> Dict[str, Any]:
     """Process a single progress sample with baseline."""
     traj = sample.trajectory
 
     # Get frames array
     frames_array = frames_to_numpy_array(traj.frames)
+
+    logger.info(f"Processing progress sample with {len(frames_array)} frames")
 
     if frames_array is None or frames_array.size == 0:
         logger.warning("No frames found in trajectory")
@@ -250,14 +272,11 @@ def process_progress_sample(
     if traj.id is not None:
         metadata["id"] = traj.id
     if traj.metadata is not None:
-        metadata["video_path"] = traj.metadata.get("video_path")
-        frame_step = traj.metadata.get("frame_step")
-        if frame_step is not None:
-            metadata["frame_step"] = frame_step
+        metadata.update(traj.metadata)
 
     # Build result dict
     result = {
-        "progress_pred": progress_array.tolist(),
+        "progress_pred": progress_array,
         "task": traj.task,
         "data_source": traj.data_source,
         "data_gen_strategy": traj.data_gen_strategy,
@@ -265,7 +284,7 @@ def process_progress_sample(
         "id": traj.id,
         "video_path": metadata.get("video_path"),
         "partial_success": traj.partial_success,
-        "target_progress": traj.target_progress,
+        "target_progress": np.array(traj.target_progress),
         "quality_label": traj.quality_label,
     }
 
@@ -321,14 +340,11 @@ def process_batched_rfm_samples(
                 if traj.id is not None:
                     metadata["id"] = traj.id
                 if traj.metadata is not None:
-                    metadata["video_path"] = traj.metadata.get("video_path")
-                    frame_step = traj.metadata.get("frame_step")
-                    if frame_step is not None:
-                        metadata["frame_step"] = frame_step
+                    metadata.update(traj.metadata)
 
                 # Build result dict
                 result = {
-                    "progress_pred": progress_pred,
+                    "progress_pred": np.array(progress_pred),
                     "task": traj.task,
                     "data_source": traj.data_source,
                     "data_gen_strategy": traj.data_gen_strategy,
@@ -336,7 +352,7 @@ def process_batched_rfm_samples(
                     "id": traj.id,
                     "video_path": metadata.get("video_path"),
                     "partial_success": traj.partial_success,
-                    "target_progress": traj.target_progress,
+                    "target_progress": np.array(traj.target_progress),
                     "quality_label": traj.quality_label,
                 }
                 results.append(result)
@@ -410,34 +426,27 @@ def process_batched_rfm_samples(
 def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) -> Dict[str, Any]:
     """Run baseline evaluation on datasets."""
 
-    # Initialize model
+    # Initialize model based on reward_model type
+    model_config_dict = asdict(cfg.model_config) if hasattr(cfg.model_config, "__dataclass_fields__") else cfg.model_config.__dict__
+    
     if cfg.reward_model == "rlvlmf":
-        model = RLVLMF(vlm_provider=cfg.vlm_provider, temperature=cfg.temperature)
+        model = RLVLMF(**model_config_dict)
     elif cfg.reward_model == "gvl":
-        # API key is read from GEMINI_API_KEY environment variable
-        model = GVL(max_frames=cfg.gvl_max_frames, offset=cfg.gvl_offset)
+        # API key is read from GEMINI_API_KEY environment variable if not provided
+        model = GVL(max_frames=cfg.max_frames, **model_config_dict)
     elif cfg.reward_model == "vlac":
-        if not cfg.vlac_model_path:
-            raise ValueError("vlac_model_path is required for VLAC baseline")
-
-        model = VLAC(
-            model_path=cfg.vlac_model_path,
-            device=cfg.vlac_device,
-            model_type=cfg.vlac_model_type,
-            temperature=cfg.vlac_temperature,
-            batch_num=cfg.vlac_batch_num,
-            skip=cfg.vlac_skip,
-            frame_skip=cfg.vlac_frame_skip,
-            use_images=cfg.vlac_use_images,
-        )
+        if not cfg.model_path:
+            raise ValueError("model_path is required for VLAC baseline")
+        model = VLAC(model_path=cfg.model_path, **model_config_dict)
+    elif cfg.reward_model == "roboreward":
+        model = RoboReward(model_path=cfg.model_path or "teetone/RoboReward-4B", **model_config_dict)
     elif cfg.reward_model in ["rfm", "rewind"]:
-        if not cfg.rfm_checkpoint_path:
-            raise ValueError("rfm_checkpoint_path is required for RFM/ReWiND reward model")
-
-        model = RFMModel(checkpoint_path=cfg.rfm_checkpoint_path)
+        if not cfg.model_path:
+            raise ValueError("model_path is required for RFM/ReWiND reward model")
+        model = RFMModel(checkpoint_path=cfg.model_path)
     else:
         raise ValueError(
-            f"Unknown reward_model: {cfg.reward_model}. Must be 'rlvlmf', 'gvl', 'vlac', 'rfm', or 'rewind'"
+            f"Unknown reward_model: {cfg.reward_model}. Must be 'rlvlmf', 'gvl', 'vlac', 'roboreward', 'rfm', or 'rewind'"
         )
 
     all_metrics = {}
@@ -454,39 +463,66 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
             logger.warning(f"No datasets specified for {eval_type}, skipping")
             continue
 
-        # Resolve dataset keys
-        resolved_datasets = resolve_dataset_keys(eval_datasets, split="eval")
-        logger.info(f"Resolved datasets for {eval_type}: {resolved_datasets}")
+        # Create eval_type subdirectory: {model_type}/{eval_type}/...
+        eval_type_dir = os.path.join(cfg.output_dir, eval_type)
+        os.makedirs(eval_type_dir, exist_ok=True)
+        logger.info(f"Saving results to: {eval_type_dir}")
 
         eval_type_metrics = {}
 
+        logger.info(f"Eval datasets: {eval_datasets}")
+
+        resolved_datasets = []
+
+        for eval_dataset in eval_datasets:
+            if isinstance(eval_dataset, list):
+                resolved_datasets.append(eval_dataset)
+            else:
+                resolved_datasets.extend(resolve_dataset_keys([eval_dataset], split="eval"))
+
+            logger.info(f"Resolved datasets for {eval_type}: {resolved_datasets}")
+
         for dataset_name in resolved_datasets:
-            logger.info(f"Processing dataset: {dataset_name}")
+            # Resolve dataset keys
+            if isinstance(dataset_name, list):
+                resolved_dataset_name = dataset_name
+            else:
+                resolved_dataset_name = resolve_dataset_keys([dataset_name], split="eval")
+
+            logger.info(f"Resolved datasets for {eval_type}: {resolved_datasets}")
 
             # Create data config for this dataset (similar to trainer)
             eval_data_cfg = copy.deepcopy(base_data_cfg)
             eval_data_cfg.dataset_type = "rfm"
-            eval_data_cfg.eval_datasets = [dataset_name]
+            eval_data_cfg.eval_datasets = resolved_dataset_name
 
             # Setup dataset
             sampler_kwargs = {
                 "random_seed": cfg.custom_eval.custom_eval_random_seed,
             }
 
+            if cfg.reward_model == "roboreward":
+                sampler_kwargs["pad_frames"] = False
+
             if eval_type == "reward_alignment":
                 sampler_kwargs["max_trajectories"] = cfg.custom_eval.reward_alignment_max_trajectories
                 sampler_kwargs["use_frame_steps"] = cfg.custom_eval.use_frame_steps
+                sampler_kwargs["subsample_n_frames"] = cfg.custom_eval.subsample_n_frames
+                sampler_kwargs["pad_frames"] = cfg.custom_eval.pad_frames
             elif eval_type == "policy_ranking":
                 sampler_kwargs["num_examples_per_quality_pr"] = cfg.custom_eval.num_examples_per_quality_pr
                 sampler_kwargs["num_partial_successes"] = cfg.custom_eval.num_partial_successes
                 sampler_kwargs["max_tasks"] = cfg.custom_eval.policy_ranking_max_tasks
                 sampler_kwargs["use_frame_steps"] = cfg.custom_eval.use_frame_steps
+                sampler_kwargs["pad_frames"] = cfg.custom_eval.pad_frames
+            elif eval_type == "confusion_matrix":
+                sampler_kwargs["pad_frames"] = cfg.custom_eval.pad_frames
             elif "quality_preference" in eval_type:
                 sampler_kwargs["comparisons_per_task"] = cfg.custom_eval.comparisons_per_task
                 sampler_kwargs["max_comparisons"] = cfg.custom_eval.max_comparisons
 
             dataset = setup_custom_eval_dataset(
-                cfg=eval_data_cfg, sampler_type=eval_type, is_eval=True, verbose=True, sampler_kwargs=sampler_kwargs
+                cfg=eval_data_cfg, sampler_type=eval_type, verbose=True, sampler_kwargs=sampler_kwargs
             )
 
             # Process samples
@@ -496,39 +532,31 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                 # For RFM/ReWiND, process dataset using indices to avoid materializing entire dataset
                 logger.info(f"Processing {len(dataset)} samples in batches for RFM/ReWiND")
 
-                try:
-                    batch_results = process_batched_rfm_samples(dataset, model, batch_size=cfg.rfm_batch_size)
-                    eval_results.extend(batch_results)
-                except Exception as e:
-                    logger.error(f"Error processing batch: {e}")
-                    raise
+                model_config_dict = asdict(cfg.model_config) if hasattr(cfg.model_config, "__dataclass_fields__") else cfg.model_config.__dict__
+                batch_results = process_batched_rfm_samples(dataset, model, batch_size=model_config_dict["batch_size"])
+                eval_results.extend(batch_results)
             else:
                 # For other models, process samples one at a time
                 for i, sample in enumerate(tqdm(dataset, desc=f"Processing {dataset_name}")):
-                    try:
-                        if cfg.reward_model == "rlvlmf" and isinstance(sample, PreferenceSample):
-                            result = process_preference_sample(sample, model)
-                            if result:
-                                eval_results.append(result)
-                        elif cfg.reward_model in ["gvl", "vlac"] and isinstance(sample, ProgressSample):
-                            result = process_progress_sample(sample, model)
-                            if result:
-                                eval_results.append(result)
-                        else:
-                            logger.warning(
-                                f"Sample type mismatch: reward_model={cfg.reward_model}, sample={type(sample)}"
-                            )
-                    except Exception as e:
-                        logger.error(f"Error processing sample {i}: {e}")
-                        continue
+                    if cfg.reward_model == "rlvlmf" and isinstance(sample, PreferenceSample):
+                        result = process_preference_sample(sample, model)
+                        if result:
+                            eval_results.append(result)
+                    elif cfg.reward_model in ["gvl", "vlac", "roboreward"] and isinstance(sample, ProgressSample):
+                        # Handle ProgressSamples for gvl/vlac/roboreward (including confusion_matrix)
+                        result = process_progress_sample(sample, model)
+                        if result:
+                            eval_results.append(result)
+                    else:
+                        logger.warning(f"Sample type mismatch: reward_model={cfg.reward_model}, sample={type(sample)}")
 
             logger.info(f"Processed {len(eval_results)} samples from {dataset_name}")
 
             # Save results to JSON
-            if cfg.output_dir:
-                results_file = os.path.join(cfg.output_dir, f"{eval_type}_{dataset_name}_results.json")
+            if eval_type_dir:
+                results_file = os.path.join(eval_type_dir, f"{dataset_name}_results.json")
                 with open(results_file, "w") as f:
-                    json.dump(eval_results, f, indent=2)
+                    json.dump(_make_json_serializable(eval_results), f, indent=2)
                 logger.info(f"Saved results to {results_file}")
 
             # Compute metrics using the same functions as the trainer
@@ -543,24 +571,107 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                             f"quality_preference evaluation only supported for rlvlmf, rfm, rewind, got {cfg.reward_model}"
                         )
 
-                    eval_metrics_result = compute_eval_metrics(
-                        eval_type="quality_preference",
+                    metrics_dict, task_groups, task_details = run_quality_preference_eval(
                         results=eval_results,
-                        progress_pred_type="absolute",  # Not used for preference
-                        is_discrete_mode=False,  # Not used for preference
-                        num_bins=None,  # Not used for preference
                         data_source=data_source,
                     )
-                    if isinstance(eval_metrics_result, tuple):
-                        metrics_dict, task_groups, task_details = eval_metrics_result
+                    # Save task_groups and task_details if available
+                    if eval_type_dir:
+                        task_groups_file = os.path.join(eval_type_dir, f"{dataset_name}_task_groups.json")
+                        task_details_file = os.path.join(eval_type_dir, f"{dataset_name}_task_details.json")
+                        with open(task_groups_file, "w") as f:
+                            json.dump(_make_json_serializable(task_groups), f, indent=2)
+                        with open(task_details_file, "w") as f:
+                            json.dump(_make_json_serializable(task_details), f, indent=2)
+                        logger.info(f"Saved task_groups to {task_groups_file}")
+                        logger.info(f"Saved task_details to {task_details_file}")
+
+                    # Extract metrics from the returned dict
+                    for key, value in metrics_dict.items():
+                        if isinstance(value, (int, float)):
+                            eval_type_metrics[f"{dataset_name}/{key}"] = float(value)
+
+                    # Write metrics incrementally after each dataset
+                    if eval_type_dir:
+                        _write_metrics_incremental(eval_type_dir, eval_type_metrics)
+
+                elif eval_type == "confusion_matrix":
+                    # Confusion matrix evaluation for gvl, vlac, roboreward, rfm, rewind
+                    if cfg.reward_model not in ["gvl", "vlac", "roboreward", "rfm", "rewind"]:
+                        raise ValueError(
+                            f"confusion_matrix evaluation only supported for gvl, vlac, roboreward, rfm, rewind, got {cfg.reward_model}"
+                        )
+
+                    # run_confusion_matrix_eval returns (fig, confusion_matrix)
+                    fig, confusion_matrix = run_confusion_matrix_eval(
+                        results=eval_results,
+                        progress_pred_type="absolute_wrt_total_frames",  # Baselines use absolute progress
+                        is_discrete_mode=False,  # Baselines output continuous values
+                        num_bins=None,
+                    )
+                    metrics_dict = {}  # Confusion matrix doesn't return standard metrics dict
+
+                    # Save confusion matrix plot
+                    if fig and eval_type_dir:
+                        plot_path = os.path.join(eval_type_dir, f"{dataset_name}_confusion_matrix.png")
+                        fig.savefig(plot_path, dpi=150, bbox_inches="tight")
+                        plt.close(fig)
+                        logger.info(f"Saved confusion matrix plot to {plot_path}")
+
+                        # Save confusion matrix as numpy array
+                        matrix_path = os.path.join(eval_type_dir, f"{dataset_name}_confusion_matrix.npy")
+                        np.save(matrix_path, confusion_matrix)
+                        logger.info(f"Saved confusion matrix array to {matrix_path}")
+
+                    # Extract metrics from the returned dict (if any)
+                    for key, value in metrics_dict.items():
+                        if isinstance(value, (int, float)):
+                            eval_type_metrics[f"{dataset_name}/{key}"] = float(value)
+
+                    # Write metrics incrementally after each dataset
+                    if eval_type_dir:
+                        _write_metrics_incremental(eval_type_dir, eval_type_metrics)
+
+                else:
+                    # Progress evaluation (reward_alignment, policy_ranking) for gvl, vlac, roboreward, rfm, rewind
+                    if cfg.reward_model not in ["gvl", "vlac", "roboreward", "rfm", "rewind"]:
+                        raise ValueError(
+                            f"Progress evaluation only supported for gvl, vlac, roboreward, rfm, rewind, got {cfg.reward_model}"
+                        )
+
+                    if eval_type == "reward_alignment":
+                        metrics_dict, plots, video_frames_list, _ = run_reward_alignment_eval_per_trajectory(
+                            results=eval_results,
+                            progress_pred_type="absolute_wrt_total_frames",  # Baselines use absolute progress
+                            is_discrete_mode=False,  # Baselines output continuous values
+                            num_bins=None,
+                            data_source=data_source,
+                            use_frame_steps=cfg.custom_eval.use_frame_steps,
+                            train_success_head=False,  # Baselines don't have success head
+                            last_frame_only=False,
+                        )
+                        # Save plots with videos as GIFs if available
+                        if plots and eval_type_dir:
+                            plots_dir = os.path.join(eval_type_dir, f"{dataset_name}_plots")
+                            os.makedirs(plots_dir, exist_ok=True)
+                            for i, fig in enumerate(plots[:10]):
+                                video_frames = video_frames_list[i] if i < len(video_frames_list) else None
+                                gif_path = os.path.join(plots_dir, f"trajectory_{i:04d}.gif")
+                                _create_plot_with_video_gif(fig, video_frames, gif_path)
+                            logger.info(f"Saved {len(plots)} plot+video GIFs to {plots_dir}")
+                    elif eval_type == "policy_ranking":
+                        metrics_dict, task_groups, task_details = run_policy_ranking_eval(
+                            results=eval_results,
+                            progress_pred_type="absolute_wrt_total_frames",  # Baselines use absolute progress
+                            is_discrete_mode=False,  # Baselines output continuous values
+                            num_bins=None,
+                            data_source=data_source,
+                            correlation_method="kendall",
+                        )
                         # Save task_groups and task_details if available
-                        if cfg.output_dir:
-                            task_groups_file = os.path.join(
-                                cfg.output_dir, f"{eval_type}_{dataset_name}_task_groups.json"
-                            )
-                            task_details_file = os.path.join(
-                                cfg.output_dir, f"{eval_type}_{dataset_name}_task_details.json"
-                            )
+                        if eval_type_dir:
+                            task_groups_file = os.path.join(eval_type_dir, f"{dataset_name}_task_groups.json")
+                            task_details_file = os.path.join(eval_type_dir, f"{dataset_name}_task_details.json")
                             with open(task_groups_file, "w") as f:
                                 json.dump(_make_json_serializable(task_groups), f, indent=2)
                             with open(task_details_file, "w") as f:
@@ -568,110 +679,73 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                             logger.info(f"Saved task_groups to {task_groups_file}")
                             logger.info(f"Saved task_details to {task_details_file}")
                     else:
-                        metrics_dict = eval_metrics_result
+                        raise ValueError(f"Unknown eval_type: {eval_type}")
 
                     # Extract metrics from the returned dict
                     for key, value in metrics_dict.items():
                         if isinstance(value, (int, float)):
                             eval_type_metrics[f"{dataset_name}/{key}"] = float(value)
-                    
+
                     # Write metrics incrementally after each dataset
-                    if cfg.output_dir:
-                        _write_metrics_incremental(cfg.output_dir, eval_type, eval_type_metrics)
-
-                else:
-                    # Progress evaluation (reward_alignment, policy_ranking) for gvl, vlac, rfm, rewind
-                    if cfg.reward_model not in ["gvl", "vlac", "rfm", "rewind"]:
-                        raise ValueError(
-                            f"Progress evaluation only supported for gvl, vlac, rfm, rewind, got {cfg.reward_model}"
-                        )
-
-                    eval_metrics_result = compute_eval_metrics(
-                        eval_type=eval_type,
-                        results=eval_results,
-                        progress_pred_type="absolute_wrt_total_frames",  # Baselines use absolute progress
-                        is_discrete_mode=False,  # Baselines output continuous values
-                        num_bins=None,
-                        data_source=data_source,
-                    )
-
-                    if isinstance(eval_metrics_result, tuple):
-                        if eval_type == "reward_alignment":
-                            metrics_dict, plots, video_frames_list, _ = eval_metrics_result
-                            # Save plots with videos as GIFs if available
-                            if plots and cfg.output_dir:
-                                plots_dir = os.path.join(cfg.output_dir, f"{eval_type}_{dataset_name}_plots")
-                                os.makedirs(plots_dir, exist_ok=True)
-                                for i, fig in enumerate(plots):
-                                    video_frames = video_frames_list[i] if i < len(video_frames_list) else None
-                                    gif_path = os.path.join(plots_dir, f"trajectory_{i:04d}.gif")
-                                    _create_plot_with_video_gif(fig, video_frames, gif_path)
-                                logger.info(f"Saved {len(plots)} plot+video GIFs to {plots_dir}")
-                        elif eval_type == "policy_ranking":
-                            metrics_dict, task_groups, task_details = eval_metrics_result
-                            # Save task_groups and task_details if available
-                            if cfg.output_dir:
-                                task_groups_file = os.path.join(
-                                    cfg.output_dir, f"{eval_type}_{dataset_name}_task_groups.json"
-                                )
-                                task_details_file = os.path.join(
-                                    cfg.output_dir, f"{eval_type}_{dataset_name}_task_details.json"
-                                )
-                                with open(task_groups_file, "w") as f:
-                                    json.dump(_make_json_serializable(task_groups), f, indent=2)
-                                with open(task_details_file, "w") as f:
-                                    json.dump(_make_json_serializable(task_details), f, indent=2)
-                                logger.info(f"Saved task_groups to {task_groups_file}")
-                                logger.info(f"Saved task_details to {task_details_file}")
-                        else:
-                            metrics_dict = eval_metrics_result[0] if len(eval_metrics_result) > 0 else {}
-                    else:
-                        metrics_dict = eval_metrics_result
-
-                    # Extract metrics from the returned dict
-                    for key, value in metrics_dict.items():
-                        if isinstance(value, (int, float)):
-                            eval_type_metrics[f"{dataset_name}/{key}"] = float(value)
-                    
-                    # Write metrics incrementally after each dataset
-                    if cfg.output_dir:
-                        _write_metrics_incremental(cfg.output_dir, eval_type, eval_type_metrics)
+                    if eval_type_dir:
+                        _write_metrics_incremental(eval_type_dir, eval_type_metrics)
 
         all_metrics[eval_type] = eval_type_metrics
 
     return all_metrics
 
 
-def _write_metrics_incremental(output_dir: str, eval_type: str, eval_type_metrics: Dict[str, float]):
-    """Write metrics to shared file incrementally after each dataset.
-    
+def _write_metrics_incremental(eval_type_dir: str, eval_type_metrics: Dict[str, float]):
+    """Write metrics to file incrementally after each dataset.
+
     Args:
-        output_dir: Output directory for metrics file
-        eval_type: Evaluation type (e.g., "reward_alignment", "policy_ranking")
-        eval_type_metrics: Dictionary of metrics for this eval_type (keyed by dataset_name/metric_name)
+        eval_type_dir: Directory for this eval_type (e.g., ./baseline_eval_output/rfm/policy_ranking/)
+        eval_type_metrics: Dictionary of metrics (keyed by dataset_name/metric_name)
     """
-    metrics_file = os.path.join(output_dir, "baseline_metrics.json")
-    
-    # Read existing metrics if file exists
-    existing_metrics = {}
-    if os.path.exists(metrics_file):
-        try:
-            with open(metrics_file, "r") as f:
-                existing_metrics = json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
-            logger.warning(f"Could not read existing metrics file: {e}, starting fresh")
-            existing_metrics = {}
-    
-    # Update with new metrics for this eval_type
-    existing_metrics[eval_type] = eval_type_metrics
-    
-    # Write back to file
+    metrics_file = os.path.join(eval_type_dir, "metrics.json")
+
+    # Write metrics to file (overwrite since we're accumulating in eval_type_metrics)
     try:
         with open(metrics_file, "w") as f:
-            json.dump(existing_metrics, f, indent=2)
-        logger.info(f"Updated metrics file: {metrics_file} (eval_type: {eval_type})")
+            json.dump(_make_json_serializable(eval_type_metrics), f, indent=2)
+        logger.info(f"Updated metrics file: {metrics_file}")
     except IOError as e:
         logger.error(f"Could not write metrics file: {e}")
+
+
+def _normalize_model_path(model_path: Optional[str]) -> str:
+    """Normalize model path for use in directory names.
+
+    Handles HuggingFace paths like 'rewardfm/rfm-base' or local paths.
+    Replaces slashes, special characters with underscores.
+
+    Args:
+        model_path: Model path string (e.g., 'rewardfm/rfm-base', '/path/to/model')
+
+    Returns:
+        Normalized string safe for directory names
+    """
+    if not model_path:
+        return ""
+
+    # Get the basename if it's an absolute path
+    if model_path.startswith("/"):
+        # For absolute paths, use the last two components (parent/name)
+        parts = model_path.rstrip("/").split("/")
+        model_path = "_".join(parts[-2:]) if len(parts) >= 2 else parts[-1]
+
+    # Replace slashes with underscores
+    normalized = model_path.replace("/", "_")
+
+    # Replace other special characters that might cause issues
+    for char in [":", "\\", " ", ".", ","]:
+        normalized = normalized.replace(char, "_")
+
+    # Remove leading/trailing underscores and collapse multiple underscores
+    normalized = re.sub(r"_+", "_", normalized)
+    normalized = normalized.strip("_")
+
+    return normalized
 
 
 @hydra_main(version_base=None, config_path="../configs", config_name="baseline_eval_config")
@@ -684,15 +758,21 @@ def main(cfg: DictConfig):
     display_config(baseline_cfg)
 
     # Validate reward model
-    if baseline_cfg.reward_model not in ["gvl", "vlac", "rlvlmf", "rfm", "rewind"]:
+    if baseline_cfg.reward_model not in ["gvl", "vlac", "rlvlmf", "roboreward", "rfm", "rewind"]:
         raise ValueError(
-            f"reward_model must be 'gvl', 'vlac', 'rlvlmf', 'rfm', or 'rewind', got {baseline_cfg.reward_model}"
+            f"reward_model must be 'gvl', 'vlac', 'rlvlmf', 'roboreward', 'rfm', or 'rewind', got {baseline_cfg.reward_model}"
         )
 
-    # Setup output directory
+    # Setup output directory: {model_type}_{model_path}/{eval_type}/...
     if baseline_cfg.output_dir is None:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        baseline_cfg.output_dir = os.path.join("./baseline_eval_output", f"{baseline_cfg.reward_model}_{timestamp}")
+        normalized_path = _normalize_model_path(baseline_cfg.model_path)
+
+        if normalized_path:
+            dir_name = f"{baseline_cfg.reward_model}_{normalized_path}"
+        else:
+            dir_name = baseline_cfg.reward_model
+
+        baseline_cfg.output_dir = os.path.join("./baseline_eval_output", dir_name)
 
     os.makedirs(baseline_cfg.output_dir, exist_ok=True)
     logger.info(f"Output directory: {baseline_cfg.output_dir}")
@@ -700,7 +780,8 @@ def main(cfg: DictConfig):
     # Create data config with default settings
     # Datasets will be set per eval type during processing
     data_cfg = DataConfig(
-        max_frames=baseline_cfg.gvl_max_frames,
+        max_frames=baseline_cfg.max_frames,
+        load_embeddings=True if "rewind" in baseline_cfg.reward_model else False,
     )
 
     display_config(data_cfg)
@@ -708,9 +789,9 @@ def main(cfg: DictConfig):
     # Run evaluation
     metrics = run_baseline_evaluation(baseline_cfg, data_cfg)
 
-    # Save metrics
+    # Save all metrics summary to model root directory
     if metrics and is_rank_0():
-        metrics_file = os.path.join(baseline_cfg.output_dir, "baseline_metrics_final.json")
+        metrics_file = os.path.join(baseline_cfg.output_dir, "all_metrics.json")
         metrics_serializable = {}
         for k, v in metrics.items():
             if isinstance(v, dict):
@@ -722,7 +803,7 @@ def main(cfg: DictConfig):
 
         with open(metrics_file, "w") as f:
             json.dump(metrics_serializable, f, indent=2)
-        logger.info(f"Saved metrics to: {metrics_file}")
+        logger.info(f"Saved all metrics summary to: {metrics_file}")
 
     logger.info("\nBaseline evaluation complete!")
     return metrics

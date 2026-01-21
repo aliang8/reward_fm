@@ -13,7 +13,6 @@ class CustomEvalDataset(BaseDataset):
         self,
         sampler_type: str,
         config: DataConfig,
-        is_evaluation: bool = False,
         verbose: bool = True,
         sampler_kwargs: dict = None,
     ):
@@ -22,11 +21,17 @@ class CustomEvalDataset(BaseDataset):
         Args:
             sampler_type: Type of sampler to create (e.g., "confusion_matrix", "reward_alignment", "policy_ranking", "success_failure")
             config: Configuration object
-            is_evaluation: Whether this is for evaluation
             verbose: Verbose flag
             sampler_kwargs: Additional keyword arguments for the sampler
         """
-        super().__init__(config=config, is_evaluation=is_evaluation)
+        filter_successful_only = False
+        if sampler_type == "reward_alignment" or sampler_type == "confusion_matrix":
+            filter_successful_only = True
+        
+        if len(config.eval_datasets) == 1 and "roboreward" in config.eval_datasets[0]:
+            filter_successful_only = False
+
+        super().__init__(config=config, is_evaluation=True, filter_successful_only=filter_successful_only)
 
         sampler_cls = {
             "confusion_matrix": ConfusionMatrixSampler,

@@ -34,6 +34,7 @@ class ReWINDTransformerConfig(PretrainedConfig):
         num_attention_heads: int = 8,
         dropout: float = 0.1,
         max_len: int = 16,
+        causal_mask: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -44,7 +45,7 @@ class ReWINDTransformerConfig(PretrainedConfig):
         self.num_attention_heads = num_attention_heads
         self.dropout = dropout
         self.max_len = max_len
-
+        self.causal_mask = causal_mask
 
 class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
     """ReWiND Transformer with three prediction heads for different objectives."""
@@ -52,9 +53,10 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
     config_class = ReWINDTransformerConfig
 
     def __init__(self, config, processor=None, tokenizer=None, image_encoder=None, text_encoder=None):
-        video_feature_dim = config.video_feature_dim
-        text_feature_dim = config.text_feature_dim
-        hidden_dim = config.hidden_dim
+        rewind_config = config.rewind
+
+        video_feature_dim = rewind_config.video_feature_dim
+        text_feature_dim = rewind_config.text_feature_dim
 
         if image_encoder is not None:
             video_feature_dim = image_encoder.config.hidden_size
@@ -62,9 +64,10 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
             text_feature_dim = text_encoder.config.hidden_size
 
         super().__init__(
-            config,
-            hidden_dim=hidden_dim,
-            dropout=config.dropout,
+            config=config.rewind, 
+            model_config=config, 
+            hidden_dim=rewind_config.hidden_dim, 
+            dropout=rewind_config.dropout
         )
 
         self.image_encoder = image_encoder
@@ -72,24 +75,29 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
         self.tokenizer = tokenizer
         self.processor = processor
 
-        self.video_proj = nn.Linear(video_feature_dim, hidden_dim)
-        self.text_proj = nn.Linear(text_feature_dim, hidden_dim)
+        self.video_proj = nn.Linear(video_feature_dim, rewind_config.hidden_dim)
+        self.text_proj = nn.Linear(text_feature_dim, rewind_config.hidden_dim)
 
-        self.first_embedding_A = nn.Parameter(torch.randn(1, 1, hidden_dim))
-        self.first_embedding_B = nn.Parameter(torch.randn(1, 1, hidden_dim))
+        self.first_embedding_A = nn.Parameter(torch.randn(1, 1, rewind_config.hidden_dim))
+        self.first_embedding_B = nn.Parameter(torch.randn(1, 1, rewind_config.hidden_dim))
 
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=hidden_dim,
-            nhead=config.num_attention_heads,
-            dim_feedforward=config.hidden_dim * 4,
-            dropout=config.dropout,
+            d_model=rewind_config.hidden_dim,
+            nhead=rewind_config.num_attention_heads,
+            dim_feedforward=rewind_config.hidden_dim * 4,
+            dropout=rewind_config.dropout,
             batch_first=True,
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=config.num_layers)
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=rewind_config.num_layers)
+
+        if rewind_config.use_per_frame_progress_token:
+            self.text_position_embedding = nn.Parameter(torch.randn(1, 1, rewind_config.hidden_dim))
+            self.prog_token_A = nn.Parameter(torch.randn(1, rewind_config.max_len, rewind_config.hidden_dim))
+            self.prog_token_B = nn.Parameter(torch.randn(1, rewind_config.max_len, rewind_config.hidden_dim))
 
         # Prediction tokens
-        self.preference_token = nn.Parameter(torch.randn(1, 1, config.hidden_dim))
-        self.similarity_token = nn.Parameter(torch.randn(1, 1, config.hidden_dim))
+        self.preference_token = nn.Parameter(torch.randn(1, 1, rewind_config.hidden_dim))
+        self.similarity_token = nn.Parameter(torch.randn(1, 1, rewind_config.hidden_dim))
 
     def forward(
         self,
@@ -140,51 +148,155 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
         output = ModelOutput()
 
         if sample_type == "preference" or sample_type == "similarity":
-            video_embeddings_A = video_embeddings[:, : T // 2].clone()
-            video_embeddings_B = video_embeddings[:, T // 2 :].clone()
+            half = T // 2
+            video_embeddings_A = video_embeddings[:, :half].clone()
+            video_embeddings_B = video_embeddings[:, half:].clone()
 
-            # Add the first embedding to the beginning of embedding A
+            # Add the first embedding to the beginning of each sequence
             first_frame_emb_A = einops.repeat(self.first_embedding_A, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
             first_frame_emb_B = einops.repeat(self.first_embedding_B, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
-
             video_embeddings_A[:, 0:1] += first_frame_emb_A
             video_embeddings_B[:, 0:1] += first_frame_emb_B
 
-            if sample_type == "preference":
-                pred_token = einops.repeat(self.preference_token, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
+            if self.config.use_per_frame_progress_token:
+                # Add position embedding to text
+                text_pos = einops.repeat(self.text_position_embedding, "1 1 d -> b 1 d", b=B)
+                text_emb = text_embeddings.unsqueeze(1) + text_pos
+
+                # Get progress tokens - slice to match sequence length
+                prog_token_A = einops.repeat(self.prog_token_A[:, :half, :], "1 t d -> b t d", b=B)  # [B, half, D]
+                prog_token_B = einops.repeat(self.prog_token_B[:, :half, :], "1 t d -> b t d", b=B)  # [B, half, D]
+
+                # Interleave frames with progress tokens: [frame, prog_token, frame, prog_token, ...]
+                sequence_A = []
+                for i in range(half):
+                    sequence_A.append(video_embeddings_A[:, i : i + 1, :])  # [B, 1, D]
+                    sequence_A.append(prog_token_A[:, i : i + 1, :])  # [B, 1, D]
+
+                sequence_B = []
+                for i in range(half):
+                    sequence_B.append(video_embeddings_B[:, i : i + 1, :])  # [B, 1, D]
+                    sequence_B.append(prog_token_B[:, i : i + 1, :])  # [B, 1, D]
+
+                # Prediction token
+                if sample_type == "preference":
+                    pred_token = einops.repeat(self.preference_token, "1 1 d -> b 1 d", b=B)
+                else:
+                    pred_token = einops.repeat(self.similarity_token, "1 1 d -> b 1 d", b=B)
+
+                # Concatenate: [text, frame1_A, prog_A, frame2_A, prog_A, ..., frame1_B, prog_B, frame2_B, prog_B, ..., pred]
+                full_sequence = torch.cat([text_emb] + sequence_A + sequence_B + [pred_token], dim=1)  # [B, L, D]
+
+                # Build causal mask if enabled
+                mask = None
+                if self.config.causal_mask:
+                    L = full_sequence.shape[1]
+                    mask = torch.triu(torch.ones((L, L), dtype=torch.bool, device=full_sequence.device), diagonal=1)
+
+                full_embeddings = self.transformer(full_sequence, src_key_padding_mask=None, mask=mask)
+
+                # Extract progress token embeddings
+                D = full_embeddings.shape[-1]
+                prog_embeddings_A = []
+                prog_embeddings_B = []
+
+                idx_A_start = 1
+                idx_B_start = 1 + 2 * half
+                idx_pred = 1 + 4 * half
+
+                for i in range(half):
+                    prog_idx_A = idx_A_start + 2 * i + 1
+                    prog_embeddings_A.append(full_embeddings[:, prog_idx_A, :])  # [B, D]
+
+                    prog_idx_B = idx_B_start + 2 * i + 1
+                    prog_embeddings_B.append(full_embeddings[:, prog_idx_B, :])  # [B, D]
+
+                prog_embeddings_A = torch.stack(prog_embeddings_A, dim=1)  # [B, half, D]
+                prog_embeddings_B = torch.stack(prog_embeddings_B, dim=1)  # [B, half, D]
+
+                # Apply heads
+                progress_A_logits = self.progress_head(prog_embeddings_A.reshape(-1, D))
+                if self.use_discrete_progress:
+                    # Discrete: [b*t, num_bins] -> [b, t, num_bins]
+                    progress_A_logits = einops.rearrange(progress_A_logits, "(b t) ... -> b t ...", b=B, t=half)
+                else:
+                    # Continuous: [b*t, 1] -> [b, t]
+                    progress_A_logits = einops.rearrange(progress_A_logits, "(b t) 1 -> b t", b=B, t=half)
+
+                progress_B_logits = self.progress_head(prog_embeddings_B.reshape(-1, D))
+                if self.use_discrete_progress:
+                    # Discrete: [b*t, num_bins] -> [b, t, num_bins]
+                    progress_B_logits = einops.rearrange(progress_B_logits, "(b t) ... -> b t ...", b=B, t=half)
+                else:
+                    # Continuous: [b*t, 1] -> [b, t]
+                    progress_B_logits = einops.rearrange(progress_B_logits, "(b t) 1 -> b t", b=B, t=half)
+
+                progress_logits = {"A": progress_A_logits, "B": progress_B_logits}
+                output.progress_logits = progress_logits
+
+                success_A_logits = self.success_head(prog_embeddings_A.reshape(-1, D))
+                success_A_logits = einops.rearrange(success_A_logits, "(b t) 1 -> b t", b=B, t=half)
+
+                success_B_logits = self.success_head(prog_embeddings_B.reshape(-1, D))
+                success_B_logits = einops.rearrange(success_B_logits, "(b t) 1 -> b t", b=B, t=half)
+
+                success_logits = {"A": success_A_logits, "B": success_B_logits}
+                output.success_logits = success_logits
+
+                pred_class_token = full_embeddings[:, idx_pred, :]  # [B, D]
             else:
-                pred_token = einops.repeat(self.similarity_token, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
+                # Regular mode: use frame embeddings directly
+                if sample_type == "preference":
+                    pred_token = einops.repeat(self.preference_token, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
+                else:
+                    pred_token = einops.repeat(self.similarity_token, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
 
-            token_sequence = torch.cat(
-                [text_embeddings.unsqueeze(1), video_embeddings_A, video_embeddings_B, pred_token], dim=1
-            )  # shape: [B, 2*T + 1, D]
+                token_sequence = torch.cat(
+                    [text_embeddings.unsqueeze(1), video_embeddings_A, video_embeddings_B, pred_token], dim=1
+                )  # shape: [B, 2*T + 1, D]
 
-            token_embeddings = self.transformer(token_sequence)
-            D = token_embeddings.shape[-1]
+                # Build causal mask if enabled
+                mask = None
+                if self.config.causal_mask:
+                    L = token_sequence.shape[1]
+                    mask = torch.triu(torch.ones((L, L), dtype=torch.bool, device=token_sequence.device), diagonal=1)
 
-            final_embeddings_A = token_embeddings[:, 1 : 1 + T // 2, :]  # avoid the text embedding
-            final_embeddings_B = token_embeddings[:, 1 + T // 2 : -1, :]  # avoid the text embedding
+                token_embeddings = self.transformer(token_sequence, src_key_padding_mask=None, mask=mask)
+                D = token_embeddings.shape[-1]
 
-            progress_A_logits = self.progress_head(final_embeddings_A.reshape(-1, D))
-            progress_A_logits = einops.rearrange(progress_A_logits, "(b t) 1 -> b t", b=B)
+                final_embeddings_A = token_embeddings[:, 1 : 1 + half, :]  # avoid the text embedding
+                final_embeddings_B = token_embeddings[:, 1 + half : -1, :]  # avoid the text embedding
 
-            progress_B_logits = self.progress_head(final_embeddings_B.reshape(-1, D))
-            progress_B_logits = einops.rearrange(progress_B_logits, "(b t) 1 -> b t", b=B)
+                progress_A_logits = self.progress_head(final_embeddings_A.reshape(-1, D))
+                if self.use_discrete_progress:
+                    # Discrete: [b*t, num_bins] -> [b, t, num_bins]
+                    progress_A_logits = einops.rearrange(progress_A_logits, "(b t) ... -> b t ...", b=B, t=half)
+                else:
+                    # Continuous: [b*t, 1] -> [b, t]
+                    progress_A_logits = einops.rearrange(progress_A_logits, "(b t) 1 -> b t", b=B, t=half)
 
-            progress_logits = {"A": progress_A_logits, "B": progress_B_logits}
-            output.progress_logits = progress_logits
+                progress_B_logits = self.progress_head(final_embeddings_B.reshape(-1, D))
+                if self.use_discrete_progress:
+                    # Discrete: [b*t, num_bins] -> [b, t, num_bins]
+                    progress_B_logits = einops.rearrange(progress_B_logits, "(b t) ... -> b t ...", b=B, t=half)
+                else:
+                    # Continuous: [b*t, 1] -> [b, t]
+                    progress_B_logits = einops.rearrange(progress_B_logits, "(b t) 1 -> b t", b=B, t=half)
 
-            # Predict success for all frames
-            success_A_logits = self.success_head(final_embeddings_A.reshape(-1, D))
-            success_A_logits = einops.rearrange(success_A_logits, "(b t) 1 -> b t", b=B)
+                progress_logits = {"A": progress_A_logits, "B": progress_B_logits}
+                output.progress_logits = progress_logits
 
-            success_B_logits = self.success_head(final_embeddings_B.reshape(-1, D))
-            success_B_logits = einops.rearrange(success_B_logits, "(b t) 1 -> b t", b=B)
+                # Predict success for all frames
+                success_A_logits = self.success_head(final_embeddings_A.reshape(-1, D))
+                success_A_logits = einops.rearrange(success_A_logits, "(b t) 1 -> b t", b=B, t=half)
 
-            success_logits = {"A": success_A_logits, "B": success_B_logits}
-            output.success_logits = success_logits
+                success_B_logits = self.success_head(final_embeddings_B.reshape(-1, D))
+                success_B_logits = einops.rearrange(success_B_logits, "(b t) 1 -> b t", b=B, t=half)
 
-            pred_class_token = token_embeddings[:, -1, :]  # [B, D]
+                success_logits = {"A": success_A_logits, "B": success_B_logits}
+                output.success_logits = success_logits
+
+                pred_class_token = token_embeddings[:, -1, :]  # [B, D]
 
             if sample_type == "preference":
                 output.pref_logits = self.preference_head(pred_class_token)
@@ -192,26 +304,91 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
                 output.sim_logits = self.similarity_head(pred_class_token)
 
         elif sample_type == "progress":
-            first_frame_emb = einops.repeat(self.first_embedding_A, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
+            if self.config.use_per_frame_progress_token:
+                # Add position embedding to text
+                text_pos_emb = einops.repeat(self.text_position_embedding, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
+                text_emb = text_embeddings.unsqueeze(1).clone()
+                text_emb += text_pos_emb
 
-            # [B, T, D]
-            video_embeddings = video_embeddings.clone()
-            video_embeddings[:, 0:1] += first_frame_emb
+                # Add the first embedding to the beginning of the sequence
+                first_frame_emb = einops.repeat(self.first_embedding_A, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
+                video_embeddings = video_embeddings.clone()
+                video_embeddings[:, 0:1] += first_frame_emb
 
-            token_sequence = torch.cat([text_embeddings.unsqueeze(1), video_embeddings], dim=1)  # shape: [B, T, D]
-            token_embeddings = self.transformer(token_sequence)
-            D = token_embeddings.shape[-1]
-            final_embeddings = token_embeddings[:, 1:, :]  # avoid the text embedding
+                # Get progress tokens - slice to match sequence length
+                prog_token_A = einops.repeat(self.prog_token_A[:, :T, :], "1 t d -> b t d", b=B)  # [B, T, D]
 
-            # Progress prediction for all frames
-            progress_logits = self.progress_head(final_embeddings)
-            progress_logits = progress_logits.squeeze(-1)
+                # Interleave frames with progress tokens: [frame, prog_token, frame, prog_token, ...]
+                sequence = []
+                for i in range(T):
+                    sequence.append(video_embeddings[:, i : i + 1, :])  # [B, 1, D]
+                    sequence.append(prog_token_A[:, i : i + 1, :])  # [B, 1, D]
 
-            # Predict success for all frames
-            success_logits = self.success_head(final_embeddings)
-            success_logits = success_logits.squeeze(-1)
+                # Concatenate: [text, frame1, prog_A, frame2, prog_A, ...]
+                token_sequence = torch.cat([text_emb] + sequence, dim=1)  # [B, 2*T + 1, D]
 
-            logits = None
+                # Build causal mask if enabled
+                mask = None
+                if self.config.causal_mask:
+                    L = token_sequence.shape[1]
+                    mask = torch.triu(torch.ones((L, L), dtype=torch.bool, device=token_sequence.device), diagonal=1)
+
+                token_embeddings = self.transformer(token_sequence, src_key_padding_mask=None, mask=mask)
+                D = token_embeddings.shape[-1]
+
+                # Extract progress token embeddings
+                prog_embeddings = []
+                for i in range(T):
+                    prog_idx = 1 + 2 * i + 1
+                    prog_embeddings.append(token_embeddings[:, prog_idx, :])  # [B, D]
+
+                prog_embeddings = torch.stack(prog_embeddings, dim=1)  # [B, T, D]
+
+                # Progress prediction for all frames
+                progress_logits = self.progress_head(prog_embeddings.reshape(-1, D))
+                if self.use_discrete_progress:
+                    # Discrete: [b*t, num_bins] -> [b, t, num_bins]
+                    progress_logits = einops.rearrange(progress_logits, "(b t) ... -> b t ...", b=B, t=T)
+                else:
+                    # Continuous: [b*t, 1] -> [b, t]
+                    progress_logits = einops.rearrange(progress_logits, "(b t) 1 -> b t", b=B, t=T)
+
+                # Predict success for all frames
+                success_logits = self.success_head(prog_embeddings.reshape(-1, D))
+                success_logits = einops.rearrange(success_logits, "(b t) 1 -> b t", b=B, t=T)
+            else:
+                # Regular mode: use frame embeddings directly
+                first_frame_emb = einops.repeat(self.first_embedding_A, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
+
+                # [B, T, D]
+                video_embeddings = video_embeddings.clone()
+                video_embeddings[:, 0:1] += first_frame_emb
+
+                token_sequence = torch.cat([text_embeddings.unsqueeze(1), video_embeddings], dim=1)  # shape: [B, T + 1, D]
+
+                # Build causal mask if enabled
+                mask = None
+                if self.config.causal_mask:
+                    L = token_sequence.shape[1]
+                    mask = torch.triu(torch.ones((L, L), dtype=torch.bool, device=token_sequence.device), diagonal=1)
+
+                token_embeddings = self.transformer(token_sequence, src_key_padding_mask=None, mask=mask)
+                D = token_embeddings.shape[-1]
+                final_embeddings = token_embeddings[:, 1:, :]  # avoid the text embedding
+
+                # Progress prediction for all frames
+                progress_logits = self.progress_head(final_embeddings)
+                if self.use_discrete_progress:
+                    # Discrete: [b, t, num_bins] - keep as is
+                    pass
+                else:
+                    # Continuous: [b, t, 1] -> [b, t]
+                    progress_logits = progress_logits.squeeze(-1)
+
+                # Predict success for all frames
+                success_logits = self.success_head(final_embeddings)
+                success_logits = success_logits.squeeze(-1)
+
             progress_logits = {"A": progress_logits, "B": None}
             success_logits = {"A": success_logits, "B": None}
             output.progress_logits = progress_logits
@@ -220,6 +397,6 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
         return output, timing_raw
 
 
-# Register the model and config with transformers
+# Register the model and configs with transformers
 AutoConfig.register("rewind_transformer", ReWINDTransformerConfig)
 AutoModel.register(ReWINDTransformerConfig, ReWiNDTransformer)

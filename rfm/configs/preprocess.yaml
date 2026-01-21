@@ -2,7 +2,7 @@ train_datasets:
   - "aliangdw/metaworld"
   - "jesbu1/molmoact_rfm" 
   - "abraranwar/libero_rfm"
-  - "abraranwar/agibotworld_alpha_rfm"
+  - "abraranwar/agibotworld_alpha_headcam_rfm"
   - "ykorkmaz/libero_failure_rfm"
   - "jesbu1/ph2d_rfm"
   - "jesbu1/h2r_rfm"
@@ -18,7 +18,8 @@ train_datasets:
   - "jesbu1/soar_rfm"
   - "jesbu1/fino_net_rfm"
   - "jesbu1/racer_rfm"
-  - "jesbu1/egodex_rfm"
+  - "jesbu1/roboreward_rfm"
+  - "jesbu1/roboreward_rfm_high_res"
 
 train_subsets:
   - ["metaworld_train"]
@@ -40,7 +41,8 @@ train_subsets:
   - ["soar_rfm"]
   - ["fino_net"]
   - ["racer_train"]
-  - ["egodex_part1", "egodex_part2", "egodex_part3", "egodex_part4", "egodex_part5"]
+  - ["roboreward_train"]
+  - ["roboreward_train"]
 
 eval_datasets:
   - "abraranwar/libero_rfm"
@@ -48,7 +50,6 @@ eval_datasets:
   - "jesbu1/oxe_rfm_eval"
   - "aliangdw/metaworld"
   - "jesbu1/racer_rfm"
-  - "jesbu1/egodex_rfm"
   - "abraranwar/usc_koch_rewind_rfm"
   - "aliangdw/usc_xarm_policy_ranking"
   - "aliangdw/usc_franka_policy_ranking"
@@ -61,6 +62,8 @@ eval_datasets:
   - "jesbu1/utd_so101_clean_policy_ranking_wrist"
   - "jesbu1/usc_koch_human_robot_paired"
   - "jesbu1/usc_koch_p_ranking_rfm"
+  - "jesbu1/roboreward_rfm"
+  - "jesbu1/roboreward_rfm_high_res"
 
 eval_subsets:
   - ["libero256_10", "libero256_goal", "libero256_object", "libero256_spatial"]
@@ -68,7 +71,6 @@ eval_subsets:
   - ["oxe_bc_z_eval", "oxe_berkeley_cable_routing_eval", "oxe_bridge_v2_eval", "oxe_jaco_play_eval", "oxe_toto_eval", "oxe_viola_eval"]
   - ["metaworld_eval"]
   - ["racer_val"]
-  - ["egodex_test"]
   - ["usc_koch_rewind"]
   - ["usc_xarm_policy_ranking"]
   - ["usc_franka_policy_ranking"]
@@ -81,6 +83,8 @@ eval_subsets:
   - ["utd_so101_clean_policy_ranking_wrist"]
   - ["usc_koch_human_robot_paired_human", "usc_koch_human_robot_paired_robot"]
   - ["usc_koch_p_ranking_all"]
+  - ["roboreward_val", "roboreward_test"]
+  - ["roboreward_val", "roboreward_test"]
 
 
 max_frames_for_preprocessing: 32

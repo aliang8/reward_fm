@@ -6,34 +6,12 @@
 
 defaults:
   - _self_
+  - reward_model: rlvlmf  # Options: rlvlmf, gvl, vlac, rfm, rewind, roboreward
 
-# Reward model: "gvl", "vlac", "rlvlmf", "rfm", or "rewind"
-reward_model: "rlvlmf"  # Options: "gvl", "vlac", "rlvlmf", "rfm", "rewind"
-
-# VLM provider for RL-VLM-F (only used if reward_model is "rlvlmf")
-vlm_provider: "gemini"  # Options: "gemini", "openai"
-
-# RL-VLM-F settings (only used if reward_model is "rlvlmf")
-temperature: 0.0
-
-# GVL settings (only used if reward_model is "gvl")
-gvl_api_key: null  # Will use GEMINI_API_KEY env var if not set
-gvl_max_frames: 32
-gvl_offset: 0.5
-
-# VLAC settings (only used if reward_model is "vlac")
-vlac_model_path: null  # Path to VLAC model checkpoint (required for vlac)
-vlac_device: "cuda:0"
-vlac_model_type: "internvl2"
-vlac_temperature: 0.5
-vlac_batch_num: 5
-vlac_skip: 5
-vlac_frame_skip: false
-vlac_use_images: true  # If true, use image mode; if false, use video mode
-
-# RFM/ReWiND settings (only used if reward_model is "rfm" or "rewind")
-rfm_checkpoint_path: null  # Path to RFM/ReWiND model checkpoint (HuggingFace repo ID or local path, required for rfm/rewind)
-rfm_batch_size: 32  # Batch size for RFM/ReWiND model inference
+# Shared configuration
+# model_path is set in reward_model/*.yaml files, but can be overridden here
+# model_path: null  # Override model path if needed (HuggingFace repo ID or local path)
+max_frames: 32  # Maximum frames for models (used by GVL and potentially others)
 
 # Custom evaluation configuration
 # This specifies which evaluation types and datasets to run
@@ -41,17 +19,20 @@ custom_eval:
   eval_types: ["quality_preference"]  # Options: ["quality_preference", "reward_alignment", "policy_ranking", "confusion_matrix"]
   quality_preference: ["aliangdw_metaworld_metaworld_eval"]  # Datasets for preference evaluation
   reward_alignment: ["aliangdw_metaworld_metaworld_eval"]  # Datasets for progress evaluation
-  policy_ranking: ["aliangdw_metaworld_metaworld_eval"]  # Datasets for progress evaluation
+  policy_ranking: [aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking,aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking,aliangdw_utd_so101_policy_ranking_utd_so101_policy_ranking,jesbu1_mit_franka_p-rank_rfm_mit_franka_p-rank_rfm,jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top,jesbu1_utd_so101_clean_policy_ranking_wrist_utd_so101_clean_policy_ranking_wrist,jesbu1_usc_koch_p_ranking_rfm_usc_koch_p_ranking_all]  # Datasets for progress evaluation
   confusion_matrix: ["aliangdw_metaworld_metaworld_eval"]  # Datasets for progress evaluation
-  comparisons_per_task: 3  # Limit number of comparisons per task (None = use all)
+  comparisons_per_task: null # Limit number of comparisons per task (None = use all)
   max_comparisons: 100  # Limit total number of comparisons across all tasks (None = use all)
   reward_alignment_max_trajectories: 10  # Max trajectories for reward alignment
   policy_ranking_max_tasks: 20  # Max tasks for policy ranking
   use_frame_steps: false  # Whether to use frame steps (subsequences) for reward_alignment and policy_ranking. true = generate subsequences, false = use whole trajectory.
-  num_examples_per_quality_pr: 3  # Examples per quality label for policy ranking
+  num_examples_per_quality_pr: null  # Examples per quality label for policy ranking
   num_partial_successes: 5  # For RoboArena: Total trajectories to sample via circular sampling (None = use num_examples_per_quality_pr per group)
   custom_eval_random_seed: 42
 
 # Output directory for evaluation results
 output_dir: null  # Defaults to ./baseline_eval_output/<reward_model>_<timestamp>
 
+# Server settings (for baseline_eval_server.py)
+server_url: "0.0.0.0"  # Evaluation server URL
+server_port: 8001  # Evaluation server port

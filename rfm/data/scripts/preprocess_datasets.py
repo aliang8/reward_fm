@@ -30,15 +30,24 @@ from rfm.utils.embedding_utils import compute_video_embeddings, compute_text_emb
 # VIDEO_ERROR_PRINTED = False
 # maps subsets to functions that filter the dataset. If true, the example is dropped.
 soar_bad_trajectories = [
-    "b180805a-638e-4055-bc72-3a8d4808a289",
-    "3b82f7dd-7b6d-4488-b296-4354ad7af945",
-    "4aef32ef-2ebe-42c0-8563-96b0ec22a551",
-    "3f7291df-502a-4a4c-acca-2c776cbfaccc",
-    "9785b54a-39ed-48e6-93b5-b8ce589d477b",
-    "c00f8523-1301-47be-b10b-fc3ee32d6c02",
-    "8d1c4509-3d7b-4b00-837c-efa9351ca234",
-    "647060e8-92dd-48db-933b-ee716421a354",
-    "0493e8a2-5520-4f42-b30f-8e67eb0088de",
+    # success
+    "ca7fec9e-0c19-4e43-8503-ac6cf274a5f3",
+    "96913909-04c5-4b95-91b4-42f59dffa90c",
+    "521ea359-caf2-449d-b9c7-73574ce6de01",
+    "a0c119ab-2cd4-4f65-a0b4-8fb736322bf0",
+    "116411d4-fb67-4cde-ba17-e45edf60d922",
+    "db1582fc-76c9-4069-ac6d-a296e574900c",
+    # failure
+    "e0cd2f7e-cfc6-46fb-9880-d65318709642",
+    "2dfaf622-9aac-4965-b492-dcb5c6da8c62",
+    "88ea7b35-c9f2-494f-9cc4-4c9a5c8def6d",
+    "52cdf32b-702d-417c-b29f-9c1cbe022755",
+    "c7868d1d-6e99-4490-b9ad-41b0e9c89069",
+    "ee6735c6-9d11-4412-9b34-11a9e6d67646",
+    "fed7da83-a9d6-4c71-acd6-5b6a212b1e6a",
+    "d31ad630-14d2-47f2-b4a9-0579247b72b8",
+    "31f3679d-2242-4d98-89d9-6a05b06fc807",
+    "a49d8c5f-bf02-42f5-b130-1f3d53968120",
 ]
 filters = {
     "jesbu1/molmoact_rfm/molmoact_dataset_tabletop": lambda x: "load the bowl" in x["task"].lower(),

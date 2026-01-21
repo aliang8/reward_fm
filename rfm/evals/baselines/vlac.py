@@ -29,14 +29,19 @@ from typing import List, Dict, Optional
 import numpy as np
 import cv2
 
+from rfm.utils.logger import get_logger
+
 # Disable tqdm globally before importing evo_vlac to prevent progress bars
 try:
     import tqdm
+
     # Monkey-patch tqdm to always disable before evo_vlac imports it
     _original_tqdm = tqdm.tqdm
+
     def _disabled_tqdm(*args, **kwargs):
-        kwargs['disable'] = True
+        kwargs["disable"] = True
         return _original_tqdm(*args, **kwargs)
+
     tqdm.tqdm = _disabled_tqdm
 except ImportError:
     pass  # tqdm not available, nothing to patch
@@ -56,6 +61,7 @@ try:
 except ImportError:
     HF_AVAILABLE = False
 
+logger = get_logger()
 
 def download_vlac_model(
     repo_id: str = "InternRobotics/VLAC", cache_dir: Optional[str] = None, local_dir: Optional[str] = None
@@ -104,7 +110,7 @@ class VLAC:
         model_type: str = "internvl2",
         temperature: float = 0.5,
         top_k: int = 1,
-        batch_num: int = 5,
+        batch_size: int = 5,
         skip: int = 5,
         frame_skip: bool = True,
         auto_download: bool = True,
@@ -121,7 +127,7 @@ class VLAC:
             model_type: Model type (default: "internvl2")
             temperature: Temperature for generation
             top_k: Top-k sampling
-            batch_num: Batch number for processing
+            batch_size: Batch size for processing
             skip: Pair-wise step size
             frame_skip: Whether to skip frames for efficiency
             auto_download: If True and model_path is a Hugging Face repo ID, automatically
@@ -158,7 +164,7 @@ class VLAC:
         self.model_type = model_type
         self.temperature = temperature
         self.top_k = top_k
-        self.batch_num = batch_num
+        self.batch_size = batch_size
         self.skip = skip
         self.frame_skip = frame_skip
         self.use_images = use_images
@@ -183,8 +189,9 @@ class VLAC:
             reference_video_path: Optional path to reference video for in-context learning
 
         Returns:
-            List of task completion percentages (0-100) for each frame.
-            None values indicate frames where prediction failed.
+            List of task progress values in [0, 1] range for each frame.
+            Values are normalized from VLAC output (which may be [0, 100] or [0, 1]).
+            If no predictions, returns list of zeros.
         """
         if frames_array is None or frames_array.size == 0:
             return []
@@ -223,13 +230,14 @@ class VLAC:
                     ref_cap.release()
 
                 # Run VLAC trajectory critic with images
+                # Note: get_trajectory_critic returns (critic_list, value_list) for pair-wise comparisons
                 critic_list, value_list = self.critic.get_trajectory_critic(
                     task=task_description,
                     image_list=image_list,
                     ref_image_list=ref_image_list if ref_image_list else None,
-                    batch_num=self.batch_num,
+                    batch_num=self.batch_size,
                     ref_num=len(ref_image_list) if ref_image_list else 0,
-                    rich=True,  # Output decimal values
+                    rich=True,  # Output decimal values (True for [0,1] range, False for integer percentage)
                     reverse_eval=False,
                 )
             else:
@@ -258,26 +266,30 @@ class VLAC:
                 assert compressed_frames_array.shape[0] == frames_array.shape[0], (
                     f"Shape mismatch: original {frames_array.shape} vs compressed {compressed_frames_array.shape}"
                 )
-
+                
                 # Run VLAC trajectory critic with video
+                # Note: web_trajectory_critic returns (result_path, value_list, critic_list, done_list)
+                # where value_list contains progress values in [0, 1] if rich=True, or [0, 100] if rich=False
                 result_path, value_list, critic_list, done_list = self.critic.web_trajectory_critic(
                     task_description=task_description,
                     main_video_path=compressed_video,
-                    reference_video_path=reference_video_path,
-                    batch_num=self.batch_num,
-                    ref_num=6 if reference_video_path else 0,
-                    think=False,
-                    skip=self.skip,
-                    rich=True,
-                    reverse_eval=False,
+                    reference_video_path=None,
+                    batch_num=self.batch_size,
+                    ref_num=0,  # Number of reference images from reference video
+                    think=False,  # Whether to use Chain-of-Thought reasoning
+                    skip=1,  # predict per frame
+                    rich=True,  # Output decimal values (True for [0,1] range, False for integer percentage)
+                    reverse_eval=False,  # Whether to reverse evaluation (for VROC evaluation)
                     output_path=tmpdir,
                     fps=float(output_fps),
-                    frame_skip=self.frame_skip,
-                    done_flag=False,
-                    in_context_done=False,
-                    done_threshold=0.9,
-                    video_output=False,
+                    frame_skip=self.frame_skip,  # Whether to skip frames for efficiency (if False, evaluate each frame)
+                    done_flag=False,  # Whether to output done/task completion flag
+                    in_context_done=False,  # Whether to use reference video for done prediction
+                    done_threshold=0.9,  # Threshold for task completion
+                    video_output=False,  # Whether to output annotated video
                 )
+
+            logger.info(f"value_list: {value_list}")
 
             # Extract progress values from value_list
             # value_list contains progress predictions for each frame
@@ -301,10 +313,10 @@ class VLAC:
                     # Truncate to match frame count
                     progress_list = progress_list[:num_frames]
 
-                return progress_list
+                return np.array(progress_list)
             else:
                 # Return zeros for all frames if no predictions
-                return [0.0] * frames_array.shape[0]
+                return np.array([0.0] * frames_array.shape[0])
 
     def _frames_to_video(self, frames_array: np.ndarray, output_path: str, fps: float = 5.0):
         """Convert frames array to video file."""

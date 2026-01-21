@@ -12,14 +12,15 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial
 from multiprocessing import Pool, cpu_count
-from typing import Any
+from typing import Any, Optional
 
 from pyrallis import wrap
 from tqdm import tqdm
 
 import datasets
 from datasets import Dataset
-from rfm.data.dataset_types import Trajectory
+
+# from rfm.data.dataset_types import Trajectory  # not needed, just type hint
 from dataset_upload.helpers import (
     create_hf_trajectory,
     create_output_directory,
@@ -115,7 +116,7 @@ class OutputConfig:
         default=64, metadata={"help": "Maximum number of frames per trajectory (-1 for no downsampling)"}
     )
     use_video: bool = field(default=True, metadata={"help": "Use MP4 videos instead of individual frame images"})
-    shortest_edge_size: int = field(default=240, metadata={"help": "Shortest edge size for video resizing"})
+    shortest_edge_size: Optional[int] = field(default=240, metadata={"help": "Shortest edge size for video resizing"})
     center_crop: bool = field(
         default=False,
         metadata={"help": "Center crop the video to the target size. Defaults to False, which means no cropping."},
@@ -194,7 +195,7 @@ def process_single_trajectory(args):
 
 def convert_dataset_to_hf_format(
     trajectories: list[dict],
-    hf_creator_fn: Callable[[dict, str, str, int, Any, int, str], Trajectory],
+    hf_creator_fn: Callable[[dict, str, str, int, Any, int, str], Any],
     output_dir: str = "rfm_dataset",
     dataset_name: str = "",
     max_trajectories: int | None = None,
@@ -998,6 +999,12 @@ def main(cfg: GenerateConfig):
 
         print(f"Loading HAND_paired dataset from: {cfg.dataset.dataset_path}")
         task_data = load_hand_paired_dataset(cfg.dataset.dataset_path, cfg.dataset.dataset_name)
+        trajectories = flatten_task_data(task_data)
+    elif "roboreward" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.roboreward_loader import load_roboreward_dataset
+
+        print(f"Loading RoboReward dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_roboreward_dataset(cfg.dataset.dataset_path, cfg.dataset.dataset_name)
         trajectories = flatten_task_data(task_data)
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")

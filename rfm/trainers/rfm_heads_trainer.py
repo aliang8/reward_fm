@@ -1,9 +1,10 @@
 import collections
 import copy
+import io
 import json
 import os
 import random
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Tuple, Optional, Any, final
 
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
@@ -16,11 +17,15 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import Trainer
 
-from rfm.data.datasets.helpers import load_frames_from_npz
 from rfm.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
-from rfm.evals.compile_results import compute_eval_metrics
-from rfm.evals.eval_metrics_utils import compute_pearson, compute_spearman
-from rfm.models.utils import ModelOutput
+from rfm.evals.compile_results import (
+    run_quality_preference_eval,
+    run_reward_alignment_eval_per_trajectory,
+    run_confusion_matrix_eval,
+    run_policy_ranking_eval,
+    run_similarity_score_eval,
+)
+from rfm.models.utils import ModelOutput, convert_bins_to_continuous, convert_discrete_target_to_continuous
 from rfm.utils.distributed import banner, get_rank, is_rank_0, log_fsdp_diagnostics
 from rfm.utils.logger import Logger, get_logger, log_memory_usage
 from rfm.utils.metrics import compute_spearman_correlation
@@ -459,7 +464,10 @@ class RFMHeadsTrainer(Trainer):
 
         # Log custom losses at specified intervals (using our custom logger only)
         if self.state.global_step % self.args.logging_steps == 0:
-            self._log_metadata()
+            try:
+                self._log_metadata()
+            except Exception as e:
+                logger.warning(f"Error logging metadata: {e}")
 
         # Log GPU memory usage at every training step for diagnostics
         log_memory_usage(f"Step {self.state.global_step}")
@@ -684,7 +692,7 @@ class RFMHeadsTrainer(Trainer):
         # make sure values are floats so they are loggable into wandb reports
         log_data = {k: float(v) for k, v in log_data.items()}
 
-        self.logger.log_scalars(log_data, step=self.state.global_step)
+        self.logger.log_scalars(log_data, step=self.state.global_step + 1)
 
         if is_rank_0():
             logger.info(f"Step {self.state.global_step}, Epoch {self.state.epoch:.2f}:")
@@ -697,8 +705,8 @@ class RFMHeadsTrainer(Trainer):
             logger.info(f"Timing raw: {rounded_times}")
 
             # Log optimizer stats to console
-            if optim_stats:
-                logger.info(f"Optimizer stats: {optim_stats}")
+            # if optim_stats:
+            #     logger.info(f"Optimizer stats: {optim_stats}")
 
     def _make_eval_dataloader(self, dataset):
         """Create a distributed evaluation dataloader with proper sampling."""
@@ -747,13 +755,15 @@ class RFMHeadsTrainer(Trainer):
             sampler_kwargs["frame_step"] = (
                 2 if (self.config.trainer_cls == "rfm_heads" and not self.config.data.use_multi_image) else 1
             )
-            sampler_kwargs["use_frame_steps"] = self.config.custom_eval.use_frame_steps
+            # sampler_kwargs["use_frame_steps"] = self.config.custom_eval.use_frame_steps
+            # we only care about the final predicted progress for ranking
+            sampler_kwargs["use_frame_steps"] = False
         elif eval_type == "quality_preference":
             sampler_kwargs["comparisons_per_task"] = self.config.custom_eval.comparisons_per_task
             sampler_kwargs["max_comparisons"] = self.config.custom_eval.max_comparisons
 
         dataset = setup_custom_eval_dataset(
-            eval_cfg, sampler_type=eval_type, is_eval=True, verbose=False, sampler_kwargs=sampler_kwargs
+            eval_cfg, sampler_type=eval_type, verbose=False, sampler_kwargs=sampler_kwargs
         )
         # Explicitly delete eval_cfg after dataset creation to free memory
         del eval_cfg
@@ -991,569 +1001,7 @@ class RFMHeadsTrainer(Trainer):
 
         return batch_results, outputs
 
-    def _save_reward_alignment_videos(
-        self, video_frames_list, plots, eval_results, output_dir, ds_name, trajectory_progress_data=None
-    ):
-        # Check if dataset is RoboArena
-        is_roboarena = False
-        if eval_results and len(eval_results) > 0:
-            first_data_source = eval_results[0].get("data_source", "")
-            is_roboarena = "roboarena" in str(first_data_source).lower()
-
-        # Group eval_results by trajectory ID (like compile_results.py does)
-        # Since compile_results processes trajectories in order and creates video_frames_list/plots
-        # in that same order, we can reconstruct the mapping by collecting unique trajectory IDs
-        processed_trajectory_ids = []
-        for r in eval_results:
-            trajectory_id = r.get("id")
-            if trajectory_id and trajectory_id not in processed_trajectory_ids:
-                processed_trajectory_ids.append(trajectory_id)
-
-        saved_count = 0
-        for idx, (frames, plot) in enumerate(zip(video_frames_list, plots)):
-            if frames is None or idx >= len(processed_trajectory_ids):
-                continue
-
-            trajectory_id = processed_trajectory_ids[idx]
-            # Get all results for this trajectory
-            results_for_trajectory = [r for r in eval_results if r.get("id") == trajectory_id]
-            # Sort by frame_step if available (for frame_steps mode)
-            # This orders subsequences from shortest to longest (e.g., [0], [0,1], [0,1,2], ...)
-            results_for_trajectory.sort(key=lambda r: r.get("metadata", {}).get("frame_step", 0))
-
-            if not results_for_trajectory:
-                continue
-
-            result = results_for_trajectory[0]
-            data_source = result.get("data_source", "unknown")
-            quality_label = result.get("quality_label", "unknown")
-            traj_id = result.get("id", f"traj_{idx}")
-            partial_success = result.get("partial_success")
-            task = result.get("task", "unknown")
-
-            # Build directory structure: {data_source}/{quality_label}/
-            save_dir = os.path.join(output_dir, "reward_alignment_videos", str(data_source), str(quality_label))
-            os.makedirs(save_dir, exist_ok=True)
-
-            # Build filename
-            if is_roboarena and partial_success is not None:
-                # For RoboArena: {quality_label}_{partial_success}_{traj_id}.mp4
-                filename = f"{quality_label}_{partial_success}_{traj_id}.mp4"
-            else:
-                # Standard: {traj_id}.mp4
-                filename = f"{traj_id}.mp4"
-
-            video_path = os.path.join(save_dir, filename)
-
-            # Load original frames at full resolution from video_path
-            video_path_from_result = result.get("video_path")
-            original_frames = load_frames_from_npz(video_path_from_result)
-            # frames are in (T, H, W, C) format from load_frames_from_npz
-            if original_frames.shape[-1] == 3:
-                frames_rgb = original_frames.astype(np.uint8)
-            elif original_frames.shape[1] == 3:
-                # If in (T, C, H, W) format, transpose to (T, H, W, C)
-                frames_rgb = original_frames.transpose(0, 2, 3, 1).astype(np.uint8)
-            else:
-                frames_rgb = original_frames.astype(np.uint8)
-
-            # Ensure frames are in correct range [0, 255]
-            if frames_rgb.max() <= 1.0:
-                frames_rgb = (frames_rgb * 255).astype(np.uint8)
-            else:
-                frames_rgb = np.clip(frames_rgb, 0, 255).astype(np.uint8)
-
-            # Get progress data for this trajectory (should always be available)
-            progress_pred = None
-            target_progress = None
-            if trajectory_progress_data and idx < len(trajectory_progress_data):
-                progress_pred = trajectory_progress_data[idx]
-
-            # Extract target_progress from results_for_trajectory (always needed)
-            # If we don't have progress_pred from trajectory_progress_data, extract from results_for_trajectory
-            if progress_pred is None:
-                progress_pred = []
-                target_progress = []
-                for r in results_for_trajectory:
-                    pred = r.get("progress_pred")
-                    tgt = r.get("target_progress")
-                    if pred is not None:
-                        # Use prediction at current timestep (or last if past max length)
-                        timestep = len(progress_pred)
-                        if timestep >= len(pred) - 1:
-                            progress_pred.append(float(pred[-1]))
-                        else:
-                            progress_pred.append(float(pred[timestep]))
-                    else:
-                        progress_pred.append(0.0)
-
-                    if tgt is not None and len(tgt) > 0:
-                        target_progress.append(float(tgt[-1]))
-                    else:
-                        target_progress.append(0.0)
-
-                # Handle relative progress type
-                if self.config.data.progress_pred_type == "relative":
-                    progress_pred = np.cumsum(np.array(progress_pred)).tolist()
-                    target_progress = np.cumsum(np.array(target_progress)).tolist()
-
-            # Get success data for this trajectory (if available)
-            success_probs = None
-            success_labels = None
-            for r in results_for_trajectory:
-                if r.get("success_probs") is not None:
-                    if success_probs is None:
-                        success_probs = []
-                    sp = r.get("success_probs")
-                    if sp is not None:
-                        # Use probability at current timestep (or last if past max length)
-                        timestep = len(success_probs)
-                        if isinstance(sp, (list, np.ndarray)):
-                            if timestep >= len(sp) - 1:
-                                success_probs.append(float(sp[-1]))
-                            else:
-                                success_probs.append(float(sp[timestep]))
-                        else:
-                            success_probs.append(float(sp))
-                    else:
-                        success_probs.append(0.0)
-
-                if r.get("success_labels") is not None:
-                    if success_labels is None:
-                        success_labels = []
-                    sl = r.get("success_labels")
-                    if sl is not None:
-                        # Use label at current timestep (or last if past max length)
-                        timestep = len(success_labels)
-                        if isinstance(sl, (list, np.ndarray)):
-                            if timestep >= len(sl) - 1:
-                                success_labels.append(float(sl[-1]))
-                            else:
-                                success_labels.append(float(sl[timestep]))
-                        else:
-                            success_labels.append(float(sl))
-                    else:
-                        success_labels.append(0.0)
-
-            # Ensure we have progress data (should always be available)
-            if progress_pred is None or target_progress is None:
-                logger.warning(f"No progress data available for trajectory {traj_id}, skipping video")
-                continue
-
-            # Create matplotlib animated plot video
-            # Define DPI for animation quality
-            fig_dpi = 300
-
-            # Use matplotlib animation to save video with subplots
-            try:
-                # Compute metrics
-                last_preds = np.array(progress_pred)
-                last_targets = np.array(target_progress)
-
-                # Check if this is a failure dataset
-                from rfm.data.dataset_category import is_failure
-
-                is_failure_dataset = is_failure(data_source)
-
-                if is_failure_dataset:
-                    traj_mse = 0.0
-                    traj_pearson = 0.0
-                    traj_spearman = 0.0
-                else:
-                    traj_mse = float(np.mean((last_targets - last_preds) ** 2))
-                    traj_pearson = compute_pearson(last_targets.tolist(), last_preds.tolist())
-                    traj_spearman = compute_spearman(last_targets.tolist(), last_preds.tolist())
-
-                    # Handle NaN values
-                    traj_pearson = float(traj_pearson) if not np.isnan(traj_pearson) else 0.0
-                    traj_spearman = float(traj_spearman) if not np.isnan(traj_spearman) else 0.0
-
-                # Determine number of subplots: 3 if success data available, 2 otherwise
-                has_success_data = success_probs is not None and len(success_probs) > 0
-                num_subplots = 3 if has_success_data else 2
-
-                # Create figure with subplots: video, progress plot, and optionally success plot
-                if has_success_data:
-                    fig_anim, (ax_video, ax_progress, ax_success) = plt.subplots(1, 3, figsize=(24, 8), dpi=fig_dpi)
-                else:
-                    fig_anim, (ax_video, ax_progress) = plt.subplots(1, 2, figsize=(16, 8), dpi=fig_dpi)
-                ax_video.axis("off")
-
-                # Set up progress plot
-                ax_progress.set_ylabel("Progress", fontsize=24, fontweight="bold")
-                ax_progress.set_xlabel("Timestep", fontsize=24, fontweight="bold")
-
-                title_parts = [f"Task: {task}, Quality: {quality_label}"]
-                if is_roboarena and partial_success is not None:
-                    title_parts.append(f"Partial Success: {partial_success:.2f}")
-                title_parts.append(f"MSE: {traj_mse:.3f}, r: {traj_pearson:.3f}, sp: {traj_spearman:.3f}")
-                ax_progress.set_title("\n".join(title_parts), fontsize=20, fontweight="bold", pad=30)
-                ax_progress.set_ylim(0, 1)
-                ax_progress.set_xlim(0, max(len(last_preds), 1))
-                ax_progress.set_yticks([0, 1])
-                ax_progress.spines["right"].set_visible(False)
-                ax_progress.spines["top"].set_visible(False)
-                ax_progress.tick_params(axis="both", which="major", labelsize=18)
-
-                im_video = ax_video.imshow(frames_rgb[0])
-                (line_progress,) = ax_progress.plot([], [], linewidth=4, color="blue")
-
-                line_success = None
-                if has_success_data:
-                    last_success_probs = np.array(success_probs)
-                    last_success_labels = np.array(success_labels) if success_labels is not None else None
-
-                    ax_success.set_ylabel("Success Probability", fontsize=24, fontweight="bold")
-                    ax_success.set_xlabel("Timestep", fontsize=24, fontweight="bold")
-                    ax_success.set_title("Success Prediction", fontsize=20, fontweight="bold", pad=30)
-                    ax_success.set_ylim(0, 1)
-                    ax_success.set_xlim(0, max(len(last_success_probs), 1))
-                    ax_success.set_yticks([0, 1])
-                    ax_success.spines["right"].set_visible(False)
-                    ax_success.spines["top"].set_visible(False)
-                    ax_success.tick_params(axis="both", which="major", labelsize=18)
-
-                    (line_success,) = ax_success.plot([], [], linewidth=4, color="green", label="Predicted")
-                    if last_success_labels is not None:
-                        ax_success.plot(
-                            range(len(last_success_labels)),
-                            last_success_labels,
-                            linewidth=2,
-                            color="red",
-                            linestyle="--",
-                            label="Ground Truth",
-                            alpha=0.7,
-                        )
-                    ax_success.legend(fontsize=16)
-
-                def animate(frame_idx):
-                    # Update video frame
-                    im_video.set_array(frames_rgb[frame_idx])
-
-                    # Update progress plot up to current frame
-                    max_idx = min(frame_idx + 1, len(last_preds))
-                    line_progress.set_data(range(max_idx), last_preds[:max_idx])
-
-                    # Update success plot up to current frame if available
-                    if has_success_data and line_success is not None:
-                        max_idx_success = min(frame_idx + 1, len(last_success_probs))
-                        line_success.set_data(range(max_idx_success), last_success_probs[:max_idx_success])
-                        return [im_video, line_progress, line_success]
-
-                    return [im_video, line_progress]
-
-                # Create animation
-                anim = animation.FuncAnimation(
-                    fig_anim, animate, frames=len(frames_rgb), interval=500, blit=True, repeat=True
-                )
-
-                Writer = animation.writers["ffmpeg"]
-                writer = Writer(fps=2, metadata=dict(artist="RFM"), bitrate=5000)
-                anim.save(video_path, writer=writer, dpi=fig_dpi)
-                plt.close(fig_anim)
-
-                saved_count += 1
-                logger.debug(f"Saved reward_alignment video: {video_path}")
-            except Exception as e:
-                logger.warning(f"Failed to save video {video_path}: {e}")
-
-        if saved_count > 0:
-            logger.info(f"Saved {saved_count} reward_alignment videos to {output_dir}/reward_alignment_videos/")
-
-    def _save_policy_ranking_incorrect_pairs(self, task_groups, eval_results, output_dir, ds_name, is_roboarena):
-        """Save incorrectly and correctly ranked policy pairs to disk.
-
-        Finds pairs where the predicted reward ordering doesn't match the ground truth ordering:
-        - For non-RoboArena: successful < failure, successful < suboptimal, suboptimal < failure
-        - For RoboArena: partial_success ordering doesn't match predicted reward ordering
-
-        Saves final frames side by side with metadata.
-        Saves up to 10 incorrect pairs and 10 correct pairs (randomly sampled).
-        """
-        quality_order = {"failure": 1, "suboptimal": 2, "successful": 3}
-        incorrect_pairs = []
-        correct_pairs = []
-
-        for task, trajectories in task_groups.items():
-            if len(trajectories) < 2:
-                continue
-
-            if is_roboarena:
-                # RoboArena: Check pairs where partial_success ordering doesn't match predicted reward ordering
-                for i in range(len(trajectories)):
-                    for j in range(i + 1, len(trajectories)):
-                        traj1 = trajectories[i]
-                        traj2 = trajectories[j]
-
-                        partial1 = traj1.get("partial_success")
-                        partial2 = traj2.get("partial_success")
-                        pred1 = traj1.get("final_predicted_reward")
-                        pred2 = traj2.get("final_predicted_reward")
-
-                        if partial1 is None or partial2 is None or pred1 is None or pred2 is None:
-                            continue
-
-                        # Skip if partial_success values are the same
-                        if partial1 == partial2:
-                            continue
-
-                        # Check if ordering is incorrect
-                        partial_order_correct = partial1 > partial2  # traj1 should have higher partial_success
-                        pred_order = pred1 > pred2  # traj1 has higher predicted reward
-
-                        # Check if ranking is correct or incorrect
-                        if partial_order_correct != pred_order:
-                            incorrect_pairs.append({
-                                "task": task,
-                                "traj1": traj1,
-                                "traj2": traj2,
-                                "partial1": partial1,
-                                "partial2": partial2,
-                                "pred1": pred1,
-                                "pred2": pred2,
-                                "error_type": "partial_success_mismatch",
-                            })
-                        else:
-                            correct_pairs.append({
-                                "task": task,
-                                "traj1": traj1,
-                                "traj2": traj2,
-                                "partial1": partial1,
-                                "partial2": partial2,
-                                "pred1": pred1,
-                                "pred2": pred2,
-                                "error_type": "partial_success_correct",
-                            })
-            else:
-                # Non-RoboArena: Check pairs where quality ordering doesn't match predicted reward ordering
-                for i in range(len(trajectories)):
-                    for j in range(i + 1, len(trajectories)):
-                        traj1 = trajectories[i]
-                        traj2 = trajectories[j]
-
-                        quality1 = traj1.get("quality_label")
-                        quality2 = traj2.get("quality_label")
-                        pred1 = traj1.get("final_predicted_reward_last")
-                        pred2 = traj2.get("final_predicted_reward_last")
-
-                        if quality1 is None or quality2 is None or pred1 is None or pred2 is None:
-                            continue
-
-                        order1 = quality_order.get(quality1, 0)
-                        order2 = quality_order.get(quality2, 0)
-
-                        # Skip if same quality
-                        if order1 == order2:
-                            continue
-
-                        # Check if ordering is incorrect
-                        quality_order_correct = order1 > order2  # traj1 should have higher quality
-                        pred_order = pred1 > pred2  # traj1 has higher predicted reward
-
-                        # Check if ranking is correct or incorrect
-                        error_type = f"{quality1}_vs_{quality2}"
-                        if quality_order_correct != pred_order:
-                            incorrect_pairs.append({
-                                "task": task,
-                                "traj1": traj1,
-                                "traj2": traj2,
-                                "quality1": quality1,
-                                "quality2": quality2,
-                                "pred1": pred1,
-                                "pred2": pred2,
-                                "error_type": error_type,
-                            })
-                        else:
-                            correct_pairs.append({
-                                "task": task,
-                                "traj1": traj1,
-                                "traj2": traj2,
-                                "quality1": quality1,
-                                "quality2": quality2,
-                                "pred1": pred1,
-                                "pred2": pred2,
-                                "error_type": f"{error_type}_correct",
-                            })
-
-        max_pairs = 10
-
-        def sample_diverse_pairs(pairs, max_count):
-            """Sample pairs ensuring each trajectory appears at most once."""
-            if len(pairs) <= max_count:
-                return pairs
-
-            # Track which trajectory IDs we've already used
-            used_traj_ids = set()
-            selected_pairs = []
-
-            # Shuffle pairs to randomize selection
-            shuffled_pairs = pairs.copy()
-            random.shuffle(shuffled_pairs)
-
-            for pair in shuffled_pairs:
-                if len(selected_pairs) >= max_count:
-                    break
-
-                traj1_id = pair["traj1"].get("id")
-                traj2_id = pair["traj2"].get("id")
-
-                # Check if either trajectory has been used
-                if traj1_id not in used_traj_ids and traj2_id not in used_traj_ids:
-                    selected_pairs.append(pair)
-                    used_traj_ids.add(traj1_id)
-                    used_traj_ids.add(traj2_id)
-
-            # If we haven't filled up to max_count, add remaining pairs even if they repeat
-            if len(selected_pairs) < max_count:
-                remaining = [p for p in shuffled_pairs if p not in selected_pairs]
-                needed = max_count - len(selected_pairs)
-                selected_pairs.extend(remaining[:needed])
-
-            return selected_pairs
-
-        incorrect_pairs = sample_diverse_pairs(incorrect_pairs, max_pairs)
-        correct_pairs = sample_diverse_pairs(correct_pairs, max_pairs)
-
-        if not incorrect_pairs and not correct_pairs:
-            logger.info(f"No pairs found for policy_ranking/{ds_name}")
-            return
-
-        # Create output directories
-        save_dir = os.path.join(output_dir, "policy_ranking_viz", ds_name)
-        os.makedirs(save_dir, exist_ok=True)
-
-        def save_pair_visualization(pair, idx, pair_type, save_dir):
-            """Helper function to save a single pair visualization.
-
-            Args:
-                pair: Dictionary containing traj1, traj2, task, and metadata
-                idx: Index of the pair
-                pair_type: "incorrect" or "correct"
-                save_dir: Directory to save the visualization
-
-            Returns:
-                True if saved successfully, False otherwise
-            """
-            traj1 = pair["traj1"]
-            traj2 = pair["traj2"]
-            task = pair["task"]
-
-            # Load final frames from video paths
-            video_path1 = traj1.get("video_path")
-            video_path2 = traj2.get("video_path")
-
-            if not video_path1 or not video_path2:
-                return False
-
-            try:
-                # Load frames and get final frame
-                frames1 = load_frames_from_npz(video_path1)
-                frames2 = load_frames_from_npz(video_path2)
-
-                # Get final frame (last frame in sequence)
-                final_frame1 = frames1[-1] if len(frames1.shape) == 4 else frames1
-                final_frame2 = frames2[-1] if len(frames2.shape) == 4 else frames2
-
-                # Ensure frames are in (H, W, C) format
-                if len(final_frame1.shape) == 3 and final_frame1.shape[0] == 3:
-                    final_frame1 = final_frame1.transpose(1, 2, 0)
-                if len(final_frame2.shape) == 3 and final_frame2.shape[0] == 3:
-                    final_frame2 = final_frame2.transpose(1, 2, 0)
-
-                # Ensure uint8 and correct range
-                if final_frame1.dtype != np.uint8:
-                    if final_frame1.max() <= 1.0:
-                        final_frame1 = (final_frame1 * 255).astype(np.uint8)
-                    else:
-                        final_frame1 = np.clip(final_frame1, 0, 255).astype(np.uint8)
-                if final_frame2.dtype != np.uint8:
-                    if final_frame2.max() <= 1.0:
-                        final_frame2 = (final_frame2 * 255).astype(np.uint8)
-                    else:
-                        final_frame2 = np.clip(final_frame2, 0, 255).astype(np.uint8)
-
-                # Create matplotlib figure with two subplots side by side
-                fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
-
-                # Display frames
-                ax1.imshow(final_frame1)
-                ax1.axis("off")
-                ax2.imshow(final_frame2)
-                ax2.axis("off")
-
-                # Build labels for each trajectory
-                traj_id1 = traj1.get("id", "unknown")
-                traj_id2 = traj2.get("id", "unknown")
-
-                if is_roboarena:
-                    label1_parts = [
-                        f"Task: {task}",
-                        f"Partial Success: {pair['partial1']:.2f}",
-                        f"Predicted Reward: {pair['pred1']:.3f}",
-                        f"ID: {traj_id1}",
-                    ]
-                    label2_parts = [
-                        f"Task: {task}",
-                        f"Partial Success: {pair['partial2']:.2f}",
-                        f"Predicted Reward: {pair['pred2']:.3f}",
-                        f"ID: {traj_id2}",
-                    ]
-                else:
-                    label1_parts = [
-                        f"Task: {task}",
-                        f"Quality: {pair['quality1']}",
-                        f"Predicted Reward: {pair['pred1']:.3f}",
-                        f"ID: {traj_id1}",
-                    ]
-                    label2_parts = [
-                        f"Task: {task}",
-                        f"Quality: {pair['quality2']}",
-                        f"Predicted Reward: {pair['pred2']:.3f}",
-                        f"ID: {traj_id2}",
-                    ]
-
-                # Add labels above frames
-                ax1.set_title("\n".join(label1_parts), fontsize=14, fontweight="bold", pad=10)
-                ax2.set_title("\n".join(label2_parts), fontsize=14, fontweight="bold", pad=10)
-
-                # Add title based on pair type
-                error_type = pair["error_type"]
-                title_prefix = "Incorrectly" if pair_type == "incorrect" else "Correctly"
-                fig.suptitle(f"{title_prefix} Ranked Pair: {error_type}", fontsize=16, fontweight="bold", y=0.98)
-
-                plt.tight_layout()
-
-                # Save figure
-                filename = f"{task}_{error_type}_{idx}.png"
-                # Sanitize filename
-                filename = filename.replace("/", "_").replace("\\", "_")
-                save_path = os.path.join(save_dir, filename)
-                fig.savefig(save_path, dpi=150, bbox_inches="tight")
-                plt.close(fig)
-
-                return True
-            except Exception as e:
-                logger.warning(f"Failed to save {pair_type} pair {idx} for task {task}: {e}")
-                return False
-
-        # Save incorrect pairs
-        saved_incorrect = 0
-        for idx, pair in enumerate(incorrect_pairs):
-            if save_pair_visualization(pair, idx, "incorrect", save_dir):
-                saved_incorrect += 1
-
-        # Save correct pairs
-        saved_correct = 0
-        for idx, pair in enumerate(correct_pairs):
-            if save_pair_visualization(pair, idx, "correct", save_dir):
-                saved_correct += 1
-
-        if saved_incorrect > 0 or saved_correct > 0:
-            logger.info(
-                f"Saved {saved_incorrect} incorrectly ranked pairs and {saved_correct} correctly ranked pairs to {save_dir}/"
-            )
-
-    def _compute_and_log_eval_metrics(self, eval_type, eval_results, ds_name, eval_step, output_dir=None):
+    def _compute_and_log_eval_metrics(self, eval_type, eval_results, ds_name, eval_step):
         """Compute metrics and create visualizations for evaluation results."""
         # Initialize variables to None to ensure they exist for cleanup
         plots = None
@@ -1576,8 +1024,15 @@ class RFMHeadsTrainer(Trainer):
             data_source = eval_results[0]["data_source"]
 
         if eval_type == "reward_alignment":
-            eval_metrics, plots, video_frames_list, trajectory_progress_data = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins, data_source
+            eval_metrics, plots, video_frames_list, trajectory_progress_data = run_reward_alignment_eval_per_trajectory(
+                eval_results,
+                self.config.data.progress_pred_type,
+                is_discrete_mode,
+                num_bins,
+                data_source,
+                use_frame_steps=self.config.custom_eval.use_frame_steps,
+                train_success_head=self.config.model.train_success_head,
+                last_frame_only=self.config.model.model_type == "vqa",
             )
             # log_memory_usage(f"After compute_eval_metrics (reward_alignment)")
 
@@ -1587,25 +1042,113 @@ class RFMHeadsTrainer(Trainer):
                 inner_padding=1,
             )
 
-            # Save videos to disk if output_dir is provided
-            if output_dir is not None and video_frames_list:
-                self._save_reward_alignment_videos(
-                    video_frames_list, plots, eval_results, output_dir, ds_name, trajectory_progress_data
-                )
-
             # Build rows of (video, figure)
             rows = []
             for plot, frames in zip(plots, video_frames_list):
                 if frames is not None:
                     rows.append((frames, plot))
 
-            if rows and self.logger.enabled("wandb"):
-                self.logger.log_video_table(
-                    f"reward_alignment_samples/{ds_name}",
-                    videos_and_figures=rows,
-                    columns=["video", "progress_plot"],
-                    step=eval_step,
-                )
+            if video_frames_list and plots:
+                # Log individual images to wandb: first frame + plot side-by-side
+                if self.logger.enabled("wandb"):
+                    # Filter valid pairs and limit to 10
+                    valid_pairs = [
+                        (frames, plot)
+                        for frames, plot in zip(video_frames_list, plots)
+                        if frames is not None and plot is not None
+                    ]
+                    valid_pairs = valid_pairs[:10]
+
+                    combined_images = []
+                    for idx, (frames, plot) in enumerate(valid_pairs):
+                        # Convert frames from (T, C, H, W) to (T, H, W, C) for display
+                        if len(frames.shape) == 4 and frames.shape[1] == 3:
+                            frames_rgb = frames.transpose(0, 2, 3, 1)
+                        else:
+                            frames_rgb = frames
+
+                        # Ensure frames are uint8 in [0, 255]
+                        if frames_rgb.max() <= 1.0:
+                            frames_rgb = (frames_rgb * 255).astype(np.uint8)
+                        else:
+                            frames_rgb = np.clip(frames_rgb, 0, 255).astype(np.uint8)
+
+                        # Convert plot to image at original resolution
+                        plot_fig = plot
+                        buf = io.BytesIO()
+                        plot_fig.savefig(buf, format="png", dpi=plot_fig.dpi, bbox_inches="tight")
+                        buf.seek(0)
+                        from PIL import Image
+
+                        plot_img_pil = Image.open(buf)
+                        # Convert RGBA to RGB if necessary
+                        if plot_img_pil.mode == "RGBA":
+                            plot_img_pil = plot_img_pil.convert("RGB")
+                        plot_img = np.array(plot_img_pil)
+                        buf.close()
+
+                        # Get plot dimensions
+                        plot_h, plot_w = plot_img.shape[:2]
+
+                        # Get first and last frames and resize to match plot height
+                        first_frame = frames_rgb[0]
+                        last_frame = frames_rgb[-1]
+
+                        # Calculate width to maintain aspect ratio, or use plot height
+                        frame_h, frame_w = first_frame.shape[:2]
+                        aspect_ratio = frame_w / frame_h
+                        video_h = plot_h
+                        video_w = int(plot_h * aspect_ratio)
+
+                        # Resize first frame
+                        first_frame_pil = Image.fromarray(first_frame)
+                        first_frame_resized = first_frame_pil.resize((video_w, video_h), Image.Resampling.LANCZOS)
+                        first_frame_resized = np.array(first_frame_resized)
+
+                        # Resize last frame
+                        last_frame_pil = Image.fromarray(last_frame)
+                        last_frame_resized = last_frame_pil.resize((video_w, video_h), Image.Resampling.LANCZOS)
+                        last_frame_resized = np.array(last_frame_resized)
+
+                        # Combine first frame, last frame, and plot side-by-side
+                        combined_image = np.hstack([first_frame_resized, last_frame_resized, plot_img])
+                        combined_images.append(combined_image)
+
+                        # Log individual image to wandb
+                        tag = f"reward_alignment_samples/{ds_name}/reward_sample_{idx}"
+                        self.logger.log_image(tag, combined_image, step=eval_step)
+
+                    # Create combined figure with all samples stacked vertically
+                    if combined_images:
+                        # Find the maximum width to ensure all images have the same width
+                        max_width = max(img.shape[1] for img in combined_images)
+                        # Resize all images to have the same width
+                        resized_combined = []
+                        for img in combined_images:
+                            if img.shape[1] != max_width:
+                                img_pil = Image.fromarray(img)
+                                # Maintain aspect ratio by calculating new height
+                                aspect = img.shape[0] / img.shape[1]
+                                new_height = int(max_width * aspect)
+                                img_resized = img_pil.resize((max_width, new_height), Image.Resampling.LANCZOS)
+                                resized_combined.append(np.array(img_resized))
+                            else:
+                                resized_combined.append(img)
+
+                        # Stack all images vertically
+                        combined_figure = np.vstack(resized_combined)
+
+                        # Log combined figure to wandb
+                        combined_tag = f"reward_alignment_samples/{ds_name}/all_samples_combined"
+                        self.logger.log_image(combined_tag, combined_figure, step=eval_step)
+
+            # if rows and self.logger.enabled("wandb"):
+            #     self.logger.log_video_table(
+            #         f"reward_alignment_samples/{ds_name}",
+            #         videos_and_figures=rows,
+            #         columns=["video", "progress_plot"],
+            #         step=eval_step,
+            #     )
 
             # # Create and log 3x3 grid of videos with progress overlays
             # if video_frames_list and self.logger.enabled("wandb"):
@@ -1626,17 +1169,17 @@ class RFMHeadsTrainer(Trainer):
             #         del grid_video
 
             # For tensorboard (no table support), log each video and its figure separately
-            if self.logger.enabled("tensorboard"):
-                for idx, frames in enumerate(video_frames_list):
-                    if frames is not None:
-                        self.logger.log_video(
-                            f"reward_alignment_video/{ds_name}/{idx}",
-                            frames,
-                            fps=2,
-                            step=eval_step,
-                        )
-                for idx, plot in enumerate(plots):
-                    self.logger.log_figure(f"{ds_name}/reward_alignment_plot/{idx}", plot, step=eval_step)
+            # if self.logger.enabled("tensorboard"):
+            #     for idx, frames in enumerate(video_frames_list):
+            #         if frames is not None:
+            #             self.logger.log_video(
+            #                 f"reward_alignment_video/{ds_name}/{idx}",
+            #                 frames,
+            #                 fps=2,
+            #                 step=eval_step,
+            #             )
+            #     for idx, plot in enumerate(plots):
+            #         self.logger.log_figure(f"{ds_name}/reward_alignment_plot/{idx}", plot, step=eval_step)
 
             # Close all plots to avoid accumulating open figures
             for plot in plots:
@@ -1650,8 +1193,13 @@ class RFMHeadsTrainer(Trainer):
             trajectory_progress_data = None
             # log_memory_usage(f"After deleting plots/videos")
         elif eval_type == "policy_ranking":
-            eval_metrics, task_groups, task_details = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins, data_source
+            eval_metrics, task_groups, task_details = run_policy_ranking_eval(
+                eval_results,
+                self.config.data.progress_pred_type,
+                is_discrete_mode,
+                num_bins,
+                data_source,
+                correlation_method="kendall",
             )
             # log_memory_usage(f"After compute_eval_metrics (policy_ranking)")
 
@@ -1661,11 +1209,17 @@ class RFMHeadsTrainer(Trainer):
                 inner_padding=1,
             )
 
-            is_roboarena = "roboarena" in str(ds_name).lower()
+            # Check if any trajectory has partial_success to determine visualization type
+            use_partial_success = False
+            if task_groups:
+                # Check first task group to see if it has partial_success
+                first_group = next(iter(task_groups.values()))
+                if first_group and len(first_group) > 0:
+                    use_partial_success = first_group[0].get("partial_success") is not None
 
             data = []
-            if is_roboarena:
-                # RoboArena visualization: show partial vs predicted rewards for each aggregation type
+            if use_partial_success:
+                # Visualization for datasets with partial_success: show partial vs predicted rewards for each aggregation type
                 for task, group in task_groups.items():
                     partial_successes = np.array([t["partial_success"] for t in group]).round(2)
                     predicted_rewards_last = np.array([t["final_predicted_reward_last"] for t in group]).round(2)
@@ -1756,6 +1310,25 @@ class RFMHeadsTrainer(Trainer):
                 step=eval_step,
             )
 
+            # Save policy ranking samples as JSON metadata
+            # Convert table data (list of lists) to list of dictionaries
+            samples_metadata = []
+            for row in data:
+                sample_dict = {col: val for col, val in zip(columns, row)}
+                samples_metadata.append(sample_dict)
+
+            # Save to policy_ranking_samples folder
+            output_dir = self.args.output_dir
+            samples_dir = os.path.join(output_dir, "policy_ranking_samples", f"step_{eval_step}")
+            os.makedirs(samples_dir, exist_ok=True)
+
+            filename = f"{ds_name}.json"
+            filepath = os.path.join(samples_dir, filename)
+
+            with open(filepath, "w") as f:
+                json.dump(samples_metadata, f, indent=2)
+            logger.info(f"Saved {len(samples_metadata)} policy ranking samples to {filepath}")
+
             # # Create and log grid of frame pairs with progress annotations
             # if self.logger.enabled("wandb"):
             #     grid_image = create_policy_ranking_grid(
@@ -1769,18 +1342,14 @@ class RFMHeadsTrainer(Trainer):
             #         )
             #         del grid_image
 
-            # Save incorrectly ranked pairs to disk if output_dir is provided
-            if output_dir is not None:
-                self._save_policy_ranking_incorrect_pairs(task_groups, eval_results, output_dir, ds_name, is_roboarena)
-
             # log_memory_usage(f"Before deleting policy_ranking data")
             del data, task_groups, task_details
             task_groups = None
             task_details = None
             # log_memory_usage(f"After deleting policy_ranking data")
         elif eval_type == "confusion_matrix":
-            confusion_plot, confusion_matrix = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins
+            confusion_plot, confusion_matrix = run_confusion_matrix_eval(
+                eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins
             )
             eval_metrics = {}  # no eval metrics
             # log_memory_usage(f"After compute_eval_metrics (confusion_matrix)")
@@ -1799,9 +1368,7 @@ class RFMHeadsTrainer(Trainer):
             confusion_matrix = None
             # log_memory_usage(f"After deleting confusion_matrix data")
         elif "quality_preference" in eval_type:
-            eval_metrics, task_groups, task_details = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type
-            )
+            eval_metrics, task_groups, task_details = run_quality_preference_eval(eval_results, data_source=data_source)
             # log_memory_usage(f"After compute_eval_metrics (quality_preference)")
 
             banner(
@@ -1835,15 +1402,33 @@ class RFMHeadsTrainer(Trainer):
                 columns=columns,
                 step=eval_step,
             )
+
+            # Save quality preference samples as JSON metadata
+            # Convert table data (list of lists) to list of dictionaries
+            samples_metadata = []
+            for row in data:
+                sample_dict = {col: val for col, val in zip(columns, row)}
+                samples_metadata.append(sample_dict)
+
+            # Save to quality_preference_samples folder
+            output_dir = self.args.output_dir
+            samples_dir = os.path.join(output_dir, "quality_preference_samples", f"step_{eval_step}")
+            os.makedirs(samples_dir, exist_ok=True)
+
+            filename = f"{ds_name}.json"
+            filepath = os.path.join(samples_dir, filename)
+
+            with open(filepath, "w") as f:
+                json.dump(samples_metadata, f, indent=2)
+            logger.info(f"Saved {len(samples_metadata)} quality preference samples to {filepath}")
+
             # log_memory_usage(f"Before deleting quality_preference data")
             del data, task_groups, task_details
             task_groups = None
             task_details = None
             # log_memory_usage(f"After deleting quality_preference data")
         elif eval_type == "similarity_score":
-            eval_metrics, task_groups, task_details = compute_eval_metrics(
-                eval_type, eval_results, self.config.data.progress_pred_type
-            )
+            eval_metrics, task_groups, task_details = run_similarity_score_eval(eval_results)
             # log_memory_usage(f"After compute_eval_metrics (similarity_score)")
 
             banner(
@@ -1899,14 +1484,13 @@ class RFMHeadsTrainer(Trainer):
 
         return eval_metrics
 
-    def _save_eval_results_json(self, eval_results, eval_type, ds_name, output_dir):
+    def _save_eval_results_json(self, eval_results, eval_type, ds_name):
         """Save eval_results as JSON file.
 
         Args:
             eval_results: List of evaluation result dictionaries
             eval_type: Type of evaluation (e.g., "reward_alignment", "policy_ranking")
             ds_name: Dataset name
-            output_dir: Directory to save the JSON file
         """
 
         def serialize_value(value):
@@ -1931,6 +1515,7 @@ class RFMHeadsTrainer(Trainer):
         serialized_results = [serialize_value(result) for result in eval_results]
 
         # Create output directory if it doesn't exist
+        output_dir = self.args.output_dir
         eval_results_dir = os.path.join(output_dir, "eval_results")
         os.makedirs(eval_results_dir, exist_ok=True)
 
@@ -1994,7 +1579,7 @@ class RFMHeadsTrainer(Trainer):
             torch.cuda.synchronize()
         logger.debug(f"  [Rank {get_rank()}] Cleanup complete")
 
-    def _run_single_eval_dataset(self, eval_type, eval_dataset, eval_step, output_dir=None):
+    def _run_single_eval_dataset(self, eval_type, eval_dataset, eval_step):
         """Run evaluation for a single dataset."""
         logger.info(f"  Processing dataset: {eval_dataset}")
         # log_memory_usage(f"Before dataset {eval_dataset}")
@@ -2062,15 +1647,10 @@ class RFMHeadsTrainer(Trainer):
             eval_metrics = {}
             if self.accelerator.is_main_process:
                 logger.info(f"  [Rank {get_rank()}] Starting metric computation")
-                # Use output_dir parameter if provided, otherwise fall back to config
-                actual_output_dir = output_dir if output_dir is not None else getattr(self.config, "output_dir", None)
-                eval_metrics = self._compute_and_log_eval_metrics(
-                    eval_type, eval_results, ds_name, eval_step, output_dir=actual_output_dir
-                )
+                eval_metrics = self._compute_and_log_eval_metrics(eval_type, eval_results, ds_name, eval_step)
 
-                # Save eval_results as JSON if output_dir is available
-                if actual_output_dir is not None:
-                    self._save_eval_results_json(eval_results, eval_type, ds_name, actual_output_dir)
+                # Save eval_results as JSON
+                self._save_eval_results_json(eval_results, eval_type, ds_name)
                 logger.info(f"  [Rank {get_rank()}] Finished metric computation")
             else:
                 logger.info(f"  [Rank {get_rank()}] Skipping metric computation (not main process)")
@@ -2091,14 +1671,13 @@ class RFMHeadsTrainer(Trainer):
 
             return eval_metrics, ds_name
 
-    def _run_custom_evaluations(self, eval_step=None, output_dir=None):
+    def _run_custom_evaluations(self, eval_step=None):
         """
         Run custom evaluations.
 
         Args:
             eval_step: Step number to use for logging. If None, uses self.state.global_step.
                       This ensures consistent step logging to prevent wandb warnings.
-            output_dir: Optional directory to save evaluation outputs (e.g., videos for reward_alignment).
         """
         if eval_step is None:
             eval_step = self.state.global_step
@@ -2135,9 +1714,7 @@ class RFMHeadsTrainer(Trainer):
 
             with _timer(f"time/eval_type/{eval_type}", timing_raw=self.timing_raw):
                 for eval_dataset in eval_datasets_name:
-                    eval_metrics, ds_name = self._run_single_eval_dataset(
-                        eval_type, eval_dataset, eval_step, output_dir=output_dir
-                    )
+                    eval_metrics, ds_name = self._run_single_eval_dataset(eval_type, eval_dataset, eval_step)
                     metrics[ds_name][eval_type] = eval_metrics
 
                     # Store timing for this eval_dataset
@@ -2233,7 +1810,7 @@ class RFMHeadsTrainer(Trainer):
         """
         Override evaluate method to implement custom RFM evaluation metrics.
         """
-        eval_step = self.state.global_step
+        eval_step = self.state.global_step + 1
 
         # Save current training mode and set to eval mode
         was_training = self.model.training
@@ -2277,9 +1854,7 @@ class RFMHeadsTrainer(Trainer):
         )
         if custom_eval_should_run:
             with _timer("time/custom_evaluations", timing_raw=self.timing_raw):
-                # Get output_dir from config if available (for offline eval)
-                output_dir = getattr(self.config, "output_dir", None)
-                custom_metrics = self._run_custom_evaluations(eval_step=eval_step, output_dir=output_dir)
+                custom_metrics = self._run_custom_evaluations(eval_step=eval_step)
 
             metrics.update(custom_metrics)
             # Add custom evaluation time
@@ -2365,7 +1940,10 @@ class RFMHeadsTrainer(Trainer):
                 preference_loss, loss_dict = self._compute_preference_loss(
                     model, preference_inputs, return_outputs=True, training=training
                 )
-                total_loss += preference_loss
+                if not torch.isnan(preference_loss).any():
+                    total_loss += preference_loss
+                else:
+                    logger.warning(f"NaN detected in preference loss, replacing with 0.0")
                 log_metadata.update(loss_dict)
 
         # Compute progress loss if we have progress samples
@@ -2374,8 +1952,11 @@ class RFMHeadsTrainer(Trainer):
                 progress_loss, loss_dict = self._compute_progress_loss(
                     model, progress_inputs, return_outputs=True, training=training
                 )
-                total_loss += progress_loss
-            log_metadata.update(loss_dict)
+                if not torch.isnan(progress_loss).any():
+                    total_loss += progress_loss
+                else:
+                    logger.warning(f"NaN detected in progress loss, replacing with 0.0")
+                log_metadata.update(loss_dict)
 
         # Compute similarity loss if we have similarity samples
         if num_similarities > 0 and similarity_inputs and self.config.model.train_similarity_head:
@@ -2383,14 +1964,16 @@ class RFMHeadsTrainer(Trainer):
                 similarity_loss, loss_dict = self._compute_similarity_loss(
                     model, similarity_inputs, return_outputs=True, training=training
                 )
-                total_loss += similarity_loss
-            log_metadata.update(loss_dict)
+                if not torch.isnan(similarity_loss).any():
+                    total_loss += similarity_loss
+                else:
+                    logger.warning(f"NaN detected in similarity loss, replacing with 0.0")
+                log_metadata.update(loss_dict)
 
         for key, value in log_metadata.items():
             logger.trace(f"{key}: {value}, type: {type(value)}")
             if isinstance(value, torch.Tensor):
                 logger.trace(f"\t{key}: shape={value.shape}")
-
         # Check for NaN in total loss before returning
         if torch.isnan(total_loss).any():
             logger.warning(f"NaN detected in total_loss, replacing with 0.0")
@@ -2407,7 +1990,7 @@ class RFMHeadsTrainer(Trainer):
         return total_loss
 
     def _compute_success_loss_helper(
-        self, success_logits, target_progress, success_labels, progress_loss_mask=None
+        self, success_logits, target_progress, success_labels, progress_loss_mask=None, quality_labels=None
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Helper function to compute success prediction loss.
@@ -2417,16 +2000,22 @@ class RFMHeadsTrainer(Trainer):
         - progress > max_success (label=1, success)
         - ignores frames in between
 
+        The loss is automatically balanced by applying a weight to the minority class
+        (whichever has fewer samples - positives or negatives) so both classes contribute equally.
+
         Args:
             success_logits: Success prediction logits (can be tensor or list of tensors)
             target_progress: Target progress tensors (can be tensor or list of tensors)
             success_labels: Success labels from batch (computed in collator) (can be tensor or list of tensors)
             progress_loss_mask: Per-sample mask tensor of shape (batch_size,) with 1.0 for samples
                 where we should compute progress/success loss (e.g., successful, rewound, different_task)
-            aggregate: Whether to return the mean of the losses and accuracies
+            quality_labels: Optional list of quality labels (e.g., "successful", "suboptimal", "failure") for each sample.
+                If a trajectory has quality_label in ["suboptimal", "failure", "failed"], we always predict success=0
+                and verify that success_labels are all 0s.
 
         Returns:
             tuple: (success_loss, success_accuracy, success_auprc, metrics)
+                   The loss is already balanced via per-sample weighting of the minority class
         """
         # Get base thresholds from config
         min_success = self.config.data.min_success
@@ -2441,41 +2030,130 @@ class RFMHeadsTrainer(Trainer):
             target_progress = target_progress[:, ::2]
             success_labels = success_labels[:, ::2]
 
+        # Handle suboptimal/failure trajectories: always predict success=0 and verify labels are all 0s
+        # Create a mask for suboptimal/failure trajectories: always include all frames for these trajectories
+        quality_mask = None
+        if quality_labels is not None:
+            batch_size = success_logits.shape[0]
+            seq_len = success_logits.shape[1]
+            quality_mask = torch.zeros(batch_size, seq_len, device=success_logits.device, dtype=torch.float32)
+
+            for i in range(batch_size):
+                quality_label = quality_labels[i]
+                if quality_label is not None and quality_label.lower() in ("suboptimal", "failure", "failed"):
+                    # Verify that success_labels are all 0s for this trajectory
+                    sample_success_labels = success_labels[i]
+                    if not (sample_success_labels == 0.0).all():
+                        logger.debug(
+                            f"Trajectory {i} has quality_label='{quality_label}' but success_labels are not all 0s. "
+                            f"Found non-zero labels: {(sample_success_labels != 0.0).sum().item()} out of {len(sample_success_labels)}"
+                        )
+                        import ipdb
+
+                        ipdb.set_trace()
+
+                    # Include all frames for this trajectory in the mask
+                    quality_mask[i, :] = 1.0
+
+        if self.config.loss.progress_loss_type.lower() == "discrete":
+            target_progress = convert_discrete_target_to_continuous(
+                target_progress, num_bins=self.config.loss.progress_discrete_bins
+            )
+
+        # We predict success for frames where progress < min_success or the frame is a success
         combined_mask = ((target_progress < min_success) | (success_labels > 0.5)).float()
 
-        if progress_loss_mask is not None:
-            combined_mask = combined_mask * progress_loss_mask
+        # Incorporate quality mask: always include all frames for suboptimal/failure trajectories
+        if quality_mask is not None:
+            combined_mask = torch.maximum(combined_mask, quality_mask)
+
+        # if progress_loss_mask is not None:
+        #     combined_mask = combined_mask * progress_loss_mask
 
         # Clamp logits to prevent extreme values and gradient issues
         success_logits = torch.clamp(success_logits, min=-50.0, max=50.0)
 
-        positive_weight_value = float(getattr(self.config.loss, "success_positive_weight", 1.0))
-        pos_weight_tensor = torch.tensor(
-            positive_weight_value, device=success_logits.device, dtype=success_logits.dtype
-        )
+        # Compute class counts for balancing
+        num_positives = (success_labels * combined_mask).sum()
+        num_negatives = ((1 - success_labels) * combined_mask).sum()
 
+        # Compute per-sample weights to balance classes
+        # Weight the minority class so both classes contribute equally to the loss
+        # success_loss_weight = max(num_pos, num_neg) / min(num_pos, num_neg)
+        # Applied to whichever class has fewer samples
+        if num_positives > 0 and num_negatives > 0:
+            if num_positives < num_negatives:
+                # Positives are minority - weight them up
+                success_loss_weight = (num_negatives / num_positives).detach()
+                sample_weights = torch.where(
+                    success_labels > 0.5,
+                    success_loss_weight * combined_mask,
+                    combined_mask,
+                )
+            else:
+                # Negatives are minority (or equal) - weight them up
+                success_loss_weight = (num_positives / num_negatives).detach()
+                sample_weights = torch.where(
+                    success_labels > 0.5,
+                    combined_mask,
+                    success_loss_weight * combined_mask,
+                )
+        else:
+            success_loss_weight = torch.tensor(1.0, device=success_logits.device, dtype=success_logits.dtype)
+            sample_weights = combined_mask
+
+        # Compute BCE loss with per-sample weights (includes combined_mask)
         loss = F.binary_cross_entropy_with_logits(
             success_logits,
             success_labels,
+            weight=sample_weights,
             reduction="none",
-            pos_weight=pos_weight_tensor,
         )
-        # [Bx1]
-        masked_loss = loss * combined_mask
+        combined_mask_index = combined_mask.bool()
+        loss = (loss * combined_mask) / (sample_weights + 1e-8)
+        success_loss = loss[combined_mask_index].mean()
 
         # Compute accuracy per sample
         success_preds = (torch.sigmoid(success_logits) > 0.5).float()
         correct = (success_preds == success_labels).float()
         masked_correct = correct * combined_mask
 
+        # Compute per-sample positive and negative accuracy tensors (like masked_correct)
+        # Only include values for samples of the corresponding class, use NaN for other class
+        # positive_correct: correct (0 or 1) for positive samples (label==1), NaN for negative samples
+        positive_mask = (success_labels == 1) & (combined_mask > 0)
+        positive_correct_tensor = torch.where(
+            positive_mask, correct, torch.tensor(float("nan"), device=correct.device, dtype=torch.float32)
+        )
+
+        # negative_correct: correct (0 or 1) for negative samples (label==0), NaN for positive samples
+        negative_mask = (success_labels == 0) & (combined_mask > 0)
+        negative_correct_tensor = torch.where(
+            negative_mask, correct, torch.tensor(float("nan"), device=correct.device, dtype=torch.float32)
+        )
+
+        # Compute weighted accuracy (balanced accuracy) - scalar values for logging
+        # Weight each class's accuracy by inverse of its frequency
+        positive_correct_sum = (correct[combined_mask_index] * success_labels[combined_mask_index]).sum()
+        negative_correct_sum = (correct[combined_mask_index] * (1 - success_labels[combined_mask_index])).sum()
+
+        if num_positives > 0 and num_negatives > 0:
+            # Balanced accuracy: average of recall for each class
+            positive_acc_scalar = positive_correct_sum / (num_positives + 1e-8)
+            negative_acc_scalar = negative_correct_sum / (num_negatives + 1e-8)
+            weighted_acc = (positive_acc_scalar + negative_acc_scalar) / 2.0
+        else:
+            weighted_acc = masked_correct.sum() / (combined_mask.sum() + 1e-8)
+            # Set accuracies to 0.0 when we can't compute them properly
+            positive_acc_scalar = torch.tensor(0.0, device=success_loss.device, dtype=torch.float32)
+            negative_acc_scalar = torch.tensor(0.0, device=success_loss.device, dtype=torch.float32)
+
+        success_acc = masked_correct.sum() / (combined_mask.sum() + 1e-8)
+
         # Compute AUPRC (Area Under Precision-Recall Curve)
-        # Flatten tensors for AUPRC computation
         success_probs = torch.sigmoid(success_logits)
         success_probs_flat = success_probs[combined_mask > 0]
         success_labels_flat = success_labels[combined_mask > 0]
-
-        success_loss = masked_loss.sum() / (combined_mask.sum() + 1e-8)
-        success_acc = masked_correct.sum() / (combined_mask.sum() + 1e-8)
 
         # Compute AUPRC across all valid frames
         if success_probs_flat.numel() > 0 and len(torch.unique(success_labels_flat)) > 1:
@@ -2488,8 +2166,16 @@ class RFMHeadsTrainer(Trainer):
             batch_auprc = torch.tensor(0.0, device=success_loss.device, dtype=torch.float32)
 
         metrics = {
-            "masked_loss": masked_loss,
             "masked_correct": masked_correct,
+            "masked_loss": loss,
+            "weighted_accuracy": weighted_acc,
+            "positive_accuracy": positive_correct_tensor,  # Per-sample tensor like masked_correct
+            "negative_accuracy": negative_correct_tensor,  # Per-sample tensor like masked_correct
+            "positive_accuracy_scalar": positive_acc_scalar,  # Scalar for logging
+            "negative_accuracy_scalar": negative_acc_scalar,  # Scalar for logging
+            "success_loss_weight": success_loss_weight,
+            "num_positives": num_positives,
+            "num_negatives": num_negatives,
         }
 
         return success_loss, success_acc, batch_auprc, metrics
@@ -2499,6 +2185,7 @@ class RFMHeadsTrainer(Trainer):
         progress_pred: torch.Tensor,
         target_progress: torch.Tensor,
         mask: torch.Tensor,
+        predict_last_frame_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Helper function to compute progress loss.
@@ -2508,6 +2195,8 @@ class RFMHeadsTrainer(Trainer):
                           or (batch_size, seq_len, num_bins) for discrete loss (logits)
             target_progress: Target progress tensors of shape (batch_size, seq_len) with values in [0, 1]
             mask: Per-sample mask tensor of shape (batch_size, seq_len) with 1.0 for samples where we should compute loss
+            predict_last_frame_mask: Optional mask tensor of shape (batch_size, seq_len) with 1.0 for frames with partial_success.
+                                    If provided, this takes precedence over config.
 
         Returns:
             tuple: (masked_loss, spearman_correlations, metrics)
@@ -2519,11 +2208,24 @@ class RFMHeadsTrainer(Trainer):
         ) and not self.config.data.use_multi_image:
             target_progress = target_progress[:, ::2]
             mask = mask[:, ::2]
+            if predict_last_frame_mask is not None:
+                predict_last_frame_mask = predict_last_frame_mask[:, ::2]
 
-        # If predict_last_frame_progress is True, only compute loss for the last frame
-        last_frame_mask = None
-        if self.config.loss.predict_last_frame_progress:
-            # Create a mask that only selects the last frame for each sequence
+        # Apply predict_last_frame_mask if provided
+        # The mask defaults to all 1s (include all frames) unless explicitly set to 0
+        if predict_last_frame_mask is not None:
+            # Use the mask from batch inputs (already handles partial_success)
+            # Ensure shapes match
+            if predict_last_frame_mask.shape != mask.shape:
+                # If predict_last_frame_mask is [batch_size, seq_len] and mask is [batch_size, 1], expand mask first
+                if mask.shape[1] == 1 and predict_last_frame_mask.shape[1] > 1:
+                    mask = mask.expand_as(predict_last_frame_mask)
+                elif predict_last_frame_mask.shape[1] == 1 and mask.shape[1] > 1:
+                    predict_last_frame_mask = predict_last_frame_mask.expand_as(mask)
+            
+            mask = mask * predict_last_frame_mask
+        elif self.config.loss.predict_last_frame_progress:
+            # Fallback to config-based logic: create a mask that only selects the last frame for each sequence
             last_frame_mask = torch.zeros_like(target_progress, dtype=torch.float32)
             last_frame_mask[:, -1] = 1.0  # Set last frame to 1.0 for all sequences
             mask = mask * last_frame_mask
@@ -2540,13 +2242,20 @@ class RFMHeadsTrainer(Trainer):
 
             # Target progress is already discrete bins [0, num_bins-1] from data sampling
             # Convert to long tensor
-            target_bins = target_progress.long()  # [batch_size, seq_len]
-            # Ensure bins are in valid range [0, num_bins-1]
-            target_bins = torch.clamp(target_bins, 0, num_bins - 1)
+            if len(target_progress.shape) == 2:
+                target_bins = target_progress.long()  # [batch_size, seq_len]
+                # Ensure bins are in valid range [0, num_bins-1]
+                target_bins = torch.clamp(target_bins, 0, num_bins - 1)
 
-            # progress_pred should be [batch_size, seq_len, num_bins] logits
-            # Reshape for cross-entropy: [batch_size * seq_len, num_bins] and [batch_size * seq_len]
-            batch_size, seq_len = target_bins.shape
+                # progress_pred should be [batch_size, seq_len, num_bins] logits
+                # Reshape for cross-entropy: [batch_size * seq_len, num_bins] and [batch_size * seq_len]
+                batch_size, seq_len = target_bins.shape
+                target_bins_flat = target_bins.view(batch_size * seq_len)  # [B*T]
+            else:
+                target_bins = target_progress
+                # if we're using C51-style soft bins
+                batch_size, seq_len, num_bins = target_bins.shape
+                target_bins_flat = target_bins.view(batch_size * seq_len, num_bins)
 
             # Check if progress_pred has the correct shape for discrete mode
             if len(progress_pred.shape) == 2:
@@ -2566,7 +2275,6 @@ class RFMHeadsTrainer(Trainer):
                 )
 
             progress_pred_flat = progress_pred.view(batch_size * seq_len, num_bins)  # [B*T, num_bins]
-            target_bins_flat = target_bins.view(batch_size * seq_len)  # [B*T]
             # Mask shape may be [B, 1] or [B, seq_len] depending on downsampling/last_frame_mask
             # Ensure it matches target_bins shape [B, seq_len] before flattening
             if mask.shape[1] != seq_len:
@@ -2582,7 +2290,10 @@ class RFMHeadsTrainer(Trainer):
 
             # Compute accuracy: compare predicted bins (argmax) with target bins
             pred_bins_flat = torch.argmax(progress_pred_flat, dim=-1)  # [B*T]
-            correct_flat = (pred_bins_flat == target_bins_flat).float()  # [B*T]
+            if len(target_bins_flat.shape) == 2:
+                correct_flat = (pred_bins_flat == torch.argmax(target_bins_flat, dim=-1)).float()  # [B*T]
+            else:
+                correct_flat = (pred_bins_flat == target_bins_flat).float()  # [B*T]
 
             # Apply mask and reshape back
             masked_loss_flat = loss_per_sample_flat * mask_flat  # [B*T]
@@ -2603,29 +2314,24 @@ class RFMHeadsTrainer(Trainer):
         # For discrete mode, convert predictions back to continuous for spearman correlation
         # For L1/L2, use predictions as-is
         if loss_type == "discrete":
-            # Convert logits to probabilities, then to expected value (weighted sum)
-            progress_pred_continuous = torch.softmax(progress_pred, dim=-1)  # [B, T, num_bins]
-            # Create bin centers: [0, 1/(num_bins-1), 2/(num_bins-1), ..., 1]
-            bin_centers = torch.linspace(0.0, 1.0, num_bins, device=progress_pred.device, dtype=progress_pred.dtype)
-            # Compute expected value: sum(prob * bin_center) for each timestep
-            progress_pred_for_corr = (progress_pred_continuous * bin_centers.unsqueeze(0).unsqueeze(0)).sum(
-                dim=-1
-            )  # [B, T]
+            progress_pred_for_corr = convert_bins_to_continuous(progress_pred)
+            target_progress_for_corr = convert_discrete_target_to_continuous(target_progress, num_bins=num_bins)
         else:
             progress_pred_for_corr = progress_pred
+            target_progress_for_corr = target_progress
 
-        if mask.shape[1] != target_progress.shape[1]:
-            repeated_mask = mask.repeat(1, target_progress.shape[1])
+        if mask.shape[1] != target_progress_for_corr.shape[1]:
+            repeated_mask = mask.repeat(1, target_progress_for_corr.shape[1])
         else:
             repeated_mask = mask
         masked_spearman_corr = compute_spearman_correlation(
-            progress_pred_for_corr, target_progress, aggregate=False, mask=repeated_mask
+            progress_pred_for_corr, target_progress_for_corr, aggregate=False, mask=repeated_mask
         )
         masked_spearman_corr = masked_spearman_corr.detach()
 
         # Average per sample, then take mean across batch
         # TODO: might need to change this if the mask is per timestep too
-        progress_loss = masked_loss.mean(dim=1).sum(dim=0) / mask.sum()
+        progress_loss = masked_loss.mean(dim=1).sum(dim=0) / (mask.sum() + 1e-8)
         spearman_corr = masked_spearman_corr.mean()
 
         # Keep track of the per-sample metrics
@@ -2644,6 +2350,7 @@ class RFMHeadsTrainer(Trainer):
         strategy_values: Optional[List[str]],
         data_source_values: List[str],
         metrics: Dict[str, torch.Tensor],
+        loss_mask: Optional[torch.Tensor] = None,
     ) -> None:
         """
         Add stratified metrics (by strategy and data source) to outputs_dict.
@@ -2654,8 +2361,13 @@ class RFMHeadsTrainer(Trainer):
             strategy_values: List of strategy values to split by (e.g., data_gen_strategy), or None to skip
             data_source_values: List of data source values to split by
             metrics: Dictionary of metric tensors, e.g., {"acc": tensor, "loss": tensor, "margin": tensor}
+            loss_mask: Optional[torch.Tensor] = None,
         """
         device = self.accelerator.device
+
+        # Flatten loss_mask to 1D if it has extra dimensions (e.g., [batch_size, 1] -> [batch_size])
+        if loss_mask is not None:
+            loss_mask = loss_mask.squeeze()
 
         # Split by strategy
         if strategy_values is not None:
@@ -2666,9 +2378,18 @@ class RFMHeadsTrainer(Trainer):
                 )
                 # Apply mask to each metric and compute mean
                 for metric_name, metric_tensor in metrics.items():
-                    masked_metric = metric_tensor[mask == 1].detach()
-                    mean_value = masked_metric.mean().item() if masked_metric.numel() > 0 else 0.0
-                    outputs_dict[f"{prefix}_strat_{metric_name}/{strat}"] = mean_value
+                    if len(metric_tensor.shape) == 0:
+                        continue
+                    if loss_mask is not None:
+                        masked_metric = metric_tensor[(mask == 1) & (loss_mask == 1)].detach()
+                    else:
+                        masked_metric = metric_tensor[mask == 1].detach()
+
+                    # get mean over non-nan values
+                    non_nan_masked_metric = masked_metric[~torch.isnan(masked_metric)]
+                    if non_nan_masked_metric.numel() > 0:
+                        mean_value = non_nan_masked_metric.mean().item()
+                        outputs_dict[f"{prefix}_strat_{metric_name}/{strat}"] = mean_value
 
         # Split by data source
         data_sources = set(data_source_values)
@@ -2678,9 +2399,16 @@ class RFMHeadsTrainer(Trainer):
             )
             # Apply mask to each metric and compute mean
             for metric_name, metric_tensor in metrics.items():
-                masked_metric = metric_tensor[mask == 1].detach()
-                mean_value = masked_metric.mean().item() if masked_metric.numel() > 0 else 0.0
-                outputs_dict[f"{prefix}_ds_{metric_name}/{data_source}"] = mean_value
+                if len(metric_tensor.shape) == 0:
+                    continue
+                if loss_mask is not None:
+                    masked_metric = metric_tensor[(mask == 1) & (loss_mask == 1)].detach()
+                else:
+                    masked_metric = metric_tensor[mask == 1].detach()
+                non_nan_masked_metric = masked_metric[~torch.isnan(masked_metric)]
+                if non_nan_masked_metric.numel() > 0:
+                    mean_value = non_nan_masked_metric.mean().item()
+                    outputs_dict[f"{prefix}_ds_{metric_name}/{data_source}"] = mean_value
 
     def forward_model(self, model, inputs, sample_type="progress"):
         """Forward pass for the model."""
@@ -2749,24 +2477,32 @@ class RFMHeadsTrainer(Trainer):
         progress_pred = progress_logits["A"]
         progress_target = inputs["target_progress"]
         progress_target_mask = inputs["target_progress_mask"].unsqueeze(-1)
+        predict_last_frame_mask = inputs["predict_last_frame_mask"]
 
         progress_loss, spearman_corr, progress_metrics = self._compute_progress_loss_helper(
-            progress_pred, progress_target, progress_target_mask
+            progress_pred, progress_target, progress_target_mask, predict_last_frame_mask=predict_last_frame_mask
         )
+        final_loss = 0
 
-        final_loss = progress_loss
+        final_loss += progress_loss
         if self.config.model.train_success_head:
             success_logits = model_output.success_logits
             success_pred = success_logits["A"]
             success_labels = inputs["success_labels"]
 
+            quality_labels = inputs.get("quality_labels", None)
             success_loss, success_accuracy, success_auprc, success_metrics = self._compute_success_loss_helper(
                 success_pred,
                 progress_target,
                 success_labels,
                 progress_loss_mask=progress_target_mask,
+                quality_labels=quality_labels,
             )
-            final_loss = progress_loss + success_loss
+            # success_loss is already balanced via per-sample weighting of minority class
+            if not torch.isnan(success_loss).any():
+                final_loss += success_loss
+            else:
+                logger.warning(f"NaN detected in success loss")
 
         # Check for NaN in final loss
         if torch.isnan(final_loss).any():
@@ -2793,6 +2529,7 @@ class RFMHeadsTrainer(Trainer):
                 strategy_values,
                 inputs["data_source"],
                 stratified_metrics,
+                progress_target_mask,
             )
 
             outputs_dict.update({
@@ -2802,16 +2539,39 @@ class RFMHeadsTrainer(Trainer):
 
             # Add progress accuracy for discrete mode
             if "masked_progress_accuracy" in progress_metrics:
-                progress_accuracy = progress_metrics["masked_progress_accuracy"].sum() / (
-                    progress_target_mask.sum() + 1e-8
-                )
+                # Expand mask to match masked_progress_accuracy shape [batch_size, seq_len]
+                masked_progress_accuracy = progress_metrics["masked_progress_accuracy"]
+                batch_size, seq_len = masked_progress_accuracy.shape
+                if progress_target_mask.shape[1] != seq_len:
+                    mask_expanded = progress_target_mask.expand(batch_size, seq_len)
+                else:
+                    mask_expanded = progress_target_mask
+                progress_accuracy = masked_progress_accuracy.sum() / (mask_expanded.sum() + 1e-8)
                 outputs_dict[f"{prefix}/prog_accuracy"] = progress_accuracy.item()
 
             if self.config.model.train_success_head:
+                weighted_accuracy = success_metrics["weighted_accuracy"]
+                positive_accuracy_scalar = success_metrics["positive_accuracy_scalar"]
+                negative_accuracy_scalar = success_metrics["negative_accuracy_scalar"]
+                success_loss_weight = success_metrics["success_loss_weight"]
                 outputs_dict.update({
                     f"{prefix}/success_loss": success_loss.item(),
                     f"{prefix}/success_accuracy": success_accuracy.item(),
                     f"{prefix}/success_auprc": success_auprc.item(),
+                    f"{prefix}/weighted_success_accuracy": weighted_accuracy.item()
+                    if torch.is_tensor(weighted_accuracy)
+                    else weighted_accuracy,
+                    f"{prefix}/positive_success_accuracy": positive_accuracy_scalar.item()
+                    if torch.is_tensor(positive_accuracy_scalar)
+                    else positive_accuracy_scalar,
+                    f"{prefix}/negative_success_accuracy": negative_accuracy_scalar.item()
+                    if torch.is_tensor(negative_accuracy_scalar)
+                    else negative_accuracy_scalar,
+                    f"{prefix}/success_loss_weight": success_loss_weight.item()
+                    if torch.is_tensor(success_loss_weight)
+                    else success_loss_weight,
+                    f"{prefix}/success_num_positives": success_metrics["num_positives"].item(),
+                    f"{prefix}/success_num_negatives": success_metrics["num_negatives"].item(),
                 })
 
         if not return_outputs:
@@ -2839,21 +2599,31 @@ class RFMHeadsTrainer(Trainer):
         )
         preference_loss = preference_loss_all.mean()
 
-        final_loss = preference_loss
+        final_loss = 0
+
+        if not torch.isnan(preference_loss).any():
+            final_loss += preference_loss
+        else:
+            logger.warning(f"NaN detected in preference loss")
 
         # =========================================================================================
         # Compute progress and success loss for the first trajectory in the paired samples
         # =========================================================================================
         target_progress_A = inputs["target_progress_A"]
         target_progress_A_mask = inputs["target_progress_A_mask"].unsqueeze(-1)
+        data_gen_strat = inputs["trajectory_A_data_gen_strategy"]
+        logger.warning(f"DATA GEN STRAT FOR TRAJ A: {data_gen_strat}")
+        logger.warning(f"DATA SOURCE FOR TRAJ A: {inputs['trajectory_A_data_source']}")
+        # logger.warning(f"PREFERENCE LABELS: {inputs['preference_labels']}")
 
         if self.config.model.train_progress_head and self.config.training.predict_pref_progress:
             progress_pred_A = progress_logits["A"]
-
+            predict_last_frame_mask_A = inputs["predict_last_frame_mask_A"]
             progress_loss_A, spearman_corr_A, progress_metrics_A = self._compute_progress_loss_helper(
                 progress_pred_A,
                 target_progress_A,
                 target_progress_A_mask,
+                predict_last_frame_mask=predict_last_frame_mask_A,
             )
             final_loss += progress_loss_A
 
@@ -2862,18 +2632,23 @@ class RFMHeadsTrainer(Trainer):
             success_logits = success_logits["A"]
             success_labels_A = inputs["success_labels_A"]
 
+            quality_labels_A = inputs.get("trajectory_A_quality_label", None)
             success_loss, success_accuracy, success_auprc, success_metrics_A = self._compute_success_loss_helper(
                 success_logits,
                 target_progress_A,
                 success_labels_A,
                 progress_loss_mask=target_progress_A_mask,
+                quality_labels=quality_labels_A,
             )
-            final_loss += success_loss
+            # success_loss is already balanced via per-sample weighting of minority class
+            if not torch.isnan(success_loss).any():
+                final_loss += success_loss
+            else:
+                logger.warning(f"NaN detected in success loss")
 
         # Check for NaN in final loss
         if torch.isnan(final_loss).any():
-            logger.warning(f"NaN detected in preference loss, replacing with 0.0")
-            final_loss = torch.tensor(0.0, device=final_loss.device, dtype=final_loss.dtype)
+            logger.warning(f"NaN detected in preference loss")
 
         if return_outputs:
             outputs_dict = {}
@@ -2889,9 +2664,14 @@ class RFMHeadsTrainer(Trainer):
 
                 # Add progress accuracy for discrete mode
                 if "masked_progress_accuracy" in progress_metrics_A:
-                    progress_accuracy_A = progress_metrics_A["masked_progress_accuracy"].sum() / (
-                        target_progress_A_mask.sum() + 1e-8
-                    )
+                    # Expand mask to match masked_progress_accuracy shape [batch_size, seq_len]
+                    masked_progress_accuracy = progress_metrics_A["masked_progress_accuracy"]
+                    batch_size, seq_len = masked_progress_accuracy.shape
+                    if target_progress_A_mask.shape[1] != seq_len:
+                        mask_expanded = target_progress_A_mask.expand(batch_size, seq_len)
+                    else:
+                        mask_expanded = target_progress_A_mask
+                    progress_accuracy_A = masked_progress_accuracy.sum() / (mask_expanded.sum() + 1e-8)
                     outputs_dict[f"{prefix}/pref_prog_accuracy"] = progress_accuracy_A.item()
 
                 stratified_progress_metrics = {
@@ -2905,26 +2685,45 @@ class RFMHeadsTrainer(Trainer):
                     inputs["trajectory_A_data_gen_strategy"],
                     inputs["trajectory_A_data_source"],
                     stratified_progress_metrics,
+                    target_progress_A_mask,
                 )
 
             if self.config.model.train_success_head:
+                weighted_accuracy = success_metrics_A["weighted_accuracy"]
+                positive_accuracy_scalar = success_metrics_A["positive_accuracy_scalar"]
+                negative_accuracy_scalar = success_metrics_A["negative_accuracy_scalar"]
+                success_loss_weight = success_metrics_A["success_loss_weight"]
                 outputs_dict.update({
                     f"{prefix}/pref_success_loss": success_loss.item(),
                     f"{prefix}/pref_success_accuracy": success_accuracy.item(),
                     f"{prefix}/pref_success_auprc": success_auprc.item(),
+                    f"{prefix}/pref_weighted_success_accuracy": weighted_accuracy.item()
+                    if torch.is_tensor(weighted_accuracy)
+                    else weighted_accuracy,
+                    f"{prefix}/pref_positive_success_accuracy": positive_accuracy_scalar.item()
+                    if torch.is_tensor(positive_accuracy_scalar)
+                    else positive_accuracy_scalar,
+                    f"{prefix}/pref_negative_success_accuracy": negative_accuracy_scalar.item()
+                    if torch.is_tensor(negative_accuracy_scalar)
+                    else negative_accuracy_scalar,
+                    f"{prefix}/pref_success_loss_weight": success_loss_weight.item()
+                    if torch.is_tensor(success_loss_weight)
+                    else success_loss_weight,
                 })
 
                 stratified_success_metrics = {
                     "success_loss": success_metrics_A["masked_loss"],
                     "success_acc": success_metrics_A["masked_correct"],
+                    "success_pos_acc": success_metrics_A["positive_accuracy"],
+                    "success_neg_acc": success_metrics_A["negative_accuracy"],
                 }
-
                 self._add_stratified_metrics(
                     outputs_dict,
                     prefix,
                     inputs["trajectory_A_data_gen_strategy"],
                     inputs["trajectory_A_data_source"],
                     stratified_success_metrics,
+                    target_progress_A_mask,
                 )
 
             if preference_loss is not None:
@@ -3024,6 +2823,13 @@ class RFMHeadsTrainer(Trainer):
             success_logits_ref_sim = {"A": success_A_ref_sim, "B": None}
             success_logits_ref_diff = {"A": success_A_ref_diff, "B": None}
 
+        # Handle preference_logits - extract from ref_diff pairs (odd indices) if predict_pref_sim is enabled
+        preference_logits_ref_diff = None
+        if self.config.model.train_preference_head and self.config.training.predict_pref_sim:
+            if batched_outputs.pref_logits is not None:
+                # Extract preference logits for ref_diff pairs (odd indices)
+                preference_logits_ref_diff = batched_outputs.pref_logits[1::2]  # Odd indices
+
         model_outputs_ref_sim = ModelOutput(
             sim_logits=sim_logits_ref_sim,
             progress_logits=progress_logits_ref_sim,
@@ -3050,7 +2856,11 @@ class RFMHeadsTrainer(Trainer):
         similarity_loss_all = F.softplus(-diff_scores)
         similarity_loss = similarity_loss_all.mean()
         similarity_margin = (score_ref_sim - score_ref_diff).detach()
-        final_loss = similarity_loss
+        final_loss = 0
+        if not torch.isnan(similarity_loss).any():
+            final_loss += similarity_loss
+        else:
+            logger.warning(f"NaN detected in similarity loss")
 
         # =========================================================================================
         # Compute progress and success loss for trajectory A (first trajectory) in both ref_sim and ref_diff
@@ -3074,18 +2884,22 @@ class RFMHeadsTrainer(Trainer):
             progress_pred_ref_diff = progress_logits_ref_diff["A"]  # [batch_size, seq_len]
 
             # Compute progress loss for ref_sim (using trajectory A)
+            predict_last_frame_mask_sim_A = inputs.get("predict_last_frame_mask_sim_A", None)
             progress_loss_ref_sim, spearman_corr_ref_sim, progress_metrics_ref_sim = self._compute_progress_loss_helper(
                 progress_pred_ref_sim,
                 target_progress_sim_A,
                 target_progress_sim_A_mask,
+                predict_last_frame_mask=predict_last_frame_mask_sim_A,
             )
 
             # Compute progress loss for ref_diff (using trajectory A)
+            predict_last_frame_mask_diff_A = inputs.get("predict_last_frame_mask_diff_A", None)
             progress_loss_ref_diff, spearman_corr_ref_diff, progress_metrics_ref_diff = (
                 self._compute_progress_loss_helper(
                     progress_pred_ref_diff,
                     target_progress_diff_A,
                     target_progress_diff_A_mask,
+                    predict_last_frame_mask=predict_last_frame_mask_diff_A,
                 )
             )
 
@@ -3100,6 +2914,10 @@ class RFMHeadsTrainer(Trainer):
             success_pred_ref_sim = success_logits_ref_sim["A"]  # [batch_size, seq_len]
             success_pred_ref_diff = success_logits_ref_diff["A"]  # [batch_size, seq_len]
 
+            # Get quality labels for trajectory A in each comparison
+            quality_labels_sim_A = inputs.get("trajectory_A_quality_label_sim", None)
+            quality_labels_diff_A = inputs.get("trajectory_A_quality_label_diff", None)
+
             # Compute success loss for ref_sim (using trajectory A)
             success_loss_ref_sim, success_accuracy_ref_sim, success_auprc_ref_sim, success_metrics_ref_sim = (
                 self._compute_success_loss_helper(
@@ -3107,6 +2925,7 @@ class RFMHeadsTrainer(Trainer):
                     target_progress_sim_A,
                     success_labels_sim_A,
                     progress_loss_mask=target_progress_sim_A_mask,
+                    quality_labels=quality_labels_sim_A,
                 )
             )
 
@@ -3117,19 +2936,45 @@ class RFMHeadsTrainer(Trainer):
                     target_progress_diff_A,
                     success_labels_diff_A,
                     progress_loss_mask=target_progress_diff_A_mask,
+                    quality_labels=quality_labels_diff_A,
                 )
             )
 
-            # Sum the success losses
+            # Sum the success losses (already balanced via per-sample weighting of minority class)
             total_success_loss = success_loss_ref_sim + success_loss_ref_diff
             success_accuracy = (success_accuracy_ref_sim + success_accuracy_ref_diff) / 2.0
             success_auprc = (success_auprc_ref_sim + success_auprc_ref_diff) / 2.0
-            final_loss = final_loss + total_success_loss
+            if not torch.isnan(total_success_loss).any():
+                final_loss = final_loss + total_success_loss
 
-        # Check for NaN in final loss
-        if torch.isnan(final_loss).any():
-            logger.warning(f"NaN detected in similarity loss, replacing with 0.0")
-            final_loss = torch.tensor(0.0, device=final_loss.device, dtype=final_loss.dtype)
+        # =========================================================================================
+        # Compute preference loss for ref/diff pair if predict_pref_sim is enabled
+        # =========================================================================================
+        # Ref is always preferred over diff, so we compute preference loss for the ref_diff pairs
+        preference_loss_ref_diff = None
+        if self.config.model.train_preference_head and self.config.training.predict_pref_sim:
+            if preference_logits_ref_diff is not None:
+                preference_labels_ref_diff = inputs.get("preference_labels_ref_diff")
+                if preference_labels_ref_diff is not None:
+                    # Clamp logits to prevent extreme values and gradient issues
+                    preference_scores_ref_diff = torch.clamp(
+                        preference_logits_ref_diff.squeeze(-1), min=-50.0, max=50.0
+                    )
+
+                    # Binary cross entropy loss for preference prediction
+                    preference_loss_ref_diff_all = F.binary_cross_entropy_with_logits(
+                        preference_scores_ref_diff, preference_labels_ref_diff.float(), reduction="none"
+                    )
+                    preference_loss_ref_diff = preference_loss_ref_diff_all.mean()
+
+                    if not torch.isnan(preference_loss_ref_diff).any():
+                        final_loss += preference_loss_ref_diff
+                    else:
+                        logger.warning(f"NaN detected in similarity preference loss")
+                else:
+                    logger.warning("predict_pref_sim is enabled but preference_labels_ref_diff not found in inputs")
+            else:
+                logger.warning("predict_pref_sim is enabled but pref_logits not found in batched_outputs")
 
         if return_outputs:
             outputs_dict = {}
@@ -3179,12 +3024,23 @@ class RFMHeadsTrainer(Trainer):
                     "masked_progress_accuracy" in progress_metrics_ref_sim
                     and "masked_progress_accuracy" in progress_metrics_ref_diff
                 ):
-                    progress_accuracy_ref_sim = progress_metrics_ref_sim["masked_progress_accuracy"].sum() / (
-                        target_progress_sim_A_mask.sum() + 1e-8
-                    )
-                    progress_accuracy_ref_diff = progress_metrics_ref_diff["masked_progress_accuracy"].sum() / (
-                        target_progress_diff_A_mask.sum() + 1e-8
-                    )
+                    # Expand masks to match masked_progress_accuracy shape [batch_size, seq_len]
+                    masked_progress_accuracy_sim = progress_metrics_ref_sim["masked_progress_accuracy"]
+                    masked_progress_accuracy_diff = progress_metrics_ref_diff["masked_progress_accuracy"]
+                    batch_size, seq_len = masked_progress_accuracy_sim.shape
+
+                    if target_progress_sim_A_mask.shape[1] != seq_len:
+                        mask_expanded_sim = target_progress_sim_A_mask.expand(batch_size, seq_len)
+                    else:
+                        mask_expanded_sim = target_progress_sim_A_mask
+
+                    if target_progress_diff_A_mask.shape[1] != seq_len:
+                        mask_expanded_diff = target_progress_diff_A_mask.expand(batch_size, seq_len)
+                    else:
+                        mask_expanded_diff = target_progress_diff_A_mask
+
+                    progress_accuracy_ref_sim = masked_progress_accuracy_sim.sum() / (mask_expanded_sim.sum() + 1e-8)
+                    progress_accuracy_ref_diff = masked_progress_accuracy_diff.sum() / (mask_expanded_diff.sum() + 1e-8)
                     avg_progress_accuracy = (progress_accuracy_ref_sim + progress_accuracy_ref_diff) / 2.0
                     outputs_dict[f"{prefix}/sim_prog_accuracy"] = avg_progress_accuracy.item()
                     outputs_dict[f"{prefix}/sim_prog_accuracy_ref_sim"] = progress_accuracy_ref_sim.item()
@@ -3210,16 +3066,42 @@ class RFMHeadsTrainer(Trainer):
                     inputs["data_gen_strategy"],
                     inputs["trajectory_A_data_source"],
                     stratified_progress_metrics,
+                    target_progress_sim_A_mask,
                 )
 
             # Add success loss metrics if computed
             if self.config.model.train_success_head:
+                weighted_accuracy_ref_sim = success_metrics_ref_sim["weighted_accuracy"]
+                weighted_accuracy_ref_diff = success_metrics_ref_diff["weighted_accuracy"]
+                avg_weighted_accuracy = (weighted_accuracy_ref_sim + weighted_accuracy_ref_diff) / 2.0
+                # Use scalar versions for logging
+                positive_accuracy_scalar_ref_sim = success_metrics_ref_sim["positive_accuracy_scalar"]
+                positive_accuracy_scalar_ref_diff = success_metrics_ref_diff["positive_accuracy_scalar"]
+                avg_positive_accuracy = (positive_accuracy_scalar_ref_sim + positive_accuracy_scalar_ref_diff) / 2.0
+                negative_accuracy_scalar_ref_sim = success_metrics_ref_sim["negative_accuracy_scalar"]
+                negative_accuracy_scalar_ref_diff = success_metrics_ref_diff["negative_accuracy_scalar"]
+                avg_negative_accuracy = (negative_accuracy_scalar_ref_sim + negative_accuracy_scalar_ref_diff) / 2.0
+                success_loss_weight_ref_sim = success_metrics_ref_sim["success_loss_weight"]
+                success_loss_weight_ref_diff = success_metrics_ref_diff["success_loss_weight"]
+                avg_success_loss_weight = (success_loss_weight_ref_sim + success_loss_weight_ref_diff) / 2.0
                 outputs_dict.update({
                     f"{prefix}/sim_success_loss": total_success_loss.item(),
                     f"{prefix}/sim_success_loss_ref_sim": success_loss_ref_sim.item(),
                     f"{prefix}/sim_success_loss_ref_diff": success_loss_ref_diff.item(),
                     f"{prefix}/sim_success_accuracy": success_accuracy.item(),
                     f"{prefix}/sim_success_auprc": success_auprc.item(),
+                    f"{prefix}/sim_weighted_success_accuracy": avg_weighted_accuracy.item()
+                    if torch.is_tensor(avg_weighted_accuracy)
+                    else avg_weighted_accuracy,
+                    f"{prefix}/sim_positive_success_accuracy": avg_positive_accuracy.item()
+                    if torch.is_tensor(avg_positive_accuracy)
+                    else avg_positive_accuracy,
+                    f"{prefix}/sim_negative_success_accuracy": avg_negative_accuracy.item()
+                    if torch.is_tensor(avg_negative_accuracy)
+                    else avg_negative_accuracy,
+                    f"{prefix}/sim_success_loss_weight": avg_success_loss_weight.item()
+                    if torch.is_tensor(avg_success_loss_weight)
+                    else avg_success_loss_weight,
                 })
 
                 # Combine metrics from both ref_sim and ref_diff for stratification
@@ -3230,10 +3112,18 @@ class RFMHeadsTrainer(Trainer):
                 combined_success_acc = (
                     success_metrics_ref_sim["masked_correct"] + success_metrics_ref_diff["masked_correct"]
                 ) / 2.0
+                combined_positive_acc = (
+                    success_metrics_ref_sim["positive_accuracy"] + success_metrics_ref_diff["positive_accuracy"]
+                ) / 2.0
+                combined_negative_acc = (
+                    success_metrics_ref_sim["negative_accuracy"] + success_metrics_ref_diff["negative_accuracy"]
+                ) / 2.0
 
                 stratified_success_metrics = {
                     "success_loss": combined_success_loss,
                     "success_acc": combined_success_acc,
+                    "success_pos_acc": combined_positive_acc,
+                    "success_neg_acc": combined_negative_acc,
                 }
 
                 self._add_stratified_metrics(
@@ -3242,7 +3132,25 @@ class RFMHeadsTrainer(Trainer):
                     inputs["data_gen_strategy"],
                     inputs["trajectory_A_data_source"],
                     stratified_success_metrics,
+                    target_progress_sim_A_mask,
                 )
+
+            # Add preference loss metrics if computed
+            if self.config.model.train_preference_head and self.config.training.predict_pref_sim:
+                if preference_loss_ref_diff is not None and preference_logits_ref_diff is not None:
+                    preference_labels_ref_diff = inputs.get("preference_labels_ref_diff")
+                    if preference_labels_ref_diff is not None:
+                        preference_scores_ref_diff = torch.clamp(preference_logits_ref_diff, min=-50.0, max=50.0)
+                        preference_probs_ref_diff = torch.sigmoid(preference_scores_ref_diff)
+                        preference_predictions_ref_diff = (preference_probs_ref_diff > 0.5).float()
+                        preference_accuracy_ref_diff = (
+                            preference_predictions_ref_diff == preference_labels_ref_diff
+                        ).float()
+
+                        outputs_dict.update({
+                            f"{prefix}/sim_pref_loss": preference_loss_ref_diff.item(),
+                            f"{prefix}/sim_pref_accuracy": preference_accuracy_ref_diff.mean().item(),
+                        })
 
             return final_loss, outputs_dict
 

@@ -28,6 +28,12 @@ from rfm.utils.logger import get_logger
 logger = get_logger()
 
 
+def squeeze_last_safe(x: torch.Tensor) -> torch.Tensor:
+    if x.ndim > 1 and x.shape[-1] == 1:
+        return x.squeeze(-1)
+    return x
+
+
 class RFM(PredictionHeadsMixin, PreTrainedModel):
     """Reward Foundation Model with three prediction heads for different objectives.
 
@@ -36,6 +42,7 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
     - SmolVLM (AutoModelForImageTextToText)
     """
 
+    # unused param i think
     config_class = Qwen2_5_VLModel.config_class
 
     # Declare support for SDPA and Flash Attention (will delegate to underlying model), needed for Qwen3
@@ -86,8 +93,26 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
         self.model_config = model_config
 
         self.average_temporal_patches = self.model_config.average_temporal_patches
-        self.use_progress_token = self.model_config.use_progress_token
+        self.use_per_frame_progress_token = self.model_config.use_per_frame_progress_token
         self.use_multi_image = self.model_config.use_multi_image
+
+        # Frame pooling strategy for multi-image mode (used when NOT using per-frame progress tokens).
+        # - mean: average pool patch tokens in the frame span
+        # - boundary: use the last patch token in the frame span
+        # - attention: learned attention pooling over patch tokens in the frame span
+        self.frame_pooling = getattr(self.model_config, "frame_pooling", "mean")
+        self.frame_pooling_attn_temperature = float(getattr(self.model_config, "frame_pooling_attn_temperature", 1.0))
+        if self.frame_pooling_attn_temperature <= 0:
+            raise ValueError("frame_pooling_attn_temperature must be > 0")
+        # Always create the attention pooling projection so checkpoints can be loaded across pooling modes.
+        self.frame_pool_attn = nn.Linear(hidden_size, 1, bias=False).to(dtype=self.model_dtype)
+
+        # Validate that use_per_frame_progress_token requires use_multi_image
+        if self.use_per_frame_progress_token and not self.use_multi_image:
+            raise ValueError(
+                "use_per_frame_progress_token=True requires use_multi_image=True. "
+                "Per-frame progress tokens can only be used in multi-image mode."
+            )
 
         # Molmo2 only supports multi-image mode, not video
         if "Molmo" in self.base_model_id and not self.use_multi_image:
@@ -103,6 +128,14 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
     def gradient_checkpointing_disable(self, **kwargs):
         """Delegates gradient checkpointing disabling to the base model."""
         self.model.gradient_checkpointing_disable(**kwargs)
+
+    def generate(self, *args, **kwargs):
+        """Delegates generation to the base model."""
+        return self.model.generate(*args, **kwargs)
+
+    def prepare_inputs_for_generation(self, *args, **kwargs):
+        """Delegates input preparation for generation to the base model."""
+        return self.model.prepare_inputs_for_generation(*args, **kwargs)
 
     def _extract_hidden_states_from_token_pairs(
         self,
@@ -238,8 +271,19 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
                 # This shouldn't happen normally, but handle it gracefully
                 frame_embedding = (hidden_state[start_pos] + hidden_state[end_pos]) / 2.0
             else:
-                # Mean pool all tokens between the pair
-                frame_embedding = frame_tokens.mean(dim=0)  # [hidden_dim]
+                if self.frame_pooling == "mean":
+                    frame_embedding = frame_tokens.mean(dim=0)  # [hidden_dim]
+                elif self.frame_pooling == "boundary":
+                    # Use the last patch token as a boundary summary of the frame span.
+                    frame_embedding = frame_tokens[-1]
+                elif self.frame_pooling == "attention":
+                    # Learned attention pooling over patch tokens in this frame span.
+                    # scores: [num_tokens]
+                    scores = self.frame_pool_attn(frame_tokens).squeeze(-1) / self.frame_pooling_attn_temperature
+                    weights = torch.softmax(scores, dim=0).unsqueeze(-1)  # [num_tokens, 1]
+                    frame_embedding = (weights * frame_tokens).sum(dim=0)
+                else:
+                    raise ValueError(f"Unsupported frame_pooling: {self.frame_pooling}")
 
             frame_embeddings.append(frame_embedding)
 
@@ -305,8 +349,8 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
         if self.use_discrete_progress:
             progress = progress_output  # [T, num_bins] - keep logits
         else:
-            progress = progress_output.squeeze(-1)  # [T]
-        success = self.success_head(boundary_hidden_states).squeeze(-1)  # [T]
+            progress = squeeze_last_safe(progress_output)  # [T]
+        success = squeeze_last_safe(self.success_head(boundary_hidden_states))  # [T]
 
         return progress, success
 
@@ -315,7 +359,7 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
         hidden_state: torch.Tensor,
         input_ids: torch.Tensor,
         token_name: str,
-    ) -> torch.Tensor:
+    ) -> torch.Tensor | list[torch.Tensor]:
         """
         Extract hidden states at specific token positions.
 
@@ -325,7 +369,8 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
             token_name: Name of the token to find (e.g., "<|prog_token|>", "<|pref_token|>")
 
         Returns:
-            token_hidden_states: Hidden states at token positions [B, hidden_dim]
+            If exactly one token per sequence: tensor [B, hidden_dim]
+            If multiple tokens per sequence (variable counts): list of tensors, one per batch item [num_tokens_i, hidden_dim]
         """
         # Handle both batched and unbatched inputs
         is_batched = hidden_state.dim() == 3
@@ -344,27 +389,26 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
         # Get token ID
         token_id = tokenizer.convert_tokens_to_ids(token_name)
 
-        # Find all positions where the token appears
-        token_positions = []
-        for i, seq_ids in enumerate(input_ids):
-            positions = (seq_ids == token_id).nonzero(as_tuple=True)[0]
-            if len(positions) == 0:
-                raise ValueError(f"{token_name} not found in sequence {i}")
-            elif len(positions) > 1:
-                raise ValueError(f"{token_name} appears {len(positions)} times in sequence {i}, expected exactly 1")
-            else:
-                token_positions.append(positions[0].item())
+        # Find all token positions across batch - vectorized
+        token_mask = input_ids == token_id  # [B, seq_len]
+        batch_indices, positions = token_mask.nonzero(as_tuple=True)  # both [total_tokens]
 
-        token_positions = torch.tensor(token_positions, device=input_ids.device, dtype=torch.long)
+        if len(positions) == 0:
+            raise ValueError(f"{token_name} not found in any sequence")
 
-        # Extract hidden states at the token positions
-        token_hidden_states = torch.gather(
-            hidden_state,
-            1,
-            token_positions.view(-1, 1, 1).expand(-1, -1, hidden_state.size(-1)),
-        ).squeeze(1)  # [B, hidden_dim]
+        # Extract all hidden states at token positions at once - vectorized
+        all_hidden = hidden_state[batch_indices, positions]  # [total_tokens, hidden_dim]
 
-        return token_hidden_states
+        # Count tokens per batch sample
+        token_counts = torch.bincount(batch_indices, minlength=B)  # [B]
+
+        # Check if all sequences have exactly one token
+        if (token_counts == 1).all():
+            # Return as [B, hidden_dim] tensor
+            return all_hidden.reshape(B, -1)
+        else:
+            # Split by batch index into list of tensors (variable token counts)
+            return list(torch.split(all_hidden, token_counts.tolist()))
 
     def _forward_smolvlm(
         self,
@@ -375,7 +419,7 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
         timing_raw,
         **kwargs,
     ):
-        """Forward pass for SmolVLM model."""
+        """Forward pass for SmolVLM model. Returns (ModelOutput, timing_raw)."""
         model_kwargs = {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
@@ -385,78 +429,84 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
         with _timer("time/rfm_forward", timing_raw=timing_raw):
             outputs = self.model(**model_kwargs, output_hidden_states=True, return_dict=True)
 
-        B = input_ids.shape[0]
         hidden_state = outputs.hidden_states[-1]  # [B, seq_len, hidden_dim]
+        progress_logits = {"A": None, "B": None}
+        success_logits = {"A": None, "B": None}
 
-        progress_logits_A = []
-        progress_logits_B = []
-        success_logits_A = []
-        success_logits_B = []
+        # Create output
+        output = ModelOutput()
 
-        # Skip all frame extraction when using progress token
-        skip_frame_extraction = self.use_progress_token
+        # Handle token-based extraction first if using per-frame progress tokens
+        if self.use_per_frame_progress_token:
+            progress_logits, success_logits, pref_or_sim_logits = self._process_token_extraction(
+                hidden_state, input_ids, sample_type
+            )
+            output.progress_logits = progress_logits
+            output.success_logits = success_logits
+            if pref_or_sim_logits is not None:
+                if sample_type == "preference":
+                    output.pref_logits = pref_or_sim_logits
+                else:
+                    output.sim_logits = pref_or_sim_logits
+        else:
+            # Process frames normally
+            with _timer("time/progress_logits", timing_raw=timing_raw):
+                progress_logits, success_logits = self._process_smolvlm_frames(hidden_state, input_ids, sample_type)
+            output.progress_logits = progress_logits
+            output.success_logits = success_logits
 
-        with _timer("time/progress_logits", timing_raw=timing_raw):
-            if not skip_frame_extraction:
-                # Compute per-frame embeddings and predictions
-                for i in range(B):
-                    # Extract frame embeddings for this sample
-                    frame_embeddings = self._extract_hidden_states_from_token_pairs(
-                        hidden_state[i],  # [seq_len, hidden_dim]
-                        input_ids[i],  # [seq_len]
-                    )  # [num_frames, hidden_dim]
+            # Handle preference/similarity tokens if needed
+            if sample_type in ["preference", "similarity"]:
+                token_name = "<|pref_token|>" if sample_type == "preference" else "<|sim_token|>"
+                token_hidden = self._extract_hidden_state_from_token(hidden_state, input_ids, token_name)
+                if sample_type == "preference":
+                    output.pref_logits = self.preference_head(token_hidden)
+                else:
+                    output.sim_logits = self.similarity_head(token_hidden)
 
-                    if frame_embeddings.shape[0] == 0:
-                        raise ValueError(f"No frame embeddings extracted for sample {i}")
+        return output, timing_raw
 
-                    # For progress samples, there's only one video/trajectory (V=1)
-                    # For preference/similarity samples, there are two videos/trajectories (V=2)
-                    if sample_type == "progress":
-                        trajectory_A_frames = frame_embeddings
-                        trajectory_B_frames = None
-                    else:
-                        mid_point = frame_embeddings.shape[0] // 2
-                        trajectory_A_frames = frame_embeddings[:mid_point]
-                        trajectory_B_frames = frame_embeddings[mid_point:]
+    def _process_smolvlm_frames(self, hidden_state, input_ids, sample_type):
+        """Process SmolVLM frames and return progress/success logits."""
+        B = input_ids.shape[0]
+        progress_logits_A, progress_logits_B = [], []
+        success_logits_A, success_logits_B = [], []
 
-                    # Apply heads to trajectory A frames
-                    progress_A_output = self.progress_head(
-                        trajectory_A_frames
-                    )  # [T_A, 1] or [T_A, num_bins] for discrete
-                    if self.use_discrete_progress:
-                        progress_A = progress_A_output  # [T_A, num_bins] - keep logits
-                    else:
-                        progress_A = progress_A_output.squeeze(-1)  # [T_A]
-                    success_A = self.success_head(trajectory_A_frames).squeeze(-1)  # [T_A]
-                    progress_logits_A.append(progress_A)
-                    success_logits_A.append(success_A)
+        for i in range(B):
+            frame_embeddings = self._extract_hidden_states_from_token_pairs(hidden_state[i], input_ids[i])
+            if frame_embeddings.shape[0] == 0:
+                raise ValueError(f"No frame embeddings extracted for sample {i}")
 
-                    # Apply heads to trajectory B frames (if available)
-                    if trajectory_B_frames is not None:
-                        progress_B_output = self.progress_head(
-                            trajectory_B_frames
-                        )  # [T_B, 1] or [T_B, num_bins] for discrete
-                        if self.use_discrete_progress:
-                            progress_B = progress_B_output  # [T_B, num_bins] - keep logits
-                        else:
-                            progress_B = progress_B_output.squeeze(-1)  # [T_B]
-                        success_B = self.success_head(trajectory_B_frames).squeeze(-1)  # [T_B]
-                        progress_logits_B.append(progress_B)
-                        success_logits_B.append(success_B)
-                    else:
-                        progress_logits_B.append(None)
-                        success_logits_B.append(None)
+            if sample_type == "progress":
+                traj_A, traj_B = frame_embeddings, None
+            else:
+                mid = frame_embeddings.shape[0] // 2
+                traj_A, traj_B = frame_embeddings[:mid], frame_embeddings[mid:]
 
-        progress_logits = {
-            "A": torch.stack(progress_logits_A) if progress_logits_A else None,
-            "B": torch.stack(progress_logits_B) if progress_logits_B else None,
-        }
-        success_logits = {
-            "A": torch.stack(success_logits_A) if success_logits_A else None,
-            "B": torch.stack(success_logits_B) if success_logits_B else None,
-        }
+            # Trajectory A
+            prog_A = self.progress_head(traj_A)
+            progress_logits_A.append(prog_A if self.use_discrete_progress else squeeze_last_safe(prog_A))
+            success_logits_A.append(squeeze_last_safe(self.success_head(traj_A)))
 
-        return outputs, progress_logits, success_logits
+            # Trajectory B
+            if traj_B is not None:
+                prog_B = self.progress_head(traj_B)
+                progress_logits_B.append(prog_B if self.use_discrete_progress else squeeze_last_safe(prog_B))
+                success_logits_B.append(squeeze_last_safe(self.success_head(traj_B)))
+            else:
+                progress_logits_B.append(None)
+                success_logits_B.append(None)
+
+        return (
+            {
+                "A": torch.stack(progress_logits_A) if progress_logits_A else None,
+                "B": torch.stack(progress_logits_B) if progress_logits_B and progress_logits_B[0] is not None else None,
+            },
+            {
+                "A": torch.stack(success_logits_A) if success_logits_A else None,
+                "B": torch.stack(success_logits_B) if success_logits_B and success_logits_B[0] is not None else None,
+            },
+        )
 
     def _forward_qwen(
         self,
@@ -468,31 +518,10 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
         video_grid_thw,
         sample_type,
         timing_raw,
+        second_per_grid_ts=None,
         **kwargs,
     ):
-        """Forward pass for Qwen model."""
-        batch_size = input_ids.shape[0] if input_ids is not None else 0
-        logger.trace(f"RFM._forward_qwen: Starting, sample_type={sample_type}, batch_size={batch_size}")
-
-        # Extract second_per_grid_ts from kwargs if present
-        second_per_grid_ts = kwargs.pop("second_per_grid_ts", None)
-
-        # Log all input shapes to check for inconsistencies across ranks
-        logger.trace(
-            f"RFM._forward_qwen: Input shapes - input_ids: {input_ids.shape if input_ids is not None else 'None'}, "
-            f"attention_mask: {attention_mask.shape if attention_mask is not None else 'None'}, "
-            f"pixel_values: {pixel_values.shape if pixel_values is not None else 'None'}, "
-            f"pixel_values_videos: {pixel_values_videos.shape if pixel_values_videos is not None else 'None'}"
-        )
-        if image_grid_thw is not None:
-            logger.trace(f"RFM._forward_qwen: image_grid_thw shape: {image_grid_thw.shape}, len: {len(image_grid_thw)}")
-        if video_grid_thw is not None:
-            logger.trace(f"RFM._forward_qwen: video_grid_thw shape: {video_grid_thw.shape}, len: {len(video_grid_thw)}")
-
-        torch.cuda.synchronize()
-        logger.trace(f"attention mask sum: {attention_mask.sum()}")
-        torch.cuda.synchronize()
-
+        """Forward pass for Qwen2.5/Qwen3 models. Returns (ModelOutput, timing_raw)."""
         model_kwargs = {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
@@ -503,197 +532,321 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
             "second_per_grid_ts": second_per_grid_ts,
             **kwargs,
         }
-        logger.trace("RFM._forward_qwen: About to call base model forward")
         with _timer("time/rfm_forward", timing_raw=timing_raw):
-            outputs = self.model(**model_kwargs)
-        logger.trace("RFM._forward_qwen: Base model forward completed")
+            # Qwen3 models may need output_hidden_states=True and use hidden_states instead of last_hidden_state
+            is_qwen3 = "Qwen3" in self.base_model_id or (hasattr(self.model, "config") and "Qwen3" in str(type(self.model)))
+            if is_qwen3:
+                outputs = self.model(**model_kwargs, output_hidden_states=True, return_dict=True)
+                # Qwen3 uses hidden_states tuple, take the last layer
+                hidden_state = outputs.hidden_states[-1] if hasattr(outputs, "hidden_states") else outputs.last_hidden_state
+            else:
+                outputs = self.model(**model_kwargs)
+                hidden_state = outputs.last_hidden_state  # [B, seq_len, hidden_dim]
+        
+        progress_logits = {"A": None, "B": None}
+        success_logits = {"A": None, "B": None}
 
-        hidden_state = outputs.last_hidden_state  # [B, seq_len, hidden_dim]
-        logger.trace(f"RFM._forward_qwen: hidden_state shape: {hidden_state.shape}")
+        # Create output
+        output = ModelOutput()
 
-        # Get token IDs for vision tokens
-        # Qwen uses <|vision_start|> and <|vision_end|>
-        # Molmo2 uses <low_res_im_start> and <im_patch> tokens instead
-        is_molmo = "Molmo" in self.base_model_id
-
-        if is_molmo:
-            # Molmo2 uses different tokens for images
-            vision_start_token_id = self.processor.tokenizer.convert_tokens_to_ids("<low_res_im_start>")
-            vision_end_token_id = self.processor.tokenizer.convert_tokens_to_ids("<low_res_im_end>")
-            im_patch_token_id = self.processor.tokenizer.convert_tokens_to_ids("<im_patch>")
+        if self.use_per_frame_progress_token:
+            progress_logits, success_logits, pref_or_sim_logits = self._process_token_extraction(
+                hidden_state, input_ids, sample_type
+            )
+            output.progress_logits = progress_logits
+            output.success_logits = success_logits
+            if pref_or_sim_logits is not None:
+                if sample_type == "preference":
+                    output.pref_logits = pref_or_sim_logits
+                else:
+                    output.sim_logits = pref_or_sim_logits
         else:
+            # Process frames normally
             vision_start_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|vision_start|>")
             vision_end_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|vision_end|>")
-            im_patch_token_id = None
-        split_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|split_token|>")
+            split_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|split_token|>")
 
+            tps = getattr(getattr(self.processor, "video_processor", None), "temporal_patch_size", 2)
+            merge_size = getattr(getattr(self.processor, "video_processor", None), "merge_size", 14)
+
+            if self.use_multi_image:
+                progress_logits, success_logits = self._process_multi_image_frames(
+                    hidden_state,
+                    input_ids,
+                    sample_type,
+                    vision_start_token_id,
+                    vision_end_token_id,
+                    split_token_id,
+                    timing_raw,
+                )
+            else:
+                progress_logits, success_logits = self._process_video_frames(
+                    hidden_state,
+                    input_ids,
+                    video_grid_thw,
+                    sample_type,
+                    vision_start_token_id,
+                    split_token_id,
+                    tps,
+                    merge_size,
+                    timing_raw,
+                )
+
+            output.progress_logits = progress_logits
+            output.success_logits = success_logits
+
+            # Handle preference/similarity tokens if needed
+            if sample_type in ["preference", "similarity"]:
+                token_name = "<|pref_token|>" if sample_type == "preference" else "<|sim_token|>"
+                token_hidden = self._extract_hidden_state_from_token(hidden_state, input_ids, token_name)
+                if sample_type == "preference":
+                    output.pref_logits = self.preference_head(token_hidden)
+                else:
+                    output.sim_logits = self.similarity_head(token_hidden)
+
+        return output, timing_raw
+
+    def _forward_molmo(
+        self,
+        input_ids,
+        attention_mask,
+        pixel_values,
+        image_grid_thw,
+        sample_type,
+        timing_raw,
+        image_grids=None,
+        image_token_pooling=None,
+        image_num_crops=None,
+        **kwargs,
+    ):
+        """Forward pass for Molmo2 models (multi-image only). Returns (ModelOutput, timing_raw)."""
+        model_kwargs = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "pixel_values": pixel_values,
+            "image_grid_thw": image_grid_thw,
+            "image_grids": image_grids,
+            "image_token_pooling": image_token_pooling,
+            "image_num_crops": image_num_crops,
+            **kwargs,
+        }
+        with _timer("time/rfm_forward", timing_raw=timing_raw):
+            # Qwen3 models may need output_hidden_states=True and use hidden_states instead of last_hidden_state
+            is_qwen3 = "Qwen3" in self.base_model_id or (hasattr(self.model, "config") and "Qwen3" in str(type(self.model)))
+            if is_qwen3:
+                outputs = self.model(**model_kwargs, output_hidden_states=True, return_dict=True)
+                # Qwen3 uses hidden_states tuple, take the last layer
+                hidden_state = outputs.hidden_states[-1] if hasattr(outputs, "hidden_states") else outputs.last_hidden_state
+            else:
+                outputs = self.model(**model_kwargs)
+                hidden_state = outputs.last_hidden_state  # [B, seq_len, hidden_dim]
+        
+        progress_logits = {"A": None, "B": None}
+        success_logits = {"A": None, "B": None}
+
+        # Create output
+        output = ModelOutput()
+
+        # Handle token-based extraction first if using per-frame progress tokens
+        if self.use_per_frame_progress_token:
+            progress_logits, success_logits, pref_or_sim_logits = self._process_token_extraction(
+                hidden_state, input_ids, sample_type
+            )
+            output.progress_logits = progress_logits
+            output.success_logits = success_logits
+            if pref_or_sim_logits is not None:
+                if sample_type == "preference":
+                    output.pref_logits = pref_or_sim_logits
+                else:
+                    output.sim_logits = pref_or_sim_logits
+        else:
+            # Process frames normally
+            vision_start_token_id = self.processor.tokenizer.convert_tokens_to_ids("<low_res_im_start>")
+            split_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|split_token|>")
+
+            progress_logits, success_logits = self._process_multi_image_frames(
+                hidden_state, input_ids, sample_type, vision_start_token_id, None, split_token_id, timing_raw
+            )
+
+            output.progress_logits = progress_logits
+            output.success_logits = success_logits
+
+            # Handle preference/similarity tokens if needed
+            if sample_type in ["preference", "similarity"]:
+                token_name = "<|pref_token|>" if sample_type == "preference" else "<|sim_token|>"
+                token_hidden = self._extract_hidden_state_from_token(hidden_state, input_ids, token_name)
+                if sample_type == "preference":
+                    output.pref_logits = self.preference_head(token_hidden)
+                else:
+                    output.sim_logits = self.similarity_head(token_hidden)
+
+        return output, timing_raw
+
+    def _process_multi_image_frames(
+        self,
+        hidden_state,
+        input_ids,
+        sample_type,
+        vision_start_token_id,
+        vision_end_token_id,
+        split_token_id,
+        timing_raw,
+    ):
+        """Process frames in multi-image mode (shared by Qwen and Molmo)."""
         progress_logits_A = []
         progress_logits_B = []
         success_logits_A = []
         success_logits_B = []
 
-        # temporal patch size (only needed for video mode)
-        # Check both that video_processor exists AND has the required attributes (Molmo2 doesn't have these)
-        has_tps = hasattr(self.processor, "video_processor") and hasattr(
-            self.processor.video_processor, "temporal_patch_size"
-        )
-        has_merge = hasattr(self.processor, "video_processor") and hasattr(self.processor.video_processor, "merge_size")
-        tps = self.processor.video_processor.temporal_patch_size if has_tps else 2
-        merge_size = self.processor.video_processor.merge_size if has_merge else 14
-
-        # Skip all frame extraction when using progress token
-        skip_frame_extraction = self.use_progress_token
+        all_trajectory_A_frames = []
+        all_trajectory_B_frames = []
+        trajectory_A_lengths = []
+        trajectory_B_lengths = []
+        has_trajectory_B = sample_type != "progress"
 
         with _timer("time/progress_logits", timing_raw=timing_raw):
-            if not skip_frame_extraction:
-                # logger.trace(f"RFM._forward_qwen: Processing {len(input_ids)} samples in frame extraction mode")
-                # Compute per-frame embeddings and predictions
-                for i, seq_ids in enumerate(input_ids):
-                    # logger.trace(f"RFM._forward_qwen: Processing sample {i}/{len(input_ids) - 1}")
+            # First pass: extract all frame embeddings
+            for i, seq_ids in enumerate(input_ids):
+                vision_start_positions = (seq_ids == vision_start_token_id).nonzero(as_tuple=True)[0]
+                if len(vision_start_positions) == 0:
+                    raise ValueError(f"vision_start_token (id={vision_start_token_id}) not found in sequence {i}")
 
-                    # Find all vision token positions
-                    vision_start_positions = (seq_ids == vision_start_token_id).nonzero(as_tuple=True)[0]
+                # Extract embeddings using _extract_hidden_states_from_token_pairs
+                # (handles both Qwen and Molmo token patterns)
+                frame_embeddings = self._extract_hidden_states_from_token_pairs(hidden_state[i], seq_ids)
 
-                    # For Molmo2, vision_end_token_id is None, so we need to find image regions differently
-                    if is_molmo and im_patch_token_id is not None:
-                        # For Molmo2: find where <im_patch> tokens are
-                        im_patch_positions = (seq_ids == im_patch_token_id).nonzero(as_tuple=True)[0]
-                        # Find boundaries: where patches end for each image (where non-patch token appears)
-                        # Each <low_res_im_start> marks a new image
-                        vision_end_positions = []
-                        for start_idx, start_pos in enumerate(vision_start_positions):
-                            start_pos_val = start_pos.item()
-                            # Find the last consecutive im_patch token after this start
-                            patches_after_start = im_patch_positions[im_patch_positions > start_pos]
-                            if len(patches_after_start) > 0:
-                                # Find where patches stop being consecutive or hit next image start
-                                if start_idx + 1 < len(vision_start_positions):
-                                    next_start = vision_start_positions[start_idx + 1].item()
-                                    patches_for_this_image = patches_after_start[patches_after_start < next_start]
-                                else:
-                                    patches_for_this_image = patches_after_start
-                                if len(patches_for_this_image) > 0:
-                                    vision_end_positions.append(patches_for_this_image[-1])
-                        vision_end_positions = torch.tensor(vision_end_positions, device=seq_ids.device)
-                    elif vision_end_token_id is not None:
-                        vision_end_positions = (seq_ids == vision_end_token_id).nonzero(as_tuple=True)[0]
+                if frame_embeddings.shape[0] == 0:
+                    raise ValueError(f"No frame embeddings extracted for sample {i}")
+
+                # Split into trajectories
+                if sample_type == "progress":
+                    trajectory_A_frames = frame_embeddings
+                    trajectory_B_frames = None
+                else:
+                    split_positions = (seq_ids == split_token_id).nonzero(as_tuple=True)[0]
+                    if len(split_positions) == 0:
+                        raise ValueError(f"split_token not found in sequence {i}")
+                    split_pos = split_positions[0].item()
+                    traj_a_count = sum(1 for pos in vision_start_positions if pos.item() < split_pos)
+                    trajectory_A_frames = frame_embeddings[:traj_a_count]
+                    trajectory_B_frames = frame_embeddings[traj_a_count:]
+
+                all_trajectory_A_frames.append(trajectory_A_frames)
+                trajectory_A_lengths.append(trajectory_A_frames.shape[0])
+
+                if trajectory_B_frames is not None:
+                    all_trajectory_B_frames.append(trajectory_B_frames)
+                    trajectory_B_lengths.append(trajectory_B_frames.shape[0])
+                else:
+                    all_trajectory_B_frames.append(None)
+                    trajectory_B_lengths.append(0)
+
+            # Batch process trajectory A
+            if all_trajectory_A_frames:
+                batched_A = torch.cat(all_trajectory_A_frames, dim=0)
+                progress_A_out = self.progress_head(batched_A)
+                success_A_out = squeeze_last_safe(self.success_head(batched_A))
+
+                if self.use_discrete_progress:
+                    progress_A_split = torch.split(progress_A_out, trajectory_A_lengths, dim=0)
+                else:
+                    progress_A_split = torch.split(squeeze_last_safe(progress_A_out), trajectory_A_lengths, dim=0)
+                success_A_split = torch.split(success_A_out, trajectory_A_lengths, dim=0)
+
+                for prog, succ in zip(progress_A_split, success_A_split):
+                    progress_logits_A.append(prog)
+                    success_logits_A.append(succ)
+
+            # Batch process trajectory B
+            if has_trajectory_B:
+                valid_B = [(f, l) for f, l in zip(all_trajectory_B_frames, trajectory_B_lengths) if f is not None]
+                if valid_B:
+                    valid_B_frames, valid_B_lengths = zip(*valid_B)
+                    batched_B = torch.cat(valid_B_frames, dim=0)
+                    progress_B_out = self.progress_head(batched_B)
+                    success_B_out = squeeze_last_safe(self.success_head(batched_B))
+
+                    if self.use_discrete_progress:
+                        progress_B_split = torch.split(progress_B_out, list(valid_B_lengths), dim=0)
                     else:
-                        vision_end_positions = torch.tensor([], device=seq_ids.device)
+                        progress_B_split = torch.split(squeeze_last_safe(progress_B_out), list(valid_B_lengths), dim=0)
+                    success_B_split = torch.split(success_B_out, list(valid_B_lengths), dim=0)
 
-                    # logger.trace(
-                    #     f"RFM._forward_qwen: Sample {i} - found {len(vision_start_positions)} vision_start tokens, {len(vision_end_positions)} vision_end tokens"
-                    # )
-
-                    if len(vision_start_positions) == 0:
-                        raise ValueError(f"vision_start_token (id={vision_start_token_id}) not found in sequence {i}")
-
-                    is_multi_image = self.use_multi_image
-                    # logger.trace(f"RFM._forward_qwen: Sample {i} - is_multi_image={is_multi_image} (from model config)")
-
-                    if is_multi_image:
-                        # logger.trace(f"RFM._forward_qwen: Sample {i} - Using multi-image mode")
-                        # Multi-image mode: extract embeddings from each vision_start/end pair
-                        frame_embeddings = self._extract_hidden_states_from_token_pairs(
-                            hidden_state[i],  # [seq_len, hidden_dim]
-                            seq_ids,  # [seq_len]
-                        )  # [num_frames, hidden_dim]
-
-                        if frame_embeddings.shape[0] == 0:
-                            raise ValueError(f"No frame embeddings extracted for sample {i} in multi-image mode")
-
-                        # For progress samples, all frames belong to trajectory A
-                        if sample_type == "progress":
-                            trajectory_A_frames = frame_embeddings
-                            trajectory_B_frames = None
-                        else:
-                            # For preference/similarity, find the split token to separate trajectories
-                            split_positions = (seq_ids == split_token_id).nonzero(as_tuple=True)[0]
-                            if len(split_positions) == 0:
-                                raise ValueError(
-                                    f"split_token not found in sequence {i} for preference/similarity sample"
-                                )
-
-                            split_pos = split_positions[0].item()
-                            traj_a_pairs = sum(1 for pos in vision_start_positions if pos.item() < split_pos)
-                            trajectory_A_frames = frame_embeddings[:traj_a_pairs]
-                            trajectory_B_frames = frame_embeddings[traj_a_pairs:]
-
-                        # Apply heads to trajectory A frames
-                        progress_A_output = self.progress_head(
-                            trajectory_A_frames
-                        )  # [T_A, 1] or [T_A, num_bins] for discrete
-                        if self.use_discrete_progress:
-                            progress_A = progress_A_output  # [T_A, num_bins] - keep logits
-                        else:
-                            progress_A = progress_A_output.squeeze(-1)  # [T_A]
-                        success_A = self.success_head(trajectory_A_frames).squeeze(-1)  # [T_A]
-                        progress_logits_A.append(progress_A)
-                        success_logits_A.append(success_A)
-
-                        # Apply heads to trajectory B frames (if available)
-                        if trajectory_B_frames is not None:
-                            progress_B_output = self.progress_head(
-                                trajectory_B_frames
-                            )  # [T_B, 1] or [T_B, num_bins] for discrete
-                            if self.use_discrete_progress:
-                                progress_B = progress_B_output  # [T_B, num_bins] - keep logits
-                            else:
-                                progress_B = progress_B_output.squeeze(-1)  # [T_B]
-                            success_B = self.success_head(trajectory_B_frames).squeeze(-1)  # [T_B]
-                            progress_logits_B.append(progress_B)
-                            success_logits_B.append(success_B)
+                    valid_idx = 0
+                    for frame in all_trajectory_B_frames:
+                        if frame is not None:
+                            progress_logits_B.append(progress_B_split[valid_idx])
+                            success_logits_B.append(success_B_split[valid_idx])
+                            valid_idx += 1
                         else:
                             progress_logits_B.append(None)
                             success_logits_B.append(None)
-                    else:
-                        # logger.trace(f"RFM._forward_qwen: Sample {i} - Using video mode")
-                        # Video mode: use existing temporal patch logic
-                        if video_grid_thw is None or i >= len(video_grid_thw):
-                            raise ValueError(
-                                f"video_grid_thw is required for progress prediction in video mode. Got: {video_grid_thw}"
-                            )
+                else:
+                    progress_logits_B = [None] * len(all_trajectory_A_frames)
+                    success_logits_B = [None] * len(all_trajectory_A_frames)
+            else:
+                progress_logits_B = [None] * len(all_trajectory_A_frames)
+                success_logits_B = [None] * len(all_trajectory_A_frames)
 
-                        # For trajectory A
-                        if sample_type == "progress":
-                            current_video_grid_A = video_grid_thw[i]  # [T, H, W]
-                        else:
-                            current_video_grid_A = video_grid_thw[i * tps]  # [T, H, W]
+        progress_logits = {
+            "A": torch.stack(progress_logits_A) if progress_logits_A else None,
+            "B": torch.stack(progress_logits_B) if progress_logits_B and progress_logits_B[0] is not None else None,
+        }
+        success_logits = {
+            "A": torch.stack(success_logits_A) if success_logits_A else None,
+            "B": torch.stack(success_logits_B) if success_logits_B and success_logits_B[0] is not None else None,
+        }
+        return progress_logits, success_logits
 
-                        # Extract progress and success from trajectory A
-                        start_position_A = vision_start_positions[0].item()
-                        progress_A, success_A = self._extract_progress_from_trajectory(
-                            hidden_state[i],
-                            start_position_A,
-                            current_video_grid_A,
-                            merge_size,
-                        )
-                        progress_logits_A.append(progress_A)
-                        success_logits_A.append(success_A)
+    def _process_video_frames(
+        self,
+        hidden_state,
+        input_ids,
+        video_grid_thw,
+        sample_type,
+        vision_start_token_id,
+        split_token_id,
+        tps,
+        merge_size,
+        timing_raw,
+    ):
+        """Process frames in video mode (Qwen only). Returns (progress_logits, success_logits)."""
+        progress_logits_A = []
+        progress_logits_B = []
+        success_logits_A = []
+        success_logits_B = []
 
-                        # For progress-only samples, we don't need trajectory B
-                        if sample_type != "progress":
-                            # For trajectory B
-                            if (i * tps) + 1 >= len(video_grid_thw):
-                                raise ValueError(f"video_grid_thw index {(i * tps) + 1} out of bounds for trajectory B")
-                            current_video_grid_B = video_grid_thw[i * tps + 1]  # [T, H, W]
+        with _timer("time/progress_logits", timing_raw=timing_raw):
+            for i, seq_ids in enumerate(input_ids):
+                vision_start_positions = (seq_ids == vision_start_token_id).nonzero(as_tuple=True)[0]
+                if len(vision_start_positions) == 0:
+                    raise ValueError(f"vision_start_token not found in sequence {i}")
 
-                            # Extract progress and success from trajectory B
-                            start_position_B = vision_start_positions[1].item()
-                            progress_B, success_B = self._extract_progress_from_trajectory(
-                                hidden_state[i],
-                                start_position_B,
-                                current_video_grid_B,
-                                merge_size,
-                            )
-                            progress_logits_B.append(progress_B)
-                            success_logits_B.append(success_B)
-                        else:
-                            progress_logits_B.append(None)
-                            success_logits_B.append(None)
+                if video_grid_thw is None or i >= len(video_grid_thw):
+                    raise ValueError(f"video_grid_thw required for video mode")
 
-        # logger.trace(
-        #     f"RFM._forward_qwen: Stacking progress/success logits, len_A={len(progress_logits_A)}, len_B={len(progress_logits_B)}"
-        # )
+                # Trajectory A
+                grid_idx_A = i if sample_type == "progress" else i * tps
+                progress_A, success_A = self._extract_progress_from_trajectory(
+                    hidden_state[i], vision_start_positions[0].item(), video_grid_thw[grid_idx_A], merge_size
+                )
+                progress_logits_A.append(progress_A)
+                success_logits_A.append(success_A)
+
+                # Trajectory B (if not progress sample)
+                if sample_type != "progress":
+                    grid_idx_B = i * tps + 1
+                    if grid_idx_B >= len(video_grid_thw):
+                        raise ValueError(f"video_grid_thw index {grid_idx_B} out of bounds")
+                    progress_B, success_B = self._extract_progress_from_trajectory(
+                        hidden_state[i], vision_start_positions[1].item(), video_grid_thw[grid_idx_B], merge_size
+                    )
+                    progress_logits_B.append(progress_B)
+                    success_logits_B.append(success_B)
+                else:
+                    progress_logits_B.append(None)
+                    success_logits_B.append(None)
+
         progress_logits = {
             "A": torch.stack(progress_logits_A) if progress_logits_A else None,
             "B": torch.stack(progress_logits_B) if progress_logits_B[0] is not None else None,
@@ -702,9 +855,91 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
             "A": torch.stack(success_logits_A) if success_logits_A else None,
             "B": torch.stack(success_logits_B) if success_logits_B[0] is not None else None,
         }
-        # logger.trace("RFM._forward_qwen: Completed, returning outputs")
+        return progress_logits, success_logits
 
-        return outputs, progress_logits, success_logits
+    def _apply_heads_to_hidden_states(
+        self, hidden_states_list: list[torch.Tensor]
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Apply progress and success heads to a list of hidden states.
+
+        Args:
+            hidden_states_list: List of tensors, one per batch item [num_tokens_i, hidden_dim]
+
+        Returns:
+            tuple: (progress_logits, success_logits)
+                - progress_logits: [B, max_tokens] or [B, max_tokens, num_bins] for discrete (padded)
+                - success_logits: [B, max_tokens] (padded)
+        """
+        progress_list = []
+        success_list = []
+        for hidden in hidden_states_list:
+            if hidden.shape[0] > 0:
+                progress_output = self.progress_head(hidden)
+                if self.use_discrete_progress:
+                    progress_list.append(progress_output)
+                else:
+                    progress_list.append(squeeze_last_safe(progress_output))
+                success_list.append(squeeze_last_safe(self.success_head(hidden)))
+            else:
+                progress_list.append(torch.empty(0, device=hidden.device))
+                success_list.append(torch.empty(0, device=hidden.device))
+
+        progress = torch.stack(progress_list) if progress_list else None
+        success = torch.stack(success_list) if success_list else None
+        return progress, success
+
+    def _process_token_extraction(
+        self,
+        hidden_state: torch.Tensor,
+        input_ids: torch.Tensor,
+        sample_type: str,
+    ) -> tuple[dict, dict, torch.Tensor | None]:
+        """
+        Process token-based extraction for progress, preference, and similarity predictions.
+
+        Returns:
+            tuple: (progress_logits, success_logits, pref_or_sim_logits)
+                - progress_logits: dict with "A" and/or "B" keys
+                - success_logits: dict with "A" and/or "B" keys
+                - pref_or_sim_logits: preference or similarity logits, or None
+        """
+        progress_logits = {"A": None, "B": None}
+        success_logits = {"A": None, "B": None}
+        pref_or_sim_logits = None
+
+        # Extract all <|prog_token|> hidden states (returns list of tensors when multiple tokens)
+        all_prog_token_hidden = self._extract_hidden_state_from_token(hidden_state, input_ids, "<|prog_token|>")
+
+        if sample_type == "progress":
+            # For progress samples, all tokens belong to trajectory A
+            hidden_states_A = all_prog_token_hidden
+            progress_logits["A"], success_logits["A"] = self._apply_heads_to_hidden_states(hidden_states_A)
+        elif sample_type in ["preference", "similarity"]:
+            # For preference/similarity, assume equal number of tokens for A and B
+            # Split each batch item's tokens in half
+            hidden_states_A = []
+            hidden_states_B = []
+            for tokens in all_prog_token_hidden:
+                num_tokens = tokens.shape[0]
+                if num_tokens % 2 != 0:
+                    raise ValueError(f"Expected even number of <|prog_token|> tokens, got {num_tokens}")
+                mid = num_tokens // 2
+                hidden_states_A.append(tokens[:mid])
+                hidden_states_B.append(tokens[mid:])
+
+            progress_logits["A"], success_logits["A"] = self._apply_heads_to_hidden_states(hidden_states_A)
+            progress_logits["B"], success_logits["B"] = self._apply_heads_to_hidden_states(hidden_states_B)
+
+            token_name = "<|pref_token|>" if sample_type == "preference" else "<|sim_token|>"
+            token_hidden = self._extract_hidden_state_from_token(hidden_state, input_ids, token_name)
+            # token_hidden is [B, hidden_dim] when exactly one token per sequence
+            if sample_type == "preference":
+                pref_or_sim_logits = self.preference_head(token_hidden)
+            else:
+                pref_or_sim_logits = self.similarity_head(token_hidden)
+
+        return progress_logits, success_logits, pref_or_sim_logits
 
     def forward(
         self,
@@ -728,268 +963,51 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
         """
         Forward pass for the RFM (Reward Foundation Model).
 
-        This method handles three types of predictions:
-        1. **Preference prediction**: Binary classification comparing two trajectories
-        2. **Progress prediction**: Regression predicting task completion progress (0-1)
-        3. **Similarity prediction**: Scoring how similar a trajectory is to a reference
-
-        Args:
-            input_ids (torch.LongTensor, optional):
-                Indices of input sequence tokens in the vocabulary. Shape: [batch_size, sequence_length]
-
-            attention_mask (torch.Tensor, optional):
-                Mask to avoid performing attention on padding token indices. Shape: [batch_size, sequence_length]
-                Values: 1 for tokens that are NOT masked, 0 for tokens that are masked.
-
-            pixel_values_videos (torch.FloatTensor, optional):
-                Pixel values for video frames. Shape: [sequence_length, embedding_dim]
-
-            image_grid_thw (torch.LongTensor, optional):
-                Image grid dimensions (N, 3) for image processing
-
-            video_grid_thw (torch.LongTensor, optional):
-                Video grid dimensions (N, 3) for video processing
-
-            sample_type (str, optional):
-                Type of sample to process:
-                - "preference": Uses preference head with <|pref_token|> for binary trajectory comparison
-                - "similarity": Uses similarity head with <|reward_token|> for trajectory-reference scoring
-                - None: No specific prediction, returns zero logits
-
-            target_progress (torch.FloatTensor, optional):
-                Target progress values for progress prediction. Shape: [batch_size, sequence_length]
-                If provided, progress prediction will be computed using the last token position.
-
-            second_per_grid_ts (torch.FloatTensor, optional):
-                Time stamps for video grid processing.
-
-            **kwargs: Additional keyword arguments passed to the base model.
+        Dispatches to model-specific forward methods:
+        - SmolVLM: _forward_smolvlm
+        - Qwen2.5/Qwen3: _forward_qwen
+        - Molmo2: _forward_molmo
 
         Returns:
-            tuple: (model_output, timing_raw)
-                - model_output (ModelOutput):
-                    Contains predictions for the specified sample type:
-                    - pref_logits: Binary logits [batch_size, 1] for preference
-                    - sim_logits: Continuous similarity scores [batch_size, 1] for similarity
-                    - progress_logits: Dict with 'A' and 'B' trajectories
-                        - 'A': Tensor for trajectory A [batch_size, max_seq_len_A] (padded to max length)
-                        - 'B': Tensor for trajectory B [batch_size, max_seq_len_B] or None (padded to max length)
-                    Values should be in range [0, 1] representing task completion percentage at each timestep.
-
-                - timing_raw (Dict[str, float]):
-                    Timing information for the forward pass.
+            tuple: (ModelOutput, timing_raw dict)
         """
-        logger.trace(
-            f"RFM.forward: Starting, sample_type={sample_type}, batch_size={input_ids.shape[0] if input_ids is not None else 'N/A'}"
-        )
-
         if timing_raw is None:
             timing_raw = {}
 
-        # Call appropriate forward method based on model type
+        # Dispatch to model-specific forward
         if "SmolVLM" in self.base_model_id:
-            logger.trace("RFM.forward: Calling _forward_smolvlm")
-            outputs, progress_logits, success_logits = self._forward_smolvlm(
-                input_ids, attention_mask, pixel_values, sample_type, timing_raw, **kwargs
+            return self._forward_smolvlm(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                pixel_values=pixel_values,
+                sample_type=sample_type,
+                timing_raw=timing_raw,
+                **kwargs,
             )
-            logger.trace("RFM.forward: _forward_smolvlm completed")
-        else:
-            logger.trace("RFM.forward: Calling _forward_qwen")
-            outputs, progress_logits, success_logits = self._forward_qwen(
-                input_ids,
-                attention_mask,
-                pixel_values,
-                pixel_values_videos,
-                image_grid_thw,
-                video_grid_thw,
-                sample_type,
-                timing_raw,
-                second_per_grid_ts=second_per_grid_ts,
-                # Molmo2-specific parameters
+        elif "Molmo" in self.base_model_id:
+            return self._forward_molmo(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                pixel_values=pixel_values,
+                image_grid_thw=image_grid_thw,
+                sample_type=sample_type,
+                timing_raw=timing_raw,
                 image_grids=image_grids,
                 image_token_pooling=image_token_pooling,
                 image_num_crops=image_num_crops,
-                video_grids=video_grids,
-                video_token_pooling=video_token_pooling,
                 **kwargs,
             )
-            logger.trace("RFM.forward: _forward_qwen completed")
-
-        # Create ModelOutput
-        logger.trace("RFM.forward: Creating ModelOutput")
-        output = ModelOutput()
-        output.progress_logits = progress_logits
-        output.success_logits = success_logits
-
-        # For token-based predictions (progress with use_progress_token, preference, similarity)
-        # Get hidden states once if needed
-        need_token_extraction = (
-            (sample_type == "progress" and self.use_progress_token and outputs is not None)
-            or (sample_type in ["preference", "similarity"] and self.use_progress_token and outputs is not None)
-            or sample_type in ["preference", "similarity"]
-        )
-        logger.trace(
-            f"RFM.forward: need_token_extraction={need_token_extraction}, sample_type={sample_type}, use_progress_token={self.use_progress_token}"
-        )
-
-        if need_token_extraction:
-            # Get hidden states (works for both SmolVLM and Qwen)
-            logger.trace("RFM.forward: Extracting hidden states for token-based predictions")
-            if "SmolVLM" in self.base_model_id:
-                hidden_state_for_token = outputs.hidden_states[-1]  # [B, seq_len, hidden_dim]
-            else:
-                hidden_state_for_token = outputs.last_hidden_state  # [B, seq_len, hidden_dim]
-            logger.trace(f"RFM.forward: hidden_state_for_token shape: {hidden_state_for_token.shape}")
-
-            # For progress samples with use_progress_token, extract hidden state from <|prog_token_A|> and <|succ_token_A|>
-            # This overrides the per-frame prediction above
-            if sample_type == "progress" and self.use_progress_token:
-                logger.trace("RFM.forward: Processing progress with use_progress_token")
-                # Extract hidden states at <|prog_token_A|> positions
-                logger.trace("RFM.forward: Extracting <|prog_token_A|> hidden states")
-                prog_token_A_hidden_states = self._extract_hidden_state_from_token(
-                    hidden_state_for_token,
-                    input_ids,
-                    "<|prog_token_A|>",
-                )  # [B, hidden_dim]
-                logger.trace(f"RFM.forward: prog_token_A_hidden_states shape: {prog_token_A_hidden_states.shape}")
-
-                # Extract hidden states at <|succ_token_A|> positions
-                logger.trace("RFM.forward: Extracting <|succ_token_A|> hidden states")
-                succ_token_A_hidden_states = self._extract_hidden_state_from_token(
-                    hidden_state_for_token,
-                    input_ids,
-                    "<|succ_token_A|>",
-                )  # [B, hidden_dim]
-                logger.trace(f"RFM.forward: succ_token_A_hidden_states shape: {succ_token_A_hidden_states.shape}")
-
-                # Apply heads to get predictions
-                logger.trace("RFM.forward: Applying progress and success heads")
-                progress_pred_output = self.progress_head(
-                    prog_token_A_hidden_states
-                )  # [B, 1] or [B, num_bins] for discrete
-                if self.use_discrete_progress:
-                    progress_pred = progress_pred_output  # [B, num_bins] - keep logits
-                else:
-                    progress_pred = progress_pred_output.squeeze(-1)  # [B]
-                success_pred = self.success_head(succ_token_A_hidden_states).squeeze(-1)  # [B]
-                logger.trace(
-                    f"RFM.forward: progress_pred shape: {progress_pred.shape}, success_pred shape: {success_pred.shape}"
-                )
-
-                progress_logits["A"] = progress_pred.unsqueeze(-1)
-                success_logits["A"] = success_pred.unsqueeze(-1)
-            # For preference and similarity with use_progress_token, extract from both prog_token_A/B and succ_token_A/B
-            elif sample_type in ["preference", "similarity"] and self.use_progress_token:
-                logger.trace(f"RFM.forward: Processing {sample_type} with use_progress_token")
-                # Extract hidden states at <|prog_token_A|> and <|prog_token_B|> positions
-                logger.trace("RFM.forward: Extracting <|prog_token_A|> hidden states")
-                prog_token_A_hidden_states = self._extract_hidden_state_from_token(
-                    hidden_state_for_token,
-                    input_ids,
-                    "<|prog_token_A|>",
-                )  # [B, hidden_dim]
-                logger.trace(f"RFM.forward: prog_token_A_hidden_states shape: {prog_token_A_hidden_states.shape}")
-
-                logger.trace("RFM.forward: Extracting <|prog_token_B|> hidden states")
-                prog_token_B_hidden_states = self._extract_hidden_state_from_token(
-                    hidden_state_for_token,
-                    input_ids,
-                    "<|prog_token_B|>",
-                )  # [B, hidden_dim]
-                logger.trace(f"RFM.forward: prog_token_B_hidden_states shape: {prog_token_B_hidden_states.shape}")
-
-                # Extract hidden states at <|succ_token_A|> and <|succ_token_B|> positions
-                logger.trace("RFM.forward: Extracting <|succ_token_A|> hidden states")
-                succ_token_A_hidden_states = self._extract_hidden_state_from_token(
-                    hidden_state_for_token,
-                    input_ids,
-                    "<|succ_token_A|>",
-                )  # [B, hidden_dim]
-                logger.trace(f"RFM.forward: succ_token_A_hidden_states shape: {succ_token_A_hidden_states.shape}")
-
-                logger.trace("RFM.forward: Extracting <|succ_token_B|> hidden states")
-                succ_token_B_hidden_states = self._extract_hidden_state_from_token(
-                    hidden_state_for_token,
-                    input_ids,
-                    "<|succ_token_B|>",
-                )  # [B, hidden_dim]
-                logger.trace(f"RFM.forward: succ_token_B_hidden_states shape: {succ_token_B_hidden_states.shape}")
-
-                # Apply heads to get progress and success values for both trajectories
-                logger.trace("RFM.forward: Applying progress and success heads for A and B")
-                progress_pred_A_output = self.progress_head(
-                    prog_token_A_hidden_states
-                )  # [B, 1] or [B, num_bins] for discrete
-                progress_pred_B_output = self.progress_head(
-                    prog_token_B_hidden_states
-                )  # [B, 1] or [B, num_bins] for discrete
-                if self.use_discrete_progress:
-                    progress_pred_A = progress_pred_A_output  # [B, num_bins] - keep logits
-                    progress_pred_B = progress_pred_B_output  # [B, num_bins] - keep logits
-                else:
-                    progress_pred_A = progress_pred_A_output.squeeze(-1)  # [B]
-                    progress_pred_B = progress_pred_B_output.squeeze(-1)  # [B]
-                success_pred_A = self.success_head(succ_token_A_hidden_states).squeeze(-1)  # [B]
-                success_pred_B = self.success_head(succ_token_B_hidden_states).squeeze(-1)  # [B]
-                logger.trace(f"RFM.forward: Progress/success predictions completed")
-
-                progress_logits["A"] = progress_pred_A.unsqueeze(-1)  # [B, 1]
-                progress_logits["B"] = progress_pred_B.unsqueeze(-1)  # [B, 1]
-                success_logits["A"] = success_pred_A.unsqueeze(-1)  # [B, 1]
-                success_logits["B"] = success_pred_B.unsqueeze(-1)  # [B, 1]
-
-                # Also extract preference/similarity token for the main prediction
-                if sample_type == "preference":
-                    token_name = "<|pref_token|>"
-                elif sample_type == "similarity":
-                    token_name = "<|sim_token|>"
-                else:
-                    raise ValueError(f"Invalid sample type: {sample_type}")
-
-                # Extract hidden states at the target token positions
-                logger.trace(f"RFM.forward: Extracting {token_name} hidden states")
-                token_hidden_states = self._extract_hidden_state_from_token(
-                    hidden_state_for_token,
-                    input_ids,
-                    token_name,
-                )  # [B, hidden_dim]
-                logger.trace(f"RFM.forward: token_hidden_states shape: {token_hidden_states.shape}")
-
-                # Apply the appropriate head
-                logger.trace(f"RFM.forward: Applying {sample_type} head")
-                if sample_type == "preference":
-                    output.pref_logits = self.preference_head(token_hidden_states)
-                else:  # similarity
-                    output.sim_logits = self.similarity_head(token_hidden_states)
-                logger.trace(f"RFM.forward: {sample_type} head completed")
-
-            # For preference and similarity without use_progress_token, use specific tokens for main prediction
-            elif sample_type in ["preference", "similarity"]:
-                logger.trace(f"RFM.forward: Processing {sample_type} without use_progress_token")
-                # Determine which token to use
-                if sample_type == "preference":
-                    token_name = "<|pref_token|>"
-                elif sample_type == "similarity":
-                    token_name = "<|sim_token|>"
-                else:
-                    raise ValueError(f"Invalid sample type: {sample_type}")
-
-                # Extract hidden states at the target token positions
-                logger.trace(f"RFM.forward: Extracting {token_name} hidden states")
-                token_hidden_states = self._extract_hidden_state_from_token(
-                    hidden_state_for_token,
-                    input_ids,
-                    token_name,
-                )  # [B, hidden_dim]
-                logger.trace(f"RFM.forward: token_hidden_states shape: {token_hidden_states.shape}")
-
-                # Apply the appropriate head
-                logger.trace(f"RFM.forward: Applying {sample_type} head")
-                if sample_type == "preference":
-                    output.pref_logits = self.preference_head(token_hidden_states)
-                else:  # similarity
-                    output.sim_logits = self.similarity_head(token_hidden_states)
-                logger.trace(f"RFM.forward: {sample_type} head completed")
-
-        return output, timing_raw
+        else:
+            # Qwen2.5 / Qwen3
+            return self._forward_qwen(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                pixel_values=pixel_values,
+                pixel_values_videos=pixel_values_videos,
+                image_grid_thw=image_grid_thw,
+                video_grid_thw=video_grid_thw,
+                sample_type=sample_type,
+                timing_raw=timing_raw,
+                second_per_grid_ts=second_per_grid_ts,
+                **kwargs,
+            )

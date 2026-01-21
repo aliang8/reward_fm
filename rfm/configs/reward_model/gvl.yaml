@@ -1,0 +1,9 @@
+# @package _global_
+
+# GVL model configuration
+reward_model: "gvl"
+
+model_config:
+  api_key: null  # Will use GEMINI_API_KEY env var if not set
+  offset: 0.5
+

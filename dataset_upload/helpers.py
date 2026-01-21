@@ -214,13 +214,16 @@ def create_trajectory_video_optimized(
         # After cropping, the frame is a square
         height, width = crop_size, crop_size
 
-    scale_factor = shortest_edge_size / min(height, width)
-    target_width = int(width * scale_factor)
-    target_height = int(height * scale_factor)
+    if shortest_edge_size is not None:
+        scale_factor = shortest_edge_size / min(height, width)
+        target_width = int(width * scale_factor)
+        target_height = int(height * scale_factor)
 
-    # Ensure dimensions are even, as required by some codecs like H.264
-    target_width = target_width if target_width % 2 == 0 else target_width + 1
-    target_height = target_height if target_height % 2 == 0 else target_height + 1
+        # Ensure dimensions are even, as required by some codecs like H.264
+        target_width = target_width if target_width % 2 == 0 else target_width + 1
+        target_height = target_height if target_height % 2 == 0 else target_height + 1
+    else:
+        target_height, target_width = height, width
 
     # FFmpeg command for creating a web-optimized H.264 video
     # This pipes raw video frames from stdin
@@ -362,13 +365,14 @@ def create_hf_trajectory(
     preference_group_id = traj_dict.get("preference_group_id", None)
     preference_rank = traj_dict.get("preference_rank", None)
     partial_success = traj_dict.get("partial_success", None)
+    data_source = traj_dict.get("data_source", dataset_name)
 
     # Create dataset trajectory
     trajectory = {
         "id": id,
         "task": task_description,
         "lang_vector": lang_vector,  # Pre-computed language vector
-        "data_source": dataset_name,
+        "data_source": data_source,
         "frames": video_path,
         "is_robot": is_robot,
         "quality_label": quality_label,

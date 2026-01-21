@@ -8,13 +8,16 @@ as PreferenceSample objects that can be evaluated by the model.
 """
 
 from typing import Dict, List, Any
-
+import numpy as np
 import torch
 from tqdm import tqdm
 
 from rfm.data.dataset_types import ProgressSample, Trajectory
 from rfm.data.samplers.base import RFMBaseSampler
 from rfm.utils.distributed import rank_0_print
+from rfm.utils.logger import get_logger
+
+logger = get_logger()
 
 
 class RewardAlignmentSampler(RFMBaseSampler):
@@ -30,6 +33,7 @@ class RewardAlignmentSampler(RFMBaseSampler):
         max_trajectories: int | None = None,
         frame_step: int = 1,
         use_frame_steps: bool = True,
+        subsample_n_frames: int = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -37,6 +41,7 @@ class RewardAlignmentSampler(RFMBaseSampler):
         self.max_trajectories = max_trajectories
         self.frame_step = frame_step
         self.use_frame_steps = use_frame_steps
+        self.subsample_n_frames = subsample_n_frames
         self.sample_indices = self._generate_all_sample_indices()
 
         rank_0_print(
@@ -57,17 +62,21 @@ class RewardAlignmentSampler(RFMBaseSampler):
             f"Generating subsequence samples for {len(trajectories_to_process)} trajectories", verbose=self.verbose
         )
 
+        all_num_frames = []
         for traj_idx in trajectories_to_process:
             traj = self.dataset[traj_idx]
+            num_frames = traj["num_frames"]
+            all_num_frames.append(num_frames)
             sample_indices.extend(self._generate_indices_for_trajectory(traj_idx, traj))
 
+        logger.info(f"All num frames: {all_num_frames}")
         return sample_indices
 
     def _generate_indices_for_trajectory(self, traj_idx: int, traj: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Generate sample indices for a single trajectory.
 
         Args:
-            traj_idx: Index of the trajectory in the dataset
+            traj_idx: Index of the trajectory in the dataseqt
             traj: Trajectory dictionary
 
         Returns:
@@ -77,17 +86,33 @@ class RewardAlignmentSampler(RFMBaseSampler):
         indices = []
 
         if self.use_frame_steps:
-            # Generate subsequence indices like reward_alignment: 0:frame_step, 0:2*frame_step, etc.
-            for end_idx in range(self.frame_step, num_frames + 1, self.frame_step):
-                frame_indices = list(range(end_idx))
-                indices.append({
-                    "traj_idx": traj_idx,
-                    "frame_indices": frame_indices,
-                    "num_frames": num_frames,
-                    "video_path": traj["frames"],
-                    "id": traj["id"],
-                    "use_frame_steps": True,
-                })
+            if self.subsample_n_frames:
+                if self.subsample_n_frames > num_frames:
+                    end_indices = list(range(num_frames))
+                else:
+                    end_indices = np.linspace(0, num_frames - 1, self.subsample_n_frames)
+                for end_idx in end_indices:
+                    frame_indices = list(range(int(end_idx) + 1))
+                    indices.append({
+                        "traj_idx": traj_idx,
+                        "frame_indices": frame_indices,
+                        "num_frames": num_frames,
+                        "video_path": traj["frames"],
+                        "id": traj["id"],
+                        "use_frame_steps": True,
+                    })
+            else:
+                # Generate subsequence indices like reward_alignment: 0:frame_step, 0:2*frame_step, etc.
+                for end_idx in range(self.frame_step, num_frames + 1, self.frame_step):
+                    frame_indices = list(range(end_idx))
+                    indices.append({
+                        "traj_idx": traj_idx,
+                        "frame_indices": frame_indices,
+                        "num_frames": num_frames,
+                        "video_path": traj["frames"],
+                        "id": traj["id"],
+                        "use_frame_steps": True,
+                    })
         else:
             # Generate one sample per trajectory (whole trajectory)
             indices.append({
@@ -123,6 +148,7 @@ class RewardAlignmentSampler(RFMBaseSampler):
                 traj=traj,
                 frame_indices=frame_indices,
                 metadata=metadata,
+                pad_frames=self.pad_frames,
             )
         else:
             # Whole trajectory mode
@@ -135,6 +161,7 @@ class RewardAlignmentSampler(RFMBaseSampler):
             trajectory = self._get_traj_from_data(
                 traj=traj,
                 metadata=metadata,
+                pad_frames=self.pad_frames,
             )
 
         sample = ProgressSample(trajectory=trajectory, sample_type="progress")

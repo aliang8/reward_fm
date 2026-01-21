@@ -32,8 +32,15 @@ model:
   train_preference_head: true   # Whether to train the preference prediction head
   train_similarity_head: false  # Whether to train the similarity scoring head
   train_success_head: false     # Whether to train the success prediction head
-  average_temporal_patches: false
-  use_progress_token: false
+  average_temporal_patches: false # Whether to average the patches for video frames when multi_image=False
+  use_per_frame_progress_token: false
+  # Pooling strategy used when extracting per-frame embeddings from vision token spans (multi-image mode)
+  # - mean: average over patch tokens for each frame (current default)
+  # - boundary: use the last patch token in the frame span
+  # - attention: learned attention pooling over patch tokens in the frame span
+  frame_pooling: "mean"
+  # Softmax temperature for attention pooling (only used when frame_pooling="attention")
+  frame_pooling_attn_temperature: 1.0
   use_multi_image: ${data.use_multi_image}  # Reference from data config - If True, feed frames as a list of images instead of converting to video (avoids encoding overhead)
 
   use_peft: false
@@ -71,13 +78,13 @@ data:
   # Video processing settings
   max_frames_after_preprocessing: 64
   max_frames: 16  # Maximum frames per trajectory
-  resized_height: 196  # Height to resize images/videos to
-  resized_width: 196   # Width to resize images/videos to
+  resized_height: null # Height to resize images/videos to
+  resized_width: null   # Width to resize images/videos to
   load_embeddings: false
   min_frames_per_trajectory: 5 # Minimum number of frames required per trajectory (trajectories with fewer frames will be filtered out)
   use_multi_image: false  # If True, feed frames as a list of images instead of converting to video (avoids encoding overhead)
   shuffle_progress_frames: false  # If True, shuffle progress frames (except the first frame) and labels during training
-  task_instruction_same_source_prob: 0.5  # Probability of sampling alternative task instruction from same data source
+  traj_same_source_prob: 0.5  # Probability of sampling alternative task instruction from same data source
 
   # Data generation settings
   sample_type_ratio: [1, 0, 0]  # Ratio of preference, progress (no longer used, it's absorbed in preference if predict_pref_progress is true), and similarity samples
@@ -106,18 +113,21 @@ data:
 
   progress_pred_type: "absolute_first_frame" # "absolute_first_frame", "relative_first_frame", or "absolute_wrt_total_frames"
 
-  # RoboArena partial success threshold
-  roboarena_partial_success_threshold: 0.2  # Minimum difference in partial_success between chosen and rejected trajectories for RoboArena
+  # Partial success threshold (for datasets with partial_success like RoboArena and RoboReward)
+  partial_success_threshold: 0.2  # Minimum difference in partial_success between chosen and rejected trajectories
 
   # Success label parameters
-  min_success: 0.8  # Progress threshold below which success label is 0
-  max_success: 1.0  # Progress threshold above which success label is 1
+  min_success: 0.5  # Progress threshold below which success label pred is applied, anything in between min and max is not used for success pred loss unless succ = 1 for those frames.
+  max_success: 1.0  # Progress threshold above which success label is 1. Most sim datasets don't have a special cutoff number so we use 1.0 as default as sims will succeed at 1.0 progress.
   # Dataset-specific success thresholds (CSV format: dataset_name,success_percentage)
   dataset_success_cutoff_file: "rfm/data/dataset_success_cutoff.txt"
   
   progress_loss_type: ${loss.progress_loss_type}  # Type of progress loss: "l1", "l2", or "discrete"
   progress_discrete_bins: ${loss.progress_discrete_bins}  # Number of discrete bins for progress when using discrete loss
 
+  use_per_frame_progress_token: ${model.use_per_frame_progress_token}
+  predict_last_frame_partial_progress: False 
+  
 # =====================================================================================
 # Custom Evaluation Configuration
 # =====================================================================================
@@ -142,7 +152,8 @@ custom_eval:
   custom_eval_random_seed: 42  # Random seed for custom eval samplers to ensure deterministic sampling across ranks.
   policy_ranking_max_tasks: 100  # Maximum number of tasks to use for policy ranking evaluation. null = use all tasks with multiple quality labels.
   use_frame_steps: true  # Whether to use frame steps (subsequences) for reward_alignment and policy_ranking. true = generate subsequences, false = use whole trajectory.
-
+  num_partial_successes: 5  # Number of partial successes to sample for policy ranking evaluation. null = use all partial successes.
+  
 # =====================================================================================
 # Training Configuration
 # =====================================================================================
@@ -211,11 +222,11 @@ training:
 # Loss Configuration
 # =====================================================================================
 loss:
-  # 6:1 ratio of success to failure for BCEWithLogits loss
-  success_positive_weight: 6
+  # Success loss weight and pos_weight are computed dynamically from class imbalance
+  # to weight positive and negative classes equally (balanced accuracy)
   predict_last_frame_progress: false  # If true, only compute progress loss for the last frame
   progress_loss_type: "l2"  # Options: "l1", "l2", or "discrete" (default: "l2")
-  progress_discrete_bins: 10  # Number of discrete bins for progress when using discrete loss (default: 10)
+  progress_discrete_bins: 32  # Number of discrete bins for progress when using discrete loss (default: 10)
 
 # =====================================================================================
 # Logging and Output Configuration

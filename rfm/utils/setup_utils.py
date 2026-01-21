@@ -61,9 +61,10 @@ logger = get_logger()
 from rfm.utils.save import parse_hf_model_id_and_revision, resolve_checkpoint_path
 
 
-def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str) -> None:
+def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: ModelConfig) -> None:
     """
     Load checkpoint weights from safetensors files in a checkpoint directory.
+    Includes verification for PEFT adapters and progress_head.
 
     This is needed when using Unsloth, as we can't use from_pretrained on checkpoints.
     Instead, we load the base model with Unsloth first, then manually load the checkpoint weights.
@@ -71,7 +72,10 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str) -> No
     Args:
         model: The model to load weights into
         checkpoint_path: Path to checkpoint directory containing safetensors files
+        cfg: Model configuration for verification
     """
+    import pdb
+    
     checkpoint_path = Path(checkpoint_path)
     if not checkpoint_path.exists():
         raise ValueError(f"Checkpoint path does not exist: {checkpoint_path}")
@@ -86,29 +90,129 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str) -> No
 
     logger.info(f"Loading checkpoint weights from {len(safetensors_files)} safetensors file(s) in {checkpoint_path}")
 
+    # Capture before weights for verification (adapter and progress_head)
+    before_weights = {}
+    before_progress_head = model.progress_head[0].weight.clone()
+    before_weights["progress_head"] = before_progress_head
+    
+    # Capture adapter weights before loading (if PEFT is enabled)
+    adapter_keys_before = []
+    sample_adapter_keys = []
+    if cfg.use_peft:
+        model_state_dict = model.state_dict()
+        adapter_keys_before = [k for k in model_state_dict.keys() if "lora_A" in k or "lora_B" in k]
+        if adapter_keys_before:
+            # Sample a few adapter weights to verify they change
+            sample_adapter_keys = adapter_keys_before[:3]  # Check first 3 adapters
+            for key in sample_adapter_keys:
+                before_weights[f"adapter_{key}"] = model_state_dict[key].clone()
+            logger.info(f"Found {len(adapter_keys_before)} adapter parameters in model before loading checkpoint")
+        else:
+            logger.warning("No adapter parameters found in model - PEFT may not be applied correctly")
+
     # Load all safetensors files and merge into a single state dict
-    state_dict = {}
+    checkpoint_state_dict = {}
     for safetensors_file in safetensors_files:
         logger.debug(f"Loading weights from {safetensors_file.name}")
         file_state_dict = load_file(str(safetensors_file))
-        state_dict.update(file_state_dict)
+        checkpoint_state_dict.update(file_state_dict)
+
+    # Check what adapter keys are in checkpoint
+    checkpoint_adapter_keys = [k for k in checkpoint_state_dict.keys() if "lora_A" in k or "lora_B" in k]
+    logger.info(f"Found {len(checkpoint_adapter_keys)} adapter parameters in checkpoint")
+    if checkpoint_adapter_keys:
+        logger.debug(f"Sample checkpoint adapter keys: {checkpoint_adapter_keys[:5]}")
 
     # Load state dict into model with strict=False to handle missing keys
-    missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+    missing_keys, unexpected_keys = model.load_state_dict(checkpoint_state_dict, strict=False)
 
-    if missing_keys:
-        logger.warning(f"Missing keys when loading checkpoint: {len(missing_keys)} keys")
+    # Filter missing keys - base model keys are expected for PEFT checkpoints
+    base_model_missing = [k for k in missing_keys if any(pattern in k for pattern in ["visual.", "language_model.", "text_encoder.", "text_model.", "embed_tokens"])]
+    other_missing = [k for k in missing_keys if k not in base_model_missing]
+    
+    if base_model_missing:
+        logger.info(f"Missing base model keys (expected for PEFT checkpoints): {len(base_model_missing)} keys")
+    if other_missing:
+        logger.warning(f"Missing non-base model keys: {len(other_missing)} keys")
         logger.debug(
-            f"Missing keys: {missing_keys[:10]}..." if len(missing_keys) > 10 else f"Missing keys: {missing_keys}"
+            f"Missing keys: {other_missing[:10]}..." if len(other_missing) > 10 else f"Missing keys: {other_missing}"
         )
 
-    if unexpected_keys:
-        logger.warning(f"Unexpected keys when loading checkpoint: {len(unexpected_keys)} keys")
+    # Filter unexpected keys - adapter keys might be expected if structure differs slightly
+    adapter_unexpected = [k for k in unexpected_keys if "lora_A" in k or "lora_B" in k]
+    other_unexpected = [k for k in unexpected_keys if k not in adapter_unexpected]
+    
+    if adapter_unexpected:
+        logger.warning(f"Unexpected adapter keys in checkpoint (not in model): {len(adapter_unexpected)} keys")
         logger.debug(
-            f"Unexpected keys: {unexpected_keys[:10]}..."
-            if len(unexpected_keys) > 10
-            else f"Unexpected keys: {unexpected_keys}"
+            f"Unexpected adapter keys: {adapter_unexpected[:10]}..."
+            if len(adapter_unexpected) > 10
+            else f"Unexpected adapter keys: {adapter_unexpected}"
         )
+    if other_unexpected:
+        logger.warning(f"Unexpected non-adapter keys: {len(other_unexpected)} keys")
+        logger.debug(
+            f"Unexpected keys: {other_unexpected[:10]}..."
+            if len(other_unexpected) > 10
+            else f"Unexpected keys: {other_unexpected}"
+        )
+
+    # Verify progress_head loaded correctly
+    after_progress_head = model.progress_head[0].weight
+    progress_head_loaded = not torch.allclose(before_progress_head, after_progress_head, atol=1e-6)
+    
+    logger.info(
+        f"Progress head - Before: shape={before_progress_head.shape}, sum={before_progress_head.sum():.6f} | "
+        f"After: shape={after_progress_head.shape}, sum={after_progress_head.sum():.6f} | "
+        f"Loaded: {progress_head_loaded}"
+    )
+    
+    if not progress_head_loaded:
+        logger.error("Progress head weights did not change after loading checkpoint!")
+        logger.error("This indicates the checkpoint weights were not loaded correctly.")
+        pdb.set_trace()  # Breakpoint if progress_head didn't load
+
+    # Verify adapter weights loaded correctly (if PEFT is enabled)
+    adapter_loaded_correctly = True
+    if cfg.use_peft and adapter_keys_before:
+        model_state_dict_after = model.state_dict()
+        adapter_keys_after = [k for k in model_state_dict_after.keys() if "lora_A" in k or "lora_B" in k]
+        
+        logger.info(f"Adapter keys - Before: {len(adapter_keys_before)} | After: {len(adapter_keys_after)}")
+        
+        # Check if sample adapter weights changed
+        for key in sample_adapter_keys:
+            if key in before_weights:
+                before_adapter = before_weights[f"adapter_{key}"]
+                if key in model_state_dict_after:
+                    after_adapter = model_state_dict_after[key]
+                    adapter_changed = not torch.allclose(before_adapter, after_adapter, atol=1e-6)
+                    logger.info(
+                        f"Adapter {key} - Before: shape={before_adapter.shape}, sum={before_adapter.sum():.6f} | "
+                        f"After: shape={after_adapter.shape}, sum={after_adapter.sum():.6f} | "
+                        f"Loaded: {adapter_changed}"
+                    )
+                    if not adapter_changed:
+                        logger.warning(f"Adapter {key} weights did not change after loading checkpoint!")
+                        adapter_loaded_correctly = False
+                else:
+                    logger.warning(f"Adapter key {key} not found in model after loading!")
+                    adapter_loaded_correctly = False
+        
+        # Check how many adapter keys from checkpoint were actually loaded
+        loaded_adapter_keys = [k for k in checkpoint_adapter_keys if k in model_state_dict_after]
+        logger.info(f"Loaded {len(loaded_adapter_keys)}/{len(checkpoint_adapter_keys)} adapter keys from checkpoint")
+        
+        if len(loaded_adapter_keys) == 0:
+            logger.error("No adapter weights were loaded from checkpoint!")
+            adapter_loaded_correctly = False
+        elif len(loaded_adapter_keys) < len(checkpoint_adapter_keys) * 0.5:  # Less than 50% loaded
+            logger.warning(f"Only {len(loaded_adapter_keys)}/{len(checkpoint_adapter_keys)} adapter keys loaded - may indicate structure mismatch")
+            adapter_loaded_correctly = False
+    
+    if not adapter_loaded_correctly:
+        logger.error("Adapter weights did not load correctly!")
+        pdb.set_trace()  # Breakpoint if adapters didn't load correctly
 
     logger.info(f"Successfully loaded checkpoint weights from {checkpoint_path}")
 
@@ -574,7 +678,7 @@ def setup_model_and_processor(
                 checkpoint_path = resolve_checkpoint_path(hf_model_id)
                 if checkpoint_path is None:
                     raise ValueError(f"Could not resolve checkpoint path: {hf_model_id}")
-                _load_checkpoint_weights_from_safetensors(model, checkpoint_path)
+                _load_checkpoint_weights_from_safetensors(model, checkpoint_path, cfg)
             else:
                 # For non-PEFT models, we can use from_pretrained as before
                 # Capture before weights for verification

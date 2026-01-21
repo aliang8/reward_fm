@@ -996,6 +996,7 @@ class RFMBatchCollator(BaseCollator):
                         partial_success=traj_a_partial_success,
                     )
                 )
+                trajectory_A_data_source_sim.append(sample.sim_trajectory.data_source)
 
         # Create predict_last_frame masks for trajectory A in each comparison
         predict_last_frame_mask_sim_A_list = []

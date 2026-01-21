@@ -310,6 +310,12 @@ class CustomEvaluationConfig:
             "help": "For RoboArena datasets: Number of total trajectories to sample using circular sampling across partial_success values. None = use num_examples_per_quality_pr per partial_success group."
         },
     )
+    num_partial_successes: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "For RoboArena datasets: Number of total trajectories to sample using circular sampling across partial_success values. None = use num_examples_per_quality_pr per partial_success group."
+        },
+    )
     policy_ranking_max_tasks: Optional[int] = field(
         default=100,
         metadata={

@@ -147,7 +147,8 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: 
         logger.debug(f"Sample model adapter keys: {model_adapter_keys[:3]}")
     
     # Remap checkpoint keys to match model structure
-    # Try multiple strategies: direct match, remove "model.model." -> "model.", add "model." prefix
+    # For PEFT models wrapped in RFM: checkpoint has "model.model." but model expects "model.base_model.model.model."
+    # Try multiple strategies: direct match, map "model.model." -> "model.base_model.model.model.", etc.
     remapped_state_dict = {}
     remapped_count = 0
     direct_match_count = 0
@@ -162,8 +163,13 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: 
             # Try different remapping strategies
             potential_keys = []
             
-            # Strategy 1: Remove "model.model." -> "model."
+            # Strategy 1 (PEFT): Map "model.model." -> "model.base_model.model.model." (for PEFT wrapped in RFM)
+            # This handles the case where Unsloth saved the full model from model.model
             if ckpt_key.startswith("model.model."):
+                # For PEFT: model.model.* -> model.base_model.model.model.*
+                peft_key = ckpt_key.replace("model.model.", "model.base_model.model.model.", 1)
+                potential_keys.append(peft_key)
+                # Also try: model.model.* -> model.* (fallback)
                 potential_keys.append(ckpt_key.replace("model.model.", "model.", 1))
             
             # Strategy 2: Remove "model." prefix entirely
@@ -173,6 +179,12 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: 
             # Strategy 3: Add "model." prefix if missing
             if not ckpt_key.startswith("model."):
                 potential_keys.append(f"model.{ckpt_key}")
+            
+            # Strategy 4: Try adding "base_model." between "model." and the rest (for non-PEFT wrapped models)
+            if ckpt_key.startswith("model.") and not ckpt_key.startswith("model.base_model."):
+                parts = ckpt_key.split(".", 1)
+                if len(parts) == 2:
+                    potential_keys.append(f"model.base_model.{parts[1]}")
             
             # Try each potential key
             matched = False
@@ -273,17 +285,26 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: 
                     adapter_loaded_correctly = False
         
         # Check how many adapter keys from checkpoint were actually loaded
-        # Need to check both original and remapped keys
+        # Need to check both original and remapped keys (matching the remapping strategies above)
         loaded_adapter_keys = []
         for ckpt_key in checkpoint_adapter_keys:
-            # Check if original key or remapped key exists in model
+            # Check if original key exists in model
             if ckpt_key in model_state_dict_after:
                 loaded_adapter_keys.append(ckpt_key)
-            elif ckpt_key.startswith("model.model."):
-                # Check remapped version
-                remapped_key = ckpt_key.replace("model.model.", "model.", 1)
-                if remapped_key in model_state_dict_after:
-                    loaded_adapter_keys.append(ckpt_key)  # Count original key as loaded
+            else:
+                # Try remapping strategies to find the actual key used in model
+                potential_keys = []
+                if ckpt_key.startswith("model.model."):
+                    # Strategy 1: PEFT wrapped in RFM
+                    potential_keys.append(ckpt_key.replace("model.model.", "model.base_model.model.model.", 1))
+                    # Strategy 2: Fallback
+                    potential_keys.append(ckpt_key.replace("model.model.", "model.", 1))
+                
+                # Check if any remapped key exists in model
+                for remapped_key in potential_keys:
+                    if remapped_key in model_state_dict_after:
+                        loaded_adapter_keys.append(ckpt_key)  # Count original key as loaded
+                        break
         logger.info(f"Loaded {len(loaded_adapter_keys)}/{len(checkpoint_adapter_keys)} adapter keys from checkpoint")
         
         if len(loaded_adapter_keys) == 0:
@@ -804,19 +825,7 @@ def setup_model_and_processor(
                         "This should not happen if PEFT was applied correctly before wrapping in RFM."
                     )
                 
-                logger.info("model.model is a PeftModel - loading adapters using PeftModel.from_pretrained()")
-                try:
-                    # PeftModel.from_pretrained() expects adapter_model.safetensors and adapter_config.json
-                    # If checkpoint was saved with our custom saving, it should have these files
-                    model.model = PeftModel.from_pretrained(model.model, checkpoint_path)
-                    logger.info("Successfully loaded PEFT adapters using PeftModel.from_pretrained()")
-                except Exception as e:
-                    logger.warning(f"PeftModel.from_pretrained() failed: {e}")
-                    logger.info("This might be because checkpoint was saved with different structure.")
-                    logger.info("Falling back to manual loading for adapters")
-                    # Fall through to manual loading
-                
-                # Check if PeftModel.from_pretrained() succeeded by checking if adapter files exist
+                # Check if adapter files exist first (indicates checkpoint was saved in PEFT format)
                 adapter_config_path = os.path.join(checkpoint_path, "adapter_config.json")
                 adapter_model_paths = [
                     os.path.join(checkpoint_path, "adapter_model.safetensors"),
@@ -824,19 +833,24 @@ def setup_model_and_processor(
                 ]
                 has_adapter_files = os.path.exists(adapter_config_path) and any(os.path.exists(p) for p in adapter_model_paths)
                 
-                # Also verify that model.model is still a PeftModel (if PeftModel.from_pretrained() succeeded)
-                is_model_peft_after_load = isinstance(model.model, PeftModel)
-                logger.info(f"After loading attempt - model.model is PeftModel: {is_model_peft_after_load}")
-                logger.info(f"Checkpoint has adapter files: {has_adapter_files}")
-                
-                if has_adapter_files and is_model_peft_after_load:
-                    # PeftModel.from_pretrained() should have worked, only load custom heads
-                    logger.info("PEFT adapters loaded via PeftModel.from_pretrained(), loading custom heads only")
-                    _load_checkpoint_weights_from_safetensors(model, checkpoint_path, cfg, load_adapters=False)
+                if has_adapter_files:
+                    # Checkpoint has PEFT adapter files - use PeftModel.from_pretrained()
+                    logger.info("Checkpoint contains PEFT adapter files - loading using PeftModel.from_pretrained()")
+                    try:
+                        model.model = PeftModel.from_pretrained(model.model, checkpoint_path)
+                        logger.info("Successfully loaded PEFT adapters using PeftModel.from_pretrained()")
+                        # Only load custom heads (adapters already loaded)
+                        logger.info("Loading custom heads only (adapters already loaded)")
+                        _load_checkpoint_weights_from_safetensors(model, checkpoint_path, cfg, load_adapters=False)
+                    except Exception as e:
+                        logger.warning(f"PeftModel.from_pretrained() failed: {e}")
+                        logger.info("Falling back to manual loading for all weights")
+                        _load_checkpoint_weights_from_safetensors(model, checkpoint_path, cfg, load_adapters=True)
                 else:
-                    # Either adapter files don't exist or PeftModel.from_pretrained() failed
-                    # Use manual loading for everything
-                    logger.info("Loading all weights manually (including adapters)")
+                    # Checkpoint was saved as full model (no adapter.json) - load everything manually
+                    # This happens when Unsloth saves the full model instead of just adapters
+                    logger.info("Checkpoint was saved as full model (no adapter.json found)")
+                    logger.info("Loading all weights manually from safetensors files (including adapters)")
                     _load_checkpoint_weights_from_safetensors(model, checkpoint_path, cfg, load_adapters=True)
             else:
                 # For non-PEFT models, we can use from_pretrained as before

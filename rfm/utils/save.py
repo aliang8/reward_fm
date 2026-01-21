@@ -324,6 +324,23 @@ class SaveBestCallback(TrainerCallback):
                 json.dump(metrics_to_save, f, indent=2)
             logger.info(f"📊 Saved metrics to {metrics_file}")
 
+        # Save random state from training dataset
+        if self._trainer and hasattr(self._trainer, "train_dataset"):
+            try:
+                train_dataset = self._trainer.train_dataset
+                # Handle RepeatedDataset wrapper if present
+                if hasattr(train_dataset, "dataset"):
+                    train_dataset = train_dataset.dataset
+                
+                if hasattr(train_dataset, "get_random_state"):
+                    random_state = train_dataset.get_random_state()
+                    random_state_file = os.path.join(ckpt_dir, "dataset_random_state.json")
+                    with open(random_state_file, "w") as f:
+                        json.dump(random_state, f, indent=2)
+                    logger.info(f"Saved dataset random state to {random_state_file}")
+            except Exception as e:
+                logger.warning(f"Could not save random state: {e}")
+
     def _cleanup_memory(self):
         """Perform memory cleanup."""
         if torch.cuda.is_available():

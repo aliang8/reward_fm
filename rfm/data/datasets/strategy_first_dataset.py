@@ -116,6 +116,35 @@ class StrategyFirstDataset(BaseDataset):
         logger.info(f"Tasks with optimal trajectories: {len(self.tasks_with_optimal)}")
         logger.info(f"Tasks with both optimal and suboptimal trajectories: {len(self.tasks_with_both)}")
 
+    def get_random_state(self) -> dict:
+        """Get random state from dataset and all samplers for checkpointing.
+        
+        Returns:
+            Dictionary containing random state for dataset and all samplers
+        """
+        state = {
+            "dataset": self._local_random.getstate() if hasattr(self, "_local_random") else None,
+            "pref_sampler": self.pref_sampler._local_random.getstate() if self.pref_sampler else None,
+            "progress_sampler": self.progress_sampler._local_random.getstate() if self.progress_sampler else None,
+            "similarity_sampler": self.similarity_sampler._local_random.getstate() if self.similarity_sampler else None,
+        }
+        return state
+
+    def set_random_state(self, state: dict):
+        """Restore random state from checkpoint.
+        
+        Args:
+            state: Dictionary containing random state for dataset and all samplers
+        """
+        if state.get("dataset") and hasattr(self, "_local_random"):
+            self._local_random.setstate(state["dataset"])
+        if state.get("pref_sampler") and self.pref_sampler:
+            self.pref_sampler._local_random.setstate(state["pref_sampler"])
+        if state.get("progress_sampler") and self.progress_sampler:
+            self.progress_sampler._local_random.setstate(state["progress_sampler"])
+        if state.get("similarity_sampler") and self.similarity_sampler:
+            self.similarity_sampler._local_random.setstate(state["similarity_sampler"])
+
     def __len__(self):
         if self.max_samples is None:
             return self.data_len

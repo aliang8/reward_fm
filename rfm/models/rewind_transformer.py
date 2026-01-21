@@ -260,10 +260,20 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
 
                 # Apply heads
                 Progress_A_logits = self.progress_head(prog_embeddings_A.reshape(-1, D))
-                Progress_A_logits = einops.rearrange(Progress_A_logits, "(b t) 1 -> b t", b=B, t=half)
+                if self.use_discrete_progress:
+                    # Discrete: [b*t, num_bins] -> [b, t, num_bins]
+                    Progress_A_logits = einops.rearrange(Progress_A_logits, "(b t) ... -> b t ...", b=B, t=half)
+                else:
+                    # Continuous: [b*t, 1] -> [b, t]
+                    Progress_A_logits = einops.rearrange(Progress_A_logits, "(b t) 1 -> b t", b=B, t=half)
 
                 Progress_B_logits = self.progress_head(prog_embeddings_B.reshape(-1, D))
-                Progress_B_logits = einops.rearrange(Progress_B_logits, "(b t) 1 -> b t", b=B, t=half)
+                if self.use_discrete_progress:
+                    # Discrete: [b*t, num_bins] -> [b, t, num_bins]
+                    Progress_B_logits = einops.rearrange(Progress_B_logits, "(b t) ... -> b t ...", b=B, t=half)
+                else:
+                    # Continuous: [b*t, 1] -> [b, t]
+                    Progress_B_logits = einops.rearrange(Progress_B_logits, "(b t) 1 -> b t", b=B, t=half)
 
                 progress_logits = {"A": Progress_A_logits, "B": Progress_B_logits}
                 output.progress_logits = progress_logits
@@ -302,20 +312,30 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
                 final_embeddings_B = token_embeddings[:, 1 + half : -1, :]  # avoid the text embedding
 
                 progress_A_logits = self.progress_head(final_embeddings_A.reshape(-1, D))
-                progress_A_logits = einops.rearrange(progress_A_logits, "(b t) 1 -> b t", b=B)
+                if self.use_discrete_progress:
+                    # Discrete: [b*t, num_bins] -> [b, t, num_bins]
+                    progress_A_logits = einops.rearrange(progress_A_logits, "(b t) ... -> b t ...", b=B, t=half)
+                else:
+                    # Continuous: [b*t, 1] -> [b, t]
+                    progress_A_logits = einops.rearrange(progress_A_logits, "(b t) 1 -> b t", b=B, t=half)
 
                 progress_B_logits = self.progress_head(final_embeddings_B.reshape(-1, D))
-                progress_B_logits = einops.rearrange(progress_B_logits, "(b t) 1 -> b t", b=B)
+                if self.use_discrete_progress:
+                    # Discrete: [b*t, num_bins] -> [b, t, num_bins]
+                    progress_B_logits = einops.rearrange(progress_B_logits, "(b t) ... -> b t ...", b=B, t=half)
+                else:
+                    # Continuous: [b*t, 1] -> [b, t]
+                    progress_B_logits = einops.rearrange(progress_B_logits, "(b t) 1 -> b t", b=B, t=half)
 
                 progress_logits = {"A": progress_A_logits, "B": progress_B_logits}
                 output.progress_logits = progress_logits
 
                 # Predict success for all frames
                 success_A_logits = self.success_head(final_embeddings_A.reshape(-1, D))
-                success_A_logits = einops.rearrange(success_A_logits, "(b t) 1 -> b t", b=B)
+                success_A_logits = einops.rearrange(success_A_logits, "(b t) 1 -> b t", b=B, t=half)
 
                 success_B_logits = self.success_head(final_embeddings_B.reshape(-1, D))
-                success_B_logits = einops.rearrange(success_B_logits, "(b t) 1 -> b t", b=B)
+                success_B_logits = einops.rearrange(success_B_logits, "(b t) 1 -> b t", b=B, t=half)
 
                 success_logits = {"A": success_A_logits, "B": success_B_logits}
                 output.success_logits = success_logits
@@ -370,7 +390,12 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
 
                 # Progress prediction for all frames
                 progress_logits = self.progress_head(prog_embeddings.reshape(-1, D))
-                progress_logits = einops.rearrange(progress_logits, "(b t) 1 -> b t", b=B, t=T)
+                if self.use_discrete_progress:
+                    # Discrete: [b*t, num_bins] -> [b, t, num_bins]
+                    progress_logits = einops.rearrange(progress_logits, "(b t) ... -> b t ...", b=B, t=T)
+                else:
+                    # Continuous: [b*t, 1] -> [b, t]
+                    progress_logits = einops.rearrange(progress_logits, "(b t) 1 -> b t", b=B, t=T)
 
                 # Predict success for all frames
                 success_logits = self.success_head(prog_embeddings.reshape(-1, D))
@@ -397,7 +422,12 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
 
                 # Progress prediction for all frames
                 progress_logits = self.progress_head(final_embeddings)
-                progress_logits = progress_logits.squeeze(-1)
+                if self.use_discrete_progress:
+                    # Discrete: [b, t, num_bins] - keep as is
+                    pass
+                else:
+                    # Continuous: [b, t, 1] -> [b, t]
+                    progress_logits = progress_logits.squeeze(-1)
 
                 # Predict success for all frames
                 success_logits = self.success_head(final_embeddings)

@@ -44,6 +44,32 @@ class RFMDataset(BaseDataset):
 
         self.data_len = len(self.dataset)
 
+    def get_random_state(self) -> dict:
+        """Get random state from all samplers for checkpointing.
+        
+        Returns:
+            Dictionary containing random state for all samplers
+        """
+        state = {
+            "pref_sampler": self.pref_sampler._local_random.getstate() if self.pref_sampler else None,
+            "progress_sampler": self.progress_sampler._local_random.getstate() if self.progress_sampler else None,
+            "similarity_sampler": self.similarity_sampler._local_random.getstate() if self.similarity_sampler else None,
+        }
+        return state
+
+    def set_random_state(self, state: dict):
+        """Restore random state from checkpoint.
+        
+        Args:
+            state: Dictionary containing random state for all samplers
+        """
+        if state.get("pref_sampler") and self.pref_sampler:
+            self.pref_sampler._local_random.setstate(state["pref_sampler"])
+        if state.get("progress_sampler") and self.progress_sampler:
+            self.progress_sampler._local_random.setstate(state["progress_sampler"])
+        if state.get("similarity_sampler") and self.similarity_sampler:
+            self.similarity_sampler._local_random.setstate(state["similarity_sampler"])
+
     def get_resample_attempt_stats(self):
         return self._resample_attempt_stats
 

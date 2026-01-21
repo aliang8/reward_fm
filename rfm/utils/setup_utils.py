@@ -837,8 +837,12 @@ def setup_dataset(cfg: DataConfig, is_eval: bool = False, sampler_kwargs=None, *
     if cfg.dataset_type not in dataset_cls:
         raise ValueError(f"Unknown dataset_type: {cfg.dataset_type}. Must be one of: {list(dataset_cls.keys())}")
 
-    if sampler_kwargs is not None:
-        kwargs["sampler_kwargs"] = sampler_kwargs
+    if sampler_kwargs is None:
+        sampler_kwargs = {}
+    
+    sampler_kwargs["random_seed"] = cfg.seed    
+    kwargs["sampler_kwargs"] = sampler_kwargs
+    kwargs["random_seed"] = cfg.seed
 
     # Create the base dataset
     dataset = dataset_cls[cfg.dataset_type](config=cfg, is_evaluation=is_eval, **kwargs)

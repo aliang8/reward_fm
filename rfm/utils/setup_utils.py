@@ -75,7 +75,7 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: 
         cfg: Model configuration for verification
         load_adapters: If False, skip loading adapter weights (assumes already loaded via PeftModel.from_pretrained)
     """
-    import pdb
+    import ipdb; ipdb.set_trace()
     
     checkpoint_path = Path(checkpoint_path)
     if not checkpoint_path.exists():
@@ -776,25 +776,47 @@ def setup_model_and_processor(
                 # If so, use PeftModel.from_pretrained() to load adapter weights
                 if isinstance(base_model, PeftModel):
                     logger.info("Base model is already a PeftModel, loading adapters using PeftModel.from_pretrained()")
-                    base_model = PeftModel.from_pretrained(base_model, checkpoint_path)
-                    # Update the RFM model's base_model reference
-                    model.model = base_model
+                    try:
+                        # PeftModel.from_pretrained() expects adapter_model.safetensors and adapter_config.json
+                        # If checkpoint was saved with our custom saving, it should have these files
+                        base_model = PeftModel.from_pretrained(base_model, checkpoint_path)
+                        logger.info("Successfully loaded PEFT adapters using PeftModel.from_pretrained()")
+                        # Update the RFM model's base_model reference
+                        model.model = base_model
+                    except Exception as e:
+                        logger.warning(f"PeftModel.from_pretrained() failed: {e}")
+                        logger.info("This might be because checkpoint was saved with different structure.")
+                        logger.info("Falling back to manual loading for adapters")
+                        # Fall through to manual loading
                 else:
                     # Try to load adapters into the base_model using PeftModel.from_pretrained()
                     # This should work if the base_model has PEFT structure
                     try:
                         logger.info("Attempting to load adapters into base_model using PeftModel.from_pretrained()")
                         base_model = PeftModel.from_pretrained(base_model, checkpoint_path)
+                        logger.info("Successfully loaded PEFT adapters using PeftModel.from_pretrained()")
                         model.model = base_model
                     except Exception as e:
                         logger.warning(f"PeftModel.from_pretrained() failed: {e}")
                         logger.info("Falling back to manual loading")
-                        _load_checkpoint_weights_from_safetensors(model, checkpoint_path, cfg)
-                        return tokenizer, processor, model
                 
-                # After loading adapters, load other weights (progress_head, etc.) manually
-                logger.info("Loading non-adapter weights (progress_head, etc.) from checkpoint")
-                _load_checkpoint_weights_from_safetensors(model, checkpoint_path, cfg, load_adapters=False)
+                # Check if PeftModel.from_pretrained() succeeded by checking if adapter files exist
+                adapter_config_path = os.path.join(checkpoint_path, "adapter_config.json")
+                adapter_model_paths = [
+                    os.path.join(checkpoint_path, "adapter_model.safetensors"),
+                    os.path.join(checkpoint_path, "adapter_model.bin"),
+                ]
+                has_adapter_files = os.path.exists(adapter_config_path) and any(os.path.exists(p) for p in adapter_model_paths)
+                
+                if has_adapter_files and isinstance(model.model, PeftModel):
+                    # PeftModel.from_pretrained() should have worked, only load custom heads
+                    logger.info("PEFT adapters loaded via PeftModel.from_pretrained(), loading custom heads only")
+                    _load_checkpoint_weights_from_safetensors(model, checkpoint_path, cfg, load_adapters=False)
+                else:
+                    # Either adapter files don't exist or PeftModel.from_pretrained() failed
+                    # Use manual loading for everything
+                    logger.info("Loading all weights manually (including adapters)")
+                    _load_checkpoint_weights_from_safetensors(model, checkpoint_path, cfg, load_adapters=True)
             else:
                 # For non-PEFT models, we can use from_pretrained as before
                 # Capture before weights for verification

@@ -102,6 +102,7 @@ class DatasetConfig:
 
     dataset_path: str = field(default="", metadata={"help": "Path to the dataset"})
     dataset_name: str = field(default=None, metadata={"help": "Name of the dataset (defaults to dataset_type)"})
+    exclude_wrist_cam: bool = field(default=False, metadata={"help": "Exclude wrist camera views (MIT Franka only)"})
 
 
 @dataclass
@@ -828,6 +829,7 @@ def main(cfg: GenerateConfig):
             max_frames=cfg.output.max_frames,
             fps=cfg.output.fps,
             num_workers=cfg.output.num_workers,
+            exclude_wrist_cam=cfg.dataset.exclude_wrist_cam,
         )
 
         # Handle pushing/saving consistently

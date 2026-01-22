@@ -56,6 +56,12 @@ Example usage (debug mode - only process 5 episodes):
         --h5_paths so101_dataset.h5 \
         --reward-model-path aliangdw/qwen4b_pref_prog_succ_8_frames_all_part2 \
         --sentence-encoder sentence-transformers/all-MiniLM-L6-v2 \
+        --batch_size 32
+
+    uv run python scripts/relabel_h5_rewards.py \
+        --h5_paths /scr/shared/reward_fm/play_datasets/play_dataset_test_subtrajs_gripper.h5 \
+        --reward-model-path aliangdw/qwen4b_pref_prog_succ_8_frames_all_part2 \
+        --sentence-encoder sentence-transformers/all-MiniLM-L6-v2 \
         --batch_size 32 
         
 With multiple inputs and an output directory:
@@ -233,6 +239,7 @@ def relabel_episode_with_baseline(
     max_frames: int = 16,
     test_batched: bool = False,
     use_batched: Optional[bool] = None,
+    use_frame_steps: bool = False,
 ) -> Optional[np.ndarray]:
     """
     Relabel rewards for a single episode using a baseline model (GVL, VLAC, RoboReward, RFMModel).
@@ -249,7 +256,7 @@ def relabel_episode_with_baseline(
     logger.debug(f"Episode {demo_name}: Extracted {len(frames)} frames with shape {frames.shape}")
     
     try:
-        logger.info(f"Episode {demo_name}: Starting reward relabeling with baseline model ({len(frames)} timesteps)")
+        logger.info(f"Episode {demo_name}: Starting reward relabeling with baseline model ({len(frames)} timesteps, use_frame_steps={use_frame_steps})")
         
         if eval_server_url is not None:
             # Use baseline eval server
@@ -265,10 +272,39 @@ def relabel_episode_with_baseline(
                 max_frames=max_frames,
             )
             progress_array = np.array(progress_predictions, dtype=np.float32)
+        elif not use_frame_steps:
+            # Whole trajectory mode: feed entire trajectory once, get N-dim progress vector
+            logger.debug(f"Episode {demo_name}: Using whole trajectory mode (use_frame_steps=False)")
+            
+            # Subsample frames if needed
+            frames_to_use = frames
+            if max_frames > 0 and HAS_SUBSAMPLE_HELPER and len(frames) > max_frames:
+                frames_to_use, _ = linspace_subsample_frames(frames, num_frames=max_frames)
+                logger.debug(f"Episode {demo_name}: Subsampled {len(frames)} frames to {len(frames_to_use)} frames")
+            
+            # Call compute_progress once on the whole trajectory
+            progress_pred = baseline_model.compute_progress(frames_to_use, task_description=language_instruction)
+            
+            # Convert to numpy array
+            if isinstance(progress_pred, list):
+                progress_values = np.array([float(v) if v is not None else 0.0 for v in progress_pred], dtype=np.float32)
+            elif isinstance(progress_pred, np.ndarray):
+                progress_values = progress_pred.astype(np.float32)
+            else:
+                progress_values = np.zeros(len(frames_to_use), dtype=np.float32)
+            
+            # If we subsampled, interpolate back to original trajectory length
+            if len(progress_values) != len(frames):
+                # Linear interpolation to match original trajectory length
+                original_indices = np.linspace(0, len(progress_values) - 1, len(frames))
+                progress_array = np.interp(original_indices, np.arange(len(progress_values)), progress_values).astype(np.float32)
+                logger.debug(f"Episode {demo_name}: Interpolated {len(progress_values)} progress values to {len(frames)} timesteps")
+            else:
+                progress_array = progress_values
         else:
-            # Use direct baseline model
-            logger.debug(f"Episode {demo_name}: Using direct baseline model")
+            # Frame-step mode: Use direct baseline model
             # Build subsequences [0:1], [0:2], [0:3], ... for frame-step processing
+            logger.debug(f"Episode {demo_name}: Using frame-step mode (use_frame_steps=True)")
             all_frames = [frames[i] for i in range(len(frames))]
             all_progress = []
             
@@ -592,6 +628,7 @@ def relabel_episode(
     language_instruction: Optional[str] = None,
     test_batched: bool = False,
     use_batched: Optional[bool] = None,
+    use_frame_steps: bool = False,
 ) -> Optional[np.ndarray]:
     """
     Relabel rewards for a single episode.
@@ -626,6 +663,7 @@ def relabel_episode(
                 max_frames=max_frames,
                 test_batched=test_batched,
                 use_batched=use_batched,
+                use_frame_steps=use_frame_steps,
             )
     
     # Convert frames to list format expected by RFM relabeling functions
@@ -780,6 +818,13 @@ def main():
         action="store_true",
         help="Disable batched mode and use individual compute_progress calls (only for baseline models).",
     )
+    parser.add_argument(
+        "--use-frame-steps",
+        action="store_true",
+        default=False,
+        help="If set, compute rewards per-timestep by building subsequences [0:1], [0:2], ... and taking the last value. "
+             "If not set (default), compute rewards for the whole trajectory at once (faster, returns N-dim vector where N=min(traj_len, max_frames)).",
+    )
     args = parser.parse_args()
     
     # Handle conflicting flags
@@ -839,6 +884,10 @@ def main():
         logger.info("BATCHED MODE: Will use compute_progress_batched if available")
     if args.no_batched:
         logger.info("INDIVIDUAL MODE: Will use individual compute_progress calls")
+    if args.use_frame_steps:
+        logger.info("FRAME-STEP MODE: Computing rewards per-timestep with subsequences")
+    else:
+        logger.info("WHOLE-TRAJECTORY MODE: Computing rewards for entire trajectory at once (faster)")
     logger.info(f"Batch size: {args.batch_size}")
     if args.image_key:
         logger.info(f"Image key: {args.image_key}")
@@ -991,6 +1040,7 @@ def main():
                     language_instruction=language_instruction,
                     test_batched=args.test_batched,
                     use_batched=use_batched,
+                    use_frame_steps=args.use_frame_steps,
                 )
                 if rewards is not None:
                     rewards_map[demo_name] = rewards

@@ -816,6 +816,36 @@ def main(cfg: GenerateConfig):
             print(f"Dataset saved locally to: {dataset_path_local}")
         print("Dataset conversion complete!")
         return
+    elif "rfm_new_mit_franka" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.new_mit_franka_loader import convert_new_mit_franka_dataset_to_hf
+
+        print(f"Converting New MIT Franka dataset to HF from: {cfg.dataset.dataset_path}")
+        dataset = convert_new_mit_franka_dataset_to_hf(
+            dataset_path=cfg.dataset.dataset_path,
+            dataset_name=cfg.dataset.dataset_name,
+            output_dir=cfg.output.output_dir,
+            max_trajectories=cfg.output.max_trajectories,
+            max_frames=cfg.output.max_frames,
+            fps=cfg.output.fps,
+            num_workers=cfg.output.num_workers,
+        )
+
+        # Handle pushing/saving consistently
+        if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
+            print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")
+            try:
+                push_hf_dataset_and_video_files_to_hub(
+                    dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir
+                )
+            except Exception as e:
+                print(f"❌ Error pushing to hub: {e}")
+                print("Dataset was created locally but failed to push metadata to hub")
+        else:
+            dataset_path_local = os.path.join(cfg.output.output_dir, (cfg.dataset.dataset_name).lower())
+            dataset.save_to_disk(dataset_path_local)
+            print(f"Dataset saved locally to: {dataset_path_local}")
+        print("Dataset conversion complete!")
+        return
     elif "utd_so101_clean_policy_ranking" in cfg.dataset.dataset_name.lower():
         from dataset_upload.dataset_loaders.utd_so101_clean_policy_ranking_loader import (
             convert_utd_so101_clean_policy_ranking_to_hf,

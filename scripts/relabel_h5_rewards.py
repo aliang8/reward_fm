@@ -59,10 +59,11 @@ Example usage (debug mode - only process 5 episodes):
         --batch_size 32
 
     uv run python scripts/relabel_h5_rewards.py \
-        --h5_paths /scr/shared/reward_fm/play_datasets/play_dataset_test_subtrajs_gripper.h5 \
+        --h5_paths play_dataset_test_subtrajs_gripper.h5 \
         --reward-model-path aliangdw/qwen4b_pref_prog_succ_8_frames_all_part2 \
         --sentence-encoder sentence-transformers/all-MiniLM-L6-v2 \
-        --batch_size 32 
+        --batch_size 32 \
+        --use_frame_steps 32
         
 With multiple inputs and an output directory:
     uv run python scripts/relabel_h5_rewards.py \
@@ -71,6 +72,10 @@ With multiple inputs and an output directory:
         --sentence-encoder sentence-transformers/all-MiniLM-L6-v2 \
         --batch_size 32 \
         --output_path /data/relabeled/
+
+uv run --active python scripts/relabel_h5_rewards.py         --h5_paths play_dataset_test_subtrajs_gripper.h5         --reward-model roboreward \                            
+        --reward-model-path teetone/RoboReward-4B         --sentence-encoder sentence-transformers/all-MiniLM-L6-v2         --batch_size 32    --language-instruction="Open the bottle" --image-key=cam_left_wrist &
+        
 """
 
 import argparse
@@ -825,6 +830,13 @@ def main():
         help="If set, compute rewards per-timestep by building subsequences [0:1], [0:2], ... and taking the last value. "
              "If not set (default), compute rewards for the whole trajectory at once (faster, returns N-dim vector where N=min(traj_len, max_frames)).",
     )
+    parser.add_argument(
+        "--rewards-only",
+        action="store_true",
+        default=False,
+        help="If set, create a minimal H5 file containing only rewards and language instructions (no observations, actions, etc.). "
+             "Useful for saving disk space when you only need the relabeled rewards.",
+    )
     args = parser.parse_args()
     
     # Handle conflicting flags
@@ -888,6 +900,8 @@ def main():
         logger.info("FRAME-STEP MODE: Computing rewards per-timestep with subsequences")
     else:
         logger.info("WHOLE-TRAJECTORY MODE: Computing rewards for entire trajectory at once (faster)")
+    if args.rewards_only:
+        logger.info("REWARDS-ONLY MODE: Output will contain only rewards and language instructions")
     logger.info(f"Batch size: {args.batch_size}")
     if args.image_key:
         logger.info(f"Image key: {args.image_key}")
@@ -1065,50 +1079,108 @@ def main():
         # Write relabeled H5 file
         logger.info(f"Writing relabeled file: {output_h5}")
         logger.debug(f"Rewards computed for {len(rewards_map)}/{len(demo_names)} episodes")
-        with h5py.File(input_h5, "r") as infile, h5py.File(output_h5, "w") as outfile:
-            # Copy file-level attributes
-            logger.debug("Copying file-level attributes...")
-            for attr_name, attr_val in infile.attrs.items():
-                outfile.attrs[attr_name] = attr_val
+        
+        if args.rewards_only:
+            # Minimal mode: only write rewards and language instructions
+            with h5py.File(input_h5, "r") as infile, h5py.File(output_h5, "w") as outfile:
+                # Copy file-level attributes
+                logger.debug("Copying file-level attributes...")
+                for attr_name, attr_val in infile.attrs.items():
+                    outfile.attrs[attr_name] = attr_val
 
-            # Update metadata
-            outfile.attrs["rewards_relabeled"] = True
-            outfile.attrs["reward_model_type"] = args.reward_model
-            if args.reward_model_path is not None:
-                outfile.attrs["reward_model_path"] = args.reward_model_path
-                logger.debug(f"Stored reward_model_path: {args.reward_model_path}")
-            if args.eval_server_url is not None:
-                outfile.attrs["eval_server_url"] = args.eval_server_url
-                logger.debug(f"Stored eval_server_url: {args.eval_server_url}")
-            if args.baseline_eval_server_url is not None:
-                outfile.attrs["baseline_eval_server_url"] = args.baseline_eval_server_url
-                logger.debug(f"Stored baseline_eval_server_url: {args.baseline_eval_server_url}")
+                # Update metadata
+                outfile.attrs["rewards_relabeled"] = True
+                outfile.attrs["rewards_only"] = True
+                outfile.attrs["reward_model_type"] = args.reward_model
+                if args.reward_model_path is not None:
+                    outfile.attrs["reward_model_path"] = args.reward_model_path
+                if args.eval_server_url is not None:
+                    outfile.attrs["eval_server_url"] = args.eval_server_url
+                if args.baseline_eval_server_url is not None:
+                    outfile.attrs["baseline_eval_server_url"] = args.baseline_eval_server_url
 
-            # Create /data and copy each demo, replacing rewards
-            in_data = infile["data"]
-            out_data = outfile.create_group("data")
+                # Create /data with only rewards and language instructions
+                in_data = infile["data"]
+                out_data = outfile.create_group("data")
 
-            logger.debug(f"Copying {len(demo_names)} episodes to output file...")
-            for demo_name in tqdm(demo_names, desc="  Writing episodes", leave=False):
-                dg_in = in_data[demo_name]
-                dg_out = out_data.create_group(demo_name)
-                copy_group_with_relabel(dg_in, dg_out, demo_name, rewards_map, dg_in)
-                # Copy demo attributes
-                for attr_name, attr_val in dg_in.attrs.items():
-                    dg_out.attrs[attr_name] = attr_val
-
-                # Update language instruction if provided
-                if args.language_instruction is not None:
-                    # Delete existing language_instruction if it exists
-                    if "language_instruction" in dg_out:
-                        del dg_out["language_instruction"]
-                    # Store as bytes if it's a string
-                    if isinstance(args.language_instruction, str):
-                        dg_out.create_dataset("language_instruction", data=args.language_instruction.encode("utf-8"))
+                logger.debug(f"Writing {len(demo_names)} episodes (rewards-only mode)...")
+                for demo_name in tqdm(demo_names, desc="  Writing episodes", leave=False):
+                    dg_in = in_data[demo_name]
+                    dg_out = out_data.create_group(demo_name)
+                    
+                    # Write rewards
+                    if demo_name in rewards_map and rewards_map[demo_name] is not None:
+                        dg_out.create_dataset("rewards", data=rewards_map[demo_name], compression="gzip")
                     else:
-                        dg_out.create_dataset("language_instruction", data=args.language_instruction)
-                    logger.debug(f"Updated language_instruction for {demo_name}")
-            logger.debug("Finished writing all episodes")
+                        # Fallback to zeros
+                        episode_len = len(dg_in["actions"]) if "actions" in dg_in else 0
+                        dg_out.create_dataset("rewards", data=np.zeros(episode_len, dtype=np.float32), compression="gzip")
+                    
+                    # Write language instruction
+                    if args.language_instruction is not None:
+                        if isinstance(args.language_instruction, str):
+                            dg_out.create_dataset("language_instruction", data=args.language_instruction.encode("utf-8"))
+                        else:
+                            dg_out.create_dataset("language_instruction", data=args.language_instruction)
+                    elif "language_instruction" in dg_in:
+                        # Copy existing language instruction
+                        dg_out.create_dataset("language_instruction", data=dg_in["language_instruction"][()])
+                    
+                    # Copy essential attributes (episode index, etc.)
+                    for attr_name, attr_val in dg_in.attrs.items():
+                        dg_out.attrs[attr_name] = attr_val
+                    
+                    # Store episode length for reference
+                    if "actions" in dg_in:
+                        dg_out.attrs["episode_length"] = len(dg_in["actions"])
+                
+                logger.debug("Finished writing all episodes (rewards-only)")
+        else:
+            # Full mode: copy everything and replace rewards
+            with h5py.File(input_h5, "r") as infile, h5py.File(output_h5, "w") as outfile:
+                # Copy file-level attributes
+                logger.debug("Copying file-level attributes...")
+                for attr_name, attr_val in infile.attrs.items():
+                    outfile.attrs[attr_name] = attr_val
+
+                # Update metadata
+                outfile.attrs["rewards_relabeled"] = True
+                outfile.attrs["reward_model_type"] = args.reward_model
+                if args.reward_model_path is not None:
+                    outfile.attrs["reward_model_path"] = args.reward_model_path
+                    logger.debug(f"Stored reward_model_path: {args.reward_model_path}")
+                if args.eval_server_url is not None:
+                    outfile.attrs["eval_server_url"] = args.eval_server_url
+                    logger.debug(f"Stored eval_server_url: {args.eval_server_url}")
+                if args.baseline_eval_server_url is not None:
+                    outfile.attrs["baseline_eval_server_url"] = args.baseline_eval_server_url
+                    logger.debug(f"Stored baseline_eval_server_url: {args.baseline_eval_server_url}")
+
+                # Create /data and copy each demo, replacing rewards
+                in_data = infile["data"]
+                out_data = outfile.create_group("data")
+
+                logger.debug(f"Copying {len(demo_names)} episodes to output file...")
+                for demo_name in tqdm(demo_names, desc="  Writing episodes", leave=False):
+                    dg_in = in_data[demo_name]
+                    dg_out = out_data.create_group(demo_name)
+                    copy_group_with_relabel(dg_in, dg_out, demo_name, rewards_map, dg_in)
+                    # Copy demo attributes
+                    for attr_name, attr_val in dg_in.attrs.items():
+                        dg_out.attrs[attr_name] = attr_val
+
+                    # Update language instruction if provided
+                    if args.language_instruction is not None:
+                        # Delete existing language_instruction if it exists
+                        if "language_instruction" in dg_out:
+                            del dg_out["language_instruction"]
+                        # Store as bytes if it's a string
+                        if isinstance(args.language_instruction, str):
+                            dg_out.create_dataset("language_instruction", data=args.language_instruction.encode("utf-8"))
+                        else:
+                            dg_out.create_dataset("language_instruction", data=args.language_instruction)
+                        logger.debug(f"Updated language_instruction for {demo_name}")
+                logger.debug("Finished writing all episodes")
 
         logger.info(f"✅ Successfully saved relabeled dataset: {output_h5}")
         if args.info:

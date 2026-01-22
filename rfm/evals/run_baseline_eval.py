@@ -190,6 +190,8 @@ def _make_json_serializable(obj: Any) -> Any:
 def _shorten_dataset_name(dataset_name: Union[str, List[str]], max_length: int = 60) -> str:
     """Shorten dataset name for use in filenames.
     
+    Uses DS_SHORT_NAME_MAPPING for known datasets, otherwise truncates with hash suffix.
+    
     Args:
         dataset_name: Dataset name (string or list of strings)
         max_length: Maximum length for the output string (default 60)
@@ -197,11 +199,22 @@ def _shorten_dataset_name(dataset_name: Union[str, List[str]], max_length: int =
     Returns:
         Shortened, filesystem-safe string for use in filenames
     """
+    from rfm.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
+    
     # Convert list to string if needed
     if isinstance(dataset_name, list):
         name_str = "_".join(str(x) for x in dataset_name)
     else:
         name_str = str(dataset_name)
+    
+    # Check if there's a mapping for this dataset name
+    if name_str in DS_SHORT_NAME_MAPPING:
+        return DS_SHORT_NAME_MAPPING[name_str]
+    
+    # Also check after normalizing (in case the input has special chars)
+    normalized_for_lookup = name_str.replace("-", "_").replace("/", "_")
+    if normalized_for_lookup in DS_SHORT_NAME_MAPPING:
+        return DS_SHORT_NAME_MAPPING[normalized_for_lookup]
     
     # Replace problematic characters
     for char in ["/", "\\", ":", "*", "?", '"', "<", ">", "|", " ", ","]:

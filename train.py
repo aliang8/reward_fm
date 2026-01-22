@@ -80,8 +80,8 @@ def train(cfg: ExperimentConfig):
         cfg.data.dataloader_num_workers = 0
         cfg.data.dataloader_persistent_workers = False
 
-        cfg.custom_eval.num_examples_per_quality_pr = 1
-        cfg.custom_eval.policy_ranking_max_tasks = 10
+        # cfg.custom_eval.num_examples_per_quality_pr = 1
+        # cfg.custom_eval.policy_ranking_max_tasks = 10
 
     # Set memory management
     torch.backends.cudnn.benchmark = True
@@ -292,6 +292,25 @@ def train(cfg: ExperimentConfig):
 
     checkpoint_path = resolve_checkpoint_path(cfg.training.resume_from_checkpoint, hub_token=save_best_cfg.hub_token)
     rank_0_info(f"Training from checkpoint: {checkpoint_path}")
+
+    # Restore random state from checkpoint if resuming
+    if checkpoint_path and os.path.isdir(checkpoint_path):
+        random_state_file = os.path.join(checkpoint_path, "dataset_random_state.json")
+        if os.path.exists(random_state_file):
+            try:
+                with open(random_state_file, "r") as f:
+                    random_state = json.load(f)
+                # Handle RepeatedDataset wrapper if present
+                train_dataset = train_dataset.dataset if hasattr(train_dataset, "dataset") else train_dataset
+                if hasattr(train_dataset, "set_random_state"):
+                    train_dataset.set_random_state(random_state)
+                    rank_0_info(f"Restored dataset random state from {random_state_file}")
+                else:
+                    rank_0_info(f"Dataset does not support random state restoration")
+            except Exception as e:
+                rank_0_info(f"Could not restore random state: {e}")
+        else:
+            rank_0_info(f"No dataset_random_state.json found in checkpoint, starting with fresh random state")
 
     if cfg.debug:
         rank_0_info("🐛 DEBUG MODE: eval_steps=2, custom_eval_steps=2, eval_subset_size=10")

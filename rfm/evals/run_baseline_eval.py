@@ -522,7 +522,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                 sampler_kwargs["max_comparisons"] = cfg.custom_eval.max_comparisons
 
             dataset = setup_custom_eval_dataset(
-                cfg=eval_data_cfg, sampler_type=eval_type, is_eval=True, verbose=True, sampler_kwargs=sampler_kwargs
+                cfg=eval_data_cfg, sampler_type=eval_type, verbose=True, sampler_kwargs=sampler_kwargs
             )
 
             # Process samples
@@ -781,6 +781,7 @@ def main(cfg: DictConfig):
     # Datasets will be set per eval type during processing
     data_cfg = DataConfig(
         max_frames=baseline_cfg.max_frames,
+        load_embeddings=True if "rewind" in baseline_cfg.reward_model else False,
     )
 
     display_config(data_cfg)

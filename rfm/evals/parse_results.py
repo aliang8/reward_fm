@@ -12,21 +12,25 @@ RFM_1M_OOD_DATASETS = DATASET_MAP[RFM_1M_OOD]["eval"]
 
 keys_to_remove = ["mit_franka", "libero", "metaworld", "racer", "roboreward", "roboarena"]
 
-model_names = [
-    "ReWiND",
-    "VLAC-2B",
-    "RoboReward-4B",
-    "RoboReward-8B",
-    "RFM-4B",
-]
-
 model_to_results_dir = {
     "ReWiND": "",
-    "VLAC-2B": "/home/azure/reward_fm/baseline_eval_output/vlac_InternRobotics_VLAC/",
-    "RoboReward-4B": "",
-    "RoboReward-8B": "",
-    "RFM-4B": "",
+    # "VLAC-2B": "/home/azure/reward_fm/baseline_eval_output/vlac_InternRobotics_VLAC/",
+    "VLAC-2B": "",
+    "RoboReward-4B": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/roboreward_teetone_RoboReward-4B/",
+    "RoboReward-8B": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/roboreward_teetone_RoboReward-8B/",
+    "RFM-4B-All": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/rfm_rewardfm_rfm_qwen_pref_prog_4frames_all_strategy/",
+    "RFM-4B-8frames": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/rfm_aliangdw_qwen4b_pref_prog_succ_8_frames_all/",
 }
+
+model_names = list(model_to_results_dir.keys())
+
+metric_to_key = {
+    "reward_alignment": "pearson",
+    "policy_ranking": "kendall_last",
+}
+
+# eval_types = ["reward_alignment", "policy_ranking"]
+eval_types = ["policy_ranking"]
 
 def load_and_filter_results(results_file: str, id_datasets: list, ood_datasets: list, eval_type: str):
     """Load metrics.json and filter by ID and OOD datasets."""
@@ -44,7 +48,7 @@ def load_and_filter_results(results_file: str, id_datasets: list, ood_datasets: 
 # Load results for each model
 model_to_results = {model: {} for model in model_names}
 
-for eval_type in ["reward_alignment", "policy_ranking"]:
+for eval_type in eval_types:
     for model in model_names:
         model_results_file = model_to_results_dir[model]
         model_to_results[model][eval_type] = load_and_filter_results(
@@ -55,6 +59,7 @@ def render_terminal_table(
     model_to_results,
     eval_type,
     model_names,
+    metric_key : str = "pearson"
 ):
     # Extract id and ood results for the given eval_type
     id_results_by_model = {m: model_to_results[m][eval_type][0] for m in model_names}
@@ -63,7 +68,7 @@ def render_terminal_table(
     console = Console()
 
     table = Table(
-        title="VOC (Pearson r ↑)",
+        title=f"{eval_type.capitalize()} ({metric_key.capitalize()} ↑)",
         show_lines=False,
         header_style="bold",
     )
@@ -75,7 +80,7 @@ def render_terminal_table(
         table.add_column(m, justify="right")
 
     def add_block(split_name, results_by_model):
-        results_by_model = {m: {k: v for k, v in results_by_model[m].items() if "pearson" in k or "kendall_rewind_last" in k} for m in model_names}
+        results_by_model = {m: {k: v for k, v in results_by_model[m].items() if metric_key in k} for m in model_names}
 
         # collect all unique datasets from all models
         datasets = []
@@ -112,6 +117,7 @@ def render_terminal_table(
 
     console.print(table)
 
-render_terminal_table(model_to_results, "reward_alignment", model_names)
-
-render_terminal_table(model_to_results, "policy_ranking", model_names)
+for idx, eval_type in enumerate(eval_types):
+    metric_key = metric_to_key[eval_type]
+    print(f"Rendering {eval_type.capitalize()} ({metric_key.capitalize()} ↑)")
+    render_terminal_table(model_to_results, eval_type, model_names, metric_key=metric_key)

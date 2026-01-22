@@ -516,6 +516,14 @@ def run_reward_alignment_eval_per_trajectory(
         mae = _compute_mae_between_bins(pred_bins_mae, gt_bins_mae)
         metrics["mae"] = mae
 
+    # Add binary success accuracy if available
+    if success_acc_list:
+        metrics["success_acc"] = float(np.mean(success_acc_list))
+
+    # Add RoboArena delta metric if available
+    if use_partial_success and roboarena_deltas:
+        metrics["roboarena_abs_delta"] = float(np.mean(roboarena_deltas))
+
     return metrics, plots, video_frames_list, trajectory_progress_data
 
 

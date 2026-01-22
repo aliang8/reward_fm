@@ -282,6 +282,10 @@ DATASET_MAP = {
             [
                 "abraranwar_libero_rfm_libero256_90",
                 "ykorkmaz_libero_failure_rfm_libero_90_failure",
+            ],
+            [ 
+                "abraranwar_libero_rfm_libero256_10",
+                "ykorkmaz_libero_failure_rfm_libero_10_failure",
             ]
         ],
     },
@@ -379,9 +383,9 @@ DATASET_MAP = {
     },
     "rfm-1m-ood": {
         "eval": [
-            "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",  # putting this here for now
-            "jesbu1_roboreward_rfm_roboreward_test",
-            "jesbu1_mit_franka_p-rank_rfm_mit_franka_p-rank_rfm",
+            # "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",  # putting this here for now
+            # "jesbu1_roboreward_rfm_roboreward_test",
+            # "jesbu1_mit_franka_p-rank_rfm_mit_franka_p-rank_rfm",
             "jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top",
             "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking",
             "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking",
@@ -399,6 +403,10 @@ DATASET_MAP = {
             [
                 "abraranwar_libero_rfm_libero256_90",
                 "ykorkmaz_libero_failure_rfm_libero_90_failure",
+            ],
+            [ 
+                "abraranwar_libero_rfm_libero256_10",
+                "ykorkmaz_libero_failure_rfm_libero_10_failure",
             ]
         ],
     },
@@ -420,7 +428,6 @@ DATA_SOURCE_CATEGORY = {
     "preference_only": [
         "oxe_bc_z",
         "oxe_dlr_edan_shared_control_converted_externally_to_rlds",
-        "roboreward_dlr_edan_shared_control_converted_externally_to_rldsroboarena",
         "auto_eval_rfm",
         # "humanoid_everyday_rfm",
         "galaxea_part1_r1_lite",
@@ -430,6 +437,7 @@ DATA_SOURCE_CATEGORY = {
         "galaxea_part5_r1_lite",
         "epic",
         "roboreward_roboarena",
+        "roboreward_dlr_edan_shared_control_converted_externally_to_rldsroboarena",
         "roboarena",
         "roboarena_eval_debug_nowrist",
     ],

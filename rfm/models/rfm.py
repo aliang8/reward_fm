@@ -129,6 +129,14 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
         """Delegates gradient checkpointing disabling to the base model."""
         self.model.gradient_checkpointing_disable(**kwargs)
 
+    def generate(self, *args, **kwargs):
+        """Delegates generation to the base model."""
+        return self.model.generate(*args, **kwargs)
+
+    def prepare_inputs_for_generation(self, *args, **kwargs):
+        """Delegates input preparation for generation to the base model."""
+        return self.model.prepare_inputs_for_generation(*args, **kwargs)
+
     def _extract_hidden_states_from_token_pairs(
         self,
         hidden_state: torch.Tensor,
@@ -525,9 +533,16 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
             **kwargs,
         }
         with _timer("time/rfm_forward", timing_raw=timing_raw):
-            outputs = self.model(**model_kwargs)
-
-        hidden_state = outputs.last_hidden_state  # [B, seq_len, hidden_dim]
+            # Qwen3 models may need output_hidden_states=True and use hidden_states instead of last_hidden_state
+            is_qwen3 = "Qwen3" in self.base_model_id or (hasattr(self.model, "config") and "Qwen3" in str(type(self.model)))
+            if is_qwen3:
+                outputs = self.model(**model_kwargs, output_hidden_states=True, return_dict=True)
+                # Qwen3 uses hidden_states tuple, take the last layer
+                hidden_state = outputs.hidden_states[-1] if hasattr(outputs, "hidden_states") else outputs.last_hidden_state
+            else:
+                outputs = self.model(**model_kwargs)
+                hidden_state = outputs.last_hidden_state  # [B, seq_len, hidden_dim]
+        
         progress_logits = {"A": None, "B": None}
         success_logits = {"A": None, "B": None}
 
@@ -616,9 +631,16 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
             **kwargs,
         }
         with _timer("time/rfm_forward", timing_raw=timing_raw):
-            outputs = self.model(**model_kwargs)
-
-        hidden_state = outputs.last_hidden_state  # [B, seq_len, hidden_dim]
+            # Qwen3 models may need output_hidden_states=True and use hidden_states instead of last_hidden_state
+            is_qwen3 = "Qwen3" in self.base_model_id or (hasattr(self.model, "config") and "Qwen3" in str(type(self.model)))
+            if is_qwen3:
+                outputs = self.model(**model_kwargs, output_hidden_states=True, return_dict=True)
+                # Qwen3 uses hidden_states tuple, take the last layer
+                hidden_state = outputs.hidden_states[-1] if hasattr(outputs, "hidden_states") else outputs.last_hidden_state
+            else:
+                outputs = self.model(**model_kwargs)
+                hidden_state = outputs.last_hidden_state  # [B, seq_len, hidden_dim]
+        
         progress_logits = {"A": None, "B": None}
         success_logits = {"A": None, "B": None}
 

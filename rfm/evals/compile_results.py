@@ -1014,7 +1014,7 @@ def run_confusion_matrix_eval(
         )
 
     # Create the plot
-    fig = plt.figure(figsize=(10, 8))
+    fig = plt.figure(figsize=(8, 8))
 
     # Create heatmap showing average final rewards
     sns.heatmap(
@@ -1026,8 +1026,8 @@ def run_confusion_matrix_eval(
         # yticklabels=list(uniq_tasks),
         # cbar_kws={"label": "Average Final Reward (5 trajs)"},
     )
-    plt.xlabel("Language Task", fontsize=12)
-    plt.ylabel("Video Task", fontsize=12)
+    # plt.xlabel("Language Task", fontsize=12)
+    # plt.ylabel("Video Task", fontsize=12)
     # plt.xticks(rotation=45, ha="right")
     # plt.yticks(rotation=0)
     # Remove xticks and yticks
@@ -1036,6 +1036,9 @@ def run_confusion_matrix_eval(
 
     # Remove the legend
     plt.legend([])
+
+    # Remove the color bar
+    plt.colorbar(False)
 
     plt.tight_layout()
 

@@ -116,7 +116,7 @@ def _process_episode(args):
     return None
 
 
-def convert_rfm_mit_franka_dataset_to_hf(
+def convert_new_mit_franka_dataset_to_hf(
     dataset_path: str,
     dataset_name: str,
     output_dir: str,
@@ -124,8 +124,9 @@ def convert_rfm_mit_franka_dataset_to_hf(
     max_frames: int = 64,
     fps: int = 10,
     num_workers: int = -1,
+    exclude_wrist_cam: bool = False,
 ) -> Dataset:
-    """Convert RFM-MIT-Franka dataset to HF format.
+    """Convert New MIT Franka dataset to HF format.
 
     Args:
         dataset_path: Path to the dataset directory containing task folders
@@ -135,6 +136,7 @@ def convert_rfm_mit_franka_dataset_to_hf(
         max_frames: Maximum frames per trajectory
         fps: Frames per second for output videos
         num_workers: Number of worker processes (-1 for auto, 0 for sequential)
+        exclude_wrist_cam: If True, only process external camera views and skip wrist camera
 
     Returns:
         HuggingFace Dataset
@@ -184,6 +186,10 @@ def convert_rfm_mit_franka_dataset_to_hf(
                     view = "wrist"
                 else:
                     print(f"Warning: Unknown view type in {video_file.name}, skipping...")
+                    continue
+
+                # Skip wrist camera if exclude_wrist_cam is True
+                if exclude_wrist_cam and view == "wrist":
                     continue
 
                 episode_meta = {

@@ -55,7 +55,7 @@ Each trajectory has two synchronized camera views:
 - **ext (external)**: Third-person view of the robot and workspace
 - **wrist**: First-person view from the robot's wrist camera
 
-The loader processes both views as separate trajectories, each with the same task instruction but different visual observations.
+By default, the loader processes both views as separate trajectories, each with the same task instruction but different visual observations. You can optionally exclude wrist camera views using the `exclude_wrist_cam` configuration option.
 
 ### Quality Labels
 
@@ -65,15 +65,16 @@ The loader processes both views as separate trajectories, each with the same tas
 
 ## Configuration
 
-Configuration file: `dataset_upload/configs/data_gen_configs/rfm_mit_franka.yaml`
+Configuration file: `dataset_upload/configs/data_gen_configs/new_mit_franka.yaml`
 
 ```yaml
 dataset:
   dataset_path: ~/reward_fm/datasets/RFM_MIT_Franka
-  dataset_name: rfm_mit_franka_rfm
+  dataset_name: rfm_new_mit_franka_rfm
+  exclude_wrist_cam: false  # Set to true to only process external camera views
 
 output:
-  output_dir: ./rfm_dataset/rfm_mit_franka_rfm
+  output_dir: ./rfm_dataset/rfm_new_mit_franka_rfm
   max_trajectories: -1  # -1 for all trajectories
   max_frames: 32
   use_video: true
@@ -84,20 +85,35 @@ output:
 
 hub:
   push_to_hub: true
-  hub_repo_id: rfm_mit_franka_rfm
+  hub_repo_id: rfm_new_mit_franka_rfm
 ```
+
+### Camera View Options
+
+The dataset includes both external and wrist camera views. You can configure which views to process:
+
+- **`exclude_wrist_cam: false`** (default): Process both external and wrist camera views as separate trajectories
+- **`exclude_wrist_cam: true`**: Only process external camera views, skip wrist camera entirely
+
+This is useful if you only want third-person views or need to reduce dataset size.
 
 ## Usage
 
 ### Convert Dataset to HuggingFace Format
 
 ```bash
-uv run python -m dataset_upload.generate_hf_dataset --config_path=dataset_upload/configs/data_gen_configs/rfm_mit_franka.yaml
+uv run python -m dataset_upload.generate_hf_dataset --config_path=dataset_upload/configs/data_gen_configs/new_mit_franka.yaml
+```
+
+To only process external camera views (exclude wrist camera):
+
+```bash
+uv run python -m dataset_upload.generate_hf_dataset --config_path=dataset_upload/configs/data_gen_configs/new_mit_franka.yaml --dataset.exclude_wrist_cam=true
 ```
 
 This will:
 - Scan all task folders and their quality subfolders
-- Load the corresponding MP4 videos for both camera views
+- Load the corresponding MP4 videos for both camera views (or only external if `exclude_wrist_cam: true`)
 - Process and resample videos to the specified frame count and FPS
 - Generate language embeddings for task instructions
 - Create a HuggingFace dataset with proper quality labels
@@ -128,17 +144,17 @@ The generated dataset will have the following schema:
 
 The loader uses the following mapping from folder names to natural language instructions:
 
-| Folder Name  | Task Instruction                                      |
-|--------------|-------------------------------------------------------|
-| foldtowel    | Fold the towel in half                                |
-| movebanana   | Pick up the banana and place it on the plate          |
-| movemouse    | Pick up the mouse and place it in the target location |
-| pourpebble   | Pour pebbles from one container to another            |
-| pulltissue   | Pull a tissue from the tissue box                     |
-| putspoon     | Pick up the spoon and place it in the target location |
-| stirpot      | Stir the pot with the spoon                           |
+| Folder Name  | Task Instruction                                                                       |
+|--------------|----------------------------------------------------------------------------------------|
+| foldtowel    | Fold the towel in half                                                                 |
+| movebanana   | Pick up the banana from the blue plate and place it on the green plate                 |
+| movemouse    | Pick up the mouse and place it right next to the laptop, while avoiding spilling coffee |
+| pourpebble   | Pour the pebbles from the cup onto the plate                                           |
+| pulltissue   | Pull a tissue from the tissue box                                                      |
+| putspoon     | Pick up the spoon and place it inside the cup                                          |
+| stirpot      | Pick up the spatula and stir the beans in the pot                                      |
 
-These mappings are defined in the loader file and can be updated if needed.
+These mappings are defined in the loader file (`new_mit_franka_loader.py`) and can be updated if needed.
 
 ## Notes
 
@@ -146,7 +162,8 @@ These mappings are defined in the loader file and can be updated if needed.
 - The loader supports parallel processing with configurable worker count
 - Language embeddings are cached to avoid redundant computations
 - Output videos maintain the same content but are resampled to the specified frame count and FPS
-- Both camera views (ext and wrist) are processed as separate trajectories
+- Both camera views (ext and wrist) are processed as separate trajectories by default
+- Use `exclude_wrist_cam: true` to only process external camera views and reduce dataset size by ~50%
 
 ## Troubleshooting
 
@@ -164,15 +181,20 @@ These mappings are defined in the loader file and can be updated if needed.
 
 ### Unknown Task Warning
 - If a task folder is not in the TASK_INSTRUCTIONS mapping, it will be skipped
-- Add new tasks to the mapping in `rfm_mit_franka_loader.py`
+- Add new tasks to the mapping in `new_mit_franka_loader.py`
+
+### Filtering Camera Views
+- Set `exclude_wrist_cam: true` in the YAML config to skip wrist camera videos
+- Or pass it as a command-line argument: `dataset.exclude_wrist_cam=true`
+- This will process only external camera views, roughly halving the dataset size
 
 ## Example Output
 
 After processing, you'll have a directory structure like:
 
 ```
-rfm_dataset/rfm_mit_franka_rfm/
-  rfm_mit_franka_rfm/
+rfm_dataset/rfm_new_mit_franka_rfm/
+  rfm_new_mit_franka_rfm/
     shard_0000/
       episode_000000/
         foldtowel_ext.mp4
@@ -181,8 +203,23 @@ rfm_dataset/rfm_mit_franka_rfm/
       ...
 ```
 
+With `exclude_wrist_cam: true`, only external camera videos are included:
+
+```
+rfm_dataset/rfm_new_mit_franka_rfm/
+  rfm_new_mit_franka_rfm/
+    shard_0000/
+      episode_000000/
+        foldtowel_ext.mp4
+      episode_000001/
+        movebanana_ext.mp4
+      ...
+```
+
 And a HuggingFace Dataset with all trajectory metadata.
 
 ## Dataset Statistics
 
 The dataset contains approximately 304 video files (152 trajectory pairs with ext and wrist views) across 7 different manipulation tasks, with varying distributions of successful, suboptimal, and failed demonstrations.
+
+When `exclude_wrist_cam: true` is set, approximately 152 external camera videos are processed (one per trajectory).

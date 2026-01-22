@@ -187,10 +187,29 @@ def _make_json_serializable(obj: Any) -> Any:
         return obj
 
 
+def _shorten_single_name(name: str, mapping: dict) -> str:
+    """Shorten a single dataset name using the mapping."""
+    # Check if there's a direct mapping
+    if name in mapping:
+        return mapping[name]
+    
+    # Also check after normalizing (in case the input has special chars)
+    normalized = name.replace("-", "_").replace("/", "_")
+    if normalized in mapping:
+        return mapping[normalized]
+    
+    # No mapping found, clean up the name
+    for char in ["/", "\\", ":", "*", "?", '"', "<", ">", "|", " ", ","]:
+        name = name.replace(char, "_")
+    name = re.sub(r"_+", "_", name)
+    return name.strip("_")
+
+
 def _shorten_dataset_name(dataset_name: Union[str, List[str]], max_length: int = 60) -> str:
     """Shorten dataset name for use in filenames.
     
     Uses DS_SHORT_NAME_MAPPING for known datasets, otherwise truncates with hash suffix.
+    For lists, each element is shortened individually then combined.
     
     Args:
         dataset_name: Dataset name (string or list of strings)
@@ -201,24 +220,12 @@ def _shorten_dataset_name(dataset_name: Union[str, List[str]], max_length: int =
     """
     from rfm.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
     
-    # Convert list to string if needed
+    # Handle list by shortening each element individually
     if isinstance(dataset_name, list):
-        name_str = "_".join(str(x) for x in dataset_name)
+        shortened_parts = [_shorten_single_name(str(x), DS_SHORT_NAME_MAPPING) for x in dataset_name]
+        name_str = "_".join(shortened_parts)
     else:
-        name_str = str(dataset_name)
-    
-    # Check if there's a mapping for this dataset name
-    if name_str in DS_SHORT_NAME_MAPPING:
-        return DS_SHORT_NAME_MAPPING[name_str]
-    
-    # Also check after normalizing (in case the input has special chars)
-    normalized_for_lookup = name_str.replace("-", "_").replace("/", "_")
-    if normalized_for_lookup in DS_SHORT_NAME_MAPPING:
-        return DS_SHORT_NAME_MAPPING[normalized_for_lookup]
-    
-    # Replace problematic characters
-    for char in ["/", "\\", ":", "*", "?", '"', "<", ">", "|", " ", ","]:
-        name_str = name_str.replace(char, "_")
+        name_str = _shorten_single_name(str(dataset_name), DS_SHORT_NAME_MAPPING)
     
     # Collapse multiple underscores
     name_str = re.sub(r"_+", "_", name_str)
@@ -229,7 +236,8 @@ def _shorten_dataset_name(dataset_name: Union[str, List[str]], max_length: int =
         return name_str
     
     # Generate short hash of original name for uniqueness
-    hash_suffix = hashlib.md5(name_str.encode()).hexdigest()[:8]
+    original_str = "_".join(str(x) for x in dataset_name) if isinstance(dataset_name, list) else str(dataset_name)
+    hash_suffix = hashlib.md5(original_str.encode()).hexdigest()[:8]
     
     # Truncate and add hash
     # Reserve space for hash suffix: "_" + 8 chars = 9 chars

@@ -1025,6 +1025,7 @@ def run_confusion_matrix_eval(
         # xticklabels=list(uniq_tasks),
         # yticklabels=list(uniq_tasks),
         # cbar_kws={"label": "Average Final Reward (5 trajs)"},
+        cbar=False,  # Remove the color bar
     )
     # plt.xlabel("Language Task", fontsize=12)
     # plt.ylabel("Video Task", fontsize=12)
@@ -1033,12 +1034,6 @@ def run_confusion_matrix_eval(
     # Remove xticks and yticks
     plt.xticks([])
     plt.yticks([])
-
-    # Remove the legend
-    plt.legend([])
-
-    # Remove the color bar
-    plt.colorbar(False)
 
     plt.tight_layout()
 

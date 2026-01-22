@@ -17,24 +17,37 @@ class GVL:
         max_frames: int = 15,
         offset: float = 0.5,
         model_name: str = "gemini-2.0-flash",
+        provider: str = "gemini",
         max_retries: int = 5,
         base_delay: float = 1.0,
         max_delay: float = 60.0,
         **kwargs,
     ):
         """
+        :param api_key:          API key for the provider (defaults to env var based on provider)
         :param max_frames:       If N > max_frames, sample exactly max_frames frames
         :param offset:           Time offset used when sampling frames (seconds/frame). Keep consistent meaning with the frontend if applicable.
-        :param model_name:       Gemini model name to use (e.g., "gemini-2.0-flash", "gemini-1.5-pro")
+        :param model_name:       Model name to use (e.g., "gemini-2.0-flash" for Gemini, "gpt-4o" for OpenAI)
+        :param provider:         API provider: "gemini" or "openai"
         :param max_retries:      Maximum number of retries on API throttling/errors
         :param base_delay:       Base delay in seconds for exponential backoff
         :param max_delay:        Maximum delay in seconds between retries
         """
+        self.provider = provider.lower()
+        if self.provider not in ["gemini", "openai"]:
+            raise ValueError(f"Unsupported provider: {provider}. Must be 'gemini' or 'openai'")
 
+        # Set API key based on provider
         if api_key is None:
-            api_key = os.environ.get("GEMINI_API_KEY")
-            if not api_key:
-                raise ValueError("GEMINI_API_KEY environment variable must be set")
+            if self.provider == "gemini":
+                api_key = os.environ.get("GEMINI_API_KEY")
+                if not api_key:
+                    raise ValueError("GEMINI_API_KEY environment variable must be set")
+            else:  # openai
+                api_key = os.environ.get("OPENAI_API_KEY")
+                if not api_key:
+                    raise ValueError("OPENAI_API_KEY environment variable must be set")
+        
         self.api_key = api_key
         self.max_frames = max_frames
         self.offset = offset
@@ -170,7 +183,7 @@ class GVL:
         # 3) prompt2
         parts.append({"text": prompt2})
 
-        # 4) “Frame X” + inline, sorted by shuffled_index
+        # 4) "Frame X" + inline, sorted by shuffled_index
         frames_sorted_by_shuffle = sorted(self.frames_info, key=lambda f: f["shuffled_index"])
 
         for i, frame in enumerate(frames_sorted_by_shuffle, start=1):
@@ -179,7 +192,7 @@ class GVL:
 
         return parts
 
-    def stream_inference(self, parts: List[Dict]) -> str:
+    def _stream_inference_gemini(self, parts: List[Dict]) -> str:
         """
         Call the Gemini SSE endpoint and return the concatenated streamed text.
         Implements exponential backoff retry on throttling (429) and server errors (5xx).
@@ -234,6 +247,101 @@ class GVL:
         if last_exception:
             raise last_exception
         return ""
+
+    def _stream_inference_openai(self, parts: List[Dict]) -> str:
+        """
+        Call the OpenAI API with vision capabilities and return the response text.
+        Implements exponential backoff retry on throttling (429) and server errors (5xx).
+        """
+        url = "https://api.openai.com/v1/chat/completions"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}"
+        }
+
+        # Convert parts to OpenAI message format
+        content = []
+        for part in parts:
+            if "text" in part:
+                content.append({
+                    "type": "text",
+                    "text": part["text"]
+                })
+            elif "inline_data" in part:
+                content.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{part['inline_data']['mime_type']};base64,{part['inline_data']['data']}",
+                        "detail": "low"  # Use low detail for efficiency
+                    }
+                })
+
+        body = {
+            "model": self.model_name,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": content
+                }
+            ],
+            "max_tokens": 4096,
+            "stream": True
+        }
+
+        last_exception = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                full_text = ""
+                with requests.post(url, headers=headers, json=body, stream=True) as resp:
+                    # Check for throttling or server errors
+                    if resp.status_code == 429 or resp.status_code >= 500:
+                        delay = min(self.base_delay * (2 ** attempt), self.max_delay)
+                        print(f"[GVL-OpenAI] API returned {resp.status_code}, retrying in {delay:.1f}s (attempt {attempt + 1}/{self.max_retries + 1})")
+                        time.sleep(delay)
+                        continue
+                    
+                    resp.raise_for_status()
+
+                    for line in resp.iter_lines(decode_unicode=True):
+                        if not line:
+                            continue
+                        if line.startswith("data: "):
+                            data_str = line[len("data: "):]
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                data_json = json.loads(data_str)
+                                choices = data_json.get("choices", [])
+                                if choices:
+                                    delta = choices[0].get("delta", {})
+                                    text_piece = delta.get("content", "")
+                                    if text_piece:
+                                        full_text += text_piece
+                            except json.JSONDecodeError:
+                                continue
+                
+                return full_text
+                
+            except requests.exceptions.RequestException as e:
+                last_exception = e
+                delay = min(self.base_delay * (2 ** attempt), self.max_delay)
+                print(f"[GVL-OpenAI] Request failed: {e}, retrying in {delay:.1f}s (attempt {attempt + 1}/{self.max_retries + 1})")
+                time.sleep(delay)
+        
+        # All retries exhausted
+        print(f"[GVL-OpenAI] All {self.max_retries + 1} attempts failed")
+        if last_exception:
+            raise last_exception
+        return ""
+
+    def stream_inference(self, parts: List[Dict]) -> str:
+        """
+        Call the appropriate API endpoint based on provider and return the response text.
+        """
+        if self.provider == "gemini":
+            return self._stream_inference_gemini(parts)
+        else:  # openai
+            return self._stream_inference_openai(parts)
 
     @staticmethod
     def extract_json_from_response(text: str) -> str:

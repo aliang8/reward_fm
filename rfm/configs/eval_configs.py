@@ -83,11 +83,15 @@ class GVLConfig:
     """Configuration for GVL baseline model."""
     api_key: Optional[str] = field(
         default=None,
-        metadata={"help": "GVL API key (defaults to GEMINI_API_KEY env var)"},
+        metadata={"help": "API key (defaults to GEMINI_API_KEY or OPENAI_API_KEY env var based on provider)"},
+    )
+    provider: str = field(
+        default="gemini",
+        metadata={"help": "API provider: 'gemini' or 'openai'"},
     )
     model_name: str = field(
         default="gemini-2.5-flash-lite",
-        metadata={"help": "Gemini model name (e.g., gemini-2.0-flash, gemini-1.5-pro)"},
+        metadata={"help": "Model name (e.g., 'gemini-2.0-flash' for Gemini, 'gpt-4o' for OpenAI)"},
     )
     offset: float = field(
         default=0.5,

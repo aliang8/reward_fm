@@ -34,6 +34,7 @@ Usage:
 """
 
 import copy
+import hashlib
 import json
 import os
 import re
@@ -184,6 +185,45 @@ def _make_json_serializable(obj: Any) -> Any:
         return None
     else:
         return obj
+
+
+def _shorten_dataset_name(dataset_name: Union[str, List[str]], max_length: int = 60) -> str:
+    """Shorten dataset name for use in filenames.
+    
+    Args:
+        dataset_name: Dataset name (string or list of strings)
+        max_length: Maximum length for the output string (default 60)
+    
+    Returns:
+        Shortened, filesystem-safe string for use in filenames
+    """
+    # Convert list to string if needed
+    if isinstance(dataset_name, list):
+        name_str = "_".join(str(x) for x in dataset_name)
+    else:
+        name_str = str(dataset_name)
+    
+    # Replace problematic characters
+    for char in ["/", "\\", ":", "*", "?", '"', "<", ">", "|", " ", ","]:
+        name_str = name_str.replace(char, "_")
+    
+    # Collapse multiple underscores
+    name_str = re.sub(r"_+", "_", name_str)
+    name_str = name_str.strip("_")
+    
+    # If short enough, return as-is
+    if len(name_str) <= max_length:
+        return name_str
+    
+    # Generate short hash of original name for uniqueness
+    hash_suffix = hashlib.md5(name_str.encode()).hexdigest()[:8]
+    
+    # Truncate and add hash
+    # Reserve space for hash suffix: "_" + 8 chars = 9 chars
+    truncate_length = max_length - 9
+    truncated = name_str[:truncate_length].rstrip("_")
+    
+    return f"{truncated}_{hash_suffix}"
 
 
 def process_preference_sample(sample: PreferenceSample, model: RLVLMF) -> Dict[str, Any]:
@@ -483,6 +523,9 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
             logger.info(f"Resolved datasets for {eval_type}: {resolved_datasets}")
 
         for dataset_name in resolved_datasets:
+            # Create short name for filenames (dataset names can be very long)
+            short_dataset_name = _shorten_dataset_name(dataset_name)
+            
             # Resolve dataset keys
             if isinstance(dataset_name, list):
                 resolved_dataset_name = dataset_name
@@ -554,7 +597,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
 
             # Save results to JSON
             if eval_type_dir:
-                results_file = os.path.join(eval_type_dir, f"{dataset_name}_results.json")
+                results_file = os.path.join(eval_type_dir, f"{short_dataset_name}_results.json")
                 with open(results_file, "w") as f:
                     json.dump(_make_json_serializable(eval_results), f, indent=2)
                 logger.info(f"Saved results to {results_file}")
@@ -577,8 +620,8 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                     )
                     # Save task_groups and task_details if available
                     if eval_type_dir:
-                        task_groups_file = os.path.join(eval_type_dir, f"{dataset_name}_task_groups.json")
-                        task_details_file = os.path.join(eval_type_dir, f"{dataset_name}_task_details.json")
+                        task_groups_file = os.path.join(eval_type_dir, f"{short_dataset_name}_task_groups.json")
+                        task_details_file = os.path.join(eval_type_dir, f"{short_dataset_name}_task_details.json")
                         with open(task_groups_file, "w") as f:
                             json.dump(_make_json_serializable(task_groups), f, indent=2)
                         with open(task_details_file, "w") as f:
@@ -589,7 +632,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                     # Extract metrics from the returned dict
                     for key, value in metrics_dict.items():
                         if isinstance(value, (int, float)):
-                            eval_type_metrics[f"{dataset_name}/{key}"] = float(value)
+                            eval_type_metrics[f"{short_dataset_name}/{key}"] = float(value)
 
                     # Write metrics incrementally after each dataset
                     if eval_type_dir:
@@ -613,20 +656,20 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
 
                     # Save confusion matrix plot
                     if fig and eval_type_dir:
-                        plot_path = os.path.join(eval_type_dir, f"{dataset_name}_confusion_matrix.png")
+                        plot_path = os.path.join(eval_type_dir, f"{short_dataset_name}_confusion_matrix.png")
                         fig.savefig(plot_path, dpi=150, bbox_inches="tight")
                         plt.close(fig)
                         logger.info(f"Saved confusion matrix plot to {plot_path}")
 
                         # Save confusion matrix as numpy array
-                        matrix_path = os.path.join(eval_type_dir, f"{dataset_name}_confusion_matrix.npy")
+                        matrix_path = os.path.join(eval_type_dir, f"{short_dataset_name}_confusion_matrix.npy")
                         np.save(matrix_path, confusion_matrix)
                         logger.info(f"Saved confusion matrix array to {matrix_path}")
 
                     # Extract metrics from the returned dict (if any)
                     for key, value in metrics_dict.items():
                         if isinstance(value, (int, float)):
-                            eval_type_metrics[f"{dataset_name}/{key}"] = float(value)
+                            eval_type_metrics[f"{short_dataset_name}/{key}"] = float(value)
 
                     # Write metrics incrementally after each dataset
                     if eval_type_dir:
@@ -652,7 +695,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                         )
                         # Save plots with videos as GIFs if available
                         if plots and eval_type_dir:
-                            plots_dir = os.path.join(eval_type_dir, f"{dataset_name}_plots")
+                            plots_dir = os.path.join(eval_type_dir, f"{short_dataset_name}_plots")
                             os.makedirs(plots_dir, exist_ok=True)
                             for i, fig in enumerate(plots[:10]):
                                 video_frames = video_frames_list[i] if i < len(video_frames_list) else None
@@ -670,8 +713,8 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                         )
                         # Save task_groups and task_details if available
                         if eval_type_dir:
-                            task_groups_file = os.path.join(eval_type_dir, f"{dataset_name}_task_groups.json")
-                            task_details_file = os.path.join(eval_type_dir, f"{dataset_name}_task_details.json")
+                            task_groups_file = os.path.join(eval_type_dir, f"{short_dataset_name}_task_groups.json")
+                            task_details_file = os.path.join(eval_type_dir, f"{short_dataset_name}_task_details.json")
                             with open(task_groups_file, "w") as f:
                                 json.dump(_make_json_serializable(task_groups), f, indent=2)
                             with open(task_details_file, "w") as f:
@@ -684,7 +727,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                     # Extract metrics from the returned dict
                     for key, value in metrics_dict.items():
                         if isinstance(value, (int, float)):
-                            eval_type_metrics[f"{dataset_name}/{key}"] = float(value)
+                            eval_type_metrics[f"{short_dataset_name}/{key}"] = float(value)
 
                     # Write metrics incrementally after each dataset
                     if eval_type_dir:

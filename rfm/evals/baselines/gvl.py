@@ -5,6 +5,7 @@ import re
 import requests
 import json
 import os
+import time
 from typing import List, Dict, Optional
 import numpy as np
 
@@ -16,12 +17,18 @@ class GVL:
         max_frames: int = 15,
         offset: float = 0.5,
         model_name: str = "gemini-2.0-flash",
+        max_retries: int = 5,
+        base_delay: float = 1.0,
+        max_delay: float = 60.0,
         **kwargs,
     ):
         """
         :param max_frames:       If N > max_frames, sample exactly max_frames frames
         :param offset:           Time offset used when sampling frames (seconds/frame). Keep consistent meaning with the frontend if applicable.
         :param model_name:       Gemini model name to use (e.g., "gemini-2.0-flash", "gemini-1.5-pro")
+        :param max_retries:      Maximum number of retries on API throttling/errors
+        :param base_delay:       Base delay in seconds for exponential backoff
+        :param max_delay:        Maximum delay in seconds between retries
         """
 
         if api_key is None:
@@ -32,6 +39,9 @@ class GVL:
         self.max_frames = max_frames
         self.offset = offset
         self.model_name = model_name
+        self.max_retries = max_retries
+        self.base_delay = base_delay
+        self.max_delay = max_delay
 
         # List to store frame info: each element contains
         # {"gt_index": i, "shuffled_index": ..., "base64": "..."}
@@ -172,34 +182,58 @@ class GVL:
     def stream_inference(self, parts: List[Dict]) -> str:
         """
         Call the Gemini SSE endpoint and return the concatenated streamed text.
+        Implements exponential backoff retry on throttling (429) and server errors (5xx).
         """
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:streamGenerateContent?alt=sse&key={self.api_key}"
         body = {"contents": [{"parts": parts}]}
         headers = {"Content-Type": "application/json"}
 
-        full_text = ""
-        with requests.post(url, headers=headers, json=body, stream=True) as resp:
-            resp.raise_for_status()
-
-            for line in resp.iter_lines(decode_unicode=True):
-                if not line:
-                    continue
-                if line.startswith("data: "):
-                    data_str = line[len("data: ") :]
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        data_json = json.loads(data_str)
-                        candidates = data_json.get("candidates")
-                        if candidates and len(candidates) > 0:
-                            content = candidates[0].get("content", {})
-                            parts_list = content.get("parts", [])
-                            if parts_list:
-                                text_piece = parts_list[0].get("text", "")
-                                full_text += text_piece
-                    except json.JSONDecodeError:
+        last_exception = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                full_text = ""
+                with requests.post(url, headers=headers, json=body, stream=True) as resp:
+                    # Check for throttling or server errors
+                    if resp.status_code == 429 or resp.status_code >= 500:
+                        delay = min(self.base_delay * (2 ** attempt), self.max_delay)
+                        print(f"[GVL] API returned {resp.status_code}, retrying in {delay:.1f}s (attempt {attempt + 1}/{self.max_retries + 1})")
+                        time.sleep(delay)
                         continue
-        return full_text
+                    
+                    resp.raise_for_status()
+
+                    for line in resp.iter_lines(decode_unicode=True):
+                        if not line:
+                            continue
+                        if line.startswith("data: "):
+                            data_str = line[len("data: ") :]
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                data_json = json.loads(data_str)
+                                candidates = data_json.get("candidates")
+                                if candidates and len(candidates) > 0:
+                                    content = candidates[0].get("content", {})
+                                    parts_list = content.get("parts", [])
+                                    if parts_list:
+                                        text_piece = parts_list[0].get("text", "")
+                                        full_text += text_piece
+                            except json.JSONDecodeError:
+                                continue
+                
+                return full_text
+                
+            except requests.exceptions.RequestException as e:
+                last_exception = e
+                delay = min(self.base_delay * (2 ** attempt), self.max_delay)
+                print(f"[GVL] Request failed: {e}, retrying in {delay:.1f}s (attempt {attempt + 1}/{self.max_retries + 1})")
+                time.sleep(delay)
+        
+        # All retries exhausted
+        print(f"[GVL] All {self.max_retries + 1} attempts failed")
+        if last_exception:
+            raise last_exception
+        return ""
 
     @staticmethod
     def extract_json_from_response(text: str) -> str:

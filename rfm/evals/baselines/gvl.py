@@ -10,17 +10,28 @@ import numpy as np
 
 
 class GVL:
-    def __init__(self, max_frames: int = 15, offset: float = 0.5):
+    def __init__(
+        self,
+        api_key: str = None,
+        max_frames: int = 15,
+        offset: float = 0.5,
+        model_name: str = "gemini-2.0-flash",
+        **kwargs,
+    ):
         """
         :param max_frames:       If N > max_frames, sample exactly max_frames frames
         :param offset:           Time offset used when sampling frames (seconds/frame). Keep consistent meaning with the frontend if applicable.
+        :param model_name:       Gemini model name to use (e.g., "gemini-2.0-flash", "gemini-1.5-pro")
         """
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY environment variable must be set")
+
+        if api_key is None:
+            api_key = os.environ.get("GEMINI_API_KEY")
+            if not api_key:
+                raise ValueError("GEMINI_API_KEY environment variable must be set")
         self.api_key = api_key
         self.max_frames = max_frames
         self.offset = offset
+        self.model_name = model_name
 
         # List to store frame info: each element contains
         # {"gt_index": i, "shuffled_index": ..., "base64": "..."}
@@ -162,7 +173,7 @@ class GVL:
         """
         Call the Gemini SSE endpoint and return the concatenated streamed text.
         """
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse&key={self.api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:streamGenerateContent?alt=sse&key={self.api_key}"
         body = {"contents": [{"parts": parts}]}
         headers = {"Content-Type": "application/json"}
 

@@ -1029,7 +1029,28 @@ def run_confusion_matrix_eval(
 
     plt.tight_layout()
 
-    return fig, confusion_matrix
+    # Compute trace - off-diagonal metric
+    n = num_tasks
+    trace = np.trace(confusion_matrix)
+    total_sum = np.sum(confusion_matrix)
+    off_diag_sum = total_sum - trace
+    trace_minus_offdiag = trace - off_diag_sum
+    
+    # Normalized version (avg diagonal - avg off-diagonal)
+    avg_diagonal = trace / n if n > 0 else 0.0
+    avg_off_diag = off_diag_sum / (n * n - n) if n > 1 else 0.0
+    normalized_metric = avg_diagonal - avg_off_diag
+    
+    metrics = {
+        "trace": float(trace),
+        "off_diagonal_sum": float(off_diag_sum),
+        "trace_minus_offdiag": float(trace_minus_offdiag),
+        "avg_diagonal": float(avg_diagonal),
+        "avg_off_diagonal": float(avg_off_diag),
+        "normalized_trace_minus_offdiag": float(normalized_metric),
+    }
+
+    return fig, confusion_matrix, metrics
 
 
 def run_policy_ranking_eval(

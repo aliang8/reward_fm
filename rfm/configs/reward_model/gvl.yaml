@@ -4,6 +4,7 @@
 reward_model: "gvl"
 
 model_config:
-  api_key: null  # Will use GEMINI_API_KEY env var if not set
+  # api_key: null  # Will use GEMINI_API_KEY env var if not set
+  model_name: "gemini-2.5-flash-lite"  # Options: gemini-2.0-flash, gemini-1.5-pro, etc.
   offset: 0.5
 

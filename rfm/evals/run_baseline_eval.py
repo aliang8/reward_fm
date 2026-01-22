@@ -666,14 +666,13 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                             f"confusion_matrix evaluation only supported for gvl, vlac, roboreward, rfm, rewind, got {cfg.reward_model}"
                         )
 
-                    # run_confusion_matrix_eval returns (fig, confusion_matrix)
-                    fig, confusion_matrix = run_confusion_matrix_eval(
+                    # run_confusion_matrix_eval returns (fig, confusion_matrix, metrics)
+                    fig, confusion_matrix, metrics_dict = run_confusion_matrix_eval(
                         results=eval_results,
                         progress_pred_type="absolute_wrt_total_frames",  # Baselines use absolute progress
                         is_discrete_mode=False,  # Baselines output continuous values
                         num_bins=None,
                     )
-                    metrics_dict = {}  # Confusion matrix doesn't return standard metrics dict
 
                     # Save confusion matrix plot
                     if fig and eval_type_dir:

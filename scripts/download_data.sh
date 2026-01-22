@@ -139,6 +139,8 @@ repos=(
   jesbu1/usc_koch_p_ranking_rfm
   #jesbu1/roboreward_rfm
   jesbu1/roboreward_rfm_high_res
+  jesbu1/rfm_new_mit_franka_rfm_nowrist
+  ykorkmaz/usc_trossen_rfm
 )
 
 # ------------------------------

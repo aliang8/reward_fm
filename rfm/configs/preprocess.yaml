@@ -64,7 +64,8 @@ eval_datasets:
   - "jesbu1/usc_koch_p_ranking_rfm"
   - "jesbu1/roboreward_rfm"
   - "jesbu1/roboreward_rfm_high_res"
-  - "jesbu1/rfm_new_mit_franka_rfm"
+  - "jesbu1/rfm_new_mit_franka_rfm_nowrist"
+  - "ykorkmaz/usc_trossen_rfm"
 
 eval_subsets:
   - ["libero256_10", "libero256_goal", "libero256_object", "libero256_spatial"]
@@ -86,8 +87,8 @@ eval_subsets:
   - ["usc_koch_p_ranking_all"]
   - ["roboreward_val", "roboreward_test"]
   - ["roboreward_val", "roboreward_test"]
-  - ["rfm_new_mit_franka_rfm"]
-
+  - ["rfm_new_mit_franka_rfm_nowrist"]
+  - ["usc_trossen"]
 
 max_frames_for_preprocessing: 32
 video_frame_sampling: "uniform"

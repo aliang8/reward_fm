@@ -1,11 +1,11 @@
 # RFM-MIT-Franka Dataset Configuration
 dataset:
   dataset_path: ~/reward_fm/datasets/RFM_MIT_Franka  # Path to dataset directory
-  dataset_name: rfm_new_mit_franka_rfm
-  exclude_wrist_cam: false  # Set to true to only process external camera views
+  dataset_name: rfm_new_mit_franka_rfm_nowrist
+  exclude_wrist_cam: true  # Set to true to only process external camera views
 
 output:
-  output_dir: ./rfm_dataset/rfm_new_mit_franka_rfm
+  output_dir: ./rfm_dataset/rfm_new_mit_franka_rfm_nowrist
   max_trajectories: -1  # -1 for all trajectories
   max_frames: 32
   use_video: true
@@ -16,4 +16,4 @@ output:
 
 hub:
   push_to_hub: true
-  hub_repo_id: rfm_new_mit_franka_rfm
+  hub_repo_id: rfm_new_mit_franka_rfm_nowrist

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import torch
+from typing import List, Optional
 
 from rfm.data.datasets.base import BaseDataset
 from rfm.data.samplers import *
@@ -24,14 +25,18 @@ class CustomEvalDataset(BaseDataset):
             verbose: Verbose flag
             sampler_kwargs: Additional keyword arguments for the sampler
         """
-        filter_successful_only = False
-        if sampler_type == "reward_alignment" or sampler_type == "confusion_matrix":
-            filter_successful_only = True
+        filter_quality_labels: Optional[List[str]] = None
         
+        if sampler_type == "reward_alignment":
+            filter_quality_labels = ["successful"]
+        elif sampler_type == "confusion_matrix":
+            filter_quality_labels = ["successful", "suboptimal"]
+        
+        # Special case: roboreward datasets should not filter by quality
         if len(config.eval_datasets) == 1 and "roboreward" in config.eval_datasets[0]:
-            filter_successful_only = False
+            filter_quality_labels = None
 
-        super().__init__(config=config, is_evaluation=True, filter_successful_only=filter_successful_only)
+        super().__init__(config=config, is_evaluation=True, filter_quality_labels=filter_quality_labels)
 
         sampler_cls = {
             "confusion_matrix": ConfusionMatrixSampler,

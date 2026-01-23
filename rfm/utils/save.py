@@ -57,7 +57,10 @@ def resolve_checkpoint_path(checkpoint_path: Optional[str], hub_token: Optional[
             repo_id=repo_id,
             revision=revision,
             token=hub_token,
-            allow_patterns=["*.safetensors", "*.bin", "*.json", "*.txt", "*.model", "*.yaml"],
+            allow_patterns=[
+                "*.safetensors", "*.bin", "*.json", "*.txt", "*.model", "*.yaml",
+                "*.pt", "*.pth",  # optimizer.pt, scheduler.pt, rng_state.pth
+            ],
         )
         logger.info(f"Downloaded checkpoint to: {local_path}")
         return local_path
@@ -379,6 +382,14 @@ class SaveBestCallback(TrainerCallback):
             self._trainer.save_state()  # trainer_state.json etc. in output_dir
             # save the trainer_state.json to the actual checkpoint directory
             shutil.copy(os.path.join(args.output_dir, "trainer_state.json"), ckpt_dir)
+            
+            # Save optimizer and scheduler state for proper resume
+            # This is critical for resuming training with correct optimizer state
+            try:
+                self._trainer._save_optimizer_and_scheduler(ckpt_dir)
+                logger.info(f"Saved optimizer and scheduler state to {ckpt_dir}")
+            except Exception as e:
+                logger.warning(f"Could not save optimizer/scheduler state: {e}")
 
         # Save metrics to JSON file
         if metrics is not None:

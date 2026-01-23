@@ -2,6 +2,15 @@
 export GEMINI_API_KEY="your-api-key-here"
 uv run python rfm/evals/run_baseline_eval.py \
     reward_model=gvl \
+    model_config.model_name=gemini-2.5-flash-lite \
+    custom_eval.eval_types=[confusion_matrix] \
+    custom_eval.confusion_matrix=[[aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking,jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top,aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking]] \
+    max_frames=8
+
+uv run python rfm/evals/run_baseline_eval.py \
+    reward_model=gvl \
+    model_config.provider=openai \
+    model_config.model_name=gpt-4o-mini \
     custom_eval.eval_types=[confusion_matrix] \
     custom_eval.confusion_matrix=[[aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking,jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top,aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking]] \
     max_frames=8

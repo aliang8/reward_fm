@@ -83,11 +83,32 @@ class GVLConfig:
     """Configuration for GVL baseline model."""
     api_key: Optional[str] = field(
         default=None,
-        metadata={"help": "GVL API key (defaults to GEMINI_API_KEY env var)"},
+        metadata={"help": "API key (defaults to GEMINI_API_KEY or OPENAI_API_KEY env var based on provider)"},
+    )
+    provider: str = field(
+        default="gemini",
+        metadata={"help": "API provider: 'gemini' or 'openai'"},
+    )
+    model_name: str = field(
+        default="gemini-2.5-flash-lite",
+        metadata={"help": "Model name (e.g., 'gemini-2.0-flash' for Gemini, 'gpt-4o' for OpenAI)"},
     )
     offset: float = field(
         default=0.5,
         metadata={"help": "Frame offset for GVL"},
+    )
+    # Retry settings for API throttling
+    max_retries: int = field(
+        default=5,
+        metadata={"help": "Max retry attempts on 429/5xx errors"},
+    )
+    base_delay: float = field(
+        default=1.0,
+        metadata={"help": "Base delay in seconds for exponential backoff"},
+    )
+    max_delay: float = field(
+        default=60.0,
+        metadata={"help": "Maximum delay between retries"},
     )
 
 

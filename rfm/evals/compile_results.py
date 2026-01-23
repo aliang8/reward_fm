@@ -516,14 +516,6 @@ def run_reward_alignment_eval_per_trajectory(
         mae = _compute_mae_between_bins(pred_bins_mae, gt_bins_mae)
         metrics["mae"] = mae
 
-    # Add binary success accuracy if available
-    if success_acc_list:
-        metrics["success_acc"] = float(np.mean(success_acc_list))
-
-    # Add RoboArena delta metric if available
-    if use_partial_success and roboarena_deltas:
-        metrics["roboarena_abs_delta"] = float(np.mean(roboarena_deltas))
-
     return metrics, plots, video_frames_list, trajectory_progress_data
 
 
@@ -1014,7 +1006,7 @@ def run_confusion_matrix_eval(
         )
 
     # Create the plot
-    fig = plt.figure(figsize=(10, 8))
+    fig = plt.figure(figsize=(8, 8))
 
     # Create heatmap showing average final rewards
     sns.heatmap(
@@ -1025,21 +1017,40 @@ def run_confusion_matrix_eval(
         # xticklabels=list(uniq_tasks),
         # yticklabels=list(uniq_tasks),
         # cbar_kws={"label": "Average Final Reward (5 trajs)"},
+        cbar=False,  # Remove the color bar
     )
-    plt.xlabel("Language Task", fontsize=12)
-    plt.ylabel("Video Task", fontsize=12)
+    # plt.xlabel("Language Task", fontsize=12)
+    # plt.ylabel("Video Task", fontsize=12)
     # plt.xticks(rotation=45, ha="right")
     # plt.yticks(rotation=0)
     # Remove xticks and yticks
     plt.xticks([])
     plt.yticks([])
 
-    # Remove the legend
-    plt.legend([])
-
     plt.tight_layout()
 
-    return fig, confusion_matrix
+    # Compute trace - off-diagonal metric
+    n = num_tasks
+    trace = np.trace(confusion_matrix)
+    total_sum = np.sum(confusion_matrix)
+    off_diag_sum = total_sum - trace
+    trace_minus_offdiag = trace - off_diag_sum
+    
+    # Normalized version (avg diagonal - avg off-diagonal)
+    avg_diagonal = trace / n if n > 0 else 0.0
+    avg_off_diag = off_diag_sum / (n * n - n) if n > 1 else 0.0
+    normalized_metric = avg_diagonal - avg_off_diag
+    
+    metrics = {
+        "trace": float(trace),
+        "off_diagonal_sum": float(off_diag_sum),
+        "trace_minus_offdiag": float(trace_minus_offdiag),
+        "avg_diagonal": float(avg_diagonal),
+        "avg_off_diagonal": float(avg_off_diag),
+        "normalized_trace_minus_offdiag": float(normalized_metric),
+    }
+
+    return fig, confusion_matrix, metrics
 
 
 def run_policy_ranking_eval(

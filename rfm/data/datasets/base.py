@@ -50,7 +50,15 @@ def resolve_dataset_keys(
 
 
 class BaseDataset(torch.utils.data.Dataset):
-    def __init__(self, config: DataConfig, is_evaluation: bool = False, filter_successful_only: bool = False):
+    def __init__(self, config: DataConfig, is_evaluation: bool = False, filter_quality_labels: Optional[List[str]] = None):
+        """Initialize BaseDataset.
+        
+        Args:
+            config: Data configuration
+            is_evaluation: Whether this is an evaluation dataset
+            filter_quality_labels: List of quality labels to keep (e.g., ["successful"], ["successful", "suboptimal"]).
+                                   If None, no quality label filtering is applied.
+        """
         self.config = config
         self.is_evaluation = is_evaluation
 
@@ -75,14 +83,14 @@ class BaseDataset(torch.utils.data.Dataset):
         # Check if we're in progress_only mode (sample_type_ratio == [0, 1, 0])
         # In progress_only mode, filter to only include successful trajectories
         if config.sample_type_ratio == [0, 1, 0] and not is_evaluation:
-            filter_successful_only = True
+            filter_quality_labels = ["successful"]
             logger.info(
                 "Progress-only mode detected (sample_type_ratio=[0, 1, 0]), filtering to only successful trajectories"
             )
 
         dataset_type = "evaluation" if is_evaluation else "training"
         logger.info(f"Filtering {dataset_type} dataset with {len(self.dataset)} total trajectories")
-        if self.is_evaluation and not filter_successful_only:
+        if self.is_evaluation and filter_quality_labels is None:
             logger.info(f"SKIPPING FILTERING for {dataset_type} dataset BECAUSE IT'S EVALUATION")
         else:
             self.dataset, self._combined_indices = self._filter_dataset(
@@ -90,15 +98,15 @@ class BaseDataset(torch.utils.data.Dataset):
                 min_frames=min_frames,
                 dataset=self.dataset,
                 combined_indices=self._combined_indices,
-                filter_successful_only=filter_successful_only,
+                filter_quality_labels=filter_quality_labels,
             )
-        if filter_successful_only:
+        if filter_quality_labels:
             logger.info(
-                f"{dataset_type.capitalize()} dataset filtered with {len(self.dataset)} total trajectories (filtered for successful trajectories only)"
+                f"{dataset_type.capitalize()} dataset filtered with {len(self.dataset)} total trajectories (filtered for quality_labels: {filter_quality_labels})"
             )
         else:
             logger.info(
-                f"{dataset_type.capitalize()} dataset filtered with {len(self.dataset)} total trajectories (excluded keywords and min_frames only, not filtering for successful trajectories)"
+                f"{dataset_type.capitalize()} dataset filtered with {len(self.dataset)} total trajectories (excluded keywords and min_frames only, no quality label filtering)"
             )
 
         # Filter out trajectories based on multiple criteria (build indices first, then filter once)
@@ -366,14 +374,14 @@ class BaseDataset(torch.utils.data.Dataset):
         min_frames: int,
         dataset: Dataset,
         combined_indices: Dict[str, Any],
-        filter_successful_only: bool = False,
+        filter_quality_labels: Optional[List[str]] = None,
     ) -> Tuple[Dataset, Dict[str, Any]]:
         """Filter dataset based on multiple criteria simultaneously.
 
         Filters out trajectories that:
         - Have tasks containing excluded keywords
         - Have <= min_frames frames
-        - (If filter_successful_only=True) Have quality_label != "successful"
+        - (If filter_quality_labels is set) Have quality_label not in the specified list
         - RoboArena trajectories from tasks with only one partial_success category
 
         Uses batched map operations for efficient parallel processing.
@@ -383,7 +391,7 @@ class BaseDataset(torch.utils.data.Dataset):
             min_frames: Minimum number of frames required (trajectories with frames > min_frames are kept)
             dataset: The dataset to filter
             combined_indices: Dictionary of combined indices to update after filtering
-            filter_successful_only: If True, only keep trajectories with quality_label == "successful"
+            filter_quality_labels: List of quality labels to keep. If None, no quality filtering is applied.
 
         Returns:
             tuple: (filtered_dataset, filtered_combined_indices)
@@ -455,9 +463,9 @@ class BaseDataset(torch.utils.data.Dataset):
                     if num_frames <= min_frames:
                         dfr = True
 
-                # Check quality_label for successful-only filter (only if not dropped by other filters)
-                if filter_successful_only and not dkw and not dfr:
-                    if quality_label != "successful":
+                # Check quality_label filter (only if not dropped by other filters)
+                if filter_quality_labels and not dkw and not dfr:
+                    if quality_label not in filter_quality_labels:
                         dq = True
 
                 # # Check tasks with single partial_success (only if not dropped by other filters)

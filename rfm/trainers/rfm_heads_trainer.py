@@ -1348,10 +1348,9 @@ class RFMHeadsTrainer(Trainer):
             task_details = None
             # log_memory_usage(f"After deleting policy_ranking data")
         elif eval_type == "confusion_matrix":
-            confusion_plot, confusion_matrix = run_confusion_matrix_eval(
+            confusion_plot, confusion_matrix, eval_metrics = run_confusion_matrix_eval(
                 eval_results, self.config.data.progress_pred_type, is_discrete_mode, num_bins
             )
-            eval_metrics = {}  # no eval metrics
             # log_memory_usage(f"After compute_eval_metrics (confusion_matrix)")
 
             banner(

@@ -90,14 +90,19 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=rewind_config.num_layers)
 
+        self.text_position_embedding = nn.Parameter(torch.randn(1, 1, rewind_config.hidden_dim))
+
         if rewind_config.use_per_frame_progress_token:
-            self.text_position_embedding = nn.Parameter(torch.randn(1, 1, rewind_config.hidden_dim))
             self.prog_token_A = nn.Parameter(torch.randn(1, rewind_config.max_len, rewind_config.hidden_dim))
             self.prog_token_B = nn.Parameter(torch.randn(1, rewind_config.max_len, rewind_config.hidden_dim))
 
         # Prediction tokens
         self.preference_token = nn.Parameter(torch.randn(1, 1, rewind_config.hidden_dim))
         self.similarity_token = nn.Parameter(torch.randn(1, 1, rewind_config.hidden_dim))
+
+        # Learnable video A and video B tokens 
+        self.video_A_token = nn.Parameter(torch.randn(1, 1, rewind_config.hidden_dim))
+        self.video_B_token = nn.Parameter(torch.randn(1, 1, rewind_config.hidden_dim))
 
     def forward(
         self,
@@ -157,6 +162,11 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
             first_frame_emb_B = einops.repeat(self.first_embedding_B, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
             video_embeddings_A[:, 0:1] += first_frame_emb_A
             video_embeddings_B[:, 0:1] += first_frame_emb_B
+
+            # Add learnable video A tokens to all frames of video A
+            video_embeddings_A = video_embeddings_A + einops.repeat(self.video_A_token, "1 1 d -> b t d", b=B, t=half)
+            # Add learnable video B tokens to all frames of video B
+            video_embeddings_B = video_embeddings_B + einops.repeat(self.video_B_token, "1 1 d -> b t d", b=B, t=half)
 
             if self.config.use_per_frame_progress_token:
                 # Add position embedding to text

@@ -65,3 +65,6 @@ confusion_matrix_output/*
 *.npy
 vqa_dataests/*
 *.sbatch
+run_scripts*
+*.gz
+*.pdf

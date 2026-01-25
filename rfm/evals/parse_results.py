@@ -13,12 +13,15 @@ RFM_1M_OOD_DATASETS = DATASET_MAP[RFM_1M_OOD]["eval"]
 keys_to_remove = ["mit_franka", "libero", "metaworld", "racer", "roboreward", "roboarena"]
 
 model_to_results_dir = {
+    "GVL": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/gvl",
     "ReWiND": "",
     # "VLAC-2B": "/home/azure/reward_fm/baseline_eval_output/vlac_InternRobotics_VLAC/",
-    "VLAC-2B": "",
-    "RoboReward-4B": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/roboreward_teetone_RoboReward-4B/",
-    "RoboReward-8B": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/roboreward_teetone_RoboReward-8B/",
-    "RFM-4B-All": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/rfm_rewardfm_rfm_qwen_pref_prog_4frames_all_strategy/",
+    "VLAC-2B": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/vlac_InternRobotics_VLAC",
+    "RoboReward-4B": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/roboreward_teetone_RoboReward-4B copy/",
+    "RoboReward-8B": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/roboreward_teetone_RoboReward-8B copy/",
+    "RFM-4B Prog Only": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/rfm_rfm_1m_ablation_prog_only_8frames_ckpt-latest-avg-2metrics=0_6650_step=5750",
+    "RFM-4B Prog Pref": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/rfm_rfm_1m_ablation_prog_pref_8frames_ckpt-avg-2metrics=0_7977_step=2250",
+    # "RFM-4B-All": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/rfm_rewardfm_rfm_qwen_pref_prog_4frames_all_strategy/",
     "RFM-4B-8frames": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/rfm_aliangdw_qwen4b_pref_prog_succ_8_frames_all/",
 }
 

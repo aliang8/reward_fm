@@ -9,10 +9,23 @@ from rich.table import Table
 LIBERO_PI0 = "libero_pi0"
 LIBERO_PI0_DATASETS = DATASET_MAP[LIBERO_PI0]["eval"]
 
+RFM_1M_ID = "rfm-1m-id"
+RFM_1M_OOD = "rfm-1m-ood"
+RFM_1M_ID_DATASETS = DATASET_MAP[RFM_1M_ID]["eval"]
+RFM_1M_OOD_DATASETS = DATASET_MAP[RFM_1M_OOD]["eval"]
+
+DATASETS = RFM_1M_ID_DATASETS + RFM_1M_OOD_DATASETS
+
+# model_to_results_dir = {
+#     "LIBERO Prog Only": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/rfm_libero_ablation_prog_only_lora_ft_4frames_2000steps_ckpt-avg-3metrics=0_6280_step=1000",
+#     "LIBERO Pref Prog": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/rfm_libero_ablation_progpref_lora_ft_4frames_2000steps_ckpt-avg-3metrics=0_6809_step=450",
+#     "RobotRFM": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/rfm_libero_ablation_prog_pref_with_fail_lora_ft_4frames_2000steps_ckpt-avg-3metrics=0_7650_step=700"
+# }
+
 model_to_results_dir = {
-    "LIBERO Prog Only": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/rfm_libero_ablation_prog_only_lora_ft_4frames_2000steps_ckpt-avg-3metrics=0_6280_step=1000",
-    "LIBERO Pref Prog": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/rfm_libero_ablation_progpref_lora_ft_4frames_2000steps_ckpt-avg-3metrics=0_6809_step=450",
-    "RobotRFM": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/rfm_libero_ablation_prog_pref_with_fail_lora_ft_4frames_2000steps_ckpt-avg-3metrics=0_7650_step=700"
+    "RFM-4B Prog Only": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/rfm_rfm_1m_ablation_prog_only_8frames_ckpt-latest-avg-2metrics=0_6650_step=5750",
+    "RFM-4B Prog Pref": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/rfm_rfm_1m_ablation_prog_pref_8frames_ckpt-avg-2metrics=0_7977_step=2250",
+    "RFM-4B-8frames": "/gpfs/home/jessezha/scrubbed_storage/reward_fm/baseline_eval_output/rfm_aliangdw_qwen4b_pref_prog_succ_8_frames_all/",
 }
 
 model_names = list(model_to_results_dir.keys())
@@ -72,7 +85,7 @@ for eval_type in eval_types:
     for model in model_names:
         model_results_file = model_to_results_dir[model]
         model_to_results[model][eval_type] = load_and_filter_results(
-            model_results_file, LIBERO_PI0_DATASETS, eval_type=eval_type
+            model_results_file, DATASETS, eval_type=eval_type
         )
         
 def render_terminal_table(

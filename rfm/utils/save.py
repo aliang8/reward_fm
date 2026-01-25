@@ -767,6 +767,11 @@ def load_model_from_hf(
             else:
                 raise ValueError(f"config.yaml not found in checkpoint directory or parent directory: {resolved_path}")
     else:
+        # Check if this is a local path that doesn't exist
+        is_local_path = model_path.startswith("/") or model_path.startswith("./") or model_path.startswith("../")
+        if is_local_path:
+            raise ValueError(f"Local checkpoint path does not exist: {resolved_path}")
+        
         try:
             from huggingface_hub import hf_hub_download
         except ImportError:

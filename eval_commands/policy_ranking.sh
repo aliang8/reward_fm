@@ -1,7 +1,16 @@
+# GVL
+uv run python rfm/evals/run_baseline_eval.py \
+    reward_model=gvl \
+    model_config.provider=openai \
+    model_config.model_name=gpt-4o-mini \
+    custom_eval.eval_types=[policy_ranking] \
+    custom_eval.policy_ranking=[rfm-1m-ood] \
+    max_frames=15
+
 # ReWIND
 uv run python rfm/evals/run_baseline_eval.py \
     reward_model=rewind \
-    model_path=rewardfm/rewind-scale-rfm1M-32layers-8frame-20260118-180522 \
+    model_path="/home/azure/reward_fm/logs/rfm-1m-id_ablation_rewind_bs512_prog_pref_4frames_continuous_scaled/ckpt-latest-avg-2metrics\=0.6334_step\=6100" \
     custom_eval.eval_types=[policy_ranking] \
     custom_eval.policy_ranking=[rfm-1m-ood] \
     custom_eval.use_frame_steps=false \
@@ -31,10 +40,13 @@ uv run python rfm/evals/run_baseline_eval.py \
     custom_eval.num_examples_per_quality_pr=1000 \
     max_frames=64
 
+ant_rfm_qwen4b_4gpu_bs16_pref_prog_succ_8_frames_all_discrete_10_bins_part2
+
+
 # RFM 8 frame model DISCRETE
 uv run python rfm/evals/run_baseline_eval.py \
     reward_model=rfm \
-    model_path=aliangdw/qwen4b_pref_prog_succ_8_frames_all_part2 \
+    model_path="/gpfs/home/jessezha/scrubbed_storage/reward_fm/logs/ant_rfm_qwen4b_4gpu_bs16_pref_prog_succ_8_frames_all_discrete_10_bins_part2/ckpt-avg-5metrics\=0.7155_step\=4500" \
     custom_eval.eval_types=[policy_ranking] \
     custom_eval.policy_ranking=[rfm-1m-ood] \
     custom_eval.use_frame_steps=false \

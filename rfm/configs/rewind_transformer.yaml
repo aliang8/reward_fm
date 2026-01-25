@@ -23,9 +23,9 @@ model:
     num_attention_heads: 8
     dropout: 0.1  
     max_len: 16
-    causal_mask: true
-    use_per_frame_progress_token: true
-    progress_loss_type: l2
+    causal_mask: false
+    use_per_frame_progress_token: false
+    progress_loss_type: discrete
     progress_discrete_bins: 32
 
 
@@ -47,4 +47,3 @@ training:
 
 data:  
   load_embeddings: true
-  progress_pred_type: absolute 

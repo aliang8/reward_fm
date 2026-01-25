@@ -65,17 +65,6 @@ logger = get_logger()
 logger.info(f"rfm.eval_server logger initialized at level {LOG_LEVEL}")
 
 
-def log_logits(name: str, value: Any) -> None:
-    if isinstance(value, torch.Tensor):
-        logger.debug(f"{name} shape={tuple(value.shape)} values={value.detach().cpu().tolist()}")
-    elif isinstance(value, dict):
-        logger.debug(f"{name} keys={list(value.keys())}")
-        for key, sub_value in value.items():
-            log_logits(f"{name}.{key}", sub_value)
-    elif isinstance(value, list):
-        logger.debug(f"{name}: {value}")
-
-
 def aggregate_frame_step_predictions(
     outputs: Dict[str, Any],
     sample_frame_counts: List[int],
@@ -189,6 +178,7 @@ def process_batch_helper(
     is_discrete_mode: bool = False,
     num_bins: int = 10,
     use_frame_steps: bool = False,
+    max_frames: int = 4,
 ) -> Dict[str, Any]:
     """Synchronous batch processing on specific GPU."""
     if not batch_data:
@@ -213,9 +203,9 @@ def process_batch_helper(
         else:
             raise ValueError(f"Unsupported sample object type: {type(sample)}")
 
-    # Handle frame steps for progress samples - expand into sub-samples, each subsampled to 4 frames
+    # Handle frame steps for progress samples - expand into sub-samples, each subsampled to max_frames
     # so they can be batched together (all same size)
-    NUM_SUBSAMPLED_FRAMES = 4
+    num_subsampled_frames = max_frames
 
     if use_frame_steps:
         expanded_samples = []
@@ -228,11 +218,11 @@ def process_batch_helper(
                 num_frames = frames.shape[0] if hasattr(frames, "shape") else len(frames)
 
                 # Create sub-samples with increasing frame counts: 0:1, 0:2, 0:3, ..., 0:T
-                # Each sub-sample is subsampled to NUM_SUBSAMPLED_FRAMES frames using linspace
+                # Each sub-sample is subsampled to num_subsampled_frames frames using linspace
                 for i in range(1, num_frames + 1):
                     # Use linspace to select frame indices from 0 to i-1
                     # This ensures all sub-samples have the same number of frames for batching
-                    indices = np.linspace(0, i - 1, NUM_SUBSAMPLED_FRAMES, dtype=int)
+                    indices = np.linspace(0, i - 1, num_subsampled_frames, dtype=int)
                     sub_frames = frames[indices]
 
                     sub_trajectory = copy.deepcopy(sample.trajectory)
@@ -274,7 +264,7 @@ def process_batch_helper(
 
         input_samples = expanded_samples
         logger.debug(
-            f"[job {job_id}] Expanded {len(sample_frame_counts)} samples into {len(input_samples)} sub-samples with frame steps (each subsampled to {NUM_SUBSAMPLED_FRAMES} frames)"
+            f"[job {job_id}] Expanded {len(sample_frame_counts)} samples into {len(input_samples)} sub-samples with frame steps (each subsampled to {num_subsampled_frames} frames)"
         )
     else:
         sample_frame_counts = None
@@ -476,13 +466,9 @@ class MultiGPUEvalServer:
 
         try:
             # Determine if discrete mode is enabled
-            progress_loss_type = getattr(self.exp_config.loss, "progress_loss_type", "l2")
+            progress_loss_type = self.exp_config.loss.progress_loss_type
             is_discrete_mode = progress_loss_type.lower() == "discrete"
-            num_bins = getattr(
-                self.exp_config.loss,
-                "progress_discrete_bins",
-                getattr(self.exp_config.model, "progress_discrete_bins", 10),
-            )
+            num_bins = self.exp_config.loss.progress_discrete_bins
 
             # Extract use_frame_steps flag from batch_data (if present)
             use_frame_steps = False
@@ -511,6 +497,7 @@ class MultiGPUEvalServer:
                 is_discrete_mode,
                 num_bins,
                 use_frame_steps,
+                self.exp_config.data.max_frames,
             )
 
             # Update stats

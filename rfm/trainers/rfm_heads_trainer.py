@@ -1933,6 +1933,11 @@ class RFMHeadsTrainer(Trainer):
             f"Num preferences: {num_preferences}, Num similarities: {num_similarities}, Num progress: {num_progress}"
         )
 
+        # Get loss weights from config (default to 1.0 if not specified)
+        pref_weight = getattr(self.config.loss, "preference_loss_weight", 1.0)
+        prog_weight = getattr(self.config.loss, "progress_loss_weight", 1.0)
+        sim_weight = getattr(self.config.loss, "similarity_loss_weight", 1.0)
+
         # Compute preference loss if we have preference samples
         if num_preferences > 0 and preference_inputs and self.config.model.train_preference_head:
             with _timer("time/compute_preference_loss", timing_raw=self.timing_raw):
@@ -1940,7 +1945,7 @@ class RFMHeadsTrainer(Trainer):
                     model, preference_inputs, return_outputs=True, training=training
                 )
                 if not torch.isnan(preference_loss).any():
-                    total_loss += preference_loss
+                    total_loss += pref_weight * preference_loss
                 else:
                     logger.warning(f"NaN detected in preference loss, replacing with 0.0")
                 log_metadata.update(loss_dict)
@@ -1952,7 +1957,7 @@ class RFMHeadsTrainer(Trainer):
                     model, progress_inputs, return_outputs=True, training=training
                 )
                 if not torch.isnan(progress_loss).any():
-                    total_loss += progress_loss
+                    total_loss += prog_weight * progress_loss
                 else:
                     logger.warning(f"NaN detected in progress loss, replacing with 0.0")
                 log_metadata.update(loss_dict)
@@ -1964,7 +1969,7 @@ class RFMHeadsTrainer(Trainer):
                     model, similarity_inputs, return_outputs=True, training=training
                 )
                 if not torch.isnan(similarity_loss).any():
-                    total_loss += similarity_loss
+                    total_loss += sim_weight * similarity_loss
                 else:
                     logger.warning(f"NaN detected in similarity loss, replacing with 0.0")
                 log_metadata.update(loss_dict)

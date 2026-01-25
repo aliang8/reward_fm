@@ -23,27 +23,31 @@ model:
     num_attention_heads: 16
     dropout: 0.1  
     max_len: 16
-    causal_mask: true
-    use_per_frame_progress_token: true
+    causal_mask: false
+    use_per_frame_progress_token: false
     progress_loss_type: discrete
     progress_discrete_bins: 32
 
 training:
-  gradient_checkpointing: false
+  gradient_checkpointing: true  # Enable for deep model memory efficiency
 
   bf16: false
   fp16: true
 
   per_device_train_batch_size: 1024
   per_device_eval_batch_size: 512
-  learning_rate: 1e-4
+  learning_rate: 3e-5  # Lower LR for deep 32-layer model
   weight_decay: 0.01
-  warmup_ratio: 0.01
+  warmup_ratio: 0.05  # Longer warmup for stable deep model training
   
   eval_steps: 200
   custom_eval_steps: 200
   max_steps: 20000
 
+# Loss weights for multi-task balancing
+loss:
+  preference_loss_weight: 1.0
+  progress_loss_weight: 1.0
+
 data:  
   load_embeddings: true
-  progress_pred_type: absolute 

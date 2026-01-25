@@ -895,28 +895,88 @@ def setup_model_and_processor(
         processor = AutoImageProcessor.from_pretrained("facebook/dinov2-base", use_fast=True)
         tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L12-v2")
 
+        train_img = cfg.train_vision_encoder
+        train_text = cfg.train_language_model
+
+        for p in image_encoder.parameters():
+            p.requires_grad = train_img
+
+        for p in text_encoder.parameters():
+            p.requires_grad = train_text
+
         if hf_model_id:
             repo_id, revision_to_load = parse_hf_model_id_and_revision(hf_model_id, model_name="ReWiND model")
             
-            model = ReWiNDTransformer.from_pretrained(
-                repo_id,
-                processor=processor,
-                image_encoder=image_encoder,
-                text_encoder=text_encoder,
-                tokenizer=tokenizer,
-                revision=revision_to_load,
-            )
+            # Resolve checkpoint path (handles both HF Hub and local paths)
+            checkpoint_path = resolve_checkpoint_path(hf_model_id)
+            is_local_path = checkpoint_path is not None and os.path.isdir(checkpoint_path)
+            
+            if is_local_path:
+                # Local checkpoint - initialize model first, then load weights manually
+                logger.info(f"Loading ReWiND model from local checkpoint: {checkpoint_path}")
+                
+                # Initialize fresh model
+                model = ReWiNDTransformer(
+                    config=cfg,
+                    processor=processor,
+                    tokenizer=tokenizer,
+                    image_encoder=image_encoder,
+                    text_encoder=text_encoder,
+                )
+                
+                # Load weights from safetensors files
+                safetensors_files = list(Path(checkpoint_path).glob("*.safetensors"))
+                if safetensors_files:
+                    logger.info(f"Loading weights from {len(safetensors_files)} safetensors file(s)")
+                    checkpoint_state_dict = {}
+                    for safetensors_file in safetensors_files:
+                        logger.debug(f"Loading weights from {safetensors_file.name}")
+                        file_state_dict = load_file(str(safetensors_file))
+                        checkpoint_state_dict.update(file_state_dict)
+                    
+                    # Load state dict with strict=False to handle missing encoder keys
+                    missing_keys, unexpected_keys = model.load_state_dict(checkpoint_state_dict, strict=False)
+                    
+                    # Filter out expected missing keys (encoders are loaded separately)
+                    encoder_missing = [k for k in missing_keys if "image_encoder" in k or "text_encoder" in k]
+                    other_missing = [k for k in missing_keys if k not in encoder_missing]
+                    
+                    if encoder_missing:
+                        logger.info(f"Missing encoder keys (expected - loaded separately): {len(encoder_missing)}")
+                    if other_missing:
+                        logger.warning(f"Missing non-encoder keys: {other_missing}")
+                    if unexpected_keys:
+                        logger.warning(f"Unexpected keys: {unexpected_keys[:10]}..." if len(unexpected_keys) > 10 else f"Unexpected keys: {unexpected_keys}")
+                    
+                    logger.info(f"Successfully loaded ReWiND weights from {checkpoint_path}")
+                else:
+                    # Try loading from pytorch checkpoint files
+                    pt_files = list(Path(checkpoint_path).glob("*.pt")) + list(Path(checkpoint_path).glob("*.bin"))
+                    if pt_files:
+                        logger.info(f"Loading weights from {len(pt_files)} pytorch file(s)")
+                        for pt_file in pt_files:
+                            if "optimizer" not in pt_file.name and "scheduler" not in pt_file.name:
+                                checkpoint_state_dict = torch.load(pt_file, map_location="cpu")
+                                if "state_dict" in checkpoint_state_dict:
+                                    checkpoint_state_dict = checkpoint_state_dict["state_dict"]
+                                model.load_state_dict(checkpoint_state_dict, strict=False)
+                                logger.info(f"Loaded weights from {pt_file.name}")
+                                break
+                    else:
+                        logger.warning(f"No safetensors or pytorch files found in {checkpoint_path}")
+            else:
+                # HuggingFace Hub - use from_pretrained
+                logger.info(f"Loading ReWiND model from HuggingFace Hub: {repo_id}")
+                model = ReWiNDTransformer.from_pretrained(
+                    repo_id,
+                    processor=processor,
+                    image_encoder=image_encoder,
+                    text_encoder=text_encoder,
+                    tokenizer=tokenizer,
+                    revision=revision_to_load,
+                )
         else:
-            train_img = cfg.train_vision_encoder
-            train_text = cfg.train_language_model
-
-            for p in image_encoder.parameters():
-                p.requires_grad = train_img
-
-            for p in text_encoder.parameters():
-                p.requires_grad = train_text
-
-            logger.info("Initializing ReWiND model...")
+            logger.info("Initializing fresh ReWiND model...")
             model = ReWiNDTransformer(
                 config=cfg,
                 processor=processor,

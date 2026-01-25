@@ -1,7 +1,17 @@
+# GVL
+uv run python rfm/evals/run_baseline_eval.py \
+    reward_model=gvl \
+    model_config.provider=openai \
+    model_config.model_name=gpt-4o-mini \
+    custom_eval.eval_types=[reward_alignment] \
+    custom_eval.reward_alignment=[rfm-1m-id,rfm-1m-ood] \
+    custom_eval.reward_alignment_max_trajectories=30 \
+    max_frames=15
+
 # ReWIND
 uv run python rfm/evals/run_baseline_eval.py \
     reward_model=rewind \
-    model_path=rewardfm/rewind-scale-rfm1M-32layers-8frame-20260118-180522 \
+    model_path="/home/azure/reward_fm/logs/rfm-1m-id_ablation_rewind_bs512_prog_pref_4frames_continuous_scaled/ckpt-latest-avg-2metrics\=0.6334_step\=6100" \
     custom_eval.eval_types=[reward_alignment] \
     custom_eval.reward_alignment=[rfm-1m-id,rfm-1m-ood] \
     custom_eval.use_frame_steps=true \
@@ -55,3 +65,8 @@ uv run python rfm/evals/run_baseline_eval.py \
     custom_eval.reward_alignment_max_trajectories=100 \
     max_frames=4 \
     model_config.batch_size=32
+
+
+/gpfs/home/jessezha/scrubbed_storage/reward_fm/logs/rfm_1m_ablation_prog_only_8frames/ckpt-latest-avg-2metrics\=0.3964_step\=5250/
+
+/gpfs/home/jessezha/scrubbed_storage/reward_fm/logs/rfm_1m_ablation_prog_pref_8frames/ckpt-latest-avg-2metrics\=0.5777_step\=2000/

@@ -450,10 +450,12 @@ class RFMBatchCollator(BaseCollator):
         ]
 
         # Add predict_last_frame_mask (padded to max_length)
-        batch_inputs["predict_last_frame_mask"] = pad_list_to_max(predict_last_frame_mask_list)
+        if predict_last_frame_mask_list[0] is not None:
+            batch_inputs["predict_last_frame_mask"] = pad_list_to_max(predict_last_frame_mask_list)
 
         success_label_list = [sample.trajectory.success_label for sample in progress_samples]
-        batch_inputs["success_labels"] = pad_list_to_max(success_label_list)
+        if success_label_list[0] is not None:
+            batch_inputs["success_labels"] = pad_list_to_max(success_label_list)
 
         return batch_inputs
 

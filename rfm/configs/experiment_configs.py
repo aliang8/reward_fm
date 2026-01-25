@@ -462,6 +462,20 @@ class LossConfig:
         default=10,
         metadata={"help": "Number of discrete bins for progress when using discrete loss (default: 10)"},
     )
+    
+    # Multi-task loss weights for balancing different objectives
+    preference_loss_weight: float = field(
+        default=1.0,
+        metadata={"help": "Weight for preference prediction loss in multi-task training"},
+    )
+    progress_loss_weight: float = field(
+        default=1.0,
+        metadata={"help": "Weight for progress prediction loss in multi-task training"},
+    )
+    similarity_loss_weight: float = field(
+        default=1.0,
+        metadata={"help": "Weight for similarity prediction loss in multi-task training"},
+    )
 
 
 @dataclass

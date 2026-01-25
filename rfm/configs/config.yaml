@@ -227,6 +227,11 @@ loss:
   predict_last_frame_progress: false  # If true, only compute progress loss for the last frame
   progress_loss_type: "l2"  # Options: "l1", "l2", or "discrete" (default: "l2")
   progress_discrete_bins: 32  # Number of discrete bins for progress when using discrete loss (default: 10)
+  
+  # Multi-task loss weights for balancing different objectives
+  preference_loss_weight: 1.0  # Weight for preference prediction loss
+  progress_loss_weight: 1.0    # Weight for progress prediction loss
+  similarity_loss_weight: 1.0  # Weight for similarity prediction loss
 
 # =====================================================================================
 # Logging and Output Configuration

@@ -87,6 +87,7 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
             dim_feedforward=rewind_config.hidden_dim * 4,
             dropout=rewind_config.dropout,
             batch_first=True,
+            norm_first=True,  # Pre-norm for better deep model training stability
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=rewind_config.num_layers)
 

@@ -689,7 +689,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                     # Extract metrics from the returned dict (if any)
                     for key, value in metrics_dict.items():
                         if isinstance(value, (int, float)):
-                            eval_type_metrics[f"{short_dataset_name}/{key}"] = float(value)
+                            eval_type_metrics[f"{dataset_name}/{key}"] = float(value)
 
                     # Write metrics incrementally after each dataset
                     if eval_type_dir:

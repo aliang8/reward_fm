@@ -88,6 +88,7 @@ DS_SHORT_NAME_MAPPING = {
     "jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top": "utd_so101_clean_top",
     "jesbu1_utd_so101_clean_policy_ranking_wrist_utd_so101_clean_policy_ranking_wrist": "utd_so101_clean_wrist",
     "jesbu1_rfm_new_mit_franka_rfm_rfm_new_mit_franka_rfm": "rfm_new_mit_franka",
+    "jesbu1_rfm_new_mit_franka_rfm_nowrist_rfm_new_mit_franka_rfm_nowrist": "rfm_new_mit_franka_nowrist",
     "ykorkmaz_usc_trossen_rfm_usc_trossen": "usc_trossen",
     # Reward Alignment
     "abraranwar_usc_koch_rewind_rfm_usc_koch_rewind": "usc_koch_rewind",

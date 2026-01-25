@@ -141,11 +141,11 @@ def compute_normalization_stats(
     for repo_id in repo_ids:
         print(f"  Scanning {repo_id}...")
         try:
-            dataset = LeRobotDataset(repo_id, root=root, download_videos=False, video_backend="pyav")
+            dataset = LeRobotDataset(repo_id, root=root, download_videos=True, video_backend="pyav")
         except Exception as e:
             print(f"  Warning: Version check failed, trying with revision='main': {e}")
             try:
-                dataset = LeRobotDataset(repo_id, root=root, download_videos=False, video_backend="pyav", revision="main")
+                dataset = LeRobotDataset(repo_id, root=root, download_videos=True, video_backend="pyav", revision="main")
             except Exception as e2:
                 print(f"  Error: Could not load dataset {repo_id}: {e2}")
                 continue

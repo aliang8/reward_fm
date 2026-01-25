@@ -747,7 +747,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                     # Extract metrics from the returned dict
                     for key, value in metrics_dict.items():
                         if isinstance(value, (int, float)):
-                            eval_type_metrics[f"{short_dataset_name}/{key}"] = float(value)
+                            eval_type_metrics[f"{dataset_name}/{key}"] = float(value)
 
                     # Write metrics incrementally after each dataset
                     if eval_type_dir:
@@ -761,17 +761,32 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
 def _write_metrics_incremental(eval_type_dir: str, eval_type_metrics: Dict[str, float]):
     """Write metrics to file incrementally after each dataset.
 
+    Loads existing metrics from file if present and merges with new metrics.
+
     Args:
         eval_type_dir: Directory for this eval_type (e.g., ./baseline_eval_output/rfm/policy_ranking/)
         eval_type_metrics: Dictionary of metrics (keyed by dataset_name/metric_name)
     """
     metrics_file = os.path.join(eval_type_dir, "metrics.json")
 
-    # Write metrics to file (overwrite since we're accumulating in eval_type_metrics)
+    # Load existing metrics if file exists
+    existing_metrics = {}
+    if os.path.exists(metrics_file):
+        try:
+            with open(metrics_file, "r") as f:
+                existing_metrics = json.load(f)
+            logger.debug(f"Loaded {len(existing_metrics)} existing metrics from {metrics_file}")
+        except (IOError, json.JSONDecodeError) as e:
+            logger.warning(f"Could not load existing metrics file: {e}. Starting fresh.")
+
+    # Merge: new metrics overwrite existing ones with same key
+    merged_metrics = {**existing_metrics, **eval_type_metrics}
+
+    # Write merged metrics to file
     try:
         with open(metrics_file, "w") as f:
-            json.dump(_make_json_serializable(eval_type_metrics), f, indent=2)
-        logger.info(f"Updated metrics file: {metrics_file}")
+            json.dump(_make_json_serializable(merged_metrics), f, indent=2)
+        logger.info(f"Updated metrics file: {metrics_file} ({len(merged_metrics)} total metrics)")
     except IOError as e:
         logger.error(f"Could not write metrics file: {e}")
 
@@ -851,22 +866,6 @@ def main(cfg: DictConfig):
 
     # Run evaluation
     metrics = run_baseline_evaluation(baseline_cfg, data_cfg)
-
-    # Save all metrics summary to model root directory
-    if metrics and is_rank_0():
-        metrics_file = os.path.join(baseline_cfg.output_dir, "all_metrics.json")
-        metrics_serializable = {}
-        for k, v in metrics.items():
-            if isinstance(v, dict):
-                metrics_serializable[k] = {
-                    k2: float(v2) if isinstance(v2, (int, float, np.number)) else v2 for k2, v2 in v.items()
-                }
-            else:
-                metrics_serializable[k] = v
-
-        with open(metrics_file, "w") as f:
-            json.dump(metrics_serializable, f, indent=2)
-        logger.info(f"Saved all metrics summary to: {metrics_file}")
 
     logger.info("\nBaseline evaluation complete!")
     return metrics

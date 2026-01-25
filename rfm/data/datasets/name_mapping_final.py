@@ -82,14 +82,16 @@ DS_SHORT_NAME_MAPPING = {
     "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist": "Roboarena (Eval Debug No Wrist)",
     "jesbu1_roboarena_0825_rfm_roboarena": "Roboarena (W Wrist)",
     # Policy Ranking
-    "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking": "Usc Xarm (Policy Ranking)",
-    "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking": "Usc Franka (Policy Ranking)",
-    "jesbu1_mit_franka_p-rank_rfm_mit_franka_p-rank_rfm": "Mit Franka (P-Rank)",
-    "jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top": "Utd SO101 (Clean Policy Ranking Top)",
-    "jesbu1_utd_so101_clean_policy_ranking_wrist_utd_so101_clean_policy_ranking_wrist": "Utd SO101 (Clean Policy Ranking Wrist)",
-    "jesbu1_usc_koch_p_ranking_rfm_usc_koch_p_ranking_all": "Usc Koch (P-Rank All)",
+    "aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking": "USC Xarm",
+    "aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking": "USC Franka",
+    "jesbu1_mit_franka_p-rank_rfm_mit_franka_p-rank_rfm": "Mit Franka",
+    "jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top": "Utd SO101 (Top)",
+    "jesbu1_utd_so101_clean_policy_ranking_wrist_utd_so101_clean_policy_ranking_wrist": "Utd SO101 (Wrist)",
+    "jesbu1_usc_koch_p_ranking_rfm_usc_koch_p_ranking_all": "USC Koch",
+    "ykorkmaz_usc_trossen_rfm_usc_trossen": "USC Trossen",
+    "jesbu1_rfm_new_mit_franka_rfm_nowrist_rfm_new_mit_franka_rfm_nowrist": "Mit Franka (Nowrist)",
     # Reward Alignment
-    "abraranwar_usc_koch_rewind_rfm_usc_koch_rewind": "Usc Koch Rewind",
+    "abraranwar_usc_koch_rewind_rfm_usc_koch_rewind": "USC Koch Rewind",
 
     # Extras
     "jesbu1_roboreward_rfm_roboreward_test": "RoboReward (Test)",

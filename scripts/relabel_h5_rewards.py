@@ -16,65 +16,18 @@ Assumes datasets follow a robomimic-style layout:
     /data/{demo}/dones
     language annotation under /data/{demo}/language_instruction or /data/{demo}/obs/language
 
-Example usage (direct model):
-    uv run python scripts/relabel_h5_rewards.py \
-        --h5_paths /path/to/dataset.h5 \
-        --reward-model-path rewardfm/ant-rfm-rewind-bs1024-oxe-mw-prog-mw-0.1 \
-        --sentence-encoder sentence-transformers/all-MiniLM-L6-v2 \
-        --batch_size 32
-
 Example usage (eval server):
     uv run python scripts/relabel_h5_rewards.py \
-        --h5_paths /scr/shared/reward_fm/play_datasets/play_dataset_test_subtrajs_gripper.h5 \
-        --eval-server-url http://localhost:8001 \
+        --h5_paths rfm_offlineRL_1_succ.h5 \
+        --reward-model-path aliangdw/qwen4b_pref_prog_succ_8_frames_all_part2 \
         --sentence-encoder sentence-transformers/all-MiniLM-L6-v2 \
-        --batch_size 32
-
-Example usage (with specific image key):
-    uv run python scripts/relabel_h5_rewards.py \
-        --h5_paths /path/to/dataset.h5 \
-        --reward-model-path rewardfm/ant-rfm-rewind-bs1024-oxe-mw-prog-mw-0.1 \
-        --sentence-encoder sentence-transformers/all-MiniLM-L6-v2 \
-        --image-key image_top \
         --batch_size 32
 
 Example usage (RoboReward baseline):
     uv run python scripts/relabel_h5_rewards.py \
         --h5_paths /scr/shared/reward_fm/play_datasets/play_dataset_test_subtrajs_gripper.h5 \
         --reward-model roboreward \
-        --reward-model-path teetone/RoboReward-4B
-
-Example usage (with custom language instruction):
-    uv run python scripts/relabel_h5_rewards.py \
-        --h5_paths /path/to/dataset.h5 \
-        --reward-model-path rewardfm/ant-rfm-rewind-bs1024-oxe-mw-prog-mw-0.1 \
-        --sentence-encoder sentence-transformers/all-MiniLM-L6-v2 \
-        --language-instruction "Pick up the red block and place it in the box"
-
-Example usage (debug mode - only process 5 episodes):
-    uv run python scripts/relabel_h5_rewards.py \
-        --h5_paths so101_dataset.h5 \
-        --reward-model-path aliangdw/qwen4b_pref_prog_succ_8_frames_all_part2 \
-        --sentence-encoder sentence-transformers/all-MiniLM-L6-v2 \
-        --batch_size 32
-
-    uv run python scripts/relabel_h5_rewards.py \
-        --h5_paths play_dataset_test_subtrajs_gripper.h5 \
-        --reward-model-path aliangdw/qwen4b_pref_prog_succ_8_frames_all_part2 \
-        --sentence-encoder sentence-transformers/all-MiniLM-L6-v2 \
-        --batch_size 32 \
-        --use_frame_steps 32
-        
-With multiple inputs and an output directory:
-    uv run python scripts/relabel_h5_rewards.py \
-        --h5_paths /data/a.h5 /data/b.h5 \
-        --reward-model-path rewardfm/ant-rfm-rewind-bs1024-oxe-mw-prog-mw-0.1 \
-        --sentence-encoder sentence-transformers/all-MiniLM-L6-v2 \
-        --batch_size 32 \
-        --output_path /data/relabeled/
-
-uv run --active python scripts/relabel_h5_rewards.py         --h5_paths play_dataset_test_subtrajs_gripper.h5         --reward-model roboreward --reward-model-path teetone/RoboReward-4B         --sentence-encoder sentence-transformers/all-MiniLM-L6-v2         --batch_size 32    --language-instruction="Open the bottle" --image-key=cam_left_wrist &
-        
+        --reward-model-path teetone/RoboReward-4B    
 """
 
 import argparse
@@ -151,29 +104,65 @@ def build_output_path_for_input(input_path: str, output_path: Optional[str], lan
     return str((op / (Path(input_path).stem + f"_relabeled{lang_suffix}.h5")).with_suffix(".h5"))
 
 
+def compute_env_reward(episode_len: int, sparse: bool) -> np.ndarray:
+    """
+    Compute environment reward for an episode.
+    
+    Args:
+        episode_len: Number of timesteps in the episode
+        sparse: If True, returns -1 for all timesteps except last (0).
+                If False, returns all zeros.
+    
+    Returns:
+        Array of env rewards with shape (episode_len,)
+    """
+    if sparse:
+        env_reward = np.full(episode_len, -1.0, dtype=np.float32)
+        env_reward[-1] = 0.0  # Last frame gets 0
+    else:
+        env_reward = np.zeros(episode_len, dtype=np.float32)
+    return env_reward
+
+
 def copy_group_with_relabel(
     src_group: h5py.Group,
     dst_group: h5py.Group,
     demo_name: str,
     rewards_map: Dict[str, np.ndarray],
     root_group: h5py.Group,
+    sparse_env_reward: bool = False,
 ):
     """
     Recursively copy src_group to dst_group, replacing 'rewards' dataset when encountered.
+    Also creates 'progress_reward' and 'env_reward' datasets.
     """
     for key in src_group.keys():
         obj = src_group[key]
         if isinstance(obj, h5py.Group):
             sub_group = dst_group.create_group(key)
-            copy_group_with_relabel(obj, sub_group, demo_name, rewards_map, root_group)
+            copy_group_with_relabel(obj, sub_group, demo_name, rewards_map, root_group, sparse_env_reward)
         else:
             if key == "rewards":
+                # Get episode length
+                episode_len = len(root_group["actions"])
+                
+                # Get progress reward (relabeled rewards)
                 if demo_name in rewards_map and rewards_map[demo_name] is not None:
-                    dst_group.create_dataset("rewards", data=rewards_map[demo_name], compression="gzip")
+                    progress_reward = rewards_map[demo_name]
                 else:
-                    # Fallback to zeros of appropriate length
-                    episode_len = len(root_group["actions"])
-                    dst_group.create_dataset("rewards", data=np.zeros(episode_len, dtype=np.float32), compression="gzip")
+                    # Fallback to zeros
+                    progress_reward = np.zeros(episode_len, dtype=np.float32)
+                
+                # Compute env reward
+                env_reward = compute_env_reward(episode_len, sparse_env_reward)
+                
+                # Combined rewards = env_reward + progress_reward
+                combined_rewards = env_reward + progress_reward
+                
+                # Write all three reward fields
+                dst_group.create_dataset("progress_reward", data=progress_reward, compression="gzip")
+                dst_group.create_dataset("env_reward", data=env_reward, compression="gzip")
+                dst_group.create_dataset("rewards", data=combined_rewards, compression="gzip")
             else:
                 # Copy dataset with compression if it's large
                 if obj.size > 1000:
@@ -342,34 +331,27 @@ def relabel_episode_with_baseline(
             # Check if batched method is available
             has_batched_method = hasattr(baseline_model, "compute_progress_batched")
             
-            try:
-                # Call compute_progress_batched once on all subsequences
-                logger.debug(f"Episode {demo_name}: Calling compute_progress_batched with {len(batch_subsequences_list)} subsequences")
-                start_time = time.time()
-                batch_progress_results = baseline_model.compute_progress_batched(
-                    batch_subsequences_list, task_descriptions_list
-                )
-                elapsed_time = time.time() - start_time
-                logger.info(f"Episode {demo_name}: Batched call completed in {elapsed_time:.3f}s ({elapsed_time/len(batch_subsequences_list)*1000:.2f}ms per subsequence)")
-                
-                # Extract last values from batched results
-                sampled_progress = []
-                for result_list in batch_progress_results:
-                    if isinstance(result_list, list) and len(result_list) > 0:
-                        sampled_progress.append(float(result_list[-1]) if result_list[-1] is not None else 0.0)
-                    elif isinstance(result_list, np.ndarray) and len(result_list) > 0:
-                        sampled_progress.append(float(result_list[-1]) if result_list[-1] is not None else 0.0)
-                    else:
-                        sampled_progress.append(0.0)
-                
-                progress_array = np.array(sampled_progress, dtype=np.float32)
-                logger.debug(f"Episode {demo_name}: Got {len(sampled_progress)} progress values: {progress_array.tolist()}")
-                
-                    
-            except Exception as e:
-                logger.error(f"Episode {demo_name}: Error in batched frame-step processing: {e}", exc_info=True)
-                # Fallback to zeros
-                progress_array = np.zeros(num_frames, dtype=np.float32)
+            # Call compute_progress_batched once on all subsequences
+            logger.debug(f"Episode {demo_name}: Calling compute_progress_batched with {len(batch_subsequences_list)} subsequences")
+            start_time = time.time()
+            batch_progress_results = baseline_model.compute_progress_batched(
+                batch_subsequences_list, task_descriptions_list
+            )
+            elapsed_time = time.time() - start_time
+            logger.info(f"Episode {demo_name}: Batched call completed in {elapsed_time:.3f}s ({elapsed_time/len(batch_subsequences_list)*1000:.2f}ms per subsequence)")
+            
+            # Extract last values from batched results
+            sampled_progress = []
+            for result_list in batch_progress_results:
+                if isinstance(result_list, list) and len(result_list) > 0:
+                    sampled_progress.append(float(result_list[-1]) if result_list[-1] is not None else 0.0)
+                elif isinstance(result_list, np.ndarray) and len(result_list) > 0:
+                    sampled_progress.append(float(result_list[-1]) if result_list[-1] is not None else 0.0)
+                else:
+                    sampled_progress.append(0.0)
+            
+            progress_array = np.array(sampled_progress, dtype=np.float32)
+            logger.debug(f"Episode {demo_name}: Got {len(sampled_progress)} progress values: {progress_array.tolist()}")
         
         # Normalize to [0, 1] if needed (some models return [0, 100] or [1, 5])
         if progress_array.max() > 1.0:
@@ -615,6 +597,13 @@ def main():
         help="If set, create a minimal H5 file containing only rewards and language instructions (no observations, actions, etc.). "
              "Useful for saving disk space when you only need the relabeled rewards.",
     )
+    parser.add_argument(
+        "--sparse-env-reward",
+        action="store_true",
+        default=False,
+        help="If set, env_reward will be 0 for the last frame and -1 for all other timesteps. "
+             "If not set, env_reward will be all zeros. The final 'rewards' field = env_reward + progress_reward.",
+    )
     args = parser.parse_args()
     
     # Handle conflicting flags
@@ -680,6 +669,11 @@ def main():
         logger.info("WHOLE-TRAJECTORY MODE: Computing rewards for entire trajectory at once (faster)")
     if args.rewards_only:
         logger.info("REWARDS-ONLY MODE: Output will contain only rewards and language instructions")
+    if args.sparse_env_reward:
+        logger.info("SPARSE ENV REWARD: env_reward = -1 for all timesteps except last (0)")
+    else:
+        logger.info("ZERO ENV REWARD: env_reward = 0 for all timesteps")
+    logger.info("Output fields: progress_reward (relabeled), env_reward, rewards = env_reward + progress_reward")
     logger.info(f"Batch size: {args.batch_size}")
     if args.image_key:
         logger.info(f"Image key: {args.image_key}")
@@ -800,7 +794,7 @@ def main():
 
             # Process each episode
             logger.info(f"Starting reward relabeling for {len(demo_names)} episodes...")
-            for demo_name in tqdm(demo_names[:5], desc="  Relabeling episodes"):
+            for demo_name in tqdm(demo_names, desc="  Relabeling episodes"):
                 demo_group = in_data[demo_name]
                 
                 # Use provided language instruction if available, otherwise extract from episode
@@ -854,63 +848,11 @@ def main():
                 success_rate = 100.0 * stats["success"] / stats["total"]
                 logger.info(f"  Success rate: {success_rate:.1f}%")
 
-        # Write relabeled H5 file
-        logger.info(f"Writing relabeled file: {output_h5}")
-        logger.debug(f"Rewards computed for {len(rewards_map)}/{len(demo_names)} episodes")
-        
-        if args.rewards_only:
-            # Minimal mode: only write rewards and language instructions
-            with h5py.File(input_h5, "r") as infile, h5py.File(output_h5, "w") as outfile:
-                # Copy file-level attributes
-                logger.debug("Copying file-level attributes...")
-                for attr_name, attr_val in infile.attrs.items():
-                    outfile.attrs[attr_name] = attr_val
-
-                # Update metadata
-                outfile.attrs["rewards_relabeled"] = True
-                outfile.attrs["rewards_only"] = True
-                outfile.attrs["reward_model_type"] = args.reward_model
-                if args.reward_model_path is not None:
-                    outfile.attrs["reward_model_path"] = args.reward_model_path
-                if args.eval_server_url is not None:
-                    outfile.attrs["eval_server_url"] = args.eval_server_url
-                if args.baseline_eval_server_url is not None:
-                    outfile.attrs["baseline_eval_server_url"] = args.baseline_eval_server_url
-
-                # Create /data with only rewards and language instructions
-                in_data = infile["data"]
-                out_data = outfile.create_group("data")
-
-                logger.debug(f"Writing {len(demo_names)} episodes (rewards-only mode)...")
-                for demo_name in tqdm(demo_names[:5], desc="  Writing episodes", leave=False):
-                    dg_in = in_data[demo_name]
-                    dg_out = out_data.create_group(demo_name)
-                    
-                    # Write rewards
-                    dg_out.create_dataset("rewards", data=rewards_map[demo_name], compression="gzip")
-                    
-                    # Write language instruction
-                    if args.language_instruction is not None:
-                        if isinstance(args.language_instruction, str):
-                            dg_out.create_dataset("language_instruction", data=args.language_instruction.encode("utf-8"))
-                        else:
-                            dg_out.create_dataset("language_instruction", data=args.language_instruction)
-                    elif "language_instruction" in dg_in:
-                        # Copy existing language instruction
-                        dg_out.create_dataset("language_instruction", data=dg_in["language_instruction"][()])
-                    
-                    # Copy essential attributes (episode index, etc.)
-                    for attr_name, attr_val in dg_in.attrs.items():
-                        dg_out.attrs[attr_name] = attr_val
-                    
-                    # Store episode length for reference
-                    if "actions" in dg_in:
-                        dg_out.attrs["episode_length"] = len(dg_in["actions"])
-                
-                logger.debug("Finished writing all episodes (rewards-only)")
-        else:
-            # Full mode: copy everything and replace rewards
-            with h5py.File(input_h5, "r") as infile, h5py.File(output_h5, "w") as outfile:
+            # Write relabeled H5 file (while input file is still open to avoid GPFS locking issues)
+            logger.info(f"Writing relabeled file: {output_h5}")
+            logger.debug(f"Rewards computed for {len(rewards_map)}/{len(demo_names)} episodes")
+            
+            with h5py.File(output_h5, "w") as outfile:
                 # Copy file-level attributes
                 logger.debug("Copying file-level attributes...")
                 for attr_name, attr_val in infile.attrs.items():
@@ -919,6 +861,9 @@ def main():
                 # Update metadata
                 outfile.attrs["rewards_relabeled"] = True
                 outfile.attrs["reward_model_type"] = args.reward_model
+                outfile.attrs["sparse_env_reward"] = args.sparse_env_reward
+                if args.rewards_only:
+                    outfile.attrs["rewards_only"] = True
                 if args.reward_model_path is not None:
                     outfile.attrs["reward_model_path"] = args.reward_model_path
                     logger.debug(f"Stored reward_model_path: {args.reward_model_path}")
@@ -929,31 +874,78 @@ def main():
                     outfile.attrs["baseline_eval_server_url"] = args.baseline_eval_server_url
                     logger.debug(f"Stored baseline_eval_server_url: {args.baseline_eval_server_url}")
 
-                # Create /data and copy each demo, replacing rewards
-                in_data = infile["data"]
+                # Create /data group
                 out_data = outfile.create_group("data")
 
-                logger.debug(f"Copying {len(demo_names)} episodes to output file...")
-                for demo_name in tqdm(demo_names, desc="  Writing episodes", leave=False):
-                    dg_in = in_data[demo_name]
-                    dg_out = out_data.create_group(demo_name)
-                    copy_group_with_relabel(dg_in, dg_out, demo_name, rewards_map, dg_in)
-                    # Copy demo attributes
-                    for attr_name, attr_val in dg_in.attrs.items():
-                        dg_out.attrs[attr_name] = attr_val
-
-                    # Update language instruction if provided
-                    if args.language_instruction is not None:
-                        # Delete existing language_instruction if it exists
-                        if "language_instruction" in dg_out:
-                            del dg_out["language_instruction"]
-                        # Store as bytes if it's a string
-                        if isinstance(args.language_instruction, str):
-                            dg_out.create_dataset("language_instruction", data=args.language_instruction.encode("utf-8"))
+                if args.rewards_only:
+                    # Minimal mode: only write rewards and language instructions
+                    logger.debug(f"Writing {len(demo_names)} episodes (rewards-only mode)...")
+                    for demo_name in tqdm(demo_names, desc="  Writing episodes", leave=False):
+                        dg_in = in_data[demo_name]
+                        dg_out = out_data.create_group(demo_name)
+                        
+                        # Get episode length
+                        episode_len = len(dg_in["actions"]) if "actions" in dg_in else len(rewards_map.get(demo_name, []))
+                        
+                        # Get progress reward (relabeled rewards)
+                        if demo_name in rewards_map and rewards_map[demo_name] is not None:
+                            progress_reward = rewards_map[demo_name]
                         else:
-                            dg_out.create_dataset("language_instruction", data=args.language_instruction)
-                        logger.debug(f"Updated language_instruction for {demo_name}")
-                logger.debug("Finished writing all episodes")
+                            progress_reward = np.zeros(episode_len, dtype=np.float32)
+                        
+                        # Compute env reward
+                        env_reward = compute_env_reward(episode_len, args.sparse_env_reward)
+                        
+                        # Combined rewards = env_reward + progress_reward
+                        combined_rewards = env_reward + progress_reward
+                        
+                        # Write all three reward fields
+                        dg_out.create_dataset("progress_reward", data=progress_reward, compression="gzip")
+                        dg_out.create_dataset("env_reward", data=env_reward, compression="gzip")
+                        dg_out.create_dataset("rewards", data=combined_rewards, compression="gzip")
+                        
+                        # Write language instruction
+                        if args.language_instruction is not None:
+                            if isinstance(args.language_instruction, str):
+                                dg_out.create_dataset("language_instruction", data=args.language_instruction.encode("utf-8"))
+                            else:
+                                dg_out.create_dataset("language_instruction", data=args.language_instruction)
+                        elif "language_instruction" in dg_in:
+                            # Copy existing language instruction
+                            dg_out.create_dataset("language_instruction", data=dg_in["language_instruction"][()])
+                        
+                        # Copy essential attributes (episode index, etc.)
+                        for attr_name, attr_val in dg_in.attrs.items():
+                            dg_out.attrs[attr_name] = attr_val
+                        
+                        # Store episode length for reference
+                        if "actions" in dg_in:
+                            dg_out.attrs["episode_length"] = len(dg_in["actions"])
+                    
+                    logger.debug("Finished writing all episodes (rewards-only)")
+                else:
+                    # Full mode: copy everything and replace rewards
+                    logger.debug(f"Copying {len(demo_names)} episodes to output file...")
+                    for demo_name in tqdm(demo_names, desc="  Writing episodes", leave=False):
+                        dg_in = in_data[demo_name]
+                        dg_out = out_data.create_group(demo_name)
+                        copy_group_with_relabel(dg_in, dg_out, demo_name, rewards_map, dg_in, args.sparse_env_reward)
+                        # Copy demo attributes
+                        for attr_name, attr_val in dg_in.attrs.items():
+                            dg_out.attrs[attr_name] = attr_val
+
+                        # Update language instruction if provided
+                        if args.language_instruction is not None:
+                            # Delete existing language_instruction if it exists
+                            if "language_instruction" in dg_out:
+                                del dg_out["language_instruction"]
+                            # Store as bytes if it's a string
+                            if isinstance(args.language_instruction, str):
+                                dg_out.create_dataset("language_instruction", data=args.language_instruction.encode("utf-8"))
+                            else:
+                                dg_out.create_dataset("language_instruction", data=args.language_instruction)
+                            logger.debug(f"Updated language_instruction for {demo_name}")
+                    logger.debug("Finished writing all episodes")
 
         logger.info(f"✅ Successfully saved relabeled dataset: {output_h5}")
         if args.info:

@@ -38,7 +38,6 @@ from convert_lerobot_common import (
     print_dataset_info,
     compute_text_embeddings,
 )
-from envs.obs_wrappers import center_crop
 
 # Optional cv2 for image resizing
 try:
@@ -48,6 +47,29 @@ except ImportError:
     HAS_CV2 = False
 
 
+def center_crop(image, size):
+    """Center crop an image or a batch of images to the specified size.
+
+    Supports both 3D (H, W, C) and 4D (N, H, W, C) arrays.
+    """
+    if image is None or size is None:
+        return image
+
+    if image.ndim == 3:
+        h, w = image.shape[:2]
+        crop = min(size, h, w)
+        x = (w - crop) // 2
+        y = (h - crop) // 2
+        return image[y : y + crop, x : x + crop, :]
+    elif image.ndim == 4:
+        h, w = image.shape[1:3]
+        crop = min(size, h, w)
+        x = (w - crop) // 2
+        y = (h - crop) // 2
+        return image[:, y : y + crop, x : x + crop, :]
+    else:
+        return image
+        
 # =============================================================================
 # Data Classes
 # =============================================================================

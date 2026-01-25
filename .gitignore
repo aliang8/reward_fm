@@ -64,3 +64,5 @@ baseline_eval_output/*
 confusion_matrix_output/*
 *.npy
 vqa_dataests/*
+run_scripts*
+*.gz

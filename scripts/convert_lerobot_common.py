@@ -116,7 +116,7 @@ def compute_normalization_stats(
     repo_ids: list[str],
     root: str | Path | None,
     action_norm_mode: str = "minmax",  # "minmax" for [-1,1] range, "zscore" for mean=0,std=1
-    batch_size: int = 256,
+    batch_size: int = 32,
     num_workers: int = 0,
 ) -> dict:
     """
@@ -180,7 +180,7 @@ def compute_normalization_stats(
             ds,
             batch_size=batch_size,
             shuffle=False,
-            num_workers=32,
+            num_workers=8,
             collate_fn=_norm_stats_collate,
             pin_memory=False,
         )

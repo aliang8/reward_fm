@@ -110,43 +110,45 @@ class ConversionConfig:
     image_width: int | None = None
     normalize: bool = False
     action_norm_mode: str = "minmax"
-    extraction_batch_size: int = 256
+    extraction_batch_size: int = 32
     extraction_num_workers: int = 8
 
 
 # =============================================================================
-# Frame Extraction (Step 1: DataLoader-based extraction)
+# Episode Extraction (DataLoader per episode for memory efficiency)
 # =============================================================================
 
-class FrameExtractionDataset(Dataset):
-    """PyTorch Dataset wrapper for parallel frame extraction from LeRobotDataset."""
+class EpisodeFrameDataset(Dataset):
+    """Dataset for extracting frames from a single episode range."""
     
     def __init__(
         self,
         dataset: LeRobotDataset,
+        frame_indices: list[int],
         obs_keys: set[str],
         action_key: str,
         include_rewards: bool = True,
         include_dones: bool = True,
     ):
         self.dataset = dataset
+        self.frame_indices = frame_indices
         self.obs_keys = obs_keys
         self.action_key = action_key
         self.include_rewards = include_rewards
         self.include_dones = include_dones
-        self.total_frames = len(dataset)
     
     def __len__(self) -> int:
-        return self.total_frames
+        return len(self.frame_indices)
     
     def __getitem__(self, idx: int) -> dict[str, Any]:
-        """Extract single frame, converting tensors to numpy."""
+        """Extract single frame by local index."""
+        frame_idx = self.frame_indices[idx]
         try:
-            item = self.dataset[idx]
-        except Exception:
-            return {"index": idx, "valid": False}
+            item = self.dataset[frame_idx]
+        except Exception as e:
+            return {"local_idx": idx, "frame_idx": frame_idx, "valid": False, "error": str(e)}
         
-        result = {"index": idx, "valid": True}
+        result = {"local_idx": idx, "frame_idx": frame_idx, "valid": True}
         
         # Action
         if self.action_key in item:
@@ -173,45 +175,55 @@ class FrameExtractionDataset(Dataset):
         return result
 
 
-def extract_all_frames(
+def extract_episode_frames(
     dataset: LeRobotDataset,
+    from_idx: int,
+    to_idx: int,
     obs_keys: set[str],
     action_key: str,
     config: ConversionConfig,
-) -> dict[int, Frame]:
+) -> list[Frame] | None:
     """
-    Extract all frames from dataset using DataLoader for parallel loading.
+    Extract frames for a single episode using DataLoader.
     
     Returns:
-        Dictionary mapping frame index to Frame object.
+        List of Frame objects in order, or None if extraction fails.
     """
-    extraction_dataset = FrameExtractionDataset(
+    frame_indices = list(range(from_idx, to_idx))
+    if len(frame_indices) == 0:
+        return None
+    
+    ep_dataset = EpisodeFrameDataset(
         dataset=dataset,
+        frame_indices=frame_indices,
         obs_keys=obs_keys,
         action_key=action_key,
         include_rewards=config.include_rewards,
         include_dones=config.include_dones,
     )
     
+    # Use DataLoader for parallel extraction within this episode
     loader = DataLoader(
-        extraction_dataset,
+        ep_dataset,
         batch_size=config.extraction_batch_size,
         shuffle=False,
         num_workers=config.extraction_num_workers,
         pin_memory=False,
-        collate_fn=lambda batch: batch,  # Return list of dicts
+        collate_fn=lambda batch: batch,
     )
     
-    frames: dict[int, Frame] = {}
+    # Collect frames (may arrive out of order due to parallel loading)
+    frames_dict: dict[int, Frame] = {}
     
-    for batch in tqdm(loader, desc="  Extracting frames"):
+    for batch in loader:
         for item in batch:
+            local_idx = item["local_idx"]
             if not item.get("valid", False):
-                frames[item["index"]] = Frame(index=item["index"], valid=False)
+                frames_dict[local_idx] = Frame(index=item["frame_idx"], valid=False)
                 continue
             
-            frames[item["index"]] = Frame(
-                index=item["index"],
+            frames_dict[local_idx] = Frame(
+                index=item["frame_idx"],
                 action=item.get("action"),
                 observations=item.get("obs", {}),
                 reward=item.get("reward", 0.0),
@@ -219,12 +231,9 @@ def extract_all_frames(
                 valid=True,
             )
     
-    return frames
+    # Return frames in order
+    return [frames_dict[i] for i in range(len(frame_indices)) if i in frames_dict]
 
-
-# =============================================================================
-# Episode Splitting (Step 2: Group frames into episodes)
-# =============================================================================
 
 def get_episode_metadata(dataset: LeRobotDataset) -> tuple[list[dict], dict[int, str]]:
     """Extract episode boundaries and task mapping from dataset metadata."""
@@ -259,81 +268,52 @@ def get_episode_metadata(dataset: LeRobotDataset) -> tuple[list[dict], dict[int,
     return episodes, task_map
 
 
-def split_into_episodes(
-    frames: dict[int, Frame],
-    episode_metadata: list[dict],
-    task_map: dict[int, str],
-    repo_id: str,
+def frames_to_episode_data(
+    frames: list[Frame],
+    ep_idx: int,
+    language_instruction: str,
     obs_keys: set[str],
     config: ConversionConfig,
-) -> list[dict]:
-    """
-    Split extracted frames into episodes based on metadata.
+) -> dict | None:
+    """Convert list of frames to episode data dict."""
+    actions = []
+    obs_dict = {key: [] for key in obs_keys}
+    rewards = []
+    dones = []
     
-    Returns:
-        List of episode data dicts (not yet processed).
-    """
-    episodes = []
-    
-    for ep_meta in tqdm(episode_metadata, desc="  Splitting into episodes"):
-        ep_idx = ep_meta["index"]
-        from_idx = ep_meta["from_idx"]
-        to_idx = ep_meta["to_idx"]
-        
-        if to_idx <= from_idx:
+    for i, frame in enumerate(frames):
+        if not frame.valid:
             continue
         
-        # Get language instruction
-        language_instruction = None
-        if ep_meta.get("tasks"):
-            tasks = ep_meta["tasks"]
-            if isinstance(tasks, list) and len(tasks) > 0:
-                language_instruction = task_map.get(tasks[0], str(tasks[0]))
-        if language_instruction is None:
-            language_instruction = f"{repo_id} Episode {ep_idx}"
+        if frame.action is not None:
+            actions.append(frame.action)
         
-        # Collect frames for this episode
-        actions = []
-        obs_dict = {key: [] for key in obs_keys}
-        rewards = []
-        dones = []
+        for key in obs_keys:
+            if key in frame.observations:
+                obs_dict[key].append(frame.observations[key])
         
-        for frame_idx in range(from_idx, to_idx):
-            frame = frames.get(frame_idx)
-            if frame is None or not frame.valid:
-                continue
-            
-            if frame.action is not None:
-                actions.append(frame.action)
-            
-            for key in obs_keys:
-                if key in frame.observations:
-                    obs_dict[key].append(frame.observations[key])
-            
-            if config.include_rewards:
-                rewards.append(frame.reward)
-            
-            if config.include_dones:
-                is_last = (frame_idx == to_idx - 1)
-                dones.append(frame.done or is_last)
+        if config.include_rewards:
+            rewards.append(frame.reward)
         
-        if len(actions) == 0:
-            continue
-        
-        # Ensure last done is True
-        if config.include_dones and len(dones) > 0:
-            dones[-1] = True
-        
-        episodes.append({
-            "ep_idx": ep_idx,
-            "language_instruction": language_instruction,
-            "actions": actions,
-            "obs": obs_dict,
-            "rewards": rewards,
-            "dones": dones,
-        })
+        if config.include_dones:
+            is_last = (i == len(frames) - 1)
+            dones.append(frame.done or is_last)
     
-    return episodes
+    if len(actions) == 0:
+        return None
+    
+    # Ensure last done is True
+    if config.include_dones and len(dones) > 0:
+        dones[-1] = True
+    
+    return {
+        "ep_idx": ep_idx,
+        "language_instruction": language_instruction,
+        "actions": actions,
+        "obs": obs_dict,
+        "rewards": rewards,
+        "dones": dones,
+    }
 
 
 # =============================================================================
@@ -558,7 +538,7 @@ def convert_single_dataset(
     sentence_encoder: SentenceTransformer | None,
     demo_counter_start: int = 0,
 ) -> int:
-    """Convert a single LeRobot dataset to HDF5."""
+    """Convert a single LeRobot dataset to HDF5, processing one episode at a time."""
     print(f"\nLoading dataset: {repo_id}")
     
     # Load dataset
@@ -585,33 +565,67 @@ def convert_single_dataset(
     print(f"  Low-dim keys: {low_dim_keys}")
     print(f"  Action key: {action_key}")
     
-    # Step 1: Extract all frames
-    print(f"  Step 1: Extracting all frames...")
-    frames = extract_all_frames(dataset, obs_keys, action_key, config)
-    print(f"  Extracted {len(frames)} frames")
-    
-    # Step 2: Split into episodes
-    print(f"  Step 2: Splitting into episodes...")
+    # Get episode metadata
     episode_metadata, task_map = get_episode_metadata(dataset)
-    raw_episodes = split_into_episodes(frames, episode_metadata, task_map, repo_id, obs_keys, config)
-    print(f"  Split into {len(raw_episodes)} episodes")
+    print(f"  Processing {len(episode_metadata)} episodes (one at a time)...")
     
-    # Free memory
-    del frames
-    
-    # Step 3: Process episodes
-    print(f"  Step 3: Processing episodes...")
     demo_counter = demo_counter_start
+    failed_episodes = 0
     
-    for ep_data in tqdm(raw_episodes, desc="  Processing & writing"):
-        episode = process_episode(ep_data, repo_id, image_keys, config, norm_stats)
+    for ep_meta in tqdm(episode_metadata, desc="  Episodes"):
+        ep_idx = ep_meta["index"]
+        from_idx = ep_meta["from_idx"]
+        to_idx = ep_meta["to_idx"]
         
-        if episode is None:
+        if to_idx <= from_idx:
             continue
         
-        # Step 4: Write to HDF5
-        write_episode_to_h5(episode, data_group, sentence_encoder)
-        demo_counter += 1
+        # Get language instruction
+        language_instruction = None
+        if ep_meta.get("tasks"):
+            tasks = ep_meta["tasks"]
+            if isinstance(tasks, list) and len(tasks) > 0:
+                language_instruction = task_map.get(tasks[0], str(tasks[0]))
+        if language_instruction is None:
+            language_instruction = f"{repo_id} Episode {ep_idx}"
+        
+        try:
+            # Extract frames for this episode using DataLoader
+            frames = extract_episode_frames(
+                dataset, from_idx, to_idx, obs_keys, action_key, config
+            )
+            
+            if frames is None or len(frames) == 0:
+                failed_episodes += 1
+                continue
+            
+            # Convert frames to episode data
+            ep_data = frames_to_episode_data(
+                frames, ep_idx, language_instruction, obs_keys, config
+            )
+            
+            if ep_data is None:
+                failed_episodes += 1
+                continue
+            
+            # Process episode (normalize, resize, etc.)
+            episode = process_episode(ep_data, repo_id, image_keys, config, norm_stats)
+            
+            if episode is None:
+                failed_episodes += 1
+                continue
+            
+            # Write to HDF5
+            write_episode_to_h5(episode, data_group, sentence_encoder)
+            demo_counter += 1
+            
+        except Exception as e:
+            print(f"    Warning: Episode {ep_idx} failed: {e}")
+            failed_episodes += 1
+            continue
+    
+    if failed_episodes > 0:
+        print(f"  Warning: {failed_episodes} episodes failed to process")
     
     return demo_counter
 
@@ -782,5 +796,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

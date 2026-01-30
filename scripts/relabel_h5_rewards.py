@@ -37,6 +37,9 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
+# Disable HDF5 file locking for GPFS compatibility (must be set before importing h5py)
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+
 import h5py
 import numpy as np
 import torch
@@ -71,37 +74,82 @@ except ImportError:
     logger.warning("linspace_subsample_frames not available. Frame subsampling will be disabled.")
 
 
-def build_output_path_for_input(input_path: str, output_path: Optional[str], language_instruction: Optional[str] = None) -> str:
+def open_h5_with_retry(path: str, mode: str = "r", max_retries: int = 5, base_delay: float = 2.0):
+    """
+    Open an HDF5 file with retry logic for GPFS file locking issues.
+    
+    Args:
+        path: Path to the H5 file
+        mode: File mode ('r', 'w', 'a', etc.)
+        max_retries: Maximum number of retry attempts
+        base_delay: Base delay in seconds (will be exponentially increased)
+    
+    Returns:
+        h5py.File object
+    
+    Raises:
+        Exception: If all retries fail
+    """
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            # Try with locking disabled at the file level too
+            return h5py.File(path, mode, locking=False)
+        except (BlockingIOError, OSError) as e:
+            # Catch both BlockingIOError and OSError (GPFS can throw either)
+            last_error = e
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)  # Exponential backoff
+                logger.warning(
+                    f"GPFS file locking issue opening {path} (attempt {attempt + 1}/{max_retries}): {e}. "
+                    f"Retrying in {delay:.1f}s..."
+                )
+                time.sleep(delay)
+            else:
+                logger.error(f"Failed to open {path} after {max_retries} attempts: {e}")
+    raise last_error
+
+
+def build_output_path_for_input(
+    input_path: str,
+    output_path: Optional[str],
+    language_instruction: Optional[str] = None,
+    image_key: Optional[str] = None,
+    model: Optional[str] = None,
+) -> str:
     """
     Resolve the output file path for a given input H5.
     - If output_path is None: place next to input, with _relabeled suffix.
     - If output_path is an existing directory: write inside it with _relabeled suffix.
     - If a single input is used and output_path is a file path (endswith .h5): use that path.
-    - If language_instruction is provided, it will be incorporated into the filename (sanitized).
+    - If language_instruction, image_key, or model are provided, they will be incorporated into the filename (sanitized).
     """
     import re
-    
-    # Create a sanitized version of language instruction for filename
-    lang_suffix = ""
+
+    def _sanitize(s: str, max_len: int = 50) -> str:
+        s = s.replace("/", "_")
+        s = re.sub(r'[^\w\s\-.]', '', s)
+        s = re.sub(r'[-\s.]+', '_', s).strip('_')
+        return s[:max_len] if s else ""
+
+    suffixes = []
+    if model:
+        suffixes.append(f"model_{_sanitize(model, 50)}")
     if language_instruction:
-        # Sanitize: remove special chars, limit length, replace spaces with underscores
-        sanitized = re.sub(r'[^\w\s-]', '', language_instruction)
-        sanitized = re.sub(r'[-\s]+', '_', sanitized)
-        sanitized = sanitized[:50]  # Limit length
-        lang_suffix = f"_{sanitized}"
-    
+        suffixes.append(_sanitize(language_instruction, 50))
+    if image_key:
+        suffixes.append(f"img_{_sanitize(image_key, 40)}")
+    suffix = "_" + "_".join(suffixes) if suffixes else ""
+
     if output_path is None:
-        base = input_path.replace(".h5", f"_relabeled{lang_suffix}.h5")
-        return base
+        return input_path.replace(".h5", f"_relabeled{suffix}.h5")
     op = Path(output_path)
     if op.is_dir() or (output_path.endswith(os.sep) and not op.exists()):
-        # Directory (create later if needed)
         op = op if op.is_dir() else op
-        return str((op / (Path(input_path).stem + f"_relabeled{lang_suffix}.h5")).with_suffix(".h5"))
+        return str((op / (Path(input_path).stem + f"_relabeled{suffix}.h5")).with_suffix(".h5"))
     if output_path.lower().endswith(".h5"):
         return output_path
-    # Treat as directory string
-    return str((op / (Path(input_path).stem + f"_relabeled{lang_suffix}.h5")).with_suffix(".h5"))
+    return str((op / (Path(input_path).stem + f"_relabeled{suffix}.h5")).with_suffix(".h5"))
 
 
 def compute_env_reward(episode_len: int, sparse: bool) -> np.ndarray:
@@ -131,16 +179,17 @@ def copy_group_with_relabel(
     rewards_map: Dict[str, np.ndarray],
     root_group: h5py.Group,
     sparse_env_reward: bool = False,
+    success_preds_map: Optional[Dict[str, np.ndarray]] = None,
 ):
     """
     Recursively copy src_group to dst_group, replacing 'rewards' dataset when encountered.
-    Also creates 'progress_reward' and 'env_reward' datasets.
+    Also creates 'progress_reward', 'env_reward', and optionally 'success_preds' datasets.
     """
     for key in src_group.keys():
         obj = src_group[key]
         if isinstance(obj, h5py.Group):
             sub_group = dst_group.create_group(key)
-            copy_group_with_relabel(obj, sub_group, demo_name, rewards_map, root_group, sparse_env_reward)
+            copy_group_with_relabel(obj, sub_group, demo_name, rewards_map, root_group, sparse_env_reward, success_preds_map)
         else:
             if key == "rewards":
                 # Get episode length
@@ -163,6 +212,10 @@ def copy_group_with_relabel(
                 dst_group.create_dataset("progress_reward", data=progress_reward, compression="gzip")
                 dst_group.create_dataset("env_reward", data=env_reward, compression="gzip")
                 dst_group.create_dataset("rewards", data=combined_rewards, compression="gzip")
+                
+                # Write success_preds if available
+                if success_preds_map is not None and demo_name in success_preds_map and success_preds_map[demo_name] is not None:
+                    dst_group.create_dataset("success_preds", data=success_preds_map[demo_name], compression="gzip")
             else:
                 # Copy dataset with compression if it's large
                 if obj.size > 1000:
@@ -233,18 +286,19 @@ def relabel_episode_with_baseline(
     test_batched: bool = False,
     use_batched: Optional[bool] = None,
     use_frame_steps: bool = False,
-) -> Optional[np.ndarray]:
+) -> tuple[Optional[np.ndarray], Optional[np.ndarray]]:
     """
     Relabel rewards for a single episode using a baseline model (GVL, VLAC, RoboReward, RFMModel).
     
     Returns:
-        Array of relabeled rewards, or None if relabeling failed
+        Tuple of (rewards array, success_preds array or None). Returns (None, None) if relabeling failed.
     """
     # Extract frames
     frames = extract_frames_from_episode(demo_group, image_keys)
+
     if frames is None:
         logger.warning(f"Episode {demo_name}: No images found, skipping relabeling")
-        return None
+        return None, None
     
     logger.debug(f"Episode {demo_name}: Extracted {len(frames)} frames with shape {frames.shape}")
     
@@ -303,13 +357,14 @@ def relabel_episode_with_baseline(
             # 4. Interpolate back to full trajectory length
             logger.debug(f"Episode {demo_name}: Using frame-step mode with linspace subsampling (use_frame_steps=True)")
             
-            num_frames = len(frames)
-            num_subsequences = 8
+            # num_frames = len(frames)
+            # num_subsequences = 8
             
-            # Get linspace indices for subsequence endpoints
-            # E.g., for 100 frames and 8 subsequences: [0, 14, 28, 42, 57, 71, 85, 99]
-            subsequence_end_indices = np.linspace(0, num_frames - 1, num_subsequences, dtype=int)
-            logger.debug(f"Episode {demo_name}: Using {num_subsequences} subsequences at indices: {subsequence_end_indices.tolist()}")
+            # # Get linspace indices for subsequence endpoints
+            # # E.g., for 100 frames and 8 subsequences: [0, 14, 28, 42, 57, 71, 85, 99]
+            # subsequence_end_indices = np.linspace(0, num_frames - 1, num_subsequences, dtype=int)
+            # logger.debug(f"Episode {demo_name}: Using {num_subsequences} subsequences at indices: {subsequence_end_indices.tolist()}")
+            subsequence_end_indices = list(range(0, len(frames)))
             
             # Build subsequences
             batch_subsequences_list = []
@@ -328,30 +383,30 @@ def relabel_episode_with_baseline(
             
             logger.info(f"Episode {demo_name}: Built {len(batch_subsequences_list)} subsequences for batched processing")
             
-            # Check if batched method is available
-            has_batched_method = hasattr(baseline_model, "compute_progress_batched")
-            
-            # Call compute_progress_batched once on all subsequences
-            logger.debug(f"Episode {demo_name}: Calling compute_progress_batched with {len(batch_subsequences_list)} subsequences")
-            start_time = time.time()
-            batch_progress_results = baseline_model.compute_progress_batched(
-                batch_subsequences_list, task_descriptions_list
-            )
-            elapsed_time = time.time() - start_time
-            logger.info(f"Episode {demo_name}: Batched call completed in {elapsed_time:.3f}s ({elapsed_time/len(batch_subsequences_list)*1000:.2f}ms per subsequence)")
-            
-            # Extract last values from batched results
+            # Call compute_progress_batched in chunks of batch_size
+            chunk_size = batch_size
             sampled_progress = []
-            for result_list in batch_progress_results:
-                if isinstance(result_list, list) and len(result_list) > 0:
-                    sampled_progress.append(float(result_list[-1]) if result_list[-1] is not None else 0.0)
-                elif isinstance(result_list, np.ndarray) and len(result_list) > 0:
-                    sampled_progress.append(float(result_list[-1]) if result_list[-1] is not None else 0.0)
-                else:
-                    sampled_progress.append(0.0)
+            start_time = time.time()
+            for chunk_start in tqdm(range(0, len(batch_subsequences_list), chunk_size), desc=f"batching progress"):
+                chunk_end = min(chunk_start + chunk_size, len(batch_subsequences_list))
+                sub_list = batch_subsequences_list[chunk_start:chunk_end]
+                task_list = task_descriptions_list[chunk_start:chunk_end]
+                batch_progress_results = baseline_model.compute_progress_batched(sub_list, task_list)
+                for result_list in batch_progress_results:
+                    if isinstance(result_list, list) and len(result_list) > 0:
+                        sampled_progress.append(float(result_list[-1]) if result_list[-1] is not None else 0.0)
+                    elif isinstance(result_list, np.ndarray) and len(result_list) > 0:
+                        sampled_progress.append(float(result_list[-1]) if result_list[-1] is not None else 0.0)
+                    else:
+                        sampled_progress.append(0.0)
+            elapsed_time = time.time() - start_time
+            logger.info(
+                f"Episode {demo_name}: Batched calls completed in {elapsed_time:.3f}s "
+                f"({elapsed_time/len(batch_subsequences_list)*1000:.2f}ms per subsequence, chunk_size={chunk_size})"
+            )
             
             progress_array = np.array(sampled_progress, dtype=np.float32)
-            logger.debug(f"Episode {demo_name}: Got {len(sampled_progress)} progress values: {progress_array.tolist()}")
+            logger.debug(f"Episode {demo_name}: Got {len(sampled_progress)} progress values")
         
         # Normalize to [0, 1] if needed (some models return [0, 100] or [1, 5])
         if progress_array.max() > 1.0:
@@ -365,12 +420,13 @@ def relabel_episode_with_baseline(
         rewards = progress_array
         logger.info(
             f"Episode {demo_name}: Relabeling complete - rewards range: [{rewards.min():.4f}, {rewards.max():.4f}], "
-            f"mean: {rewards.mean():.4f}, std: {rewards.std():.4f}"
+            f"mean: {rewards.mean():.4f}, std: {rewards.std():.4f}, shape: {rewards.shape}", 
         )
-        return rewards
+        # Baseline models don't provide success predictions
+        return rewards, None
     except Exception as e:
         logger.error(f"Episode {demo_name}: Error relabeling rewards: {e}", exc_info=True)
-        return None
+        return None, None
 
 
 def relabel_episode(
@@ -392,18 +448,18 @@ def relabel_episode(
     test_batched: bool = False,
     use_batched: Optional[bool] = None,
     use_frame_steps: bool = False,
-) -> Optional[np.ndarray]:
+) -> tuple[Optional[np.ndarray], Optional[np.ndarray]]:
     """
     Relabel rewards for a single episode.
     
     Returns:
-        Array of relabeled rewards, or None if relabeling failed
+        Tuple of (rewards array, success_preds array or None). Returns (None, None) if relabeling failed.
     """
     # Extract frames
     frames = extract_frames_from_episode(demo_group, image_keys)
     if frames is None:
         logger.warning(f"Episode {demo_name}: No images found, skipping relabeling")
-        return None
+        return None, None
     
     logger.debug(f"Episode {demo_name}: Extracted {len(frames)} frames with shape {frames.shape}")
     
@@ -412,7 +468,7 @@ def relabel_episode(
         language_instruction = get_language_instruction(demo_group)
     logger.debug(f"Episode {demo_name}: Language instruction: {language_instruction[:100]}...")
     
-    # Use baseline model if specified
+    # Use baseline model if specified (returns tuple already)
     if reward_model_type in ["gvl", "vlac", "roboreward"]:
         if baseline_model is not None or baseline_eval_server_url is not None:
             return relabel_episode_with_baseline(
@@ -465,14 +521,24 @@ def relabel_episode(
         
         # Use progress predictions as rewards
         rewards = np.array(progress_predictions, dtype=np.float32)
-        logger.info(
-            f"Episode {demo_name}: Relabeling complete - rewards range: [{rewards.min():.4f}, {rewards.max():.4f}], "
-            f"mean: {rewards.mean():.4f}, std: {rewards.std():.4f}"
-        )
-        return rewards
+        
+        # Convert success_probs to numpy array if available
+        success_preds = None
+        if success_probs is not None:
+            success_preds = np.array(success_probs, dtype=np.float32)
+            logger.info(
+                f"Episode {demo_name}: Relabeling complete - rewards range: [{rewards.min():.4f}, {rewards.max():.4f}], "
+                f"mean: {rewards.mean():.4f}, success_preds range: [{success_preds.min():.4f}, {success_preds.max():.4f}]"
+            )
+        else:
+            logger.info(
+                f"Episode {demo_name}: Relabeling complete - rewards range: [{rewards.min():.4f}, {rewards.max():.4f}], "
+                f"mean: {rewards.mean():.4f}, std: {rewards.std():.4f}"
+            )
+        return rewards, success_preds
     except Exception as e:
         logger.error(f"Episode {demo_name}: Error relabeling rewards: {e}", exc_info=True)
-        return None
+        return None, None
 
 
 def find_image_keys(obs_group: h5py.Group) -> List[str]:
@@ -736,7 +802,13 @@ def main():
     # Process each H5 file
     total_stats = {"total": 0, "success": 0, "failed": 0}
     for file_idx, input_h5 in enumerate(h5_paths, 1):
-        output_h5 = build_output_path_for_input(input_h5, args.output_path, args.language_instruction)
+        model_for_path = args.reward_model_path or args.reward_model
+        output_h5 = build_output_path_for_input(
+            input_h5, args.output_path,
+            language_instruction=args.language_instruction,
+            image_key=args.image_key,
+            model=model_for_path,
+        )
         Path(output_h5).parent.mkdir(parents=True, exist_ok=True)
         logger.info(f"\n{'='*60}")
         logger.info(f"Processing file {file_idx}/{len(h5_paths)}: {input_h5}")
@@ -744,9 +816,10 @@ def main():
         logger.info(f"{'='*60}")
 
         rewards_map: Dict[str, np.ndarray] = {}
+        success_preds_map: Dict[str, np.ndarray] = {}
         stats = {"total": 0, "success": 0, "failed": 0, "skipped": 0}
 
-        with h5py.File(input_h5, "r") as infile:
+        with open_h5_with_retry(input_h5, "r") as infile:
             if "data" not in infile:
                 logger.warning(f"No 'data' group found in {input_h5}, skipping")
                 continue
@@ -808,7 +881,7 @@ def main():
                     use_batched = False
                 # Otherwise, None means auto-detect (default behavior)
                 
-                rewards = relabel_episode(
+                rewards, success_preds = relabel_episode(
                     demo_group=demo_group,
                     demo_name=demo_name,
                     image_keys=image_keys,
@@ -830,6 +903,8 @@ def main():
                 )
                 if rewards is not None:
                     rewards_map[demo_name] = rewards
+                    if success_preds is not None:
+                        success_preds_map[demo_name] = success_preds
                     stats["success"] += 1
                 else:
                     stats["failed"] += 1
@@ -844,6 +919,8 @@ def main():
             logger.info(f"  Total episodes: {stats['total']}")
             logger.info(f"  Successfully relabeled: {stats['success']}")
             logger.info(f"  Failed/Skipped: {stats['failed']}")
+            if success_preds_map:
+                logger.info(f"  Episodes with success_preds: {len(success_preds_map)}")
             if stats["total"] > 0:
                 success_rate = 100.0 * stats["success"] / stats["total"]
                 logger.info(f"  Success rate: {success_rate:.1f}%")
@@ -852,7 +929,7 @@ def main():
             logger.info(f"Writing relabeled file: {output_h5}")
             logger.debug(f"Rewards computed for {len(rewards_map)}/{len(demo_names)} episodes")
             
-            with h5py.File(output_h5, "w") as outfile:
+            with open_h5_with_retry(output_h5, "w") as outfile:
                 # Copy file-level attributes
                 logger.debug("Copying file-level attributes...")
                 for attr_name, attr_val in infile.attrs.items():
@@ -893,16 +970,20 @@ def main():
                         else:
                             progress_reward = np.zeros(episode_len, dtype=np.float32)
                         
-                        # Compute env reward
-                        env_reward = compute_env_reward(episode_len, args.sparse_env_reward)
+                        # # Compute env reward
+                        # env_reward = compute_env_reward(episode_len, args.sparse_env_reward)
                         
-                        # Combined rewards = env_reward + progress_reward
-                        combined_rewards = env_reward + progress_reward
+                        # # Combined rewards = env_reward + progress_reward
+                        # combined_rewards = env_reward + progress_reward
                         
-                        # Write all three reward fields
-                        dg_out.create_dataset("progress_reward", data=progress_reward, compression="gzip")
-                        dg_out.create_dataset("env_reward", data=env_reward, compression="gzip")
-                        dg_out.create_dataset("rewards", data=combined_rewards, compression="gzip")
+                        # # Write all three reward fields
+                        # dg_out.create_dataset("progress_reward", data=progress_reward, compression="gzip")
+                        # dg_out.create_dataset("env_reward", data=env_reward, compression="gzip")
+                        dg_out.create_dataset("rewards", data=progress_reward, compression="gzip")
+                        
+                        # Write success_preds if available
+                        if demo_name in success_preds_map and success_preds_map[demo_name] is not None:
+                            dg_out.create_dataset("success_preds", data=success_preds_map[demo_name], compression="gzip")
                         
                         # Write language instruction
                         if args.language_instruction is not None:
@@ -929,7 +1010,7 @@ def main():
                     for demo_name in tqdm(demo_names, desc="  Writing episodes", leave=False):
                         dg_in = in_data[demo_name]
                         dg_out = out_data.create_group(demo_name)
-                        copy_group_with_relabel(dg_in, dg_out, demo_name, rewards_map, dg_in, args.sparse_env_reward)
+                        copy_group_with_relabel(dg_in, dg_out, demo_name, rewards_map, dg_in, args.sparse_env_reward, success_preds_map)
                         # Copy demo attributes
                         for attr_name, attr_val in dg_in.attrs.items():
                             dg_out.attrs[attr_name] = attr_val

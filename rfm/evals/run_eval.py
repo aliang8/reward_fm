@@ -406,7 +406,6 @@ def run_progress_server(
         success_probs=success_array,
         success_labels=None,  # No ground truth labels available
         is_discrete_mode=False,
-        num_bins=10,
         title=f"Progress & Success - {video_name}",
     )
 
@@ -674,7 +673,6 @@ def run_progress_model(
         success_probs=success_array,
         success_labels=None,  # No ground truth labels available
         is_discrete_mode=False,
-        num_bins=10,
         title=f"Progress & Success - {video_name}",
     )
 

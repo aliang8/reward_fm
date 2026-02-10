@@ -4,10 +4,10 @@ FastAPI server to evaluate RFM model batches with a multi-GPU service layer.
 
 Usage example:
     uv run python rfm/evals/eval_server.py \
-        model_path=rewardfm/pref_prog_2frames_all \
-        batch_size=32 \
+        model_path=rewardfm/rfm_qwen_pref_prog_4frames_all_strategy \
+        batch_size=16 \
         num_gpus=1 \
-        server_port=8000
+        server_port=8001
 
 Endpoints:
   POST /evaluate_batch        - JSON payload
@@ -45,13 +45,17 @@ from hydra import main as hydra_main
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from rfm.evals.eval_utils import extract_answer_from_text
+from rfm.evals.eval_utils import (
+    extract_answer_from_text,
+    parse_npy_form_data,
+    reconstruct_payload_from_npy,
+)
 from rfm.utils.save import load_model_from_hf
 from rfm.configs.eval_configs import EvalServerConfig
 from rfm.configs.experiment_configs import ExperimentConfig
 from rfm.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample
 from rfm.utils.setup_utils import setup_model_and_processor, setup_batch_collator
-from rfm.models.utils import ModelOutput
+from rfm.models.utils import ModelOutput, convert_bins_to_continuous, convert_bins_to_continuous_hard
 from rfm.utils.config_utils import display_config, convert_hydra_to_dataclass
 from rfm.utils.logger import get_logger, setup_loguru_logging
 
@@ -70,6 +74,80 @@ def log_logits(name: str, value: Any) -> None:
             log_logits(f"{name}.{key}", sub_value)
     elif isinstance(value, list):
         logger.debug(f"{name}: {value}")
+
+
+def aggregate_frame_step_predictions(
+    outputs: Dict[str, Any],
+    sample_frame_counts: List[int],
+    outputs_success: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Aggregate frame-step predictions back into full sequences.
+
+    Args:
+        outputs: Dict containing progress predictions from sub-samples
+        sample_frame_counts: List indicating how many frames each original sample had
+        outputs_success: Optional dict containing success predictions
+
+    Returns:
+        Aggregated outputs with full sequences per original sample
+    """
+    progress_pred = outputs.get("progress_pred", [])
+
+    # Aggregate progress predictions
+    aggregated_progress = []
+    current_idx = 0
+
+    for num_frames in sample_frame_counts:
+        if num_frames == 1:
+            # Non-progress sample or single-frame sample, pass through
+            if current_idx < len(progress_pred):
+                aggregated_progress.append(progress_pred[current_idx])
+                current_idx += 1
+            else:
+                aggregated_progress.append([])
+        else:
+            # Collect predictions from sub-samples and extract last prediction from each
+            sample_predictions = []
+            for i in range(num_frames):
+                if current_idx < len(progress_pred):
+                    sub_pred = progress_pred[current_idx]
+                    # Extract the last (and only meaningful) prediction from this sub-sample
+                    if isinstance(sub_pred, list) and len(sub_pred) > 0:
+                        sample_predictions.append(sub_pred[-1])
+                    current_idx += 1
+            aggregated_progress.append(sample_predictions)
+
+    aggregated_outputs = {"progress_pred": aggregated_progress}
+
+    # Aggregate success predictions if present
+    if outputs_success is not None:
+        success_probs = outputs_success.get("success_probs", [])
+        aggregated_success = []
+        current_idx = 0
+
+        for num_frames in sample_frame_counts:
+            if num_frames == 1:
+                if current_idx < len(success_probs):
+                    aggregated_success.append(success_probs[current_idx])
+                    current_idx += 1
+                else:
+                    aggregated_success.append([])
+            else:
+                # Collect success predictions from sub-samples
+                sample_success = []
+                for i in range(num_frames):
+                    if current_idx < len(success_probs):
+                        sub_success = success_probs[current_idx]
+                        # Extract the last prediction from this sub-sample
+                        if isinstance(sub_success, list) and len(sub_success) > 0:
+                            sample_success.append(sub_success[-1])
+                        current_idx += 1
+                aggregated_success.append(sample_success)
+
+        aggregated_outputs["outputs_success"] = {"success_probs": aggregated_success}
+
+    return aggregated_outputs
 
 
 def forward_model(
@@ -108,6 +186,9 @@ def process_batch_helper(
     device: torch.device,
     batch_data: List[Dict[str, Any]],
     job_id: int = 0,
+    is_discrete_mode: bool = False,
+    num_bins: int = 10,
+    use_frame_steps: bool = False,
 ) -> Dict[str, Any]:
     """Synchronous batch processing on specific GPU."""
     if not batch_data:
@@ -132,6 +213,72 @@ def process_batch_helper(
         else:
             raise ValueError(f"Unsupported sample object type: {type(sample)}")
 
+    # Handle frame steps for progress samples - expand into sub-samples, each subsampled to 4 frames
+    # so they can be batched together (all same size)
+    NUM_SUBSAMPLED_FRAMES = 4
+
+    if use_frame_steps:
+        expanded_samples = []
+        sample_frame_counts = []  # Track how many sub-samples each original sample generates
+
+        for sample in input_samples:
+            if isinstance(sample, ProgressSample):
+                # Get the frames from the trajectory
+                frames = sample.trajectory.frames
+                num_frames = frames.shape[0] if hasattr(frames, "shape") else len(frames)
+
+                # Create sub-samples with increasing frame counts: 0:1, 0:2, 0:3, ..., 0:T
+                # Each sub-sample is subsampled to NUM_SUBSAMPLED_FRAMES frames using linspace
+                for i in range(1, num_frames + 1):
+                    # Use linspace to select frame indices from 0 to i-1
+                    # This ensures all sub-samples have the same number of frames for batching
+                    indices = np.linspace(0, i - 1, NUM_SUBSAMPLED_FRAMES, dtype=int)
+                    sub_frames = frames[indices]
+
+                    sub_trajectory = copy.deepcopy(sample.trajectory)
+                    sub_trajectory.frames = sub_frames
+                    sub_trajectory.frames_shape = (
+                        sub_frames.shape if hasattr(sub_frames, "shape") else (len(sub_frames),)
+                    )
+
+                    # Adjust target_progress and success_label if they exist (also subsample)
+                    if hasattr(sub_trajectory, "target_progress") and sub_trajectory.target_progress is not None:
+                        orig_progress = sub_trajectory.target_progress[:i]
+                        if len(orig_progress) > 0:
+                            sub_trajectory.target_progress = (
+                                np.array(orig_progress)[indices].tolist()
+                                if hasattr(orig_progress, "__len__")
+                                else orig_progress
+                            )
+                    if hasattr(sub_trajectory, "success_label") and sub_trajectory.success_label is not None:
+                        orig_success = sub_trajectory.success_label[:i]
+                        if len(orig_success) > 0:
+                            sub_trajectory.success_label = (
+                                np.array(orig_success)[indices].tolist()
+                                if hasattr(orig_success, "__len__")
+                                else orig_success
+                            )
+
+                    # Create sub-sample
+                    sub_sample = ProgressSample(
+                        trajectory=sub_trajectory,
+                        data_gen_strategy=sample.data_gen_strategy,
+                    )
+                    expanded_samples.append(sub_sample)
+
+                sample_frame_counts.append(num_frames)
+            else:
+                # Non-progress samples are passed through unchanged
+                expanded_samples.append(sample)
+                sample_frame_counts.append(1)
+
+        input_samples = expanded_samples
+        logger.debug(
+            f"[job {job_id}] Expanded {len(sample_frame_counts)} samples into {len(input_samples)} sub-samples with frame steps (each subsampled to {NUM_SUBSAMPLED_FRAMES} frames)"
+        )
+    else:
+        sample_frame_counts = None
+
     batch_inputs = batch_collator(input_samples)
 
     # Move inputs to the correct GPU
@@ -148,6 +295,7 @@ def process_batch_helper(
     outputs_preference = None
     outputs_progress = None
     outputs_similarity = None
+    outputs_success = None
 
     num_preferences = batch_inputs.get("num_preferences", 0)
     num_progress = batch_inputs.get("num_progress", 0)
@@ -171,9 +319,9 @@ def process_batch_helper(
                 tokenizer,
                 batch_inputs["preference_inputs"],
                 sample_type="preference",
+                is_discrete_mode=is_discrete_mode,
+                num_bins=num_bins,
             )
-    else:
-        outputs_preference = None
 
     if num_progress > 0:
         if model_type == "vqa":
@@ -186,7 +334,18 @@ def process_batch_helper(
                 tokenizer,
                 batch_inputs["progress_inputs"],
                 sample_type="progress",
+                is_discrete_mode=is_discrete_mode,
+                num_bins=num_bins,
             )
+
+        if "outputs_success" in outputs_progress:
+            outputs_success = outputs_progress.pop("outputs_success")
+
+        # Aggregate frame-step predictions back into full sequences
+        if use_frame_steps and sample_frame_counts is not None:
+            outputs_progress = aggregate_frame_step_predictions(outputs_progress, sample_frame_counts, outputs_success)
+            if outputs_success is not None:
+                outputs_success = outputs_progress.pop("outputs_success", None)
 
     if num_similarities > 0:
         if model_type == "vqa":
@@ -196,11 +355,14 @@ def process_batch_helper(
             tokenizer,
             batch_inputs["similarity_inputs"],
             sample_type="similarity",
+            is_discrete_mode=is_discrete_mode,
+            num_bins=num_bins,
         )
 
     return {
         "outputs_preference": outputs_preference,
         "outputs_progress": outputs_progress,
+        "outputs_success": outputs_success,
         "outputs_similarity": outputs_similarity,
     }
 
@@ -227,6 +389,7 @@ class MultiGPUEvalServer:
             model_path=self.model_path,
             device=torch.device("cpu"),
         )
+
         self.exp_config: ExperimentConfig = exp_config
         self.base_tokenizer = tokenizer
         self.base_processor = processor
@@ -312,6 +475,28 @@ class MultiGPUEvalServer:
         self.gpu_stats[gpu_info["gpu_id"]]["last_used"] = start_time
 
         try:
+            # Determine if discrete mode is enabled
+            progress_loss_type = getattr(self.exp_config.loss, "progress_loss_type", "l2")
+            is_discrete_mode = progress_loss_type.lower() == "discrete"
+            num_bins = getattr(
+                self.exp_config.loss,
+                "progress_discrete_bins",
+                getattr(self.exp_config.model, "progress_discrete_bins", 10),
+            )
+
+            # Extract use_frame_steps flag from batch_data (if present)
+            use_frame_steps = False
+            actual_batch_data = batch_data
+            if isinstance(batch_data, dict) and "samples" in batch_data:
+                use_frame_steps = batch_data.get("use_frame_steps", False)
+                actual_batch_data = batch_data["samples"]
+            elif isinstance(batch_data, dict) and "use_frame_steps" in batch_data:
+                # Legacy format: extract use_frame_steps and assume rest is data
+                use_frame_steps = batch_data.get("use_frame_steps", False)
+                actual_batch_data = [v for k, v in batch_data.items() if k != "use_frame_steps"]
+                if len(actual_batch_data) == 1 and isinstance(actual_batch_data[0], list):
+                    actual_batch_data = actual_batch_data[0]
+
             # Process batch in thread pool
             result = await loop.run_in_executor(
                 self.executor,
@@ -321,8 +506,11 @@ class MultiGPUEvalServer:
                 gpu_info["tokenizer"],
                 gpu_info["batch_collator"],
                 gpu_info["device"],
-                batch_data,
+                actual_batch_data,
                 job_id,
+                is_discrete_mode,
+                num_bins,
+                use_frame_steps,
             )
 
             # Update stats
@@ -370,7 +558,12 @@ class MultiGPUEvalServer:
 
 
 def compute_batch_outputs(
-    model: Any, tokenizer: Any, batch_inputs: Dict[str, torch.Tensor], sample_type: str
+    model: Any,
+    tokenizer: Any,
+    batch_inputs: Dict[str, torch.Tensor],
+    sample_type: str,
+    is_discrete_mode: bool = False,
+    num_bins: int = 10,
 ) -> Dict[str, Any]:
     """
     Run a forward pass for non-VQA models and return the raw head outputs we
@@ -402,53 +595,44 @@ def compute_batch_outputs(
             "preference_labels": batch_inputs["preference_labels"].cpu().tolist(),
         })
 
-        logger.debug(f"predictions: {results['predictions']}")
-        logger.debug(f"prediction_probs: {results['prediction_probs']}")
-        logger.debug(f"preference_labels: {results['preference_labels']}")
+        # logger.debug(f"predictions: {results['predictions']}")
+        # logger.debug(f"prediction_probs: {results['prediction_probs']}")
+        # logger.debug(f"preference_labels: {results['preference_labels']}")
 
-    # Progress predictions (used by both preference + progress sample types)
+    # Progress predictions (only for progress sample type)
     progress_logits = model_output.progress_logits
-    if progress_logits is not None and isinstance(progress_logits, dict):
-        if sample_type == "preference":
-            progress_pred_chosen: List[List[float]] = []
-            progress_pred_rejected: List[List[float]] = []
-            preference_labels = results.get("preference_labels", batch_inputs["preference_labels"].cpu().tolist())
-            seq_A = progress_logits.get("A")
-            seq_B = progress_logits.get("B")
+    if progress_logits is not None and isinstance(progress_logits, dict) and sample_type == "progress":
+        progress_pred = []
+        seq_A = progress_logits.get("A")
 
-            # Convert tensors to lists
-            seq_A_list = [seq_A[i] for i in range(seq_A.shape[0])] if seq_A is not None else []
-            seq_B_list = [seq_B[i] for i in range(seq_B.shape[0])] if seq_B is not None else []
+        # Convert tensor to list
+        seq_A_list = [seq_A[i] for i in range(seq_A.shape[0])] if seq_A is not None else []
 
-            for label, seq_A_item, seq_B_item in zip(preference_labels, seq_A_list, seq_B_list, strict=False):
-                if label == 1.0:
-                    chosen_seq, rejected_seq = seq_A_item, seq_B_item
-                else:
-                    chosen_seq, rejected_seq = seq_B_item, seq_A_item
-                progress_pred_chosen.append([] if chosen_seq is None else chosen_seq.detach().cpu().flatten().tolist())
-                progress_pred_rejected.append(
-                    [] if rejected_seq is None else rejected_seq.detach().cpu().flatten().tolist()
-                )
-            results.update({
-                "progress_pred_chosen": progress_pred_chosen,
-                "progress_pred_rejected": progress_pred_rejected,
-            })
-            logger.debug(f"progress_pred_chosen: {progress_pred_chosen}")
-            logger.debug(f"progress_pred_rejected: {progress_pred_rejected}")
-        elif sample_type == "progress":
-            progress_pred = []
-            seq_A = progress_logits.get("A")
+        # Process seq_A
+        for seq_A_item in seq_A_list:
+            if seq_A_item is None:
+                progress_pred.append([])
+            elif is_discrete_mode:
+                # seq_A_item is [seq_len, num_bins] logits, convert entire sequence to continuous
+                continuous_pred = convert_bins_to_continuous(seq_A_item.detach().cpu().float())
+                # continuous_pred = convert_bins_to_continuous_hard(seq_A_item.detach().cpu().float())
+                progress_pred.append(continuous_pred.numpy().flatten().tolist())
+            else:
+                progress_pred.append(seq_A_item.detach().cpu().flatten().tolist())
 
-            # Convert tensor to list
-            seq_A_list = [seq_A[i] for i in range(seq_A.shape[0])] if seq_A is not None else []
+        if not progress_pred:
+            batch_size = len(batch_inputs.get("task", []))
+            progress_pred = [[] for _ in range(batch_size)]
 
-            for seq_A_item in seq_A_list:
-                progress_pred.append([] if seq_A_item is None else seq_A_item.detach().cpu().flatten().tolist())
-            if not progress_pred:
-                batch_size = len(batch_inputs.get("task", []))
-                progress_pred = [[] for _ in range(batch_size)]
-            results["progress_pred"] = progress_pred
-            logger.debug(f"progress_pred: {progress_pred}")
+        results["progress_pred"] = progress_pred
+        # logger.debug(f"progress_pred: {progress_pred}")
+        if model_output.success_logits is not None:
+            success_pred = model_output.success_logits["A"]
+            success_probs = torch.sigmoid(success_pred)
+            results["outputs_success"] = {
+                "success_probs": success_probs.detach().cpu().tolist(),
+            }
+            # logger.debug(f"success_probs: {success_probs}")
 
     # Similarity logits
     if sample_type == "similarity" and model_output.sim_logits is not None:
@@ -465,31 +649,41 @@ def compute_batch_outputs(
             sim_scores_list = sim_tensor.detach().cpu().flatten().tolist()
 
         num_samples = len(batch_inputs.get("task", []))
-        if num_samples == 0 and sim_scores_list:
-            num_samples = len(sim_scores_list) // 2
+
+        # Eval server is always in inference mode (only ref_sim, no ref_diff)
+        # In inference mode, batch structure is [ref_sim_0, ref_sim_1, ...]
+        # Assert that we have one score per sample (inference mode)
+        if num_samples > 0:
+            assert len(sim_scores_list) == num_samples, (
+                f"Expected {num_samples} similarity scores (inference mode: one per sample), "
+                f"but got {len(sim_scores_list)} scores. This suggests the collator is not in inference mode."
+            )
+        elif sim_scores_list:
+            # Infer num_samples from list length (should be 1:1 ratio in inference mode)
+            num_samples = len(sim_scores_list)
+            assert num_samples % 2 != 0 or num_samples == 0, (
+                f"Got {num_samples} scores which is even - this suggests training mode structure. "
+                f"Eval server should always be in inference mode (one score per sample)."
+            )
 
         sim_score_ref_sim: List[Optional[float]] = []
-        sim_score_ref_diff: List[Optional[float]] = []
+
+        # Inference mode: one score per sample (only ref_sim)
         for i in range(num_samples):
-            idx_sim = i * 2
-            idx_diff = idx_sim + 1
-            sim_score_ref_sim.append(sim_scores_list[idx_sim] if idx_sim < len(sim_scores_list) else None)
-            sim_score_ref_diff.append(sim_scores_list[idx_diff] if idx_diff < len(sim_scores_list) else None)
+            sim_score_ref_sim.append(sim_scores_list[i] if i < len(sim_scores_list) else None)
 
         results.update({
             "sim_score_ref_sim": sim_score_ref_sim,
-            "sim_score_ref_diff": sim_score_ref_diff,
             "task": batch_inputs.get("task", []),
             "data_source": batch_inputs.get("data_source", []),
             "data_gen_strategy": batch_inputs.get("data_gen_strategy", []),
             "metadata": batch_inputs.get("metadata", []),
         })
 
-        logger.debug(f"sim_score_ref_sim: {sim_score_ref_sim}")
-        logger.debug(f"sim_score_ref_diff: {sim_score_ref_diff}")
-        logger.debug(f"task: {batch_inputs.get('task', [])}")
-        logger.debug(f"data_source: {batch_inputs.get('data_source', [])}")
-        logger.debug(f"data_gen_strategy: {batch_inputs.get('data_gen_strategy', [])}")
+        # logger.debug(f"sim_score_ref_sim: {sim_score_ref_sim}")
+        # logger.debug(f"task: {batch_inputs.get('task', [])}")
+        # logger.debug(f"data_source: {batch_inputs.get('data_source', [])}")
+        # logger.debug(f"data_gen_strategy: {batch_inputs.get('data_gen_strategy', [])}")
 
     return results
 
@@ -607,93 +801,43 @@ def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | Non
         # Parse form data
         form_data = await request.form()
 
-        # Extract numpy arrays from files
-        numpy_arrays = {}
-        other_data = {}
+        # Extract numpy arrays and other data using shared utility (await async function)
+        numpy_arrays, other_data = await parse_npy_form_data(form_data)
 
-        for key, value in form_data.items():
-            # Check if this is a file upload (UploadFile object)
-            if hasattr(value, "filename") and value.filename:
-                # This is a file upload
-                if value.filename.endswith(".npy"):
-                    # Load .npy file
-                    content = await value.read()
-                    buf = io.BytesIO(content)
-                    array = np.load(buf)
-                    numpy_arrays[key] = array
-                else:
-                    # Non-.npy file, skip for now
-                    continue
-            else:
-                # This is a string value (form field)
-                try:
-                    # Try to parse as JSON
-                    other_data[key] = json.loads(value)
-                except (json.JSONDecodeError, TypeError):
-                    # Keep as string if not JSON
-                    other_data[key] = value
+        # Extract use_frame_steps flag from other_data (handle both bool and string)
+        use_frame_steps_value = other_data.pop("use_frame_steps", False)
+        if isinstance(use_frame_steps_value, bool):
+            use_frame_steps = use_frame_steps_value
+        else:
+            use_frame_steps = str(use_frame_steps_value).lower() == "true"
 
-        # Reconstruct the original payload structure
-        batch_data = reconstruct_payload_from_npy(numpy_arrays, other_data)
+        # Reconstruct the original payload structure (RFM needs torch tensor conversion for embeddings)
+        batch_data = reconstruct_payload_from_npy(
+            numpy_arrays,
+            other_data,
+            trajectory_keys=[
+                "chosen_trajectory",
+                "rejected_trajectory",
+                "reference_trajectory",
+                "traj_sim_trajectory",
+                "traj_diff_trajectory",
+                "trajectory",
+            ],
+            convert_embeddings_to_torch=True,
+        )
+
+        # Add use_frame_steps flag to batch_data
+        batch_payload = {
+            "samples": batch_data,
+            "use_frame_steps": use_frame_steps,
+        }
 
         # Process the batch
         logger.debug(
             f"Received /evaluate_batch_npy request with {len(numpy_arrays)} numpy arrays "
-            f"and {len(other_data)} other fields"
+            f"and {len(other_data)} other fields, use_frame_steps={use_frame_steps}"
         )
-        return await multi_gpu_server.process_batch(batch_data)
-
-    def reconstruct_payload_from_npy(
-        numpy_arrays: Dict[str, np.ndarray], other_data: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
-        """Reconstruct the original payload structure from .npy files and form data.
-
-        The client sends data in this format:
-        - Files: sample_0_chosen_trajectory_frames.npy, sample_0_chosen_trajectory_lang_vector.npy, etc.
-        - Data: sample_0, sample_1, etc. (each containing the full sample JSON with numpy file references)
-
-        We need to reconstruct the original list of sample dictionaries.
-        """
-        samples = []
-
-        # Process each sample
-        for i in range(len(other_data)):
-            sample_key = f"sample_{i}"
-            if sample_key in other_data:
-                # Get the sample data - might already be parsed or might be a string
-                sample_data = other_data[sample_key]
-                if isinstance(sample_data, str):
-                    # Parse the sample JSON if it's a string
-                    sample_data = json.loads(sample_data)
-
-                # Replace numpy file references with actual arrays
-                for key, value in sample_data.items():
-                    if key in [
-                        "chosen_trajectory",
-                        "rejected_trajectory",
-                        "reference_trajectory",
-                        "traj_sim_trajectory",
-                        "traj_diff_trajectory",
-                        "trajectory",
-                    ]:
-                        if isinstance(value, dict):
-                            for traj_key, traj_value in value.items():
-                                if isinstance(traj_value, dict) and traj_value.get("__numpy_file__"):
-                                    # Replace with actual numpy array
-                                    file_key = traj_value["__numpy_file__"]
-                                    if file_key in numpy_arrays:
-                                        value[traj_key] = numpy_arrays[file_key]
-
-                                if traj_key in ["video_embeddings", "text_embedding"]:
-                                    if traj_key in value and value[traj_key] is not None:
-                                        if isinstance(value[traj_key], np.ndarray):
-                                            value[traj_key] = torch.tensor(value[traj_key])
-                                        elif isinstance(value[traj_key], list):
-                                            value[traj_key] = torch.tensor(value[traj_key])
-
-                samples.append(sample_data)
-
-        return samples
+        return await multi_gpu_server.process_batch(batch_payload)
 
     @app.get("/gpu_status")
     def get_gpu_status() -> Dict[str, Any]:

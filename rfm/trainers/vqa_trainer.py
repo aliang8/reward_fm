@@ -15,48 +15,27 @@ from rfm.data.collators.vqa import IGNORE_INDEX
 import numpy as np
 
 
-# copied because the original function forces the metric reduction
-def fixed_cross_entropy(
-    source: torch.Tensor,
-    target: torch.Tensor,
-    num_items_in_batch: torch.Tensor | None = None,
-    ignore_index: int = IGNORE_INDEX,
-    reduction: str = "mean",
-    **kwargs,
-) -> torch.Tensor:
-    loss = nn.functional.cross_entropy(source, target, ignore_index=ignore_index, reduction=reduction)
-    if reduction == "sum":
-        # just in case users pass an int for num_items_in_batch, which could be the case for custom trainer
-        if torch.is_tensor(num_items_in_batch):
-            num_items_in_batch = num_items_in_batch.to(loss.device)
-        loss = loss / num_items_in_batch
-    return loss
-
-
-def ForCausalLMLoss(
-    logits,
-    labels,
-    vocab_size: int,
-    num_items_in_batch: torch.Tensor | None = None,
-    ignore_index: int = IGNORE_INDEX,
-    shift_labels: torch.Tensor | None = None,
-    **kwargs,
-) -> torch.Tensor:
-    # Upcast to float if we need to compute the loss to avoid potential precision issues
+def ForCausalLMLoss(logits, labels, vocab_size, ignore_index=IGNORE_INDEX):
     logits = logits.float()
 
-    if shift_labels is None:
-        # Shift so that tokens < n predict n
-        labels = nn.functional.pad(labels, (0, 1), value=ignore_index)
-        shift_labels = labels[..., 1:].contiguous()
+    # logits: [B, T, V]
+    # labels: [B, T]
+    logits = logits[..., :-1, :].contiguous()
+    labels = labels[..., 1:].contiguous()
 
-    # Flatten the tokens
     logits = logits.view(-1, vocab_size)
-    shift_labels = shift_labels.view(-1)
-    # Enable model parallelism
-    shift_labels = shift_labels.to(logits.device)
-    loss = fixed_cross_entropy(logits, shift_labels, num_items_in_batch, ignore_index, **kwargs)
-    return loss
+    labels = labels.view(-1).to(logits.device)
+
+    return nn.functional.cross_entropy(
+        logits,
+        labels,
+        ignore_index=ignore_index,
+        reduction="mean",
+    )
+
+
+def process_progress_pred(progress):
+    return progress / 100
 
 
 class RFMVQATrainer(RFMHeadsTrainer):
@@ -64,6 +43,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
         super().__init__(config, *args, **kwargs)
         self._ddp_static_graph_set = False
         self.model_type_checked = False
+        assert self.config.loss.predict_last_frame_progress, "only supports last frame for now"
 
     def _get_model(self):
         # Clear any existing past_key_values in model if present
@@ -100,22 +80,8 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
         return metrics
 
-    def _aggregate_progress_logits(self, progress_logits, target_progress) -> list[list[float]]:
+    def _aggregate_progress_logits(self, progress_logits) -> list[list[float]]:
         # ensures all progress logits are the same length as each other
-
-        # get the mode of the target progress lengths
-        target_progress_lengths = []
-        for progress in target_progress:
-            if hasattr(progress, "shape"):
-                if progress.shape[-1] > 0:
-                    target_progress_lengths.append(progress.shape[-1])
-            else:
-                target_progress_lengths.append(len(progress))
-
-        if not target_progress_lengths:
-            return []
-
-        # target_progress_length_mode = statistics.mode(target_progress_lengths)
         max_frames = self.config.data.max_frames
 
         # aggregate by padding and truncating to the mode length
@@ -186,7 +152,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
                     do_sample=False,  # Greedy decoding for reproducibility
                     pad_token_id=model.tokenizer.pad_token_id,
                     eos_token_id=model.tokenizer.eos_token_id,
-                    use_cache=True,  # Disable KV caching to prevent OOM - slower but memory safe
+                    use_cache=False,  # Disable KV caching to prevent OOM - slower but memory safe
                 )
 
             # Decode only the generated part (not the input prompt)
@@ -206,14 +172,17 @@ class RFMVQATrainer(RFMHeadsTrainer):
             del generated_ids_sliced, pred_texts
 
             if sample_type == "progress":
-                progress_logits = self._aggregate_progress_logits(predictions, inputs["target_progress"])
+                progress_logits = self._aggregate_progress_logits(predictions)
+                progress_logits = process_progress_pred(
+                    torch.tensor(progress_logits, dtype=torch.float32, device=self.accelerator.device)
+                )
                 progress_logits = {"A": progress_logits, "B": None}
             elif sample_type == "preference":
                 pref_logits = []
                 for i, prediction in enumerate(predictions):
-                    if prediction == "A":
+                    if prediction == 1:
                         pref_logits.append(1)
-                    elif prediction == "B":
+                    elif prediction == 2:
                         pref_logits.append(0)
                     else:
                         pref_logits.append(-1)
@@ -221,6 +190,10 @@ class RFMVQATrainer(RFMHeadsTrainer):
 
             # Explicitly free all remaining references
             del gen_inputs, predictions
+
+            # Clear CUDA cache after generation to free memory from generate() internals
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
         # Create ModelOutput with all expected fields to match parent class expectations
         model_output = ModelOutput(
@@ -311,6 +284,13 @@ class RFMVQATrainer(RFMHeadsTrainer):
                 training=training,
             )
 
+        # Free combined inputs dict after loss computation
+        del combined, batches_to_combine, modes_per_sample
+
+        # Clear CUDA cache during evaluation to prevent memory accumulation
+        if not training and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         self.log_metadata = loss_dict
 
         if return_outputs:
@@ -368,36 +348,43 @@ class RFMVQATrainer(RFMHeadsTrainer):
             second_per_grid_ts=inputs.get("second_per_grid_ts"),
             use_cache=False,  # Disable KV caching for training
             return_dict=True,
+            labels=inputs["labels"],
         )
+        loss = outputs["loss"]
 
         # RFMVQA has model directly, handle DDP wrapping
         rfm_model = self.model.module if hasattr(self.model, "module") else self.model
-        # Handle different config structures for different models
-        # Qwen has text_config.vocab_size, SmolVLM has vocab_size directly
-        if hasattr(rfm_model.model.config, "text_config"):
-            vocab_size = rfm_model.model.config.text_config.vocab_size
-        else:
-            vocab_size = rfm_model.model.config.vocab_size
-
-        loss = ForCausalLMLoss(
-            logits=outputs["logits"],
-            labels=inputs["labels"],
-            vocab_size=vocab_size,
-            reduction="none",
-        )
+        # loss = ForCausalLMLoss(
+        #    logits=outputs["logits"],
+        #    labels=inputs["labels"],
+        #    vocab_size=outputs["logits"].shape[-1],
+        #    ignore_index=IGNORE_INDEX,
+        #    #reduction="mean",
+        # )
         # reshape
-        loss = loss.reshape(B, -1)
-        loss_per_example = loss.mean(dim=1)
-        loss = loss.mean()
+        # loss = loss.reshape(B, -1)
+
+        # loss_per_example = loss[loss != IGNORE_INDEX]
+        # loss_per_example = loss.mean(dim=1)
+        # loss = loss.mean()
 
         prefix = "train" if training else "eval"
         loss_dict = {f"{prefix}/combined_loss": loss.item()}
 
         # Compute predictions for all samples
         pred_ids = outputs["logits"].argmax(dim=-1)
+
+        # CRITICAL: Delete the large outputs tensor immediately after extracting pred_ids
+        # The logits tensor can be huge (batch × seq_len × vocab_size, where vocab_size ~32K+)
+        del outputs
+
         rfm_model = self.model.module if hasattr(self.model, "module") else self.model
         tokenizer = rfm_model.tokenizer
         pred_texts = tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
+
+        # Free pred_ids after decoding
+        del pred_ids
+
         extracted_answers = [extract_answer_from_text(text) for text in pred_texts]
 
         # Aggregate metrics per mode via simple for loop
@@ -408,23 +395,28 @@ class RFMVQATrainer(RFMHeadsTrainer):
         prog_data = []  # (loss, mse, source, strategy)
 
         for i, mode in enumerate(modes_per_sample):
-            mode_loss = loss_per_example[i].item()
+            # mode_loss = loss_per_example[i].item()
 
             if mode == "preference":
-                pred = extracted_answers[i]
-                label_map = {"A": 1, "B": 0}
-                pred_label = label_map.get(pred, -1)
-                # Get from original batch (index within preference batch)
-                pref_idx = sum(1 for j, m in enumerate(modes_per_sample[:i]) if m == "preference")
-                gt_label = pref_inputs["preference_labels"][pref_idx].item()
-                correct = 1.0 if pred_label == gt_label else 0.0
+                try:
+                    pred = extracted_answers[i]
+                    label_map = {1: 1, 2: 0}  # video 1 is A, video 2 is B
+                    pred_label = label_map.get(int(pred), -1)
+                    print(f"PREF PRED: {pred_label}")
+                    # Get from original batch (index within preference batch)
+                    pref_idx = sum(1 for j, m in enumerate(modes_per_sample[:i]) if m == "preference")
+                    gt_label = pref_inputs["preference_labels"][pref_idx].item()
+                    correct = 1.0 if pred_label == gt_label else 0.0
+                except Exception:
+                    correct = 0.0
 
                 # Get metadata
                 source = pref_inputs.get("data_source", [None] * len(pref_inputs["preference_labels"]))[pref_idx]
                 strategy = pref_inputs.get(
                     "rejected_data_gen_strategy", [None] * len(pref_inputs["preference_labels"])
                 )[pref_idx]
-                pref_data.append(dict(loss=mode_loss, correct=correct, source=source, strategy=strategy))
+                # pref_data.append(dict(loss=mode_loss, correct=correct, source=source, strategy=strategy))
+                pref_data.append(dict(correct=correct, source=source, strategy=strategy))
 
             elif mode == "progress":
                 pred = extracted_answers[i]
@@ -432,39 +424,48 @@ class RFMVQATrainer(RFMHeadsTrainer):
                 prog_idx = sum(1 for j, m in enumerate(modes_per_sample[:i]) if m == "progress")
                 gt = prog_inputs["target_progress"][prog_idx]
 
+                if self.config.loss.predict_last_frame_progress:
+                    gt = gt[-1]
+
                 mse = None
                 try:
+                    # breakpoint()
                     parsed = ast.literal_eval(pred)
-                    pred_tensor = torch.tensor(parsed, dtype=torch.float32)
-                    mse = F.mse_loss(pred_tensor, gt).item()
+                    pred_tensor = process_progress_pred(torch.tensor(parsed, dtype=torch.float32))
+                    if not isinstance(gt, list):
+                        gt = [gt]
+                    gt_tensor = torch.tensor(gt, dtype=torch.float32)
+                    print(f"PROG PRED: {pred_tensor}, {gt_tensor}")
+                    mse = F.mse_loss(pred_tensor, gt_tensor).item()
                 except Exception:
                     mse = None
                 # Get metadata
                 source = prog_inputs.get("data_source", [None] * len(prog_inputs["target_progress"]))[prog_idx]
                 strategy = prog_inputs.get("data_gen_strategy", [None] * len(prog_inputs["target_progress"]))[prog_idx]
-                prog_data.append(dict(loss=mode_loss, mse=mse, source=source, strategy=strategy))
+                # prog_data.append(dict(loss=mode_loss, mse=mse, source=source, strategy=strategy))
+                prog_data.append(dict(mse=mse, source=source, strategy=strategy))
 
         # Aggregate overall metrics
         if pref_data:
-            loss_dict[f"{prefix}/preference_loss"] = np.mean([x["loss"] for x in pref_data])
+            # loss_dict[f"{prefix}/preference_loss"] = np.mean([x["loss"] for x in pref_data])
             loss_dict[f"{prefix}/preference_acc"] = np.mean([x["correct"] for x in pref_data])
 
             # By data source
             sources = set(x["source"] for x in pref_data if x["source"] is not None)
             for source in sources:
                 source_data = [x for x in pref_data if x["source"] == source]
-                loss_dict[f"{prefix}_ds/pref_loss_{source}"] = np.mean([x["loss"] for x in source_data])
+                # loss_dict[f"{prefix}_ds/pref_loss_{source}"] = np.mean([x["loss"] for x in source_data])
                 loss_dict[f"{prefix}_ds/pref_acc_{source}"] = np.mean([x["correct"] for x in source_data])
 
             # By strategy
             strategies = set(x["strategy"] for x in pref_data if x["strategy"] is not None)
             for strategy in strategies:
                 strat_data = [x for x in pref_data if x["strategy"] == strategy]
-                loss_dict[f"{prefix}_strat/pref_loss_{strategy}"] = np.mean([x["loss"] for x in strat_data])
+                # loss_dict[f"{prefix}_strat/pref_loss_{strategy}"] = np.mean([x["loss"] for x in strat_data])
                 loss_dict[f"{prefix}_strat/pref_acc_{strategy}"] = np.mean([x["correct"] for x in strat_data])
 
         if prog_data:
-            loss_dict[f"{prefix}/progress_loss"] = np.mean([x["loss"] for x in prog_data])
+            # loss_dict[f"{prefix}/progress_loss"] = np.mean([x["loss"] for x in prog_data])
             mses = [x["mse"] for x in prog_data if x["mse"] is not None]
             if mses:
                 loss_dict[f"{prefix}/progress_mse"] = np.mean(mses)
@@ -473,7 +474,7 @@ class RFMVQATrainer(RFMHeadsTrainer):
             sources = set(x["source"] for x in prog_data if x["source"] is not None)
             for source in sources:
                 source_data = [x for x in prog_data if x["source"] == source]
-                loss_dict[f"{prefix}_ds/prog_loss_{source}"] = np.mean([x["loss"] for x in source_data])
+                # loss_dict[f"{prefix}_ds/prog_loss_{source}"] = np.mean([x["loss"] for x in source_data])
                 prog_mse = [x["mse"] for x in source_data if x["mse"] is not None]
                 if prog_mse:
                     loss_dict[f"{prefix}_ds/prog_mse_{source}"] = np.mean(prog_mse)
@@ -482,9 +483,12 @@ class RFMVQATrainer(RFMHeadsTrainer):
             strategies = set(x["strategy"] for x in prog_data if x["strategy"] is not None)
             for strategy in strategies:
                 strat_data = [x for x in prog_data if x["strategy"] == strategy]
-                loss_dict[f"{prefix}_strat/prog_loss_{strategy}"] = np.mean([x["loss"] for x in strat_data])
+                # loss_dict[f"{prefix}_strat/prog_loss_{strategy}"] = np.mean([x["loss"] for x in strat_data])
                 prog_mse = [x["mse"] for x in strat_data if x["mse"] is not None]
                 if prog_mse:
                     loss_dict[f"{prefix}_strat/prog_mse_{strategy}"] = np.mean(prog_mse)
+
+        # Clean up intermediate data structures
+        del pref_data, prog_data, extracted_answers
 
         return (loss, loss_dict) if return_outputs else loss

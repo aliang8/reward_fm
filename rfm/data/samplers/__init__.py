@@ -3,7 +3,6 @@ from rfm.data.samplers.pref import PrefSampler
 from rfm.data.samplers.sim import SimSampler
 from rfm.data.samplers.progress import ProgressSampler
 from rfm.data.samplers.eval.confusion_matrix import ConfusionMatrixSampler
-from rfm.data.samplers.eval.progress_default import ProgressDefaultSampler
 from rfm.data.samplers.eval.progress_policy_ranking import ProgressPolicyRankingSampler
 from rfm.data.samplers.eval.reward_alignment import RewardAlignmentSampler
 from rfm.data.samplers.eval.quality_preference import QualityPreferenceSampler
@@ -16,7 +15,6 @@ __all__ = [
     "SimSampler",
     "ProgressSampler",
     "ConfusionMatrixSampler",
-    "ProgressDefaultSampler",
     "ProgressPolicyRankingSampler",
     "RewardAlignmentSampler",
     "QualityPreferenceSampler",

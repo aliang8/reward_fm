@@ -12,14 +12,15 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial
 from multiprocessing import Pool, cpu_count
-from typing import Any
+from typing import Any, Optional
 
 from pyrallis import wrap
 from tqdm import tqdm
 
 import datasets
 from datasets import Dataset
-from rfm.data.dataset_types import Trajectory
+
+# from rfm.data.dataset_types import Trajectory  # not needed, just type hint
 from dataset_upload.helpers import (
     create_hf_trajectory,
     create_output_directory,
@@ -101,6 +102,7 @@ class DatasetConfig:
 
     dataset_path: str = field(default="", metadata={"help": "Path to the dataset"})
     dataset_name: str = field(default=None, metadata={"help": "Name of the dataset (defaults to dataset_type)"})
+    exclude_wrist_cam: bool = field(default=False, metadata={"help": "Exclude wrist camera views (MIT Franka only)"})
 
 
 @dataclass
@@ -115,7 +117,7 @@ class OutputConfig:
         default=64, metadata={"help": "Maximum number of frames per trajectory (-1 for no downsampling)"}
     )
     use_video: bool = field(default=True, metadata={"help": "Use MP4 videos instead of individual frame images"})
-    shortest_edge_size: int = field(default=240, metadata={"help": "Shortest edge size for video resizing"})
+    shortest_edge_size: Optional[int] = field(default=240, metadata={"help": "Shortest edge size for video resizing"})
     center_crop: bool = field(
         default=False,
         metadata={"help": "Center crop the video to the target size. Defaults to False, which means no cropping."},
@@ -194,7 +196,7 @@ def process_single_trajectory(args):
 
 def convert_dataset_to_hf_format(
     trajectories: list[dict],
-    hf_creator_fn: Callable[[dict, str, str, int, Any, int, str], Trajectory],
+    hf_creator_fn: Callable[[dict, str, str, int, Any, int, str], Any],
     output_dir: str = "rfm_dataset",
     dataset_name: str = "",
     max_trajectories: int | None = None,
@@ -815,6 +817,37 @@ def main(cfg: GenerateConfig):
             print(f"Dataset saved locally to: {dataset_path_local}")
         print("Dataset conversion complete!")
         return
+    elif "rfm_new_mit_franka" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.new_mit_franka_loader import convert_new_mit_franka_dataset_to_hf
+
+        print(f"Converting New MIT Franka dataset to HF from: {cfg.dataset.dataset_path}")
+        dataset = convert_new_mit_franka_dataset_to_hf(
+            dataset_path=cfg.dataset.dataset_path,
+            dataset_name=cfg.dataset.dataset_name,
+            output_dir=cfg.output.output_dir,
+            max_trajectories=cfg.output.max_trajectories,
+            max_frames=cfg.output.max_frames,
+            fps=cfg.output.fps,
+            num_workers=cfg.output.num_workers,
+            exclude_wrist_cam=cfg.dataset.exclude_wrist_cam,
+        )
+
+        # Handle pushing/saving consistently
+        if cfg.hub.push_to_hub and cfg.hub.hub_repo_id:
+            print(f"\nPushing dataset to HuggingFace Hub: {cfg.hub.hub_repo_id}")
+            try:
+                push_hf_dataset_and_video_files_to_hub(
+                    dataset, cfg.hub.hub_repo_id, cfg.hub.hub_token, cfg.dataset.dataset_name, cfg.output.output_dir
+                )
+            except Exception as e:
+                print(f"❌ Error pushing to hub: {e}")
+                print("Dataset was created locally but failed to push metadata to hub")
+        else:
+            dataset_path_local = os.path.join(cfg.output.output_dir, (cfg.dataset.dataset_name).lower())
+            dataset.save_to_disk(dataset_path_local)
+            print(f"Dataset saved locally to: {dataset_path_local}")
+        print("Dataset conversion complete!")
+        return
     elif "utd_so101_clean_policy_ranking" in cfg.dataset.dataset_name.lower():
         from dataset_upload.dataset_loaders.utd_so101_clean_policy_ranking_loader import (
             convert_utd_so101_clean_policy_ranking_to_hf,
@@ -998,6 +1031,12 @@ def main(cfg: GenerateConfig):
 
         print(f"Loading HAND_paired dataset from: {cfg.dataset.dataset_path}")
         task_data = load_hand_paired_dataset(cfg.dataset.dataset_path, cfg.dataset.dataset_name)
+        trajectories = flatten_task_data(task_data)
+    elif "roboreward" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.roboreward_loader import load_roboreward_dataset
+
+        print(f"Loading RoboReward dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_roboreward_dataset(cfg.dataset.dataset_path, cfg.dataset.dataset_name)
         trajectories = flatten_task_data(task_data)
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")

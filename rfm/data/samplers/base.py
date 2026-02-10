@@ -15,15 +15,14 @@ from rfm.data.datasets.helpers import (
     pad_trajectory_to_max_frames_torch,
     pad_trajectory_to_max_frames_np,
     compute_success_labels,
-    convert_continuous_to_discrete_bins,
-    convert_continuous_to_discrete_bin,
     create_trajectory_from_dict,
     load_embeddings_from_path,
-    create_rewind_trajectory,
     linspace_subsample_frames,
+    convert_continuous_to_discrete_bins,
 )
 from rfm.data.dataset_types import Trajectory
 from rfm.utils.logger import get_logger
+from rfm.data.dataset_category import is_preference_only_ds
 
 logger = get_logger()
 
@@ -39,6 +38,7 @@ class RFMBaseSampler:
         dataset_success_cutoff_map: Optional[Dict[str, float]] = None,
         verbose: bool = True,
         random_seed: int = 42,
+        pad_frames: bool = True,
     ):
         """Initialize sampler with dataset and indices.
 
@@ -55,7 +55,7 @@ class RFMBaseSampler:
         self.verbose = verbose
         self.dataset_success_cutoff_map = dataset_success_cutoff_map or {}
         self._local_random = Random(random_seed)
-
+        self.pad_frames = pad_frames
         self._cached_ids = self.dataset["id"]
         self._cached_is_robot = self.dataset["is_robot"]
 
@@ -161,12 +161,22 @@ class RFMBaseSampler:
     def _get_same_task_suboptimal(self, ref_traj: dict) -> dict | None:
         """Get suboptimal trajectory from same task.
 
+        For trajectories with partial_success, uses partial_success logic instead of quality_label logic.
+
         Args:
             ref_traj: Reference trajectory
 
         Returns:
             Suboptimal trajectory dict or None if not available
         """
+        # Check if this trajectory uses partial_success
+        use_partial_success = ref_traj.get("partial_success") is not None
+
+        if use_partial_success:
+            # For trajectories with partial_success, use partial_success logic
+            return self._get_different_partial_success_traj(ref_traj)
+
+        # For trajectories without partial_success, use the standard suboptimal logic
         task_name = ref_traj["task"]
         same_task_suboptimal_indices = self.suboptimal_by_task.get(task_name, [])
         if not same_task_suboptimal_indices:
@@ -211,17 +221,49 @@ class RFMBaseSampler:
         Returns:
             Different task trajectory dict or None if not available
         """
-        other_tasks = [task for task in self.optimal_by_task.keys() if task != ref_traj["task"]]
+        same_source_prob = self.config.traj_same_source_prob
+        data_source = ref_traj.get("data_source")
+        other_tasks = []
+
+        if data_source and data_source in self.tasks_by_data_source and random.random() < same_source_prob:
+            other_tasks = [task for task in self.tasks_by_data_source[data_source] if task != ref_traj["task"]]
+
+        if not other_tasks:
+            other_tasks = [task for task in self.optimal_by_task.keys() if task != ref_traj["task"]]
+
         if not other_tasks:
             logger.trace(
                 f"[BASE SAMPLER] _get_different_video_traj: No other tasks available (ref task: '{ref_traj['task']}')"
             )
             return None
 
-        other_task = random.choice(other_tasks)
-        other_task_indices = self.optimal_by_task[other_task]
-        if not other_task_indices:
-            logger.trace(f"[BASE SAMPLER] _get_different_video_traj: Task '{other_task}' has no optimal indices")
+        # Try up to 2 times to find a valid task
+        max_retries = 2
+        other_task_indices = None
+        other_task = None
+
+        for attempt in range(max_retries):
+            other_task = random.choice(other_tasks)
+            if other_task not in self.optimal_by_task:
+                logger.trace(
+                    f"[BASE SAMPLER] _get_different_video_traj: Attempt {attempt + 1}/{max_retries}: Task '{other_task}' not found in optimal_by_task"
+                )
+                continue
+
+            other_task_indices = self.optimal_by_task[other_task]
+            if not other_task_indices:
+                logger.trace(
+                    f"[BASE SAMPLER] _get_different_video_traj: Attempt {attempt + 1}/{max_retries}: Task '{other_task}' has no optimal indices"
+                )
+                continue
+
+            # Found a valid task with indices
+            break
+
+        if other_task_indices is None or not other_task_indices:
+            logger.trace(
+                f"[BASE SAMPLER] _get_different_video_traj: Failed to find valid task after {max_retries} attempts"
+            )
             return None
 
         other_idx = random.choice(other_task_indices)
@@ -240,7 +282,7 @@ class RFMBaseSampler:
         Returns:
             Trajectory dict with different task instruction or None if not available
         """
-        same_source_prob = self.config.task_instruction_same_source_prob
+        same_source_prob = self.config.traj_same_source_prob
         data_source = ref_traj.get("data_source")
         candidate_tasks = []
 
@@ -354,7 +396,7 @@ class RFMBaseSampler:
         return paired_traj
 
     def _get_different_partial_success_traj(self, ref_traj: dict) -> dict | None:
-        """Get trajectory from same task with different partial_success (for RoboArena).
+        """Get trajectory from same task with different partial_success.
 
         Finds trajectories with either higher or lower partial_success than the reference,
         using absolute difference for threshold checking.
@@ -375,8 +417,8 @@ class RFMBaseSampler:
             )
             return None
 
-        # Get minimum threshold from config (default to 0.0 if not set)
-        min_threshold = self.config.roboarena_partial_success_threshold
+        # Get minimum threshold from config
+        min_threshold = getattr(self.config, "partial_success_threshold", 0.2)
 
         # Get all trajectories from the same task
         same_task_indices = self.task_indices.get(task_name, [])
@@ -421,36 +463,14 @@ class RFMBaseSampler:
         selected_idx = random.choice(candidate_indices)
         result = self.dataset[selected_idx]
         result_partial_success = result.get("partial_success")
-        direction = "higher" if result_partial_success > ref_partial_success else "lower"
+        # If ref_partial_success is 1.0, direction is always "lower" since 1.0 is the maximum
+        if ref_partial_success == 1.0:
+            direction = "lower"
+        else:
+            direction = "higher" if result_partial_success > ref_partial_success else "lower"
         logger.trace(
             f"[BASE SAMPLER] _get_different_partial_success_traj: Found trajectory {result.get('id', 'unknown')} with partial_success {result_partial_success} ({direction} than {ref_partial_success}, abs diff: {abs(ref_partial_success - result_partial_success):.3f}, threshold: {min_threshold})"
         )
-        return result
-
-    def _get_rewound_traj(self, ref_traj: dict) -> Trajectory:
-        """Get rewound trajectory from reference trajectory.
-
-        Args:
-            ref_traj: Reference trajectory
-
-        Returns:
-            Rewound trajectory as Trajectory object (already processed)
-        """
-        traj_id = ref_traj.get("id", "unknown")
-        logger.trace(f"[BASE SAMPLER] _get_rewound_traj: Creating rewound trajectory for ID: {traj_id}")
-
-        ds_key = ref_traj["data_source"]
-        success_cutoff = self.dataset_success_cutoff_map.get(ds_key, self.config.max_success)
-        result = create_rewind_trajectory(
-            ref_traj,
-            max_frames=self.config.max_frames,
-            use_embeddings=self.config.load_embeddings,
-            progress_pred_type=getattr(self.config, "progress_pred_type", "absolute"),
-            success_cutoff=success_cutoff,
-            dataset_success_percent=self.dataset_success_cutoff_map,
-            max_success=self.config.max_success,
-        )
-        logger.trace(f"[BASE SAMPLER] _get_rewound_traj: Successfully created rewound trajectory for ID: {traj_id}")
         return result
 
     def _get_subsample_indices(
@@ -559,6 +579,7 @@ class RFMBaseSampler:
         subsample_strategy: str | None = None,
         frame_indices: List[int] | None = None,
         metadata: Dict[str, Any] | None = None,
+        pad_frames: bool = True,
     ) -> Trajectory:
         """Load, subsample, and optionally pad trajectory data and create a Trajectory object.
 
@@ -567,6 +588,7 @@ class RFMBaseSampler:
             subsample_strategy: Optional strategy for subsampling ("subsample_forward", "subsample_reverse", "subsample_rewind", or None for default/bidirectional). Ignored if frame_indices is provided.
             frame_indices: Optional list of specific frame indices to use. If provided, subsample_strategy is ignored.
             metadata: Optional metadata dict to merge into trajectory metadata.
+            pad_frames: Whether to pad the trajectory data to max_frames.
 
         Returns:
             Trajectory object with loaded and subsampled data (padded)
@@ -661,12 +683,16 @@ class RFMBaseSampler:
         # Extract data using indices
         subsampled = data[indices]
 
+        # Get partial_success early to pass to compute_progress_from_segment
+        partial_success = traj.get("partial_success")
+
         # Compute progress
         target_progress = compute_progress_from_segment(
             num_frames_total=num_frames_total,
             frame_indices=indices,
             progress_pred_type=self.config.progress_pred_type,
             success_cutoff=success_cutoff,
+            partial_success=partial_success,
         )
 
         # Subsample uniformly if needed (if we have more frames than max_frames)
@@ -679,7 +705,7 @@ class RFMBaseSampler:
             indices = [indices[idx] for idx in frame_indices_subsample] if isinstance(indices, list) else indices
 
         # Pad if needed
-        if target_progress:
+        if target_progress and pad_frames:
             if self.config.load_embeddings:
                 subsampled, target_progress = pad_trajectory_to_max_frames_torch(
                     subsampled, target_progress, self.config.max_frames
@@ -688,6 +714,28 @@ class RFMBaseSampler:
                 subsampled, target_progress = pad_trajectory_to_max_frames_np(
                     subsampled, target_progress, self.config.max_frames
                 )
+
+        # Create predict_last_frame_mask: mark the last frame if partial_success < 1.0
+        # If predict_last_frame_partial_progress is True and partial_success < 1.0 and the last original frame is in the subsampled indices,
+        # mark all positions where it appears with 1.0, all others 0.0. Otherwise, all 1.0s.
+        final_frame_count = len(subsampled)
+        predict_last_frame_mask = [1.0] * final_frame_count  # Default: all 1.0s (no masking)
+        
+        if self.config.predict_last_frame_partial_progress and partial_success is not None:
+            if partial_success == 1.0 and not is_preference_only_ds(traj["data_source"]):
+                pass 
+            else:
+                last_original_frame_idx = num_frames_total - 1
+                if isinstance(indices, list) and last_original_frame_idx in indices:
+                    # Find all positions where the last frame index appears
+                    last_frame_positions = [i for i, idx in enumerate(indices) if idx == last_original_frame_idx and i < final_frame_count]
+                    if last_frame_positions:
+                        # Mark all positions where the last frame appears with 1.0, all others 0.0
+                        predict_last_frame_mask = [0.0] * final_frame_count
+                        for pos in last_frame_positions:
+                            predict_last_frame_mask[pos] = 1.0
+                else:
+                    predict_last_frame_mask = [0.0] * final_frame_count
 
         # Update frames_shape
         frames_shape = subsampled.shape if hasattr(subsampled, "shape") else tuple()
@@ -707,16 +755,13 @@ class RFMBaseSampler:
             quality_label=traj.get("quality_label"),
         )
 
-        # Convert partial_success to discrete bins if in discrete mode
-        partial_success = traj.get("partial_success")
-        if partial_success is not None and self.config.progress_loss_type.lower() == "discrete":
-            num_bins = self.config.progress_discrete_bins
-            partial_success = convert_continuous_to_discrete_bin(partial_success, num_bins)
-
-        # Convert progress to discrete if needed
+        # Convert partial_success and target_progress to discrete bins if in discrete mode
         if self.config.progress_loss_type.lower() == "discrete":
-            num_bins = self.config.progress_discrete_bins
-            target_progress = convert_continuous_to_discrete_bins(target_progress, num_bins)
+            if partial_success is not None:
+                partial_success = convert_continuous_to_discrete_bins(
+                    [partial_success], self.config.progress_discrete_bins
+                )[0]
+            target_progress = convert_continuous_to_discrete_bins(target_progress, self.config.progress_discrete_bins)
 
         trajectory = create_trajectory_from_dict(
             traj,
@@ -728,6 +773,7 @@ class RFMBaseSampler:
                 "target_progress": target_progress,
                 "success_label": success_label,
                 "partial_success": partial_success,
+                "predict_last_frame_mask": predict_last_frame_mask,
                 "metadata": metadata,
             },
         )

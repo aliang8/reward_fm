@@ -1,9 +1,0 @@
-# RFM VQA
-trainer_cls: "rfm_vqa"
-
-model:
-  model_type: "vqa"
-
-logging:
-  wandb_project: "rfm"
-  wandb_entity: clvr

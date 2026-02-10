@@ -17,7 +17,8 @@ from dataset_upload.helpers import (
 # We do not stream; assume RLDS TFDS builders are already downloaded locally.
 import tensorflow_datasets as tfds
 
-soar_new_success_labels_path = "dataset_upload/dataset_helpers/soar_vlm_labels_checkpoint.json"
+# soar_new_success_labels_path = "dataset_upload/dataset_helpers/soar_vlm_labels_checkpoint.json"
+soar_new_success_labels_path = "dataset_upload/dataset_helpers/soar_label_corrections_full.json"
 
 
 def _build_video_paths(output_dir: str, dataset_label: str, episode_idx: int, view_key: str) -> tuple[str, str]:
@@ -108,21 +109,32 @@ def convert_soar_dataset_to_hf(
     lang_model = load_sentence_transformer_model()
     lang_cache: dict[str, Any] = {}
 
+    label_corrections = {}
+    if os.path.exists(soar_new_success_labels_path):
+        with open(soar_new_success_labels_path) as f:
+            data = json.load(f)
+        # Keys are strings in JSON, convert to int
+        label_corrections = {int(k): v for k, v in data.get("label_corrections", {}).items()}
+        print(f"Loaded label corrections for {len(label_corrections)} trajectories")
+
     datasets_list: list[Dataset] = []
 
     builder = tfds.builder_from_directory(root)
     success_episode_instructions = set()  # to only upload failures that have a corresponding success episode
     for split_name in ["success", "failure"]:
-        # Commonly RLDS train split contains the episodes
         ds = builder.as_dataset(split=split_name, shuffle_files=False)
 
         if split_name == "success":
             with open(soar_new_success_labels_path, "r") as f:
-                new_success_labels = json.load(f)["results"]
+                # new_success_labels = json.load(f)["results"]
+                new_success_labels = json.load(f)["label_corrections"]
                 # episodes where qwen-3-vl predicted success
-                new_success_labels = [
-                    result["predicted_label"] for result in new_success_labels if result["original_label"] == "success"
-                ]
+                # new_success_labels = [
+                #    result["predicted_label"] for result in new_success_labels if result["original_label"] == "success"
+                # ]
+
+                # convert to int keys
+                new_success_labels = {int(k): v for k, v in new_success_labels.items()}
 
         entries: list[dict] = []
         produced = 0
@@ -130,7 +142,7 @@ def convert_soar_dataset_to_hf(
 
         for ep_idx, episode in enumerate(tqdm(ds, desc=f"SOAR {split_name} episodes")):
             if split_name == "success":
-                if new_success_labels[ep_idx] != "success":
+                if new_success_labels[ep_idx] != "successful":
                     # disagree with qwen-3-vl's prediction, skip this episode
                     continue
             if produced >= max_limit:
@@ -154,7 +166,9 @@ def convert_soar_dataset_to_hf(
             if not task_text:
                 continue
             elif split_name == "failure":
-                if task_text not in success_episode_instructions:
+                if new_success_labels[ep_idx] != "failure":  # skip if the label is not correct
+                    continue
+                elif task_text not in success_episode_instructions:
                     # no corresponding success episode, skip this failure
                     print(f"No corresponding success episode for failure {ep_idx}, skipping")
                     continue
@@ -167,10 +181,8 @@ def convert_soar_dataset_to_hf(
             valid_img_key: str | None = None
             valid_img_key = "image_0"
 
+            # Determine quality label
             quality_label = "successful" if split_name.lower().startswith("success") else "failure"
-
-            if split_name == "success":
-                success_episode_instructions.add(task_text)
 
             # Build entry for this view
             episode_entries = _process_episode((

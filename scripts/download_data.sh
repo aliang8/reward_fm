@@ -107,7 +107,8 @@ retry_until_success() {
 # ------------------------------
 repos=(
   abraranwar/libero_rfm
-  abraranwar/agibotworld_alpha_rfm   
+  #abraranwar/agibotworld_alpha_rfm   
+  abraranwar/agibotworld_alpha_headcam_rfm   
   abraranwar/usc_koch_rewind_rfm
   ykorkmaz/libero_failure_rfm
   aliangdw/metaworld
@@ -136,6 +137,10 @@ repos=(
   jesbu1/utd_so101_clean_policy_ranking_wrist
   jesbu1/usc_koch_human_robot_paired
   jesbu1/usc_koch_p_ranking_rfm
+  #jesbu1/roboreward_rfm
+  jesbu1/roboreward_rfm_high_res
+  jesbu1/rfm_new_mit_franka_rfm_nowrist
+  ykorkmaz/usc_trossen_rfm
 )
 
 # ------------------------------

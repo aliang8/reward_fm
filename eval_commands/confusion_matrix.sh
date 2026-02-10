@@ -18,7 +18,7 @@ uv run python rfm/evals/run_baseline_eval.py \
 # ReWIND
 uv run python rfm/evals/run_baseline_eval.py \
     reward_model=rewind \
-    model_path="/home/azure/reward_fm/logs/rfm-1m-id_ablation_rewind_bs512_prog_pref_4frames_continuous_scaled/ckpt-latest-avg-2metrics\=0.6334_step\=6100" \
+    model_path=aliangdw/rewind_rfm-1m-id_continuous_scaled \
     custom_eval.eval_types=[confusion_matrix] \
     custom_eval.confusion_matrix=[[aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking,jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top,aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking]] \
     custom_eval.use_frame_steps=false \

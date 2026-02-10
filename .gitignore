@@ -68,3 +68,6 @@ vqa_dataests/*
 run_scripts*
 *.gz
 *.pdf
+*.png
+*.jpg
+*.pkl

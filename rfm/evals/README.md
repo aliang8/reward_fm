@@ -51,9 +51,9 @@ For **VLAC**, you need to:
 
 2. **Download the model** from Hugging Face (auto-download if `model_path` is a Hugging Face repo ID) or provide a local path to the model checkpoint
 
-### Robo-Dopamine Model Setup
+### Robometer (Robo-Dopamine GRM) setup
 
-**Robo-Dopamine** uses vLLM, which requires **torch 2.9.x**. Reward-fm pins **torch 2.8.0** and **xformers**, so the resolver cannot satisfy both. Use a dedicated venv and install **vLLM first**, then the rest of the deps:
+**Robometer** is our baseline built on [Robo-Dopamine](https://github.com/FlagOpen/Robo-Dopamine) GRM. It uses vLLM, which requires **torch 2.9.x**. Reward-fm pins **torch 2.8.0** and **xformers**, so the resolver cannot satisfy both. Use a dedicated venv and install **vLLM first**, then the rest of the deps:
 
 1. **Create a separate virtual environment** (requires CUDA 12.x). Run from the **reward_fm repo root**:
    ```bash
@@ -73,7 +73,7 @@ For **VLAC**, you need to:
    ```bash
    .venv-robodopamine/bin/python rfm/evals/run_baseline_eval.py reward_model=robodopamine ...
    ```
-   Run from the reward_fm repo root.
+   Run from the reward_fm repo root. The config key is still `reward_model=robodopamine`.
 
 ### RFM/ReWiND Model Setup
 

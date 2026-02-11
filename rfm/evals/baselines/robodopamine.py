@@ -69,8 +69,8 @@ class RoboDopamine:
             # So frame_interval=1 uses every frame; frame_interval=5 uses every 5th frame.
             run_root = self._grm.run_pipeline(
                 cam_high_path=str(frames_dir),
-                cam_left_path=None,
-                cam_right_path=None,
+                cam_left_path=str(frames_dir),
+                cam_right_path=str(frames_dir),
                 out_root=str(out_root),
                 task=task_description,
                 frame_interval=self.frame_interval,

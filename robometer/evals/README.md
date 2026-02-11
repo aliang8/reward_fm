@@ -55,9 +55,9 @@ For **VLAC**, you need to:
 
 **Robometer** is our baseline built on [Robo-Dopamine](https://github.com/FlagOpen/Robo-Dopamine) GRM. It uses vLLM, which requires **torch 2.9.x**. Reward-fm pins **torch 2.8.0** and **xformers**, so the resolver cannot satisfy both. Use a dedicated venv and install **vLLM first**, then the rest of the deps:
 
-1. **Create a separate virtual environment** (requires CUDA 12.x). Run from the **reward_fm repo root**:
+1. **Create a separate virtual environment** (requires CUDA 12.x). Run from the **repo root**:
    ```bash
-   cd /path/to/reward_fm   # must be repo root so paths below work
+   cd /path/to/reward_fm   # or your repo root
    uv venv .venv-robodopamine
    uv pip install vllm --python .venv-robodopamine/bin/python
    uv pip install -r requirements-robodopamine.txt --python .venv-robodopamine/bin/python
@@ -73,7 +73,7 @@ For **VLAC**, you need to:
    ```bash
    .venv-robodopamine/bin/python robometer/evals/run_baseline_eval.py reward_model=robodopamine ...
    ```
-   Run from the reward_fm repo root. The config key is still `reward_model=robodopamine`.
+   Run from the repo root. The config key is still `reward_model=robodopamine`.
 
 ### RFM/ReWiND Model Setup
 

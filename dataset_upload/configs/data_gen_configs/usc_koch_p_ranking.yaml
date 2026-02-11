@@ -4,11 +4,11 @@
 #   <dataset_path>/robot/usc_koch_*  (includes success/suboptimal/failure)
 #
 dataset:
-  dataset_path: ~/projects/reward_fm/datasets/usc_koch_human_robot_paired
+  dataset_path: ~/projects/robometer/datasets/usc_koch_human_robot_paired
   dataset_name: usc_koch_p_ranking_rfm
 
 output:
-  output_dir: ./rfm_dataset/usc_koch_p_ranking  # overridden per dataset_name (like other dataset_upload converters)
+  output_dir: ./robometer_dataset/usc_koch_p_ranking  # overridden per dataset_name (like other dataset_upload converters)
   max_trajectories: -1  # -1 for all trajectories
   max_frames: 32
   use_video: true

@@ -13,7 +13,7 @@ set -euo pipefail
 # Parse command‑line arguments
 # ------------------------------
 METHOD=${RFM_DOWNLOAD_METHOD:-hf}   # hf | git
-BASE_DIR_DEFAULT=${RFM_DATASET_PATH:-./rfm_dataset}
+BASE_DIR_DEFAULT=${ROBOMETER_DATASET_PATH:-${RFM_DATASET_PATH:-./robometer_dataset}}
 BASE_DIR="$BASE_DIR_DEFAULT"
 
 while [[ $# -gt 0 ]]; do

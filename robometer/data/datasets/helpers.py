@@ -142,9 +142,9 @@ def load_frames_from_npz(npz_filepath: str) -> np.ndarray:
     if not npz_filepath:
         raise ValueError("npz_filepath is None or empty")
 
-    # If path is relative, prepend RFM_PROCESSED_DATASETS_PATH
+    # If path is relative, prepend ROBOMETER_PROCESSED_DATASETS_PATH (or RFM_PROCESSED_DATASETS_PATH)
     if not os.path.isabs(npz_filepath):
-        rfm_dataset_path = os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
+        rfm_dataset_path = os.environ.get("ROBOMETER_PROCESSED_DATASETS_PATH") or os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
         # HACK:
         rfm_dataset_path = rfm_dataset_path.replace("processed_datasets", "")
         if rfm_dataset_path:
@@ -177,9 +177,9 @@ def load_embeddings_from_path(embeddings_path: str) -> torch.Tensor:
         ipdb.set_trace()
         raise ValueError(f"embeddings_path: {embeddings_path} is None or empty")
 
-    # If path is relative, prepend RFM_PROCESSED_DATASETS_PATH
+    # If path is relative, prepend ROBOMETER_PROCESSED_DATASETS_PATH (or RFM_PROCESSED_DATASETS_PATH)
     if not os.path.isabs(embeddings_path):
-        rfm_dataset_path = os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
+        rfm_dataset_path = os.environ.get("ROBOMETER_PROCESSED_DATASETS_PATH") or os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
         # HACK:
         rfm_dataset_path = rfm_dataset_path.replace("processed_datasets/", "")
         rfm_dataset_path = rfm_dataset_path.replace("processed_datasets", "")
@@ -673,10 +673,10 @@ def create_trajectory_from_dict(traj_dict: Dict[str, Any], overrides: Optional[D
 def show_available_datasets():
     """Show which datasets are available in the cache."""
     # The preprocessing script now creates individual cache directories for each dataset/subset pair
-    cache_dir = os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
+    cache_dir = os.environ.get("ROBOMETER_PROCESSED_DATASETS_PATH") or os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
     if not cache_dir:
         raise ValueError(
-            "RFM_PROCESSED_DATASETS_PATH environment variable not set. Please set it to the directory containing your processed datasets."
+            "ROBOMETER_PROCESSED_DATASETS_PATH (or RFM_PROCESSED_DATASETS_PATH) not set. Set it to the directory containing your processed datasets."
         )
 
     print("=" * 100)

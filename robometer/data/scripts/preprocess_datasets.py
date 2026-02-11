@@ -873,7 +873,7 @@ class DatasetPreprocessor:
             rank_0_print(f"Loading dataset: {dataset_path}")
 
             # Check if RFM_DATASET_PATH is set
-            rfm_dataset_path = os.environ.get("RFM_DATASET_PATH")
+            rfm_dataset_path = os.environ.get("ROBOMETER_DATASET_PATH") or os.environ.get("RFM_DATASET_PATH")
             if not rfm_dataset_path:
                 raise ValueError(
                     "RFM_DATASET_PATH environment variable not set. "
@@ -1085,8 +1085,8 @@ def main(config: DataPreprocessConfig):
 
     print("\n✅ Dataset preprocessing complete!")
     print(f"Unified cache: {config.cache_dir}")
-    print(f"Please set the RFM_PROCESSED_DATASETS_PATH environment variable to {config.cache_dir} by running:")
-    print(f"export RFM_PROCESSED_DATASETS_PATH={config.cache_dir}")
+    print(f"Please set ROBOMETER_PROCESSED_DATASETS_PATH (or RFM_PROCESSED_DATASETS_PATH) to {config.cache_dir} by running:")
+    print(f"export ROBOMETER_PROCESSED_DATASETS_PATH={config.cache_dir}")
 
 
 if __name__ == "__main__":

@@ -81,11 +81,11 @@ File: `dataset_upload/configs/data_gen_configs/utd_so101_clean_policy_ranking_wr
 
 ```yaml
 dataset:
-  dataset_path: ~/projects/reward_fm/datasets/utd_prank
+  dataset_path: ~/projects/robometer/datasets/utd_prank
   dataset_name: utd_so101_clean_policy_ranking_wrist
 
 output:
-  output_dir: ./rfm_dataset/utd_so101_clean_policy_ranking_wrist
+  output_dir: ./robometer_dataset/utd_so101_clean_policy_ranking_wrist
   max_trajectories: -1
   max_frames: 64
   use_video: true
@@ -104,11 +104,11 @@ File: `dataset_upload/configs/data_gen_configs/utd_so101_clean_policy_ranking_to
 
 ```yaml
 dataset:
-  dataset_path: ~/projects/reward_fm/datasets/utd_prank
+  dataset_path: ~/projects/robometer/datasets/utd_prank
   dataset_name: utd_so101_clean_policy_ranking_top
 
 output:
-  output_dir: ./rfm_dataset/utd_so101_clean_policy_ranking_top
+  output_dir: ./robometer_dataset/utd_so101_clean_policy_ranking_top
   max_trajectories: -1
   max_frames: 64
   use_video: true
@@ -246,7 +246,7 @@ rfm_dataset/utd_so101_clean_policy_ranking_wrist/
 
 ### Top View
 ```
-rfm_dataset/utd_so101_clean_policy_ranking_top/
+robometer_dataset/utd_so101_clean_policy_ranking_top/
   utd_so101_clean_policy_ranking_top/
     shard_0000/
       episode_000000/

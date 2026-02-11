@@ -4,7 +4,7 @@ dataset:
   dataset_name: racer_train
 
 output:
-  output_dir: ./rfm_dataset/racer_rfm
+  output_dir: ./robometer_dataset/racer_rfm
   max_trajectories: -1
   max_frames: 64
   use_video: true

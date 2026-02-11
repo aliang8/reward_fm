@@ -197,7 +197,7 @@ def process_single_trajectory(args):
 def convert_dataset_to_hf_format(
     trajectories: list[dict],
     hf_creator_fn: Callable[[dict, str, str, int, Any, int, str], Any],
-    output_dir: str = "rfm_dataset",
+    output_dir: str = "robometer_dataset",
     dataset_name: str = "",
     max_trajectories: int | None = None,
     max_frames: int = -1,

@@ -1,10 +1,10 @@
 #!/bin/bash
-if [ -z "$RFM_PROCESSED_DATASETS_PATH" ]; then
-    echo "RFM_PROCESSED_DATASETS_PATH is not set"
+if [ -z "${ROBOMETER_PROCESSED_DATASETS_PATH:-$RFM_PROCESSED_DATASETS_PATH}" ]; then
+    echo "ROBOMETER_PROCESSED_DATASETS_PATH (or RFM_PROCESSED_DATASETS_PATH) is not set"
     exit 1
 fi
 
-cd "$RFM_PROCESSED_DATASETS_PATH" || exit 1
+cd "${ROBOMETER_PROCESSED_DATASETS_PATH:-$RFM_PROCESSED_DATASETS_PATH}" || exit 1
 
 # Track already processed archives to avoid duplicates
 declare -A processed_archives

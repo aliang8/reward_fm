@@ -51,7 +51,7 @@ dataset:
   dataset_name: hand_paired
 
 output:
-  output_dir: ./rfm_dataset/hand_paired_rfm
+  output_dir: ./robometer_dataset/hand_paired_rfm
   max_trajectories: -1
   max_frames: 64
   use_video: true

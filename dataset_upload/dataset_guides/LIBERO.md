@@ -56,7 +56,7 @@ uv run python dataset_upload/generate_hf_dataset.py \
     --config_path=dataset_upload/configs/data_gen_configs/libero.yaml \
     --dataset.dataset_path=/path/to/your/libero/dataset \
     --dataset.dataset_name=libero_custom \
-    --output.output_dir=libero_rfm_dataset \
+    --output.output_dir=libero_robometer_dataset \
     --output.max_trajectories=1000 \
     --output.use_video=true \
     --output.fps=10

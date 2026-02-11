@@ -4,7 +4,7 @@ dataset:
   dataset_name: ph2d
 
 output:
-  output_dir: ./rfm_dataset/ph2d_rfm
+  output_dir: ./robometer_dataset/ph2d_rfm
   max_trajectories: -1
   max_frames: 64  # use all frames in each sequence
   use_video: true

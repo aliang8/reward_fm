@@ -37,7 +37,7 @@ for dataset_name in ${OXE_VALID_DATASETS[@]}; do
     echo "=" * 100
     uv run python -m dataset_upload.generate_hf_dataset \
         --config_path=dataset_upload/configs/data_gen_configs/oxe.yaml \
-        --output.output_dir ./rfm_dataset/oxe_rfm \
+        --output.output_dir ./robometer_dataset/oxe_rfm \
         --dataset.dataset_path ~/tensorflow_datasets/openx_datasets/ \
         --hub.push_to_hub=false \
         --dataset.dataset_name oxe_$dataset_name \

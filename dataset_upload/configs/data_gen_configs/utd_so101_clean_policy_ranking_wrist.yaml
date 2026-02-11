@@ -1,10 +1,10 @@
 # UTD SO101 Clean Policy Ranking Dataset Configuration - Wrist View
 dataset:
-  dataset_path: ~/projects/reward_fm/datasets/utd_prank
+  dataset_path: ~/projects/robometer/datasets/utd_prank
   dataset_name: utd_so101_clean_policy_ranking_wrist
 
 output:
-  output_dir: ./rfm_dataset/utd_so101_clean_policy_ranking_wrist
+  output_dir: ./robometer_dataset/utd_so101_clean_policy_ranking_wrist
   max_trajectories: -1  # -1 for all trajectories
   max_frames: 64
   use_video: true

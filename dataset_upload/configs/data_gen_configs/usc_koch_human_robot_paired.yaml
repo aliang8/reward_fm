@@ -1,11 +1,11 @@
 # USC Koch Human-Robot Paired Dataset Configuration
 # Use with --dataset.dataset_name to specify "human" or "robot"
 dataset:
-  dataset_path: ~/projects/reward_fm/datasets/usc_koch_human_robot_paired
+  dataset_path: ~/projects/robometer/datasets/usc_koch_human_robot_paired
   dataset_name: usc_koch_human_robot_paired_human  # Override with human/robot
 
 output:
-  output_dir: ./rfm_dataset/usc_koch_human_robot_paired  # Will be overridden by dataset_name
+  output_dir: ./robometer_dataset/usc_koch_human_robot_paired  # Will be overridden by dataset_name
   max_trajectories: -1  # -1 for all trajectories
   max_frames: 32
   use_video: true

@@ -41,7 +41,7 @@ dataset:
   dataset_name: epic
 
 output:
-  output_dir: ./rfm_dataset/epic_rfm
+  output_dir: ./robometer_dataset/epic_rfm
   max_trajectories: -1
   max_frames: 64
   use_video: true

@@ -56,7 +56,7 @@ dataset:
   dataset_name: roboreward_train  # Can be overridden with --dataset.dataset_name
 
 output:
-  output_dir: ./rfm_dataset/roboreward_rfm
+  output_dir: ./robometer_dataset/roboreward_rfm
   max_trajectories: -1
   max_frames: 64
   use_video: true

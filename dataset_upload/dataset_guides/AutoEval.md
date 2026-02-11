@@ -47,7 +47,7 @@ dataset:
   dataset_name: autoeval
 
 output:
-  output_dir: ./rfm_dataset/autoeval_rfm
+  output_dir: ./robometer_dataset/autoeval_rfm
   max_trajectories: -1
   max_frames: 64
   use_video: true

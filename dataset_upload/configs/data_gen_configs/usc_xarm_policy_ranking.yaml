@@ -4,7 +4,7 @@ dataset:
   dataset_name: usc_xarm_policy_ranking
 
 output:
-  output_dir: ./rfm_dataset/usc_xarm_policy_ranking
+  output_dir: ./robometer_dataset/usc_xarm_policy_ranking
   max_trajectories: -1
   max_frames: 64
   use_video: true

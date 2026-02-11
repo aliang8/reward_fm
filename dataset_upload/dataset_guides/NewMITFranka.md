@@ -70,7 +70,7 @@ Configuration file: `dataset_upload/configs/data_gen_configs/new_mit_franka.yaml
 
 ```yaml
 dataset:
-  dataset_path: ~/reward_fm/datasets/RFM_MIT_Franka
+  dataset_path: ~/robometer/datasets/RFM_MIT_Franka
   dataset_name: rfm_new_mit_franka_rfm
   exclude_wrist_cam: false  # Set to true to only process external camera views
 
@@ -194,7 +194,7 @@ These mappings are defined in the loader file (`new_mit_franka_loader.py`) and c
 After processing, you'll have a directory structure like:
 
 ```
-rfm_dataset/rfm_new_mit_franka_rfm/
+robometer_dataset/rfm_new_mit_franka_rfm/
   rfm_new_mit_franka_rfm/
     shard_0000/
       episode_000000/
@@ -207,7 +207,7 @@ rfm_dataset/rfm_new_mit_franka_rfm/
 With `exclude_wrist_cam: true`, only external camera videos are included:
 
 ```
-rfm_dataset/rfm_new_mit_franka_rfm/
+robometer_dataset/rfm_new_mit_franka_rfm/
   rfm_new_mit_franka_rfm/
     shard_0000/
       episode_000000/

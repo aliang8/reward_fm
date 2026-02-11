@@ -135,7 +135,7 @@ allow-direct-references = true
 
 # Configuration for the 'uv' package manager
 [tool.uv]
-# Declare that rfm and vlac optional dependencies are incompatible
+# Declare that robometer and vlac optional dependencies are incompatible
 # They have conflicting trl and transformers version requirements
 conflicts = [
     [

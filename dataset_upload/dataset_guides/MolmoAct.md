@@ -29,7 +29,7 @@ dataset:
   dataset_name: molmoact_dataset_tabletop
 
 output:
-  output_dir: ./rfm_dataset/molmoact_rfm
+  output_dir: ./robometer_dataset/molmoact_rfm
   max_trajectories: -1
   max_frames: 64
   use_video: true

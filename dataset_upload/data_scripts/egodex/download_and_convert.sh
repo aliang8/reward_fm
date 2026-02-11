@@ -18,7 +18,7 @@ for part in test part1 part2 part3 part4 part5; do
         --config_path=dataset_upload/configs/data_gen_configs/egodex.yaml \
         --dataset.dataset_path="${HOME}/egodex/${part}/${part}" \
         --dataset.dataset_name="egodex_${part}" \
-        --output.output_dir=./rfm_dataset/egodex_rfm \
+        --output.output_dir=./robometer_dataset/egodex_rfm \
         --hub.push_to_hub=false
 
     echo "Done processing ${part}..."

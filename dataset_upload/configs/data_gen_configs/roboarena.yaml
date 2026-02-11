@@ -4,7 +4,7 @@ dataset:
   dataset_name: roboarena_eval_debug_nowrist # This will be the dataset name / data source
 
 output:
-  output_dir: ./rfm_dataset/roboarena_eval_debug_nowrist
+  output_dir: ./robometer_dataset/roboarena_eval_debug_nowrist
   max_trajectories: -1
   max_frames: 64
   use_video: true

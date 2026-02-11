@@ -228,7 +228,7 @@ logging:
   save_model: true
   save_processor: true
   log_to: []
-  wandb_project: "rfm"
+  wandb_project: "robometer"
   wandb_entity: clvr
   wandb_notes: "training RFM"
   

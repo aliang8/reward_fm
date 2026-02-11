@@ -144,10 +144,10 @@ class BaseDataset(torch.utils.data.Dataset):
                 - dataset: The loaded and concatenated dataset
                 - combined_indices: Dictionary of combined indices
         """
-        cache_dir = os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
+        cache_dir = os.environ.get("ROBOMETER_PROCESSED_DATASETS_PATH") or os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
         if not cache_dir:
             raise ValueError(
-                "RFM_PROCESSED_DATASETS_PATH environment variable not set. Please set it to the directory containing your processed datasets."
+                "ROBOMETER_PROCESSED_DATASETS_PATH (or RFM_PROCESSED_DATASETS_PATH) not set. Set it to the directory containing your processed datasets."
             )
         cache_type = "evaluation" if self.is_evaluation else "training"
 

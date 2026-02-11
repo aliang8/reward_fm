@@ -52,7 +52,7 @@ dataset:
   dataset_name: galaxea_part1_r1_lite # choose from part1_r1_lite, part2_r1_lite, part3_r1_lite, part4_r1_lite, part5_r1_lite, ...
 
 output:
-  output_dir: ./rfm_dataset/galaxea_rfm
+  output_dir: ./robometer_dataset/galaxea_rfm
   max_trajectories: -1
   max_frames: 64
   use_video: true

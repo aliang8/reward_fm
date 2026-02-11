@@ -97,7 +97,7 @@ dataset:
   dataset_name: egocot
 
 output:
-  output_dir: ./rfm_dataset/egocot_rfm
+  output_dir: ./robometer_dataset/egocot_rfm
   max_trajectories: -1  # -1 for all trajectories
   max_frames: 8  # EgoCoT uses 8 consecutive frames
   use_video: true

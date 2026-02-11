@@ -46,7 +46,7 @@ dataset:
   dataset_name: motif
 
 output:
-  output_dir: ./rfm_dataset/motif_rfm
+  output_dir: ./robometer_dataset/motif_rfm
   max_trajectories: -1
   max_frames: 64
   use_video: true

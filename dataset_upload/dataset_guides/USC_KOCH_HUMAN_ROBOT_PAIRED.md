@@ -66,7 +66,7 @@ uv run python -m dataset_upload.generate_hf_dataset \
 Before converting the dataset, you need to download it first:
 
 ```bash
-cd /home/jesse/projects/reward_fm
+cd /path/to/robometer
 bash dataset_upload/data_scripts/usc_koch_human_robot_paired/download_datasets.sh
 ```
 
@@ -130,7 +130,7 @@ You control which data to process by specifying the dataset name:
 ### Step 1: Download the Dataset
 
 ```bash
-cd /home/jesse/projects/reward_fm
+cd /path/to/robometer
 bash dataset_upload/data_scripts/usc_koch_human_robot_paired/download_datasets.sh
 ```
 
@@ -304,7 +304,7 @@ rfm_dataset/usc_koch_human_robot_paired_human/
 
 ### Robot Demonstrations
 ```
-rfm_dataset/usc_koch_human_robot_paired_robot/
+robometer_dataset/usc_koch_human_robot_paired_robot/
   usc_koch_human_robot_paired_robot/
     shard_0000/
       episode_000000/

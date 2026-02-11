@@ -76,7 +76,7 @@ uv sync
 
 ```bash
 hf auth
-export RFM_PROCESSED_DATASETS_PATH=/path/to/save/processed_datasets
+export ROBOMETER_PROCESSED_DATASETS_PATH=/path/to/save/processed_datasets
 ./scripts/download_processed_datasets.sh
 ./scripts/untar_processed_datasets.sh
 ```
@@ -150,13 +150,13 @@ See dataset_upload README and dataset_guides for adding datasets.
 If you prefer not to use the processed datasets:
 
 ```bash
-export RFM_DATASET_PATH=/path/to/your/rfm_dataset
+export ROBOMETER_DATASET_PATH=/path/to/your/robometer_dataset
 ./scripts/download_data.sh
 # Optional: RFM_DOWNLOAD_METHOD=git ./scripts/download_data.sh
 
 # Preprocess
 uv run python -m robometer.data.scripts.preprocess_datasets --config robometer/configs/preprocess.yaml
-export RFM_PROCESSED_DATASETS_PATH=/path/to/save/processed_datasets
+export ROBOMETER_PROCESSED_DATASETS_PATH=/path/to/save/processed_datasets
 ```
 
 ---

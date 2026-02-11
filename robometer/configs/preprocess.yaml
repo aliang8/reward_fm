@@ -95,7 +95,7 @@ video_frame_sampling: "uniform"
 num_proc: 1
 num_threads: 8
 force_reprocess: false
-cache_dir: /scr/shared/reward_fm/processed_datasets
+cache_dir: /path/to/robometer/processed_datasets
 
 # Embedding preprocessing parameters
 precompute_embeddings: true

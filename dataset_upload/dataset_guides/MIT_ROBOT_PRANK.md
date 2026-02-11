@@ -54,7 +54,7 @@ Configuration file: `dataset_upload/configs/data_gen_configs/mit_robot_prank.yam
 
 ```yaml
 dataset:
-  dataset_path: ~/projects/reward_fm/datasets/20251210-mit-robot-prank
+  dataset_path: ~/projects/robometer/datasets/20251210-mit-robot-prank
   dataset_name: mit_franka_p-rank_rfm
 
 output:
@@ -135,7 +135,7 @@ The generated dataset will have the following schema:
 After processing, you'll have a directory structure like:
 
 ```
-rfm_dataset/mit_franka_p-rank_rfm/
+robometer_dataset/mit_franka_p-rank_rfm/
   mit_franka_p-rank_rfm/
     shard_0000/
       episode_000000/

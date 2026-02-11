@@ -9,6 +9,17 @@ uv run python rfm/evals/run_baseline_eval.py \
     max_frames=8 \
     model_config.batch_size=64
 
+# Robo-Dopamine (run with venv Python so vLLM is found; do not use uv run)
+.venv-robodopamine/bin/python rfm/evals/run_baseline_eval.py \
+    reward_model=robodopamine \
+    model_path=tanhuajie2001/Robo-Dopamine-GRM-3B \
+    custom_eval.eval_types=[policy_ranking] \
+    custom_eval.policy_ranking=[rfm-1m-ood] \
+    custom_eval.use_frame_steps=false \
+    custom_eval.num_examples_per_quality_pr=1000 \
+    max_frames=64 \
+    model_config.batch_size=1
+
 # VlAC
 uv run --extra vlac --python .venv-vlac/bin/python rfm/evals/run_baseline_eval.py \
     reward_model=vlac \

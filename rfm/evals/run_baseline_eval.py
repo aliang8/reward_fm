@@ -64,10 +64,8 @@ from rfm.evals.baselines.rlvlmf import RLVLMF
 from rfm.evals.baselines.gvl import GVL
 from rfm.evals.baselines.vlac import VLAC
 
-try:
-    from rfm.evals.baselines.roboreward import RoboReward
-except ImportError:
-    RoboReward = None
+from rfm.evals.baselines.robodopamine import RoboDopamine
+from rfm.evals.baselines.roboreward import RoboReward
 from rfm.evals.baselines.rfm_model import RFMModel
 from rfm.evals.compile_results import (
     run_quality_preference_eval,
@@ -308,7 +306,7 @@ def process_preference_sample(sample: PreferenceSample, model: RLVLMF) -> Dict[s
 
 def process_progress_sample(
     sample: ProgressSample,
-    model: Union[GVL, VLAC, RoboReward],
+    model: Union[GVL, VLAC, RoboReward, RoboDopamine],
 ) -> Dict[str, Any]:
     """Process a single progress sample with baseline."""
     traj = sample.trajectory
@@ -499,6 +497,10 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
         if not cfg.model_path:
             raise ValueError("model_path is required for VLAC baseline")
         model = VLAC(model_path=cfg.model_path, **model_config_dict)
+    elif cfg.reward_model == "robodopamine":
+        if not cfg.model_path:
+            raise ValueError("model_path is required for Robo-Dopamine baseline")
+        model = RoboDopamine(model_path=cfg.model_path, **model_config_dict)
     elif cfg.reward_model == "roboreward":
         model = RoboReward(model_path=cfg.model_path or "teetone/RoboReward-4B", **model_config_dict)
     elif cfg.reward_model in ["rfm", "rewind"]:
@@ -507,7 +509,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
         model = RFMModel(checkpoint_path=cfg.model_path)
     else:
         raise ValueError(
-            f"Unknown reward_model: {cfg.reward_model}. Must be 'rlvlmf', 'gvl', 'vlac', 'roboreward', 'rfm', or 'rewind'"
+            f"Unknown reward_model: {cfg.reward_model}. Must be 'rlvlmf', 'gvl', 'vlac', 'robodopamine', 'roboreward', 'rfm', or 'rewind'"
         )
 
     all_metrics = {}
@@ -606,7 +608,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                         result = process_preference_sample(sample, model)
                         if result:
                             eval_results.append(result)
-                    elif cfg.reward_model in ["gvl", "vlac", "roboreward"] and isinstance(sample, ProgressSample):
+                    elif cfg.reward_model in ["gvl", "vlac", "roboreward", "robodopamine"] and isinstance(sample, ProgressSample):
                         # Handle ProgressSamples for gvl/vlac/roboreward (including confusion_matrix)
                         result = process_progress_sample(sample, model)
                         if result:
@@ -661,9 +663,9 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
 
                 elif eval_type == "confusion_matrix":
                     # Confusion matrix evaluation for gvl, vlac, roboreward, rfm, rewind
-                    if cfg.reward_model not in ["gvl", "vlac", "roboreward", "rfm", "rewind"]:
+                    if cfg.reward_model not in ["gvl", "vlac", "roboreward", "robodopamine", "rfm", "rewind"]:
                         raise ValueError(
-                            f"confusion_matrix evaluation only supported for gvl, vlac, roboreward, rfm, rewind, got {cfg.reward_model}"
+                            f"confusion_matrix evaluation only supported for gvl, vlac, roboreward, robodopamine, rfm, rewind, got {cfg.reward_model}"
                         )
 
                     # run_confusion_matrix_eval returns (fig, confusion_matrix, metrics)
@@ -697,9 +699,9 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
 
                 else:
                     # Progress evaluation (reward_alignment, policy_ranking) for gvl, vlac, roboreward, rfm, rewind
-                    if cfg.reward_model not in ["gvl", "vlac", "roboreward", "rfm", "rewind"]:
+                    if cfg.reward_model not in ["gvl", "vlac", "roboreward", "robodopamine", "rfm", "rewind"]:
                         raise ValueError(
-                            f"Progress evaluation only supported for gvl, vlac, roboreward, rfm, rewind, got {cfg.reward_model}"
+                            f"Progress evaluation only supported for gvl, vlac, roboreward, robodopamine, rfm, rewind, got {cfg.reward_model}"
                         )
 
                     if eval_type == "reward_alignment":
@@ -821,9 +823,9 @@ def main(cfg: DictConfig):
     display_config(baseline_cfg)
 
     # Validate reward model
-    if baseline_cfg.reward_model not in ["gvl", "vlac", "rlvlmf", "roboreward", "rfm", "rewind"]:
+    if baseline_cfg.reward_model not in ["gvl", "vlac", "rlvlmf", "roboreward", "robodopamine", "rfm", "rewind"]:
         raise ValueError(
-            f"reward_model must be 'gvl', 'vlac', 'rlvlmf', 'roboreward', 'rfm', or 'rewind', got {baseline_cfg.reward_model}"
+            f"reward_model must be 'gvl', 'vlac', 'rlvlmf', 'roboreward', 'robodopamine', 'rfm', or 'rewind', got {baseline_cfg.reward_model}"
         )
 
     # Setup output directory: {model_type}_{model_path}/{eval_type}/...

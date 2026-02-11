@@ -1,0 +1,11 @@
+# @package _global_
+
+# Robo-Dopamine GRM model configuration
+reward_model: "robodopamine"
+
+model_path: "tanhuajie2001/Robo-Dopamine-GRM-3B"
+
+model_config:
+  frame_interval: 1
+  batch_size: 1
+  eval_mode: "incremental"

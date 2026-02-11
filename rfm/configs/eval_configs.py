@@ -166,14 +166,31 @@ class RoboRewardConfig:
 
 
 @dataclass
+class RoboDopamineConfig:
+    """Configuration for Robo-Dopamine GRM baseline model."""
+    frame_interval: int = field(
+        default=1,
+        metadata={"help": "Step between sampled frames for before/after pairs (1 = every frame)"},
+    )
+    batch_size: int = field(
+        default=1,
+        metadata={"help": "Batch size for vLLM inference"},
+    )
+    eval_mode: str = field(
+        default="incremental",
+        metadata={"help": "Evaluation mode: 'incremental', 'forward', or 'backward'"},
+    )
+
+
+@dataclass
 class BaselineEvalConfig:
     """Configuration for baseline evaluation runs (run_baseline_eval.py)."""
 
-    # Reward model discriminator: "gvl", "vlac", "rlvlmf", "rfm", "rewind", or "roboreward"
+    # Reward model discriminator: "gvl", "vlac", "rlvlmf", "rfm", "rewind", "roboreward", or "robodopamine"
     reward_model: str = field(
         default="rlvlmf",
         metadata={
-            "help": "Reward model: 'gvl' or 'vlac' for progress, 'rlvlmf' for preference, 'rfm' or 'rewind' for trained models, 'roboreward' for RoboReward baseline"
+            "help": "Reward model: 'gvl', 'vlac', 'robodopamine' for progress; 'rlvlmf' for preference; 'rfm', 'rewind' for trained models; 'roboreward' for RoboReward baseline"
         },
     )
     
@@ -235,10 +252,12 @@ class BaselineEvalConfig:
                 self.model_config = RFMConfig(**(self.model_config or {}))
             elif self.reward_model == "roboreward":
                 self.model_config = RoboRewardConfig(**(self.model_config or {}))
+            elif self.reward_model == "robodopamine":
+                self.model_config = RoboDopamineConfig(**(self.model_config or {}))
             else:
                 raise ValueError(
                     f"Unknown reward_model: {self.reward_model}. "
-                    f"Must be 'rlvlmf', 'gvl', 'vlac', 'rfm', 'rewind', or 'roboreward'"
+                    f"Must be 'rlvlmf', 'gvl', 'vlac', 'rfm', 'rewind', 'roboreward', or 'robodopamine'"
                 )
 
 

@@ -51,6 +51,30 @@ For **VLAC**, you need to:
 
 2. **Download the model** from Hugging Face (auto-download if `model_path` is a Hugging Face repo ID) or provide a local path to the model checkpoint
 
+### Robo-Dopamine Model Setup
+
+**Robo-Dopamine** uses vLLM, which requires **torch 2.9.x**. Reward-fm pins **torch 2.8.0** and **xformers**, so the resolver cannot satisfy both. Use a dedicated venv and install **vLLM first**, then the rest of the deps:
+
+1. **Create a separate virtual environment** (requires CUDA 12.x). Run from the **reward_fm repo root**:
+   ```bash
+   cd /path/to/reward_fm   # must be repo root so paths below work
+   uv venv .venv-robodopamine
+   uv pip install vllm --python .venv-robodopamine/bin/python
+   uv pip install -r requirements-robodopamine.txt --python .venv-robodopamine/bin/python
+   uv pip install -e . --no-deps --python .venv-robodopamine/bin/python
+   ```
+   Verify vLLM is installed:
+   ```bash
+   .venv-robodopamine/bin/python -c "import vllm; print('vLLM OK')"
+   ```
+   Use this venv only for the Robo-Dopamine baseline.
+
+2. **Run evals** using the venv’s Python directly (do **not** use `uv run`, or vLLM may not be found):
+   ```bash
+   .venv-robodopamine/bin/python rfm/evals/run_baseline_eval.py reward_model=robodopamine ...
+   ```
+   Run from the reward_fm repo root.
+
 ### RFM/ReWiND Model Setup
 
 For **RFM/ReWiND**, you need to provide:

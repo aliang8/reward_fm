@@ -65,3 +65,4 @@ confusion_matrix_output/*
 *.npy
 vqa_dataests/*
 run_scripts/*
+paper_stuff/*

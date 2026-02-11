@@ -16,7 +16,7 @@ from rich.table import Table
 from rich import print as rprint
 
 
-def load_preprocess_config(config_path: str = "rfm/configs/preprocess.yaml") -> dict:
+def load_preprocess_config(config_path: str = "robometer/configs/preprocess.yaml") -> dict:
     """Load the preprocess configuration file."""
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
@@ -27,7 +27,7 @@ def get_cache_dir_for_dataset(base_cache_dir: str, dataset_path: str, subset: st
     """
     Construct the cache directory path for a dataset/subset pair.
 
-    Following the logic from rfm/data/scripts/preprocess_datasets.py:
+    Following the logic from robometer/data/scripts/preprocess_datasets.py:
     cache_key = f"{dataset_path}/{subset}"
     individual_cache_dir = os.path.join(cache_dir, cache_key.replace("/", "_").replace(":", "_"))
     """
@@ -98,7 +98,7 @@ def main():
     console.print(f"[bold]Using cache directory:[/bold] {cache_dir}")
 
     # Load preprocess configuration
-    config_path = "rfm/configs/preprocess.yaml"
+    config_path = "robometer/configs/preprocess.yaml"
     if not os.path.exists(config_path):
         console.print(f"[bold red]Error:[/bold red] Config file not found: {config_path}")
         return

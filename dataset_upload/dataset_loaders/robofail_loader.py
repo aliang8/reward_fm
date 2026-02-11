@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 from dataset_upload.helpers import generate_unique_id
-from rfm.data.video_helpers import load_video_frames
+from robometer.data.video_helpers import load_video_frames
 from tqdm import tqdm
 
 

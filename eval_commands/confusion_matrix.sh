@@ -1,13 +1,13 @@
 # GVL
 export GEMINI_API_KEY="your-api-key-here"
-uv run python rfm/evals/run_baseline_eval.py \
+uv run python robometer/evals/run_baseline_eval.py \
     reward_model=gvl \
     model_config.model_name=gemini-2.5-flash-lite \
     custom_eval.eval_types=[confusion_matrix] \
     custom_eval.confusion_matrix=[[aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking,jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top,aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking]] \
     max_frames=8
 
-uv run python rfm/evals/run_baseline_eval.py \
+uv run python robometer/evals/run_baseline_eval.py \
     reward_model=gvl \
     model_config.provider=openai \
     model_config.model_name=gpt-4o-mini \
@@ -16,7 +16,7 @@ uv run python rfm/evals/run_baseline_eval.py \
     max_frames=8
 
 # ReWIND
-uv run python rfm/evals/run_baseline_eval.py \
+uv run python robometer/evals/run_baseline_eval.py \
     reward_model=rewind \
     model_path=rewardfm/rewind-scale-rfm1M-32layers-8frame-20260118-180522 \
     custom_eval.eval_types=[confusion_matrix] \
@@ -26,7 +26,7 @@ uv run python rfm/evals/run_baseline_eval.py \
     model_config.batch_size=64
 
 # Robo-Dopamine (run with venv Python so vLLM is found; do not use uv run)
-.venv-robodopamine/bin/python rfm/evals/run_baseline_eval.py \
+.venv-robodopamine/bin/python robometer/evals/run_baseline_eval.py \
     reward_model=robodopamine \
     model_path=tanhuajie2001/Robo-Dopamine-GRM-3B \
     custom_eval.eval_types=[confusion_matrix] \
@@ -35,7 +35,7 @@ uv run python rfm/evals/run_baseline_eval.py \
     model_config.batch_size=1
 
 # VLAC
-uv run --extra vlac --python .venv-vlac/bin/python python rfm/evals/run_baseline_eval.py \
+uv run --extra vlac --python .venv-vlac/bin/python python robometer/evals/run_baseline_eval.py \
     reward_model=vlac \
     model_path=InternRobotics/VLAC \
     custom_eval.eval_types=[confusion_matrix] \
@@ -45,7 +45,7 @@ uv run --extra vlac --python .venv-vlac/bin/python python rfm/evals/run_baseline
 
 # ROBOREWARD
 # without koch
-uv run python rfm/evals/run_baseline_eval.py \
+uv run python robometer/evals/run_baseline_eval.py \
     reward_model=roboreward \
     model_path=teetone/RoboReward-8B \
     custom_eval.eval_types=[confusion_matrix] \
@@ -53,7 +53,7 @@ uv run python rfm/evals/run_baseline_eval.py \
     max_frames=64
 
 # on all
-uv run python rfm/evals/run_baseline_eval.py \
+uv run python robometer/evals/run_baseline_eval.py \
     reward_model=roboreward \
     model_path=teetone/RoboReward-8B \
     custom_eval.eval_types=[confusion_matrix] \
@@ -62,7 +62,7 @@ uv run python rfm/evals/run_baseline_eval.py \
 
 # RFM
 # without koch
-uv run python rfm/evals/run_baseline_eval.py \
+uv run python robometer/evals/run_baseline_eval.py \
     reward_model=rfm \
     model_path=aliangdw/qwen4b_pref_prog_succ_8_frames_all_part2 \
     custom_eval.eval_types=[confusion_matrix] \
@@ -71,7 +71,7 @@ uv run python rfm/evals/run_baseline_eval.py \
     model_config.batch_size=32
 
 # on all
-uv run python rfm/evals/run_baseline_eval.py \
+uv run python robometer/evals/run_baseline_eval.py \
     reward_model=rfm \
     model_path=aliangdw/qwen4b_pref_prog_succ_8_frames_all_part2 \
     custom_eval.eval_types=[confusion_matrix] \

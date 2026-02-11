@@ -25,20 +25,20 @@ OXE refers to a collection of RLDS-format robot datasets accessible via TensorFl
 - Using the provided config to generate individual datasets:
 
 ```bash
-uv run python rfm/data/generate_hf_dataset.py --config_path=rfm/configs/data_gen_configs/oxe.yaml  --dataset.dataset_name oxe_<dataset_name>
+uv run python dataset_upload/generate_hf_dataset.py --config_path=dataset_upload/configs/data_gen_configs/oxe.yaml  --dataset.dataset_name oxe_<dataset_name>
 ```
 - Using the provided script to generate all datasets:
 
 ```bash
-bash rfm/data/data_scripts/oxe/gen_all_oxe.sh
+bash dataset_upload/data_scripts/oxe/gen_all_oxe.sh
 ```
 
 
 - Manual CLI example:
 
 ```bash
-uv run rfm/data/generate_hf_dataset.py     
-    --config_path=rfm/configs/data_gen_configs/oxe.yaml \
+uv run dataset_upload/generate_hf_dataset.py     
+    --config_path=dataset_upload/configs/data_gen_configs/oxe.yaml \
     --output.max_trajectories=10 \
     --output.output_dir ~/scratch_data/oxe_rfm_test
 ```
@@ -67,11 +67,11 @@ These names are loaded from the TFDS store (as `split="train"`). Each name must 
 - `furniture_bench_dataset_converted_externally_to_rlds`
 - `taco_play`
 
-Note: Additional per-dataset configs (e.g., wrist cams, multiple externals) are defined in `rfm/data/dataset_helpers/oxe_helper.py` via `OXE_DATASET_CONFIGS`. The loader currently iterates only the list above.
+Note: Additional per-dataset configs (e.g., wrist cams, multiple externals) are defined in `dataset_upload/dataset_helpers/oxe_helper.py` via `OXE_DATASET_CONFIGS`. The loader currently iterates only the list above.
 
 ### Configuration
 
-Edit `rfm/configs/data_gen_configs/oxe.yaml`:
+Edit `dataset_upload/configs/data_gen_configs/oxe.yaml`:
 
 ```yaml
 dataset:

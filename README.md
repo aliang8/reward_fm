@@ -42,7 +42,7 @@ General-purpose robot reward models are typically trained to predict absolute ta
 
 ```
 reward_fm/
-├── rfm/                    # Main package
+├── robometer/              # Main package
 │   ├── data/               # Datasets and preprocessing
 │   ├── configs/            # Hydra and experiment configs
 │   ├── models/             # Model definitions
@@ -88,7 +88,7 @@ For raw download and preprocessing, see [📥 Download raw datasets](#-download-
 ### 🔍 Robometer evaluation
 
 Same interface as other baselines: `reward_model=robodopamine`, plus `policy_ranking` or `confusion_matrix` eval types. Example commands are in `eval_commands/reward_alignment.sh`, `eval_commands/policy_ranking.sh`, and `eval_commands/confusion_matrix.sh`.  
-Detailed baseline eval docs: [rfm/evals/README.md](rfm/evals/README.md).
+Detailed baseline eval docs: [robometer/evals/README.md](robometer/evals/README.md).
 
 ---
 
@@ -97,22 +97,22 @@ Detailed baseline eval docs: [rfm/evals/README.md](rfm/evals/README.md).
 ### Training
 
 ```bash
-uv run accelerate launch --config_file rfm/configs/fsdp.yaml train.py --config_path=rfm/configs/config.yaml
+uv run accelerate launch --config_file robometer/configs/fsdp.yaml train.py --config_path=robometer/configs/config.yaml
 ```
 
 ### Evaluation (train script)
 
 ```bash
-uv run accelerate launch --config_file rfm/configs/fsdp.yaml train.py --mode=evaluate
+uv run accelerate launch --config_file robometer/configs/fsdp.yaml train.py --mode=evaluate
 ```
 
 ### Baseline evaluation (all models)
 
 ```bash
 # RFM / ReWiND
-uv run python rfm/evals/run_baseline_eval.py reward_model=rfm model_path=... custom_eval.eval_types=[reward_alignment] ...
+uv run python robometer/evals/run_baseline_eval.py reward_model=rfm model_path=... custom_eval.eval_types=[reward_alignment] ...
 
-# GVL, VLAC, RoboReward: see rfm/evals/README.md and eval_commands/*.sh
+# GVL, VLAC, RoboReward: see robometer/evals/README.md and eval_commands/*.sh
 # Robometer: use .venv-robodopamine/bin/python as in [Robometer inference](#-robometer-inference-reward-alignment) above
 ```
 
@@ -120,10 +120,10 @@ uv run python rfm/evals/run_baseline_eval.py reward_model=rfm model_path=... cus
 
 ```bash
 # Start server
-uv run evals/eval_server.py --config_path=rfm/configs/config.yaml --host=0.0.0.0 --port=8000
+uv run evals/eval_server.py --config_path=robometer/configs/config.yaml --host=0.0.0.0 --port=8000
 
 # Client
-uv run python evals/run_model_eval.py --config_path=rfm/configs/config.yaml --server_url=http://localhost:8000 --batch_size=15 --num-batches=-1
+uv run python evals/run_model_eval.py --config_path=robometer/configs/config.yaml --server_url=http://localhost:8000 --batch_size=15 --num-batches=-1
 ```
 
 ---
@@ -134,14 +134,14 @@ Supported: **AgiBotWorld** (streaming), **LIBERO** (HDF5), and custom configs.
 
 ```bash
 # AgiBotWorld
-uv run python rfm/data/generate_hf_dataset.py --config_path=rfm/configs/data_gen_configs/agibot_world.yaml
+uv run python dataset_upload/generate_hf_dataset.py --config_path=dataset_upload/configs/data_gen_configs/agibot_world.yaml
 
 # LIBERO
-uv run python rfm/data/generate_hf_dataset.py --config_path=rfm/configs/data_gen.yaml \
+uv run python dataset_upload/generate_hf_dataset.py --config_path=dataset_upload/configs/data_gen.yaml \
   --dataset.dataset_path=LIBERO/libero/datasets/libero_90 --dataset.dataset_name=libero_90
 ```
 
-See [rfm/data/README_ADDING_DATASETS.md](rfm/data/README_ADDING_DATASETS.md).
+See dataset_upload README and dataset_guides for adding datasets.
 
 ---
 
@@ -155,7 +155,7 @@ export RFM_DATASET_PATH=/path/to/your/rfm_dataset
 # Optional: RFM_DOWNLOAD_METHOD=git ./scripts/download_data.sh
 
 # Preprocess
-uv run python -m rfm.data.scripts.preprocess_datasets --config rfm/configs/preprocess.yaml
+uv run python -m robometer.data.scripts.preprocess_datasets --config robometer/configs/preprocess.yaml
 export RFM_PROCESSED_DATASETS_PATH=/path/to/save/processed_datasets
 ```
 

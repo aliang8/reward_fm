@@ -13,7 +13,7 @@ from hydra.core.config_store import ConfigStore
 from hydra import main as hydra_main
 
 from peft import prepare_model_for_kbit_training
-from rfm.configs.experiment_configs import (
+from robometer.configs.experiment_configs import (
     ExperimentConfig,
     ModelConfig,
     PEFTConfig,
@@ -24,23 +24,23 @@ from rfm.configs.experiment_configs import (
     SaveBestConfig,
     CustomEvaluationConfig,
 )
-from rfm.trainers import ReWiNDTrainer, RFMHeadsTrainer, RFMVQATrainer
-from rfm.data.datasets.helpers import show_available_datasets
-from rfm.utils.distributed import is_rank_0
-from rfm.utils.logger import rank_0_info
-from rfm.utils.timer import _timer
-from rfm.utils.save import SaveBestCallback, resolve_checkpoint_path
-from rfm.utils.setup_utils import (
+from robometer.trainers import ReWiNDTrainer, RFMHeadsTrainer, RFMVQATrainer
+from robometer.data.datasets.helpers import show_available_datasets
+from robometer.utils.distributed import is_rank_0
+from robometer.utils.logger import rank_0_info
+from robometer.utils.timer import _timer
+from robometer.utils.save import SaveBestCallback, resolve_checkpoint_path
+from robometer.utils.setup_utils import (
     create_training_arguments,
     setup_batch_collator,
     setup_dataset,
     setup_model_and_processor,
     setup_peft_model,
 )
-from rfm.data.datasets.base import resolve_dataset_keys
-from rfm.utils.logger import Logger
-from rfm.utils.distributed import banner
-from rfm.utils.config_utils import display_config, convert_hydra_to_dataclass
+from robometer.data.datasets.base import resolve_dataset_keys
+from robometer.utils.logger import Logger
+from robometer.utils.distributed import banner
+from robometer.utils.config_utils import display_config, convert_hydra_to_dataclass
 import datasets
 
 datasets.logging.set_verbosity_error()
@@ -320,7 +320,7 @@ def train(cfg: ExperimentConfig):
     rank_0_info(f"Training complete! Check {cfg.training.output_dir} for checkpoints and final model.")
 
 
-@hydra_main(version_base=None, config_path="rfm/configs", config_name="config")
+@hydra_main(version_base=None, config_path="robometer/configs", config_name="config")
 def main(cfg: DictConfig):
     banner("Starting RFM Training")
 

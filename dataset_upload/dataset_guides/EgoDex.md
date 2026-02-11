@@ -71,7 +71,7 @@ uv run python -m dataset_upload.generate_hf_dataset --config_path=dataset_upload
 ### Option 2: Manual Configuration
 ```bash
 uv run python -m dataset_upload.generate_hf_dataset \
-    --config_path=rfm/configs/data_gen_configs/egodex.yaml \
+    --config_path=dataset_upload/configs/data_gen_configs/egodex.yaml \
     --dataset.dataset_path="/path/to/egodex/test" \
     --dataset.dataset_name="egodex_test" \
     --output.max_trajectories=50 \
@@ -82,7 +82,7 @@ uv run python -m dataset_upload.generate_hf_dataset \
 ```bash
 # Process part1
 uv run python -m dataset_upload.generate_hf_dataset \
-    --config_path=rfm/configs/data_gen_configs/egodex.yaml \
+    --config_path=dataset_upload/configs/data_gen_configs/egodex.yaml \
     --dataset.dataset_path="/path/to/egodex/part1" \
     --dataset.dataset_name="egodex_part1" \
     --output.max_trajectories=-1 \
@@ -90,7 +90,7 @@ uv run python -m dataset_upload.generate_hf_dataset \
 
 # Process part2 with different dataset name
 uv run python -m dataset_upload.generate_hf_dataset \
-    --config_path=rfm/configs/data_gen_configs/egodex.yaml \
+    --config_path=dataset_upload/configs/data_gen_configs/egodex.yaml \
     --dataset.dataset_path="/path/to/egodex/part2" \
     --dataset.dataset_name="egodex_part2" \
     --output.max_trajectories=-1 \
@@ -267,7 +267,7 @@ For processing thousands of trajectories from different parts:
 # Process each part separately to manage resources and create different datasets
 for part in part1 part2 part3 part4 part5; do
     uv run python -m dataset_upload.generate_hf_dataset \
-        --config_path=rfm/configs/data_gen_configs/egodex.yaml \
+        --config_path=dataset_upload/configs/data_gen_configs/egodex.yaml \
         --dataset.dataset_path="/data/egodex/${part}" \
         --dataset.dataset_name="egodex_${part}" \
         --output.output_dir="egodex_${part}_dataset" \
@@ -281,7 +281,7 @@ done
 # All parts go to same hub repo but with different dataset names
 for part in part1 part2 part3 part4 part5; do
     uv run python -m dataset_upload.generate_hf_dataset \
-        --config_path=rfm/configs/data_gen_configs/egodex.yaml \
+        --config_path=dataset_upload/configs/data_gen_configs/egodex.yaml \
         --dataset.dataset_path="/data/egodx/${part}" \
         --dataset.dataset_name="egodx_${part}" \
         --hub.hub_repo_id="your-username/egodx_rfm" \

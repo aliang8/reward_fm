@@ -39,21 +39,21 @@ Then, for each dataset, run with the all the datasets you would like to process
 
 ### Option 1: Use Default Configuration
 ```bash
-uv run python rfm/data/generate_hf_dataset.py \
-    --config_path=rfm/configs/data_gen_configs/libero.yaml\
+uv run python dataset_upload/generate_hf_dataset.py \
+    --config_path=dataset_upload/configs/data_gen_configs/libero.yaml\
     --dataset.dataset_path=deps/libero/LIBERO/libero/datasets/libero_90 \
     --dataset.dataset_name=libero_90
 ```
 
 If all your LIBERO data exists in the path above, you can use the following utility script
 ```bash
-uv run bash rfm/data/data_scripts/libero/gen_all_libero.sh
+uv run bash dataset_upload/data_scripts/libero/gen_all_libero.sh
 ```
 
 ### Option 2: Custom Configuration
 ```bash
-uv run python rfm/data/generate_hf_dataset.py \
-    --config_path=rfm/configs/data_gen_configs/libero.yaml \
+uv run python dataset_upload/generate_hf_dataset.py \
+    --config_path=dataset_upload/configs/data_gen_configs/libero.yaml \
     --dataset.dataset_path=/path/to/your/libero/dataset \
     --dataset.dataset_name=libero_custom \
     --output.output_dir=libero_rfm_dataset \

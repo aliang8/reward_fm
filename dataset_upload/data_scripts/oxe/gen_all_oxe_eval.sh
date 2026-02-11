@@ -25,8 +25,8 @@ OXE_VALID_DATASETS=(
 for dataset_name in ${OXE_VALID_DATASETS[@]}; do
     echo "Generating dataset: $dataset_name"
     echo "=" * 100
-    uv run rfm/data/generate_hf_dataset.py \
-        --config_path=rfm/configs/data_gen_configs/oxe.yaml \
+    uv run dataset_upload/generate_hf_dataset.py \
+        --config_path=dataset_upload/configs/data_gen_configs/oxe.yaml \
         --output.output_dir ~/scratch_data/oxe_rfm_eval \
         --dataset.dataset_name oxe_$dataset_name\_eval \
         --hub.hub_repo_id oxe_rfm_eval

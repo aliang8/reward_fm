@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(pwd)"
 
 UV_BIN=${UV_BIN:-uv}
-PY_SCRIPT="${PROJECT_ROOT}/rfm/data/data_scripts/libero/rerender_libero.py"
+PY_SCRIPT="${PROJECT_ROOT}/dataset_upload/data_scripts/libero/rerender_libero.py"
 REQS_FILE="${PROJECT_ROOT}/deps/libero/LIBERO/requirements.txt"
 DATASETS_DIR="${PROJECT_ROOT}/deps/libero/LIBERO/libero/datasets"
 

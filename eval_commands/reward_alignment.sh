@@ -1,5 +1,5 @@
 # ReWIND
-uv run python rfm/evals/run_baseline_eval.py \
+uv run python robometer/evals/run_baseline_eval.py \
     reward_model=rewind \
     model_path=rewardfm/rewind-scale-rfm1M-32layers-8frame-20260118-180522 \
     custom_eval.eval_types=[reward_alignment] \
@@ -11,7 +11,7 @@ uv run python rfm/evals/run_baseline_eval.py \
     model_config.batch_size=64
 
 # Robo-Dopamine (run with venv Python so vLLM is found; do not use uv run)
-.venv-robodopamine/bin/python rfm/evals/run_baseline_eval.py \
+.venv-robodopamine/bin/python robometer/evals/run_baseline_eval.py \
     reward_model=robodopamine \
     model_path=tanhuajie2001/Robo-Dopamine-GRM-3B \
     custom_eval.eval_types=[reward_alignment] \
@@ -22,7 +22,7 @@ uv run python rfm/evals/run_baseline_eval.py \
     model_config.batch_size=1
 
 # VLAC
-uv run --extra vlac --python .venv-vlac/bin/python  rfm/evals/run_baseline_eval.py \
+uv run --extra vlac --python .venv-vlac/bin/python  robometer/evals/run_baseline_eval.py \
     reward_model=vlac \
     model_path=InternRobotics/VLAC \
     custom_eval.eval_types=[reward_alignment] \
@@ -33,7 +33,7 @@ uv run --extra vlac --python .venv-vlac/bin/python  rfm/evals/run_baseline_eval.
     max_frames=64
 
 # ROBOREWARD
-uv run python rfm/evals/run_baseline_eval.py \
+uv run python robometer/evals/run_baseline_eval.py \
     reward_model=roboreward \
     model_path=teetone/RoboReward-4B \
     custom_eval.eval_types=[reward_alignment] \
@@ -45,7 +45,7 @@ uv run python rfm/evals/run_baseline_eval.py \
     model_config.batch_size=32
 
 # RFM 
-uv run python rfm/evals/run_baseline_eval.py \
+uv run python robometer/evals/run_baseline_eval.py \
     reward_model=rfm \
     model_path=aliangdw/qwen4b_pref_prog_succ_8_frames_all \
     custom_eval.eval_types=[reward_alignment] \
@@ -57,7 +57,7 @@ uv run python rfm/evals/run_baseline_eval.py \
     model_config.batch_size=32
 
 # LIBERO ABLATION
-uv run python rfm/evals/run_baseline_eval.py \
+uv run python robometer/evals/run_baseline_eval.py \
     reward_model=rfm \
     model_path="/gpfs/home/jessezha/scrubbed_storage/reward_fm/logs/libero_ablation_prog_only_lora_ft_4frames_2000steps/ckpt-avg-3metrics\=0.6280_step\=1000" \
     custom_eval.eval_types=[reward_alignment] \

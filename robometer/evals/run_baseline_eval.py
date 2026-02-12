@@ -21,8 +21,8 @@ Usage:
         custom_eval.use_frame_steps=true \
         max_frames=8
     
-    # Run RFM model progress evaluation (reward alignment)
-    # reward_model=rfm automatically loads configs/reward_model/rfm.yaml (rfm is dataset/model name)
+    # Run RBM model progress evaluation (reward alignment)
+    # reward_model=rbm loads configs/reward_model/rbm.yaml
     uv run python robometer/evals/run_baseline_eval.py \
         reward_model=rfm \
         model_path=rewardfm/rfm_qwen_pref_prog_4frames_all_strategy \

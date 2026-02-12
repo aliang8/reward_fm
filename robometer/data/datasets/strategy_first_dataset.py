@@ -400,13 +400,13 @@ class StrategyFirstDataset(BaseDataset):
     ) -> List[int]:
         """Filter indices based on strategy requirements.
 
-        For SUBOPTIMAL strategy (preference or similarity), filters to only include indices from tasks
+        For SUBOPTIMAL strategy (preference), filters to only include indices from tasks
         that have optimal trajectories (unless RoboArena).
 
         Args:
             indices: List of trajectory indices to filter
             data_source: The data source name
-            sample_type: The sample type (pref/progress/similarity)
+            sample_type: The sample type (pref/progress)
             strategy: The selected strategy
 
         Returns:
@@ -445,7 +445,7 @@ class StrategyFirstDataset(BaseDataset):
         is_roboarena = data_source and "roboarena" in str(data_source).lower()
         is_roboreward = data_source and "roboreward" in str(data_source).lower()
 
-        # For SUBOPTIMAL strategy (preference or similarity), filter to tasks with both optimal and suboptimal trajectories
+        # For SUBOPTIMAL strategy (preference), filter to tasks with both optimal and suboptimal trajectories
         if strategy == DataGenStrat.SUBOPTIMAL and sample_type == "pref":
             # Skip task filtering for RoboArena and RoboReward (they use partial_success logic)
             if is_roboarena or is_roboreward:
@@ -481,7 +481,7 @@ class StrategyFirstDataset(BaseDataset):
         """Generate a sample using the appropriate sampler for the sample type.
 
         Args:
-            sample_type: The sample type (pref/progress/similarity)
+            sample_type: The sample type (pref/progress)
             item: The trajectory item
             preferred_strategy: Optional strategy to use (if None, sampler will select its own)
         """
@@ -531,7 +531,7 @@ class StrategyFirstDataset(BaseDataset):
         """Helper method to try generating a sample with retry logic.
 
         Args:
-            sample_type: The sample type to generate (pref/progress/similarity)
+            sample_type: The sample type to generate (pref/progress)
             filtered_sources: Optional list of allowed data sources. If None, uses all sources.
             strategy: Optional strategy for filtering indices. If None, no index filtering.
             preferred_strategy: Optional strategy to pass to sampler. If None, sampler selects its own.
@@ -562,9 +562,7 @@ class StrategyFirstDataset(BaseDataset):
                 filtered_indices = source_indices
 
             # Select a trajectory from filtered indices
-            # For progress: this is the trajectory for progress prediction
-            # For preference: this is the chosen trajectory
-            # For similarity: this is the reference trajectory
+            # For progress: trajectory for progress prediction; for preference: chosen trajectory
             selected_traj_idx = self._local_random.choice(filtered_indices)
             item = self.dataset[selected_traj_idx]
 

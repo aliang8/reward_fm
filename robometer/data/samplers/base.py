@@ -110,7 +110,7 @@ class RBMBaseSampler:
             item: An item from the dataset (typically a trajectory dict)
 
         Returns:
-            A sample object (e.g., PreferenceSample, ProgressSample, SimilaritySample)
+            A sample object (e.g., PreferenceSample, ProgressSample)
         """
         raise NotImplementedError("Subclasses must implement _generate_sample")
 

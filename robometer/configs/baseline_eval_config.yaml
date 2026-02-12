@@ -1,6 +1,6 @@
 # @package _global_
 
-# Baseline Evaluation Configuration for RFM
+# Baseline Evaluation Configuration for RBM
 # This config is used for running baseline evaluations (GVL, RL-VLM-F) on datasets
 # Used by run_baseline_eval.py
 

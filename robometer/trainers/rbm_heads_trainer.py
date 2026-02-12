@@ -1676,7 +1676,7 @@ class RBMHeadsTrainer(Trainer):
 
     def evaluate(self, eval_dataset=None, ignore_keys=None) -> Dict[str, float]:
         """
-        Override evaluate method to implement custom RFM evaluation metrics.
+        Override evaluate method to implement custom RBM evaluation metrics.
         """
         eval_step = self.state.global_step + 1
 
@@ -2280,7 +2280,7 @@ class RBMHeadsTrainer(Trainer):
                     timing_raw=self.timing_raw,
                 )
             else:
-                logger.trace("forward_model: Using Qwen/Molmo/RFM model path, calling model forward")
+                logger.trace("forward_model: Using Qwen/Molmo/RBM model path, calling model forward")
                 logger.trace(
                     f"forward_model: input_ids shape: {inputs['input_ids'].shape if 'input_ids' in inputs else 'N/A'}"
                 )

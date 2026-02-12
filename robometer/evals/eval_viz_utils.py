@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Utility functions for visualization in RFM evaluations.
+Utility functions for visualization in RBM evaluations.
 """
 
 from typing import Optional
@@ -36,7 +36,7 @@ def create_combined_progress_success_plot(
         success_binary: Optional binary success predictions
         success_probs: Optional success probability predictions
         success_labels: Optional ground truth success labels
-        is_discrete_mode: Whether progress is in discrete mode (deprecated, kept for compatibility)
+        is_discrete_mode: Optional; legacy parameter, no longer used
         title: Optional title for the plot (if None, auto-generated from loss/pearson)
         loss: Optional loss value to display in title
         pearson: Optional pearson correlation to display in title

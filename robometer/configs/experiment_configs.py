@@ -410,7 +410,7 @@ class TrainingConfig:
         },
     )
 
-    # RFM specific settings
+    # RBM-specific settings
     predict_pref_progress: bool = field(
         default=False, metadata={"help": "Whether to predict progress for preference samples"}
     )

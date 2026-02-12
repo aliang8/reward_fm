@@ -127,12 +127,10 @@ class BaseDataset(torch.utils.data.Dataset):
         self._resample_attempt_stats: Dict[str, collections.defaultdict[str, List[int]]] = {
             "preference": collections.defaultdict(list),
             "progress": collections.defaultdict(list),
-            "similarity": collections.defaultdict(list),
         }
         self._resample_dataset_attempt_stats: Dict[str, collections.defaultdict[str, List[int]]] = {
             "preference": collections.defaultdict(list),
             "progress": collections.defaultdict(list),
-            "similarity": collections.defaultdict(list),
         }
 
     def __len__(self):

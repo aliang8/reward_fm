@@ -47,7 +47,7 @@ class RLVLMF:
                 raise ValueError("Set GEMINI_API_KEY environment variable")
 
             genai.configure(api_key=api_key)
-            # Note: Original RL-VLM-F uses 'gemini-pro-vision' which is deprecated
+            # Original RL-VLM-F used 'gemini-pro-vision' (deprecated); we use a supported model
             # Using latest flash model for speed and cost-effectiveness
             self.model = genai.GenerativeModel("gemini-2.5-flash")
 

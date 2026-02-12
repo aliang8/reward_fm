@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FastAPI server to evaluate RFM model batches with a multi-GPU service layer.
+FastAPI server to evaluate RBM model batches with a multi-GPU service layer.
 
 Usage example:
     uv run python robometer/evals/eval_server.py \
@@ -597,7 +597,7 @@ def compute_batch_outputs(
 
 
 def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | None = None):
-    app = FastAPI(title="RFM Multi-GPU Evaluation Server")
+    app = FastAPI(title="RBM Multi-GPU Evaluation Server")
 
     app.add_middleware(
         CORSMiddleware,

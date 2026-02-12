@@ -147,7 +147,7 @@ def load_frames_from_npz(npz_filepath: str) -> np.ndarray:
         rfm_dataset_path = os.environ.get("ROBOMETER_PROCESSED_DATASETS_PATH") or os.environ.get(
             "RFM_PROCESSED_DATASETS_PATH", ""
         )
-        # HACK:
+        # Normalize: strip processed_datasets when env points to repo root
         rfm_dataset_path = rfm_dataset_path.replace("processed_datasets", "")
         if rfm_dataset_path:
             npz_filepath = os.path.join(rfm_dataset_path, npz_filepath)
@@ -184,7 +184,7 @@ def load_embeddings_from_path(embeddings_path: str) -> torch.Tensor:
         rfm_dataset_path = os.environ.get("ROBOMETER_PROCESSED_DATASETS_PATH") or os.environ.get(
             "RFM_PROCESSED_DATASETS_PATH", ""
         )
-        # HACK:
+        # Normalize: strip processed_datasets when env points to repo root
         rfm_dataset_path = rfm_dataset_path.replace("processed_datasets/", "")
         rfm_dataset_path = rfm_dataset_path.replace("processed_datasets", "")
         if rfm_dataset_path:

@@ -872,19 +872,19 @@ class DatasetPreprocessor:
             # Loading from HuggingFace Hub - handle video paths
             rank_0_print(f"Loading dataset: {dataset_path}")
 
-            # Check if RFM_DATASET_PATH is set
+            # Check ROBOMETER_DATASET_PATH or RFM_DATASET_PATH (legacy)
             rfm_dataset_path = os.environ.get("ROBOMETER_DATASET_PATH") or os.environ.get("RFM_DATASET_PATH")
             if not rfm_dataset_path:
                 raise ValueError(
-                    "RFM_DATASET_PATH environment variable not set. "
-                    "Please set it to the directory containing your downloaded datasets. "
-                    "Example: export RFM_DATASET_PATH=/path/to/your/datasets"
+                    "ROBOMETER_DATASET_PATH (or RFM_DATASET_PATH) not set. "
+                    "Set it to the directory containing your downloaded datasets. "
+                    "Example: export ROBOMETER_DATASET_PATH=/path/to/your/datasets"
                 )
 
             dataset_name = dataset_path.split("/")[-1]
 
             def patch_path(old_path):
-                # RFM_DATASET_PATH is set in the environment variable
+                # Dataset root from env (ROBOMETER_DATASET_PATH or RFM_DATASET_PATH)
                 root_dir = f"{rfm_dataset_path}/{dataset_name}"
                 return f"{root_dir}/{old_path}"  # e.g., "./videos/trajectory_0000.mp4"
 

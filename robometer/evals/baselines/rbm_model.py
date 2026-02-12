@@ -3,7 +3,7 @@
 RBM and ReWiND model class for baseline evaluation.
 
 This class provides a unified interface for loading RBM/ReWiND models from checkpoints
-and computing progress, preference, and similarity predictions.
+and computing progress and preference predictions.
 """
 
 import time
@@ -64,7 +64,7 @@ class RBMModel:
 
         # Determine if this is ReWiND or RFM
         self.is_rewind = "rewind" in exp_config.model.base_model_id.lower()
-        logger.info(f"Model type: {'ReWiND' if self.is_rewind else 'RFM'}")
+        logger.info(f"Model type: {'ReWiND' if self.is_rewind else 'RBM'}")
 
         # Create batch collator using the loaded config
         self.batch_collator = setup_batch_collator(

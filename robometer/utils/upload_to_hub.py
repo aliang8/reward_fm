@@ -2,11 +2,11 @@
 """
 Simple script to upload a trained model to HuggingFace Hub.
 
-uv run python rfm/utils/upload_to_hub.py \
+uv run python robometer/utils/upload_to_hub.py \
     --model_dir ./checkpoints/my_model \
-    --hub_model_id rewardfm/my-rfm-model \
+    --hub_model_id rewardfm/my-rbm-model \
     --private \
-    --commit_message "Upload trained RFM model checkpoint" \
+    --commit_message "Upload trained RBM model checkpoint" \
     --base_model "Qwen/Qwen3-VL-4B-Instruct"
 """
 
@@ -211,7 +211,7 @@ def main():
     parser.add_argument("--hub_model_id", type=str, required=True, help="HuggingFace model ID (username/model-name)")
     parser.add_argument("--private", action="store_true", help="Make the model private")
     parser.add_argument("--token", type=str, help="HuggingFace token (or set HF_TOKEN env var)")
-    parser.add_argument("--commit_message", type=str, default="Upload RFM model", help="Commit message for the upload")
+    parser.add_argument("--commit_message", type=str, default="Upload RBM model", help="Commit message for the upload")
     parser.add_argument(
         "--base_model", type=str, default="Qwen/Qwen2.5-VL-3B-Instruct", help="Base model name for the model card"
     )

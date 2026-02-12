@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
-Standalone client script for the RFM eval_server.
+Client script for the RBM eval server. No robometer dependency.
 
-Example usage:
-python use_reward_eval_server.py --eval-server-url 'http://40.119.56.66:8000' \ 
---video /path/to/video.mp4 (or a .npy/.npz file containing frames as (T,H,W,C) or (T,C,H,W)) \
---task "task_instruction" \
---fps 1.0 \
+Sends a video (or .npy/.npz frames) and task instruction to a running eval server,
+then saves per-frame progress and success predictions plus an optional plot.
+
+Example:
+  # Start the server first (in another terminal):
+  #   uv run python robometer/evals/eval_server.py --config_path=robometer/configs/config.yaml --host=0.0.0.0 --port=8000
+
+  python scripts/example_inference.py --eval-server-url http://localhost:8000 --video /path/to/video.mp4 --task "Pick up the red block"
 """
 
 from __future__ import annotations
@@ -208,35 +211,33 @@ def load_frames_input(
     fps: float = 1.0,
 ) -> np.ndarray:
     """
-    Accept either:
-      - a video path/URL, or
-      - a .npy/.npz file containing frames as (T,H,W,C) or (T,C,H,W)
+    Load frames from a video file (path or URL) or from a .npy/.npz file.
+
+    Video: uses decord; fps controls sampling density.
+    .npy/.npz: expects array shape (T, H, W, C) or (T, C, H, W); for .npz uses
+    key 'arr_0' or the first array.
+
+    Returns:
+        Frames as uint8 array (T, H, W, C). Raises on failure.
     """
-    # If path ends with .npy or .npz, load the numpy array directly
     if video_or_array_path.endswith(".npy"):
         frames_array = np.load(video_or_array_path)
     elif video_or_array_path.endswith(".npz"):
-        npz = np.load(video_or_array_path)
-        # By convention, try to use 'arr_0' or the first array in the file
-        if "arr_0" in npz:
-            frames_array = npz["arr_0"]
-        else:
-            # Fallback: get the first item in the npz archive
-            frames_array = next(iter(npz.values()))
+        with np.load(video_or_array_path, allow_pickle=False) as npz:
+            if "arr_0" in npz:
+                frames_array = npz["arr_0"].copy()
+            else:
+                frames_array = next(iter(npz.values())).copy()
     else:
         frames_array = extract_frames(video_or_array_path, fps=fps)
 
     if frames_array is None or frames_array.size == 0:
-        return None, "Could not extract frames from video."
+        raise RuntimeError("Could not extract frames from input.")
 
-    # Ensure dtype is uint8
     if frames_array.dtype != np.uint8:
         frames_array = np.clip(frames_array, 0, 255).astype(np.uint8)
-    # Ensure shape is (T, H, W, C)
     if frames_array.ndim == 4:
-        # If channels are in second dimension (T, C, H, W), transpose to (T, H, W, C)
         if frames_array.shape[1] in (1, 3) and frames_array.shape[-1] not in (1, 3):
-            # Assume shape (T, C, H, W)
             frames_array = frames_array.transpose(0, 2, 3, 1)
 
     return frames_array
@@ -308,25 +309,28 @@ def post_evaluate_batch_npy(
 
 def extract_rewards_from_server_output(outputs: Dict[str, Any]) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Match the repo's SPUR convention:
-      reward(sample) = clamp(progress_pred[sample][-1], 0, 1)
+    Parse server JSON into per-frame progress and success probability arrays.
+
+    Returns:
+        progress_array: Per-frame progress (reward) predictions for the first sample.
+        success_array: Per-frame success probabilities, or empty array if not in response.
     """
     outputs_progress = outputs.get("outputs_progress")
     if outputs_progress is None:
         raise ValueError("No `outputs_progress` in server response")
     progress_pred = outputs_progress.get("progress_pred", [])
 
-    # Extract progress predictions
     if progress_pred and len(progress_pred) > 0:
-        progress_array = np.array(progress_pred[0])  # First sample
+        progress_array = np.array(progress_pred[0], dtype=np.float32)
     else:
-        progress_array = np.array([])
+        progress_array = np.array([], dtype=np.float32)
 
-    # Extract success predictions if available
     outputs_success = outputs.get("outputs_success", {})
-    success_probs = outputs_success.get("success_probs", []) if outputs_success else None
+    success_probs = outputs_success.get("success_probs", []) if outputs_success else []
     if success_probs and len(success_probs) > 0:
-        success_array = np.array(success_probs[0])
+        success_array = np.array(success_probs[0], dtype=np.float32)
+    else:
+        success_array = np.array([], dtype=np.float32)
 
     return progress_array, success_array
 
@@ -354,58 +358,63 @@ def compute_rewards_per_frame(
     eval_server_url: str,
     video_frames: np.ndarray,
     task: str,
-    max_frames: int,
-    batch_size: int,
-    timeout_s: float,
+    timeout_s: float = 120.0,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Compute reward per timestep by evaluating prefixes:
-      prefix t uses frames[:t], for t in [1..T]
+    Send the full trajectory to the eval server and get per-frame progress and success.
+
+    Returns:
+        progress: Per-frame progress (reward) predictions.
+        success_probs: Per-frame success probabilities (empty if model has no success head).
     """
     T = int(video_frames.shape[0])
-    rewards_out = np.zeros((T,), dtype=np.float32)
-    success_probs_out = np.zeros((T,), dtype=np.float32)
-
     sample = make_progress_sample(
         frames=video_frames,
         task=task,
         sample_id="0",
         subsequence_length=T,
     )
-
     outputs = post_evaluate_batch_npy(eval_server_url, [sample], timeout_s=timeout_s)
-    rewards_out, success_probs_out = extract_rewards_from_server_output(outputs)
-
-    return rewards_out, success_probs_out
+    return extract_rewards_from_server_output(outputs)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Compute per-frame rewards from an eval_server.")
+    parser = argparse.ArgumentParser(
+        description="Get per-frame progress and success predictions from an RBM eval server.",
+        epilog="Start the server with: uv run python robometer/evals/eval_server.py --config_path=robometer/configs/config.yaml --host=0.0.0.0 --port=8000",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument(
-        "--eval-server-url", type=str, default="http://40.119.56.66:8000", help="Base URL, e.g. http://localhost:8000"
+        "--eval-server-url",
+        type=str,
+        default="http://localhost:8000",
+        help="Eval server base URL (default: http://localhost:8000)",
     )
     parser.add_argument(
         "--video",
         type=str,
         required=True,
-        help="Video path/URL OR a frames .npy/.npz (with key 'frames') containing (T,H,W,C) or (T,C,H,W).",
+        help="Path or URL to a video, or a .npy/.npz file with frames (T,H,W,C) or (T,C,H,W)",
     )
-    parser.add_argument("--task", type=str, required=True, help="Task string")
-    parser.add_argument("--fps", type=float, default=1.0, help="FPS to sample when using decord-based extraction")
-    parser.add_argument("--max-frames", type=int, default=16, help="Frames sent to server after subsample+pad")
-    parser.add_argument("--batch-size", type=int, default=32, help="How many prefixes to evaluate per request")
-    parser.add_argument("--timeout-s", type=float, default=120.0, help="HTTP timeout")
+    parser.add_argument("--task", type=str, required=True, help="Task instruction describing the trajectory")
+    parser.add_argument(
+        "--fps",
+        type=float,
+        default=1.0,
+        help="Frames per second when sampling from video (default: 1.0)",
+    )
+    parser.add_argument("--timeout-s", type=float, default=120.0, help="HTTP request timeout in seconds (default: 120)")
     parser.add_argument(
         "--success-threshold",
         type=float,
         default=0.5,
-        help="Threshold on per-frame success prob to form a binary success curve for plotting.",
+        help="Threshold for binary success curve in the plot (default: 0.5)",
     )
     parser.add_argument(
         "--out",
         type=str,
         default=None,
-        help="Output .npy path (default: alongside video, <stem>_rewards.npy)",
+        help="Output path for rewards .npy (default: <video_stem>_rewards.npy)",
     )
     args = parser.parse_args()
 
@@ -418,8 +427,6 @@ def main() -> None:
         eval_server_url=args.eval_server_url,
         video_frames=frames,
         task=args.task,
-        max_frames=int(args.max_frames),
-        batch_size=int(args.batch_size),
         timeout_s=float(args.timeout_s),
     )
 
@@ -428,12 +435,13 @@ def main() -> None:
     success_path = out_path.with_name(out_path.stem + "_success_probs.npy")
     np.save(str(success_path), success_probs)
 
-    success_binary = (success_probs > float(args.success_threshold)).astype(np.int32)
+    show_success = success_probs.size > 0 and success_probs.size == rewards.size
+    success_binary = (success_probs > float(args.success_threshold)).astype(np.int32) if show_success else None
     fig = create_combined_progress_success_plot(
         progress_pred=rewards,
         num_frames=int(frames.shape[0]),
         success_binary=success_binary,
-        success_probs=success_probs,
+        success_probs=success_probs if show_success else None,
         success_labels=None,
         title=f"Progress/Success — {video_path.name}",
     )
@@ -443,8 +451,7 @@ def main() -> None:
 
     summary = {
         "video": str(video_path),
-        "num_video_frames": int(frames.shape[0]),
-        "max_frames_sent_to_server": int(args.max_frames),
+        "num_frames": int(frames.shape[0]),
         "out_npy": str(out_path),
         "out_success_probs_npy": str(success_path),
         "out_plot_png": str(plot_path),

@@ -65,15 +65,4 @@ class PreferenceSample(BaseModel):
     resample_attempts: int = 1
 
 
-class SimilaritySample(BaseModel):
-    """Deprecated: similarity head removed. Kept for backward compatibility when loading datasets/samplers."""
-
-    ref_trajectory: Trajectory
-    sim_trajectory: Trajectory
-    diff_trajectory: Optional[Trajectory] = None
-    sample_type: str = "similarity"
-    data_gen_strategy: Optional[str] = None
-    resample_attempts: int = 1
-
-
-SampleType = Union[PreferenceSample, ProgressSample, SimilaritySample]
+SampleType = Union[PreferenceSample, ProgressSample]

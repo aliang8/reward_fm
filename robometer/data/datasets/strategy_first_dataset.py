@@ -4,7 +4,6 @@ from random import Random
 
 from robometer.data.datasets.base import BaseDataset
 from robometer.data.samplers.pref import PrefSampler
-from robometer.data.samplers.sim import SimSampler
 from robometer.data.samplers.progress import ProgressSampler
 from robometer.data.datasets.helpers import DataGenStrat
 from robometer.data.dataset_category import (
@@ -25,7 +24,7 @@ class StrategyFirstDataset(BaseDataset):
     and from StrategyBalancedDataset which selects sample type then data source (with optional weights).
 
     Sampling flow:
-    1. Select sample type (preference/progress/similarity) based on sample_type_ratio
+    1. Select sample type (preference/progress) based on sample_type_ratio
     2. Select strategy for that sample type based on strategy ratios
     3. Select data source uniformly from all available data sources
     4. Sample trajectory from selected data source and generate sample
@@ -39,7 +38,6 @@ class StrategyFirstDataset(BaseDataset):
 
         self.pref_sampler = None
         self.progress_sampler = None
-        self.similarity_sampler = None
 
         if sampler_kwargs is None:
             sampler_kwargs = {}
@@ -57,8 +55,6 @@ class StrategyFirstDataset(BaseDataset):
             self.pref_sampler = PrefSampler(is_evaluation=is_evaluation, **base_sampler_kwargs)
         if self.config.sample_type_ratio[1] > 0:
             self.progress_sampler = ProgressSampler(is_evaluation=is_evaluation, **base_sampler_kwargs)
-        if self.config.sample_type_ratio[2] > 0:
-            self.similarity_sampler = SimSampler(is_evaluation=is_evaluation, **base_sampler_kwargs)
 
         self.sample_type_ratio = config.sample_type_ratio
         self.max_samples = max_samples
@@ -106,7 +102,7 @@ class StrategyFirstDataset(BaseDataset):
 
         logger.info(f"StrategyFirstDataset initialized with {len(self.dataset)} trajectories")
         logger.info(
-            f"Sample type ratios: pref={self.sample_type_ratio[0]}, progress={self.sample_type_ratio[1]}, sim={self.sample_type_ratio[2]}"
+            f"Sample type ratios: pref={self.sample_type_ratio[0]}, progress={self.sample_type_ratio[1]}"
         )
         logger.info(f"Available data sources: {list(self.source_indices.keys())}")
         if self.normalized_weights:
@@ -126,7 +122,6 @@ class StrategyFirstDataset(BaseDataset):
             "dataset": self._local_random.getstate() if hasattr(self, "_local_random") else None,
             "pref_sampler": self.pref_sampler._local_random.getstate() if self.pref_sampler else None,
             "progress_sampler": self.progress_sampler._local_random.getstate() if self.progress_sampler else None,
-            "similarity_sampler": self.similarity_sampler._local_random.getstate() if self.similarity_sampler else None,
         }
         return state
 
@@ -142,8 +137,6 @@ class StrategyFirstDataset(BaseDataset):
             self.pref_sampler._local_random.setstate(state["pref_sampler"])
         if state.get("progress_sampler") and self.progress_sampler:
             self.progress_sampler._local_random.setstate(state["progress_sampler"])
-        if state.get("similarity_sampler") and self.similarity_sampler:
-            self.similarity_sampler._local_random.setstate(state["similarity_sampler"])
 
     def __len__(self):
         if self.max_samples is None:
@@ -221,10 +214,6 @@ class StrategyFirstDataset(BaseDataset):
             available_types.append("progress")
             available_probs.append(self.sample_type_ratio[1])
 
-        if self.sample_type_ratio[2] > 0 and self.similarity_sampler is not None:
-            available_types.append("similarity")
-            available_probs.append(self.sample_type_ratio[2])
-
         if not available_types:
             raise ValueError("No available sample types (all ratios are 0 or samplers are None)")
 
@@ -272,16 +261,6 @@ class StrategyFirstDataset(BaseDataset):
                 strategies.append((DataGenStrat.REVERSE_PROGRESS, strategy_ratios[2]))
             if len(strategy_ratios) > 3 and strategy_ratios[3] > 0:
                 strategies.append((DataGenStrat.REWIND, strategy_ratios[3]))
-
-        elif sample_type == "similarity":
-            strategy_ratios = self.config.similarity_strategy_ratio
-            # Map ratios to strategies: [rewind, suboptimal_same_task, paired_human_robot]
-            if len(strategy_ratios) > 0 and strategy_ratios[0] > 0:
-                strategies.append((DataGenStrat.REWIND, strategy_ratios[0]))
-            if len(strategy_ratios) > 1 and strategy_ratios[1] > 0:
-                strategies.append((DataGenStrat.SUBOPTIMAL, strategy_ratios[1]))
-            if len(strategy_ratios) > 2 and strategy_ratios[2] > 0:
-                strategies.append((DataGenStrat.PAIRED_HUMAN_ROBOT, strategy_ratios[2]))
 
         if not strategies:
             return None
@@ -469,7 +448,7 @@ class StrategyFirstDataset(BaseDataset):
         is_roboreward = data_source and "roboreward" in str(data_source).lower()
 
         # For SUBOPTIMAL strategy (preference or similarity), filter to tasks with both optimal and suboptimal trajectories
-        if strategy == DataGenStrat.SUBOPTIMAL and sample_type in ["pref", "similarity"]:
+        if strategy == DataGenStrat.SUBOPTIMAL and sample_type == "pref":
             # Skip task filtering for RoboArena and RoboReward (they use partial_success logic)
             if is_roboarena or is_roboreward:
                 return indices
@@ -516,8 +495,6 @@ class StrategyFirstDataset(BaseDataset):
             sampler = self.pref_sampler
         elif sample_type == "progress":
             sampler = self.progress_sampler
-        elif sample_type == "similarity":
-            sampler = self.similarity_sampler
         else:
             return None
 
@@ -636,8 +613,6 @@ class StrategyFirstDataset(BaseDataset):
             available_samplers.append("pref")
         if failed_sample_type != "progress" and self.progress_sampler is not None:
             available_samplers.append("progress")
-        if failed_sample_type != "similarity" and self.similarity_sampler is not None:
-            available_samplers.append("similarity")
 
         if not available_samplers:
             logger.error(f"[StrategyFirstDataset] No other samplers available after {failed_sample_type} failed")

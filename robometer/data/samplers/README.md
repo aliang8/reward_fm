@@ -1,61 +1,14 @@
 # Sampler Strategies Documentation
 
-This document summarizes the data generation strategies used by each sampler type in the RFM data pipeline.
+This document summarizes the data generation strategies used by each sampler type in the RBM data pipeline.
 
 ## Overview
 
-The codebase contains three main sampler types:
-- **SimSampler**: Generates similarity scoring samples
+The codebase contains two main sampler types:
 - **PrefSampler**: Generates preference prediction samples
 - **ProgressSampler**: Generates progress prediction samples
 
 Each sampler implements multiple strategies for generating training data, with automatic retry logic and strategy rebalancing on failure.
-
----
-
-## SimSampler (Similarity Scoring)
-
-The `SimSampler` creates similarity scoring samples where two trajectories (`o^1` and `o^2`) are ranked against a reference trajectory (`o^ref`). The goal is to learn that `o^1` should be ranked higher than `o^2`.
-
-### Strategies
-
-#### 1. **REWIND**
-- **Description**: Creates a similarity sample where `o^1` is an optimal trajectory from the same task, and `o^2` is a rewound (subsampled) version of the reference trajectory.
-- **Purpose**: Learn to distinguish between optimal and suboptimal trajectories from the same task.
-- **Implementation**: 
-  - `traj_sim`: Optimal trajectory from same task (via `_get_same_task_optimal`)
-  - `traj_diff`: Rewound trajectory from reference (via `subsample_rewind`)
-
-#### 2. **SUBOPTIMAL**
-- **Description**: Creates a similarity sample where `o^1` is an optimal trajectory from the same task, and `o^2` is a suboptimal/failure trajectory from the same task.
-- **Purpose**: Learn to distinguish between optimal and suboptimal trajectories from the same task.
-- **Conditions**: Only available when:
-  - Data source is in the failure category (`is_failure_ds`)
-  - Probability is boosted by 2x for failure category data sources
-- **Implementation**:
-  - `traj_sim`: Optimal trajectory from same task (via `_get_same_task_optimal`)
-  - `traj_diff`: Suboptimal trajectory from same task (via `_get_same_task_suboptimal`)
-
-#### 3. **PAIRED_HUMAN_ROBOT**
-- **Description**: Creates a similarity sample where `o^1` is a paired human/robot trajectory (opposite type from reference, same task), and `o^2` is from a different task.
-- **Purpose**: Learn to distinguish between same-task and different-task trajectories, leveraging paired human/robot demonstrations.
-- **Conditions**: Only available when:
-  - Data source is in the paired category (`is_paired_ds`)
-  - Paired human/robot data exists for the task
-  - Probability is boosted by 2x for paired category data sources
-- **Implementation**:
-  - `traj_sim`: Paired human/robot trajectory (via `_get_paired_human_robot_traj`)
-  - `traj_diff`: Trajectory from different task (via `_get_different_video_traj`)
-
-### Strategy Selection
-- Strategies are selected probabilistically based on `similarity_strategy_ratio` configuration
-- Probabilities are rebalanced when strategies fail
-- Strategies are removed after 4 consecutive failures
-- Maximum 10 total attempts per sample generation
-
-### Reference Trajectory Requirements
-- For non-RoboArena: Must have `quality_label == "successful"`
-- For RoboArena: Must have `partial_success` field present
 
 ---
 

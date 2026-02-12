@@ -2,7 +2,6 @@ import random
 
 from robometer.data.datasets.base import BaseDataset
 from robometer.data.samplers.pref import PrefSampler
-from robometer.data.samplers.sim import SimSampler
 from robometer.data.samplers.progress import ProgressSampler
 from robometer.data.dataset_category import is_preference_only
 from robometer.utils.logger import get_logger
@@ -11,14 +10,13 @@ logger = get_logger()
 
 
 class RBMDataset(BaseDataset):
-    """Dataset that combines preference, similarity, and progress generation."""
+    """Dataset that combines preference and progress generation."""
 
     def __init__(self, config, is_evaluation=False, max_samples=None, sampler_kwargs=None, **kwargs):
         super().__init__(config, is_evaluation, **kwargs)
 
         self.pref_sampler = None
         self.progress_sampler = None
-        self.similarity_sampler = None
 
         if sampler_kwargs is None:
             sampler_kwargs = {}
@@ -36,8 +34,6 @@ class RBMDataset(BaseDataset):
             self.pref_sampler = PrefSampler(is_evaluation=is_evaluation, **base_sampler_kwargs)
         if self.config.sample_type_ratio[1] > 0:
             self.progress_sampler = ProgressSampler(is_evaluation=is_evaluation, **base_sampler_kwargs)
-        if self.config.sample_type_ratio[2] > 0:
-            self.similarity_sampler = SimSampler(is_evaluation=is_evaluation, **base_sampler_kwargs)
 
         self.sample_type_ratio = config.sample_type_ratio
         self.max_samples = max_samples
@@ -53,7 +49,6 @@ class RBMDataset(BaseDataset):
         state = {
             "pref_sampler": self.pref_sampler._local_random.getstate() if self.pref_sampler else None,
             "progress_sampler": self.progress_sampler._local_random.getstate() if self.progress_sampler else None,
-            "similarity_sampler": self.similarity_sampler._local_random.getstate() if self.similarity_sampler else None,
         }
         return state
 
@@ -67,8 +62,6 @@ class RBMDataset(BaseDataset):
             self.pref_sampler._local_random.setstate(state["pref_sampler"])
         if state.get("progress_sampler") and self.progress_sampler:
             self.progress_sampler._local_random.setstate(state["progress_sampler"])
-        if state.get("similarity_sampler") and self.similarity_sampler:
-            self.similarity_sampler._local_random.setstate(state["similarity_sampler"])
 
     def get_resample_attempt_stats(self):
         return self._resample_attempt_stats
@@ -145,7 +138,6 @@ class RBMDataset(BaseDataset):
         samplers = [
             ("pref", self.sample_type_ratio[0], self.pref_sampler),
             ("progress", self.sample_type_ratio[1], self.progress_sampler),
-            ("similarity", self.sample_type_ratio[2], self.similarity_sampler),
         ]
 
         # Remove samplers with zero probability or None samplers

@@ -187,8 +187,6 @@ class DataConfig:
     preference_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 1])
     # [different_task, forward_progress, reverse_progress, rewind]
     progress_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 1])
-    # Deprecated: similarity head removed; kept for dataloader/sampler backward compatibility.
-    similarity_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1])
 
     data_source_weights: Optional[Dict[str, float]] = field(
         default=None,
@@ -275,8 +273,6 @@ class CustomEvaluationConfig:
     confusion_matrix: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
     reward_alignment: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
     quality_preference: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
-    # Deprecated: similarity head removed; kept so getattr(custom_eval, "similarity_score") does not break.
-    similarity_score: List[str] = field(default_factory=list)
     comparisons_per_task: Optional[int] = field(
         default=None,
         metadata={
@@ -293,12 +289,6 @@ class CustomEvaluationConfig:
         default=None,
         metadata={
             "help": "Number of trajectories to sample per quality label for policy ranking evaluation. Only tasks with multiple quality labels are used. If None = use all."
-        },
-    )
-    num_partial_successes: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": "For RoboArena datasets: Number of total trajectories to sample using circular sampling across partial_success values. None = use num_examples_per_quality_pr per partial_success group."
         },
     )
     num_partial_successes: Optional[int] = field(
@@ -422,9 +412,6 @@ class TrainingConfig:
     predict_pref_progress: bool = field(
         default=False, metadata={"help": "Whether to predict progress for preference samples"}
     )
-    # Deprecated: similarity head removed; kept for config backward compatibility.
-    predict_sim_progress: bool = field(default=False, metadata={"help": "Deprecated; unused."})
-    predict_pref_sim: bool = field(default=False, metadata={"help": "Deprecated; unused."})
 
 
 @dataclass

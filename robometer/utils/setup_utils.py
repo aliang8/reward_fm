@@ -947,7 +947,7 @@ def setup_model_and_processor(
             elif "preference_head" in name:
                 param.requires_grad = cfg.train_preference_head
             elif "similarity_head" in name:
-                param.requires_grad = getattr(cfg, "train_similarity_head", False)
+                param.requires_grad = False
         
         # 2. Handle base model parameters (vision/language) - skip if PEFT is applied
         elif is_base_model_param(name):
@@ -979,7 +979,6 @@ def setup_model_and_processor(
     logger.info(f"  - Progress head: {cfg.train_progress_head}")
     logger.info(f"  - Success head: {getattr(cfg, 'train_success_head', False)}")
     logger.info(f"  - Preference head: {cfg.train_preference_head}")
-    logger.info(f"  - Similarity head: {getattr(cfg, 'train_similarity_head', False)}")
 
     for name, param in model.named_parameters():
         if param.requires_grad:
@@ -1136,8 +1135,6 @@ def setup_batch_collator(
         "base_model_id": cfg.model.base_model_id,
         "use_multi_image": cfg.data.use_multi_image,
         "prog_pref": cfg.training.predict_pref_progress,
-        "prog_sim": cfg.training.predict_sim_progress,
-        "pref_sim": cfg.training.predict_pref_sim,
         "use_per_frame_progress_token": getattr(cfg.data, "use_per_frame_progress_token", False),
         "shuffle_progress_frames": cfg.data.shuffle_progress_frames,
         "inference": is_eval,

@@ -134,8 +134,6 @@ class RBMBatchCollator(BaseCollator):
         load_embeddings: bool = False,
         use_multi_image: bool = False,
         prog_pref: bool = False,
-        prog_sim: bool = False,
-        pref_sim: bool = False,
         use_per_frame_progress_token: bool = False,
         shuffle_progress_frames: bool = False,
         inference: bool = False,
@@ -153,8 +151,6 @@ class RBMBatchCollator(BaseCollator):
         )
         self.use_multi_image = use_multi_image
         self.prog_pref = prog_pref
-        self.prog_sim = prog_sim
-        self.pref_sim = pref_sim
 
         # Molmo2 only supports multi-image mode, not video
         if "Molmo" in self.base_model_id and not self.use_multi_image:

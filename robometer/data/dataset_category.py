@@ -228,16 +228,6 @@ DATASET_MAP = {
             "jesbu1_racer_rfm_racer_val",
         ],
     },
-    "similarity_score": {
-        "eval": [
-            ["anqil_rh20t_subset_rfm_rh20t_human", "anqil_rh20t_subset_rfm_rh20t_robot"],
-            ["jesbu1_hand_paired_rfm_hand_paired_human", "jesbu1_hand_paired_rfm_hand_paired_robot"],
-            [
-                "jesbu1_usc_koch_human_robot_paired_usc_koch_human_robot_paired_human",
-                "jesbu1_usc_koch_human_robot_paired_usc_koch_human_robot_paired_robot",
-            ],
-        ]
-    },
     "franka": {
         "train": [
             "jesbu1_oxe_rfm_oxe_droid",

@@ -207,7 +207,6 @@ training:
 
   # RFM specific settings
   predict_pref_progress: true
-  predict_sim_progress: false
 
 # =====================================================================================
 # Loss Configuration

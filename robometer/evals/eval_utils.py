@@ -15,7 +15,7 @@ import numpy as np
 import requests
 import torch
 
-from robometer.data.dataset_types import PreferenceSample, SimilaritySample, ProgressSample, Trajectory
+from robometer.data.dataset_types import PreferenceSample, ProgressSample, Trajectory
 from robometer.data.datasets.helpers import linspace_subsample_frames, pad_trajectory_to_max_frames_np
 
 
@@ -105,7 +105,7 @@ def raw_dict_to_sample(
 
 
 def build_payload(
-    samples: list[PreferenceSample | SimilaritySample | ProgressSample],
+    samples: list[PreferenceSample | ProgressSample],
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Build a payload with numpy array handling.
 
@@ -128,9 +128,6 @@ def build_payload(
         for key in [
             "chosen_trajectory",
             "rejected_trajectory",
-            "reference_trajectory",
-            "traj_sim_trajectory",
-            "traj_diff_trajectory",
             "trajectory",
         ]:
             if key in processed_sample and isinstance(processed_sample[key], dict):
@@ -272,9 +269,6 @@ def reconstruct_payload_from_npy(
         trajectory_keys = [
             "chosen_trajectory",
             "rejected_trajectory",
-            "reference_trajectory",
-            "traj_sim_trajectory",
-            "traj_diff_trajectory",
             "trajectory",
         ]
 

@@ -43,7 +43,6 @@ class CustomEvalDataset(BaseDataset):
             "reward_alignment": RewardAlignmentSampler,
             "policy_ranking": ProgressPolicyRankingSampler,
             "quality_preference": QualityPreferenceSampler,
-            "similarity_score": SimilarityScoreSampler,
         }
 
         if "roboarena" in self.config.eval_datasets:

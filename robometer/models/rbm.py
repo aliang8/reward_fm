@@ -35,7 +35,7 @@ def squeeze_last_safe(x: torch.Tensor) -> torch.Tensor:
 
 
 class RBM(PredictionHeadsMixin, PreTrainedModel):
-    """Reward Behavior Model with three prediction heads for different objectives.
+    """Robometer (RBM) with three prediction heads for different objectives.
 
     Supports multiple base model architectures:
     - Qwen2.5-VL (Qwen2_5_VLModel)
@@ -933,7 +933,7 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
         **kwargs,
     ):
         """
-        Forward pass for the RBM (Reward Behavior Model).
+        Forward pass for the RBM (Robometer).
 
         Dispatches to model-specific forward methods:
         - SmolVLM: _forward_smolvlm
